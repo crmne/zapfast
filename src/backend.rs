@@ -307,6 +307,8 @@ pub enum Command {
         name: Option<String>,
         participants: Vec<String>,
         read_only: bool,
+        ephemeral_expiration: Option<u32>,
+        ephemeral_setting_timestamp: Option<i64>,
     },
     /// Internal pairing-code result.
     PairCode {

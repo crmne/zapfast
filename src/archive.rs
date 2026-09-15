@@ -112,6 +112,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("messages", "read_at", "INTEGER"),
     ("chats", "read_through", "INTEGER"),
     ("chats", "pending_read", "INTEGER"),
+    ("chats", "ephemeral_expiration", "INTEGER"),
+    ("chats", "ephemeral_setting_timestamp", "INTEGER"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
@@ -315,6 +317,27 @@ impl Archive {
             params![id, until],
         )?;
         Ok(())
+    }
+
+    /// Applies disappearing-message metadata unless a newer setting is stored.
+    pub fn set_ephemeral(&self, id: &str, expiration: u32, setting_timestamp: i64) -> Result<bool> {
+        Ok(self.connection.execute(
+            "UPDATE chats SET ephemeral_expiration = ?2, ephemeral_setting_timestamp = ?3
+             WHERE id = ?1 AND (ephemeral_setting_timestamp IS NULL OR ephemeral_setting_timestamp <= ?3)",
+            params![id, expiration, setting_timestamp],
+        )? > 0)
+    }
+
+    /// Returns the chat timer, including zero for an explicitly disabled timer.
+    pub fn ephemeral_expiration(&self, id: &str) -> Result<Option<u32>> {
+        self.connection
+            .query_row(
+                "SELECT ephemeral_expiration FROM chats WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(Option::flatten)
     }
 
     pub fn mark_read(&self, id: &str) -> Result<()> {
@@ -1230,6 +1253,35 @@ mod tests {
                 .expect("oldest")
                 .map(|m| m.id),
             Some("m1".into())
+        );
+    }
+
+    #[test]
+    fn ephemeral_setting_keeps_the_newest_timestamp() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+
+        assert!(archive.set_ephemeral(chat, 604_800, 20).expect("setting"));
+        assert!(!archive.set_ephemeral(chat, 86_400, 10).expect("stale"));
+
+        assert_eq!(
+            archive.ephemeral_expiration(chat).expect("expiration"),
+            Some(604_800)
+        );
+    }
+
+    #[test]
+    fn ephemeral_setting_preserves_explicitly_disabled_timer() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+
+        archive.set_ephemeral(chat, 0, 20).expect("setting");
+
+        assert_eq!(
+            archive.ephemeral_expiration(chat).expect("expiration"),
+            Some(0)
         );
     }
 
