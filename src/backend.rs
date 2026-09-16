@@ -42,6 +42,48 @@ impl LinkStatus {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected)
     }
+
+    /// Stable, non-sensitive description suitable for the desktop log.
+    pub(crate) fn log_label(&self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Unlinked { .. } => "unlinked",
+            Self::Connecting => "connecting",
+            Self::Connected => "connected",
+            Self::Disconnected { .. } => "disconnected",
+            Self::LoggedOut => "logged out",
+            Self::Failed(_) => "failed",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LinkStatus;
+
+    #[test]
+    fn link_logs_redact_pairing_credentials() {
+        let qr = "qr-payload-that-links-an-account";
+        let code = "12345678";
+        let phone = "573001234567";
+        let status = LinkStatus::Unlinked {
+            qr: Some(qr.into()),
+            pair_code: Some(code.into()),
+            pairing_phone: Some(phone.into()),
+        };
+
+        // The previous Debug formatting leaked every field into zapfast.log.
+        let previous = format!("link: {status:?}");
+        assert!(previous.contains(qr));
+        assert!(previous.contains(code));
+        assert!(previous.contains(phone));
+
+        let current = format!("link: {}", status.log_label());
+        assert_eq!(current, "link: unlinked");
+        assert!(!current.contains(qr));
+        assert!(!current.contains(code));
+        assert!(!current.contains(phone));
+    }
 }
 
 /// Oldest loaded message timestamp and id used as a page boundary.

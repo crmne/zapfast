@@ -435,7 +435,7 @@ impl Worker {
 
     fn set_status(&mut self, status: LinkStatus) {
         if self.status != status {
-            log::info!("link: {status:?}");
+            log::info!("link: {}", status.log_label());
             self.status = status.clone();
             self.emit(Event::Link(status));
         }
