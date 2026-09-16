@@ -9,7 +9,7 @@ use std::time::Duration;
 
 #[cfg(windows)]
 use tray_icon::menu::MenuEvent;
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 use tray_icon::menu::MenuId;
 use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
@@ -26,7 +26,7 @@ type Wake = Arc<dyn Fn() + Send + Sync>;
 const SHOW: &str = "show";
 const QUIT: &str = "quit";
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn command_for(id: &MenuId) -> Option<TrayCommand> {
     match id.0.as_str() {
         SHOW => Some(TrayCommand::ShowHide),

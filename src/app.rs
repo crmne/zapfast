@@ -178,6 +178,8 @@ pub struct App {
     pub player: Player,
     /// Active voice recorder.
     pub recording: Option<Recorder>,
+    /// Voice reply retained after a validation failure.
+    pub(crate) recording_retry: Option<(ChatId, Vec<f32>, Option<String>)>,
     /// Voice messages with a sent played receipt.
     played_told: HashSet<String>,
     /// Message bodies registered for transcript copy formatting.
@@ -386,6 +388,7 @@ impl App {
             pending: Vec::new(),
             player: Player::new(waker.clone()),
             recording: None,
+            recording_retry: None,
             played_told: HashSet::new(),
             copy_rows: Default::default(),
             selection_view: Default::default(),
@@ -1202,6 +1205,30 @@ impl App {
                     self.new_contact_pending = false;
                     self.toast_error(message);
                 }
+                Event::ReplyRejected {
+                    chat,
+                    text,
+                    samples,
+                    quoting,
+                    error,
+                } => {
+                    // Return the text to the composer unless the user has
+                    // started a new message in the meantime.
+                    if let Some(text) = text
+                        && self.composer.trim().is_empty()
+                    {
+                        self.composer = text;
+                        self.composer_mentions.clear();
+                        self.emoji_start = None;
+                        self.mention_start = None;
+                        self.reply_to = quoting.clone();
+                        self.focus_composer = true;
+                    }
+                    if let Some(samples) = samples {
+                        self.recording_retry = Some((chat, samples, quoting));
+                    }
+                    self.toast_error(error);
+                }
             }
         }
     }
@@ -1915,6 +1942,9 @@ impl App {
                 self.toast("Copied");
             }
             Action::Reply(id) => {
+                // Selecting Reply while editing must send a new reply, not edit
+                // the previous message with the new text.
+                self.editing = None;
                 self.reply_to = Some(id);
                 self.focus_composer = true;
             }
@@ -2481,9 +2511,19 @@ impl App {
         });
     }
 
-    /// Stops and sends a recording unless it is under one second.
+    /// Stops and sends a recording unless it is under one second. With no
+    /// recorder running, sends a voice reply retained after a rejection. The
+    /// retention carries its own chat: the composer only offers the retry in
+    /// that chat, so the stored chat id is always the one to send to.
     fn send_recording(&mut self) {
         let Some(recorder) = self.recording.take() else {
+            if let Some((chat, samples, quoting)) = self.recording_retry.take() {
+                self.backend.send(Command::SendVoice {
+                    chat,
+                    samples,
+                    quoting,
+                });
+            }
             return;
         };
         let Some(chat) = self.open_chat.clone() else {
@@ -2866,6 +2906,45 @@ mod tests {
             .unwrap();
         app.background_frame(&ctx);
         assert!(app.poll_voting.is_empty());
+    }
+
+    #[test]
+    fn a_rejected_text_reply_returns_to_the_composer_without_clobbering_a_draft() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let ctx = egui::Context::default();
+        events
+            .send(Event::ReplyRejected {
+                chat: "chat".into(),
+                text: Some("Failed reply".into()),
+                samples: None,
+                quoting: Some("original".into()),
+                error: "Could not send".into(),
+            })
+            .unwrap();
+        app.background_frame(&ctx);
+        assert_eq!(app.composer, "Failed reply");
+        assert_eq!(app.reply_to.as_deref(), Some("original"));
+        assert!(app.editing.is_none());
+        assert!(app.emoji_start.is_none());
+        assert!(app.mention_start.is_none());
+
+        // Text typed since the send is not overwritten by a later rejection.
+        app.composer = "My newer draft".into();
+        app.emoji_start = Some(0);
+        events
+            .send(Event::ReplyRejected {
+                chat: "chat".into(),
+                text: Some("Older failed text".into()),
+                samples: None,
+                quoting: None,
+                error: "Could not send".into(),
+            })
+            .unwrap();
+        app.background_frame(&ctx);
+        assert_eq!(app.composer, "My newer draft");
+        assert_eq!(app.reply_to.as_deref(), Some("original"));
     }
 
     #[test]

@@ -90,6 +90,43 @@ pub fn respond(app: &mut App) {
                     .collect();
                 append(app, row);
             }
+            Command::SendVoice {
+                chat,
+                samples,
+                quoting,
+            } => {
+                let quoted = quoting.and_then(|id| {
+                    app.conversations
+                        .get(&chat)?
+                        .message(&id)
+                        .map(|row| Quoted {
+                            id,
+                            sender: row.sender.clone(),
+                            sender_name: row.sender_name.clone(),
+                            summary: row.summary(),
+                            mentions: row.mentions.clone(),
+                        })
+                });
+                let mut row = outgoing(
+                    app,
+                    &chat,
+                    Content::Audio {
+                        media: super::super::media(
+                            "audio/ogg; codecs=opus",
+                            (samples.len() * 2) as u64,
+                            None,
+                            None,
+                        ),
+                        seconds: Some(
+                            (samples.len() as f32 / crate::voice::RATE as f32).ceil() as u32
+                        ),
+                        voice_note: true,
+                        waveform: crate::voice::waveform(&samples),
+                    },
+                );
+                row.quoted = quoted;
+                append(app, row);
+            }
             Command::SendSticker { chat, path } => {
                 let mut media = super::super::media(
                     "image/webp",

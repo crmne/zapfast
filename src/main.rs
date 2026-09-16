@@ -45,6 +45,11 @@ struct Cli {
     #[arg(long, requires = "demo")]
     demo_macos: bool,
 
+    /// Replay a short scripted demo scenario: `reject`.
+    #[cfg(feature = "demo")]
+    #[arg(long, value_name = "NAME")]
+    demo_script: Option<String>,
+
     /// Demo view: `chat`, `empty`, `settings`, `login`,
     /// `pair`, `shortcuts`, `about`, `info`, `mention`, `light`, or a comma-separated
     /// mix such as `chat,light`.
@@ -56,6 +61,14 @@ struct Cli {
     #[cfg(feature = "demo")]
     #[arg(long, value_name = "PATH")]
     demo_shot: Option<std::path::PathBuf>,
+    /// Number of screenshots to take in a burst (demo-shot only).
+    #[cfg(feature = "demo")]
+    #[arg(long, requires = "demo_shot", value_name = "N")]
+    demo_shot_count: Option<u32>,
+    /// Milliseconds between burst screenshots (demo-shot only).
+    #[cfg(feature = "demo")]
+    #[arg(long, requires = "demo_shot_count", value_name = "MS")]
+    demo_shot_every: Option<u64>,
     /// Screenshot window size as WxH logical points.
     #[arg(long, value_name = "WxH")]
     demo_size: Option<String>,
@@ -86,7 +99,7 @@ fn main() -> eframe::Result<()> {
     }
     let waker = backend::Waker::default();
     #[cfg(feature = "demo")]
-    let demo = cli.demo || cli.demo_shot.is_some() || cli.demo_tour;
+    let demo = cli.demo || cli.demo_shot.is_some() || cli.demo_tour || cli.demo_script.is_some();
     #[cfg(not(feature = "demo"))]
     let demo = false;
     // Keep one linked instance. Demo runs do not participate.
@@ -170,6 +183,9 @@ fn main() -> eframe::Result<()> {
         path,
         due: std::time::Instant::now() + std::time::Duration::from_millis(cli.demo_shot_delay),
         asked: false,
+        taken: 0,
+        count: cli.demo_shot_count.unwrap_or(1),
+        every: std::time::Duration::from_millis(cli.demo_shot_every.unwrap_or(cli.demo_shot_delay)),
     });
     let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(app)));
 
@@ -185,6 +201,8 @@ fn main() -> eframe::Result<()> {
         let creator_shot = shot.clone();
         #[cfg(feature = "demo")]
         let creator_tour_events = cli.demo_tour_events.clone();
+        #[cfg(feature = "demo")]
+        let creator_script = cli.demo_script.clone();
         eframe::run_native(
             "ZapFast",
             native_options(demo_persistence.clone()),
@@ -207,12 +225,22 @@ fn main() -> eframe::Result<()> {
                     #[cfg(feature = "demo")]
                     shot: creator_shot,
                     #[cfg(feature = "demo")]
-                    tour: cli.demo_tour.then(|| {
-                        zapfast::demo::tour::Tour::new(
+                    tour: if cli.demo_tour {
+                        Some(zapfast::demo::tour::Tour::new(
                             cli.demo_tour_delay.map(std::time::Duration::from_millis),
                             creator_tour_events,
-                        )
-                    }),
+                        ))
+                    } else if let Some(script) = &creator_script {
+                        match script.as_str() {
+                            "reject" => Some(zapfast::demo::tour::scenario_reject()),
+                            other => {
+                                eprintln!("unknown demo script: {other}");
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    },
                 }))
             }),
         )?;
@@ -367,6 +395,9 @@ struct Shot {
     path: std::path::PathBuf,
     due: std::time::Instant,
     asked: bool,
+    taken: u32,
+    count: u32,
+    every: std::time::Duration,
 }
 
 #[cfg(feature = "demo")]
@@ -395,15 +426,40 @@ impl Shell {
             .iter()
             .flat_map(|pixel| pixel.to_srgba_unmultiplied())
             .collect();
+        let path = if shot.count > 1 {
+            let stem = shot
+                .path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "shot".to_owned());
+            let extension = shot
+                .path
+                .extension()
+                .map(|extension| extension.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "png".to_owned());
+            let numbered = format!("{}-{:02}.{}", stem, shot.taken + 1, extension);
+            match shot.path.parent() {
+                Some(directory) => directory.join(numbered),
+                None => std::path::PathBuf::from(numbered),
+            }
+        } else {
+            shot.path.clone()
+        };
         match image::RgbaImage::from_raw(width, height, pixels) {
-            Some(buffer) => match buffer.save(&shot.path) {
-                Ok(()) => log::info!("wrote {}x{} to {}", width, height, shot.path.display()),
-                Err(error) => log::error!("could not write {}: {error}", shot.path.display()),
+            Some(buffer) => match buffer.save(&path) {
+                Ok(()) => log::info!("wrote {}x{} to {}", width, height, path.display()),
+                Err(error) => log::error!("could not write {}: {error}", path.display()),
             },
             None => log::error!("the frame buffer did not match {width}x{height}"),
         }
-        self.shot = None;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        shot.taken += 1;
+        if shot.taken >= shot.count {
+            self.shot = None;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else {
+            shot.asked = false;
+            shot.due = std::time::Instant::now() + shot.every;
+        }
     }
 }
 

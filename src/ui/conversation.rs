@@ -735,7 +735,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     .cloned();
                 match quoted {
                     Some(quoted) => reply_strip(app, ui, &quoted),
-                    None => app.reply_to = None,
+                    None => app.actions.push(Action::CancelReply),
                 }
             }
             let id = egui::Id::new("composer-text");
@@ -785,6 +785,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     sent
                 });
             let mut send_click = false;
+            // A retained voice reply is only sent from its own chat.
+            let retrying = app
+                .recording_retry
+                .as_ref()
+                .is_some_and(|(retry_chat, _, _)| *retry_chat == chat.id);
             let line_height = ui
                 .painter()
                 .layout_no_wrap("x".to_owned(), theme::regular(BODY_SIZE), palette.text)
@@ -973,7 +978,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }
                             });
                     });
-                let ready = !app.composer.trim().is_empty() || !app.pending.is_empty();
+                let ready = !app.composer.trim().is_empty()
+                    || !app.pending.is_empty()
+                    || retrying;
                 let (fill, hover, icon) = if ready {
                     (palette.accent, palette.accent_hover, palette.on_accent)
                 } else {
@@ -1000,31 +1007,46 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     } else {
                         Icon::Send
                     };
-                    if theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
-                        .clicked()
-                    {
+                    let send = theme::circle_button(
+                        ui,
+                        icon_kind,
+                        button_width,
+                        fill,
+                        hover,
+                        icon,
+                        "Send",
+                    );
+                    #[cfg(any(test, feature = "demo"))]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::new("composer-send"), send.rect));
+                    if send.clicked() {
                         send_click = true;
                     }
                 }
             },
             );
-            if (send_key || send_click)
-                && (!app.composer.trim().is_empty() || !app.pending.is_empty())
-            {
-                let text = std::mem::take(&mut app.composer);
-                if app.pending.is_empty() {
-                    app.actions.push(Action::SendText {
-                        chat: chat.id.clone(),
-                        text,
-                        quoting: app.reply_to.clone(),
-                    });
-                } else {
-                    app.actions.push(Action::SendPending {
-                        chat: chat.id.clone(),
-                        caption: text,
-                    });
+            if send_key || send_click {
+                if !app.composer.trim().is_empty() || !app.pending.is_empty() {
+                    let text = std::mem::take(&mut app.composer);
+                    if app.pending.is_empty() {
+                        app.actions.push(Action::SendText {
+                            chat: chat.id.clone(),
+                            text,
+                            quoting: app.reply_to.clone(),
+                        });
+                    } else {
+                        app.actions.push(Action::SendPending {
+                            chat: chat.id.clone(),
+                            caption: text,
+                        });
+                    }
+                    app.focus_composer = true;
+                } else if retrying {
+                    // An empty composer with a retained voice reply: the lit
+                    // Send button retries it.
+                    app.actions.push(Action::SendRecording);
+                    app.focus_composer = true;
                 }
-                app.focus_composer = true;
             }
             if app.settings.show_shortcut_hints {
                 let hint = super::keys::label(if enter_sends {
@@ -1883,8 +1905,47 @@ fn bubble_frame(
         .show(|ui| {
             context_menu(ui, view, message, actions);
         });
+    reply_button(ui, view, message, inner.response.rect, actions);
     // Store this frame's final rect for later scrolling.
     inner.response
+}
+
+/// A discoverable reply action in the free space beside the hovered bubble.
+fn reply_button(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    bubble: Rect,
+    actions: &mut Vec<Action>,
+) {
+    if view.chat.read_only || matches!(message.content, Content::Revoked) {
+        return;
+    }
+    let x = if message.from_me {
+        bubble.left() - 22.0
+    } else {
+        bubble.right() + 22.0
+    };
+    let rect = Rect::from_center_size(pos2(x, bubble.top() + 16.0), Vec2::splat(32.0));
+    let id = bubble_id(&view.chat.id, &message.id).with("reply");
+    let hovered = ui.rect_contains_pointer(bubble.union(rect));
+    if !hovered && !ui.memory(|memory| memory.has_focus(id)) {
+        return;
+    }
+    let response = ui
+        .interact(rect, id, Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Reply");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Reply"));
+    let palette = view.palette;
+    if response.hovered() || response.has_focus() {
+        ui.painter()
+            .circle_filled(rect.center(), 16.0, palette.surface_hover);
+    }
+    theme::paint_icon(ui, Icon::Reply, rect, 18.0, palette.secondary);
+    if response.clicked() {
+        actions.push(Action::Reply(message.id.clone()));
+    }
 }
 
 /// Minimum shared width for cards inside message bubbles.
@@ -2225,7 +2286,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         }
     });
     widgets::menu_separator(ui, &palette);
-    if !matches!(message.content, Content::Revoked)
+    if !view.chat.read_only
+        && !matches!(message.content, Content::Revoked)
         && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
     {
         actions.push(Action::Reply(message.id.clone()));
@@ -3493,7 +3555,7 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
                     palette.accent,
                 );
             }
-            if theme::circle_button(
+            let send = theme::circle_button(
                 ui,
                 Icon::Send,
                 button,
@@ -3501,9 +3563,11 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
                 palette.accent_hover,
                 palette.on_accent,
                 "Send",
-            )
-            .clicked()
-            {
+            );
+            #[cfg(any(test, feature = "demo"))]
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(egui::Id::new("recording-send"), send.rect));
+            if send.clicked() {
                 app.actions.push(Action::SendRecording);
             }
         },

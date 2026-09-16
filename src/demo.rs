@@ -194,6 +194,16 @@ fn media(mime: &str, size: u64, width: Option<u32>, height: Option<u32>) -> Medi
     }
 }
 
+/// Generates a synthetic voice clip for demos and tests.
+pub(super) fn demo_tone(seconds: u32) -> Vec<f32> {
+    (0..crate::voice::RATE * seconds)
+        .map(|i| {
+            let t = i as f32 / crate::voice::RATE as f32;
+            (t * 220.0 * std::f32::consts::TAU).sin() * 0.4 * (t * 1.3).sin().abs()
+        })
+        .collect()
+}
+
 /// Generates a speech-like demo waveform.
 fn demo_waveform() -> Vec<u8> {
     (0..crate::voice::BARS)
@@ -1024,6 +1034,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     .join("\n");
                 app.focus_composer = true;
             }
+            "reply" => {
+                app.reply_to = Some("ada-link".to_owned());
+                app.composer = "Thanks, I’ll take a look!".to_owned();
+                app.focus_composer = true;
+            }
             "mention" => {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.to_owned());
@@ -1081,12 +1096,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "voice" => {
                 // Use a valid clip for playback tests.
-                let tone: Vec<f32> = (0..crate::voice::RATE * 6)
-                    .map(|i| {
-                        let t = i as f32 / crate::voice::RATE as f32;
-                        (t * 220.0 * std::f32::consts::TAU).sin() * 0.4 * (t * 1.3).sin().abs()
-                    })
-                    .collect();
+                let tone = demo_tone(6);
                 let path = app.dirs.media_cache_dir().join("demo-voice.ogg");
                 if let Ok(bytes) = crate::voice::encode(&tone) {
                     let _ = std::fs::create_dir_all(path.parent().expect("a directory"));
@@ -1112,6 +1122,19 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 }
             }
             "recording" => app.recording = Some(crate::audio::Recorder::rehearsal()),
+            // The phone rejected a voice reply: the clip is retained for a
+            // retry from this chat's composer.
+            "rejected" => {
+                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+                app.backend.record_demo_commands();
+                app.recording_retry = Some((
+                    SAMPLES[0].id.to_owned(),
+                    demo_tone(6),
+                    Some("ada-format".to_owned()),
+                ));
+            }
             "compose-emoji" => {
                 app.composer = "Andiamo 😊 con due 👍🏽 e poi testo normale".to_owned();
             }
@@ -1229,6 +1252,18 @@ mod tests {
         app
     }
 
+    /// An app plus its event channel, so tests can deliver real worker events.
+    pub(super) fn app_events() -> (App, std::sync::mpsc::Sender<crate::backend::Event>) {
+        let root = std::env::temp_dir().join(format!(
+            "zapfast-demo-events-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (mut app, events) = App::headless(AppDirs::under(&root), Settings::default());
+        populate(&mut app);
+        (app, events)
+    }
+
     /// Lays out several frames without a display to catch view panics.
     pub(super) fn render(app: &mut App, ctx: &egui::Context) {
         for _ in 0..3 {
@@ -1314,6 +1349,7 @@ mod tests {
             "about",
             "info",
             "forward",
+            "reply",
             "unlink",
             "new-contact",
             "light",
@@ -1655,6 +1691,141 @@ mod tests {
         );
         render(&mut app, &ctx);
         assert!(egui::Popup::is_id_open(&ctx, popup), "and it stays open");
+    }
+
+    #[test]
+    fn hover_reply_sends_the_selected_message_reference() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let chat = sample_ids()[0].to_owned();
+        let id = crate::ui::conversation::bubble_id(&chat, "ada-link");
+        let bubble = ctx.read_response(id).unwrap().rect;
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(bubble.center())],
+        );
+        let button = ctx
+            .read_response(id.with("reply"))
+            .expect("hover reveals Reply")
+            .rect;
+        assert!(
+            !button.intersects(bubble),
+            "Reply does not cover message content"
+        );
+        let pos = button.center();
+        let click = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Reply switches out of editing, so Enter sends a new message.
+        app.editing = Some("fixture-being-edited".into());
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), click(true)],
+        );
+        frame_with(&mut app, &ctx, vec![click(false)]);
+        render(&mut app, &ctx);
+        assert_eq!(app.reply_to.as_deref(), Some("ada-link"));
+        assert!(app.editing.is_none());
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Reply fixture".into())],
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(app.backend.take_demo_commands().iter().any(|command| matches!(command,
+            crate::backend::Command::SendText { chat: sent_chat, text, quoting: Some(original), .. }
+                if sent_chat == &chat && text == "Reply fixture" && original == "ada-link"
+        )));
+        assert!(app.reply_to.is_none());
+    }
+
+    #[test]
+    fn own_messages_offer_reply_but_revoked_and_read_only_messages_do_not() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        app.conversations
+            .get_mut(&chat)
+            .unwrap()
+            .messages
+            .push(message(
+                &chat,
+                "own-reply-target",
+                true,
+                crate::util::now(),
+                Content::text("Own fixture"),
+            ));
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let id = crate::ui::conversation::bubble_id(&chat, "own-reply-target");
+        let bubble = ctx.read_response(id).unwrap().rect;
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(bubble.center())],
+        );
+        let button = ctx
+            .read_response(id.with("reply"))
+            .expect("own messages offer Reply")
+            .rect;
+        assert!(button.right() < bubble.left());
+        app.chats
+            .iter_mut()
+            .find(|row| row.id == chat)
+            .unwrap()
+            .read_only = true;
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        assert!(ctx.read_response(id.with("reply")).is_none());
+        app.chats
+            .iter_mut()
+            .find(|row| row.id == chat)
+            .unwrap()
+            .read_only = false;
+        app.conversations
+            .get_mut(&chat)
+            .unwrap()
+            .message_mut("own-reply-target")
+            .unwrap()
+            .content = Content::Revoked;
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        assert!(ctx.read_response(id.with("reply")).is_none());
+    }
+
+    #[test]
+    fn reply_can_be_cancelled_without_discarding_the_composer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("reply"));
+        render(&mut app, &ctx);
+        let text = app.composer.clone();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(app.reply_to.is_none());
+        assert_eq!(app.composer, text);
+        assert!(app.open_chat.is_some());
     }
 
     #[test]
