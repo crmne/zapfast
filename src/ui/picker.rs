@@ -17,6 +17,8 @@ use super::widgets;
 
 const WIDTH: f32 = 420.0;
 const HEIGHT: f32 = 400.0;
+/// Frame inner margin on each side. Placement uses the outer size.
+const FRAME_MARGIN: i8 = 10;
 /// Minimum emoji cell width. Columns expand to fill the grid.
 const CELL: f32 = 40.0;
 
@@ -329,21 +331,23 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
     };
     let palette = app.palette;
     let screen = ctx.content_rect();
-    let pos = place_picker(screen, app.reaction_anchor, WIDTH, HEIGHT);
+    let outer_width = WIDTH + f32::from(FRAME_MARGIN) * 2.0;
+    let outer_height = HEIGHT + f32::from(FRAME_MARGIN) * 2.0;
+    let pos = place_picker(screen, app.reaction_anchor, outer_width, outer_height);
     let area = egui::Area::new(egui::Id::new("reaction-picker"))
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             // Picker chrome stays LTR even in RTL chats, matching WhatsApp.
             ui.allocate_ui_with_layout(
-                vec2(WIDTH + 20.0, HEIGHT + 20.0),
+                vec2(outer_width, outer_height),
                 Layout::top_down(Align::Min),
                 |ui| {
                     Frame::new()
                         .fill(palette.overlay)
                         .stroke(Stroke::new(1.0, palette.outline))
                         .corner_radius(CornerRadius::same(theme::RADIUS + 4))
-                        .inner_margin(Margin::same(10))
+                        .inner_margin(Margin::same(FRAME_MARGIN))
                         .shadow(egui::epaint::Shadow {
                             offset: [0, 8],
                             blur: 28,
@@ -743,6 +747,30 @@ mod emoji_tests {
             resolve_jump(Some("Frequently Used"), &with_recent),
             Some("Frequently Used")
         );
+    }
+
+    #[test]
+    fn place_picker_keeps_the_framed_size_on_screen() {
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(500.0, 450.0));
+        let outer_width = WIDTH + f32::from(FRAME_MARGIN) * 2.0;
+        let outer_height = HEIGHT + f32::from(FRAME_MARGIN) * 2.0;
+        let anchor = Rect::from_min_size(pos2(460.0, 10.0), vec2(34.0, 34.0));
+        let inner = place_picker(screen, Some(anchor), WIDTH, HEIGHT);
+        let outer = place_picker(screen, Some(anchor), outer_width, outer_height);
+        assert!(
+            inner.x + outer_width > screen.right() - 8.0,
+            "inner size would clip the framed picker on the right: {inner:?}"
+        );
+        assert!(
+            outer.x + outer_width <= screen.right() - 8.0 + 0.01,
+            "outer size stays on the right: {outer:?}"
+        );
+        assert!(
+            outer.y + outer_height <= screen.bottom() - 8.0 + 0.01,
+            "outer size stays on the bottom: {outer:?}"
+        );
+        assert!(outer.x >= screen.left() + 8.0 - 0.01);
+        assert!(outer.y >= screen.top() + 8.0 - 0.01);
     }
 }
 

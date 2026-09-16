@@ -1767,6 +1767,28 @@ mod tests {
     }
 
     #[test]
+    fn switching_chats_closes_the_reaction_picker() {
+        let mut app = app();
+        apply_flags(&mut app, Some("react-picker"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert!(app.reaction_target.is_some());
+        assert_eq!(app.open_chat.as_deref(), Some(sample_ids()[0]));
+
+        app.actions
+            .push(crate::model::Action::OpenChat(sample_ids()[1].into()));
+        render(&mut app, &ctx);
+
+        assert_eq!(app.open_chat.as_deref(), Some(sample_ids()[1]));
+        assert!(
+            app.reaction_target.is_none(),
+            "switching chats must drop the previous reaction target"
+        );
+        assert!(app.reaction_anchor.is_none());
+    }
+
+    #[test]
     fn picking_the_current_reaction_from_the_picker_clears_it() {
         let mut app = app();
         apply_flags(&mut app, Some("react-custom"));

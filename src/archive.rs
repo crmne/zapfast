@@ -642,23 +642,17 @@ impl Archive {
         Ok(())
     }
 
-    /// History rows often omit reactions. Keep any already stored, and let a
-    /// later sender-specific update replace only that person's emoji.
+    /// History rows often omit reactions. Keep any already stored when the
+    /// incoming list is empty (wipe protection). A non-empty list is the
+    /// current snapshot, so write it unchanged.
     fn merged_reactions(&self, message: &Message) -> Result<Vec<crate::model::Reaction>> {
         let incoming = &message.reactions;
-        let Some(existing) = self.message(&message.chat, &message.id)? else {
-            return Ok(incoming.clone());
-        };
         if incoming.is_empty() {
-            return Ok(existing.reactions);
-        }
-        let mut merged = incoming.clone();
-        for old in existing.reactions {
-            if !merged.iter().any(|reaction| reaction.sender == old.sender) {
-                merged.push(old);
+            if let Some(existing) = self.message(&message.chat, &message.id)? {
+                return Ok(existing.reactions);
             }
         }
-        Ok(merged)
+        Ok(incoming.clone())
     }
 
     /// Returns up to `limit` messages before an optional timestamp/id boundary,
@@ -1714,6 +1708,33 @@ pub(crate) mod tests {
         assert_eq!(stored.reactions.len(), 1);
         assert_eq!(stored.reactions[0].emoji, "🏆");
         assert!(!stored.reactions[0].from_me);
+    }
+
+    #[test]
+    fn a_history_snapshot_replaces_the_reaction_list() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "A").expect("chat");
+        archive
+            .insert_message(&message(chat, "m1", 100, false), None)
+            .expect("insert");
+        archive
+            .set_reaction(chat, "m1", "2@s.whatsapp.net", false, "👍")
+            .expect("react");
+        archive
+            .set_reaction(chat, "m1", "3@s.whatsapp.net", false, "❤️")
+            .expect("react");
+        let mut replay = message(chat, "m1", 100, false);
+        replay.reactions = vec![crate::model::Reaction {
+            sender: "3@s.whatsapp.net".into(),
+            from_me: false,
+            emoji: "🎉".into(),
+        }];
+        archive.insert_message(&replay, None).expect("replay");
+        let stored = archive.message(chat, "m1").expect("read").expect("exists");
+        assert_eq!(stored.reactions.len(), 1);
+        assert_eq!(stored.reactions[0].sender, "3@s.whatsapp.net");
+        assert_eq!(stored.reactions[0].emoji, "🎉");
     }
 
     #[test]

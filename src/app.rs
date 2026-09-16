@@ -1382,6 +1382,9 @@ impl App {
 
     fn open_chat(&mut self, id: ChatId) {
         if self.open_chat.as_deref() != Some(id.as_str()) {
+            self.reaction_target = None;
+            self.reaction_anchor = None;
+            self.emoji_jump = None;
             if let Some(previous) = self.open_chat.take() {
                 let draft = std::mem::take(&mut self.composer);
                 // Discard an unfinished edit instead of keeping it as a draft.
@@ -1851,6 +1854,9 @@ impl App {
                 self.reply_to = None;
                 self.emoji_start = None;
                 self.mention_start = None;
+                self.reaction_target = None;
+                self.reaction_anchor = None;
+                self.emoji_jump = None;
             }
             Action::SendText {
                 chat,
