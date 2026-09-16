@@ -25,6 +25,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Recent history is copied to this computer after linking and stored here.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,
   and message status. Search chats, saved messages, and contacts.
+  Pinned chats stay in pin order (most recently pinned first), regardless of
+  new messages. Chat and contact name searches ignore accents, so `Angel`
+  finds `Ángel`.
 - **Read state across devices.** Reading a chat syncs its unread badge with
   your phone and other linked devices, including when read receipts are off.
   Replies from another device clear preceding unread messages. The read-receipt
@@ -46,14 +49,17 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Send attachments with captions.** Paste a picture, drop files, or use the
   file picker. They stay in the composer until you send them or press Escape.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
-  applies on your phone and to desktop notifications.
+  applies on your phone and to desktop notifications. Mute changes from your
+  phone survive history arriving later, including during initial linking.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
   in the chat. The app normalizes quiet recordings and handles OGG/Opus
   without external tools.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation; invoking search keeps focus in search, and
-  Escape clears search and returns to the composer. Type `:name` to autocomplete
+  Escape clears search and returns to the composer; another Escape closes the
+  chat and saves your text draft. Open menus, dialogs, and unfinished actions
+  are dismissed first. Type `:name` to autocomplete
   an emoji without leaving the composer, or `@` in a group to mention a member.
   Reply, react, edit, forward, delete, and check when a message was sent,
   delivered, or read.

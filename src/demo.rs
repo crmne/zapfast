@@ -438,6 +438,11 @@ pub fn populate(app: &mut App) {
         chat.last_activity = now - sample.minutes_ago * 60;
         chat.unread = sample.unread;
         chat.pinned = sample.pinned;
+        chat.pinned_at = if sample.pinned {
+            (now - sample.minutes_ago * 60) * 1000
+        } else {
+            0
+        };
         chat.muted_until = sample.muted.then_some(0);
         chat.archived = sample.archived;
         let mut conversation = Conversation {
@@ -812,6 +817,48 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
         match part {
             "chat" | "" => {}
             "empty" => app.open_chat = None,
+            "rtl" => {
+                let id = SAMPLES[1].id;
+                let now = crate::util::now();
+                let messages = vec![
+                    message(
+                        id,
+                        "rtl-hebrew",
+                        false,
+                        now - 120,
+                        Content::text("הכלב הגדול קפץ 🐕"),
+                    ),
+                    message(
+                        id,
+                        "rtl-arabic",
+                        false,
+                        now - 60,
+                        Content::text("مرحبا بالعالم الجميل 🌍"),
+                    ),
+                    {
+                        let mut reply =
+                            message(id, "rtl-reply", true, now, Content::text("שלום עולם"));
+                        reply.quoted = Some(Quoted {
+                            id: "rtl-hebrew".into(),
+                            sender: SAMPLES[0].id.into(),
+                            sender_name: Some("שלום עולם".into()),
+                            summary: "הכלב הגדול קפץ 🐕".into(),
+                            mentions: Vec::new(),
+                        });
+                        reply
+                    },
+                ];
+                if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == id) {
+                    chat.name = "שלום יזמות ונדל\"ן".into();
+                    if let Some(last) = &mut chat.last {
+                        last.summary = "הכלב הגדול קפץ 🐕".into();
+                    }
+                }
+                app.conversations.get_mut(id).expect("demo group").messages = messages;
+                app.open_chat = Some(id.into());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "settings" => app.page = Page::Settings,
             choice if choice.starts_with("theme=") => {
                 let themes: Vec<_> = crate::theme::presets::themes().collect();
@@ -1215,6 +1262,7 @@ mod tests {
         }
         for page in [
             "empty",
+            "rtl",
             "settings",
             "update",
             "update-downloading",

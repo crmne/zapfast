@@ -7102,6 +7102,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hkdf",
  "hmac",
+ "icu_normalizer",
  "icu_properties",
  "image",
  "jiff",

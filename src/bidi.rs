@@ -604,6 +604,17 @@ mod tests {
     }
 
     #[test]
+    fn hebrew_contact_name_with_an_embedded_quote_keeps_word_order() {
+        let logical = "מטיאס יזמות ונדל\"ן";
+        let galley = layout_fixed(logical);
+        let words = rtl_words_ltr(&galley);
+        assert_eq!(sorted(words.last().unwrap()), charset("מטיאס"));
+        assert_eq!(sorted(&words[words.len() - 2]), charset("יזמות"));
+        assert_eq!(galley.text(), logical, "copy must retain logical text");
+        assert!(glyph_centers_increasing(&galley));
+    }
+
+    #[test]
     fn hebrew_words_read_rtl_after_run_reorder() {
         let logical = "הכלב הגדול קפץ";
         let before = layout_raw(logical);

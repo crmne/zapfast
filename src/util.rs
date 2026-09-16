@@ -172,6 +172,23 @@ pub fn now() -> i64 {
     Timestamp::now().as_second()
 }
 
+/// Case- and accent-insensitive matching without changing displayed names.
+pub fn search_key(text: &str) -> String {
+    use icu_normalizer::DecomposingNormalizerBorrowed;
+    use icu_properties::{CodePointMapData, props::GeneralCategory};
+
+    if text.is_ascii() {
+        return text.to_ascii_lowercase();
+    }
+    DecomposingNormalizerBorrowed::new_nfd()
+        .normalize_iter(text.chars())
+        .filter(|c| {
+            CodePointMapData::<GeneralCategory>::new().get(*c) != GeneralCategory::NonspacingMark
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 /// Duration such as "0:12".
 pub fn duration(seconds: u32) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)

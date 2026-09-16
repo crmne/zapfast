@@ -313,8 +313,9 @@ struct ParsedChat {
     name: Option<String>,
     unread: Option<u32>,
     archived: bool,
-    pinned: bool,
-    muted_until: Option<i64>,
+    pinned_at: Option<i64>,
+    /// Outer None means the history chunk omitted mute metadata.
+    muted_until: Option<Option<i64>>,
     ephemeral_expiration: Option<u32>,
     ephemeral_setting_timestamp: Option<i64>,
     last_activity: i64,
@@ -399,6 +400,9 @@ impl Worker {
     fn emit_chats(&self) {
         match self.archive.chats() {
             Ok(mut chats) => {
+                // Early preference sync can create an empty privacy-id row.
+                // Once mapped, its preferences live on the canonical chat.
+                chats.retain(|chat| chat.last.is_some() || self.canonical_str(&chat.id) == chat.id);
                 for chat in &mut chats {
                     self.polish_chat(chat);
                 }
@@ -651,8 +655,10 @@ impl Worker {
             return;
         }
         self.lid_to_pn.insert(lid.to_owned(), pn.to_owned());
-        if let Err(error) = self.archive.put_lid(lid, pn) {
-            log::warn!("could not remember an id mapping: {error}");
+        match self.archive.put_lid(lid, pn) {
+            Ok(true) => self.emit_chats(),
+            Ok(false) => {}
+            Err(error) => log::warn!("could not remember an id mapping: {error}"),
         }
     }
 
@@ -1135,19 +1141,25 @@ impl Worker {
             }
             E::PinUpdate(update) => {
                 let chat = self.canonical(&update.jid);
-                let _ = self
-                    .archive
-                    .set_pinned(&chat, update.action.pinned.unwrap_or(false));
+                self.ensure_chat(&chat, None);
+                let _ = self.archive.set_pinned_at(
+                    &chat,
+                    update.action.pinned.unwrap_or(false),
+                    update.timestamp.timestamp_millis(),
+                );
                 self.emit_chat(&chat);
             }
             E::MuteUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                self.ensure_chat(&chat, None);
                 let until = if update.action.muted.unwrap_or(false) {
                     Some(seconds(update.action.mute_end_timestamp.unwrap_or(0)))
                 } else {
                     None
                 };
-                let _ = self.archive.set_muted(&chat, until);
+                let _ =
+                    self.archive
+                        .set_muted_at(&chat, until, update.timestamp.timestamp_millis());
                 self.emit_chat(&chat);
             }
             E::MarkChatAsReadUpdate(update) => {
@@ -1934,8 +1946,16 @@ impl Worker {
                 row.last_activity = chat.last_activity;
                 row.unread = existing.as_ref().map_or(0, |existing| existing.unread);
                 row.archived = chat.archived;
-                row.pinned = chat.pinned;
-                row.muted_until = chat.muted_until;
+                row.pinned_at = chat
+                    .pinned_at
+                    .unwrap_or_else(|| existing.as_ref().map_or(0, |row| row.pinned_at));
+                row.pinned = chat.pinned_at.map_or_else(
+                    || existing.as_ref().is_some_and(|row| row.pinned),
+                    |when| when > 0,
+                );
+                row.muted_until = chat
+                    .muted_until
+                    .unwrap_or_else(|| existing.as_ref().and_then(|row| row.muted_until));
                 if let Err(error) = self.archive.upsert_chat(&row) {
                     log::warn!("could not store chat {id}: {error}");
                     continue;
@@ -5189,11 +5209,12 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         name: non_empty(&conversation.display_name).or_else(|| non_empty(&conversation.name)),
         unread: conversation.unread_count,
         archived: conversation.archived.unwrap_or(false),
-        pinned: conversation.pinned.unwrap_or(0) > 0,
-        muted_until: conversation
-            .mute_end_time
-            .filter(|end| *end > 0)
-            .map(|end| seconds(end as i64)),
+        pinned_at: conversation.pinned.map(|when| i64::from(when) * 1000),
+        muted_until: conversation.mute_end_time.map(|end| {
+            // Zero explicitly clears a history mute; a wrapped -1 means
+            // indefinite. Absence of the field must preserve existing state.
+            (end != 0).then(|| seconds(end as i64))
+        }),
         ephemeral_expiration: conversation.ephemeral_expiration,
         ephemeral_setting_timestamp: conversation.ephemeral_setting_timestamp,
         last_activity,
@@ -5813,6 +5834,136 @@ mod receipt_tests {
             lids: Vec::new(),
             stickers: Vec::new(),
         }
+    }
+
+    #[test]
+    fn history_preserves_pin_time_and_distinguishes_missing_mute_metadata() {
+        let chat = parse_conversation(wa::Conversation {
+            id: PEER.into(),
+            pinned: Some(1_700_000_000),
+            mute_end_time: Some(1_800_000_000),
+            ..Default::default()
+        });
+        assert_eq!(chat.pinned_at, Some(1_700_000_000_000));
+        assert_eq!(chat.muted_until, Some(Some(1_800_000_000)));
+        for (end, expected) in [
+            (None, None),
+            (Some(0), Some(None)),
+            (Some(u64::MAX), Some(Some(0))),
+        ] {
+            let chat = parse_conversation(wa::Conversation {
+                id: PEER.into(),
+                mute_end_time: end,
+                ..Default::default()
+            });
+            assert_eq!(chat.muted_until, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn mute_and_pin_sync_before_history_survive_replays_and_unsetting() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let time = whatsapp_rust::wacore::time::now_utc();
+        for enabled in [true, false] {
+            let mute = wa_events::MuteUpdate::builder()
+                .jid(PEER.parse().unwrap())
+                .timestamp(time)
+                .from_full_sync(true)
+                .action(Box::new(wa::sync_action_value::MuteAction {
+                    muted: Some(enabled),
+                    mute_end_timestamp: Some(-1),
+                    ..Default::default()
+                }))
+                .build();
+            let pin = wa_events::PinUpdate::builder()
+                .jid(PEER.parse().unwrap())
+                .timestamp(time)
+                .from_full_sync(true)
+                .action(Box::new(wa::sync_action_value::PinAction {
+                    pinned: Some(enabled),
+                }))
+                .build();
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::MuteUpdate(mute)))
+                .await;
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::PinUpdate(pin)))
+                .await;
+            let before = worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .expect("sync creates the chat");
+            assert_eq!(before.muted_until, enabled.then_some(0));
+            assert_eq!(before.pinned, enabled);
+            assert_eq!(
+                before.pinned_at,
+                if enabled { time.timestamp_millis() } else { 0 }
+            );
+
+            let mut stale = history(0);
+            stale.chats[0].pinned_at = Some(if enabled { 0 } else { 123_000 });
+            stale.chats[0].muted_until = Some(if enabled { None } else { Some(0) });
+            worker.apply_history(stale, true);
+            let after = worker.archive.chat(PEER).unwrap().unwrap();
+            assert_eq!(after.muted_until, before.muted_until);
+            assert_eq!(after.pinned, before.pinned);
+            assert_eq!(after.pinned_at, before.pinned_at);
+        }
+    }
+
+    #[test]
+    fn early_privacy_id_mute_reaches_the_canonical_chat_without_a_duplicate() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER_LID, None);
+        worker.archive.set_muted_at(PEER_LID, Some(0), 200).unwrap();
+        worker.learn_lid("167650256810092", "4917663430455");
+        let mut snapshot = history(0);
+        snapshot.chats[0].pinned_at = Some(123_000);
+        worker.apply_history(snapshot, true);
+        let chat = worker.archive.chat(PEER).unwrap().unwrap();
+        assert_eq!(chat.muted_until, Some(0));
+        assert!(chat.pinned, "missing pin sync must not block history's pin");
+        worker.emit_chats();
+        let chats = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Chats(chats) => Some(chats),
+                _ => None,
+            })
+            .last()
+            .unwrap();
+        assert!(chats.iter().any(|chat| chat.id == PEER));
+        assert!(!chats.iter().any(|chat| chat.id == PEER_LID));
+        worker.archive.set_muted_at(PEER, None, 300).unwrap();
+        worker
+            .archive
+            .put_lid("167650256810092", "4917663430455")
+            .unwrap();
+        assert_eq!(
+            worker.archive.chat(PEER).unwrap().unwrap().muted_until,
+            None
+        );
+    }
+
+    #[test]
+    fn history_without_mute_metadata_preserves_the_existing_history_value() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let mut first = history(0);
+        first.chats[0].muted_until = Some(Some(0));
+        worker.apply_history(first, true);
+        worker.apply_history(history(0), true);
+        assert_eq!(
+            worker.archive.chat(PEER).unwrap().unwrap().muted_until,
+            Some(0)
+        );
+        let mut unmuted = history(0);
+        unmuted.chats[0].muted_until = Some(None);
+        worker.apply_history(unmuted, true);
+        assert_eq!(
+            worker.archive.chat(PEER).unwrap().unwrap().muted_until,
+            None
+        );
     }
 
     #[test]

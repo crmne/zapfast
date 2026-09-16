@@ -814,32 +814,35 @@ impl App {
 
     /// Visible chats filtered by search and archive state, with pinned first.
     pub fn visible_chats(&self) -> Vec<&Chat> {
-        let needle = self.search.trim().to_lowercase();
+        let needle = crate::util::search_key(self.search.trim());
         let mut chats: Vec<&Chat> = self
             .chats
             .iter()
             .filter(|chat| chat.archived == self.show_archived || !needle.is_empty())
             .filter(|chat| {
                 needle.is_empty()
-                    || chat.name.to_lowercase().contains(&needle)
+                    || crate::util::search_key(&chat.name).contains(&needle)
                     || chat.phone().is_some_and(|phone| phone.contains(&needle))
-                    || chat
-                        .last
-                        .as_ref()
-                        .is_some_and(|last| last.summary.to_lowercase().contains(&needle))
+                    || chat.last.as_ref().is_some_and(|last| {
+                        crate::util::search_key(&last.summary).contains(&needle)
+                    })
             })
             .collect();
         chats.sort_by(|a, b| {
-            b.pinned
-                .cmp(&a.pinned)
-                .then(b.last_activity.cmp(&a.last_activity))
+            b.pinned.cmp(&a.pinned).then_with(|| {
+                if a.pinned && b.pinned {
+                    b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
+                } else {
+                    b.last_activity.cmp(&a.last_activity).then(a.id.cmp(&b.id))
+                }
+            })
         });
         chats
     }
 
     /// Matching individual contacts without an existing chat, sorted by name.
     pub fn matching_contacts(&self) -> Vec<&Contact> {
-        let needle = self.search.trim().to_lowercase();
+        let needle = crate::util::search_key(self.search.trim());
         if needle.is_empty() {
             return Vec::new();
         }
@@ -852,7 +855,7 @@ impl App {
             .filter(|contact| {
                 contact
                     .display_name()
-                    .is_some_and(|name| name.to_lowercase().contains(&needle))
+                    .is_some_and(|name| crate::util::search_key(name).contains(&needle))
                     || contact
                         .id
                         .split('@')
@@ -2185,6 +2188,11 @@ impl App {
             Action::SetPinned(chat, pinned) => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.pinned = pinned;
+                    known.pinned_at = if pinned {
+                        jiff::Timestamp::now().as_millisecond()
+                    } else {
+                        0
+                    };
                 }
                 self.backend.send(Command::SetPinned(chat, pinned));
             }
@@ -3177,6 +3185,64 @@ mod tests {
             .map(|chat| chat.name.as_str())
             .collect();
         assert_eq!(names, vec!["Ada"]);
+    }
+
+    #[test]
+    fn pinned_order_survives_new_messages_and_legacy_pin_ties() {
+        let mut app = app();
+        for (id, pin, activity) in [("a", 100, 999), ("b", 200, 1), ("c", 0, 0), ("d", 0, 900)] {
+            let mut chat = Chat::new(id.into(), id.into());
+            chat.pinned = true;
+            chat.pinned_at = pin;
+            chat.last_activity = activity;
+            app.chats.push(chat);
+        }
+        let order = |app: &App| {
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&app), ["b", "a", "c", "d"]);
+        app.chats[0].last_activity = 10_000;
+        app.chats[2].last_activity = 20_000;
+        assert_eq!(order(&app), ["b", "a", "c", "d"]);
+    }
+
+    #[test]
+    fn chat_and_contact_search_ignore_composed_and_decomposed_accents() {
+        let mut app = app();
+        app.chats
+            .push(Chat::new("1@s.whatsapp.net".into(), "Ángel".into()));
+        let contact = Contact {
+            id: "2@s.whatsapp.net".into(),
+            full_name: Some("A\u{301}ngel".into()),
+            push_name: None,
+        };
+        app.contacts.insert(contact.id.clone(), contact);
+        for query in ["angel", "ÁNGEL", "A\u{301}ngel"] {
+            app.search = query.into();
+            assert_eq!(app.visible_chats().len(), 1, "{query}");
+            assert_eq!(app.matching_contacts().len(), 1, "{query}");
+        }
+        assert_eq!(app.chats[0].name, "Ángel");
+        app.search = "bob".into();
+        assert!(app.visible_chats().is_empty());
+        assert!(app.matching_contacts().is_empty());
+    }
+
+    #[test]
+    fn closing_a_chat_preserves_its_text_draft() {
+        let mut app = app();
+        let id = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(id.into(), "Ada".into()));
+        app.open_chat(id.into());
+        app.composer = "unfinished message".into();
+        app.actions.push(Action::CloseChat);
+        app.apply_actions(&egui::Context::default());
+        assert!(app.open_chat.is_none());
+        app.open_chat(id.into());
+        assert_eq!(app.composer, "unfinished message");
     }
 
     #[test]

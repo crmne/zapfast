@@ -103,7 +103,7 @@ END;
 const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
-                    c.ephemeral_expiration";
+                    c.pinned_at, c.ephemeral_expiration";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -118,6 +118,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "pending_read", "INTEGER"),
     ("chats", "ephemeral_expiration", "INTEGER"),
     ("chats", "ephemeral_setting_timestamp", "INTEGER"),
+    ("chats", "pinned_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("chats", "pin_updated_at", "INTEGER"),
+    ("chats", "mute_updated_at", "INTEGER"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
@@ -151,12 +154,13 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         unread: row.get(4)?,
         archived: row.get(5)?,
         pinned: row.get(6)?,
+        pinned_at: row.get(15)?,
         muted_until: row.get(7)?,
         last,
         participants: serde_json::from_str(&participants).unwrap_or_default(),
         read_only: row.get(14)?,
         ephemeral_expiration: row
-            .get::<_, Option<u32>>(15)?
+            .get::<_, Option<u32>>(16)?
             .filter(|expiration| *expiration != 0),
     })
 }
@@ -247,14 +251,15 @@ impl Archive {
     /// Creates a chat or replaces a phone-number title with a better name.
     pub fn upsert_chat(&self, chat: &Chat) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 last_activity = MAX(last_activity, excluded.last_activity),
                 archived = excluded.archived,
-                pinned = excluded.pinned,
-                muted_until = excluded.muted_until",
+                pinned = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned ELSE pinned END,
+                pinned_at = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned_at ELSE pinned_at END,
+                muted_until = CASE WHEN mute_updated_at IS NULL THEN excluded.muted_until ELSE muted_until END",
             params![
                 chat.id,
                 chat.name,
@@ -264,6 +269,7 @@ impl Archive {
                 chat.archived,
                 chat.pinned,
                 chat.muted_until,
+                chat.pinned_at,
             ],
         )?;
         Ok(())
@@ -315,17 +321,32 @@ impl Archive {
     }
 
     pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<()> {
+        self.set_pinned_at(id, pinned, jiff::Timestamp::now().as_millisecond())
+    }
+
+    /// Apply app-state in timestamp order. A later history chunk has no state
+    /// version and must not overwrite a pin/unpin already received from sync.
+    pub fn set_pinned_at(&self, id: &str, pinned: bool, timestamp: i64) -> Result<()> {
         self.connection.execute(
-            "UPDATE chats SET pinned = ?2 WHERE id = ?1",
-            params![id, pinned],
+            "UPDATE chats SET pinned = ?2, pinned_at = CASE WHEN ?2 THEN ?3 ELSE 0 END,
+                pin_updated_at = ?3 WHERE id = ?1
+                AND (pin_updated_at IS NULL OR pin_updated_at <= ?3)",
+            params![id, pinned, timestamp],
         )?;
         Ok(())
     }
 
     pub fn set_muted(&self, id: &str, until: Option<i64>) -> Result<()> {
+        self.set_muted_at(id, until, jiff::Timestamp::now().as_millisecond())
+    }
+
+    /// Keep mute/unmute actions across history replay, including actions that
+    /// precede the initial chat snapshot and older app-state replay.
+    pub fn set_muted_at(&self, id: &str, until: Option<i64>, timestamp: i64) -> Result<()> {
         self.connection.execute(
-            "UPDATE chats SET muted_until = ?2 WHERE id = ?1",
-            params![id, until],
+            "UPDATE chats SET muted_until = ?2, mute_updated_at = ?3 WHERE id = ?1
+                AND (mute_updated_at IS NULL OR mute_updated_at <= ?3)",
+            params![id, until, timestamp],
         )?;
         Ok(())
     }
@@ -521,14 +542,32 @@ impl Archive {
         rows.collect()
     }
 
-    /// Stores a privacy id to phone-number mapping without JID domains.
-    pub fn put_lid(&self, lid: &str, pn: &str) -> Result<()> {
+    /// Stores a privacy id mapping and carries early mute/pin sync to the
+    /// canonical chat. Returns whether that chat's preferences were touched.
+    pub fn put_lid(&self, lid: &str, pn: &str) -> Result<bool> {
         self.connection.execute(
             "INSERT INTO lids (lid, pn) VALUES (?1, ?2) ON CONFLICT(lid) DO UPDATE SET pn = excluded.pn",
             params![lid, pn],
         )?;
         self.merge_group_recipient(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
-        Ok(())
+        let changed = self.connection.execute(
+            "INSERT INTO chats (id, name, kind, pinned, pinned_at, pin_updated_at,
+                muted_until, mute_updated_at)
+             SELECT ?2, ?3, 'direct', pinned, pinned_at, pin_updated_at,
+                muted_until, mute_updated_at FROM chats WHERE id = ?1
+                AND (pin_updated_at IS NOT NULL OR mute_updated_at IS NOT NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                pinned = CASE WHEN excluded.pin_updated_at >= COALESCE(pin_updated_at, -1)
+                    THEN excluded.pinned ELSE pinned END,
+                pinned_at = CASE WHEN excluded.pin_updated_at >= COALESCE(pin_updated_at, -1)
+                    THEN excluded.pinned_at ELSE pinned_at END,
+                pin_updated_at = NULLIF(MAX(COALESCE(pin_updated_at, -1), COALESCE(excluded.pin_updated_at, -1)), -1),
+                muted_until = CASE WHEN excluded.mute_updated_at >= COALESCE(mute_updated_at, -1)
+                    THEN excluded.muted_until ELSE muted_until END,
+                mute_updated_at = NULLIF(MAX(COALESCE(mute_updated_at, -1), COALESCE(excluded.mute_updated_at, -1)), -1)",
+            params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net"), pn],
+        )?;
+        Ok(changed > 0)
     }
 
     pub fn lids(&self) -> Result<Vec<(String, String)>> {
@@ -1320,6 +1359,37 @@ pub(crate) mod tests {
             archive.chat(chat).expect("chat").expect("exists").name,
             "Rust Berlin"
         );
+    }
+
+    #[test]
+    fn mute_and_pin_versions_survive_restart_and_ignore_older_updates() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fixture.db");
+        let key = [29; 32];
+        let id = "1@s.whatsapp.net";
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat(id, "Fixture").unwrap();
+            archive.set_muted_at(id, Some(0), 200).unwrap();
+            archive.set_pinned_at(id, true, 200).unwrap();
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        archive.set_muted_at(id, None, 100).unwrap();
+        archive.set_pinned_at(id, false, 100).unwrap();
+        archive
+            .upsert_chat(&Chat::new(id.into(), "History name".into()))
+            .unwrap();
+        let chat = archive.chat(id).unwrap().unwrap();
+        assert_eq!(chat.name, "History name");
+        assert_eq!(chat.muted_until, Some(0));
+        assert!(chat.pinned);
+        assert_eq!(chat.pinned_at, 200);
+        archive.set_muted_at(id, None, 300).unwrap();
+        archive.set_pinned_at(id, false, 300).unwrap();
+        let chat = archive.chat(id).unwrap().unwrap();
+        assert_eq!(chat.muted_until, None);
+        assert!(!chat.pinned);
+        assert_eq!(chat.pinned_at, 0);
     }
 
     #[test]

@@ -63,6 +63,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             if app.open_chat.is_some() {
                 actions.push(Action::FocusComposer);
             }
+        } else if app.open_chat.is_some() {
+            actions.push(Action::CloseChat);
         }
     }
     // Enter sends a recording because the text field is hidden.
@@ -107,7 +109,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Enter", "Send (Shift+Enter for a new line)"),
     (
         "Escape",
-        "Dismiss suggestions, cancel the current action, or return from search",
+        "Dismiss the current action, return from search, or close the chat",
     ),
     ("Ctrl+V", "Paste text, or send a picture from the clipboard"),
     ("Ctrl+B", "Show or hide the chat list"),
@@ -132,6 +134,50 @@ pub fn label(keys: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn escape(app: &mut App, ctx: &egui::Context) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| handle(app, ui.ctx()),
+        );
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn escape_returns_from_search_and_reply_before_closing_the_chat() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Chats;
+        app.open_chat = Some("fixture".into());
+        let ctx = egui::Context::default();
+        app.reply_to = Some("reply".into());
+        escape(&mut app, &ctx);
+        assert!(matches!(app.actions.as_slice(), [Action::CancelReply]));
+        app.actions.clear();
+        app.reply_to = None;
+        app.search = "Ada".into();
+        escape(&mut app, &ctx);
+        assert!(
+            matches!(app.actions.as_slice(), [Action::Search(text), Action::FocusComposer] if text.is_empty())
+        );
+        app.actions.clear();
+        app.search.clear();
+        escape(&mut app, &ctx);
+        assert!(matches!(app.actions.as_slice(), [Action::CloseChat]));
+    }
 
     #[test]
     fn escape_closes_the_update_before_touching_an_unfinished_message() {
