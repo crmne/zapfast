@@ -2674,7 +2674,7 @@ impl App {
                 let slower = velocity * (-dt / GLIDE_DECAY).exp();
                 self.glide = (slower.length() > GLIDE_STOP).then_some(slower);
             }
-            ctx.request_repaint();
+            ctx.request_repaint_after(Duration::from_millis(8));
         }
         let held = self
             .scroll_lock

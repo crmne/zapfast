@@ -839,13 +839,13 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         app.actions.push(Action::TogglePicker(PickerTab::Emoji));
                     }
                 }
-                let field_width = ui.available_width() - button_width - 10.0;
+                let field_width = (ui.available_width() - button_width - 10.0).max(0.0);
                 Frame::new()
                     .fill(palette.surface)
                     .corner_radius(CornerRadius::same(theme::RADIUS + 4))
                     .inner_margin(Margin::symmetric(12, 7))
                     .show(ui, |ui| {
-                        ui.set_width(field_width - 24.0);
+                        ui.set_width((field_width - 24.0).max(0.0));
                         // Grow from one to six lines, then scroll.
                         egui::ScrollArea::vertical()
                             .id_salt("composer-scroll")
@@ -1110,13 +1110,13 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(10, 6))
         .show(ui, |ui| {
-            ui.set_width(ui.available_width());
+            ui.set_width(ui.available_width().max(0.0));
             ui.horizontal(|ui| {
                 let (bar, _) = ui.allocate_exact_size(vec2(3.0, 34.0), Sense::hover());
                 ui.painter().rect_filled(bar, 2.0, palette.accent);
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.set_max_width(ui.available_width() - 40.0);
+                    ui.set_max_width((ui.available_width() - 40.0).max(0.0));
                     widgets::rich_text(
                         ui,
                         &format!("Replying to {who}"),
@@ -1285,15 +1285,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         typing_bubble(ui, &view, &typing);
                     }
                     ui.add_space(4.0);
-                    if scroll_to_bottom {
-                        // Scroll past the end so clamping keeps the view pinned
-                        // while media expands the content. Do it immediately.
-                        let end = ui.cursor().min + vec2(0.0, 64.0);
-                        ui.scroll_to_rect_animation(
-                            Rect::from_min_size(end, Vec2::ZERO),
-                            Some(Align::BOTTOM),
-                            egui::style::ScrollAnimation::none(),
-                        );
+                    if scroll_to_bottom && !app.at_bottom {
+                        ui.scroll_to_cursor(Some(Align::BOTTOM));
                     }
                 });
         });
@@ -1516,12 +1509,13 @@ fn bubble(
 ) -> Option<egui::Response> {
     let own = message.from_me;
     let with_avatar = !own && (view.chat.is_group() || view.pictures);
-    let max_width = (ui.available_width() * 0.72).min(560.0)
+    let max_width = ((ui.available_width() * 0.72).min(560.0)
         - if with_avatar {
             SENDER_AVATAR + 8.0
         } else {
             0.0
-        };
+        })
+    .max(0.0);
     let mut response = None;
     ui.with_layout(
         Layout::top_down(if own { Align::Max } else { Align::Min }),
@@ -1826,7 +1820,7 @@ fn bubble_frame(
             // Cards share the bubble's settled width: at least CARD_WIDTH and
             // no more than the cap. Text spans that width and stays left-aligned.
             // Bubbles without cards use the natural text width.
-            let cap = (max_width - 20.0).min(ui.available_width());
+            let cap = ((max_width - 20.0).min(ui.available_width())).max(0.0);
             let reserve = footer_width(ui, message);
             let slot = match settled_width(ui, view, message, cap) {
                 Some(width) => {
@@ -1901,7 +1895,7 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
             _ => false,
         };
     card.then(|| {
-        let floor = CARD_WIDTH.min(cap);
+        let floor = CARD_WIDTH.min(cap).max(0.0);
         natural_text_width(ui, view, message, cap).map_or(floor, |width| width.clamp(floor, cap))
     })
 }
@@ -1975,18 +1969,19 @@ fn quote_block(
         .show(ui, |ui| {
             // Include frame margins in the settled width. Use a bounded,
             // left-aligned layout because own bubbles inherit right-to-left flow.
+            let inner_width = (width - 18.0).max(0.0);
             ui.allocate_ui_with_layout(
-                vec2(width - 18.0, 0.0),
+                vec2(inner_width, 0.0),
                 Layout::top_down(Align::Min),
                 |ui| {
-                    ui.set_width(width - 18.0);
+                    ui.set_width(inner_width);
                     ui.horizontal(|ui| {
                         let (bar, _) = ui.allocate_exact_size(vec2(3.0, 30.0), Sense::hover());
                         ui.painter().rect_filled(bar, 2.0, palette.accent);
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 1.0;
                             // Use the space beside the quote bar and gap.
-                            ui.set_width(width - 29.0);
+                            ui.set_width((width - 29.0).max(0.0));
                             widgets::rich_text(ui, &who, theme::semibold(12.5), palette.accent);
                             widgets::rich_text(
                                 ui,
@@ -2713,46 +2708,43 @@ fn preview_card(
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
             // Include margins in the settled card width.
-            ui.set_width(width - 16.0);
+            let card_width = (width - 16.0).max(0.0);
+            ui.set_width(card_width);
             // Limit text to the space beside the thumbnail and keep it
             // left-aligned in own bubbles.
-            let column = width - 16.0 - if thumbnail.is_some() { 72.0 } else { 0.0 };
-            ui.allocate_ui_with_layout(
-                vec2(width - 16.0, 0.0),
-                Layout::top_down(Align::Min),
-                |ui| {
-                    ui.set_width(width - 16.0);
-                    ui.horizontal(|ui| {
-                        if let Some(uri) = &thumbnail {
-                            ui.add(
-                                egui::Image::new(uri)
-                                    .fit_to_exact_size(Vec2::splat(64.0))
-                                    .corner_radius(4.0),
-                            );
+            let column = (card_width - if thumbnail.is_some() { 72.0 } else { 0.0 }).max(0.0);
+            ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_width(card_width);
+                ui.horizontal(|ui| {
+                    if let Some(uri) = &thumbnail {
+                        ui.add(
+                            egui::Image::new(uri)
+                                .fit_to_exact_size(Vec2::splat(64.0))
+                                .corner_radius(4.0),
+                        );
+                    }
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.set_width(column);
+                        if let Some(title) = &preview.title {
+                            widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
                         }
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 2.0;
-                            ui.set_width(column);
-                            if let Some(title) = &preview.title {
-                                widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
-                            }
-                            if let Some(description) = &preview.description {
-                                let line = widgets::line(
-                                    ui,
-                                    description,
-                                    theme::regular(12.5),
-                                    palette.secondary,
-                                    ui.available_width(),
-                                    2,
-                                );
-                                let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
-                                line.paint(ui, rect.min, palette.secondary);
-                            }
-                            theme::text(ui, &domain, theme::regular(12.0), palette.dim);
-                        });
+                        if let Some(description) = &preview.description {
+                            let line = widgets::line(
+                                ui,
+                                description,
+                                theme::regular(12.5),
+                                palette.secondary,
+                                ui.available_width(),
+                                2,
+                            );
+                            let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                            line.paint(ui, rect.min, palette.secondary);
+                        }
+                        theme::text(ui, &domain, theme::regular(12.0), palette.dim);
                     });
-                },
-            );
+                });
+            });
         })
         .response;
     ui.ctx().data_mut(|data| {
@@ -2814,13 +2806,18 @@ fn fit_picture(width: f32, height: f32, max_width: f32, max_height: f32) -> Vec2
     } else {
         (4.0, 3.0)
     };
-    let scale = (max_width / width).min(max_height / height).min(1.0);
+    let max_width = max_width.max(0.0);
+    let max_height = max_height.max(0.0);
+    let scale = (max_width / width).min(max_height / height).clamp(0.0, 1.0);
     let scale = if width * scale < 120.0 {
-        (120.0 / width).min(max_width / width)
+        (120.0 / width).min(max_width / width).max(0.0)
     } else {
         scale
     };
-    vec2(width * scale, (height * scale).max(90.0))
+    vec2(
+        (width * scale).max(0.0),
+        (height * scale).max(90.0).max(0.0),
+    )
 }
 
 /// Fits a sticker to the standard square size.
@@ -3184,7 +3181,7 @@ fn attachment(
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             // Include margins in the settled row width.
-            let card = width - 20.0;
+            let card = (width - 20.0).max(0.0);
             ui.set_width(card);
 
             let disc = |ui: &mut egui::Ui| {
@@ -3211,7 +3208,7 @@ fn attachment(
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     // Reserve 70 points for the icon, action, and gaps.
-                    ui.set_width(card - 70.0);
+                    ui.set_width((card - 70.0).max(0.0));
                     widgets::rich_text(ui, title, theme::medium(14.0), palette.text);
                     let detail = match &media.state {
                         MediaState::Failed(error) => format!("{error}. Click to retry."),
@@ -3287,7 +3284,7 @@ fn voice_player(
     let status = view.player.status(&message.id);
     let button = 36.0;
     let bar_height = 30.0;
-    let wave_width = width - button - 10.0;
+    let wave_width = (width - button - 10.0).max(0.0);
     let bars: Vec<u8> = if !waveform.is_empty() {
         waveform.to_vec()
     } else if let Some(bars) = view.player.bars(&message.id) {
@@ -3309,7 +3306,7 @@ fn voice_player(
     };
     // Force left-to-right layout at the player's width inside own bubbles.
     ui.allocate_ui_with_layout(
-        vec2(width, button),
+        vec2(width.max(0.0), button),
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -3365,7 +3362,7 @@ fn voice_player(
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(wave_width, bar_height), Sense::click());
                 let pitch = 3.0;
-                let count = ((rect.width() / pitch).floor() as usize).max(1);
+                let count = (rect.width() / pitch).floor() as usize;
                 let fraction = if status.total > Duration::ZERO {
                     status.position.as_secs_f32() / status.total.as_secs_f32()
                 } else {
@@ -3373,20 +3370,25 @@ fn voice_player(
                 };
                 let played_until = rect.left() + fraction * rect.width();
                 let quiet = palette.secondary.gamma_multiply(0.7);
-                for index in 0..count {
-                    let level = f32::from(bars[index * bars.len() / count]) / 100.0;
-                    let height = (2.0 + level * (bar_height - 4.0)).max(2.0);
-                    let x = rect.left() + index as f32 * pitch + 1.0;
-                    let colour = if status.state != State::Idle && x <= played_until {
-                        palette.accent
-                    } else {
-                        quiet
-                    };
-                    ui.painter().rect_filled(
-                        Rect::from_center_size(egui::pos2(x, rect.center().y), vec2(2.0, height)),
-                        1.0,
-                        colour,
-                    );
+                if count > 0 {
+                    for index in 0..count {
+                        let level = f32::from(bars[index * bars.len() / count]) / 100.0;
+                        let height = (2.0 + level * (bar_height - 4.0)).max(2.0);
+                        let x = rect.left() + index as f32 * pitch + 1.0;
+                        let colour = if status.state != State::Idle && x <= played_until {
+                            palette.accent
+                        } else {
+                            quiet
+                        };
+                        ui.painter().rect_filled(
+                            Rect::from_center_size(
+                                egui::pos2(x, rect.center().y),
+                                vec2(2.0, height),
+                            ),
+                            1.0,
+                            colour,
+                        );
+                    }
                 }
                 if matches!(status.state, State::Playing | State::Paused) {
                     let knob = played_until.clamp(rect.left() + 5.0, rect.right() - 5.0);
@@ -3401,7 +3403,11 @@ fn voice_player(
                     if response.clicked()
                         && let Some(pointer) = response.interact_pointer_pos()
                     {
-                        let fraction = ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+                        let fraction = if rect.width() > 0.0 {
+                            ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
                         actions.push(Action::SeekVoice {
                             message: message.id.clone(),
                             path: path.clone(),
@@ -3450,7 +3456,7 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
     };
     let button = 36.0;
     ui.allocate_ui_with_layout(
-        vec2(ui.available_width(), button),
+        vec2(ui.available_width().max(0.0), button),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;

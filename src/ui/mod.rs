@@ -359,4 +359,64 @@ mod idle_tests {
             ctx.repaint_causes()
         );
     }
+
+    #[test]
+    fn conversation_at_bottom_does_not_request_continuous_repaints() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        app.open_chat = Some(chat.id.clone());
+        app.scroll_to_bottom = true;
+        let mut conversation = crate::app::Conversation::default();
+        conversation.messages.push(crate::model::Message {
+            id: "m1".into(),
+            chat: chat.id.clone(),
+            sender: "123@s.whatsapp.net".into(),
+            sender_name: Some("Alice".into()),
+            from_me: false,
+            timestamp: 1000,
+            content: crate::model::Content::text("Hello world"),
+            status: crate::model::Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        });
+        conversation.complete = true;
+        app.conversations.insert(chat.id.clone(), conversation);
+
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut delay = std::time::Duration::ZERO;
+        for index in 0..6 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(index as f64),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| conversation::show(&mut app, ui),
+            );
+            delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.textures_delta.clear();
+        }
+        assert!(
+            delay > std::time::Duration::from_millis(100),
+            "idle conversation requested {delay:?}: {:?}",
+            ctx.repaint_causes()
+        );
+    }
 }

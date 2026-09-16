@@ -16,7 +16,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             let rect = ui.max_rect();
             let top = theme::blend(palette.window, palette.accent, 0.10);
             super::widgets::paint_vertical_gradient(ui, rect, top, palette.window);
-            let card_width = 460.0_f32.min(rect.width() - 24.0);
+            let card_width = (460.0_f32.min(rect.width() - 24.0)).max(0.0);
             // Center the card using its previous height. Its content determines
             // the next frame's height.
             let height_id = ui.id().with("login-card-height");
@@ -24,7 +24,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .ctx()
                 .data(|data| data.get_temp::<f32>(height_id))
                 .unwrap_or(560.0);
-            let card_height = known_height.min(rect.height() - 24.0);
+            let card_height = (known_height.min(rect.height() - 24.0)).max(0.0);
             let card =
                 egui::Rect::from_center_size(rect.center(), Vec2::new(card_width, card_height));
             let mut card_ui = ui.new_child(
@@ -44,7 +44,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     color: palette.shadow,
                 })
                 .show(&mut card_ui, |ui| {
-                    ui.set_width(card_width - 64.0);
+                    ui.set_width((card_width - 64.0).max(0.0));
                     ui.spacing_mut().item_spacing.y = 8.0;
                     let (logo, _) = ui.allocate_exact_size(Vec2::splat(64.0), egui::Sense::hover());
                     theme::logo(
@@ -66,9 +66,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     body(app, ui);
                 });
             let height = shown.response.rect.height();
-            if (height - known_height).abs() > 0.5 {
+            if (height - known_height).abs() > 2.0 {
                 ui.ctx()
-                    .data_mut(|data| data.insert_temp(height_id, height));
+                    .data_mut(|data| data.insert_temp(height_id, height.round()));
                 ui.ctx().request_repaint();
             }
         });
