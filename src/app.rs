@@ -1476,6 +1476,9 @@ impl App {
     }
 
     fn start_ai_panel(&mut self, chat: ChatId) {
+        if !self.settings.ai.enabled {
+            return;
+        }
         self.ai.invalidate();
         self.ai.open = true;
         self.ai.chat = Some(chat);
@@ -1485,6 +1488,9 @@ impl App {
     }
 
     fn refresh_ai_preview(&mut self, scope: usize) {
+        if !self.settings.ai.enabled {
+            return;
+        }
         let Some(chat) = self.ai.chat.clone() else {
             return;
         };
@@ -2427,13 +2433,23 @@ impl App {
                     .send(Command::SetMcpEnabled(self.settings.mcp_enabled));
                 self.mark_settings_dirty();
             }
-            Action::AiConfigure(config) => {
-                if config.enabled
-                    && let Err(error) = config.validate()
-                {
+            Action::SetAiEnabled(enabled) => {
+                self.settings.ai.enabled = enabled;
+                self.ai.settings_draft.enabled = enabled;
+                if !enabled {
+                    self.ai.invalidate();
+                    self.backend.send(Command::AiCancel);
+                }
+                self.save_settings();
+            }
+            Action::AiConfigure(mut config) => {
+                // Only the explicit toggle changes consent, never a stale provider draft.
+                config.enabled = self.settings.ai.enabled;
+                if let Err(error) = config.validate() {
                     self.ai.credential_status = Some(error);
                     return;
                 }
+                self.ai.settings_draft = config.clone();
                 self.settings.ai = config;
                 self.ai.key_draft.clear();
                 self.ai.credential_status = Some(format!(
@@ -2471,7 +2487,7 @@ impl App {
                 });
             }
             Action::AiReply { chat, message } => {
-                if self.open_chat.as_ref() != Some(&chat) {
+                if !self.settings.ai.enabled || self.open_chat.as_ref() != Some(&chat) {
                     return;
                 }
                 self.ai.invalidate();
@@ -2480,10 +2496,7 @@ impl App {
                 self.ai.chat = Some(chat);
                 self.ai.reply_target = Some(message);
                 self.ai.config = self.settings.ai.clone();
-                if !self.settings.ai.enabled {
-                    self.ai.error =
-                        Some("AI assistant is disabled. Enable it in AI settings.".into());
-                } else if self
+                if self
                     .ai
                     .chat
                     .as_ref()
@@ -2566,7 +2579,7 @@ impl App {
                 self.backend.send(Command::AiCancel);
             }
             Action::ExplainChat(chat) => {
-                if self.open_chat.as_ref() != Some(&chat) {
+                if !self.settings.ai.enabled || self.open_chat.as_ref() != Some(&chat) {
                     return;
                 }
                 if self.ai.open {
@@ -3818,6 +3831,139 @@ mod tests {
     }
 
     #[test]
+    fn ai_toggle_persists_without_provider_and_configure_never_changes_opt_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(dir.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        assert!(app.settings.ai.validate().is_err());
+        app.apply(Action::SetAiEnabled(true), &ctx);
+        assert!(app.settings.ai.enabled && app.ai.settings_draft.enabled);
+        assert!(Settings::load(&app.dirs.settings_file()).ai.enabled);
+        assert!(commands.try_recv().is_err()); // Enabling never contacts a provider.
+        app.apply(Action::AiConfigure(crate::ai::Config::default()), &ctx);
+        assert!(app.settings.ai.enabled); // Invalid save does not revert consent.
+        assert!(app.ai.credential_status.is_some());
+        app.apply(Action::SetAiEnabled(false), &ctx);
+        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        app.apply(
+            Action::AiConfigure(crate::ai::Config {
+                enabled: true, // A stale draft cannot silently re-enable the feature.
+                model: "synthetic-model".into(),
+                ..Default::default()
+            }),
+            &ctx,
+        );
+        assert!(!app.settings.ai.enabled && !app.ai.settings_draft.enabled);
+        assert_eq!(app.settings.ai.model, "synthetic-model");
+        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn ai_toggle_off_cancels_pending_work_preserves_configuration_and_rejects_actions() {
+        for reply in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut app, _) = App::headless(AppDirs::under(dir.path()), Settings::default());
+            let (backend, mut commands, events) = Backend::recording_with_events();
+            app.backend = backend;
+            app.settings.ai = crate::ai::Config {
+                enabled: true,
+                model: "synthetic-model".into(),
+                ..Default::default()
+            };
+            app.ai.settings_draft = app.settings.ai.clone();
+            app.ai.settings_draft.model = "unsaved-model".into();
+            app.ai.key_draft = "synthetic-key-not-saved".into();
+            app.open_chat = Some("chat".into());
+            app.ai.open = true;
+            app.ai.chat = app.open_chat.clone();
+            app.ai.config = app.settings.ai.clone();
+            app.ai.pending = true;
+            app.ai.preview_pending = true;
+            app.ai.auto_reply = reply;
+            app.ai.reply_target = reply.then(|| "target".into());
+            app.ai.replies = vec![crate::ai::PrivateText("synthetic suggestion".into())];
+            app.ai.answer = Some(crate::ai::PrivateText("partial".into()));
+            app.ai.question = "Synthetic question".into();
+            let generation = app.ai.generation;
+            let mut expected = app.settings.ai.clone();
+            expected.enabled = false;
+            let ctx = egui::Context::default();
+            app.apply(Action::SetAiEnabled(false), &ctx);
+            assert!(
+                !app.ai.open && !app.ai.pending && !app.ai.preview_pending && !app.ai.auto_reply
+            );
+            assert!(!app.ai.accepts(generation));
+            assert!(app.ai.replies.is_empty() && app.ai.question.is_empty());
+            assert!(app.ai.answer.is_none() && app.ai.preview.is_none());
+            assert_eq!(app.settings.ai, expected);
+            assert_eq!(Settings::load(&app.dirs.settings_file()).ai, expected);
+            assert_eq!(app.ai.settings_draft.model, "unsaved-model");
+            assert_eq!(app.ai.key_draft, "synthetic-key-not-saved");
+            // Cancellation is the only backend operation: no key write/deletion.
+            assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+            assert!(commands.try_recv().is_err());
+            events
+                .send(Event::AiPreview {
+                    generation,
+                    result: Ok(crate::ai::Preview {
+                        count: 1,
+                        reply_target: reply,
+                        ..Default::default()
+                    }),
+                })
+                .unwrap();
+            events
+                .send(Event::AiExplanation {
+                    generation,
+                    result: Ok(crate::ai::PrivateText("late".into())),
+                })
+                .unwrap();
+            events
+                .send(Event::AiDelta {
+                    generation,
+                    text: std::sync::Arc::new(std::sync::Mutex::new(crate::ai::PrivateText(
+                        "late".into(),
+                    ))),
+                })
+                .unwrap();
+            app.handle_events();
+            for action in [
+                Action::ExplainChat("chat".into()),
+                Action::AiReply {
+                    chat: "chat".into(),
+                    message: "target".into(),
+                },
+                Action::AiPreview(25),
+                Action::AiSubmit,
+                Action::AiChooseReply {
+                    generation,
+                    chat: "chat".into(),
+                    message: "target".into(),
+                    choice: 0,
+                    replace: true,
+                },
+            ] {
+                app.apply(action, &ctx);
+            }
+            assert!(!app.ai.open && !app.ai.pending);
+            assert!(
+                app.ai.answer.is_none() && app.ai.preview.is_none() && app.ai.replies.is_empty()
+            );
+            assert!(app.composer.is_empty());
+            assert!(commands.try_recv().is_err());
+            app.apply(Action::SetAiEnabled(true), &ctx);
+            expected.enabled = true;
+            assert_eq!(app.settings.ai, expected);
+            assert_eq!(app.ai.key_draft, "synthetic-key-not-saved");
+            assert!(!app.ai.open); // Re-enabling does not resume old work.
+            assert!(commands.try_recv().is_err());
+        }
+    }
+
+    #[test]
     fn ai_reply_disabled_and_cancelled_preview_never_submit() {
         let mut app = app();
         let (backend, mut commands, events) = Backend::recording_with_events();
@@ -3829,8 +3975,8 @@ mod tests {
             message: "target".into(),
         };
         app.apply(action.clone(), &ctx);
-        assert!(app.ai.error.as_ref().unwrap().contains("disabled"));
-        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        assert!(!app.ai.open);
+        assert!(app.ai.error.is_none());
         assert!(commands.try_recv().is_err());
         app.settings.ai.enabled = true;
         app.settings.ai.model = "test".into();
@@ -3930,6 +4076,7 @@ mod tests {
         let (mut app, _) = App::headless(AppDirs::under(&root), Settings::default());
         let (backend, mut commands, events) = Backend::recording_with_events();
         app.backend = backend;
+        app.settings.ai.enabled = true;
         app.open_chat = Some("first".into());
         app.start_ai_panel("first".into());
         let generation = app.ai.generation;
@@ -3971,6 +4118,7 @@ mod tests {
     fn detached_ai_never_waits_for_archive_provider_or_key_store() {
         let root = std::env::temp_dir().join("zapfast-ai-offline-test");
         let (mut app, _) = App::headless(AppDirs::under(&root), Settings::default());
+        app.settings.ai.enabled = true;
         app.open_chat = Some("demo".into());
         let ctx = egui::Context::default();
         app.apply(Action::ExplainChat("demo".into()), &ctx);

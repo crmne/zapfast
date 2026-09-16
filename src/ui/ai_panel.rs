@@ -8,7 +8,7 @@ use crate::{
 use egui::{Align, Frame, Layout, Margin};
 
 pub fn visible(app: &App) -> bool {
-    app.ai.open && app.page == Page::Chats && app.open_chat.is_some()
+    app.settings.ai.enabled && app.ai.open && app.page == Page::Chats && app.open_chat.is_some()
 }
 
 /// Preserve a usable conversation at compact widths by temporarily hiding the list.
@@ -17,6 +17,9 @@ pub fn hides_sidebar(app: &App, width: f32) -> bool {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    if !visible(app) {
+        return;
+    }
     let available = ui.available_width();
     let compact = available < 760.0;
     let width = if compact {
@@ -145,18 +148,6 @@ fn contents(app: &mut App, ui: &mut egui::Ui) {
             provider_disclosure(app, ui);
             if app.backend.is_offline() {
                 text(ui, "Offline demo · sample responses only", palette.warning);
-            }
-            if !app.settings.ai.enabled {
-                text(
-                    ui,
-                    "AI assistant is disabled. Enable it in AI settings.",
-                    palette.secondary,
-                );
-                if theme::soft_button(ui, &palette, Some(Icon::Settings), "AI settings", false)
-                    .clicked()
-                {
-                    app.actions.push(Action::Open(Page::Settings));
-                }
             }
             ui.add_space(8.0);
             composer(app, ui);
@@ -518,11 +509,6 @@ fn reply_contents(app: &mut App, ui: &mut egui::Ui) {
                 if theme::soft_button(ui, &p, Some(Icon::X), "Stop", false).clicked() {
                     app.actions.push(Action::AiStop);
                 }
-            } else if !app.settings.ai.enabled {
-                if theme::soft_button(ui, &p, Some(Icon::Settings), "AI settings", false).clicked()
-                {
-                    app.actions.push(Action::Open(Page::Settings));
-                }
             } else {
                 ui.horizontal_wrapped(|ui| {
                     if theme::soft_button(ui, &p, Some(Icon::Refresh), "Generate again", false)
@@ -643,6 +629,44 @@ fn question_editor(ui: &mut egui::Ui, question: &mut String, palette: theme::Pal
 #[cfg(all(test, feature = "demo"))]
 mod tests {
     use super::*;
+    #[test]
+    fn ai_panel_and_prompts_are_hidden_when_disabled_even_if_stale_open() {
+        let (mut app, ctx) = editor_app();
+        for enabled in [false, true] {
+            app.settings.ai.enabled = enabled;
+            app.ai.open = true;
+            assert_eq!(visible(&app), enabled);
+            assert_eq!(hides_sidebar(&app, 900.0), enabled);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 900.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| show(&mut app, ui),
+            );
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::epaint::Shape::Text(text) = &shape.shape {
+                        Some(text.galley.job.text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(labels.contains(&"AI assistant"), enabled);
+            assert_eq!(labels.contains(&"Review context"), enabled);
+            if !enabled {
+                assert!(labels.is_empty());
+            }
+            output.textures_delta.clear();
+        }
+    }
+
     fn editor_app() -> (App, egui::Context) {
         let (mut app, _) = App::headless(
             crate::paths::AppDirs::under(&std::env::temp_dir().join("zapfast-ai-editor-test")),

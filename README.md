@@ -144,9 +144,18 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 ## Optional AI: chat assistant and reply suggestions
 
-AI is off by default. In **Settings → Optional AI explanations**, select the
-provider's API adapter (**Chat Completions**, **Responses**, or **Anthropic
-Messages**), its base URL and model name, check **Enable AI assistant (manual submission only)**, then save the configuration. Saving while unchecked keeps AI disabled. Include
+AI is off by default. In **Settings → Optional AI explanations**, the **Enable AI
+assistant (manual submission only)** switch is always available and takes effect
+immediately, without requiring a configured provider. All other AI options,
+chat controls and prompts stay hidden until enabled. Existing opt-ins are kept.
+Turning it off closes the panel, cancels active work and clears suggestions and
+context, but keeps your provider settings and saved key. Already submitted data
+cannot be recalled; no new AI requests are made while disabled.
+
+After enabling, select the provider's API adapter (**Chat Completions**,
+**Responses**, or **Anthropic Messages**), its base URL and model name, then
+**Save AI configuration**. This separately validates and saves provider changes;
+it never changes the enable switch. Include
 `/v1` in the base URL when your provider requires it. ZapFast appends the
 adapter's endpoint (`/chat/completions`, `/responses`, or `/messages`). HTTPS
 is required except for HTTP on localhost/loopback. URLs with credentials,

@@ -190,6 +190,24 @@ mod tests {
     }
 
     #[test]
+    fn ai_defaults_off_and_preserves_explicit_saved_opt_in() {
+        assert!(!Settings::default().ai.enabled);
+        assert!(!crate::ai::Config::default().enabled);
+        for json in ["{}", r#"{"ai":{}}"#, r#"{"ai":{"model":"saved-model"}}"#] {
+            let settings: Settings = serde_json::from_str(json).unwrap();
+            assert!(!settings.ai.enabled);
+            let saved = serde_json::to_value(&settings).unwrap();
+            assert_eq!(saved["ai"]["enabled"], false);
+        }
+        let settings: Settings =
+            serde_json::from_str(r#"{"ai":{"enabled":true,"model":"saved-model"}}"#).unwrap();
+        assert!(settings.ai.enabled);
+        let restored: Settings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(restored.ai, settings.ai);
+    }
+
+    #[test]
     fn damaged_theme_cache_does_not_discard_other_settings() {
         let settings: Settings = serde_json::from_str(r#"{"custom_theme":"mine.json","custom_theme_cache":{"damaged":true},"enter_sends":false}"#).unwrap();
         assert!(!settings.enter_sends);

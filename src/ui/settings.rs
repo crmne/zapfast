@@ -243,10 +243,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
 fn ai_settings(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    ui.checkbox(
-        &mut app.ai.settings_draft.enabled,
-        "Enable AI assistant (manual submission only)",
-    );
+    if ui
+        .checkbox(
+            &mut app.ai.settings_draft.enabled,
+            "Enable AI assistant (manual submission only)",
+        )
+        .changed()
+    {
+        app.actions
+            .push(Action::SetAiEnabled(app.ai.settings_draft.enabled));
+    }
+    if !app.ai.settings_draft.enabled {
+        return;
+    }
+    ui.label("The enable switch is saved immediately. Save provider changes separately below.");
     ui.horizontal_wrapped(|ui| {
         for adapter in crate::ai::Adapter::ALL {
             ui.selectable_value(&mut app.ai.settings_draft.adapter, adapter, adapter.label());
@@ -373,4 +383,54 @@ fn theme_option(ui: &mut egui::Ui, palette: &theme::Palette, text: &str, selecte
         )
     });
     response.clicked()
+}
+
+#[cfg(test)]
+mod ai_tests {
+    use super::*;
+
+    #[test]
+    fn ai_settings_only_show_setup_after_explicit_toggle() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) =
+            App::headless(crate::paths::AppDirs::under(dir.path()), Default::default());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        // Rendering edits only the draft and queues an action, never saved consent.
+        for enabled in [false, true] {
+            app.ai.settings_draft.enabled = enabled;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 900.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| ai_settings(&mut app, ui),
+            );
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::epaint::Shape::Text(text) = &shape.shape {
+                        Some(text.galley.job.text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert!(labels.contains(&"Enable AI assistant (manual submission only)"));
+            for label in [
+                "Model name",
+                "Save AI configuration",
+                "Save key in OS store",
+                "Delete saved key",
+            ] {
+                assert_eq!(labels.contains(&label), enabled, "{label}");
+            }
+            assert!(!app.settings.ai.enabled);
+            output.textures_delta.clear();
+        }
+    }
 }

@@ -541,6 +541,7 @@ pub enum Action {
     AiSubmit,
     AiStop,
     AiClose,
+    SetAiEnabled(bool),
     AiConfigure(crate::ai::Config),
     AiStoreKey,
     AiDeleteKey,

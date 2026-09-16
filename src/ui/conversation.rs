@@ -123,7 +123,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 }
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
-                let right_controls = 88.0;
+                let right_controls = if app.settings.ai.enabled { 88.0 } else { 44.0 };
                 // Treat the avatar, name, and subtitle as one info button.
                 let block = ui
                     .scope(|ui| {
@@ -209,22 +209,30 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         palette.text,
                         "More",
                     );
-                    if theme::icon_button(
-                        ui,
-                        Icon::Sparkles,
-                        18.0,
-                        if app.ai.open {
-                            palette.accent
-                        } else {
-                            palette.secondary
-                        },
-                        palette.text,
-                        "AI assistant: ask about this chat",
-                    )
-                    .clicked()
-                    {
+                    let assistant = app.settings.ai.enabled.then(|| {
+                        theme::icon_button(
+                            ui,
+                            Icon::Sparkles,
+                            18.0,
+                            if app.ai.open {
+                                palette.accent
+                            } else {
+                                palette.secondary
+                            },
+                            palette.text,
+                            "AI assistant: ask about this chat",
+                        )
+                    });
+                    if assistant.as_ref().is_some_and(egui::Response::clicked) {
                         app.actions.push(Action::ExplainChat(chat.id.clone()));
                     }
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(
+                            egui::Id::new("ai-header-controls"),
+                            (more.rect, assistant.as_ref().map(|response| response.rect)),
+                        )
+                    });
                     let width = widgets::menu_width(
                         ui,
                         &[
@@ -241,12 +249,14 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         .width(width)
                         .frame(widgets::menu_frame(&palette))
                         .show(|ui| {
-                            if widgets::menu_item(
-                                ui,
-                                &palette,
-                                Some(Icon::Sparkles),
-                                "Explain this chat",
-                            ) {
+                            if app.settings.ai.enabled
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::Sparkles),
+                                    "Explain this chat",
+                                )
+                            {
                                 app.actions.push(Action::ExplainChat(chat.id.clone()));
                             }
                             if widgets::menu_item(ui, &palette, Some(Icon::Info), "Info") {
@@ -1175,6 +1185,7 @@ struct View<'a> {
     chat: &'a Chat,
     me: Option<&'a str>,
     auto_download: bool,
+    ai_enabled: bool,
     connected: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
     /// Show avatars for all incoming messages, not only groups.
@@ -1217,6 +1228,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         chat,
         me: app.me.as_deref(),
         auto_download: app.settings.auto_download,
+        ai_enabled: app.settings.ai.enabled,
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         pictures: app.settings.show_sender_pictures,
@@ -2255,7 +2267,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     {
         actions.push(Action::Reply(message.id.clone()));
     }
-    if !matches!(message.content, Content::Revoked)
+    if view.ai_enabled
+        && !matches!(message.content, Content::Revoked)
         && widgets::menu_item(ui, &palette, Some(Icon::Sparkles), "AI reply")
     {
         actions.push(Action::AiReply {
@@ -3574,6 +3587,87 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "demo")]
+    #[test]
+    fn ai_chat_controls_are_hidden_until_enabled() {
+        for enabled in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut app, _) =
+                App::headless(crate::paths::AppDirs::under(dir.path()), Default::default());
+            crate::demo::populate(&mut app);
+            app.settings.ai.enabled = enabled;
+            let chat = app.current_chat().unwrap().clone();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            let input = || egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1000.0, 900.0))),
+                ..Default::default()
+            };
+            ctx.run_ui(input(), |ui| header(&mut app, ui, &chat))
+                .textures_delta
+                .clear();
+            let (more, assistant) = ctx
+                .data_mut(|data| {
+                    data.get_temp::<(Rect, Option<Rect>)>(egui::Id::new("ai-header-controls"))
+                })
+                .unwrap();
+            assert_eq!(assistant.is_some(), enabled);
+            for pressed in [true, false] {
+                let mut click = input();
+                click.events = vec![
+                    egui::Event::PointerMoved(more.center()),
+                    egui::Event::PointerButton {
+                        pos: more.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ];
+                ctx.run_ui(click, |ui| header(&mut app, ui, &chat))
+                    .textures_delta
+                    .clear();
+            }
+            let mut output = ctx.run_ui(input(), |ui| header(&mut app, ui, &chat));
+            let has_label = |output: &egui::FullOutput, label: &str| {
+                output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text == label)
+            })
+            };
+            assert!(has_label(&output, "Info"));
+            assert_eq!(has_label(&output, "Explain this chat"), enabled);
+            output.textures_delta.clear();
+
+            let message = app.conversations[&chat.id]
+                .messages
+                .iter()
+                .find(|m| !matches!(m.content, Content::Revoked))
+                .unwrap();
+            let view = View {
+                palette: app.palette,
+                chat: &chat,
+                me: None,
+                auto_download: false,
+                ai_enabled: enabled,
+                connected: false,
+                poll_voting: &HashSet::new(),
+                pictures: false,
+                anchor: None,
+                names_or: &|_, _| "Synthetic".into(),
+                mention_names: &|_| "Synthetic".into(),
+                avatars: &HashMap::new(),
+                now: 0,
+                player: &app.player,
+                copy_rows: app.copy_rows.as_ref(),
+            };
+            let mut actions = Vec::new();
+            let mut output =
+                ctx.run_ui(input(), |ui| context_menu(ui, &view, message, &mut actions));
+            assert!(has_label(&output, "Reply"));
+            assert_eq!(has_label(&output, "AI reply"), enabled);
+            output.textures_delta.clear();
+        }
+    }
 
     fn media(w: Option<u32>, h: Option<u32>) -> Media {
         Media {
