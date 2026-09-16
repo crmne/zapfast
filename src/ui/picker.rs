@@ -261,6 +261,25 @@ fn category_entries(
         .filter(move |(group, _, _)| group.is_some() || has_recent)
 }
 
+fn header_row(rows: &[Row], label: &str) -> Option<usize> {
+    rows.iter().position(|row| match row {
+        Row::Header(found) => *found == label,
+        Row::Emoji { .. } => false,
+    })
+}
+
+/// Scroll target for a category tab. A stale Recent / Frequently Used jump
+/// falls back to the first Unicode group when that header is absent.
+fn resolve_jump(jump: Option<&'static str>, rows: &[Row]) -> Option<&'static str> {
+    let label = jump?;
+    if header_row(rows, label).is_some() {
+        return Some(label);
+    }
+    emojis::Group::iter()
+        .map(group_name)
+        .find(|name| header_row(rows, name).is_some())
+}
+
 fn take_plain_key(ui: &mut egui::Ui, key: Key) -> bool {
     ui.input_mut(|input| {
         let mut taken = false;
@@ -382,11 +401,12 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
 }
 
 fn category_tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
-    let current = visible_category(ui, "reaction-emoji-grid", &app.picker_search);
     let has_recent = !usable_recent(&app.settings.recent_emoji).is_empty();
     let tabs: Vec<_> = category_entries(has_recent).collect();
-    let cell = ((ui.available_width() - 4.0) / tabs.len() as f32).clamp(24.0, 36.0);
     let default = tabs.first().map(|(_, _, label)| *label);
+    let current = visible_category(ui, "reaction-emoji-grid", &app.picker_search)
+        .filter(|label| tabs.iter().any(|&(_, _, tab)| tab == *label));
+    let cell = ((ui.available_width() - 4.0) / tabs.len() as f32).clamp(24.0, 36.0);
     ui.allocate_ui_with_layout(
         vec2(ui.available_width(), cell),
         Layout::left_to_right(Align::Center),
@@ -525,12 +545,9 @@ fn emoji_grid(
     let mut grid = egui::ScrollArea::vertical()
         .id_salt(scroll_salt)
         .auto_shrink([false, false]);
-    let jump = app.emoji_jump.take();
+    let jump = resolve_jump(app.emoji_jump.take(), &rows);
     if let Some(label) = jump
-        && let Some(row) = rows.iter().position(|row| match row {
-            Row::Header(found) => *found == label,
-            Row::Emoji { .. } => false,
-        })
+        && let Some(row) = header_row(&rows, label)
     {
         grid = grid.vertical_scroll_offset(row as f32 * row_height);
     } else if newly_opened || query_changed {
@@ -706,6 +723,26 @@ mod emoji_tests {
         let with_recent: Vec<&str> = category_entries(true).map(|(_, _, label)| label).collect();
         assert_eq!(with_recent.first().copied(), Some("Frequently Used"));
         assert_eq!(with_recent.len(), labels.len() + 1);
+    }
+
+    #[test]
+    fn empty_recent_jump_falls_back_to_the_first_unicode_group() {
+        let empty = rows_for("", &[], 8, "Frequently Used");
+        assert_eq!(
+            resolve_jump(Some("Frequently Used"), &empty),
+            Some("Smileys & Emotion")
+        );
+        assert_eq!(
+            resolve_jump(Some("Recent"), &rows_for("", &[], 8, "Recent")),
+            Some("Smileys & Emotion")
+        );
+        assert_eq!(resolve_jump(Some("Flags"), &empty), Some("Flags"));
+        assert_eq!(resolve_jump(None, &empty), None);
+        let with_recent = rows_for("", &["👍".into()], 8, "Frequently Used");
+        assert_eq!(
+            resolve_jump(Some("Frequently Used"), &with_recent),
+            Some("Frequently Used")
+        );
     }
 }
 

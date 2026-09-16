@@ -2047,6 +2047,7 @@ impl App {
                     self.picker_search.clear();
                     self.picker_focus = tab == PickerTab::Emoji;
                     self.emoji_selected = 0;
+                    self.emoji_jump = None;
                     if tab == PickerTab::Stickers {
                         self.stickers_pending = self.stickers.is_empty()
                             && self.stickers_saved.is_empty()
@@ -2063,6 +2064,7 @@ impl App {
                 self.picker = None;
                 self.reaction_target = None;
                 self.reaction_anchor = None;
+                self.emoji_jump = None;
                 if !was_reaction {
                     self.refocus_composer(ctx);
                 }
@@ -2075,6 +2077,7 @@ impl App {
                 self.picker_search.clear();
                 self.picker_focus = true;
                 self.emoji_selected = 0;
+                self.emoji_jump = None;
                 self.reaction_anchor = ctx.input(|input| {
                     input
                         .pointer
