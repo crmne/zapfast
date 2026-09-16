@@ -64,7 +64,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   chat and saves your text draft. Open menus, dialogs, and unfinished actions
   are dismissed first. Type `:name` to autocomplete
   an emoji without leaving the composer, or `@` in a group to mention a member.
-  Reply, react, edit, forward, delete, and check when a message was sent,
+  Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
   delivered, or read.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
   timer, including replies, attachments, edits, and forwards. Forwarded copies

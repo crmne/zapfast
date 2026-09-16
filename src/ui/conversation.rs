@@ -1155,6 +1155,8 @@ struct View<'a> {
     /// Show avatars for all incoming messages, not only groups.
     pictures: bool,
     anchor: Option<&'a str>,
+    /// Demo/test: keep this message's context menu open.
+    open_menu: Option<&'a str>,
     /// Resolves a name with the message's stored name as fallback.
     names_or: &'a dyn Fn(&str, Option<&str>) -> String,
     /// Resolves mention names without replacing our name with "You".
@@ -1200,6 +1202,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         } else {
             app.scroll_anchor.as_deref()
         },
+        open_menu: app.open_message_menu.as_deref(),
         names_or: &names_or,
         mention_names: &mention_names,
         avatars: &avatars,
@@ -1858,7 +1861,8 @@ fn bubble_frame(
                 .layer_id_at(pos)
                 .is_none_or(|layer| layer == bubble.layer_id)
         });
-    let quick = quick_reactions(message).len() as f32;
+    let force_menu = view.open_menu == Some(message.id.as_str());
+    let quick = quick_reactions(message).len() as f32 + 1.0;
     let width = widgets::menu_width(
         ui,
         &[
@@ -1869,20 +1873,25 @@ fn bubble_frame(
         true,
     )
     .max(quick * 36.0 + 12.0);
-    egui::Popup::menu(&bubble)
-        .open_memory(if right_clicked {
-            Some(egui::SetOpenCommand::Bool(true))
-        } else if bubble.clicked() {
-            Some(egui::SetOpenCommand::Bool(false))
-        } else {
-            None
-        })
-        .at_pointer_fixed()
+    let open = if right_clicked || force_menu {
+        Some(egui::SetOpenCommand::Bool(true))
+    } else if bubble.clicked() {
+        Some(egui::SetOpenCommand::Bool(false))
+    } else {
+        None
+    };
+    let popup = egui::Popup::menu(&bubble)
+        .open_memory(open)
         .width(width)
-        .frame(widgets::menu_frame(&palette))
-        .show(|ui| {
-            context_menu(ui, view, message, actions);
-        });
+        .frame(widgets::menu_frame(&palette));
+    let popup = if force_menu {
+        popup.at_position(bubble.rect.left_top() + vec2(12.0, 8.0))
+    } else {
+        popup.at_pointer_fixed()
+    };
+    popup.show(|ui| {
+        context_menu(ui, view, message, actions);
+    });
     // Store this frame's final rect for later scrolling.
     inner.response
 }
@@ -2164,12 +2173,21 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
 const QUICK_REACTIONS: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 /// Our existing reaction to a message.
-fn own_reaction(message: &Message) -> Option<&str> {
+pub(crate) fn own_reaction(message: &Message) -> Option<&str> {
     message
         .reactions
         .iter()
         .find(|reaction| reaction.from_me)
         .map(|reaction| reaction.emoji.as_str())
+}
+
+/// Emoji to send for a reaction choice: empty string removes our current one.
+pub(crate) fn reaction_choice(current: Option<&str>, emoji: &str) -> String {
+    if current == Some(emoji) {
+        String::new()
+    } else {
+        emoji.to_owned()
+    }
 }
 
 /// Quick reactions plus our current reaction when needed.
@@ -2187,43 +2205,73 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     let palette = view.palette;
     let chat = &view.chat.id;
     let mine = own_reaction(message);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for emoji in quick_reactions(message) {
-            let chosen = mine == Some(emoji);
-            let line = widgets::line(ui, emoji, theme::regular(20.0), palette.text, 40.0, 1);
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
-            if chosen {
-                ui.painter()
-                    .circle_filled(rect.center(), 17.0, palette.surface_active);
-                ui.painter()
-                    .circle_stroke(rect.center(), 16.0, Stroke::new(1.5, palette.accent));
-            } else if response.hovered() {
-                ui.painter()
-                    .circle_filled(rect.center(), 17.0, palette.surface_hover);
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), 34.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for emoji in quick_reactions(message) {
+                let chosen = mine == Some(emoji);
+                let line = widgets::line(ui, emoji, theme::regular(20.0), palette.text, 40.0, 1);
+                let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+                if chosen {
+                    ui.painter()
+                        .circle_filled(rect.center(), 17.0, palette.surface_active);
+                    ui.painter().circle_stroke(
+                        rect.center(),
+                        16.0,
+                        Stroke::new(1.5, palette.accent),
+                    );
+                } else if response.hovered() {
+                    ui.painter()
+                        .circle_filled(rect.center(), 17.0, palette.surface_hover);
+                }
+                line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
+                let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                let response = if chosen {
+                    response.on_hover_text("Remove your reaction")
+                } else {
+                    response
+                };
+                if response.clicked() {
+                    // Selecting our current reaction removes it.
+                    actions.push(Action::React {
+                        chat: chat.clone(),
+                        message: message.id.clone(),
+                        emoji: reaction_choice(mine, emoji),
+                    });
+                    ui.close();
+                }
             }
-            line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
-            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-            let response = if chosen {
-                response.on_hover_text("Remove your reaction")
-            } else {
-                response
-            };
-            if response.clicked() {
-                // Selecting our current reaction removes it.
-                actions.push(Action::React {
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+            if ui.is_rect_visible(rect) {
+                let hovered = response.hovered();
+                ui.painter().circle_filled(
+                    rect.center(),
+                    17.0,
+                    if hovered {
+                        palette.surface_hover
+                    } else {
+                        palette.surface
+                    },
+                );
+                ui.painter()
+                    .circle_stroke(rect.center(), 16.0, Stroke::new(1.0, palette.outline));
+                theme::paint_icon(ui, Icon::Plus, rect, 16.0, palette.secondary);
+            }
+            if response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text("React with any emoji")
+                .clicked()
+            {
+                actions.push(Action::OpenReactionPicker {
                     chat: chat.clone(),
                     message: message.id.clone(),
-                    emoji: if chosen {
-                        String::new()
-                    } else {
-                        emoji.to_owned()
-                    },
                 });
                 ui.close();
             }
-        }
-    });
+        },
+    );
     widgets::menu_separator(ui, &palette);
     if !matches!(message.content, Content::Revoked)
         && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
@@ -3658,6 +3706,14 @@ mod reaction_tests {
         let quick = quick_reactions(&message);
         assert_eq!(quick.len(), QUICK_REACTIONS.len() + 1);
         assert_eq!(quick.last(), Some(&"🦀"));
+    }
+
+    #[test]
+    fn reaction_choice_toggles_or_replaces_our_emoji() {
+        assert_eq!(reaction_choice(None, "🦀"), "🦀");
+        assert_eq!(reaction_choice(Some("🦀"), "🦀"), "");
+        assert_eq!(reaction_choice(Some("👍"), "🦀"), "🦀");
+        assert_eq!(reaction_choice(Some("❤️"), "❤️"), "");
     }
 }
 

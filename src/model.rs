@@ -615,6 +615,11 @@ pub enum Action {
     /// Toggles a picker tab.
     TogglePicker(PickerTab),
     ClosePicker,
+    /// Opens the full emoji picker to react to a message.
+    OpenReactionPicker {
+        chat: ChatId,
+        message: String,
+    },
     /// Inserts an emoji at the composer cursor.
     InsertEmoji(String),
     /// Replaces an active `:query` with its selected emoji.

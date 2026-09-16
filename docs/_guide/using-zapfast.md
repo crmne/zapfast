@@ -15,8 +15,9 @@ Mentions in a group are written with `@`; the smiley opens emoji
 (searchable), GIFs, and stickers, including the stickers used on the
 phone.
 
-Right-click a message to reply, react, edit, forward, delete, or check when it
-was sent, delivered, and read. Hover over a reaction to see who added it.
+Right-click a message to reply, react with any emoji, edit, forward, delete, or
+check when it was sent, delivered, and read. The reaction row has a **+** that
+opens the full emoji picker. Hover over a reaction to see who added it.
 Editing uses the composer. Press Escape to cancel.
 
 ## Stickers
