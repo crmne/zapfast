@@ -121,7 +121,10 @@ fn main() -> eframe::Result<()> {
         dirs.adopt_previous_names()
             .map_err(|error| eframe::Error::AppCreation(error.into()))?;
     }
-    let dirs_ready = dirs.ensure();
+    // Do not open logs, settings, or either database unless their parent
+    // directories have been created and secured successfully.
+    dirs.ensure()
+        .map_err(|error| eframe::Error::AppCreation(error.into()))?;
     let mut logger =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter));
     // Write desktop-session logs to disk. Demo runs use stderr so they do not
@@ -135,9 +138,6 @@ fn main() -> eframe::Result<()> {
         }
     }
     logger.init();
-    if let Err(error) = dirs_ready {
-        log::warn!("unable to create the application directories: {error}");
-    }
     log_panics(dirs.panic_log());
     let settings = settings::Settings::load(&dirs.settings_file());
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));

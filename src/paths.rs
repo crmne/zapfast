@@ -135,7 +135,15 @@ impl AppDirs {
 
     pub fn ensure(&self) -> std::io::Result<()> {
         for dir in [&self.config, &self.state, &self.cache] {
-            std::fs::create_dir_all(dir)?;
+            let mut builder = std::fs::DirBuilder::new();
+            builder.recursive(true);
+            // Create new directories privately, even with a permissive umask.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            builder.create(dir)?;
             restrict_directory(dir)?;
         }
         Ok(())
@@ -192,6 +200,40 @@ mod tests {
                 0o700
             );
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_repairs_existing_directory_permissions_without_changing_data() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = root("existing-permissions");
+        let dirs = AppDirs::under(&root);
+        for path in [&dirs.config, &dirs.state, &dirs.cache] {
+            std::fs::create_dir_all(path).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::write(path.join("fixture"), b"preserved").unwrap();
+        }
+        dirs.ensure().unwrap();
+        for path in [&dirs.config, &dirs.state, &dirs.cache] {
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(std::fs::read(path.join("fixture")).unwrap(), b"preserved");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ensure_stops_when_an_application_directory_cannot_be_created() {
+        let root = root("blocked-directory");
+        let dirs = AppDirs::under(&root);
+        std::fs::write(&dirs.state, b"existing file").unwrap();
+        assert!(dirs.ensure().is_err());
+        assert!(!dirs.cache.exists());
+        assert_eq!(std::fs::read(&dirs.state).unwrap(), b"existing file");
         std::fs::remove_dir_all(root).unwrap();
     }
 
