@@ -1195,6 +1195,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     "🔥".into(),
                 ];
             }
+            "react-picker-empty" => {
+                let chat = SAMPLES[0].id.to_owned();
+                app.reaction_target = Some((chat, "ada-link".into()));
+                app.picker_focus = true;
+                app.settings.recent_emoji.clear();
+            }
             "react-custom" => {
                 if let Some(row) = app
                     .conversations
@@ -1374,6 +1380,7 @@ mod tests {
             "gifs-badkey",
             "react-menu",
             "react-picker",
+            "react-picker-empty",
             "react-custom",
         ] {
             let mut app = self::app();

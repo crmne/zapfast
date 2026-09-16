@@ -147,6 +147,13 @@ fn group_name(group: emojis::Group) -> &'static str {
     }
 }
 
+fn usable_recent(recent: &[String]) -> Vec<&'static str> {
+    recent
+        .iter()
+        .filter_map(|emoji| emojis::get(emoji).map(|emoji| emoji.as_str()))
+        .collect()
+}
+
 fn rows_for(
     query: &str,
     recent: &[String],
@@ -183,12 +190,9 @@ fn rows_for(
         }
         return rows;
     }
+    let recent = usable_recent(recent);
     if !recent.is_empty() {
         rows.push(Row::Header(recent_label));
-        let recent: Vec<&'static str> = recent
-            .iter()
-            .filter_map(|emoji| emojis::get(emoji).map(|emoji| emoji.as_str()))
-            .collect();
         chunk(&mut rows, recent);
     }
     for group in emojis::Group::iter() {
@@ -247,6 +251,15 @@ const CATEGORIES: &[(Option<emojis::Group>, &str, &str)] = &[
     (Some(emojis::Group::Symbols), "🔣", "Symbols"),
     (Some(emojis::Group::Flags), "🏁", "Flags"),
 ];
+
+fn category_entries(
+    has_recent: bool,
+) -> impl Iterator<Item = (Option<emojis::Group>, &'static str, &'static str)> {
+    CATEGORIES
+        .iter()
+        .copied()
+        .filter(move |(group, _, _)| group.is_some() || has_recent)
+}
 
 fn take_plain_key(ui: &mut egui::Ui, key: Key) -> bool {
     ui.input_mut(|input| {
@@ -370,17 +383,22 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
 
 fn category_tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let current = visible_category(ui, "reaction-emoji-grid", &app.picker_search);
-    let cell = ((ui.available_width() - 4.0) / CATEGORIES.len() as f32).clamp(24.0, 36.0);
+    let has_recent = !usable_recent(&app.settings.recent_emoji).is_empty();
+    let tabs: Vec<_> = category_entries(has_recent).collect();
+    let cell = ((ui.available_width() - 4.0) / tabs.len() as f32).clamp(24.0, 36.0);
+    let default = tabs.first().map(|(_, _, label)| *label);
     ui.allocate_ui_with_layout(
         vec2(ui.available_width(), cell),
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            let extra = (ui.available_width() - cell * CATEGORIES.len() as f32).max(0.0) / 2.0;
+            let extra = (ui.available_width() - cell * tabs.len() as f32).max(0.0) / 2.0;
             ui.add_space(extra);
-            for &(group, glyph, label) in CATEGORIES {
+            for &(_, glyph, label) in &tabs {
                 let selected = current == Some(label)
-                    || (current.is_none() && group.is_none() && app.picker_search.is_empty());
+                    || (current.is_none()
+                        && app.picker_search.is_empty()
+                        && Some(label) == default);
                 let (rect, response) = ui.allocate_exact_size(vec2(cell, cell), Sense::click());
                 if ui.is_rect_visible(rect) {
                     if selected {
@@ -660,6 +678,34 @@ mod emoji_tests {
                 .any(|row| matches!(row, Row::Header("Smileys & Emotion")))
         );
         assert!(rows.iter().any(|row| matches!(row, Row::Header("Flags"))));
+    }
+
+    #[test]
+    fn empty_recent_omits_the_recent_header() {
+        for recent in [Vec::new(), vec!["not-an-emoji".into()]] {
+            let rows = rows_for("", &recent, 8, "Frequently Used");
+            assert!(
+                !rows.iter().any(|row| matches!(
+                    row,
+                    Row::Header("Frequently Used") | Row::Header("Recent")
+                )),
+                "{recent:?}"
+            );
+            assert!(
+                matches!(rows.first(), Some(Row::Header("Smileys & Emotion"))),
+                "{recent:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_recent_omits_the_frequently_used_tab() {
+        let labels: Vec<&str> = category_entries(false).map(|(_, _, label)| label).collect();
+        assert!(!labels.contains(&"Frequently Used"));
+        assert_eq!(labels.first().copied(), Some("Smileys & Emotion"));
+        let with_recent: Vec<&str> = category_entries(true).map(|(_, _, label)| label).collect();
+        assert_eq!(with_recent.first().copied(), Some("Frequently Used"));
+        assert_eq!(with_recent.len(), labels.len() + 1);
     }
 }
 
