@@ -52,7 +52,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # on stable and includes snapshot recovery and no-progress conflict handling
 # (upstream #1365, #1374 and #1375). Selected features provide Tokio transport, ureq media downloads,
 # and the SQLite device store. The window handles shutdown instead of `signal`.
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "860744fb634e9b1703d69626180c66ae07c1ff04", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
+# Forked at FelipeMayerDev/whatsapp-rust branch `chat-lock` (upstream of
+# 860744f plus chat-lock verbs and the LockChatUpdate event).
+whatsapp-rust = { git = "https://github.com/FelipeMayerDev/whatsapp-rust", branch = "chat-lock", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
 # SQLCipher encrypts the archive; the device store shares the same library.
 # Bundle OpenSSL so all release platforms use the same encryption provider.

@@ -1181,11 +1181,14 @@ impl Archive {
             .optional()
     }
 
-    /// Older archives discarded pin times and could lose mute sync. Request
-    /// one library-managed snapshot for an existing archive. Fresh links
-    /// already receive snapshots; reconnecting must not add another request.
+    /// Older archives never received mute and pin changes made on the phone
+    /// before this device linked: history only replays at link time, and the
+    /// v1 refresh asked for a snapshot from the stored version, which returns
+    /// nothing once the server considers the device current. v2 replays both
+    /// collections from version zero instead. Fresh links already receive
+    /// everything; reconnecting must not add another request.
     pub fn take_preferences_refresh(&self) -> Result<bool> {
-        const KEY: &str = "chat_preferences_refresh_v1";
+        const KEY: &str = "chat_preferences_refresh_v2";
         if self.meta(KEY)?.is_some() {
             return Ok(false);
         }

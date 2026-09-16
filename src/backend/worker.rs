@@ -658,17 +658,16 @@ impl Worker {
         match self.archive.take_preferences_refresh() {
             Ok(true) => {
                 tokio::spawn(async move {
-                    use whatsapp_rust::{WAPatchName, sync_task::MajorSyncTask};
-                    // The protocol library owns collection locking, full
-                    // snapshots, and bounded retries across reconnects. Do
-                    // not reset its store or add an application retry loop.
+                    use whatsapp_rust::WAPatchName;
+                    // A full_sync request still pages from the stored version,
+                    // which returns nothing when the server considers this
+                    // device current — so the recovery replays both
+                    // collections from version zero instead. The protocol
+                    // library owns collection reservations, snapshot paging,
+                    // and MAC validation; handlers here are timestamp-guarded
+                    // against the replay's original mutation times.
                     for name in [WAPatchName::RegularLow, WAPatchName::RegularHigh] {
-                        client
-                            .process_sync_task(MajorSyncTask::AppStateSync {
-                                name,
-                                full_sync: true,
-                            })
-                            .await;
+                        client.resync_app_state_collection(name).await;
                     }
                 });
             }
@@ -1206,6 +1205,11 @@ impl Worker {
                 } else {
                     None
                 };
+                log::info!(
+                    "chat mute sync: muted={} until={until:?} full_sync={}",
+                    update.action.muted.unwrap_or(false),
+                    update.from_full_sync
+                );
                 let _ =
                     self.archive
                         .set_muted_at(&chat, until, update.timestamp.timestamp_millis());
