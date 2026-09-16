@@ -261,6 +261,11 @@ precedence and are never overwritten. Quit FastsApp before starting ZapFast;
 if an older copy is still running, the new launch brings its window forward.
 Your phone may keep showing the old linked-device name until you link again.
 
+On Linux and macOS, ZapFast restricts its configuration, state, and cache
+directories to the current user (`0700`), including existing installations.
+Startup stops if those directories cannot be created or secured, before opening
+logs or databases. Windows uses the permissions inherited from your user profile.
+
 ### Local themes
 
 **Settings → Appearance → Theme** uses the same picker as Spotifast, with
