@@ -1915,6 +1915,9 @@ impl App {
                 self.toast("Copied");
             }
             Action::Reply(id) => {
+                // Selecting Reply while editing must send a new reply, not edit
+                // the previous message with the new text.
+                self.editing = None;
                 self.reply_to = Some(id);
                 self.focus_composer = true;
             }

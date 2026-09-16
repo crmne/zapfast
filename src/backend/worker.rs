@@ -2827,6 +2827,54 @@ impl Worker {
         }
     }
 
+    /// Resolve an explicit reply before sending anything. Missing originals must
+    /// never silently downgrade a reply to an unrelated message.
+    fn reply_context(
+        &self,
+        chat: &str,
+        id: Option<&str>,
+    ) -> Result<Option<(wa::ContextInfo, Quoted)>, &'static str> {
+        let Some(id) = id else { return Ok(None) };
+        let unavailable = "Could not reply: the original message is unavailable on this computer";
+        let row = self
+            .archive
+            .message(chat, id)
+            .map_err(|_| unavailable)?
+            .ok_or(unavailable)?;
+        let raw = self
+            .archive
+            .raw(chat, id)
+            .map_err(|_| unavailable)?
+            .ok_or(unavailable)?;
+        let original = wa::Message::decode_from_slice(&raw).map_err(|_| unavailable)?;
+        let jid = Self::jid_of(chat).ok_or(unavailable)?;
+        let sender = Self::jid_of(&row.sender).ok_or(unavailable)?;
+        if id.is_empty() || matches!(row.content, Content::Revoked) {
+            return Err(unavailable);
+        }
+        let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
+            row.id.clone(),
+            &sender,
+            &jid,
+            &jid,
+            &original,
+        );
+        let shown = Quoted {
+            mentions: row.mentions.clone(),
+            id: row.id,
+            sender_name: if row.from_me {
+                Some("You".to_owned())
+            } else {
+                row.sender_name
+                    .clone()
+                    .or_else(|| self.name_for(&row.sender))
+            },
+            sender: row.sender,
+            summary: row.content.summary(),
+        };
+        Ok(Some((context, shown)))
+    }
+
     fn send_text(
         &mut self,
         chat: ChatId,
@@ -2838,22 +2886,14 @@ impl Worker {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
-        let mut quoted_row = None;
-        let context = quoting.as_deref().and_then(|id| {
-            let raw = self.archive.raw(&chat, id).ok().flatten()?;
-            let quoted = wa::Message::decode_from_slice(&raw).ok()?;
-            let row = self.archive.message(&chat, id).ok().flatten()?;
-            let sender = Self::jid_of(&row.sender).unwrap_or_else(|| jid.clone());
-            let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
-                row.id.clone(),
-                &sender,
-                &jid,
-                &jid,
-                &quoted,
-            );
-            quoted_row = Some(row);
-            Some(context)
-        });
+        let (context, shown) = match self.reply_context(&chat, quoting.as_deref()) {
+            Ok(Some((context, shown))) => (Some(context), Some(shown)),
+            Ok(None) => (None, None),
+            Err(error) => {
+                self.emit(Event::Error(error.to_owned()));
+                return;
+            }
+        };
         let mut message = outgoing_text(text.clone(), context, &mentions);
         let expiration = self.apply_ephemeral(&chat, &mut message);
         let mentions = self.mentions_of(&mentions);
@@ -2869,19 +2909,7 @@ impl Worker {
             status: Delivery::Pending,
             delivered_at: None,
             read_at: None,
-            quoted: quoted_row.map(|row| Quoted {
-                mentions: row.mentions.clone(),
-                id: row.id,
-                sender_name: if row.from_me {
-                    Some("You".to_owned())
-                } else {
-                    row.sender_name
-                        .clone()
-                        .or_else(|| self.name_for(&row.sender))
-                },
-                sender: row.sender,
-                summary: row.content.summary(),
-            }),
+            quoted: shown,
             reactions: Vec::new(),
             edited: false,
             mentions,
@@ -3832,37 +3860,13 @@ impl Worker {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
-        let quote = quoting.as_deref().and_then(|id| {
-            let raw = self.archive.raw(&chat, id).ok().flatten()?;
-            let quoted = wa::Message::decode_from_slice(&raw).ok()?;
-            let row = self.archive.message(&chat, id).ok().flatten()?;
-            let jid = Self::jid_of(&chat)?;
-            let sender = Self::jid_of(&row.sender).unwrap_or_else(|| jid.clone());
-            let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
-                row.id.clone(),
-                &sender,
-                &jid,
-                &jid,
-                &quoted,
-            );
-            let shown = Quoted {
-                mentions: row.mentions.clone(),
-                id: row.id,
-                sender_name: if row.from_me {
-                    Some("You".to_owned())
-                } else {
-                    row.sender_name
-                        .clone()
-                        .or_else(|| self.name_for(&row.sender))
-                },
-                sender: row.sender,
-                summary: row.content.summary(),
-            };
-            Some((context, shown))
-        });
-        let (context, shown) = match quote {
-            Some((context, shown)) => (Some(Box::new(context)), Some(shown)),
-            None => (None, None),
+        let (context, shown) = match self.reply_context(&chat, quoting.as_deref()) {
+            Ok(Some((context, shown))) => (Some(Box::new(context)), Some(shown)),
+            Ok(None) => (None, None),
+            Err(error) => {
+                self.emit(Event::Error(error.to_owned()));
+                return;
+            }
         };
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
@@ -5635,6 +5639,91 @@ mod receipt_tests {
             poll_sending: HashSet::new(),
         };
         (worker, events_rx, inbox, wa_events)
+    }
+
+    #[test]
+    fn replies_keep_the_original_reference_on_the_wire_and_in_the_archive() {
+        for chat in [PEER, "123-456@g.us"] {
+            for sender in [ME, PEER, "987654321@lid"] {
+                let (worker, _, _, _) = worker();
+                worker.archive.ensure_chat(chat, "Fixture").unwrap();
+                let source = Message {
+                    chat: chat.into(),
+                    sender: sender.into(),
+                    from_me: sender == ME,
+                    content: Content::text("Original fixture"),
+                    ..own_message("original", 100)
+                };
+                let original = wa::Message::text("Original fixture");
+                worker
+                    .archive
+                    .insert_message(&source, Some(&original.encode_to_vec()))
+                    .unwrap();
+                let (context, shown) = worker
+                    .reply_context(chat, Some("original"))
+                    .unwrap()
+                    .unwrap();
+                let mut reply = outgoing_text("Reply fixture".into(), Some(context), &[]);
+                apply_ephemeral_expiration(&mut reply, Some(86400));
+                let raw = reply.encode_to_vec();
+                let decoded = wa::Message::decode_from_slice(&raw).unwrap();
+                let context = context_of(&decoded).unwrap();
+                assert_eq!(context.stanza_id.as_deref(), Some("original"));
+                assert_eq!(context.participant.as_deref(), Some(sender));
+                assert_eq!(context.remote_jid, None);
+                assert_eq!(
+                    context.quoted_message.as_option().unwrap().text_content(),
+                    Some("Original fixture")
+                );
+                assert_eq!(decoded.text_content(), Some("Reply fixture"));
+                assert_eq!(worker.quoted_of(&decoded).unwrap().id, "original");
+                let row = Message {
+                    chat: chat.into(),
+                    quoted: Some(shown),
+                    content: Content::text("Reply fixture"),
+                    ..own_message("reply", 101)
+                };
+                worker.archive.insert_message(&row, Some(&raw)).unwrap();
+                assert_eq!(
+                    worker
+                        .archive
+                        .message(chat, "reply")
+                        .unwrap()
+                        .unwrap()
+                        .quoted
+                        .unwrap()
+                        .id,
+                    "original"
+                );
+                let restored = wa::Message::decode_from_slice(
+                    &worker.archive.raw(chat, "reply").unwrap().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    context_of(&restored).unwrap().stanza_id.as_deref(),
+                    Some("original")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_replies_require_a_valid_original() {
+        let (worker, _, _, _) = worker();
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        assert!(worker.reply_context(PEER, None).unwrap().is_none());
+        assert!(worker.reply_context(PEER, Some("missing")).is_err());
+        let mut row = own_message("original", 100);
+        worker.archive.insert_message(&row, None).unwrap();
+        assert!(worker.reply_context(PEER, Some("original")).is_err());
+        worker.archive.insert_message(&row, Some(&[0xff])).unwrap();
+        assert!(worker.reply_context(PEER, Some("original")).is_err());
+        row.content = Content::Revoked;
+        worker
+            .archive
+            .insert_message(&row, Some(&wa::Message::text("old").encode_to_vec()))
+            .unwrap();
+        assert!(worker.reply_context(PEER, Some("original")).is_err());
     }
 
     fn own_message(id: &str, timestamp: i64) -> Message {

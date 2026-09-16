@@ -735,7 +735,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     .cloned();
                 match quoted {
                     Some(quoted) => reply_strip(app, ui, &quoted),
-                    None => app.reply_to = None,
+                    None => app.actions.push(Action::CancelReply),
                 }
             }
             let id = egui::Id::new("composer-text");
@@ -1883,8 +1883,47 @@ fn bubble_frame(
         .show(|ui| {
             context_menu(ui, view, message, actions);
         });
+    reply_button(ui, view, message, inner.response.rect, actions);
     // Store this frame's final rect for later scrolling.
     inner.response
+}
+
+/// A discoverable reply action in the free space beside the hovered bubble.
+fn reply_button(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    bubble: Rect,
+    actions: &mut Vec<Action>,
+) {
+    if view.chat.read_only || matches!(message.content, Content::Revoked) {
+        return;
+    }
+    let x = if message.from_me {
+        bubble.left() - 22.0
+    } else {
+        bubble.right() + 22.0
+    };
+    let rect = Rect::from_center_size(pos2(x, bubble.top() + 16.0), Vec2::splat(32.0));
+    let id = bubble_id(&view.chat.id, &message.id).with("reply");
+    let hovered = ui.rect_contains_pointer(bubble.union(rect));
+    if !hovered && !ui.memory(|memory| memory.has_focus(id)) {
+        return;
+    }
+    let response = ui
+        .interact(rect, id, Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Reply");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Reply"));
+    let palette = view.palette;
+    if response.hovered() || response.has_focus() {
+        ui.painter()
+            .circle_filled(rect.center(), 16.0, palette.surface_hover);
+    }
+    theme::paint_icon(ui, Icon::Reply, rect, 18.0, palette.secondary);
+    if response.clicked() {
+        actions.push(Action::Reply(message.id.clone()));
+    }
 }
 
 /// Minimum shared width for cards inside message bubbles.
@@ -2225,7 +2264,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         }
     });
     widgets::menu_separator(ui, &palette);
-    if !matches!(message.content, Content::Revoked)
+    if !view.chat.read_only
+        && !matches!(message.content, Content::Revoked)
         && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
     {
         actions.push(Action::Reply(message.id.clone()));

@@ -42,6 +42,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   list and individual receipts are saved locally; later membership changes
   do not change that list. If the original recipients are unknown, ZapFast
   waits for the phone's aggregate status instead of guessing from one reader.
+- **Reply to a message.** Hover over a message and click the reply arrow, or
+  right-click and choose **Reply**. Send text or a voice message; **Esc** cancels
+  the reply. Replies include WhatsApp’s original-message reference, so other
+  clients can jump back to it. If the original is unavailable locally, sending
+  the reply reports an error instead of sending an unrelated message.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs; this

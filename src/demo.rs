@@ -1024,6 +1024,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     .join("\n");
                 app.focus_composer = true;
             }
+            "reply" => {
+                app.reply_to = Some("ada-link".to_owned());
+                app.composer = "Thanks, I’ll take a look!".to_owned();
+                app.focus_composer = true;
+            }
             "mention" => {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.to_owned());
@@ -1314,6 +1319,7 @@ mod tests {
             "about",
             "info",
             "forward",
+            "reply",
             "unlink",
             "new-contact",
             "light",
@@ -1655,6 +1661,141 @@ mod tests {
         );
         render(&mut app, &ctx);
         assert!(egui::Popup::is_id_open(&ctx, popup), "and it stays open");
+    }
+
+    #[test]
+    fn hover_reply_sends_the_selected_message_reference() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let chat = sample_ids()[0].to_owned();
+        let id = crate::ui::conversation::bubble_id(&chat, "ada-link");
+        let bubble = ctx.read_response(id).unwrap().rect;
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(bubble.center())],
+        );
+        let button = ctx
+            .read_response(id.with("reply"))
+            .expect("hover reveals Reply")
+            .rect;
+        assert!(
+            !button.intersects(bubble),
+            "Reply does not cover message content"
+        );
+        let pos = button.center();
+        let click = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Reply switches out of editing, so Enter sends a new message.
+        app.editing = Some("fixture-being-edited".into());
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), click(true)],
+        );
+        frame_with(&mut app, &ctx, vec![click(false)]);
+        render(&mut app, &ctx);
+        assert_eq!(app.reply_to.as_deref(), Some("ada-link"));
+        assert!(app.editing.is_none());
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Reply fixture".into())],
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(app.backend.take_demo_commands().iter().any(|command| matches!(command,
+            crate::backend::Command::SendText { chat: sent_chat, text, quoting: Some(original), .. }
+                if sent_chat == &chat && text == "Reply fixture" && original == "ada-link"
+        )));
+        assert!(app.reply_to.is_none());
+    }
+
+    #[test]
+    fn own_messages_offer_reply_but_revoked_and_read_only_messages_do_not() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        app.conversations
+            .get_mut(&chat)
+            .unwrap()
+            .messages
+            .push(message(
+                &chat,
+                "own-reply-target",
+                true,
+                crate::util::now(),
+                Content::text("Own fixture"),
+            ));
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let id = crate::ui::conversation::bubble_id(&chat, "own-reply-target");
+        let bubble = ctx.read_response(id).unwrap().rect;
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(bubble.center())],
+        );
+        let button = ctx
+            .read_response(id.with("reply"))
+            .expect("own messages offer Reply")
+            .rect;
+        assert!(button.right() < bubble.left());
+        app.chats
+            .iter_mut()
+            .find(|row| row.id == chat)
+            .unwrap()
+            .read_only = true;
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        assert!(ctx.read_response(id.with("reply")).is_none());
+        app.chats
+            .iter_mut()
+            .find(|row| row.id == chat)
+            .unwrap()
+            .read_only = false;
+        app.conversations
+            .get_mut(&chat)
+            .unwrap()
+            .message_mut("own-reply-target")
+            .unwrap()
+            .content = Content::Revoked;
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        assert!(ctx.read_response(id.with("reply")).is_none());
+    }
+
+    #[test]
+    fn reply_can_be_cancelled_without_discarding_the_composer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("reply"));
+        render(&mut app, &ctx);
+        let text = app.composer.clone();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(app.reply_to.is_none());
+        assert_eq!(app.composer, text);
+        assert!(app.open_chat.is_some());
     }
 
     #[test]
