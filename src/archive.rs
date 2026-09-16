@@ -1167,6 +1167,21 @@ impl Archive {
             .optional()
     }
 
+    /// Older archives discarded pin times and could lose mute sync. Request
+    /// one library-managed snapshot for an existing archive. Fresh links
+    /// already receive snapshots; reconnecting must not add another request.
+    pub fn take_preferences_refresh(&self) -> Result<bool> {
+        const KEY: &str = "chat_preferences_refresh_v1";
+        if self.meta(KEY)?.is_some() {
+            return Ok(false);
+        }
+        let existing: bool =
+            self.connection
+                .query_row("SELECT EXISTS(SELECT 1 FROM chats)", [], |row| row.get(0))?;
+        self.set_meta(KEY, "requested")?;
+        Ok(existing)
+    }
+
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         self.connection.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1359,6 +1374,27 @@ pub(crate) mod tests {
             archive.chat(chat).expect("chat").expect("exists").name,
             "Rust Berlin"
         );
+    }
+
+    #[test]
+    fn existing_archives_request_preference_recovery_once_across_restarts() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fixture.db");
+        let key = [31; 32];
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+            assert!(archive.take_preferences_refresh().unwrap());
+            assert!(!archive.take_preferences_refresh().unwrap());
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert!(!archive.take_preferences_refresh().unwrap());
+        let fresh = Archive::in_memory().unwrap();
+        assert!(!fresh.take_preferences_refresh().unwrap());
+        fresh
+            .ensure_chat("1@s.whatsapp.net", "Initial history")
+            .unwrap();
+        assert!(!fresh.take_preferences_refresh().unwrap());
     }
 
     #[test]

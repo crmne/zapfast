@@ -634,6 +634,32 @@ impl Worker {
         }
     }
 
+    fn refresh_legacy_preferences(&self) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        match self.archive.take_preferences_refresh() {
+            Ok(true) => {
+                tokio::spawn(async move {
+                    use whatsapp_rust::{WAPatchName, sync_task::MajorSyncTask};
+                    // The protocol library owns collection locking, full
+                    // snapshots, and bounded retries across reconnects. Do
+                    // not reset its store or add an application retry loop.
+                    for name in [WAPatchName::RegularLow, WAPatchName::RegularHigh] {
+                        client
+                            .process_sync_task(MajorSyncTask::AppStateSync {
+                                name,
+                                full_sync: true,
+                            })
+                            .await;
+                    }
+                });
+            }
+            Ok(false) => {}
+            Err(error) => log::warn!("could not schedule chat preference recovery: {error}"),
+        }
+    }
+
     async fn stop_bot(&mut self) {
         self.client = None;
         if let Some(handle) = self.handle.take()
@@ -1008,6 +1034,7 @@ impl Worker {
                 };
                 self.remember_identity(pn, lid, name);
                 self.set_status(LinkStatus::Connected);
+                self.refresh_legacy_preferences();
                 self.retry_avatars();
                 self.pump_read_sync();
                 self.poll_history.reconnect(Instant::now());

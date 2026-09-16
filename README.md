@@ -52,6 +52,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
   applies on your phone and to desktop notifications. Mute changes from your
   phone survive history arriving later, including during initial linking.
+  Existing installations request one settings refresh after upgrading to
+  recover previously lost mute settings and pin order, without relinking.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
   in the chat. The app normalizes quiet recordings and handles OGG/Opus
   without external tools.
