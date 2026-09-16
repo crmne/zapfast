@@ -2,7 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use zapfast::{app, backend, paths, settings, single_instance};
+use zapfast::{app, backend, paths, profile, settings, single_instance};
 
 use clap::Parser;
 
@@ -19,6 +19,17 @@ struct Cli {
     /// Log more from the WhatsApp library.
     #[arg(short, long)]
     verbose: bool,
+
+    /// Run as an independent instance, with its own files, window, tray item,
+    /// and linked device. Names are 1 to 32 characters of a-z, 0-9, '-', '_'.
+    #[arg(long, value_name = "NAME", env = "ZAPFAST_PROFILE", default_value = profile::DEFAULT)]
+    #[cfg_attr(feature = "demo", arg(conflicts_with = "demo"))]
+    profile: profile::Profile,
+
+    /// Loopback port a later launch uses to show this profile's window. Two
+    /// profiles may share one: each answers only for its own name.
+    #[arg(long, value_name = "PORT", env = "ZAPFAST_PORT", default_value_t = profile::DEFAULT_PORT)]
+    port: u16,
 
     /// Start with offline sample chats.
     #[cfg(feature = "demo")]
@@ -79,9 +90,16 @@ fn main() -> eframe::Result<()> {
             .map_err(|error| eframe::Error::AppCreation(error.into()));
     }
     let cli = Cli::parse();
+    // Tray, notifications, and the linked-device name all read the profile.
+    profile::announce(cli.profile.clone());
     if matches!(cli.command, Some(Control::ReloadThemes)) {
-        single_instance::send("reload-themes")
-            .map_err(|error| eframe::Error::AppCreation(error.into()))?;
+        // Reach the copy running this profile, not whoever holds the port.
+        single_instance::send(
+            &paths::AppDirs::discover(cli.profile.clone()),
+            cli.port,
+            "reload-themes",
+        )
+        .map_err(|error| eframe::Error::AppCreation(error.into()))?;
         return Ok(());
     }
     let waker = backend::Waker::default();
@@ -89,23 +107,6 @@ fn main() -> eframe::Result<()> {
     let demo = cli.demo || cli.demo_shot.is_some() || cli.demo_tour;
     #[cfg(not(feature = "demo"))]
     let demo = false;
-    // Keep one linked instance. Demo runs do not participate.
-    let instance = if demo {
-        None
-    } else {
-        match single_instance::acquire(&waker) {
-            single_instance::Outcome::Only(guard) => Some(guard),
-            single_instance::Outcome::Surfaced => {
-                eprintln!("ZapFast or FastsApp is already running; asked it to show its window");
-                return Ok(());
-            }
-        }
-    };
-    let default_filter = if cli.verbose {
-        "info,zapfast=debug,whatsapp_rust=debug,wacore=debug"
-    } else {
-        "warn,zapfast=info"
-    };
     // A demo must not create empty ZapFast directories that would prevent a
     // later real launch from adopting the existing FastsApp session.
     let dirs = if demo {
@@ -115,7 +116,42 @@ fn main() -> eframe::Result<()> {
             jiff::Timestamp::now().as_millisecond(),
         )))
     } else {
-        paths::AppDirs::discover()
+        paths::AppDirs::discover(cli.profile.clone())
+    };
+    // Keep one linked instance per profile. Demo runs do not participate.
+    let instance = if demo {
+        None
+    } else {
+        match single_instance::acquire(&waker, &dirs, cli.port) {
+            single_instance::Outcome::Only(guard) => Some(guard),
+            single_instance::Outcome::Surfaced => {
+                if cli.profile.is_default() {
+                    eprintln!(
+                        "ZapFast or FastsApp is already running; asked it to show its window"
+                    );
+                } else {
+                    eprintln!(
+                        "{} is already running; asked it to show its window",
+                        cli.profile.label()
+                    );
+                }
+                return Ok(());
+            }
+            single_instance::Outcome::Blocked => {
+                eprintln!(
+                    "{} is already running but did not answer on port {}; \
+                     leaving its session alone",
+                    cli.profile.label(),
+                    cli.port
+                );
+                return Ok(());
+            }
+        }
+    };
+    let default_filter = if cli.verbose {
+        "info,zapfast=debug,whatsapp_rust=debug,wacore=debug"
+    } else {
+        "warn,zapfast=info"
     };
     if !demo {
         dirs.adopt_previous_names()
@@ -140,7 +176,9 @@ fn main() -> eframe::Result<()> {
     }
     log_panics(dirs.panic_log());
     let settings = settings::Settings::load(&dirs.settings_file());
-    let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
+    // The default profile leaves window state where eframe has always put it;
+    // a named profile keeps its own so two windows do not share one size.
+    let persistence = (demo || !cli.profile.is_default()).then(|| dirs.window_state());
 
     #[allow(unused_mut)]
     let mut app = if demo {
@@ -187,7 +225,7 @@ fn main() -> eframe::Result<()> {
         let creator_tour_events = cli.demo_tour_events.clone();
         eframe::run_native(
             "ZapFast",
-            native_options(demo_persistence.clone()),
+            native_options(persistence.clone(), demo),
             Box::new(move |cc| {
                 creator_waker.attach(&cc.egui_ctx);
                 let mut app = creator_slot
@@ -311,16 +349,23 @@ fn demo_size_arg() -> Option<[f32; 2]> {
     Some([w.parse::<f32>().ok()?, h.parse::<f32>().ok()?])
 }
 
-fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::NativeOptions {
+fn native_options(persistence: Option<std::path::PathBuf>, demo: bool) -> eframe::NativeOptions {
     let demo_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
-    let demo = demo_persistence.is_some();
+    let running = profile::running();
+    // The window identifier is what a compositor keys its rules on, so each
+    // profile gets its own; the default keeps the one the desktop file names.
+    let (title, app_id) = if demo {
+        ("ZapFast Demo".to_owned(), "zapfast-demo".to_owned())
+    } else {
+        // Flatpak fixes the window identifier to the sandbox's own id.
+        (
+            running.label(),
+            std::env::var("FLATPAK_ID").unwrap_or_else(|_| running.slug()),
+        )
+    };
     let viewport = egui::ViewportBuilder::default()
-        .with_title(if demo { "ZapFast Demo" } else { "ZapFast" })
-        .with_app_id(if demo {
-            "zapfast-demo".to_owned()
-        } else {
-            std::env::var("FLATPAK_ID").unwrap_or_else(|_| "zapfast".to_owned())
-        })
+        .with_title(title)
+        .with_app_id(app_id)
         .with_inner_size(demo_size)
         .with_min_inner_size([720.0, 480.0])
         .with_icon(app_icon())
@@ -330,7 +375,7 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
         .with_title_shown(false);
     eframe::NativeOptions {
         viewport,
-        persistence_path: demo_persistence,
+        persistence_path: persistence,
         // Do not restore window size during fixed-size screenshot runs.
         persist_window: !demo,
         // Disable vsync because hidden Wayland windows may stop receiving frame

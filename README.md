@@ -216,6 +216,54 @@ with `Ctrl+,`. Use the pencil to message a new number or save a contact. You
 can also open a group member's contact card. Saved names sync through WhatsApp
 to your phone and linked devices.
 
+## Several accounts
+
+A profile is an independent instance: its own files, window, tray item, and
+linked device. Without `--profile`, ZapFast runs as the profile `default`,
+which keeps every path and the port it has always used, so an existing setup
+needs no change.
+
+```sh
+zapfast --profile work          # or ZAPFAST_PROFILE=work zapfast
+```
+
+Names are 1 to 32 characters of `a-z`, `0-9`, `-` or `_`. Files go to
+`zapfast-<name>` beside the default ones, and the window is titled
+`ZapFast (work)`. Each profile is linked from **Linked devices** separately,
+and shows there under its own name.
+
+A second launch of a profile that is already running brings its window forward
+instead of opening a second copy, as it always has. A profile that runs holds a
+lock on its own state directory, so one session can never be opened twice, and
+launching a second copy of it fails rather than damaging the session.
+
+The `--port` is only where a running profile listens for that request:
+
+```sh
+zapfast --profile work --port 47120   # or ZAPFAST_PORT=47120
+```
+
+It defaults to `47119` for every profile, which is fine: each answers only for
+its own name, and a profile that finds the port taken takes a free one and
+records it in `instance.port`. Set it when you want a fixed number, for example
+to reach a profile from a script.
+
+On Linux each profile gets its own window identifier (`zapfast-work`), so a
+compositor can tell the windows apart. A desktop entry per profile needs the
+matching `StartupWMClass`:
+
+```ini
+[Desktop Entry]
+Name=ZapFast (work)
+Exec=zapfast --profile work
+Icon=zapfast
+StartupWMClass=zapfast-work
+Type=Application
+```
+
+On macOS, LaunchServices does not open a second copy of an application bundle;
+start the other profile with `open -n -a ZapFast --args --profile work`.
+
 ## Files
 
 | What | Linux | Notes |
@@ -226,11 +274,17 @@ to your phone and linked devices.
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete |
 | Saved stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
 | Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
+| Window size and position | eframe's storage, or `~/.local/state/zapfast-<name>/window.ron` for a named profile | Kept per profile |
+| Running profile | `~/.local/state/zapfast-<name>/instance.lock`, `instance.port` | Named profiles only; the lock keeps one session from being opened twice |
+
+A named profile uses the same layout under `zapfast-<name>`, as a sibling of
+the default directories: clearing one profile never touches another.
 
 macOS and Windows use the standard platform directories selected by the
 `directories` crate. On first start, ZapFast moves settings, the linked session,
 message archive, saved stickers, caches, and window state from `fastsapp`
-(or the earlier `fastwhatsapp`) paths. Existing ZapFast directories take
+(or the earlier `fastwhatsapp`) paths. Only the `default` profile inherits
+them; a named profile starts empty and is linked on its own. Existing ZapFast directories take
 precedence and are never overwritten. Quit FastsApp before starting ZapFast;
 if an older copy is still running, the new launch brings its window forward.
 Your phone may keep showing the old linked-device name until you link again.

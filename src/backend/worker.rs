@@ -583,7 +583,7 @@ impl Worker {
             // WhatsApp reads the linked-device name, version, and icon at pairing.
             .with_device_props(
                 DevicePropsOverride::new()
-                    .with_os("ZapFast")
+                    .with_os(crate::profile::running().label())
                     .with_version(app_version())
                     .with_platform_type(wa::device_props::PlatformType::DESKTOP),
             )

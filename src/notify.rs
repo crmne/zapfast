@@ -97,7 +97,7 @@ fn deliver(
     }
     let mut notification = notify_rust::Notification::new();
     notification
-        .appname("ZapFast")
+        .appname(&crate::profile::running().label())
         .summary(title)
         .body(body)
         .icon("zapfast")
@@ -152,7 +152,10 @@ fn deliver(
         return;
     }
     let mut notification = notify_rust::Notification::new();
-    notification.appname("ZapFast").summary(title).body(body);
+    notification
+        .appname(&crate::profile::running().label())
+        .summary(title)
+        .body(body);
     // Windows uses the image; macOS always uses the app icon.
     if let Some(picture) = picture {
         notification.image_path(&picture.to_string_lossy());
@@ -205,9 +208,11 @@ mod tests {
     #[test]
     #[ignore = "shows a real notification"]
     fn shows_one_on_this_desktop() {
-        let picture = std::fs::read_dir(crate::paths::AppDirs::discover().avatar_cache_dir())
-            .ok()
-            .and_then(|entries| entries.flatten().map(|entry| entry.path()).next());
+        let picture = std::fs::read_dir(
+            crate::paths::AppDirs::discover(Default::default()).avatar_cache_dir(),
+        )
+        .ok()
+        .and_then(|entries| entries.flatten().map(|entry| entry.path()).next());
         let mut notifications = Notifications::default();
         notifications.show(
             "Ada Lovelace".into(),
