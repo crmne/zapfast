@@ -61,6 +61,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             if app.open_chat.is_some() {
                 actions.push(Action::FocusComposer);
             }
+        } else if app.open_chat.is_some() {
+            actions.push(Action::CloseChat);
         }
     }
     // Enter sends a recording because the text field is hidden.
@@ -105,7 +107,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Enter", "Send (Shift+Enter for a new line)"),
     (
         "Escape",
-        "Dismiss suggestions, cancel the current action, or return from search",
+        "Dismiss suggestions, cancel the current action, return from search, or close the open chat",
     ),
     ("Ctrl+V", "Paste text, or send a picture from the clipboard"),
     ("Ctrl+B", "Show or hide the chat list"),

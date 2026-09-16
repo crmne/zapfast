@@ -1127,6 +1127,8 @@ struct View<'a> {
     /// Show avatars for all incoming messages, not only groups.
     pictures: bool,
     anchor: Option<&'a str>,
+    /// Reply target in the open chat.
+    reply_to: Option<String>,
     /// Resolves a name with the message's stored name as fallback.
     names_or: &'a dyn Fn(&str, Option<&str>) -> String,
     /// Resolves mention names without replacing our name with "You".
@@ -1170,6 +1172,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         } else {
             app.scroll_anchor.as_deref()
         },
+        reply_to: app.reply_to.clone(),
         names_or: &names_or,
         mention_names: &mention_names,
         avatars: &avatars,
@@ -1813,6 +1816,30 @@ fn bubble_frame(
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
     let bubble =
         early.unwrap_or_else(|| ui.interact(inner.response.rect, bubble_id, Sense::click()));
+    let double_clicked = !matches!(message.content, Content::Revoked)
+        && ui.input(|input| {
+            input
+                .pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|pos| bubble.rect.contains(pos))
+        })
+        && ui
+            .input(|input| input.pointer.interact_pos())
+            .is_some_and(|pos| {
+                ui.ctx()
+                    .layer_id_at(pos)
+                    .is_none_or(|layer| layer == bubble.layer_id)
+            });
+    if double_clicked {
+        if view.reply_to.as_deref() == Some(message.id.as_str()) {
+            actions.push(Action::CancelReply);
+        } else {
+            actions.push(Action::Reply(message.id.clone()));
+        }
+    }
     // Read right-click from input because inner widgets own their responses.
     // Open only when no floating layer covers the chat panel.
     let right_clicked = ui.input(|input| {
