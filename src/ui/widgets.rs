@@ -161,6 +161,17 @@ pub fn paint_avatar(
     }
 }
 
+pub fn paint_disappearing_badge(ui: &Ui, palette: &Palette, avatar: Rect) {
+    let size = (avatar.width() * 0.38).clamp(14.0, 18.0);
+    let rect = Rect::from_center_size(
+        pos2(avatar.right() - size * 0.15, avatar.bottom() - size * 0.15),
+        Vec2::splat(size),
+    );
+    ui.painter()
+        .circle_filled(rect.center(), size * 0.58, palette.surface);
+    theme::paint_icon(ui, Icon::DisappearingMessages, rect, size, palette.accent);
+}
+
 /// Outgoing-message status ticks.
 pub fn ticks(ui: &Ui, palette: &Palette, rect: Rect, status: Delivery) {
     let (icon, color) = match status {

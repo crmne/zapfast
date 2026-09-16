@@ -49,6 +49,8 @@ pub struct Chat {
     pub participants: Vec<String>,
     /// Whether this is an announcement group where we cannot post.
     pub read_only: bool,
+    /// Disappearing-message duration in seconds, if enabled.
+    pub ephemeral_expiration: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,6 +78,7 @@ impl Chat {
             last: None,
             participants: Vec::new(),
             read_only: false,
+            ephemeral_expiration: None,
         }
     }
 

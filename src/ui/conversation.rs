@@ -135,7 +135,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             ),
                             Layout::left_to_right(Align::Center),
                             |ui| {
-                                widgets::avatar(
+                                let avatar_response = widgets::avatar(
                                     ui,
                                     &palette,
                                     &title,
@@ -143,6 +143,13 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     40.0,
                                     picture.as_deref(),
                                 );
+                                if chat.ephemeral_expiration.is_some() {
+                                    widgets::paint_disappearing_badge(
+                                        ui,
+                                        &palette,
+                                        avatar_response.rect,
+                                    );
+                                }
                                 ui.add_space(4.0);
                                 ui.vertical(|ui| {
                                     let width = (ui.available_width() - right_controls).max(80.0);

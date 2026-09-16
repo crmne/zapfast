@@ -102,7 +102,8 @@ END;
 
 const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
-                    m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only";
+                    m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
+                    c.ephemeral_expiration";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -154,6 +155,9 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         last,
         participants: serde_json::from_str(&participants).unwrap_or_default(),
         read_only: row.get(14)?,
+        ephemeral_expiration: row
+            .get::<_, Option<u32>>(15)?
+            .filter(|expiration| *expiration != 0),
     })
 }
 
