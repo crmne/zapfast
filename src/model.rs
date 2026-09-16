@@ -53,6 +53,8 @@ pub struct Chat {
     pub read_only: bool,
     /// Disappearing-message duration in seconds, if enabled.
     pub ephemeral_expiration: Option<u32>,
+    pub parent: Option<ChatId>,
+    pub is_community: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -82,11 +84,21 @@ impl Chat {
             participants: Vec::new(),
             read_only: false,
             ephemeral_expiration: None,
+            parent: None,
+            is_community: false,
         }
     }
 
     pub fn is_group(&self) -> bool {
         self.kind == ChatKind::Group
+    }
+
+    pub fn is_community(&self) -> bool {
+        self.is_community
+    }
+
+    pub fn is_subgroup(&self) -> bool {
+        self.parent.is_some()
     }
 
     pub fn muted(&self, now: i64) -> bool {
@@ -671,6 +683,7 @@ pub enum Action {
     ShowDialog(Dialog),
     CloseDialog,
     ToggleSidebar,
+    ToggleCommunity(ChatId),
     FocusSearch,
     FocusComposer,
     ScrollToBottom,

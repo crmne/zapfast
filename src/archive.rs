@@ -103,7 +103,7 @@ END;
 const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
-                    c.pinned_at, c.ephemeral_expiration";
+                    c.pinned_at, c.ephemeral_expiration, c.parent, c.is_community";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -121,6 +121,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "pinned_at", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "pin_updated_at", "INTEGER"),
     ("chats", "mute_updated_at", "INTEGER"),
+    ("chats", "parent", "TEXT"),
+    ("chats", "is_community", "INTEGER NOT NULL DEFAULT 0"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
@@ -146,6 +148,8 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
     };
     let kind: String = row.get(2)?;
     let participants: String = row.get(13)?;
+    let parent: Option<String> = row.get(17)?;
+    let is_community: i64 = row.get(18)?;
     Ok(Chat {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -162,6 +166,8 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         ephemeral_expiration: row
             .get::<_, Option<u32>>(16)?
             .filter(|expiration| *expiration != 0),
+        parent,
+        is_community: is_community != 0,
     })
 }
 
@@ -251,15 +257,17 @@ impl Archive {
     /// Creates a chat or replaces a phone-number title with a better name.
     pub fn upsert_chat(&self, chat: &Chat) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at, parent, is_community)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 last_activity = MAX(last_activity, excluded.last_activity),
                 archived = excluded.archived,
                 pinned = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned ELSE pinned END,
                 pinned_at = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned_at ELSE pinned_at END,
-                muted_until = CASE WHEN mute_updated_at IS NULL THEN excluded.muted_until ELSE muted_until END",
+                muted_until = CASE WHEN mute_updated_at IS NULL THEN excluded.muted_until ELSE muted_until END,
+                parent = excluded.parent,
+                is_community = excluded.is_community",
             params![
                 chat.id,
                 chat.name,
@@ -270,6 +278,8 @@ impl Archive {
                 chat.pinned,
                 chat.muted_until,
                 chat.pinned_at,
+                chat.parent,
+                chat.is_community as i64,
             ],
         )?;
         Ok(())
@@ -291,14 +301,18 @@ impl Archive {
         name: Option<&str>,
         participants: &[String],
         read_only: bool,
+        parent: Option<&str>,
+        is_community: bool,
     ) -> Result<()> {
         self.connection.execute(
-            "UPDATE chats SET name = COALESCE(?2, name), participants = ?3, read_only = ?4 WHERE id = ?1",
+            "UPDATE chats SET name = COALESCE(?2, name), participants = ?3, read_only = ?4, parent = ?5, is_community = ?6 WHERE id = ?1",
             params![
                 id,
                 name,
                 serde_json::to_string(participants).unwrap_or_else(|_| "[]".into()),
-                read_only
+                read_only,
+                parent,
+                is_community as i64
             ],
         )?;
         Ok(())
@@ -1361,6 +1375,8 @@ pub(crate) mod tests {
                 Some("Rust Berlin"),
                 &["a@s.whatsapp.net".into()],
                 true,
+                None,
+                false,
             )
             .expect("info");
         let row = archive.chat(chat).expect("chat").expect("exists");
@@ -1368,7 +1384,7 @@ pub(crate) mod tests {
         assert_eq!(row.participants, vec!["a@s.whatsapp.net"]);
         assert!(row.read_only);
         archive
-            .set_group_info(chat, None, &[], false)
+            .set_group_info(chat, None, &[], false, None, false)
             .expect("info");
         assert_eq!(
             archive.chat(chat).expect("chat").expect("exists").name,

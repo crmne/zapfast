@@ -323,6 +323,8 @@ struct ParsedChat {
     lid_jid: Option<String>,
     /// Whether the phone reports more available history.
     more_on_phone: Option<bool>,
+    parent: Option<String>,
+    is_community: bool,
     messages: Vec<ParsedMessage>,
     revoked: Vec<String>,
     poll_updates: Vec<HistoryPollUpdate>,
@@ -970,6 +972,8 @@ impl Worker {
                             .as_ref()
                             .and_then(|value| value.expiration),
                         ephemeral_setting_timestamp: None,
+                        parent: metadata.parent_group_jid.map(|jid| jid.to_non_ad_string()),
+                        is_community: metadata.is_parent_group,
                     });
                 }
                 Err(error) => {
@@ -1972,6 +1976,11 @@ impl Worker {
                 row.muted_until = chat
                     .muted_until
                     .unwrap_or_else(|| existing.as_ref().and_then(|row| row.muted_until));
+                row.parent = chat
+                    .parent
+                    .clone()
+                    .map(|parent| self.canonical_str(&parent));
+                row.is_community = chat.is_community;
                 if let Err(error) = self.archive.upsert_chat(&row) {
                     log::warn!("could not store chat {id}: {error}");
                     continue;
@@ -2791,11 +2800,18 @@ impl Worker {
                 read_only,
                 ephemeral_expiration,
                 ephemeral_setting_timestamp,
+                parent,
+                is_community,
             } => {
                 self.group_info_tries.remove(&chat);
-                let _ =
-                    self.archive
-                        .set_group_info(&chat, name.as_deref(), &participants, read_only);
+                let _ = self.archive.set_group_info(
+                    &chat,
+                    name.as_deref(),
+                    &participants,
+                    read_only,
+                    parent.as_deref(),
+                    is_community,
+                );
                 if let Some(expiration) = ephemeral_expiration {
                     let _ = self.archive.set_ephemeral(
                         &chat,
@@ -5237,6 +5253,11 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         pn_jid: conversation.pn_jid.clone(),
         lid_jid: conversation.lid_jid.clone(),
         more_on_phone,
+        parent: conversation
+            .parent_group_id
+            .clone()
+            .filter(|id| !id.is_empty()),
+        is_community: conversation.is_parent_group.unwrap_or(false),
         messages,
         revoked,
         poll_updates,
@@ -5686,6 +5707,8 @@ mod receipt_tests {
                 None,
                 &[ME.into(), PEER_LID.into(), other.into()],
                 false,
+                None,
+                false,
             )
             .unwrap();
         for (id, timestamp) in [("old", 100), ("new", 200)] {
@@ -5730,7 +5753,7 @@ mod receipt_tests {
         // Departures and joins do not rewrite the message's original audience.
         worker
             .archive
-            .set_group_info(group, None, &[ME.into(), PEER.into()], false)
+            .set_group_info(group, None, &[ME.into(), PEER.into()], false, None, false)
             .unwrap();
         send(&mut worker, PEER, ReceiptType::Read);
         assert_eq!(status(&worker, "new"), Delivery::Delivered);

@@ -352,6 +352,8 @@ pub enum Command {
         read_only: bool,
         ephemeral_expiration: Option<u32>,
         ephemeral_setting_timestamp: Option<i64>,
+        parent: Option<ChatId>,
+        is_community: bool,
     },
     /// Internal pairing-code result.
     PairCode {

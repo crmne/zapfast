@@ -497,6 +497,107 @@ pub fn populate(app: &mut App) {
         app.conversations.insert(sample.id.to_owned(), conversation);
         app.chats.push(chat);
     }
+    {
+        let community_id = "120363999999999999@g.us";
+        let mut community = Chat::new(community_id.into(), "ZapFast Community".into());
+        community.is_community = true;
+        community.last_activity = now - 15 * 60;
+        community.unread = 1;
+        community.participants = group_members
+            .iter()
+            .map(|(id, _)| (*id).to_owned())
+            .chain(std::iter::once(ME.to_owned()))
+            .collect();
+        let mut conv = Conversation {
+            complete: true,
+            requested: true,
+            phone_exhausted: true,
+            ..Default::default()
+        };
+        conv.messages.push(message(
+            community_id,
+            &format!("{community_id}-0"),
+            false,
+            community.last_activity - 60,
+            Content::text("Welcome to the community! Tap a subgroup below."),
+        ));
+        community.last = conv.messages.last().map(|last| crate::model::LastMessage {
+            from_me: last.from_me,
+            sender: last.sender.clone(),
+            sender_name: last.sender_name.clone(),
+            summary: last.summary(),
+            status: last.status,
+        });
+        app.conversations.insert(community_id.to_owned(), conv);
+        app.chats.push(community);
+
+        let announcements_id = "120363111111111111@g.us";
+        let mut announcements = Chat::new(announcements_id.into(), "Announcements".into());
+        announcements.parent = Some(community_id.into());
+        announcements.read_only = true;
+        announcements.last_activity = now - 5 * 60;
+        announcements.unread = 2;
+        announcements.participants = group_members
+            .iter()
+            .map(|(id, _)| (*id).to_owned())
+            .chain(std::iter::once(ME.to_owned()))
+            .collect();
+        let mut conv2 = Conversation {
+            complete: true,
+            requested: true,
+            phone_exhausted: true,
+            ..Default::default()
+        };
+        conv2.messages.push(message(
+            announcements_id,
+            &format!("{announcements_id}-0"),
+            false,
+            announcements.last_activity - 60,
+            Content::text("Announcement: meetup next week"),
+        ));
+        announcements.last = conv2.messages.last().map(|last| crate::model::LastMessage {
+            from_me: last.from_me,
+            sender: last.sender.clone(),
+            sender_name: last.sender_name.clone(),
+            summary: last.summary(),
+            status: last.status,
+        });
+        app.conversations.insert(announcements_id.to_owned(), conv2);
+        app.chats.push(announcements);
+
+        let general_id = "120363222222222222@g.us";
+        let mut general = Chat::new(general_id.into(), "General".into());
+        general.parent = Some(community_id.into());
+        general.last_activity = now - 7 * 60;
+        general.unread = 3;
+        general.participants = group_members
+            .iter()
+            .map(|(id, _)| (*id).to_owned())
+            .chain(std::iter::once(ME.to_owned()))
+            .collect();
+        let mut conv3 = Conversation {
+            complete: true,
+            requested: true,
+            phone_exhausted: true,
+            ..Default::default()
+        };
+        conv3.messages.push(message(
+            general_id,
+            &format!("{general_id}-0"),
+            false,
+            general.last_activity - 60,
+            Content::text("General chat is open to all members"),
+        ));
+        general.last = conv3.messages.last().map(|last| crate::model::LastMessage {
+            from_me: last.from_me,
+            sender: last.sender.clone(),
+            sender_name: last.sender_name.clone(),
+            summary: last.summary(),
+            status: last.status,
+        });
+        app.conversations.insert(general_id.to_owned(), conv3);
+        app.chats.push(general);
+    }
 
     plant_avatars(app);
     // Cover every supported bubble type in the first chat.

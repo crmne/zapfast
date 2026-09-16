@@ -225,6 +225,7 @@ pub struct App {
     pub pair_phone: String,
     pub sidebar_visible: bool,
     pub show_archived: bool,
+    pub collapsed_communities: HashSet<ChatId>,
     pub toasts: Vec<Toast>,
     pub actions: Vec<Action>,
     /// A newer release than this build, once GitHub has said so.
@@ -419,6 +420,7 @@ impl App {
             pair_phone: String::new(),
             sidebar_visible: true,
             show_archived: false,
+            collapsed_communities: HashSet::new(),
             toasts: Vec::new(),
             actions: Vec::new(),
             update: None,
@@ -838,6 +840,88 @@ impl App {
             })
         });
         chats
+    }
+
+    pub fn visible_communities(&self) -> (Vec<(Chat, Vec<Chat>)>, Vec<Chat>) {
+        let needle = crate::util::search_key(self.search.trim());
+        let visible: Vec<&Chat> = self
+            .chats
+            .iter()
+            .filter(|chat| chat.archived == self.show_archived || !needle.is_empty())
+            .filter(|chat| {
+                needle.is_empty()
+                    || crate::util::search_key(&chat.name).contains(&needle)
+                    || chat.phone().is_some_and(|phone| phone.contains(&needle))
+                    || chat.last.as_ref().is_some_and(|last| {
+                        crate::util::search_key(&last.summary).contains(&needle)
+                    })
+            })
+            .collect();
+        let mut by_parent: std::collections::HashMap<&str, Vec<&Chat>> =
+            std::collections::HashMap::new();
+        let mut communities: Vec<&Chat> = Vec::new();
+        let mut orphans: Vec<&Chat> = Vec::new();
+        for chat in &visible {
+            if chat.is_community {
+                communities.push(*chat);
+            } else if let Some(parent) = chat.parent.as_deref() {
+                by_parent.entry(parent).or_default().push(*chat);
+            } else {
+                orphans.push(*chat);
+            }
+        }
+        let mut grouped: Vec<(Chat, Vec<Chat>)> = Vec::new();
+        let mut seen_parents = std::collections::HashSet::new();
+        for community in communities {
+            let mut children = by_parent.remove(community.id.as_str()).unwrap_or_default();
+            children.sort_by(|a, b| {
+                b.pinned.cmp(&a.pinned).then_with(|| {
+                    if a.pinned && b.pinned {
+                        b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
+                    } else {
+                        b.last_activity.cmp(&a.last_activity).then(a.id.cmp(&b.id))
+                    }
+                })
+            });
+            grouped.push((
+                (*community).clone(),
+                children.into_iter().cloned().collect(),
+            ));
+            seen_parents.insert(community.id.as_str());
+        }
+        for (_, leftover) in by_parent {
+            orphans.extend(leftover);
+        }
+        grouped.sort_by(|a, b| {
+            b.0.pinned.cmp(&a.0.pinned).then_with(|| {
+                if a.0.pinned && b.0.pinned {
+                    b.0.pinned_at.cmp(&a.0.pinned_at).then(a.0.id.cmp(&b.0.id))
+                } else {
+                    b.0.last_activity
+                        .cmp(&a.0.last_activity)
+                        .then(a.0.id.cmp(&b.0.id))
+                }
+            })
+        });
+        orphans.sort_by(|a, b| {
+            b.pinned.cmp(&a.pinned).then_with(|| {
+                if a.pinned && b.pinned {
+                    b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
+                } else {
+                    b.last_activity.cmp(&a.last_activity).then(a.id.cmp(&b.id))
+                }
+            })
+        });
+        let orphans_owned: Vec<Chat> = orphans.into_iter().cloned().collect();
+        (grouped, orphans_owned)
+    }
+
+    pub fn community_unread(&self, community: &Chat, children: &[Chat]) -> u32 {
+        let mut total = community.unread;
+        for child in children {
+            total += child.unread;
+        }
+        total
     }
 
     /// Matching individual contacts without an existing chat, sorted by name.
@@ -2250,6 +2334,11 @@ impl App {
                 });
             }
             Action::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
+            Action::ToggleCommunity(id) => {
+                if !self.collapsed_communities.remove(&id) {
+                    self.collapsed_communities.insert(id);
+                }
+            }
             Action::FocusSearch => {
                 self.sidebar_visible = true;
                 self.page = Page::Chats;

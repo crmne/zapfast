@@ -224,10 +224,22 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         results(app, ui);
         return;
     }
-    let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
     let archived = app.archived_count();
     let show_archive_row = !app.show_archived && archived > 0;
-    if chats.is_empty() && !show_archive_row {
+    let (grouped, orphans) = app.visible_communities();
+    let mut items: Vec<Chat> = Vec::new();
+    for (community, children) in &grouped {
+        items.push((*community).clone());
+        if !app.collapsed_communities.contains(&community.id) {
+            for child in children {
+                items.push((*child).clone());
+            }
+        }
+    }
+    for chat in &orphans {
+        items.push((*chat).clone());
+    }
+    if items.is_empty() && !show_archive_row {
         let (title, body) = if app.show_archived {
             ("Nothing archived", "Archived chats appear here.")
         } else if app.syncing {
@@ -242,12 +254,12 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let row_height = theme::ROW_HEIGHT;
-    let total = chats.len() + usize::from(show_archive_row);
+    let total = items.len() + usize::from(show_archive_row);
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-list")
         .auto_shrink([false, false]);
     let target_row = app.scroll_chat_into_view.as_ref().and_then(|target| {
-        chats
+        items
             .iter()
             .position(|chat| chat.id == *target)
             .map(|index| index + usize::from(show_archive_row))
@@ -274,9 +286,22 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
                 archive_row(app, ui, archived);
                 continue;
             }
-            let chat = &chats[index - usize::from(show_archive_row)];
-            // Key by chat so an open menu survives list reordering.
-            ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+            let chat = &items[index - usize::from(show_archive_row)];
+            ui.push_id(("chat", &chat.id), |ui| {
+                if chat.is_community() {
+                    // Need children for aggregated badge
+                    let children = grouped
+                        .iter()
+                        .find(|(c, _)| c.id == chat.id)
+                        .map(|(_, ch)| ch.as_slice())
+                        .unwrap_or(&[]);
+                    community_row(app, ui, chat, children);
+                } else if chat.is_subgroup() {
+                    row(app, ui, chat, 18.0);
+                } else {
+                    row(app, ui, chat, 0.0);
+                }
+            });
         }
     });
 }
@@ -325,7 +350,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                 for chat in &chats {
                     let reveal = app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
                     let response = ui
-                        .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
+                        .push_id(("chat", &chat.id), |ui| row(app, ui, chat, 0.0))
                         .inner;
                     if reveal {
                         response.scroll_to_me(None);
@@ -562,7 +587,7 @@ fn archive_row(app: &mut App, ui: &mut egui::Ui, count: usize) {
     }
 }
 
-fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
+fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat, indent: f32) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
     let selected = app.open_chat.as_deref() == Some(chat.id.as_str());
@@ -578,8 +603,18 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         } else if response.hovered() {
             ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        if indent > 0.0 {
+            let x = rect.left() + 18.0;
+            ui.painter().vline(
+                x,
+                rect.y_range(),
+                egui::Stroke::new(1.0, palette.outline.gamma_multiply(0.5)),
+            );
+        }
+        let avatar_rect = Rect::from_center_size(
+            pos2(rect.left() + 38.0 + indent, rect.center().y),
+            Vec2::splat(48.0),
+        );
         let picture = app.avatar(&chat.id);
         widgets::paint_avatar(
             ui,
@@ -593,7 +628,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
         }
 
-        let left = rect.left() + 76.0;
+        let left = rect.left() + 76.0 + indent;
         let right = rect.right() - 14.0;
         let stamp = if chat.last_activity > 0 {
             crate::util::chat_stamp(chat.last_activity)
@@ -715,6 +750,152 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     if response.clicked() {
         app.actions.push(Action::OpenChat(chat.id.clone()));
     }
+    let menu_palette = palette;
+    egui::Popup::context_menu(&response)
+        .frame(widgets::menu_frame(&menu_palette))
+        .show(|ui| {
+            ui.set_min_width(190.0);
+            context_menu(app, ui, chat, &menu_palette);
+        });
+    response
+}
+
+fn community_row(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    children: &[Chat],
+) -> egui::Response {
+    let palette = app.palette;
+    let title = app.chat_title(chat);
+    let selected = app.open_chat.as_deref() == Some(chat.id.as_str());
+    let now = crate::util::now();
+    let collapsed = app.collapsed_communities.contains(&chat.id);
+    let total_unread = app.community_unread(chat, children);
+    let muted = if total_unread > 0 {
+        children.iter().all(|c| c.muted(now)) && chat.muted(now)
+    } else {
+        chat.muted(now)
+    };
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), theme::ROW_HEIGHT),
+        Sense::click(),
+    );
+    let disclosure_rect =
+        Rect::from_center_size(pos2(rect.left() + 12.0, rect.center().y), Vec2::splat(16.0));
+    let disclosure = ui
+        .interact(
+            disclosure_rect,
+            ui.id().with(("disclosure", &chat.id)),
+            Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if disclosure.clicked() {
+        app.actions.push(Action::ToggleCommunity(chat.id.clone()));
+    } else if response.clicked() {
+        app.actions.push(Action::OpenChat(chat.id.clone()));
+    }
+    if ui.is_rect_visible(rect) {
+        if selected {
+            ui.painter().rect_filled(rect, 0.0, palette.surface_active);
+        } else if response.hovered() || disclosure.hovered() {
+            ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
+        }
+        let icon = if collapsed {
+            Icon::ChevronRight
+        } else {
+            Icon::ChevronDown
+        };
+        icon.image(palette.dim, 12.0).paint_at(ui, disclosure_rect);
+        let avatar_rect =
+            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let picture = app.avatar(&chat.id);
+        widgets::paint_avatar(
+            ui,
+            &palette,
+            avatar_rect,
+            &title,
+            &chat.id,
+            picture.as_deref(),
+        );
+        if chat.ephemeral_expiration.is_some() {
+            widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
+        }
+        let left = rect.left() + 76.0;
+        let right = rect.right() - 14.0;
+        let stamp = if chat.last_activity > 0 {
+            crate::util::chat_stamp(chat.last_activity)
+        } else {
+            String::new()
+        };
+        let has_unread = total_unread > 0;
+        let stamp_color = if has_unread && !muted {
+            palette.accent
+        } else {
+            palette.dim
+        };
+        let stamp_galley = ui
+            .painter()
+            .layout_no_wrap(stamp, theme::regular(11.5), stamp_color);
+        let name_top = rect.top() + 14.0;
+        ui.painter().galley(
+            pos2(right - stamp_galley.size().x, name_top + 1.0),
+            stamp_galley.clone(),
+            stamp_color,
+        );
+        let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
+        let name_font = if has_unread {
+            theme::semibold(14.5)
+        } else {
+            theme::medium(14.5)
+        };
+        let name = widgets::line(ui, &title, name_font, palette.text, name_width, 1);
+        name.paint(ui, pos2(left, name_top), palette.text);
+        let mut badge_right = right;
+        let line_y = rect.top() + 38.0;
+        if has_unread {
+            let width = widgets::badge(
+                ui,
+                &palette,
+                pos2(badge_right - 10.0, line_y + 8.0),
+                total_unread,
+                muted,
+            );
+            badge_right -= width + 6.0;
+        }
+        if muted {
+            let icon_rect =
+                Rect::from_center_size(pos2(badge_right - 8.0, line_y + 8.0), Vec2::splat(15.0));
+            Icon::VolumeX
+                .image(palette.dim, 15.0)
+                .paint_at(ui, icon_rect);
+            badge_right -= 20.0;
+        }
+        if chat.pinned {
+            let icon_rect =
+                Rect::from_center_size(pos2(badge_right - 8.0, line_y + 8.0), Vec2::splat(14.0));
+            Icon::Pin.image(palette.dim, 14.0).paint_at(ui, icon_rect);
+            badge_right -= 20.0;
+        }
+        let count_label = format!("{} groups", children.len());
+        let preview = widgets::line(
+            ui,
+            &count_label,
+            theme::regular(13.0),
+            palette.dim,
+            badge_right - left,
+            1,
+        );
+        preview.paint(ui, pos2(left, line_y), palette.dim);
+        ui.painter().hline(
+            left..=rect.right(),
+            rect.bottom() - 0.5,
+            egui::Stroke::new(1.0, palette.outline),
+        );
+    }
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .union(disclosure.clone());
     let menu_palette = palette;
     egui::Popup::context_menu(&response)
         .frame(widgets::menu_frame(&menu_palette))
