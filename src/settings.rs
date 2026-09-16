@@ -78,6 +78,8 @@ pub struct Settings {
     pub voice_speed: f32,
     /// Also add saved contacts to the phone's address book.
     pub save_contacts_to_phone: bool,
+    /// Secret code that reveals the locked-chats folder in search.
+    pub chat_lock_code: Option<String>,
 }
 
 impl Default for Settings {
@@ -105,6 +107,7 @@ impl Default for Settings {
             names_from_contacts: true,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
+            chat_lock_code: None,
         }
     }
 }

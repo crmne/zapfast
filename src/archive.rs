@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS chats (
     unread INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
     pinned INTEGER NOT NULL DEFAULT 0,
-    muted_until INTEGER
+    muted_until INTEGER,
+    locked INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS messages (
     chat TEXT NOT NULL,
@@ -103,7 +104,7 @@ END;
 const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
-                    c.pinned_at, c.ephemeral_expiration";
+                    c.pinned_at, c.ephemeral_expiration, c.locked";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -121,6 +122,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "pinned_at", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "pin_updated_at", "INTEGER"),
     ("chats", "mute_updated_at", "INTEGER"),
+    ("chats", "locked", "INTEGER NOT NULL DEFAULT 0"),
+    ("chats", "lock_updated_at", "INTEGER"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
@@ -156,6 +159,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         pinned: row.get(6)?,
         pinned_at: row.get(15)?,
         muted_until: row.get(7)?,
+        locked: row.get(17)?,
         last,
         participants: serde_json::from_str(&participants).unwrap_or_default(),
         read_only: row.get(14)?,
@@ -339,7 +343,6 @@ impl Archive {
     pub fn set_muted(&self, id: &str, until: Option<i64>) -> Result<()> {
         self.set_muted_at(id, until, jiff::Timestamp::now().as_millisecond())
     }
-
     /// Keep mute/unmute actions across history replay, including actions that
     /// precede the initial chat snapshot and older app-state replay.
     pub fn set_muted_at(&self, id: &str, until: Option<i64>, timestamp: i64) -> Result<()> {
@@ -347,6 +350,21 @@ impl Archive {
             "UPDATE chats SET muted_until = ?2, mute_updated_at = ?3 WHERE id = ?1
                 AND (mute_updated_at IS NULL OR mute_updated_at <= ?3)",
             params![id, until, timestamp],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_locked(&self, id: &str, locked: bool) -> Result<()> {
+        self.set_locked_at(id, locked, jiff::Timestamp::now().as_millisecond())
+    }
+
+    /// Apply lock state in timestamp order, like pin and mute, so an old
+    /// replay cannot undo a lock change just received from the phone.
+    pub fn set_locked_at(&self, id: &str, locked: bool, timestamp: i64) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET locked = ?2, lock_updated_at = ?3 WHERE id = ?1
+                AND (lock_updated_at IS NULL OR lock_updated_at <= ?3)",
+            params![id, locked, timestamp],
         )?;
         Ok(())
     }
@@ -552,10 +570,11 @@ impl Archive {
         self.merge_group_recipient(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
         let changed = self.connection.execute(
             "INSERT INTO chats (id, name, kind, pinned, pinned_at, pin_updated_at,
-                muted_until, mute_updated_at)
+                muted_until, mute_updated_at, locked, lock_updated_at)
              SELECT ?2, ?3, 'direct', pinned, pinned_at, pin_updated_at,
-                muted_until, mute_updated_at FROM chats WHERE id = ?1
-                AND (pin_updated_at IS NOT NULL OR mute_updated_at IS NOT NULL)
+                muted_until, mute_updated_at, locked, lock_updated_at FROM chats WHERE id = ?1
+                AND (pin_updated_at IS NOT NULL OR mute_updated_at IS NOT NULL
+                    OR lock_updated_at IS NOT NULL)
              ON CONFLICT(id) DO UPDATE SET
                 pinned = CASE WHEN excluded.pin_updated_at >= COALESCE(pin_updated_at, -1)
                     THEN excluded.pinned ELSE pinned END,
@@ -564,7 +583,10 @@ impl Archive {
                 pin_updated_at = NULLIF(MAX(COALESCE(pin_updated_at, -1), COALESCE(excluded.pin_updated_at, -1)), -1),
                 muted_until = CASE WHEN excluded.mute_updated_at >= COALESCE(mute_updated_at, -1)
                     THEN excluded.muted_until ELSE muted_until END,
-                mute_updated_at = NULLIF(MAX(COALESCE(mute_updated_at, -1), COALESCE(excluded.mute_updated_at, -1)), -1)",
+                mute_updated_at = NULLIF(MAX(COALESCE(mute_updated_at, -1), COALESCE(excluded.mute_updated_at, -1)), -1),
+                locked = CASE WHEN excluded.lock_updated_at >= COALESCE(lock_updated_at, -1)
+                    THEN excluded.locked ELSE locked END,
+                lock_updated_at = NULLIF(MAX(COALESCE(lock_updated_at, -1), COALESCE(excluded.lock_updated_at, -1)), -1)",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net"), pn],
         )?;
         Ok(changed > 0)
@@ -1181,11 +1203,15 @@ impl Archive {
             .optional()
     }
 
+    /// Older archives discarded pin times and could lose mute sync. Request
+    /// one library-managed snapshot for an existing archive. Fresh links
+    /// already receive snapshots; reconnecting must not add another request.
     /// Older archives never received mute and pin changes made on the phone
     /// before this device linked: history only replays at link time, and the
     /// v1 refresh asked for a snapshot from the stored version, which returns
     /// nothing once the server considers the device current. v2 replays both
-    /// collections from version zero instead. Fresh links already receive
+    /// collections from version zero instead (which also redelivers `lock`
+    /// mutations the archive predates). Fresh links already receive
     /// everything; reconnecting must not add another request.
     pub fn take_preferences_refresh(&self) -> Result<bool> {
         const KEY: &str = "chat_preferences_refresh_v2";
@@ -1316,6 +1342,7 @@ pub(crate) mod tests {
         assert_eq!(chats.len(), 1);
         assert!(chats[0].participants.is_empty());
         assert!(!chats[0].read_only);
+        assert!(!chats[0].locked, "the lock column migrates in unset");
         let mut with_thumbnail = message("1@s.whatsapp.net", "m1", 1, false);
         with_thumbnail.thumbnail = Some(vec![1, 2, 3]);
         archive
@@ -1443,6 +1470,25 @@ pub(crate) mod tests {
         assert_eq!(chat.muted_until, None);
         assert!(!chat.pinned);
         assert_eq!(chat.pinned_at, 0);
+    }
+
+    #[test]
+    fn lock_versions_survive_restart_and_ignore_older_updates() {
+        let archive = Archive::in_memory().expect("opens");
+        let id = "491700000001@s.whatsapp.net";
+        archive.ensure_chat(id, "Ada").expect("chat");
+        archive.set_locked_at(id, true, 200).unwrap();
+        // An older replayed patch must not undo the newer lock.
+        archive.set_locked_at(id, false, 100).unwrap();
+        assert!(archive.chat(id).unwrap().unwrap().locked);
+        archive.set_locked_at(id, false, 300).unwrap();
+        assert!(!archive.chat(id).unwrap().unwrap().locked);
+        // Upserts from history metadata never touch the lock state.
+        archive.set_locked(id, true).unwrap();
+        archive
+            .upsert_chat(&Chat::new(id.into(), "History name".into()))
+            .unwrap();
+        assert!(archive.chat(id).unwrap().unwrap().locked);
     }
 
     #[test]

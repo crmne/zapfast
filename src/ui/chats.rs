@@ -53,7 +53,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if app.show_archived {
+                if app.show_archived || app.locked_folder {
                     if theme::icon_button(
                         ui,
                         Icon::ArrowLeft,
@@ -65,8 +65,18 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                     .clicked()
                     {
                         app.show_archived = false;
+                        app.locked_folder = false;
                     }
-                    theme::text(ui, "Archived", theme::bold(20.0), palette.text);
+                    theme::text(
+                        ui,
+                        if app.locked_folder {
+                            "Locked chats"
+                        } else {
+                            "Archived"
+                        },
+                        theme::bold(20.0),
+                        palette.text,
+                    );
                 } else {
                     let me = app.me.clone().unwrap_or_default();
                     let name = app.me_name.clone().unwrap_or_else(|| "You".to_owned());
@@ -155,7 +165,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.set_min_height(44.0);
                 ui.add_space((inset - 14.0).max(0.0));
-                if app.show_archived {
+                if app.show_archived || app.locked_folder {
                     if theme::icon_button(
                         ui,
                         Icon::ArrowLeft,
@@ -167,8 +177,18 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     .clicked()
                     {
                         app.show_archived = false;
+                        app.locked_folder = false;
                     }
-                    theme::text(ui, "Archived", theme::bold(16.0), palette.text);
+                    theme::text(
+                        ui,
+                        if app.locked_folder {
+                            "Locked chats"
+                        } else {
+                            "Archived"
+                        },
+                        theme::bold(16.0),
+                        palette.text,
+                    );
                 } else {
                     theme::text(ui, "Chats", theme::bold(20.0), palette.text);
                 }
@@ -261,6 +281,16 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
 
 fn list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    if app.locked_folder {
+        locked_list(app, ui);
+        return;
+    }
+    if app.secret_code_matched() {
+        // Typing the secret code hides every other result: the folder entry
+        // is all the search reveals until it is clicked.
+        locked_entry(app, ui);
+        return;
+    }
     if !app.search.trim().is_empty() {
         results(app, ui);
         return;
@@ -335,6 +365,78 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+}
+
+/// The row the secret code reveals: the only thing the search then shows.
+fn locked_entry(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let count = app.locked_count();
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), theme::ROW_HEIGHT),
+        Sense::click(),
+    );
+    if ui.is_rect_visible(rect) {
+        if response.hovered() {
+            ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
+        }
+        let icon_rect =
+            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(22.0));
+        Icon::LockOpen
+            .image(palette.accent, 22.0)
+            .paint_at(ui, icon_rect);
+        ui.painter().text(
+            pos2(rect.left() + 76.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Locked chats",
+            theme::medium(14.5),
+            palette.text,
+        );
+        ui.painter().text(
+            pos2(rect.right() - 16.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            count.to_string(),
+            theme::regular(12.5),
+            palette.accent,
+        );
+        ui.painter().hline(
+            (rect.left() + 76.0)..=rect.right(),
+            rect.bottom() - 0.5,
+            egui::Stroke::new(1.0, palette.outline),
+        );
+    }
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        app.locked_folder = true;
+    }
+}
+
+/// The locked folder itself; leaving it (back, or the search changing away
+/// from the code) hides the locked chats again.
+fn locked_list(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let mut chats: Vec<&Chat> = app.chats.iter().filter(|chat| chat.locked).collect();
+    chats.sort_by(|a, b| b.last_activity.cmp(&a.last_activity).then(a.id.cmp(&b.id)));
+    if chats.is_empty() {
+        widgets::empty_state(
+            ui,
+            &palette,
+            Icon::LockOpen,
+            "No locked chats",
+            "Lock a chat from its context menu to hide it here.",
+        );
+        return;
+    }
+    let chats: Vec<Chat> = chats.into_iter().cloned().collect();
+    egui::ScrollArea::vertical()
+        .id_salt("locked-chats")
+        .auto_shrink([false, false])
+        .show_rows(ui, theme::ROW_HEIGHT, chats.len(), |ui, range| {
+            for chat in &chats[range] {
+                ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+            }
+        });
 }
 
 /// Returns the smallest offset that fully reveals a fixed-height row.
@@ -822,6 +924,23 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
                 app.actions.push(Action::SetMuted(chat.id.clone(), until));
             }
         }
+    }
+    if widgets::menu_item(
+        ui,
+        palette,
+        Some(if chat.locked {
+            Icon::LockOpen
+        } else {
+            Icon::Lock
+        }),
+        if chat.locked {
+            "Unlock chat"
+        } else {
+            "Lock chat"
+        },
+    ) {
+        app.actions
+            .push(Action::SetLocked(chat.id.clone(), !chat.locked));
     }
     widgets::menu_separator(ui, palette);
     if let Some(phone) = chat.phone()

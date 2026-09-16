@@ -153,6 +153,8 @@ pub struct App {
     pub search: String,
     /// Message search results, newest first.
     pub search_hits: Vec<Message>,
+    /// Whether the locked-chats folder is open (revealed by the secret code).
+    pub locked_folder: bool,
     /// Active typers and their latest event time by chat.
     pub typing: HashMap<ChatId, Vec<(String, Instant)>>,
     pub presence: HashMap<String, Presence>,
@@ -383,6 +385,7 @@ impl App {
             last_keystroke: None,
             search: String::new(),
             search_hits: Vec::new(),
+            locked_folder: false,
             typing: HashMap::new(),
             presence: HashMap::new(),
             account_receipts_off: false,
@@ -536,8 +539,9 @@ impl App {
             return;
         };
         let now = crate::util::now();
-        // Skip muted chats and delayed reconnect backlogs.
-        if chat.unread == 0 || chat.muted(now) || now - message.timestamp > 60 {
+        // Skip muted chats, locked chats (no signal that one arrived, either),
+        // and delayed reconnect backlogs.
+        if chat.unread == 0 || chat.muted(now) || chat.locked || now - message.timestamp > 60 {
             return;
         }
         let reading = !self.window_hidden
@@ -832,14 +836,29 @@ impl App {
         names.join(", ")
     }
 
+    /// Whether the typed search text is the secret code that reveals the
+    /// locked-chats folder.
+    pub fn secret_code_matched(&self) -> bool {
+        self.settings
+            .chat_lock_code
+            .as_deref()
+            .is_some_and(|code| !code.is_empty() && self.search.trim() == code)
+    }
+
+    pub fn locked_count(&self) -> usize {
+        self.chats.iter().filter(|chat| chat.locked).count()
+    }
+
     /// Visible chats filtered by search, archive state, and the chat filter,
     /// with pinned first.
+    /// Locked chats only appear inside the locked folder.
     pub fn visible_chats(&self) -> Vec<&Chat> {
         let needle = crate::util::search_key(self.search.trim());
         let filtering = needle.is_empty() && !self.show_archived;
         let mut chats: Vec<&Chat> = self
             .chats
             .iter()
+            .filter(|chat| chat.locked == self.locked_folder)
             .filter(|chat| chat.archived == self.show_archived || !needle.is_empty())
             .filter(|chat| {
                 !filtering
@@ -848,7 +867,10 @@ impl App {
                         && self.unread_kept.contains(&chat.id))
             })
             .filter(|chat| {
-                needle.is_empty()
+                // Inside the locked folder the typed text is the secret code,
+                // not a query to match.
+                self.locked_folder
+                    || needle.is_empty()
                     || crate::util::search_key(&chat.name).contains(&needle)
                     || chat.phone().is_some_and(|phone| phone.contains(&needle))
                     || chat.last.as_ref().is_some_and(|last| {
@@ -912,7 +934,7 @@ impl App {
     pub fn unread_total(&self) -> u32 {
         self.chats
             .iter()
-            .filter(|chat| !chat.archived && !chat.muted(crate::util::now()))
+            .filter(|chat| !chat.archived && !chat.locked && !chat.muted(crate::util::now()))
             .map(|chat| chat.unread)
             .sum()
     }
@@ -1057,7 +1079,13 @@ impl App {
                 }
                 Event::SearchHits { query, messages } => {
                     if query == self.search.trim() {
-                        self.search_hits = messages;
+                        // Locked chats' messages stay out of plain search.
+                        self.search_hits = messages
+                            .into_iter()
+                            .filter(|message| {
+                                self.chat(&message.chat).is_none_or(|chat| !chat.locked)
+                            })
+                            .collect();
                     }
                 }
                 Event::Incoming { chat, message } => self.maybe_notify(&chat, &message),
@@ -2068,6 +2096,16 @@ impl App {
                 }
                 self.backend.send(Command::SetMuted(chat, until));
             }
+            Action::SetLocked(chat, locked) => {
+                if let Some(known) = self.chat_mut(&chat) {
+                    known.locked = locked;
+                }
+                // Locking the open chat closes it, as the phone does.
+                if locked && self.open_chat.as_deref() == Some(chat.as_str()) {
+                    self.open_chat = None;
+                }
+                self.backend.send(Command::SetLocked(chat, locked));
+            }
             Action::TogglePicker(tab) => {
                 self.emoji_start = None;
                 self.mention_start = None;
@@ -2376,6 +2414,11 @@ impl App {
             Action::Search(text) => {
                 self.search = text;
                 let query = self.search.trim().to_owned();
+                // Editing the search away from the secret code hides the
+                // locked folder again, like leaving the phone's home screen.
+                if !self.secret_code_matched() {
+                    self.locked_folder = false;
+                }
                 if query.is_empty() {
                     self.search_hits.clear();
                 } else {
@@ -3356,6 +3399,67 @@ mod tests {
         app.apply(Action::KeepUnread("2@s.whatsapp.net".into()), &ctx);
         app.apply(Action::SetChatFilter(ChatFilter::Unread), &ctx);
         assert!(app.visible_chats().is_empty());
+    }
+
+    #[test]
+    fn locked_chats_hide_everywhere_until_the_code_opens_the_folder() {
+        let mut app = app();
+        let mut a = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        a.last_activity = 10;
+        a.unread = 3;
+        let mut b = Chat::new("2@s.whatsapp.net".into(), "Bob".into());
+        b.last_activity = 20;
+        b.locked = true;
+        b.unread = 5;
+        app.chats = vec![b, a];
+        app.settings.chat_lock_code = Some("1234".to_owned());
+
+        // Hidden from the list, search, and the unread badge.
+        let names: Vec<&str> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Ada"]);
+        app.search = "bob".into();
+        assert!(app.visible_chats().is_empty());
+        assert_eq!(app.unread_total(), 3);
+
+        // Typing the code reveals the entry; opening the folder shows only
+        // the locked chats; editing the search away hides them again.
+        assert!(!app.secret_code_matched());
+        app.search = "1234".into();
+        assert!(app.secret_code_matched());
+        app.locked_folder = true;
+        let names: Vec<&str> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Bob"]);
+        assert_eq!(app.locked_count(), 1);
+        app.search = "123".into();
+        app.apply(Action::Search("123".into()), &egui::Context::default());
+        assert!(!app.locked_folder);
+        app.apply(Action::Search(String::new()), &egui::Context::default());
+        let names: Vec<&str> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Ada"]);
+    }
+
+    #[test]
+    fn locking_the_open_chat_closes_it() {
+        let mut app = app();
+        let id: ChatId = "2@s.whatsapp.net".into();
+        app.chats = vec![Chat::new(id.clone(), "Bob".into())];
+        app.open_chat = Some(id.clone());
+        app.locked_folder = true;
+        app.apply(Action::SetLocked(id, true), &egui::Context::default());
+        assert!(app.open_chat.is_none());
+        assert!(app.chats[0].locked);
     }
 
     #[test]
