@@ -1105,6 +1105,25 @@ impl Worker {
             E::ContactUpdate(update) => self.on_contact_update(update),
             E::GroupUpdate(update) => {
                 let chat = self.canonical(&update.group_jid);
+                if let whatsapp_rust::wacore::stanza::groups::GroupNotificationAction::Ephemeral {
+                    expiration,
+                    ..
+                } = &update.action
+                {
+                    let timestamp = update.timestamp.timestamp();
+                    let accepted = self
+                        .archive
+                        .set_ephemeral(&chat, *expiration, timestamp)
+                        .unwrap_or(false);
+                    log::info!(
+                        target: "zapfast::disappearing",
+                        "group timer update: duration={expiration}s timestamp={timestamp} accepted={accepted}"
+                    );
+                    if accepted {
+                        self.emit_chat(&chat);
+                        log::info!(target: "zapfast::disappearing", "group timer UI update emitted");
+                    }
+                }
                 self.request_group_info(&chat, true);
             }
             E::ArchiveUpdate(update) => {
@@ -1166,7 +1185,19 @@ impl Worker {
                 let id = self.canonical(&update.from);
                 let timestamp = update.setting_timestamp.timestamp();
                 self.ensure_chat(&id, None);
-                let _ = self.archive.set_ephemeral(&id, update.duration, timestamp);
+                let accepted = self
+                    .archive
+                    .set_ephemeral(&id, update.duration, timestamp)
+                    .unwrap_or(false);
+                log::info!(
+                    target: "zapfast::disappearing",
+                    "direct notification timer update: duration={}s timestamp={timestamp} accepted={accepted}",
+                    update.duration
+                );
+                if accepted {
+                    self.emit_chat(&id);
+                    log::info!(target: "zapfast::disappearing", "direct notification UI update emitted");
+                }
                 if self.is_me(&id) {
                     let stored = self
                         .archive
@@ -1458,12 +1489,29 @@ impl Worker {
         if let Some(protocol) = base.protocol_message.as_option() {
             use wa::message::protocol_message::Type;
             if protocol.r#type == Some(Type::EPHEMERAL_SETTING) {
-                if let (Some(expiration), Some(timestamp)) = (
-                    protocol.ephemeral_expiration,
-                    protocol.ephemeral_setting_timestamp,
-                ) {
+                if let Some(expiration) = protocol.ephemeral_expiration {
+                    let timestamp = protocol
+                        .ephemeral_setting_timestamp
+                        .unwrap_or_else(|| info.timestamp.timestamp());
+                    let used_fallback = protocol.ephemeral_setting_timestamp.is_none();
                     self.ensure_chat(&chat, push_name.as_deref());
-                    let _ = self.archive.set_ephemeral(&chat, expiration, timestamp);
+                    let accepted = self
+                        .archive
+                        .set_ephemeral(&chat, expiration, timestamp)
+                        .unwrap_or(false);
+                    log::info!(
+                        target: "zapfast::disappearing",
+                        "protocol timer update: duration={expiration}s timestamp={timestamp} fallback_timestamp={used_fallback} accepted={accepted}"
+                    );
+                    if accepted {
+                        self.emit_chat(&chat);
+                        log::info!(target: "zapfast::disappearing", "protocol timer UI update emitted");
+                    }
+                } else {
+                    log::info!(
+                        target: "zapfast::disappearing",
+                        "protocol timer update missing expiration"
+                    );
                 }
                 return;
             }
