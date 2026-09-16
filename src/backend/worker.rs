@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use whatsapp_rust::download::MediaType;
+use whatsapp_rust::features::message_edit::{
+    SecretEncKind, decrypt_secret_encrypted_with_fallback, extract_secret_encrypted,
+};
 use whatsapp_rust::media::{
     AudioOptions, DocumentOptions, ImageOptions, VideoOptions, audio_message, document_message,
     image_message, video_message,
@@ -326,6 +329,7 @@ struct ParsedChat {
     messages: Vec<ParsedMessage>,
     revoked: Vec<String>,
     poll_updates: Vec<HistoryPollUpdate>,
+    reactions: Vec<HistoryReaction>,
 }
 
 struct HistoryPollUpdate {
@@ -334,6 +338,19 @@ struct HistoryPollUpdate {
     from_me: bool,
     timestamp: i64,
     update: wa::message::PollUpdateMessage,
+}
+
+/// Standalone reaction from history, applied after the parent row is stored.
+struct HistoryReaction {
+    target: String,
+    sender: Option<String>,
+    from_me: bool,
+    body: HistoryReactionBody,
+}
+
+enum HistoryReactionBody {
+    Plain(String),
+    Encrypted { payload: Vec<u8>, iv: Vec<u8> },
 }
 
 struct ParsedMessage {
@@ -1578,16 +1595,11 @@ impl Worker {
             return;
         }
         if let Some(reaction) = base.reaction_message.as_option() {
-            let Some(target) = reaction.key.as_option().and_then(|key| key.id.clone()) else {
-                return;
-            };
-            let emoji = reaction.text.clone().unwrap_or_default();
-            if let Ok(Some(updated)) = self
-                .archive
-                .set_reaction(&chat, &target, &sender, from_me, &emoji)
-            {
-                self.emit(Event::MessageUpdated(Box::new(updated)));
-            }
+            self.store_plain_reaction(&chat, &sender, from_me, reaction);
+            return;
+        }
+        if base.enc_reaction_message.is_set() {
+            self.store_enc_reaction(&chat, &sender, from_me, base);
             return;
         }
         if let Some(update) = base.poll_update_message.as_option() {
@@ -1633,6 +1645,163 @@ impl Worker {
         self.store_message(row, Some(message.encode_to_vec()), push_name.as_deref());
         if is_poll {
             self.pump_poll_votes();
+        }
+    }
+
+    fn store_plain_reaction(
+        &mut self,
+        chat: &str,
+        sender: &str,
+        from_me: bool,
+        reaction: &wa::message::ReactionMessage,
+    ) {
+        let Some(target) = reaction
+            .key
+            .as_option()
+            .and_then(|key| key.id.clone())
+            .filter(|id| !id.is_empty())
+        else {
+            return;
+        };
+        let emoji = reaction_emoji(reaction.text.as_deref(), reaction.grouping_key.as_deref())
+            .unwrap_or_default();
+        self.store_reaction(chat, &target, sender, from_me, &emoji);
+    }
+
+    fn store_enc_reaction(
+        &mut self,
+        chat: &str,
+        sender: &str,
+        from_me: bool,
+        message: &wa::Message,
+    ) {
+        let Some(env) = extract_secret_encrypted(message) else {
+            return;
+        };
+        if env.kind != SecretEncKind::EncReaction {
+            return;
+        }
+        let Some(target) = env.target_id().filter(|id| !id.is_empty()) else {
+            return;
+        };
+        let Some(emoji) =
+            self.decrypt_enc_reaction(chat, target, sender, env.enc_payload, env.enc_iv, None)
+        else {
+            return;
+        };
+        self.store_reaction(chat, target, sender, from_me, &emoji);
+    }
+
+    fn store_reaction(
+        &mut self,
+        chat: &str,
+        target: &str,
+        sender: &str,
+        from_me: bool,
+        emoji: &str,
+    ) {
+        if let Ok(Some(updated)) = self
+            .archive
+            .set_reaction(chat, target, sender, from_me, emoji)
+        {
+            self.emit(Event::MessageUpdated(Box::new(updated)));
+        }
+    }
+
+    fn apply_history_reaction(
+        &mut self,
+        chat: &str,
+        reaction: HistoryReaction,
+        secrets: &HashMap<String, Vec<u8>>,
+    ) {
+        let sender = if reaction.from_me {
+            self.me()
+        } else {
+            reaction
+                .sender
+                .as_deref()
+                .map(|sender| self.canonical_str(sender))
+                .unwrap_or_else(|| chat.to_owned())
+        };
+        let emoji = match reaction.body {
+            HistoryReactionBody::Plain(emoji) => emoji,
+            HistoryReactionBody::Encrypted { payload, iv } => {
+                let Some(emoji) = self.decrypt_enc_reaction(
+                    chat,
+                    &reaction.target,
+                    &sender,
+                    &payload,
+                    &iv,
+                    Some(secrets),
+                ) else {
+                    return;
+                };
+                emoji
+            }
+        };
+        self.store_reaction(chat, &reaction.target, &sender, reaction.from_me, &emoji);
+    }
+
+    fn decrypt_enc_reaction(
+        &self,
+        chat: &str,
+        target: &str,
+        reactor: &str,
+        payload: &[u8],
+        iv: &[u8],
+        secrets: Option<&HashMap<String, Vec<u8>>>,
+    ) -> Option<String> {
+        let parent = self.archive.message(chat, target).ok().flatten()?;
+        let secret = secrets
+            .and_then(|secrets| secrets.get(target).cloned())
+            .or_else(|| {
+                self.archive
+                    .poll_key(chat, target)
+                    .ok()
+                    .flatten()
+                    .map(|(_, secret)| secret)
+            })
+            .or_else(|| {
+                self.archive
+                    .raw(chat, target)
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    .and_then(message_secret_from_raw)
+            })?;
+        let parent_jid = Self::jid_of(&parent.sender)?;
+        let reactor_jid = Self::jid_of(reactor)?;
+        let fallback_parent = self.alt_jid(&parent_jid);
+        let fallback_reactor = self.alt_jid(&reactor_jid);
+        let inner = decrypt_secret_encrypted_with_fallback(
+            payload,
+            iv,
+            &secret,
+            SecretEncKind::EncReaction,
+            target,
+            &parent_jid,
+            &reactor_jid,
+            fallback_parent.as_ref(),
+            fallback_reactor.as_ref(),
+        )
+        .ok()?;
+        let reaction = inner.reaction_message.as_option()?;
+        Some(
+            reaction_emoji(reaction.text.as_deref(), reaction.grouping_key.as_deref())
+                .unwrap_or_default(),
+        )
+    }
+
+    fn alt_jid(&self, jid: &Jid) -> Option<Jid> {
+        if jid.is_lid() {
+            let pn = self.lid_to_pn.get(jid.user_base())?;
+            format!("{pn}@s.whatsapp.net").parse().ok()
+        } else {
+            self.lid_to_pn.iter().find_map(|(lid, pn)| {
+                (*pn == jid.user_base())
+                    .then(|| format!("{lid}@lid").parse().ok())
+                    .flatten()
+            })
         }
     }
 
@@ -1988,7 +2157,15 @@ impl Worker {
                 self.request_group_info(&id, false);
             }
             let count = chat.messages.len();
+            let mut secrets = HashMap::new();
             for message in chat.messages {
+                if let Some(secret) = message
+                    .poll_secret
+                    .as_deref()
+                    .filter(|secret| secret.len() == 32)
+                {
+                    secrets.insert(message.id.clone(), secret.to_vec());
+                }
                 let poll_creator = if message.from_me {
                     self.me()
                 } else {
@@ -2055,8 +2232,10 @@ impl Worker {
                     thumbnail: message.thumbnail,
                 };
                 let mut poll_history_received = false;
+                let raw =
+                    ensure_message_secret(message.raw, secrets.get(&row.id).map(Vec::as_slice));
                 if matches!(row.content, Content::Poll { .. }) {
-                    if let Ok(raw) = wa::Message::decode_from_slice(&message.raw) {
+                    if let Ok(raw) = wa::Message::decode_from_slice(&raw) {
                         self.remember_poll(
                             &row,
                             &raw,
@@ -2066,7 +2245,7 @@ impl Worker {
                     }
                     poll_history_received = self.history_poll_votes(&row, &message.poll_votes);
                 }
-                if let Err(error) = self.archive.insert_message(&row, Some(&message.raw)) {
+                if let Err(error) = self.archive.insert_message(&row, Some(&raw)) {
                     log::warn!("could not store a history message: {error}");
                 }
                 if matches!(row.content, Content::Poll { .. }) {
@@ -2076,6 +2255,9 @@ impl Worker {
                     }
                     self.emit_message(&id, &row.id);
                 }
+            }
+            for reaction in chat.reactions {
+                self.apply_history_reaction(&id, reaction, &secrets);
             }
             for update in chat.poll_updates {
                 let sender = if update.from_me {
@@ -5078,6 +5260,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
     let mut messages = Vec::new();
     let mut revoked = Vec::new();
     let mut poll_updates = Vec::new();
+    let mut reactions = Vec::new();
     let mut newest = 0;
     for entry in &conversation.messages {
         let Some(info) = entry.message.as_option() else {
@@ -5104,15 +5287,49 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
             }
             continue;
         }
-        if base.reaction_message.is_set() {
-            continue;
-        }
         let sender = info
             .participant
             .clone()
             .or_else(|| key.participant.clone())
             .filter(|sender| !sender.is_empty())
             .or_else(|| key.remote_jid.clone());
+        if let Some(reaction) = base.reaction_message.as_option() {
+            if let Some(target) = reaction
+                .key
+                .as_option()
+                .and_then(|key| key.id.clone())
+                .filter(|id| !id.is_empty())
+            {
+                reactions.push(HistoryReaction {
+                    target,
+                    sender,
+                    from_me,
+                    body: HistoryReactionBody::Plain(
+                        reaction_emoji(reaction.text.as_deref(), reaction.grouping_key.as_deref())
+                            .unwrap_or_default(),
+                    ),
+                });
+            }
+            continue;
+        }
+        if base.enc_reaction_message.is_set() {
+            if let Some(enc) = base.enc_reaction_message.as_option()
+                && let Some(target) = enc
+                    .target_message_key
+                    .as_option()
+                    .and_then(|key| key.id.clone())
+                    .filter(|id| !id.is_empty())
+                && let (Some(payload), Some(iv)) = (enc.enc_payload.clone(), enc.enc_iv.clone())
+            {
+                reactions.push(HistoryReaction {
+                    target,
+                    sender,
+                    from_me,
+                    body: HistoryReactionBody::Encrypted { payload, iv },
+                });
+            }
+            continue;
+        }
         if let Some(update) = base.poll_update_message.as_option() {
             poll_updates.push(HistoryPollUpdate {
                 id,
@@ -5180,7 +5397,8 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
             .reactions
             .iter()
             .filter_map(|reaction| {
-                let text = reaction.text.clone().filter(|text| !text.is_empty())?;
+                let text =
+                    reaction_emoji(reaction.text.as_deref(), reaction.grouping_key.as_deref())?;
                 let key = reaction.key.as_option();
                 let from_me = key.and_then(|key| key.from_me).unwrap_or(false);
                 let who = key.and_then(|key| key.participant.clone());
@@ -5240,7 +5458,48 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         messages,
         revoked,
         poll_updates,
+        reactions,
     }
+}
+
+/// Displayed emoji for a reaction: `text`, else `groupingKey` when text is empty.
+fn reaction_emoji(text: Option<&str>, grouping_key: Option<&str>) -> Option<String> {
+    [text, grouping_key]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|emoji| !emoji.is_empty())
+        .map(str::to_owned)
+}
+
+fn message_secret_from_raw(raw: &[u8]) -> Option<Vec<u8>> {
+    let message = wa::Message::decode_from_slice(raw).ok()?;
+    let base = message.get_base_message();
+    message
+        .message_context_info
+        .as_option()
+        .or(base.message_context_info.as_option())
+        .and_then(|context| context.message_secret.clone())
+        .filter(|secret| secret.len() == 32)
+}
+
+fn ensure_message_secret(raw: Vec<u8>, secret: Option<&[u8]>) -> Vec<u8> {
+    let Some(secret) = secret.filter(|secret| secret.len() == 32) else {
+        return raw;
+    };
+    if message_secret_from_raw(&raw).is_some() {
+        return raw;
+    }
+    let Ok(mut message) = wa::Message::decode_from_slice(&raw) else {
+        return raw;
+    };
+    let mut context = message
+        .message_context_info
+        .into_option()
+        .unwrap_or_default();
+    context.message_secret = Some(secret.to_vec());
+    message.message_context_info = MessageField::some(context);
+    message.encode_to_vec()
 }
 
 #[cfg(test)]
@@ -5752,6 +6011,244 @@ mod receipt_tests {
 
         assert_eq!(parsed.ephemeral_expiration, Some(7_776_000));
         assert_eq!(parsed.ephemeral_setting_timestamp, Some(1_700_000_000));
+    }
+
+    fn history_entry(
+        chat: &str,
+        id: &str,
+        from_me: bool,
+        participant: Option<&str>,
+        message: wa::Message,
+        reactions: Vec<wa::Reaction>,
+        secret: Option<Vec<u8>>,
+    ) -> wa::HistorySyncMsg {
+        wa::HistorySyncMsg {
+            message: MessageField::some(wa::WebMessageInfo {
+                key: MessageField::some(wa::MessageKey {
+                    remote_jid: Some(chat.into()),
+                    from_me: Some(from_me),
+                    id: Some(id.into()),
+                    participant: participant.map(str::to_owned),
+                }),
+                message: MessageField::some(message),
+                message_timestamp: Some(100),
+                reactions,
+                message_secret: secret,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn reaction_emoji_prefers_text_then_grouping_key() {
+        assert_eq!(
+            reaction_emoji(Some("🏆"), Some("👍")).as_deref(),
+            Some("🏆")
+        );
+        assert_eq!(reaction_emoji(Some(""), Some("🏆")).as_deref(), Some("🏆"));
+        assert_eq!(reaction_emoji(None, Some("🏆")).as_deref(), Some("🏆"));
+        assert_eq!(reaction_emoji(Some("  "), None), None);
+    }
+
+    #[test]
+    fn history_applies_a_standalone_custom_reaction_from_another_sender() {
+        let group = "123-456@g.us";
+        let reactor = "12025550999@s.whatsapp.net";
+        let parsed = parse_conversation(wa::Conversation {
+            id: group.into(),
+            messages: vec![
+                history_entry(
+                    group,
+                    "photo",
+                    false,
+                    Some(PEER),
+                    wa::Message {
+                        conversation: Some("caption".into()),
+                        ..Default::default()
+                    },
+                    Vec::new(),
+                    None,
+                ),
+                history_entry(
+                    group,
+                    "react",
+                    false,
+                    Some(reactor),
+                    wa::Message {
+                        reaction_message: MessageField::some(wa::message::ReactionMessage {
+                            key: MessageField::some(wa::MessageKey {
+                                remote_jid: Some(group.into()),
+                                from_me: Some(false),
+                                id: Some("photo".into()),
+                                participant: Some(PEER.into()),
+                            }),
+                            text: Some("🏆".into()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    Vec::new(),
+                    None,
+                ),
+            ],
+            ..Default::default()
+        });
+        assert!(parsed.messages.iter().all(|message| message.id != "react"));
+        assert_eq!(parsed.reactions.len(), 1);
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.apply_history(
+            ParsedHistory {
+                chats: vec![parsed],
+                push_names: Vec::new(),
+                lids: Vec::new(),
+                stickers: Vec::new(),
+            },
+            true,
+        );
+        let stored = worker
+            .archive
+            .message(group, "photo")
+            .unwrap()
+            .expect("parent");
+        assert_eq!(stored.reactions.len(), 1);
+        assert_eq!(stored.reactions[0].emoji, "🏆");
+        assert!(!stored.reactions[0].from_me);
+        assert_eq!(stored.reactions[0].sender, reactor);
+    }
+
+    #[test]
+    fn history_reads_aggregated_reactions_from_grouping_key() {
+        let parsed = parse_conversation(wa::Conversation {
+            id: PEER.into(),
+            messages: vec![history_entry(
+                PEER,
+                "photo",
+                false,
+                None,
+                wa::Message {
+                    conversation: Some("caption".into()),
+                    ..Default::default()
+                },
+                vec![wa::Reaction {
+                    key: MessageField::some(wa::MessageKey {
+                        from_me: Some(false),
+                        participant: Some(PEER.into()),
+                        ..Default::default()
+                    }),
+                    grouping_key: Some("🏆".into()),
+                    ..Default::default()
+                }],
+                None,
+            )],
+            ..Default::default()
+        });
+        assert_eq!(parsed.messages[0].reactions.len(), 1);
+        assert_eq!(parsed.messages[0].reactions[0].2, "🏆");
+        assert!(!parsed.messages[0].reactions[0].1);
+    }
+
+    #[test]
+    fn live_grouping_key_reaction_from_another_sender_is_stored() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.archive.ensure_chat(PEER, "Ada").unwrap();
+        worker
+            .archive
+            .insert_message(&incoming("photo", 10), None)
+            .unwrap();
+        let raw = wa::Message {
+            reaction_message: MessageField::some(wa::message::ReactionMessage {
+                key: MessageField::some(wa::MessageKey {
+                    remote_jid: Some(PEER.into()),
+                    from_me: Some(false),
+                    id: Some("photo".into()),
+                    ..Default::default()
+                }),
+                grouping_key: Some("🏆".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let info = MessageInfo {
+            source: MessageSource {
+                chat: PEER.parse().unwrap(),
+                sender: PEER.parse().unwrap(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(20).unwrap(),
+            ..Default::default()
+        };
+        worker.ingest(&Arc::new(raw), &info);
+        let stored = worker
+            .archive
+            .message(PEER, "photo")
+            .unwrap()
+            .expect("parent");
+        assert_eq!(stored.reactions.len(), 1);
+        assert_eq!(stored.reactions[0].emoji, "🏆");
+        assert!(!stored.reactions[0].from_me);
+        assert_eq!(stored.reactions[0].sender, PEER);
+    }
+
+    #[test]
+    fn live_encrypted_custom_reaction_from_another_sender_is_stored() {
+        let secret = [0x42u8; 32];
+        let reactor = "12025550999@s.whatsapp.net";
+        let (payload, iv) = whatsapp_rust::wacore::reaction::encrypt_reaction_with_secret(
+            "🏆",
+            1_700_000_000_123,
+            &secret,
+            "photo",
+            PEER,
+            reactor,
+        )
+        .expect("encrypt");
+        let parent_raw = wa::Message {
+            conversation: Some("caption".into()),
+            message_context_info: MessageField::some(wa::MessageContextInfo {
+                message_secret: Some(secret.to_vec()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.archive.ensure_chat(PEER, "Ada").unwrap();
+        worker
+            .archive
+            .insert_message(&incoming("photo", 10), Some(&parent_raw.encode_to_vec()))
+            .unwrap();
+        let raw = wa::Message {
+            enc_reaction_message: MessageField::some(wa::message::EncReactionMessage {
+                target_message_key: MessageField::some(wa::MessageKey {
+                    remote_jid: Some(PEER.into()),
+                    from_me: Some(false),
+                    id: Some("photo".into()),
+                    participant: Some(PEER.into()),
+                }),
+                enc_payload: Some(payload),
+                enc_iv: Some(iv.to_vec()),
+            }),
+            ..Default::default()
+        };
+        let info = MessageInfo {
+            source: MessageSource {
+                chat: PEER.parse().unwrap(),
+                sender: reactor.parse().unwrap(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(20).unwrap(),
+            ..Default::default()
+        };
+        worker.ingest(&Arc::new(raw), &info);
+        let stored = worker
+            .archive
+            .message(PEER, "photo")
+            .unwrap()
+            .expect("parent");
+        assert_eq!(stored.reactions.len(), 1);
+        assert_eq!(stored.reactions[0].emoji, "🏆");
+        assert_eq!(stored.reactions[0].sender, reactor);
+        assert!(!stored.reactions[0].from_me);
     }
 
     #[test]

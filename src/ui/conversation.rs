@@ -3715,6 +3715,15 @@ mod reaction_tests {
         assert_eq!(reaction_choice(Some("👍"), "🦀"), "🦀");
         assert_eq!(reaction_choice(Some("❤️"), "❤️"), "");
     }
+
+    #[test]
+    fn another_senders_custom_reaction_is_kept_on_the_message() {
+        let message = with_reactions(vec![reaction(false, "🏆")]);
+        assert_eq!(own_reaction(&message), None);
+        assert_eq!(message.reactions[0].emoji, "🏆");
+        assert!(!message.reactions[0].from_me);
+        assert_eq!(quick_reactions(&message), QUICK_REACTIONS.to_vec());
+    }
 }
 
 /// Pending attachment tiles above the composer.

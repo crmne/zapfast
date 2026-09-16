@@ -713,6 +713,11 @@ pub fn populate(app: &mut App) {
                 emoji: "🔥".into(),
             });
             row.reactions.push(Reaction {
+                sender: mira.0.into(),
+                from_me: false,
+                emoji: "🏆".into(),
+            });
+            row.reactions.push(Reaction {
                 sender: ME.into(),
                 from_me: true,
                 emoji: "🔥".into(),
@@ -1215,6 +1220,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     });
                 }
             }
+            "react-other" => {
+                let group = SAMPLES[1].id;
+                app.open_chat = Some(group.to_owned());
+                if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == group) {
+                    chat.unread = 0;
+                }
+                app.scroll_to_bottom = true;
+            }
             other => {
                 if app.chat(other).is_some() {
                     app.open_chat = Some(other.to_owned());
@@ -1382,6 +1395,7 @@ mod tests {
             "react-picker",
             "react-picker-empty",
             "react-custom",
+            "react-other",
         ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
@@ -1767,6 +1781,25 @@ mod tests {
         assert_eq!(
             crate::ui::conversation::reaction_choice(current, "🎉"),
             "🎉"
+        );
+    }
+
+    #[test]
+    fn another_users_trophy_reaction_is_on_the_group_photo() {
+        let mut app = app();
+        apply_flags(&mut app, Some("react-other"));
+        assert_eq!(app.open_chat.as_deref(), Some(sample_ids()[1]));
+        let photo = app
+            .conversations
+            .get(sample_ids()[1])
+            .and_then(|conversation| conversation.message("group-photo"))
+            .expect("group photo");
+        assert!(
+            photo
+                .reactions
+                .iter()
+                .any(|reaction| !reaction.from_me && reaction.emoji == "🏆"),
+            "Mira's trophy should sit on the group photo"
         );
     }
 

@@ -595,6 +595,7 @@ impl Archive {
             }
             _ => status_rank(message.status),
         };
+        let reactions = self.merged_reactions(message)?;
         self.connection.execute(
             "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
@@ -624,7 +625,7 @@ impl Archive {
                     .quoted
                     .as_ref()
                     .map(|quoted| serde_json::to_string(quoted).unwrap_or_default()),
-                serde_json::to_string(&message.reactions).unwrap_or_default(),
+                serde_json::to_string(&reactions).unwrap_or_default(),
                 message.edited,
                 raw,
                 message.thumbnail.as_deref(),
@@ -639,6 +640,25 @@ impl Archive {
             params![message.chat, message.timestamp],
         )?;
         Ok(())
+    }
+
+    /// History rows often omit reactions. Keep any already stored, and let a
+    /// later sender-specific update replace only that person's emoji.
+    fn merged_reactions(&self, message: &Message) -> Result<Vec<crate::model::Reaction>> {
+        let incoming = &message.reactions;
+        let Some(existing) = self.message(&message.chat, &message.id)? else {
+            return Ok(incoming.clone());
+        };
+        if incoming.is_empty() {
+            return Ok(existing.reactions);
+        }
+        let mut merged = incoming.clone();
+        for old in existing.reactions {
+            if !merged.iter().any(|reaction| reaction.sender == old.sender) {
+                merged.push(old);
+            }
+        }
+        Ok(merged)
     }
 
     /// Returns up to `limit` messages before an optional timestamp/id boundary,
@@ -1674,6 +1694,26 @@ pub(crate) mod tests {
             .expect("react")
             .expect("exists");
         assert!(removed.reactions.is_empty());
+    }
+
+    #[test]
+    fn a_history_replay_keeps_another_senders_custom_reaction() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "A").expect("chat");
+        archive
+            .insert_message(&message(chat, "m1", 100, false), None)
+            .expect("insert");
+        archive
+            .set_reaction(chat, "m1", "2@s.whatsapp.net", false, "🏆")
+            .expect("react");
+        archive
+            .insert_message(&message(chat, "m1", 100, false), None)
+            .expect("replay");
+        let stored = archive.message(chat, "m1").expect("read").expect("exists");
+        assert_eq!(stored.reactions.len(), 1);
+        assert_eq!(stored.reactions[0].emoji, "🏆");
+        assert!(!stored.reactions[0].from_me);
     }
 
     #[test]
