@@ -39,7 +39,9 @@ upload it again.
 
 ## Voice messages
 
-Voice messages play in the chat with a seekable waveform. The first play sends
+Voice messages play in the chat with a seekable waveform. The button beside
+the waveform cycles the playback speed between 1x, 1.5x, and 2x, and the choice
+is remembered for later messages. The first play sends
 a played receipt. When the composer is empty, the send button becomes a
 microphone. Press Enter or the send button to send the recording, or Escape or
 the delete button to discard it. ZapFast raises the volume of quiet recordings.

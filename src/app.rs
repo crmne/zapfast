@@ -336,7 +336,7 @@ impl App {
                 _ => Palette::dark(),
             });
         let open_chat = settings.last_chat.clone();
-        Self {
+        let mut app = Self {
             dirs,
             settings,
             settings_dirty: false,
@@ -443,7 +443,9 @@ impl App {
             control_commands: None,
             notification_opens: Default::default(),
             notifications: Default::default(),
-        }
+        };
+        app.player.set_speed(app.settings.voice_speed);
+        app
     }
 
     /// Updates the linked app while no window exists.
@@ -2002,6 +2004,10 @@ impl App {
                 if let Err(error) = self.player.seek(&message, &path, fraction) {
                     self.toast_error(error);
                 }
+            }
+            Action::CycleVoiceSpeed => {
+                self.settings.voice_speed = self.player.cycle_speed();
+                self.mark_settings_dirty();
             }
             Action::StartRecording => {
                 if self.open_chat.is_some() && self.recording.is_none() {

@@ -50,6 +50,18 @@ impl Status {
     };
 }
 
+/// Playback speeds, in the order the speed button cycles them.
+pub const SPEEDS: [f32; 3] = [1.0, 1.5, 2.0];
+
+/// Label for a playback speed, like `1x` or `1.5x`.
+pub fn speed_label(speed: f32) -> String {
+    if speed.fract() == 0.0 {
+        format!("{}x", speed as i32)
+    } else {
+        format!("{speed:.1}x")
+    }
+}
+
 type Decoded = Arc<Mutex<Option<Result<Vec<f32>, String>>>>;
 
 /// Plays one clip at a time through the default output device.
@@ -58,6 +70,8 @@ pub struct Player {
     output: Option<(rodio::MixerDeviceSink, rodio::Player)>,
     loaded: Option<Loaded>,
     decoding: Option<Decoding>,
+    /// Playback speed applied to the current clip and to later ones.
+    speed: f32,
     /// Generated waveforms for clips that did not include one.
     bars: HashMap<String, Vec<u8>>,
 }
@@ -67,6 +81,10 @@ struct Loaded {
     samples: Arc<Vec<f32>>,
     /// Start position of the queued audio after seeking.
     base: Duration,
+    /// Wall-clock playback already folded into `base` when the speed last
+    /// changed: the sink reports wall time, which every speed advances
+    /// differently.
+    base_wall: Duration,
     paused: bool,
     done: bool,
 }
@@ -85,8 +103,42 @@ impl Player {
             output: None,
             loaded: None,
             decoding: None,
+            speed: SPEEDS[0],
             bars: HashMap::new(),
         }
+    }
+
+    /// Current playback speed multiplier.
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
+
+    /// Sets the playback speed for the clip playing now and for later ones.
+    pub fn set_speed(&mut self, speed: f32) {
+        let previous = self.speed;
+        self.speed = speed;
+        if let Some((_, sink)) = &self.output
+            && let Some(loaded) = self.loaded.as_mut()
+        {
+            // The sink's position advances at the wall-clock rate whatever
+            // the speed, so the time played at the old speed is folded into
+            // the base and the wall clock restarts for the new one.
+            let played = sink.get_pos();
+            loaded.base += played.saturating_sub(loaded.base_wall).mul_f32(previous);
+            loaded.base_wall = played;
+            sink.set_speed(speed);
+        }
+    }
+
+    /// Cycles 1x, 1.5x, and 2x, wrapping back to 1x.
+    pub fn cycle_speed(&mut self) -> f32 {
+        let next = SPEEDS
+            .iter()
+            .copied()
+            .find(|&candidate| candidate > self.speed)
+            .unwrap_or(SPEEDS[0]);
+        self.set_speed(next);
+        self.speed
     }
 
     /// Plays or pauses a message. Finished clips restart; new clips decode first.
@@ -156,7 +208,10 @@ impl Player {
                 let position = self
                     .output
                     .as_ref()
-                    .map(|(_, sink)| loaded.base + sink.get_pos())
+                    .map(|(_, sink)| {
+                        let wall = sink.get_pos().saturating_sub(loaded.base_wall);
+                        loaded.base + wall.mul_f32(self.speed)
+                    })
                     .unwrap_or(loaded.base)
                     .min(total);
                 Status {
@@ -200,6 +255,7 @@ impl Player {
                 message,
                 samples: Arc::new(samples),
                 base: Duration::ZERO,
+                base_wall: Duration::ZERO,
                 paused: false,
                 done: false,
             });
@@ -259,6 +315,7 @@ impl Player {
         }
         let (_, sink) = self.output.as_ref().expect("just opened");
         sink.clear();
+        sink.set_speed(self.speed);
         sink.append(SamplesBuffer::new(
             mono(),
             rate(),
@@ -266,6 +323,7 @@ impl Player {
         ));
         sink.play();
         loaded.base = clip_length(offset);
+        loaded.base_wall = Duration::ZERO;
         loaded.paused = false;
         loaded.done = false;
         Ok(())
@@ -447,6 +505,26 @@ pub fn recording_path(dir: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[test]
+    fn speed_labels_match_the_button() {
+        assert_eq!(speed_label(SPEEDS[0]), "1x");
+        assert_eq!(speed_label(1.5), "1.5x");
+        assert_eq!(speed_label(SPEEDS[2]), "2x");
+    }
+
+    #[test]
+    fn cycling_wraps_through_every_speed() {
+        let mut player = Player::new(Waker::default());
+        assert_eq!(player.speed(), SPEEDS[0]);
+        assert_eq!(player.cycle_speed(), 1.5);
+        assert_eq!(player.cycle_speed(), 2.0);
+        assert_eq!(player.cycle_speed(), 1.0);
+        // A speed set by hand still cycles up to the next known one.
+        player.set_speed(1.75);
+        assert_eq!(player.cycle_speed(), 2.0);
+        assert_eq!(player.speed(), 2.0);
+    }
+
     /// Plays a one-second test tone:
     /// `cargo test audio::tests::plays -- --ignored --nocapture`.
     #[test]
@@ -478,6 +556,46 @@ mod tests {
         assert!(seen_playing, "never heard it playing");
         assert_eq!(player.status("clip").state, State::Idle, "ends on its own");
         assert_eq!(player.bars("clip").map(<[u8]>::len), Some(voice::BARS));
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Plays a two-second tone at double speed and checks the position
+    /// outruns the clock:
+    /// `cargo test audio::tests::doubles -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "makes a sound on this machine"]
+    fn doubles_the_position_rate_on_this_machine() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("zapfast-audio-speed-test.ogg");
+        let tone: Vec<f32> = (0..voice::RATE * 2)
+            .map(|i| (i as f32 * 330.0 * std::f32::consts::TAU / voice::RATE as f32).sin() * 0.3)
+            .collect();
+        std::fs::write(&path, voice::encode(&tone).expect("encodes")).expect("written");
+        let mut player = Player::new(Waker::default());
+        player.set_speed(2.0);
+        player.toggle("clip", &path).expect("starts decoding");
+        let started = Instant::now();
+        let mut seen: Vec<(Duration, Duration)> = Vec::new();
+        while started.elapsed() < Duration::from_secs(6) {
+            player.poll().expect("plays");
+            let status = player.status("clip");
+            if status.state == State::Playing {
+                seen.push((started.elapsed(), status.position));
+            }
+            if status.state == State::Idle && !seen.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let (first_wall, first_position) = seen.first().expect("played");
+        let (last_wall, last_position) = seen.last().expect("played");
+        let wall = *last_wall - *first_wall;
+        let advanced = *last_position - *first_position;
+        assert!(wall > Duration::from_millis(200), "played for {wall:?}");
+        assert!(
+            advanced.as_secs_f32() >= 1.5 * wall.as_secs_f32(),
+            "position advanced {advanced:?} over {wall:?} of wall time"
+        );
         let _ = std::fs::remove_file(path);
     }
 

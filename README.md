@@ -55,8 +55,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Existing installations request one settings refresh after upgrading to
   recover previously lost mute settings and pin order, without relinking.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
-  in the chat. The app normalizes quiet recordings and handles OGG/Opus
-  without external tools.
+  in the chat. The playback speed cycles between 1x, 1.5x, and 2x from the
+  bubble, and the last choice applies to later messages. The app normalizes
+  quiet recordings and handles OGG/Opus without external tools.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation; invoking search keeps focus in search, and

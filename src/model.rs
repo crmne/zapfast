@@ -580,6 +580,8 @@ pub enum Action {
         path: PathBuf,
         fraction: f32,
     },
+    /// Cycles voice playback speed between 1x, 1.5x, and 2x.
+    CycleVoiceSpeed,
     /// Starts, cancels, or sends a voice recording.
     StartRecording,
     CancelRecording,
