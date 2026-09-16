@@ -1126,8 +1126,14 @@ impl Worker {
             }
             E::HistorySync(lazy) => self.on_history_sync(lazy).await,
             E::DisappearingModeChanged(update) => {
+                // The notification names the chat whose timer changed (WA
+                // Web: WAWebUpdateDisappearingModeForContact), so it seeds the
+                // chat first. Only when the chat is our own does it also state
+                // the account default for new chats.
                 let id = self.canonical(&update.from);
                 let timestamp = update.setting_timestamp.timestamp();
+                self.ensure_chat(&id, None);
+                let _ = self.archive.set_ephemeral(&id, update.duration, timestamp);
                 if self.is_me(&id) {
                     let stored = self
                         .archive
