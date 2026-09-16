@@ -63,6 +63,8 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 jiff = "0.2"
 # Treats joined emoji as one grapheme. Already included through egui.
 unicode-segmentation = "1"
+# Unicode bidi properties; already included through URL/IDNA handling.
+icu_properties = "2.3"
 # Opens downloaded attachments in their default desktop apps.
 open = "5"
 # File picker, clipboard images, and MIME detection for attachments. Clipboard

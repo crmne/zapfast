@@ -15,6 +15,7 @@
 //! Call once on a fresh egui galley (`layout_job` does). A second pass is a
 //! no-op when the row already matches the paragraph's expected visual order.
 
+use icu_properties::{CodePointMapData, props::BidiClass};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -329,68 +330,25 @@ fn strong_direction(c: char) -> Option<bool> {
     }
 }
 
-/// Strong LTR letters only (Unicode L). Digits are European numbers (EN), not strong.
+/// Unicode L includes all scripts; numbers, symbols and marks are not strong.
 fn is_strong_ltr(c: char) -> bool {
-    c.is_ascii_alphabetic() || ('\u{00C0}'..='\u{024F}').contains(&c)
+    CodePointMapData::<BidiClass>::new().get(c) == BidiClass::LeftToRight
 }
 
-/// Strong right-to-left letters (Unicode bidi classes R and AL), not the weak
-/// digits/punctuation that share the Hebrew and Arabic blocks.
 fn is_strong_rtl(c: char) -> bool {
-    is_rtl_letter_char(c)
-}
-
-/// Strong right-to-left letters (Unicode bidi classes R and AL).
-pub fn is_rtl(c: char) -> bool {
-    is_rtl_letter_char(c)
-}
-
-fn is_rtl_letter_char(c: char) -> bool {
     matches!(
-        c,
-        // Hebrew letters (+ Yiddish digraphs)
-        '\u{05D0}'..='\u{05EA}'
-            | '\u{05F0}'..='\u{05F2}'
-            // Arabic letters (exclude digits, punctuation, and marks in the block)
-            | '\u{0620}'..='\u{063F}'
-            | '\u{0641}'..='\u{064A}'
-            | '\u{066E}'..='\u{066F}'
-            | '\u{0671}'..='\u{06D3}'
-            | '\u{06D5}'
-            | '\u{06EE}'..='\u{06EF}'
-            | '\u{06FA}'..='\u{06FF}'
-            // Syriac letters
-            | '\u{0710}'..='\u{072F}'
-            | '\u{074D}'..='\u{074F}'
-            // Arabic Supplement
-            | '\u{0750}'..='\u{077F}'
-            // Thaana
-            | '\u{0780}'..='\u{07A5}'
-            | '\u{07B1}'
-            // NKo letters
-            | '\u{07CA}'..='\u{07EA}'
-            // Arabic Extended-A letters
-            | '\u{08A0}'..='\u{08C9}'
-            // Presentation forms
-            | '\u{FB1D}'
-            | '\u{FB1F}'..='\u{FB28}'
-            | '\u{FB2A}'..='\u{FB36}'
-            | '\u{FB38}'..='\u{FB3C}'
-            | '\u{FB3E}'
-            | '\u{FB40}'..='\u{FB41}'
-            | '\u{FB43}'..='\u{FB44}'
-            | '\u{FB46}'..='\u{FB4F}'
-            | '\u{FB50}'..='\u{FDFB}'
-            | '\u{FE70}'..='\u{FE74}'
-            | '\u{FE76}'..='\u{FEFC}'
+        CodePointMapData::<BidiClass>::new().get(c),
+        BidiClass::RightToLeft | BidiClass::ArabicLetter
     )
+}
+
+/// Characters with Unicode bidi class R or AL.
+pub fn is_rtl(c: char) -> bool {
+    is_strong_rtl(c)
 }
 
 fn is_nonspacing_mark(c: char) -> bool {
-    matches!(
-        c,
-        '\u{0591}'..='\u{05C7}' | '\u{064B}'..='\u{065F}' | '\u{0670}' | '\u{06D6}'..='\u{06ED}'
-    )
+    CodePointMapData::<BidiClass>::new().get(c) == BidiClass::NonspacingMark
 }
 
 #[cfg(test)]
@@ -400,10 +358,76 @@ mod tests {
     use egui::{Color32, FontId, Pos2, vec2};
     use std::sync::Arc;
 
+    #[test]
+    fn first_strong_direction_uses_unicode_bidi_classes() {
+        for text in ["Привет הכלב", "Καλημέρα הכלב", "你好 הכלב", "नमस्ते הכלב"]
+        {
+            assert!(!paragraph_rtl(text), "{text}");
+        }
+        for text in [
+            "× הכלב הגדול",
+            "123 הכלב הגדול",
+            "١٢٣ הכלב הגדול",
+            "َ הכלב הגדול",
+        ] {
+            assert!(paragraph_rtl(text), "{text}");
+        }
+        for c in ['×', '1', '١', '\u{064e}'] {
+            assert_eq!(strong_direction(c), None, "{c}");
+        }
+    }
+
+    #[test]
+    fn reordered_emoji_keep_their_logical_identities() {
+        let placeholder = crate::emoji::PLACEHOLDER;
+        let mut galley = layout_raw(&format!(
+            "הכלב {placeholder} הגדול {placeholder} קפץ\nOK {placeholder}"
+        ));
+        let original: Vec<_> = galley
+            .rows
+            .iter()
+            .flat_map(|row| {
+                row.glyphs
+                    .iter()
+                    .filter(|glyph| glyph.chr == placeholder)
+                    .map(|glyph| glyph.first_vertex)
+            })
+            .collect();
+        reorder_rtl_runs(&mut galley);
+        let rects: Vec<_> = crate::emoji::placeholder_rects(&galley).collect();
+        assert_eq!(rects.len(), 3);
+        assert!(
+            rects[0].left() > rects[1].left(),
+            "the first logical emoji moves to the right"
+        );
+        assert!(rects[2].top() > rects[0].top());
+        // Painting follows each placeholder's original mesh identity, even
+        // though the glyph vec is now in visual order.
+        let first_row = &galley.rows[0];
+        for (index, vertex) in original[..2].iter().enumerate() {
+            let glyph = first_row
+                .glyphs
+                .iter()
+                .find(|glyph| glyph.chr == placeholder && glyph.first_vertex == *vertex)
+                .unwrap();
+            assert_eq!(
+                rects[index],
+                glyph.logical_rect().translate(first_row.pos.to_vec2())
+            );
+        }
+        let once = rects;
+        reorder_rtl_runs(&mut galley);
+        assert_eq!(
+            crate::emoji::placeholder_rects(&galley).collect::<Vec<_>>(),
+            once
+        );
+    }
+
     fn layout_raw(text: &str) -> Galley {
         const CANDIDATES: &[&str] = &[
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
             "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -446,11 +470,21 @@ mod tests {
             },
             |ui| {
                 let mut job = LayoutJob::default();
-                job.append(
-                    text,
-                    0.0,
-                    TextFormat::simple(FontId::proportional(14.0), Color32::WHITE),
-                );
+                for run in text.split_inclusive(crate::emoji::PLACEHOLDER) {
+                    let text = run.trim_end_matches(crate::emoji::PLACEHOLDER);
+                    job.append(
+                        text,
+                        0.0,
+                        TextFormat::simple(FontId::proportional(14.0), Color32::WHITE),
+                    );
+                    if run.ends_with(crate::emoji::PLACEHOLDER) {
+                        job.append(
+                            &crate::emoji::PLACEHOLDER.to_string(),
+                            0.0,
+                            TextFormat::simple(FontId::proportional(14.0), Color32::TRANSPARENT),
+                        );
+                    }
+                }
                 *galley.borrow_mut() = Some(ui.painter().layout_job(job));
             },
         );
@@ -754,6 +788,7 @@ mod tests {
         let path = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
             "/System/Library/Fonts/Supplemental/Arial.ttf",
             r"C:\Windows\Fonts\arial.ttf",
         ]

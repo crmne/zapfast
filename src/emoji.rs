@@ -478,22 +478,26 @@ pub fn paint(ui: &egui::Ui, galley: &egui::Galley, origin: Pos2, placements: &[S
     if placements.is_empty() {
         return;
     }
-    let mut next = 0;
-    for row in &galley.rows {
-        for glyph in &row.row.glyphs {
-            if glyph.chr != PLACEHOLDER {
-                continue;
-            }
-            let Some(cluster) = placements.get(next) else {
-                return;
-            };
-            next += 1;
-            let rect = glyph
-                .logical_rect()
-                .translate(origin.to_vec2() + row.pos.to_vec2());
-            paint_cluster(ui, cluster, rect);
-        }
+    for (rect, cluster) in placeholder_rects(galley).zip(placements) {
+        paint_cluster(ui, cluster, rect.translate(origin.to_vec2()));
     }
+}
+
+/// Placeholder rectangles in logical order. Run reordering moves the mesh and
+/// glyphs together but retains each glyph's original mesh offset. Placeholder
+/// quads are tessellated even when their text color is transparent.
+pub(crate) fn placeholder_rects(galley: &egui::Galley) -> impl Iterator<Item = Rect> + '_ {
+    galley.rows.iter().flat_map(|row| {
+        let mut placeholders: Vec<_> = row
+            .glyphs
+            .iter()
+            .filter(|glyph| glyph.chr == PLACEHOLDER)
+            .collect();
+        placeholders.sort_by_key(|glyph| glyph.first_vertex);
+        placeholders
+            .into_iter()
+            .map(move |glyph| glyph.logical_rect().translate(row.pos.to_vec2()))
+    })
 }
 
 #[cfg(test)]

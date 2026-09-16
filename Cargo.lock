@@ -6588,6 +6588,7 @@ dependencies = [
  "env_logger",
  "hkdf",
  "hmac",
+ "icu_properties",
  "image",
  "jiff",
  "ksni",
