@@ -1095,6 +1095,11 @@ impl Worker {
             E::Receipt(receipt) => self.on_receipt(receipt),
             E::ChatPresence(presence) => {
                 self.learn_source(&presence.source);
+                // Match WhatsApp: only other participants appear as typing,
+                // including when our presence arrives from a linked device.
+                if self.is_me(&self.canonical(&presence.source.sender)) {
+                    return;
+                }
                 self.emit(Event::Typing {
                     chat: self.canonical(&presence.source.chat),
                     sender: self.canonical(&presence.source.sender),
@@ -5832,13 +5837,20 @@ mod receipt_tests {
     }
 
     #[tokio::test]
-    async fn typing_from_our_other_devices_remains_visible() {
+    async fn own_typing_is_hidden_in_self_direct_and_group_chats() {
         let (mut worker, events, _inbox, _wa) = worker();
-        for sender in [ME, PEER] {
+        let device = ME.replacen('@', ":2@", 1);
+        let own_lid = "9000001@lid";
+        worker.me_lid = Some(own_lid.into());
+        for (chat, sender) in [ME, PEER, "123-456@g.us"]
+            .into_iter()
+            .flat_map(|chat| [ME, device.as_str(), own_lid, PEER].map(|sender| (chat, sender)))
+        {
             let presence = wa_events::ChatPresenceUpdate::builder()
                 .source(MessageSource {
-                    chat: ME.parse().unwrap(),
+                    chat: chat.parse().unwrap(),
                     sender: sender.parse().unwrap(),
+                    is_group: chat.ends_with("@g.us"),
                     ..Default::default()
                 })
                 .state(ChatPresence::Composing)
@@ -5855,7 +5867,7 @@ mod receipt_tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(senders, [ME, PEER]);
+        assert_eq!(senders, [PEER, PEER, PEER]);
     }
 
     #[test]

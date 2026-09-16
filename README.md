@@ -28,6 +28,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Pinned chats stay in pin order (most recently pinned first), regardless of
   new messages. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
+  Typing indicators show other participants, excluding your own linked devices.
 - **Read state across devices.** Reading a chat syncs its unread badge with
   your phone and other linked devices, including when read receipts are off.
   Replies from another device clear preceding unread messages. The read-receipt
