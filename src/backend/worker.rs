@@ -1116,18 +1116,18 @@ impl Worker {
                     ..
                 } = &update.action
                 {
+                    self.ensure_chat(&chat, None);
                     let timestamp = update.timestamp.timestamp();
                     let accepted = self
                         .archive
                         .set_ephemeral(&chat, *expiration, timestamp)
                         .unwrap_or(false);
-                    log::info!(
+                    log::debug!(
                         target: "zapfast::disappearing",
                         "group timer update: duration={expiration}s timestamp={timestamp} accepted={accepted}"
                     );
                     if accepted {
                         self.emit_chat(&chat);
-                        log::info!(target: "zapfast::disappearing", "group timer UI update emitted");
                     }
                 }
                 self.request_group_info(&chat, true);
@@ -1190,26 +1190,11 @@ impl Worker {
             }
             E::HistorySync(lazy) => self.on_history_sync(lazy).await,
             E::DisappearingModeChanged(update) => {
-                // The notification names the chat whose timer changed (WA
-                // Web: WAWebUpdateDisappearingModeForContact), so it seeds the
-                // chat first. Only when the chat is our own does it also state
-                // the account default for new chats.
+                // This is a contact's default for new conversations, not a
+                // timer change in an existing chat. Per-chat changes arrive
+                // as EPHEMERAL_SETTING or a typed group Ephemeral action.
                 let id = self.canonical(&update.from);
                 let timestamp = update.setting_timestamp.timestamp();
-                self.ensure_chat(&id, None);
-                let accepted = self
-                    .archive
-                    .set_ephemeral(&id, update.duration, timestamp)
-                    .unwrap_or(false);
-                log::info!(
-                    target: "zapfast::disappearing",
-                    "direct notification timer update: duration={}s timestamp={timestamp} accepted={accepted}",
-                    update.duration
-                );
-                if accepted {
-                    self.emit_chat(&id);
-                    log::info!(target: "zapfast::disappearing", "direct notification UI update emitted");
-                }
                 if self.is_me(&id) {
                     let stored = self
                         .archive
@@ -1511,16 +1496,15 @@ impl Worker {
                         .archive
                         .set_ephemeral(&chat, expiration, timestamp)
                         .unwrap_or(false);
-                    log::info!(
+                    log::debug!(
                         target: "zapfast::disappearing",
                         "protocol timer update: duration={expiration}s timestamp={timestamp} fallback_timestamp={used_fallback} accepted={accepted}"
                     );
                     if accepted {
                         self.emit_chat(&chat);
-                        log::info!(target: "zapfast::disappearing", "protocol timer UI update emitted");
                     }
                 } else {
-                    log::info!(
+                    log::debug!(
                         target: "zapfast::disappearing",
                         "protocol timer update missing expiration"
                     );
@@ -5736,6 +5720,142 @@ mod receipt_tests {
 
         assert_eq!(parsed.ephemeral_expiration, Some(7_776_000));
         assert_eq!(parsed.ephemeral_setting_timestamp, Some(1_700_000_000));
+    }
+
+    #[test]
+    fn protocol_timer_badge_follows_enable_disable_and_ignores_stale_updates() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        for (expiration, setting_time, envelope_time, expected) in [
+            (86_400, None, 200, Some(86_400)),
+            (0, None, 300, None),
+            (604_800, Some(250), 400, None),
+        ] {
+            let raw = wa::Message {
+                protocol_message: MessageField::some(wa::message::ProtocolMessage {
+                    r#type: Some(wa::message::protocol_message::Type::EPHEMERAL_SETTING),
+                    ephemeral_expiration: Some(expiration),
+                    ephemeral_setting_timestamp: setting_time,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let info = MessageInfo {
+                source: MessageSource {
+                    chat: PEER.parse().unwrap(),
+                    sender: PEER.parse().unwrap(),
+                    ..Default::default()
+                },
+                timestamp: whatsapp_rust::wacore::time::from_secs(envelope_time).unwrap(),
+                ..Default::default()
+            };
+            worker.ingest(&Arc::new(raw), &info);
+            assert_eq!(
+                worker
+                    .archive
+                    .chat(PEER)
+                    .unwrap()
+                    .unwrap()
+                    .ephemeral_expiration,
+                expected
+            );
+            assert_eq!(worker.ephemeral_expiration(PEER), expected);
+        }
+        let badges: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::ChatUpdated(chat) if chat.id == PEER => Some(chat.ephemeral_expiration),
+                _ => None,
+            })
+            .collect();
+        assert!(badges.contains(&Some(86_400)));
+        assert_eq!(badges.last(), Some(&None));
+    }
+
+    #[tokio::test]
+    async fn group_timer_updates_work_before_history_and_keep_disable_versions() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        for (expiration, timestamp, expected) in [
+            (86_400, 200, Some(86_400)),
+            (0, 300, None),
+            (604_800, 250, None),
+        ] {
+            let update = wa_events::GroupUpdate::builder()
+                .group_jid(group.parse().unwrap())
+                .timestamp(whatsapp_rust::wacore::time::from_secs(timestamp).unwrap())
+                .is_lid_addressing_mode(false)
+                .action(
+                    whatsapp_rust::wacore::stanza::groups::GroupNotificationAction::Ephemeral {
+                        expiration,
+                        trigger: None,
+                    },
+                )
+                .build();
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
+                .await;
+            assert_eq!(
+                worker
+                    .archive
+                    .chat(group)
+                    .unwrap()
+                    .unwrap()
+                    .ephemeral_expiration,
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn default_timer_notifications_never_rewrite_existing_chat_timers() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 604_800, 100).unwrap();
+        for (from, duration, timestamp) in [
+            (PEER, 86_400, 200),
+            (ME, 86_400, 200),
+            (ME, 0, 300),
+            (ME, 604_800, 250),
+        ] {
+            let update = wa_events::DisappearingModeChanged::builder()
+                .from(from.parse().unwrap())
+                .duration(duration)
+                .setting_timestamp(whatsapp_rust::wacore::time::from_secs(timestamp).unwrap())
+                .build();
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::DisappearingModeChanged(update)))
+                .await;
+        }
+        assert_eq!(worker.ephemeral_expiration(PEER), Some(604_800));
+        assert_eq!(worker.default_ephemeral_expiration(), Some(0));
+        assert!(worker.archive.chat(ME).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn typing_from_our_other_devices_remains_visible() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        for sender in [ME, PEER] {
+            let presence = wa_events::ChatPresenceUpdate::builder()
+                .source(MessageSource {
+                    chat: ME.parse().unwrap(),
+                    sender: sender.parse().unwrap(),
+                    ..Default::default()
+                })
+                .state(ChatPresence::Composing)
+                .media(whatsapp_rust::types::presence::ChatPresenceMedia::Text)
+                .build();
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::ChatPresence(presence)))
+                .await;
+        }
+        let senders: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Typing { sender, .. } => Some(sender),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(senders, [ME, PEER]);
     }
 
     #[test]

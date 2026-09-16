@@ -817,6 +817,17 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
         match part {
             "chat" | "" => {}
             "empty" => app.open_chat = None,
+            "disappearing" => {
+                let chat = app
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == SAMPLES[1].id)
+                    .unwrap();
+                chat.ephemeral_expiration = Some(86_400);
+                app.open_chat = Some(chat.id.clone());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "rtl" => {
                 let id = SAMPLES[1].id;
                 let now = crate::util::now();
@@ -1263,6 +1274,7 @@ mod tests {
         for page in [
             "empty",
             "rtl",
+            "disappearing",
             "settings",
             "update",
             "update-downloading",
