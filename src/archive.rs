@@ -647,10 +647,10 @@ impl Archive {
     /// current snapshot, so write it unchanged.
     fn merged_reactions(&self, message: &Message) -> Result<Vec<crate::model::Reaction>> {
         let incoming = &message.reactions;
-        if incoming.is_empty() {
-            if let Some(existing) = self.message(&message.chat, &message.id)? {
-                return Ok(existing.reactions);
-            }
+        if incoming.is_empty()
+            && let Some(existing) = self.message(&message.chat, &message.id)?
+        {
+            return Ok(existing.reactions);
         }
         Ok(incoming.clone())
     }
