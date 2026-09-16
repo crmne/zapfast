@@ -6,6 +6,7 @@ use egui::{
     Align, Color32, CornerRadius, Layout, Rect, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 
+use crate::bidi;
 use crate::emoji;
 use crate::model::Delivery;
 use crate::theme::{self, Icon, Palette};
@@ -51,10 +52,8 @@ pub fn line(
         if max_rows == 1 { single } else { text },
         &format,
     );
-    Line {
-        galley: ui.painter().layout_job(job),
-        placements,
-    }
+    let galley = bidi::layout_job(ui, job);
+    Line { galley, placements }
 }
 
 /// Allocates one truncated line with color emoji.
@@ -134,7 +133,7 @@ pub fn paint_avatar(
     let size = rect.width();
     let mut painted = false;
     if let Some(picture) = picture {
-        let uri = format!("file://{}", picture.display());
+        let uri = crate::util::image_uri(picture);
         let image = egui::Image::new(uri)
             .fit_to_exact_size(Vec2::splat(size))
             .corner_radius(size / 2.0);
@@ -160,6 +159,17 @@ pub fn paint_avatar(
             );
         }
     }
+}
+
+pub fn paint_disappearing_badge(ui: &Ui, palette: &Palette, avatar: Rect) {
+    let size = (avatar.width() * 0.38).clamp(14.0, 18.0);
+    let rect = Rect::from_center_size(
+        pos2(avatar.right() - size * 0.15, avatar.bottom() - size * 0.15),
+        Vec2::splat(size),
+    );
+    ui.painter()
+        .circle_filled(rect.center(), size * 0.58, palette.surface);
+    theme::paint_icon(ui, Icon::DisappearingMessages, rect, size, palette.accent);
 }
 
 /// Outgoing-message status ticks.
@@ -263,7 +273,7 @@ pub fn menu_item_enabled(
             break_anywhere: true,
             overflow_character: Some('\u{2026}'),
         };
-        let galley = ui.painter().layout_job(job);
+        let galley = crate::bidi::layout_job(ui, job);
         ui.painter().galley(
             pos2(x, rect.center().y - galley.size().y / 2.0),
             galley,
@@ -438,17 +448,20 @@ pub fn setting_row(
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - 260.0).max(120.0));
-            theme::text(ui, label, theme::medium(14.0), palette.text);
+            rich_text(ui, label, theme::medium(14.0), palette.text);
             if !description.is_empty() {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(description)
-                            .font(theme::regular(12.5))
-                            .color(palette.secondary),
-                    )
-                    .wrap()
-                    .selectable(false),
+                let description = line(
+                    ui,
+                    description,
+                    theme::regular(12.5),
+                    palette.secondary,
+                    ui.available_width(),
+                    usize::MAX,
                 );
+                let (rect, _) = ui.allocate_exact_size(description.size(), Sense::hover());
+                if ui.is_rect_visible(rect) {
+                    description.paint(ui, rect.min, palette.secondary);
+                }
             }
         });
         ui.with_layout(Layout::right_to_left(Align::Center), control);

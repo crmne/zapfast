@@ -5,6 +5,29 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+pub mod install;
+#[cfg(target_os = "macos")]
+mod macos;
+mod transfer;
+pub use transfer::{Source, download};
+
+#[derive(Default)]
+pub enum DownloadState {
+    #[default]
+    Idle,
+    Downloading {
+        received: u64,
+        total: u64,
+    },
+    Ready(Box<install::Prepared>),
+    Installing,
+    Failed(String),
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/crmne/zapfast/releases/latest";
 
 /// Update-check interval.
@@ -54,10 +77,8 @@ fn parse(version: &str) -> Option<([u64; 3], bool)> {
         None => (version, false),
     };
     let mut parts = numbers.split('.').map(|part| part.parse::<u64>().ok());
-    Some((
-        [parts.next()??, parts.next()??, parts.next()??],
-        pre_release,
-    ))
+    let numbers = [parts.next()??, parts.next()??, parts.next()??];
+    parts.next().is_none().then_some((numbers, pre_release))
 }
 
 /// Whether `candidate` is a newer stable version than `current`.
@@ -89,6 +110,7 @@ mod tests {
             "pre-releases are not announced"
         );
         assert!(!is_newer("nightly", "0.10.0"));
+        assert!(!is_newer("99.0.0.1", "0.10.0"));
         // A release candidate hears about its release, and nothing older.
         assert!(is_newer("0.11.0", "0.11.0-rc1"));
         assert!(is_newer("0.11.1", "0.11.0-rc1"));

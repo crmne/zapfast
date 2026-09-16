@@ -10,8 +10,8 @@ install="${pkgname}.install"
 # Nothing beyond libc is linked directly; winit and glutin dlopen these at
 # startup, and this is a GUI-only application, so all of them have to be
 # there for it to run at all.
-depends=('alsa-lib' 'libglvnd' 'libxkbcommon' 'wayland' 'libx11')
-optdepends=('libxkbcommon-x11: keyboard handling in X11 sessions'
+depends=('alsa-lib' 'alsa-plugins' 'libglvnd' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrandr')
+optdepends=('org.freedesktop.secrets: archive encryption key storage'
             'noto-fonts-emoji: colour emoji in messages and reactions'
             'xdg-desktop-portal: the file picker for attachments')
 provides=('zapfast' 'fastsapp')
@@ -39,4 +39,12 @@ package() {
     "${pkgdir}/usr/share/applications/zapfast.desktop"
   install -Dm644 "${dir}/packaging/icons/zapfast.svg" \
     "${pkgdir}/usr/share/icons/hicolor/scalable/apps/zapfast.svg"
+  # Releases predating theme integration remain valid packaging inputs.
+  if [[ -f "${dir}/contrib/omarchy/zapfast.json.tpl" ]]; then
+    install -Dm644 "${dir}/contrib/omarchy/zapfast.json.tpl" \
+      "${pkgdir}/usr/share/zapfast/omarchy/zapfast.json.tpl"
+    install -Dm755 "${dir}/contrib/omarchy/zapfast-theme" \
+      "${pkgdir}/usr/share/zapfast/omarchy/zapfast-theme"
+  fi
+
 }

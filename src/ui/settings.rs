@@ -41,16 +41,50 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     ui.add_space(18.0);
 
                     section(ui, app, "Appearance");
-                    widgets::setting_row(ui, &palette, "Theme", "", |ui| {
-                        for choice in ThemeChoice::ALL.iter().rev() {
-                            let active = app.settings.theme == *choice;
-                            if theme::soft_button(ui, &palette, None, choice.label(), active).clicked()
-                                && !active
-                            {
-                                app.settings.theme = *choice;
-                                app.actions.push(Action::SettingsChanged);
+                    let detail = app.custom_themes.detail(app.settings.custom_theme.as_deref());
+                    let detail = if !detail.is_empty() {
+                        detail
+                    } else if app.custom_themes.follows_omarchy() {
+                        "Follow system uses your Omarchy colours."
+                    } else {
+                        "Follow system uses your desktop's light or dark appearance."
+                    };
+                    widgets::setting_row(ui, &palette, "Theme", detail, |ui| {
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                            let selected = app.settings.custom_theme.as_deref()
+                                .map(theme::custom::label)
+                                .unwrap_or_else(|| app.settings.theme.label());
+                            let response = egui::ComboBox::from_id_salt("appearance_theme")
+                                .selected_text(" ")
+                                .width(200.0_f32.min(ui.available_width()))
+                                .height(320.0)
+                                .show_ui(ui, |ui| {
+                                    for choice in ThemeChoice::ALL {
+                                        if theme_option(ui, &palette, choice.label(), app.settings.custom_theme.is_none() && app.settings.theme == choice) {
+                                            app.actions.push(Action::SetTheme(choice));
+                                        }
+                                    }
+                                    if app.custom_themes.picker_themes().next().is_some() {
+                                        ui.separator();
+                                    }
+                                    for custom in app.custom_themes.picker_themes() {
+                                        if theme_option(ui, &palette, theme::custom::label(&custom.filename), app.settings.custom_theme.as_deref() == Some(custom.filename.as_str())) {
+                                            app.actions.push(Action::SetCustomTheme(custom.filename.clone()));
+                                        }
+                                    }
+                                });
+                            let rect = response.response.rect;
+                            let text = widgets::line(ui, selected, theme::regular(14.0), palette.text, rect.width() - 36.0, 1);
+                            text.paint(ui, egui::pos2(rect.left() + 8.0, rect.center().y - text.size().y / 2.0), palette.text);
+                            response.response.widget_info(|| {
+                                let mut info = egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, ui.is_enabled(), "Theme");
+                                info.current_text_value = Some(selected.to_owned());
+                                info
+                            });
+                            if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), "Open themes folder", false).clicked() {
+                                app.actions.push(Action::OpenThemesFolder);
                             }
-                        }
+                        });
                     });
                     widgets::setting_row(
                         ui,
@@ -91,6 +125,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     section(ui, app, "Window");
                     toggle(ui, app, "Keep running when the window closes", "Keep ZapFast linked in the system tray. Quit from the tray menu or with Ctrl+Q.", |settings| &mut settings.keep_running_in_background);
                     toggle(ui, app, "Notify about new messages", "Show desktop notifications when the window is hidden, in the background, or showing another chat. Muted chats do not notify you.", |settings| &mut settings.notifications);
+                    toggle(ui, app, "Download updates automatically", "Download and verify new releases in the background. You choose when to restart. Native packages and Flatpak update through their package manager.", |settings| &mut settings.download_updates_automatically);
                     toggle(ui, app, "Check for updates", "Ask GitHub once a day whether a newer ZapFast release exists. The request identifies only ZapFast and its version.", |settings| &mut settings.check_for_updates);
 
                     widgets::setting_row(
@@ -225,4 +260,36 @@ fn toggle(
         *field(&mut app.settings) = value;
         app.actions.push(Action::SettingsChanged);
     }
+}
+
+/// Theme filenames can contain emoji, so paint them through the shared line renderer.
+fn theme_option(ui: &mut egui::Ui, palette: &theme::Palette, text: &str, selected: bool) -> bool {
+    let response = ui.add(
+        egui::Button::selectable(selected, " ").min_size(egui::vec2(ui.available_width(), 28.0)),
+    );
+    let rect = response.rect;
+    let line = widgets::line(
+        ui,
+        text,
+        theme::regular(14.0),
+        palette.text,
+        rect.width() - 16.0,
+        1,
+    );
+    if ui.is_rect_visible(rect) {
+        line.paint(
+            ui,
+            egui::pos2(rect.left() + 8.0, rect.center().y - line.size().y / 2.0),
+            palette.text,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            text,
+        )
+    });
+    response.clicked()
 }

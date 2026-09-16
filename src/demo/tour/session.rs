@@ -9,6 +9,58 @@ use crate::{
 pub fn respond(app: &mut App) {
     for command in app.backend.take_demo_commands() {
         match command {
+            Command::CreatePoll { chat, draft } => {
+                let state = crate::model::PollState {
+                    selectable: draft.selectable(),
+                    counts: vec![0; draft.options.len()],
+                    can_vote: true,
+                    history_complete: true,
+                    ..Default::default()
+                };
+                let row = outgoing(
+                    app,
+                    &chat,
+                    Content::Poll {
+                        question: draft.question,
+                        options: draft.options,
+                        state,
+                    },
+                );
+                append(app, row);
+                app.poll_creating = false;
+                app.dialog = None;
+            }
+            Command::VotePoll {
+                chat,
+                message,
+                choices,
+            } => {
+                if let Some(row) = app
+                    .conversations
+                    .get_mut(&chat)
+                    .and_then(|chat| chat.message_mut(&message))
+                    && let Content::Poll { state, .. } = &mut row.content
+                {
+                    for &old in &state.selected {
+                        if let Some(count) = state.counts.get_mut(old) {
+                            *count = count.saturating_sub(1);
+                        }
+                    }
+                    if !state.selected.is_empty() {
+                        state.voters = state.voters.saturating_sub(1);
+                    }
+                    for &new in &choices {
+                        if let Some(count) = state.counts.get_mut(new) {
+                            *count += 1;
+                        }
+                    }
+                    if !choices.is_empty() {
+                        state.voters += 1;
+                    }
+                    state.selected = choices;
+                }
+                app.poll_voting.remove(&(chat, message));
+            }
             Command::SendText {
                 chat,
                 text,

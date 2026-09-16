@@ -34,9 +34,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::NewContact => 380.0,
                 Dialog::ChatInfo(_) => 360.0,
                 Dialog::Forward { .. } => 420.0,
+                Dialog::CreatePoll(_) => 420.0,
             });
             ui.spacing_mut().item_spacing.y = 8.0;
             match dialog {
+                Dialog::CreatePoll(chat) => super::polls::create(app, ui, &chat),
                 Dialog::Shortcuts => shortcuts(app, ui),
                 Dialog::About => about(app, ui),
                 Dialog::ConfirmUnlink => confirm_unlink(app, ui),

@@ -5,7 +5,14 @@
 
 use egui::{Color32, CornerRadius, Response, Sense, Stroke, Vec2};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+pub mod custom;
+#[cfg(target_os = "linux")]
+mod omarchy;
+pub(crate) mod presets;
+#[cfg(target_os = "linux")]
+mod watch;
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Palette {
     pub dark: bool,
     pub window: Color32,
@@ -342,6 +349,7 @@ pub enum Icon {
     ChevronLeft,
     ChevronRight,
     ChevronUp,
+    ChartBar,
     CircleAlert,
     CircleCheck,
     CircleX,
@@ -349,6 +357,7 @@ pub enum Icon {
     Contact,
     Copy,
     Download,
+    DisappearingMessages,
     Ellipsis,
     ExternalLink,
     Eye,
@@ -411,6 +420,7 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     ChevronLeft => "chevron-left",
     ChevronRight => "chevron-right",
     ChevronUp => "chevron-up",
+    ChartBar => "chart-bar",
     CircleAlert => "circle-alert",
     CircleCheck => "circle-check",
     CircleX => "circle-x",
@@ -418,6 +428,7 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     Contact => "contact",
     Copy => "copy",
     Download => "download",
+    DisappearingMessages => "disappearing-messages",
     Ellipsis => "ellipsis",
     ExternalLink => "external-link",
     Eye => "eye",
@@ -672,6 +683,9 @@ pub fn spinner(ui: &mut egui::Ui, size: f32, color: Color32) -> Response {
 
 /// Paints a centered spinner without allocating space.
 pub fn paint_spinner(ui: &egui::Ui, rect: egui::Rect, size: f32, color: Color32) {
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(33));
     let radius = size / 2.0 - 2.0;

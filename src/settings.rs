@@ -14,7 +14,7 @@ pub enum ThemeChoice {
 }
 
 impl ThemeChoice {
-    pub const ALL: [ThemeChoice; 3] = [Self::Dark, Self::Light, Self::System];
+    pub const ALL: [ThemeChoice; 3] = [Self::System, Self::Light, Self::Dark];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -29,6 +29,20 @@ impl ThemeChoice {
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeChoice,
+    /// Filename of the selected local JSON palette.
+    pub custom_theme: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::theme::custom::read_cached_theme",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub custom_theme_cache: Option<crate::theme::custom::CustomTheme>,
+    #[serde(
+        default,
+        deserialize_with = "crate::theme::custom::read_cached_theme",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub system_theme_cache: Option<crate::theme::custom::CustomTheme>,
     /// egui zoom factor.
     pub zoom: f32,
     pub sidebar_width: f32,
@@ -56,6 +70,8 @@ pub struct Settings {
     pub notifications: bool,
     /// Ask GitHub once a day whether a newer release exists.
     pub check_for_updates: bool,
+    /// Download verified updates in the background; restarting remains explicit.
+    pub download_updates_automatically: bool,
     /// Prefer address-book names over public profile names.
     pub names_from_contacts: bool,
     /// Also add saved contacts to the phone's address book.
@@ -66,6 +82,9 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::Dark,
+            custom_theme: None,
+            custom_theme_cache: None,
+            system_theme_cache: None,
             zoom: 1.0,
             sidebar_width: 320.0,
             enter_sends: true,
@@ -80,6 +99,7 @@ impl Default for Settings {
             keep_running_in_background: true,
             notifications: true,
             check_for_updates: true,
+            download_updates_automatically: false,
             names_from_contacts: true,
             save_contacts_to_phone: true,
         }
@@ -94,6 +114,17 @@ pub const BUILT_IN_GIPHY_KEY: Option<&str> = match option_env!("ZAPFAST_GIPHY_KE
 };
 
 impl Settings {
+    pub(crate) fn cached_palette(&self) -> Option<crate::theme::Palette> {
+        let theme = if self.custom_theme.is_some() {
+            self.custom_theme_cache.as_ref()
+        } else if self.theme == ThemeChoice::System {
+            self.system_theme_cache.as_ref()
+        } else {
+            None
+        };
+        theme.map(|theme| theme.palette)
+    }
+
     /// Returns the user key, built-in key, or `None`.
     pub fn effective_giphy_key(&self) -> Option<String> {
         let own = self.giphy_key.trim();
@@ -146,6 +177,15 @@ mod tests {
         assert_eq!(parsed.theme, ThemeChoice::Light);
         assert!(parsed.enter_sends);
         assert!(parsed.check_for_updates);
+        assert!(!parsed.download_updates_automatically);
+    }
+
+    #[test]
+    fn damaged_theme_cache_does_not_discard_other_settings() {
+        let settings: Settings = serde_json::from_str(r#"{"custom_theme":"mine.json","custom_theme_cache":{"damaged":true},"enter_sends":false}"#).unwrap();
+        assert!(!settings.enter_sends);
+        assert!(settings.custom_theme_cache.is_none());
+        assert_eq!(settings.custom_theme.as_deref(), Some("mine.json"));
     }
 
     #[test]

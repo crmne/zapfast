@@ -589,6 +589,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             &chat.id,
             picture.as_deref(),
         );
+        if chat.ephemeral_expiration.is_some() {
+            widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
+        }
 
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;

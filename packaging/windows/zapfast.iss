@@ -65,6 +65,8 @@ Source: "{#Binary}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
+Source: "zapfast-installer.txt"; DestDir: "{app}"; Flags: ignoreversion
+
 [InstallDelete]
 ; AppId keeps upgrades in the existing installation directory. Remove the
 ; previous executable and shortcuts so they cannot start the old client.

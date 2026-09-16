@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           # A native arm64 runner, so the GUI's system libraries need no
           # cross-compilation sysroot.
@@ -45,12 +45,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev cmake perl
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
 
-      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Package
         shell: bash
@@ -62,10 +62,10 @@ jobs:
           else
             cp "target/${{ matrix.target }}/release/zapfast" "dist/$name/"
           fi
-          cp README.md LICENSE "dist/$name/"
+          cp README.md LICENSE packaging/zapfast-portable.txt "dist/$name/"
           if [ "${{ runner.os }}" = "Linux" ]; then
             # Desktop integration for package builds and hand-installs.
-            cp --parents packaging/applications/zapfast.desktop packaging/icons/zapfast.svg "dist/$name/"
+            cp --parents packaging/applications/zapfast.desktop packaging/icons/zapfast.svg contrib/omarchy/zapfast.json.tpl contrib/omarchy/zapfast-theme "dist/$name/"
           fi
           cd dist
           if [ "${{ runner.os }}" = "Windows" ]; then
@@ -121,8 +121,8 @@ jobs:
 
       - name: Build both architectures
         run: |
-          cargo build --release --target aarch64-apple-darwin
-          cargo build --release --target x86_64-apple-darwin
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
 
       - name: Universal binary
         run: |
@@ -136,7 +136,7 @@ jobs:
         with:
           ruby-version: '4.0'
       - name: Install native packaging
-        run: gem install native-packages --version 0.5.1 --no-document
+        run: gem install native-packages --version 0.6.0 --no-document
 
       - name: App bundle
         run: |
@@ -147,8 +147,8 @@ jobs:
 
       - name: Package, sign and notarize macOS app
         run: |
-          native-packages --config native-packages.macos.yaml build \
-            --version "${GITHUB_REF_NAME#v}" --target macos-universal \
+          native-packages build \
+            --version "${GITHUB_REF_NAME#v}" --target macos-universal --defer-recipes \
             --output "$RUNNER_TEMP/macos-packages"
           cp "$RUNNER_TEMP/macos-packages/packages/macos-universal/dmg/"*.dmg dist/
 
@@ -161,9 +161,41 @@ jobs:
           path: dist/*.dmg
           if-no-files-found: error
 
+  # The Linux build packaged as a Flatpak bundle: the same binary, in the
+  # sandbox packaging/flatpak describes, so nothing compiles twice. Flathub
+  # builds from source on its own machines, from the manifest beside it.
+  flatpak:
+    name: Flatpak bundle
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: x86_64-unknown-linux-gnu
+          path: dist
+      - name: Unpack the Linux build
+        run: |
+          tar xzf dist/zapfast-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz -C packaging/flatpak
+          mv packaging/flatpak/zapfast-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu packaging/flatpak/built
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: packaging/flatpak/rocks.zapfast.ZapFast.bundle.yml
+          bundle: zapfast-${{ github.ref_name }}-x86_64.flatpak
+          cache: false
+          upload-artifact: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: flatpak
+          path: "*.flatpak"
+          if-no-files-found: error
+
   publish:
     name: GitHub release
-    needs: [build, macos]
+    needs: [build, macos, flatpak]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v7

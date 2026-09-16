@@ -248,8 +248,10 @@ fn script() -> Vec<Cue> {
         32.5,
         Key(egui::Key::Comma, command(), "Ctrl + , · Settings"),
     );
-    add(33.0, Move(Label("Light")));
-    add(33.5, Click(left));
+    add(33.0, Move(Label("Dark")));
+    add(33.35, Click(left));
+    add(33.5, Move(Label("Light")));
+    add(33.85, Click(left));
     add(
         34.5,
         Key(egui::Key::Escape, Modifiers::NONE, "Esc · Back to chats"),
@@ -266,8 +268,10 @@ fn script() -> Vec<Cue> {
         37.5,
         Key(egui::Key::Comma, command(), "Ctrl + , · Settings"),
     );
-    add(38.0, Move(Label("Dark")));
-    add(38.5, Click(left));
+    add(38.0, Move(Label("Light")));
+    add(38.35, Click(left));
+    add(38.5, Move(Label("Dark")));
+    add(38.85, Click(left));
     add(
         39.2,
         Key(egui::Key::Escape, Modifiers::NONE, "Esc · Back to chats"),
@@ -552,6 +556,138 @@ impl Tour {
 mod tests {
     use super::*;
     use crate::model::{Dialog, PickerTab};
+
+    fn frame(app: &mut App, tour: &mut Tour, ctx: &egui::Context, events: Vec<Event>) {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 780.0))),
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            app.background_frame(ctx);
+            app.frame_ui(ui);
+            tour.observe(app, ctx);
+        });
+        output.textures_delta.clear();
+    }
+    fn click(app: &mut App, tour: &mut Tour, ctx: &egui::Context, label: &str) {
+        let pos = *tour
+            .labels
+            .get(label)
+            .unwrap_or_else(|| panic!("missing {label}"));
+        for pressed in [true, false] {
+            frame(
+                app,
+                tour,
+                ctx,
+                vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        frame(app, tour, ctx, Vec::new());
+    }
+
+    #[test]
+    fn polls_are_created_and_voted_through_real_controls() {
+        let mut app = super::super::tests::app();
+        app.backend.record_demo_commands();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let chat = app.open_chat.clone().unwrap();
+        for multiple in [false, true] {
+            app.actions
+                .push(crate::model::Action::ShowDialog(Dialog::CreatePoll(
+                    chat.clone(),
+                )));
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+            app.poll_draft = crate::model::PollDraft {
+                question: "Lunch?".into(),
+                options: vec!["Pizza".into(), "Pasta".into()],
+                multiple,
+            };
+            for _ in 0..3 {
+                frame(&mut app, &mut tour, &ctx, Vec::new());
+            }
+            click(&mut app, &mut tour, &ctx, "Send poll");
+            assert!(app.dialog.is_none());
+            assert!(!app.poll_creating);
+            for _ in 0..3 {
+                frame(&mut app, &mut tour, &ctx, Vec::new());
+            }
+            click(&mut app, &mut tour, &ctx, "Pizza");
+            click(&mut app, &mut tour, &ctx, "Pasta");
+            let Content::Poll { state, .. } =
+                &app.conversations[&chat].messages.last().unwrap().content
+            else {
+                panic!("poll")
+            };
+            assert_eq!(state.selected, if multiple { vec![0, 1] } else { vec![1] });
+            assert_eq!(state.voters, 1);
+            click(&mut app, &mut tour, &ctx, "Pasta");
+            if multiple {
+                click(&mut app, &mut tour, &ctx, "Pizza");
+            }
+            let Content::Poll { state, .. } =
+                &app.conversations[&chat].messages.last().unwrap().content
+            else {
+                panic!("poll")
+            };
+            assert!(state.selected.is_empty());
+            assert_eq!(state.counts, vec![0, 0]);
+            assert_eq!(state.voters, 0);
+            assert!(app.poll_voting.is_empty());
+        }
+    }
+
+    #[test]
+    fn the_theme_dropdown_selects_spotifast_palettes_and_returns_to_follow_system() {
+        let mut app = super::super::tests::app();
+        app.page = Page::Settings;
+        app.custom_themes = crate::theme::custom::Catalog::preview(
+            crate::theme::presets::themes().collect(),
+            false,
+        );
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        click(&mut app, &mut tour, &ctx, "Dark");
+        for name in [
+            "Follow system",
+            "Light",
+            "Dark",
+            "Catppuccin Latte.json",
+            "Catppuccin.json",
+            "Nord.json",
+            "Ristretto.json",
+            "Tokyo Night.json",
+        ] {
+            assert!(
+                tour.labels.contains_key(name),
+                "missing theme choice {name}"
+            );
+        }
+        click(&mut app, &mut tour, &ctx, "Nord.json");
+        assert_eq!(app.settings.custom_theme.as_deref(), Some("Nord.json"));
+        assert_eq!(
+            app.palette.window,
+            egui::Color32::from_rgb(0x2e, 0x34, 0x40)
+        );
+        click(&mut app, &mut tour, &ctx, "Nord.json");
+        click(&mut app, &mut tour, &ctx, "Follow system");
+        assert!(app.settings.custom_theme.is_none());
+        assert_eq!(app.settings.theme, ThemeChoice::System);
+    }
 
     #[test]
     fn real_input_opens_menus_completes_text_and_sends_offline_media() {

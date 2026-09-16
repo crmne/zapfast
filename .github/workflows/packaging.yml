@@ -3,13 +3,13 @@ name: Packaging
 on:
   push:
     branches: [main, master]
-    paths: [native-packages.yaml, native-packages.macos.yaml, packaging/**, .github/workflows/packaging.yml, .github/workflows/release.yml]
+    paths: [native-packages.yaml, packaging/**, contrib/omarchy/**, .github/workflows/packaging.yml, .github/workflows/release.yml]
   pull_request:
-    paths: [native-packages.yaml, native-packages.macos.yaml, packaging/**, .github/workflows/packaging.yml, .github/workflows/release.yml]
+    paths: [native-packages.yaml, packaging/**, contrib/omarchy/**, .github/workflows/packaging.yml, .github/workflows/release.yml]
   workflow_dispatch:
     inputs:
       version:
-        description: Published version (empty validates recipes only)
+        description: Published version (empty tests the published v0.13.1 fixture)
         type: string
         default: ''
       publish:
@@ -39,8 +39,30 @@ jobs:
   packaging:
     permissions:
       contents: write
-    uses: crmne/native-packages/.github/workflows/package.yml@5caecbb702d6605cb48f83c380ea8b8196c9909e # v0.5.1
+    uses: crmne/native-packages/.github/workflows/package.yml@f002ce91c1180528734538fa47d235d387fd351f # v0.6.0
     with:
-      version: ${{ inputs.version || '' }}
+      targets: linux-amd64,linux-arm64
+      version: ${{ inputs.version || 'v0.13.1' }}
       publish: ${{ inputs.publish == true && inputs.version != '' }}
     secrets: inherit
+
+  installation:
+    name: Install (${{ matrix.os }}, ${{ matrix.image }})
+    needs: packaging
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        image: ['ubuntu:24.04', 'debian:13-slim', 'fedora:41', 'fedora:latest']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-packages
+          path: dist/native-packages
+      - name: Install and check runtime libraries in a clean container
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: bash packaging/test-install.sh "$IMAGE" dist/native-packages

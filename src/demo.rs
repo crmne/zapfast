@@ -162,6 +162,16 @@ const SAMPLES: &[Sample] = &[
         ],
     },
     Sample {
+        id: "972501234567@s.whatsapp.net",
+        name: "Yael",
+        minutes_ago: 60 * 3,
+        unread: 1,
+        pinned: false,
+        muted: false,
+        archived: false,
+        lines: &[(false, "הכלב הגדול קפץ"), (true, "OK הכלב end")],
+    },
+    Sample {
         id: "33612345678@s.whatsapp.net",
         name: "Dentist",
         minutes_ago: 60 * 24 * 12,
@@ -428,6 +438,11 @@ pub fn populate(app: &mut App) {
         chat.last_activity = now - sample.minutes_ago * 60;
         chat.unread = sample.unread;
         chat.pinned = sample.pinned;
+        chat.pinned_at = if sample.pinned {
+            (now - sample.minutes_ago * 60) * 1000
+        } else {
+            0
+        };
         chat.muted_until = sample.muted.then_some(0);
         chat.archived = sample.archived;
         let mut conversation = Conversation {
@@ -737,6 +752,15 @@ pub fn populate(app: &mut App) {
             group_base + 180,
             Content::Poll {
                 question: "Pizza after the talks?".into(),
+                state: crate::model::PollState {
+                    selectable: 1,
+                    counts: vec![3, 2, 0],
+                    selected: vec![0],
+                    voters: 5,
+                    can_vote: true,
+                    history_complete: true,
+                    ..Default::default()
+                },
                 options: vec!["Yes".into(), "Only if it's Neapolitan".into(), "No".into()],
             },
         ),
@@ -793,12 +817,139 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
         match part {
             "chat" | "" => {}
             "empty" => app.open_chat = None,
+            "disappearing" => {
+                let chat = app
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == SAMPLES[1].id)
+                    .unwrap();
+                chat.ephemeral_expiration = Some(86_400);
+                app.open_chat = Some(chat.id.clone());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
+            "rtl" => {
+                let id = SAMPLES[1].id;
+                let now = crate::util::now();
+                let messages = vec![
+                    message(
+                        id,
+                        "rtl-hebrew",
+                        false,
+                        now - 120,
+                        Content::text("הכלב הגדול קפץ 🐕"),
+                    ),
+                    message(
+                        id,
+                        "rtl-arabic",
+                        false,
+                        now - 60,
+                        Content::text("مرحبا بالعالم الجميل 🌍"),
+                    ),
+                    {
+                        let mut reply =
+                            message(id, "rtl-reply", true, now, Content::text("שלום עולם"));
+                        reply.quoted = Some(Quoted {
+                            id: "rtl-hebrew".into(),
+                            sender: SAMPLES[0].id.into(),
+                            sender_name: Some("שלום עולם".into()),
+                            summary: "הכלב הגדול קפץ 🐕".into(),
+                            mentions: Vec::new(),
+                        });
+                        reply
+                    },
+                ];
+                if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == id) {
+                    chat.name = "שלום יזמות ונדל\"ן".into();
+                    if let Some(last) = &mut chat.last {
+                        last.summary = "הכלב הגדול קפץ 🐕".into();
+                    }
+                }
+                app.conversations.get_mut(id).expect("demo group").messages = messages;
+                app.open_chat = Some(id.into());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "settings" => app.page = Page::Settings,
-            "update" => {
+            choice if choice.starts_with("theme=") => {
+                let themes: Vec<_> = crate::theme::presets::themes().collect();
+                if let Some(theme) = themes
+                    .iter()
+                    .find(|theme| Some(theme.filename.as_str()) == choice.strip_prefix("theme="))
+                {
+                    app.settings.custom_theme = Some(theme.filename.clone());
+                    app.settings.custom_theme_cache = Some(theme.clone());
+                }
+                app.custom_themes = crate::theme::custom::Catalog::preview(themes, false);
+            }
+            "themes" => {
+                use crate::theme::custom::{Catalog, CustomTheme};
+                let mut palette = crate::theme::Palette::dark();
+                palette.accent = egui::Color32::from_rgb(137, 180, 250);
+                palette.bubble_out = egui::Color32::from_rgb(41, 57, 84);
+                let theme = CustomTheme {
+                    filename: "Moonlight 🌙.json".into(),
+                    palette,
+                };
+                let mut themes: Vec<_> = crate::theme::presets::themes().collect();
+                themes.push(theme.clone());
+                app.custom_themes = Catalog::preview(themes, false);
+                app.settings.custom_theme = Some(theme.filename.clone());
+                app.settings.custom_theme_cache = Some(theme);
+                app.page = Page::Settings;
+            }
+            "update" | "update-downloading" | "update-ready" | "update-failed"
+            | "update-managed" => {
+                use crate::updates::{
+                    DownloadState,
+                    install::{Installation, Kind, Prepared},
+                };
                 app.update = Some(crate::updates::Release {
                     version: "99.0.0".to_owned(),
                     url: "https://github.com/crmne/zapfast/releases/latest".to_owned(),
                 });
+                app.show_update = true;
+                let installation = Installation {
+                    executable: "/demo/zapfast".into(),
+                    kind: Kind::Portable,
+                };
+                app.update_support = Some(Ok(installation.clone()));
+                app.update_download = match part {
+                    "update-downloading" => DownloadState::Downloading {
+                        received: 8_000_000,
+                        total: 20_000_000,
+                    },
+                    "update-ready" => DownloadState::Ready(Box::new(Prepared {
+                        installation,
+                        directory: "/demo/staging".into(),
+                        payload: "/demo/staging/next".into(),
+                        sha256: String::new(),
+                        version: "99.0.0".into(),
+                    })),
+                    "update-failed" => DownloadState::Failed(
+                        "The download could not be verified. Try downloading it again.".into(),
+                    ),
+                    _ => DownloadState::Idle,
+                };
+                if part == "update-managed" {
+                    app.update_support = Some(Err(
+                        "Update this installation through your package manager or software center."
+                            .into(),
+                    ));
+                }
+            }
+            "poll" => {
+                app.open_chat = Some(SAMPLES[1].id.into());
+                app.scroll_to_bottom = true;
+                app.typing.clear();
+            }
+            "poll-create" => {
+                app.dialog = app.open_chat.clone().map(Dialog::CreatePoll);
+                app.poll_draft = crate::model::PollDraft {
+                    question: "Pizza after the talks? 🍕".into(),
+                    options: vec!["Yes".into(), "Only if it’s Neapolitan".into(), "No".into()],
+                    multiple: false,
+                };
             }
             "shortcuts" => app.dialog = Some(Dialog::Shortcuts),
             "about" => app.dialog = Some(Dialog::About),
@@ -1122,8 +1273,22 @@ mod tests {
         }
         for page in [
             "empty",
+            "rtl",
+            "disappearing",
             "settings",
             "update",
+            "update-downloading",
+            "update-ready",
+            "update-failed",
+            "update-managed",
+            "themes",
+            "poll",
+            "poll-create",
+            "theme=Catppuccin.json",
+            "theme=Catppuccin Latte.json",
+            "theme=Nord.json",
+            "theme=Ristretto.json",
+            "theme=Tokyo Night.json",
             "shortcuts",
             "about",
             "info",

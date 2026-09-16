@@ -5,6 +5,7 @@ pub mod app;
 pub mod archive;
 pub mod audio;
 pub mod backend;
+pub mod bidi;
 #[cfg(any(test, feature = "demo"))]
 pub mod demo;
 pub mod emoji;

@@ -39,12 +39,40 @@ protocol. These notes are for coding agents and new contributors.
 - `src/archive.rs` is the SQLite store of chats, messages, contacts, and
   privacy-id mappings. WhatsApp replays history once, at link time, so the
   archive is the only copy. It keeps each message's raw protobuf because
-  the keys to fetch an attachment live in it.
+  the keys to fetch an attachment live in it. `src/archive/encryption.rs` opens
+  the archive with SQLCipher and a random key stored in the OS keyring. Plaintext
+  migration checkpoints the old WAL and verifies an encrypted staging file before
+  atomic replacement. A locked or missing key stops linking; never fall back to
+  a disposable archive. Tests use fixtures and mock credentials only.
 - `src/model.rs` holds the app's own types. Views never touch a protobuf;
   the worker translates in `classify()` and `parse_conversation()`.
+- Poll creation, voting, and decryption use whatsapp-rust's `Client::polls()`.
+  `backend/worker/polls.rs` retains the original creator identity and key in the
+  encrypted archive; `archive/polls.rs` keeps each voter's latest timestamp and
+  message id, including encrypted updates whose parent has not arrived yet.
+  History replay must not undo a newer vote or withdrawal. Decryption runs in
+  batches of eight, with failures retried after reconnecting. The interface only
+  receives option counts and its own selection, never keys or protobufs. Visible
+  polls request phone history automatically, anchored after the creation message
+  so the response includes its vote snapshot. `poll_history.rs` serializes these
+  requests and retries from 30 seconds to 15 minutes without an interface timer.
+  History request timestamps are Unix seconds: the library argument and wire
+  field misleadingly end in `Ms`. Do not multiply archive timestamps by 1,000.
+  A repeated poll question with no usable vote snapshot cannot finish recovery.
 - Chat ids are canonical strings: a chat behind a privacy id (`@lid`) is
   filed under its phone number once the mapping is known. Use
   `Worker::canonical` for anything that arrives as a `Jid`.
+- `src/updates/` downloads verified GitHub releases and hands installation to a
+  helper after an explicit restart action. Keep package-manager detection, asset
+  checksums, startup acknowledgement and rollback intact. Portable releases carry
+  `packaging/zapfast-portable.txt`; the Windows installer has its own marker.
+- `src/theme/custom.rs` scans local JSON palettes off the UI thread, caching the
+  last usable choice in settings, with shared Spotifast palettes embedded as
+  defaults. On Linux filesystem notifications reload the catalog and the active
+  Omarchy palette without a repaint timer; following Omarchy does not require
+  packaged assets. Native packages ship optional hooks and templates, preserving
+  existing per-user files. `reload-themes` uses the single-instance channel
+  without opening a window.
 - `src/theme.rs` owns colours, fonts, and icons; `src/ui/widgets.rs` the
   shared controls. New icons go in `assets/icons/` as 24px Lucide-style SVGs
   and in the `icons!` table.
@@ -157,6 +185,11 @@ protocol. These notes are for coding agents and new contributors.
   recipient. Never promote a group from one reader, apply a receipt to earlier
   messages, or infer a historical audience from current membership. History
   trusts the phone's aggregate status, not a partial `user_receipt` list.
+- Private read-state writes all use the `regular_low` app-state collection.
+  `backend::read_sync` permits one at a time and backs off the whole queue after
+  failure; per-chat retry queues would repeatedly rebuild the same failed
+  collection. Pending positions stay in the archive until acknowledged. Snapshot
+  recovery and no-progress conflict detection belong to whatsapp-rust.
 - The name and icon under the phone's Linked devices come from
   `DevicePropsOverride` in `start_bot` (`os` is the name shown, the
   platform type picks the icon); WhatsApp reads them at pairing only, so a

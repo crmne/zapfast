@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>rocks.zapfast.ZapFast</id>
+  <name>ZapFast</name>
+  <summary>A native WhatsApp client</summary>
+  <developer id="me.paolino">
+    <name>Carmine Paolino</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>A native WhatsApp companion for Linux, macOS and Windows, written in Rust
+    without a browser engine. Link your phone to read and send messages.</p>
+    <p>Browse chats, search your local archive, send attachments and voice messages,
+    and use emoji, GIFs and stickers. Closing the window can keep the connection
+    running in the system tray. ZapFast is an independent project, not affiliated
+    with WhatsApp or Meta.</p>
+  </description>
+  <launchable type="desktop-id">rocks.zapfast.ZapFast.desktop</launchable>
+  <url type="homepage">https://zapfast.rocks/</url>
+  <url type="bugtracker">https://github.com/crmne/zapfast/issues</url>
+  <url type="help">https://zapfast.rocks/getting-started/</url>
+  <url type="vcs-browser">https://github.com/crmne/zapfast</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>A conversation with pictures, voice messages and replies</caption>
+      <image>https://raw.githubusercontent.com/crmne/zapfast/main/docs/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"><content_attribute id="social-chat">intense</content_attribute></content_rating>
+  <requires>
+    <display_length compare="ge">760</display_length>
+    <internet>always</internet>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <releases>
+    <release version="0.13.1" date="2026-09-14">
+      <url>https://github.com/crmne/zapfast/releases/tag/v0.13.1</url>
+    </release>
+  </releases>
+</component>

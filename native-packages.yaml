@@ -1,9 +1,14 @@
-# Shared CLI: gem install native-packages --version 0.5.1
+# Shared CLI: gem install native-packages --version 0.6.0
 ---
 schema: 1
 tool:
-  version: 0.5.1
+  version: 0.6.0
   nfpm: 2.47.0
+# Ubuntu 24.04 and Debian 13 use ALSA's t64 package name.
+libraries:
+  libasound.so.2:
+    deb: libasound2t64
+    rpm: alsa-lib
 nfpm:
   name: zapfast
   maintainer: Carmine Paolino <carmine@paolino.me>
@@ -34,30 +39,66 @@ nfpm:
     dst: "/usr/share/icons/hicolor/scalable/apps/zapfast.svg"
     file_info:
       mode: 420
+  - src: contrib/omarchy/zapfast.json.tpl
+    dst: /usr/share/zapfast/omarchy/zapfast.json.tpl
+    file_info:
+      mode: 420
+  - src: contrib/omarchy/zapfast-theme
+    dst: /usr/share/zapfast/omarchy/zapfast-theme
+    file_info:
+      mode: 493
   overrides:
     deb:
       depends:
       - libc6 (>= 2.39)
       - libgl1
+      - libegl1
       - libxkbcommon0
+      - libxkbcommon-x11-0
       - libwayland-client0
+      - libwayland-cursor0
+      - libwayland-egl1
       - libx11-6
-      - libasound2
+      - libx11-xcb1
+      - libxcursor1
+      - libxi6
+      - libxrandr2
+      - libasound2t64
+      - libasound2-plugins
       - libgcc-s1
       - libstdc++6
     rpm:
       depends:
       - glibc >= 2.39
       - libglvnd-glx
+      - libglvnd-egl
       - libxkbcommon
-      - wayland-libs
+      - libxkbcommon-x11
+      - libwayland-client
+      - libwayland-cursor
+      - libwayland-egl
       - libX11
+      - libX11-xcb
+      - libXcursor
+      - libXi
+      - libXrandr
       - alsa-lib
+      - alsa-plugins-pulseaudio
       - libgcc
       - libstdc++
   rpm:
     buildhost: github-actions
 targets:
+  macos-universal:
+    platform: macos
+    arch: universal
+    formats: [dmg]
+    input:
+      kind: directory
+      local: dist/macos-input
+    native:
+      command: [ruby, packaging/macos/dmg.rb, '@PAYLOAD@', '@PACKAGE@']
+      output: 'zapfast-@TAG@-macos-universal.dmg'
   linux-amd64:
     platform: linux
     arch: amd64

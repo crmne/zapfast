@@ -28,6 +28,8 @@ pub enum Outcome {
 pub enum ControlCommand {
     /// Shows or creates the window.
     Show,
+    /// Reload local theme files without opening the window.
+    ReloadThemes,
 }
 
 /// Owns the listener that marks this process as the running instance.
@@ -119,6 +121,7 @@ fn serve(
 fn parse(line: &str) -> Option<ControlCommand> {
     match line.trim_end().strip_prefix(PREFIX)? {
         "show" => Some(ControlCommand::Show),
+        "reload-themes" => Some(ControlCommand::ReloadThemes),
         _ => None,
     }
 }

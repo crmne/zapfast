@@ -1,0 +1,36 @@
+# The release workflow's Flatpak: the binary the Linux job built, packaged
+# into the same sandbox as rocks.zapfast.ZapFast.yml describes. The
+# job unpacks the release tarball into built/ beside this file first.
+id: rocks.zapfast.ZapFast
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: zapfast
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --socket=pulseaudio
+  - --share=network
+  # Archive encryption key.
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --persist=.local/state
+modules:
+  - name: zapfast
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 zapfast /app/bin/zapfast
+      - install -Dm644 packaging/applications/*.desktop /app/share/applications/rocks.zapfast.ZapFast.desktop
+      - sed -i 's/^Icon=.*$/Icon=rocks.zapfast.ZapFast/;s/^StartupWMClass=zapfast$/StartupWMClass=rocks.zapfast.ZapFast/' /app/share/applications/rocks.zapfast.ZapFast.desktop
+      - install -Dm644 packaging/icons/*.svg /app/share/icons/hicolor/scalable/apps/rocks.zapfast.ZapFast.svg
+      - install -Dm644 packaging/flatpak/rocks.zapfast.ZapFast.metainfo.xml /app/share/metainfo/rocks.zapfast.ZapFast.metainfo.xml
+      - install -Dm644 LICENSE /app/share/licenses/zapfast/LICENSE
+    sources:
+      - type: dir
+        path: built
+      # Metainfo belongs to this packaging checkout, not the portable archive.
+      - type: file
+        path: rocks.zapfast.ZapFast.metainfo.xml
+        dest: packaging/flatpak

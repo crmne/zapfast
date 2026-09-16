@@ -1,0 +1,60 @@
+# ZapFast as a Flatpak, built from source: the manifest Flathub builds
+# from. The copy in the Flathub repository names a tag and its commit in
+# the source below and carries cargo-sources.json next to it; flathub.sh
+# writes both. For a local build, this one takes the checkout as it is:
+#
+#   flatpak-builder --user --install --force-clean build-dir \
+#       packaging/flatpak/rocks.zapfast.ZapFast.yml
+#
+# The release workflow does not build from source twice: it packages the
+# binary the Linux job already built, through the bundle manifest beside
+# this one, whose finish-args are the same as these.
+id: rocks.zapfast.ZapFast
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: zapfast
+finish-args:
+  # Wayland first, X11 when that is what there is.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Sound: PulseAudio, which PipeWire also answers.
+  - --socket=pulseaudio
+  # WhatsApp, attachment downloads and the local single-instance socket.
+  - --share=network
+  # Archive key and status notifier tray.
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Older Flatpak versions leave XDG_STATE_HOME unset. Keep the fallback
+  # state directory (session, history, logs, and credential markers) durable.
+  - --persist=.local/state
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/zapfast/cargo
+modules:
+  - name: zapfast
+    buildsystem: simple
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --locked
+      - install -Dm755 target/release/zapfast /app/bin/zapfast
+      - install -Dm644 packaging/applications/*.desktop /app/share/applications/rocks.zapfast.ZapFast.desktop
+      - sed -i 's/^Icon=.*$/Icon=rocks.zapfast.ZapFast/;s/^StartupWMClass=zapfast$/StartupWMClass=rocks.zapfast.ZapFast/' /app/share/applications/rocks.zapfast.ZapFast.desktop
+      - install -Dm644 packaging/icons/*.svg /app/share/icons/hicolor/scalable/apps/rocks.zapfast.ZapFast.svg
+      - install -Dm644 packaging/flatpak/rocks.zapfast.ZapFast.metainfo.xml /app/share/metainfo/rocks.zapfast.ZapFast.metainfo.xml
+      - install -Dm644 LICENSE /app/share/licenses/zapfast/LICENSE
+    sources:
+      - type: dir
+        path: ../..
+      # Supply the current app ID even when generating a manifest for an older tag.
+      - type: file
+        path: rocks.zapfast.ZapFast.metainfo.xml
+        dest: packaging/flatpak
+      # Every crate the lockfile names, for the offline build; flathub.sh
+      # writes it with flatpak-cargo-generator.
+      - cargo-sources.json

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use egui::text::LayoutJob;
 use egui::{Color32, FontId, Galley, Pos2, Stroke, TextFormat};
 
+use crate::bidi;
 use crate::emoji;
 use crate::theme;
 
@@ -129,7 +130,7 @@ pub fn layout(
             TextFormat::simple(theme::regular(size), style.color),
         );
     }
-    let galley = ui.painter().layout_job(job);
+    let galley = bidi::layout_job(ui, job);
     Text {
         galley,
         placements,

@@ -10,6 +10,12 @@ use clap::Parser;
 #[derive(Debug, Parser)]
 #[command(name = "zapfast", version, about)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Control>,
+    #[arg(long, hide = true)]
+    update_receipt: Option<std::path::PathBuf>,
+    #[arg(long, hide = true)]
+    update_error: Option<String>,
     /// Log more from the WhatsApp library.
     #[arg(short, long)]
     verbose: bool,
@@ -60,8 +66,24 @@ struct Cli {
     demo_shot_delay: u64,
 }
 
+#[derive(Debug, clap::Subcommand)]
+enum Control {
+    /// Reload palettes in an already-running ZapFast without showing its window.
+    ReloadThemes,
+}
+
 fn main() -> eframe::Result<()> {
+    let arguments: Vec<_> = std::env::args_os().collect();
+    if arguments.len() == 3 && arguments[1] == "--apply-update" {
+        return zapfast::updates::install::run_helper(std::path::Path::new(&arguments[2]))
+            .map_err(|error| eframe::Error::AppCreation(error.into()));
+    }
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Control::ReloadThemes)) {
+        single_instance::send("reload-themes")
+            .map_err(|error| eframe::Error::AppCreation(error.into()))?;
+        return Ok(());
+    }
     let waker = backend::Waker::default();
     #[cfg(feature = "demo")]
     let demo = cli.demo || cli.demo_shot.is_some() || cli.demo_tour;
@@ -99,7 +121,10 @@ fn main() -> eframe::Result<()> {
         dirs.adopt_previous_names()
             .map_err(|error| eframe::Error::AppCreation(error.into()))?;
     }
-    let dirs_ready = dirs.ensure();
+    // Do not open logs, settings, or either database unless their parent
+    // directories have been created and secured successfully.
+    dirs.ensure()
+        .map_err(|error| eframe::Error::AppCreation(error.into()))?;
     let mut logger =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter));
     // Write desktop-session logs to disk. Demo runs use stderr so they do not
@@ -113,9 +138,6 @@ fn main() -> eframe::Result<()> {
         }
     }
     logger.init();
-    if let Err(error) = dirs_ready {
-        log::warn!("unable to create the application directories: {error}");
-    }
     log_panics(dirs.panic_log());
     let settings = settings::Settings::load(&dirs.settings_file());
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
@@ -126,6 +148,12 @@ fn main() -> eframe::Result<()> {
     } else {
         app::App::new(&waker, dirs, settings, app::AppOptions { tray: true })
     };
+    if cli.verbose {
+        app.update_arguments.push("--verbose".into());
+    }
+    if let Some(error) = cli.update_error {
+        app.toast_error(error);
+    }
     if let Some(guard) = &instance {
         app.set_remote_control(guard);
     }
@@ -145,11 +173,14 @@ fn main() -> eframe::Result<()> {
     });
     let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(app)));
 
+    let mut update_receipt = cli.update_receipt;
+
     // The link, archive, and tray outlive windows. Recreate a window when the
     // tray, notification, or another launch requests one.
     loop {
         let creator_slot = std::sync::Arc::clone(&slot);
         let creator_waker = waker.clone();
+        let creator_receipt = update_receipt.take();
         #[cfg(feature = "demo")]
         let creator_shot = shot.clone();
         #[cfg(feature = "demo")]
@@ -171,6 +202,7 @@ fn main() -> eframe::Result<()> {
                 }
                 Ok(Box::new(Shell {
                     app: Some(app),
+                    update_receipt: creator_receipt,
                     slot: std::sync::Arc::clone(&creator_slot),
                     #[cfg(feature = "demo")]
                     shot: creator_shot,
@@ -284,7 +316,11 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
     let demo = demo_persistence.is_some();
     let viewport = egui::ViewportBuilder::default()
         .with_title(if demo { "ZapFast Demo" } else { "ZapFast" })
-        .with_app_id(if demo { "zapfast-demo" } else { "zapfast" })
+        .with_app_id(if demo {
+            "zapfast-demo".to_owned()
+        } else {
+            std::env::var("FLATPAK_ID").unwrap_or_else(|_| "zapfast".to_owned())
+        })
         .with_inner_size(demo_size)
         .with_min_inner_size([720.0, 480.0])
         .with_icon(app_icon())
@@ -309,6 +345,7 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
 
 /// eframe adapter that returns the long-lived [`app::App`] when a window closes.
 struct Shell {
+    update_receipt: Option<std::path::PathBuf>,
     app: Option<app::App>,
     slot: std::sync::Arc<std::sync::Mutex<Option<app::App>>>,
     #[cfg(feature = "demo")]
@@ -412,6 +449,13 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if let Some(app) = self.app.as_mut() {
             app.frame_ui(ui);
+            if let Some(receipt) = self.update_receipt.take() {
+                std::thread::spawn(move || {
+                    if let Err(error) = zapfast::updates::install::acknowledge(&receipt) {
+                        log::warn!("could not acknowledge the update: {error:#}");
+                    }
+                });
+            }
             #[cfg(feature = "demo")]
             if let Some(tour) = self.tour.as_mut() {
                 tour.observe(app, ui.ctx());

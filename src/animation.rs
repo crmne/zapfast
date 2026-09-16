@@ -87,7 +87,13 @@ pub enum Frame {
 }
 
 /// Returns the current frame, starting decoding when needed. Schedules the next repaint.
-pub fn frame(ctx: &egui::Context, path: &Path) -> Frame {
+pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect) -> Frame {
+    // ScrollArea still lays out clipped rows. They must neither start decoders
+    // nor keep the window repainting while their pixels are off screen.
+    if !ui.is_rect_visible(rect) {
+        return Frame::Pending;
+    }
+    let ctx = ui.ctx();
     let cache = cache(ctx);
     let inbox = inbox(ctx);
     // Upload decoded frames on the UI thread.
@@ -164,7 +170,9 @@ pub fn frame(ctx: &egui::Context, path: &Path) -> Frame {
                 }
                 position -= *delay;
             }
-            ctx.request_repaint_after(until_next.max(Duration::from_millis(10)));
+            if playing.frames.len() > 1 {
+                ctx.request_repaint_after(until_next.max(Duration::from_millis(10)));
+            }
             Frame::Ready(playing.frames[chosen].0.clone())
         }
         Some(Entry::Decoding) => Frame::Pending,
@@ -473,6 +481,40 @@ fn decode_with_ffmpeg(path: &Path) -> Option<Decoded> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clipped_animation_does_not_decode_or_schedule_frames() {
+        let ctx = egui::Context::default();
+        let path = std::path::Path::new("offscreen.gif");
+        let mut delay = Duration::ZERO;
+        for index in 0..4 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(index as f64),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(200.0, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let rect =
+                        egui::Rect::from_min_size(egui::pos2(0.0, 1000.0), egui::vec2(50.0, 50.0));
+                    assert!(matches!(
+                        super::frame(ui, path, rect),
+                        super::Frame::Pending
+                    ));
+                },
+            );
+            delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.textures_delta.clear();
+        }
+        assert!(super::cache(&ctx).0.lock().unwrap().is_empty());
+        assert!(
+            delay > Duration::from_secs(1),
+            "offscreen media requested {delay:?}"
+        );
+    }
+
     use super::*;
 
     /// Verifies animated WebP frame disposal.

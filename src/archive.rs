@@ -9,7 +9,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message};
 
+mod encryption;
+mod polls;
 mod receipts;
+pub use polls::PollVote;
 
 /// Recent phone sticker metadata, last-used time, and optional local file.
 #[derive(Clone, Debug)]
@@ -99,7 +102,8 @@ END;
 
 const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
-                    m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only";
+                    m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
+                    c.pinned_at, c.ephemeral_expiration";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -112,6 +116,11 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("messages", "read_at", "INTEGER"),
     ("chats", "read_through", "INTEGER"),
     ("chats", "pending_read", "INTEGER"),
+    ("chats", "ephemeral_expiration", "INTEGER"),
+    ("chats", "ephemeral_setting_timestamp", "INTEGER"),
+    ("chats", "pinned_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("chats", "pin_updated_at", "INTEGER"),
+    ("chats", "mute_updated_at", "INTEGER"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
@@ -145,10 +154,14 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         unread: row.get(4)?,
         archived: row.get(5)?,
         pinned: row.get(6)?,
+        pinned_at: row.get(15)?,
         muted_until: row.get(7)?,
         last,
         participants: serde_json::from_str(&participants).unwrap_or_default(),
         read_only: row.get(14)?,
+        ephemeral_expiration: row
+            .get::<_, Option<u32>>(16)?
+            .filter(|expiration| *expiration != 0),
     })
 }
 
@@ -202,12 +215,15 @@ fn kind_from_name(name: &str) -> ChatKind {
 }
 
 impl Archive {
-    pub fn open(path: &Path) -> Result<Self> {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let connection = Connection::open(path)?;
-        Self::prepare(connection)
+    /// Unlocks the on-disk archive with its OS keyring key, migrating plaintext
+    /// archives before their first encrypted use. Never falls back to plaintext.
+    pub fn open(path: &Path) -> anyhow::Result<Self> {
+        let key = encryption::key_for(path)?;
+        Self::open_with_key(path, &key)
+    }
+
+    fn open_with_key(path: &Path, key: &[u8; 32]) -> anyhow::Result<Self> {
+        Ok(Self::prepare(encryption::open(path, key)?)?)
     }
 
     pub fn in_memory() -> Result<Self> {
@@ -217,6 +233,7 @@ impl Archive {
     fn prepare(connection: Connection) -> Result<Self> {
         connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         connection.execute_batch(SCHEMA)?;
+        connection.execute_batch(polls::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -234,14 +251,15 @@ impl Archive {
     /// Creates a chat or replaces a phone-number title with a better name.
     pub fn upsert_chat(&self, chat: &Chat) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 last_activity = MAX(last_activity, excluded.last_activity),
                 archived = excluded.archived,
-                pinned = excluded.pinned,
-                muted_until = excluded.muted_until",
+                pinned = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned ELSE pinned END,
+                pinned_at = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned_at ELSE pinned_at END,
+                muted_until = CASE WHEN mute_updated_at IS NULL THEN excluded.muted_until ELSE muted_until END",
             params![
                 chat.id,
                 chat.name,
@@ -251,6 +269,7 @@ impl Archive {
                 chat.archived,
                 chat.pinned,
                 chat.muted_until,
+                chat.pinned_at,
             ],
         )?;
         Ok(())
@@ -302,19 +321,55 @@ impl Archive {
     }
 
     pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<()> {
+        self.set_pinned_at(id, pinned, jiff::Timestamp::now().as_millisecond())
+    }
+
+    /// Apply app-state in timestamp order. A later history chunk has no state
+    /// version and must not overwrite a pin/unpin already received from sync.
+    pub fn set_pinned_at(&self, id: &str, pinned: bool, timestamp: i64) -> Result<()> {
         self.connection.execute(
-            "UPDATE chats SET pinned = ?2 WHERE id = ?1",
-            params![id, pinned],
+            "UPDATE chats SET pinned = ?2, pinned_at = CASE WHEN ?2 THEN ?3 ELSE 0 END,
+                pin_updated_at = ?3 WHERE id = ?1
+                AND (pin_updated_at IS NULL OR pin_updated_at <= ?3)",
+            params![id, pinned, timestamp],
         )?;
         Ok(())
     }
 
     pub fn set_muted(&self, id: &str, until: Option<i64>) -> Result<()> {
+        self.set_muted_at(id, until, jiff::Timestamp::now().as_millisecond())
+    }
+
+    /// Keep mute/unmute actions across history replay, including actions that
+    /// precede the initial chat snapshot and older app-state replay.
+    pub fn set_muted_at(&self, id: &str, until: Option<i64>, timestamp: i64) -> Result<()> {
         self.connection.execute(
-            "UPDATE chats SET muted_until = ?2 WHERE id = ?1",
-            params![id, until],
+            "UPDATE chats SET muted_until = ?2, mute_updated_at = ?3 WHERE id = ?1
+                AND (mute_updated_at IS NULL OR mute_updated_at <= ?3)",
+            params![id, until, timestamp],
         )?;
         Ok(())
+    }
+
+    /// Applies disappearing-message metadata unless a newer setting is stored.
+    pub fn set_ephemeral(&self, id: &str, expiration: u32, setting_timestamp: i64) -> Result<bool> {
+        Ok(self.connection.execute(
+            "UPDATE chats SET ephemeral_expiration = ?2, ephemeral_setting_timestamp = ?3
+             WHERE id = ?1 AND (ephemeral_setting_timestamp IS NULL OR ephemeral_setting_timestamp <= ?3)",
+            params![id, expiration, setting_timestamp],
+        )? > 0)
+    }
+
+    /// Returns the chat timer, including zero for an explicitly disabled timer.
+    pub fn ephemeral_expiration(&self, id: &str) -> Result<Option<u32>> {
+        self.connection
+            .query_row(
+                "SELECT ephemeral_expiration FROM chats WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(Option::flatten)
     }
 
     pub fn mark_read(&self, id: &str) -> Result<()> {
@@ -487,14 +542,32 @@ impl Archive {
         rows.collect()
     }
 
-    /// Stores a privacy id to phone-number mapping without JID domains.
-    pub fn put_lid(&self, lid: &str, pn: &str) -> Result<()> {
+    /// Stores a privacy id mapping and carries early mute/pin sync to the
+    /// canonical chat. Returns whether that chat's preferences were touched.
+    pub fn put_lid(&self, lid: &str, pn: &str) -> Result<bool> {
         self.connection.execute(
             "INSERT INTO lids (lid, pn) VALUES (?1, ?2) ON CONFLICT(lid) DO UPDATE SET pn = excluded.pn",
             params![lid, pn],
         )?;
         self.merge_group_recipient(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
-        Ok(())
+        let changed = self.connection.execute(
+            "INSERT INTO chats (id, name, kind, pinned, pinned_at, pin_updated_at,
+                muted_until, mute_updated_at)
+             SELECT ?2, ?3, 'direct', pinned, pinned_at, pin_updated_at,
+                muted_until, mute_updated_at FROM chats WHERE id = ?1
+                AND (pin_updated_at IS NOT NULL OR mute_updated_at IS NOT NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                pinned = CASE WHEN excluded.pin_updated_at >= COALESCE(pin_updated_at, -1)
+                    THEN excluded.pinned ELSE pinned END,
+                pinned_at = CASE WHEN excluded.pin_updated_at >= COALESCE(pin_updated_at, -1)
+                    THEN excluded.pinned_at ELSE pinned_at END,
+                pin_updated_at = NULLIF(MAX(COALESCE(pin_updated_at, -1), COALESCE(excluded.pin_updated_at, -1)), -1),
+                muted_until = CASE WHEN excluded.mute_updated_at >= COALESCE(mute_updated_at, -1)
+                    THEN excluded.muted_until ELSE muted_until END,
+                mute_updated_at = NULLIF(MAX(COALESCE(mute_updated_at, -1), COALESCE(excluded.mute_updated_at, -1)), -1)",
+            params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net"), pn],
+        )?;
+        Ok(changed > 0)
     }
 
     pub fn lids(&self) -> Result<Vec<(String, String)>> {
@@ -1094,6 +1167,21 @@ impl Archive {
             .optional()
     }
 
+    /// Older archives discarded pin times and could lose mute sync. Request
+    /// one library-managed snapshot for an existing archive. Fresh links
+    /// already receive snapshots; reconnecting must not add another request.
+    pub fn take_preferences_refresh(&self) -> Result<bool> {
+        const KEY: &str = "chat_preferences_refresh_v1";
+        if self.meta(KEY)?.is_some() {
+            return Ok(false);
+        }
+        let existing: bool =
+            self.connection
+                .query_row("SELECT EXISTS(SELECT 1 FROM chats)", [], |row| row.get(0))?;
+        self.set_meta(KEY, "requested")?;
+        Ok(existing)
+    }
+
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         self.connection.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1105,17 +1193,17 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids;",
         )
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::model::Content;
 
-    pub(super) fn message(chat: &str, id: &str, timestamp: i64, from_me: bool) -> Message {
+    pub(crate) fn message(chat: &str, id: &str, timestamp: i64, from_me: bool) -> Message {
         Message {
             id: id.into(),
             chat: chat.into(),
@@ -1234,6 +1322,35 @@ mod tests {
     }
 
     #[test]
+    fn ephemeral_setting_keeps_the_newest_timestamp() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+
+        assert!(archive.set_ephemeral(chat, 604_800, 20).expect("setting"));
+        assert!(!archive.set_ephemeral(chat, 86_400, 10).expect("stale"));
+
+        assert_eq!(
+            archive.ephemeral_expiration(chat).expect("expiration"),
+            Some(604_800)
+        );
+    }
+
+    #[test]
+    fn ephemeral_setting_preserves_explicitly_disabled_timer() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+
+        archive.set_ephemeral(chat, 0, 20).expect("setting");
+
+        assert_eq!(
+            archive.ephemeral_expiration(chat).expect("expiration"),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn group_info_is_kept() {
         let archive = Archive::in_memory().expect("opens");
         let chat = "1-2@g.us";
@@ -1257,6 +1374,58 @@ mod tests {
             archive.chat(chat).expect("chat").expect("exists").name,
             "Rust Berlin"
         );
+    }
+
+    #[test]
+    fn existing_archives_request_preference_recovery_once_across_restarts() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fixture.db");
+        let key = [31; 32];
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+            assert!(archive.take_preferences_refresh().unwrap());
+            assert!(!archive.take_preferences_refresh().unwrap());
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert!(!archive.take_preferences_refresh().unwrap());
+        let fresh = Archive::in_memory().unwrap();
+        assert!(!fresh.take_preferences_refresh().unwrap());
+        fresh
+            .ensure_chat("1@s.whatsapp.net", "Initial history")
+            .unwrap();
+        assert!(!fresh.take_preferences_refresh().unwrap());
+    }
+
+    #[test]
+    fn mute_and_pin_versions_survive_restart_and_ignore_older_updates() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fixture.db");
+        let key = [29; 32];
+        let id = "1@s.whatsapp.net";
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat(id, "Fixture").unwrap();
+            archive.set_muted_at(id, Some(0), 200).unwrap();
+            archive.set_pinned_at(id, true, 200).unwrap();
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        archive.set_muted_at(id, None, 100).unwrap();
+        archive.set_pinned_at(id, false, 100).unwrap();
+        archive
+            .upsert_chat(&Chat::new(id.into(), "History name".into()))
+            .unwrap();
+        let chat = archive.chat(id).unwrap().unwrap();
+        assert_eq!(chat.name, "History name");
+        assert_eq!(chat.muted_until, Some(0));
+        assert!(chat.pinned);
+        assert_eq!(chat.pinned_at, 200);
+        archive.set_muted_at(id, None, 300).unwrap();
+        archive.set_pinned_at(id, false, 300).unwrap();
+        let chat = archive.chat(id).unwrap().unwrap();
+        assert_eq!(chat.muted_until, None);
+        assert!(!chat.pinned);
+        assert_eq!(chat.pinned_at, 0);
     }
 
     #[test]
@@ -1542,7 +1711,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let chat = "1@s.whatsapp.net";
         {
-            let archive = Archive::open(&path).unwrap();
+            let archive = Archive::open_with_key(&path, &[7; 32]).unwrap();
             archive.ensure_chat(chat, "A").unwrap();
             archive
                 .insert_message(&message(chat, "a", 100, false), None)
@@ -1552,7 +1721,7 @@ mod tests {
             archive.queue_read_sync(chat).unwrap();
         }
         {
-            let archive = Archive::open(&path).unwrap();
+            let archive = Archive::open_with_key(&path, &[7; 32]).unwrap();
             assert_eq!(archive.read_through(chat).unwrap(), Some(100));
             assert_eq!(archive.pending_reads().unwrap(), vec![(chat.into(), 100)]);
             archive

@@ -49,13 +49,20 @@ memmap2 = "0.9"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # WhatsApp Web protocol: pairing, encryption, history sync, and media. Version
 # 0.7.0 on crates.io enables `simd`, which needs nightly Rust. This commit builds
-# on stable. Selected features provide Tokio transport, ureq media downloads,
+# on stable and includes snapshot recovery and no-progress conflict handling
+# (upstream #1365, #1374 and #1375). Selected features provide Tokio transport, ureq media downloads,
 # and the SQLite device store. The window handles shutdown instead of `signal`.
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "1ace865716726daec8d0f00335453fcb8de35d1b", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "860744fb634e9b1703d69626180c66ae07c1ff04", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
-# Local message archive. `bundled` uses the same SQLite build as the device
-# store.
-rusqlite = { version = "0.40", features = ["bundled"] }
+# SQLCipher encrypts the archive; the device store shares the same library.
+# Bundle OpenSSL so all release platforms use the same encryption provider.
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+keyring-core = "1"
+getrandom = "0.4"
+zeroize = "1"
+rand = "0.10"
+# Streaming release downloads, with restricted redirect hosts.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 qrcode = { version = "0.14", default-features = false }
 # Downloads profile pictures. The protocol library already includes this crate
 # and TLS stack.
@@ -63,6 +70,10 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 jiff = "0.2"
 # Treats joined emoji as one grapheme. Already included through egui.
 unicode-segmentation = "1"
+# Unicode bidi properties; already included through URL/IDNA handling.
+icu_properties = "2.3"
+# Canonical decomposition for accent-insensitive chat/contact search.
+icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
 # Opens downloaded attachments in their default desktop apps.
 open = "5"
 # File picker, clipboard images, and MIME detection for attachments. Clipboard
@@ -89,6 +100,8 @@ ogg = "0.9"
 webp-animation = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+notify = "8.2"
+zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 # Linux status-notifier tray item over D-Bus.
 ksni = { version = "0.3", features = ["blocking"] }
 
@@ -97,6 +110,7 @@ ksni = { version = "0.3", features = ["blocking"] }
 tray-icon = { version = "0.24", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 # Pumps AppKit without a window. The status item and Dock reopen callback must
 # stay on the main thread.
 objc2 = "0.6"
@@ -105,6 +119,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDate", "NSGeometry", "NSObjCRuntime", "NSRunLoop", "NSString"] }
 
 [target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = { version = "1.1", default-features = false }
 # Windows tray-thread message loop.
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
@@ -113,6 +128,7 @@ windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_
 winresource = "0.1"
 
 [dev-dependencies]
+tempfile = "3"
 # Creates small APNGs in sticker-import tests. Already included through image.
 png = "0.18"
 

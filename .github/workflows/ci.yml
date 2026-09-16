@@ -30,7 +30,7 @@ jobs:
       - name: GUI build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev cmake perl
       - uses: Swatinem/rust-cache@v2
       - name: Formatting
         run: cargo fmt --all --check
@@ -58,18 +58,20 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev cmake perl
       - uses: Swatinem/rust-cache@v2
       # The demo feature carries the headless layout test of every screen.
       - name: Tests (default features)
         run: cargo test --locked --all-targets
       - name: Tests (all features)
         run: cargo test --locked --all-targets --all-features
+      - name: Build macOS demo
+        if: runner.os == 'macOS'
+        run: cargo build --locked --features demo
       - name: macOS window smoke test
         if: runner.os == 'macOS'
         timeout-minutes: 3
         run: |
-          cargo build --locked --features demo
           target/debug/zapfast --demo --demo-shot "$RUNNER_TEMP/zapfast-content.png" --demo-shot-delay 8000 &
           demo_pid=$!
           sleep 6
@@ -82,3 +84,18 @@ jobs:
         with:
           name: macos-preview
           path: ${{ runner.temp }}/zapfast-*.png
+
+  windows-arm64:
+    name: compile (Windows arm64)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - run: rustup target add aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-arm64
+      - run: cargo check --locked --all-targets --all-features --target aarch64-pc-windows-msvc

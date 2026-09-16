@@ -135,7 +135,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             ),
                             Layout::left_to_right(Align::Center),
                             |ui| {
-                                widgets::avatar(
+                                let avatar_response = widgets::avatar(
                                     ui,
                                     &palette,
                                     &title,
@@ -143,6 +143,13 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     40.0,
                                     picture.as_deref(),
                                 );
+                                if chat.ephemeral_expiration.is_some() {
+                                    widgets::paint_disappearing_badge(
+                                        ui,
+                                        &palette,
+                                        avatar_response.rect,
+                                    );
+                                }
                                 ui.add_space(4.0);
                                 ui.vertical(|ui| {
                                     let width = (ui.available_width() - right_controls).max(80.0);
@@ -811,6 +818,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 {
                     app.actions.push(Action::Attach);
                 }
+                if app.editing.is_none() && theme::icon_button(ui, Icon::ChartBar, 20.0, palette.secondary, palette.text, "Create poll").clicked() {
+                    app.actions.push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
+                }
                 if app.editing.is_none() {
                     let smile = theme::icon_button(
                         ui,
@@ -857,7 +867,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                         crate::emoji::editor_job(text.as_str(), &format);
                                     job.wrap.max_width = wrap;
                                     clusters = found;
-                                    ui.fonts_mut(|fonts| fonts.layout_job(job))
+                                    let mut galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                                    crate::bidi::reorder_rtl_runs(std::sync::Arc::make_mut(
+                                        &mut galley,
+                                    ));
+                                    galley
                                 };
                                 let output = egui::TextEdit::multiline(&mut app.composer)
                                     .id(id)
@@ -1124,6 +1138,8 @@ struct View<'a> {
     chat: &'a Chat,
     me: Option<&'a str>,
     auto_download: bool,
+    connected: bool,
+    poll_voting: &'a HashSet<(ChatId, String)>,
     /// Show avatars for all incoming messages, not only groups.
     pictures: bool,
     anchor: Option<&'a str>,
@@ -1166,6 +1182,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         chat,
         me: app.me.as_deref(),
         auto_download: app.settings.auto_download,
+        connected: app.link.is_connected(),
+        poll_voting: &app.poll_voting,
         pictures: app.settings.show_sender_pictures,
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
@@ -2229,7 +2247,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     }
     if !matches!(
         message.content,
-        Content::Revoked | Content::Unsupported { .. }
+        Content::Revoked | Content::Unsupported { .. } | Content::Poll { .. }
     ) && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
     {
         actions.push(Action::ShowDialog(Dialog::Forward {
@@ -2549,19 +2567,17 @@ fn content(
             });
             None
         }
-        Content::Poll { question, options } => {
-            // Keep poll content left-to-right within the settled width.
-            ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::top_down(Align::Min), |ui| {
-                ui.set_width(width);
-                widgets::rich_text(ui, question, theme::semibold(14.0), palette.text);
-                for option in options {
-                    ui.horizontal(|ui| {
-                        theme::icon(ui, Icon::CircleCheck, 14.0, palette.dim);
-                        widgets::rich_text(ui, option, theme::regular(13.5), palette.text);
-                    });
-                }
-                theme::text(ui, "Vote on your phone", theme::regular(11.5), palette.dim);
-            });
+        Content::Poll { .. } => {
+            super::polls::ballot(
+                ui,
+                &palette,
+                message,
+                width,
+                view.connected,
+                view.poll_voting
+                    .contains(&(message.chat.clone(), message.id.clone())),
+                actions,
+            );
             None
         }
         Content::Revoked => {
@@ -2861,19 +2877,24 @@ fn picture(
         None => (width.min(PICTURE_WIDTH), PICTURE_HEIGHT),
     };
     if let Some(path) = &media.path {
-        let animated = sticker == Some(true);
-        let playing = animated.then(|| animation::frame(ui.ctx(), path));
-        if let Some(animation::Frame::Ready(texture)) = &playing {
-            let size = texture.size_vec2();
-            let size = fit_sticker(size.x, size.y);
+        if sticker == Some(true) {
+            let size = fit_sticker(
+                media.width.unwrap_or(180) as f32,
+                media.height.unwrap_or(180) as f32,
+            );
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             if ui.is_rect_visible(rect) {
-                ui.painter().image(
-                    texture.id(),
-                    rect,
-                    Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+                match animation::frame(ui, path, rect) {
+                    animation::Frame::Ready(texture) => {
+                        ui.painter().image(
+                            texture.id(),
+                            rect,
+                            Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+                    }
+                    _ => egui::Image::new(file_uri(path)).paint_at(ui, rect),
+                }
             }
             if response
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -3061,11 +3082,11 @@ fn video(
     let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
     let size = frame_size(media, Some((16, 9)), width.min(PICTURE_WIDTH));
     // Play downloaded GIFs in place; keep a poster for other videos.
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let playing = match (&media.path, gif) {
-        (Some(path), true) => Some(animation::frame(ui.ctx(), path)),
+        (Some(path), true) => Some(animation::frame(ui, path, rect)),
         _ => None,
     };
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     if let Some(animation::Frame::Ready(texture)) = &playing {
         if ui.is_rect_visible(rect) {
             ui.painter().image(
@@ -3505,7 +3526,7 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn file_uri(path: &Path) -> String {
-    format!("file://{}", path.display())
+    crate::util::image_uri(path)
 }
 
 /// Whether a conversation has visible content. Used by tests.

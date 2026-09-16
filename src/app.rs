@@ -16,7 +16,7 @@ use crate::model::{
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
 use crate::single_instance::{ControlCommand, Guard};
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
 use crate::tray::{TrayCommand, TrayService};
 
 /// Initial and incremental message-page size.
@@ -111,6 +111,7 @@ pub struct App {
     last_settings_save: Instant,
     pub backend: Backend,
     pub palette: Palette,
+    pub custom_themes: theme::custom::Catalog,
     applied_dark: Option<bool>,
     zoom_applied: bool,
 
@@ -210,6 +211,9 @@ pub struct App {
     pub dialog: Option<Dialog>,
     /// Chat filter in the forwarding destination dialog.
     pub forward_search: String,
+    pub poll_draft: crate::model::PollDraft,
+    pub poll_creating: bool,
+    pub poll_voting: HashSet<(ChatId, String)>,
     /// Contact-name editor buffers.
     pub contact_edit: Option<(String, String)>,
     /// New-contact buffers and lookup state.
@@ -226,6 +230,11 @@ pub struct App {
     /// A newer release than this build, once GitHub has said so.
     pub update: Option<crate::updates::Release>,
     last_update_check: Option<Instant>,
+    pub show_update: bool,
+    pub update_download: crate::updates::DownloadState,
+    pub update_support: Option<Result<crate::updates::install::Installation, String>>,
+    update_inspecting: bool,
+    pub update_arguments: Vec<String>,
     /// Whether to scroll the conversation to its newest message.
     pub scroll_to_bottom: bool,
     /// Whether the conversation was at the bottom last frame.
@@ -296,6 +305,8 @@ impl App {
     pub fn new(waker: &Waker, dirs: AppDirs, settings: Settings, options: AppOptions) -> Self {
         let backend = Backend::spawn(dirs.clone(), waker.clone());
         let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
+        app.custom_themes.enable_desktop_themes();
+        app.load_custom_themes();
         if options.tray {
             let waker = waker.clone();
             app.tray = TrayService::spawn(move || waker.wake());
@@ -318,10 +329,12 @@ impl App {
     }
 
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
-        let palette = match settings.theme {
-            ThemeChoice::Light => Palette::light(),
-            _ => Palette::dark(),
-        };
+        let palette = settings
+            .cached_palette()
+            .unwrap_or_else(|| match settings.theme {
+                ThemeChoice::Light => Palette::light(),
+                _ => Palette::dark(),
+            });
         let open_chat = settings.last_chat.clone();
         Self {
             dirs,
@@ -330,6 +343,7 @@ impl App {
             last_settings_save: Instant::now(),
             backend,
             palette,
+            custom_themes: theme::custom::Catalog::default(),
             applied_dark: None,
             zoom_applied: false,
             link: LinkStatus::Starting,
@@ -394,6 +408,9 @@ impl App {
             page: Page::Chats,
             dialog: None,
             forward_search: String::new(),
+            poll_draft: Default::default(),
+            poll_creating: false,
+            poll_voting: HashSet::new(),
             contact_edit: None,
             new_contact_phone: String::new(),
             new_contact_name: String::new(),
@@ -406,6 +423,11 @@ impl App {
             actions: Vec::new(),
             update: None,
             last_update_check: None,
+            show_update: false,
+            update_download: Default::default(),
+            update_support: None,
+            update_inspecting: false,
+            update_arguments: Vec::new(),
             scroll_to_bottom: true,
             at_bottom: true,
             scroll_anchor: None,
@@ -466,6 +488,7 @@ impl App {
         for command in commands {
             match command {
                 ControlCommand::Show => self.actions.push(Action::ShowWindow),
+                ControlCommand::ReloadThemes => self.actions.push(Action::ReloadThemes),
             }
         }
     }
@@ -791,32 +814,35 @@ impl App {
 
     /// Visible chats filtered by search and archive state, with pinned first.
     pub fn visible_chats(&self) -> Vec<&Chat> {
-        let needle = self.search.trim().to_lowercase();
+        let needle = crate::util::search_key(self.search.trim());
         let mut chats: Vec<&Chat> = self
             .chats
             .iter()
             .filter(|chat| chat.archived == self.show_archived || !needle.is_empty())
             .filter(|chat| {
                 needle.is_empty()
-                    || chat.name.to_lowercase().contains(&needle)
+                    || crate::util::search_key(&chat.name).contains(&needle)
                     || chat.phone().is_some_and(|phone| phone.contains(&needle))
-                    || chat
-                        .last
-                        .as_ref()
-                        .is_some_and(|last| last.summary.to_lowercase().contains(&needle))
+                    || chat.last.as_ref().is_some_and(|last| {
+                        crate::util::search_key(&last.summary).contains(&needle)
+                    })
             })
             .collect();
         chats.sort_by(|a, b| {
-            b.pinned
-                .cmp(&a.pinned)
-                .then(b.last_activity.cmp(&a.last_activity))
+            b.pinned.cmp(&a.pinned).then_with(|| {
+                if a.pinned && b.pinned {
+                    b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
+                } else {
+                    b.last_activity.cmp(&a.last_activity).then(a.id.cmp(&b.id))
+                }
+            })
         });
         chats
     }
 
     /// Matching individual contacts without an existing chat, sorted by name.
     pub fn matching_contacts(&self) -> Vec<&Contact> {
-        let needle = self.search.trim().to_lowercase();
+        let needle = crate::util::search_key(self.search.trim());
         if needle.is_empty() {
             return Vec::new();
         }
@@ -829,7 +855,7 @@ impl App {
             .filter(|contact| {
                 contact
                     .display_name()
-                    .is_some_and(|name| name.to_lowercase().contains(&needle))
+                    .is_some_and(|name| crate::util::search_key(name).contains(&needle))
                     || contact
                         .id
                         .split('@')
@@ -1004,6 +1030,25 @@ impl App {
                         self.stage_files(paths);
                     }
                 }
+                Event::PollCreated { chat, error } => {
+                    self.poll_creating = false;
+                    if let Some(error) = error {
+                        self.toast_error(error);
+                    } else if self.dialog == Some(Dialog::CreatePoll(chat)) {
+                        self.dialog = None;
+                        self.poll_draft = Default::default();
+                    }
+                }
+                Event::PollVoted {
+                    chat,
+                    message,
+                    error,
+                } => {
+                    self.poll_voting.remove(&(chat, message));
+                    if let Some(error) = error {
+                        self.toast_error(error);
+                    }
+                }
                 Event::MessageUpdated(message) => {
                     let message = *message;
                     if let Some(conversation) = self.conversations.get_mut(&message.chat)
@@ -1131,6 +1176,27 @@ impl App {
                     }
                     self.update = Some(notice);
                 }
+                Event::UpdateSupport(result) => {
+                    self.update_support = Some(result);
+                    self.update_inspecting = false;
+                    self.maybe_download_update();
+                }
+                Event::UpdateProgress { received, total } => {
+                    self.update_download =
+                        crate::updates::DownloadState::Downloading { received, total };
+                }
+                Event::UpdateDownloaded(result) => {
+                    self.update_download = match result {
+                        Ok(prepared) => crate::updates::DownloadState::Ready(prepared),
+                        Err(error) => crate::updates::DownloadState::Failed(error),
+                    };
+                }
+                Event::UpdateInstalling(result) => match result {
+                    Ok(()) => self.actions.push(Action::Quit),
+                    Err(error) => {
+                        self.update_download = crate::updates::DownloadState::Failed(error)
+                    }
+                },
                 Event::Error(message) => {
                     self.sticker_import_pending = false;
                     self.new_contact_pending = false;
@@ -1143,6 +1209,14 @@ impl App {
     fn handle_link(&mut self, status: LinkStatus) {
         match &status {
             LinkStatus::Connected => {
+                for conversation in self.conversations.values_mut() {
+                    for message in &mut conversation.messages {
+                        if let Content::Poll { state, .. } = &mut message.content {
+                            state.refresh_needed = true;
+                            state.refreshing = false;
+                        }
+                    }
+                }
                 if matches!(self.link, LinkStatus::Disconnected { .. }) {
                     self.toast("Back online");
                 }
@@ -1155,6 +1229,9 @@ impl App {
                 }
             }
             LinkStatus::LoggedOut => {
+                self.poll_voting.clear();
+                self.poll_creating = false;
+                self.poll_draft = Default::default();
                 self.notifications.clear_all();
                 self.chats.clear();
                 self.conversations.clear();
@@ -1558,11 +1635,53 @@ impl App {
             self.last_update_check = Some(now);
             self.backend.send(Command::CheckForUpdates);
         }
+        self.maybe_download_update();
         if self.settings_dirty && self.last_settings_save.elapsed() > Duration::from_secs(2) {
             self.save_settings();
         }
         if !self.typing.is_empty() || self.composing {
             ctx.request_repaint_after(Duration::from_secs(1));
+        }
+    }
+
+    fn inspect_update(&mut self) {
+        if self.update_support.is_none() && !self.update_inspecting {
+            self.update_inspecting = true;
+            self.backend.send(Command::InspectUpdate);
+        }
+    }
+
+    fn maybe_download_update(&mut self) {
+        if !self.settings.check_for_updates
+            || !self.settings.download_updates_automatically
+            || self.update.is_none()
+            || !matches!(self.update_download, crate::updates::DownloadState::Idle)
+        {
+            return;
+        }
+        self.inspect_update();
+        if matches!(self.update_support, Some(Ok(_))) {
+            self.download_update();
+        }
+    }
+
+    fn download_update(&mut self) {
+        if !matches!(
+            self.update_download,
+            crate::updates::DownloadState::Idle | crate::updates::DownloadState::Failed(_)
+        ) || !matches!(self.update_support, Some(Ok(_)))
+        {
+            return;
+        }
+        if let Some(release) = self.update.clone() {
+            self.update_download = crate::updates::DownloadState::Downloading {
+                received: 0,
+                total: 0,
+            };
+            self.backend.send(Command::DownloadUpdate {
+                release,
+                source: crate::updates::Source::GitHub,
+            });
         }
     }
 
@@ -1578,20 +1697,71 @@ impl App {
         }
     }
 
+    pub fn load_custom_themes(&mut self) {
+        self.custom_themes.start(
+            self.dirs.config.join("themes"),
+            self.settings.custom_theme.clone(),
+            &self.waker,
+        );
+    }
+
+    fn poll_custom_themes(&mut self) {
+        if self.custom_themes.needs_reload() {
+            self.load_custom_themes();
+        }
+        if !self.custom_themes.poll() {
+            return;
+        }
+        let mut changed = false;
+        if let Some(filename) = &self.settings.custom_theme
+            && let Some(theme) = self.custom_themes.find(filename)
+            && self.settings.custom_theme_cache.as_ref() != Some(theme)
+        {
+            self.settings.custom_theme_cache = Some(theme.clone());
+            changed = true;
+        }
+        if self.custom_themes.follows_omarchy() {
+            if let Some(theme) = self.custom_themes.system_theme()
+                && self.settings.system_theme_cache.as_ref() != Some(theme)
+            {
+                self.settings.system_theme_cache = Some(theme.clone());
+                changed = true;
+            }
+        } else if self.settings.system_theme_cache.take().is_some() {
+            changed = true;
+        }
+        if changed {
+            self.mark_settings_dirty();
+        }
+    }
+
     fn apply_theme(&mut self, ctx: &egui::Context) {
-        let dark = match self.settings.theme {
-            ThemeChoice::Dark => true,
-            ThemeChoice::Light => false,
-            ThemeChoice::System => ctx
-                .input(|input| input.raw.system_theme)
-                .is_none_or(|theme| theme == egui::Theme::Dark),
-        };
-        if self.applied_dark != Some(dark) {
-            self.palette = if dark {
+        let preference = self.settings.cached_palette().map_or_else(
+            || match self.settings.theme {
+                ThemeChoice::Dark => egui::ThemePreference::Dark,
+                ThemeChoice::Light => egui::ThemePreference::Light,
+                ThemeChoice::System => egui::ThemePreference::System,
+            },
+            |palette| {
+                if palette.dark {
+                    egui::ThemePreference::Dark
+                } else {
+                    egui::ThemePreference::Light
+                }
+            },
+        );
+        ctx.set_theme(preference);
+        // Use the same preference for our palette and egui's native controls.
+        let dark = ctx.theme() == egui::Theme::Dark;
+        let palette = self.settings.cached_palette().unwrap_or_else(|| {
+            if dark {
                 Palette::dark()
             } else {
                 Palette::light()
-            };
+            }
+        });
+        if self.applied_dark.is_none() || self.palette != palette {
+            self.palette = palette;
             crate::theme::apply(ctx, &self.palette);
             self.applied_dark = Some(dark);
         }
@@ -1677,6 +1847,41 @@ impl App {
             } => {
                 self.send_text(chat, text, quoting);
                 self.reply_to = None;
+            }
+            Action::RefreshPoll { chat, message } => {
+                if let Some(row) = self
+                    .conversations
+                    .get_mut(&chat)
+                    .and_then(|chat| chat.message_mut(&message))
+                    && let Content::Poll { state, .. } = &mut row.content
+                {
+                    state.refreshing = true;
+                }
+                self.backend.send(Command::RefreshPoll { chat, message });
+            }
+            Action::CreatePoll { chat, draft } => {
+                if !self.poll_creating {
+                    match draft.validated() {
+                        Ok(draft) => {
+                            self.poll_creating = true;
+                            self.backend.send(Command::CreatePoll { chat, draft });
+                        }
+                        Err(error) => self.toast_error(error),
+                    }
+                }
+            }
+            Action::VotePoll {
+                chat,
+                message,
+                choices,
+            } => {
+                if self.poll_voting.insert((chat.clone(), message.clone())) {
+                    self.backend.send(Command::VotePoll {
+                        chat,
+                        message,
+                        choices,
+                    });
+                }
             }
             Action::Composing { chat, composing } => {
                 if composing {
@@ -1983,12 +2188,20 @@ impl App {
             Action::SetPinned(chat, pinned) => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.pinned = pinned;
+                    known.pinned_at = if pinned {
+                        jiff::Timestamp::now().as_millisecond()
+                    } else {
+                        0
+                    };
                 }
                 self.backend.send(Command::SetPinned(chat, pinned));
             }
             Action::ShowDialog(dialog) => {
                 self.emoji_start = None;
                 self.mention_start = None;
+                if matches!(&dialog, Dialog::CreatePoll(_)) && !self.poll_creating {
+                    self.poll_draft = Default::default();
+                }
                 if matches!(&dialog, Dialog::Forward { .. }) {
                     self.forward_search.clear();
                 }
@@ -2079,6 +2292,53 @@ impl App {
                     self.backend.send(Command::SearchMessages { query });
                 }
             }
+            Action::ShowUpdate => {
+                self.show_update = self.update.is_some();
+                self.inspect_update();
+            }
+            Action::CloseUpdate => self.show_update = false,
+            Action::DownloadUpdate => self.download_update(),
+            Action::InstallUpdate => {
+                if matches!(
+                    self.update_download,
+                    crate::updates::DownloadState::Ready(_)
+                ) {
+                    let crate::updates::DownloadState::Ready(prepared) = std::mem::replace(
+                        &mut self.update_download,
+                        crate::updates::DownloadState::Installing,
+                    ) else {
+                        unreachable!()
+                    };
+                    self.backend.send(Command::InstallUpdate {
+                        prepared,
+                        arguments: self.update_arguments.clone(),
+                    });
+                }
+            }
+            Action::SetTheme(choice) => {
+                self.settings.theme = choice;
+                self.settings.custom_theme = None;
+                self.settings.custom_theme_cache = None;
+                self.mark_settings_dirty();
+                self.apply_theme(ctx);
+            }
+            Action::SetCustomTheme(filename) => {
+                if let Some(theme) = self.custom_themes.find(&filename) {
+                    self.settings.custom_theme_cache = Some(theme.clone());
+                    self.settings.custom_theme = Some(filename);
+                    self.mark_settings_dirty();
+                    self.apply_theme(ctx);
+                }
+            }
+            Action::ReloadThemes => self.load_custom_themes(),
+            Action::OpenThemesFolder => {
+                let directory = self.dirs.config.join("themes");
+                std::thread::spawn(move || {
+                    if std::fs::create_dir_all(&directory).is_ok() {
+                        let _ = open::that(directory);
+                    }
+                });
+            }
             Action::SettingsChanged => self.mark_settings_dirty(),
             Action::ZoomBy(delta) => {
                 self.settings.zoom = (self.settings.zoom + delta).clamp(0.6, 2.0);
@@ -2159,6 +2419,7 @@ impl App {
         self.actions
             .extend(crate::macos::drain(ctx, self.window_hidden));
         self.handle_control_commands();
+        self.poll_custom_themes();
         self.handle_notification_opens();
         self.handle_events();
         self.tick(ctx);
@@ -2553,6 +2814,158 @@ mod tests {
     }
 
     #[test]
+    fn failed_poll_requests_keep_the_draft_and_clear_pending_controls() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let ctx = egui::Context::default();
+        let draft = crate::model::PollDraft {
+            question: "Lunch?".into(),
+            options: vec!["Pizza".into(), "Pasta".into()],
+            multiple: false,
+        };
+        app.dialog = Some(Dialog::CreatePoll("chat".into()));
+        app.poll_draft = draft.clone();
+        app.apply(
+            Action::CreatePoll {
+                chat: "chat".into(),
+                draft: draft.clone(),
+            },
+            &ctx,
+        );
+        assert!(app.poll_creating);
+        events
+            .send(Event::PollCreated {
+                chat: "chat".into(),
+                error: Some("Could not send".into()),
+            })
+            .unwrap();
+        app.background_frame(&ctx);
+        assert!(!app.poll_creating);
+        assert_eq!(app.poll_draft, draft);
+        assert!(app.dialog.is_some());
+        app.apply(
+            Action::VotePoll {
+                chat: "chat".into(),
+                message: "poll".into(),
+                choices: vec![0],
+            },
+            &ctx,
+        );
+        assert_eq!(app.poll_voting.len(), 1);
+        events
+            .send(Event::PollVoted {
+                chat: "chat".into(),
+                message: "poll".into(),
+                error: Some("Could not vote".into()),
+            })
+            .unwrap();
+        app.background_frame(&ctx);
+        assert!(app.poll_voting.is_empty());
+    }
+
+    #[test]
+    fn follow_system_retains_the_os_theme_between_platform_events() {
+        let mut app = app();
+        app.settings.theme = ThemeChoice::System;
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        for theme in [egui::Theme::Light, egui::Theme::Dark] {
+            input.system_theme = Some(theme);
+            // Native input preserves the OS preference when taking each frame.
+            for _ in 0..2 {
+                let mut output = ctx.run_ui(input.take(), |_| app.apply_theme(&ctx));
+                output.textures_delta.clear();
+                assert_eq!(app.palette.dark, theme == egui::Theme::Dark);
+                assert_eq!(ctx.theme(), theme);
+            }
+        }
+    }
+
+    #[test]
+    fn custom_theme_cache_survives_a_missing_file_and_follows_system_updates() {
+        use crate::theme::custom::{Catalog, CustomTheme};
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let mut first = CustomTheme {
+            filename: "mine.json".into(),
+            palette: Palette::dark(),
+        };
+        first.palette.accent = egui::Color32::RED;
+        app.custom_themes = Catalog::from_themes(vec![first.clone()]);
+        app.apply(Action::SetCustomTheme(first.filename.clone()), &ctx);
+        assert_eq!(app.palette.accent, egui::Color32::RED);
+        // Cached selection remains usable while the file is temporarily missing.
+        app.custom_themes = Catalog::default();
+        app.settings =
+            serde_json::from_str(&serde_json::to_string(&app.settings).unwrap()).unwrap();
+        app.apply_theme(&ctx);
+        assert_eq!(app.palette, first.palette);
+        app.apply(Action::SetTheme(ThemeChoice::System), &ctx);
+        assert!(app.settings.custom_theme.is_none());
+        let mut system = first;
+        system.filename = "omarchy.json".into();
+        system.palette.accent = egui::Color32::GREEN;
+        app.custom_themes
+            .load_system_test(Some(system.clone()), true);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.settings.system_theme_cache.as_ref() != Some(&system) {
+            app.poll_custom_themes();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        app.apply_theme(&ctx);
+        assert_eq!(app.palette.accent, egui::Color32::GREEN);
+        app.apply(Action::SetTheme(ThemeChoice::Light), &ctx);
+        assert_eq!(app.palette, Palette::light());
+    }
+
+    #[test]
+    fn automatic_updates_require_opt_in_and_explicit_restart() {
+        use crate::updates::{
+            DownloadState,
+            install::{Installation, Kind, Prepared},
+        };
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.update = Some(crate::updates::Release {
+            version: "99.0.0".into(),
+            url: "https://github.com/crmne/zapfast/releases/latest".into(),
+        });
+        app.update_support = Some(Err("Use your package manager".into()));
+        app.settings.download_updates_automatically = true;
+        app.maybe_download_update();
+        assert!(matches!(app.update_download, DownloadState::Idle));
+        let installation = Installation {
+            executable: PathBuf::from("/fixture/zapfast"),
+            kind: Kind::Portable,
+        };
+        app.update_support = Some(Ok(installation.clone()));
+        app.settings.download_updates_automatically = false;
+        app.maybe_download_update();
+        assert!(matches!(app.update_download, DownloadState::Idle));
+        app.settings.download_updates_automatically = true;
+        app.maybe_download_update();
+        assert!(matches!(
+            app.update_download,
+            DownloadState::Downloading { .. }
+        ));
+        app.update_download = DownloadState::Ready(Box::new(Prepared {
+            installation,
+            directory: "/fixture/staging".into(),
+            payload: "/fixture/staging/next".into(),
+            sha256: String::new(),
+            version: "99.0.0".into(),
+        }));
+        app.maybe_download_update();
+        assert!(matches!(app.update_download, DownloadState::Ready(_)));
+        assert!(!app.quit_requested);
+        app.apply(Action::InstallUpdate, &ctx);
+        assert!(matches!(app.update_download, DownloadState::Installing));
+        assert!(!app.quit_requested, "wait for the helper before closing");
+    }
+
+    #[test]
     fn a_closed_window_does_not_read_new_messages_in_the_last_chat() {
         let mut app = app();
         let mut chat = Chat::new("peer@s.whatsapp.net".into(), "Peer".into());
@@ -2772,6 +3185,64 @@ mod tests {
             .map(|chat| chat.name.as_str())
             .collect();
         assert_eq!(names, vec!["Ada"]);
+    }
+
+    #[test]
+    fn pinned_order_survives_new_messages_and_legacy_pin_ties() {
+        let mut app = app();
+        for (id, pin, activity) in [("a", 100, 999), ("b", 200, 1), ("c", 0, 0), ("d", 0, 900)] {
+            let mut chat = Chat::new(id.into(), id.into());
+            chat.pinned = true;
+            chat.pinned_at = pin;
+            chat.last_activity = activity;
+            app.chats.push(chat);
+        }
+        let order = |app: &App| {
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&app), ["b", "a", "c", "d"]);
+        app.chats[0].last_activity = 10_000;
+        app.chats[2].last_activity = 20_000;
+        assert_eq!(order(&app), ["b", "a", "c", "d"]);
+    }
+
+    #[test]
+    fn chat_and_contact_search_ignore_composed_and_decomposed_accents() {
+        let mut app = app();
+        app.chats
+            .push(Chat::new("1@s.whatsapp.net".into(), "Ángel".into()));
+        let contact = Contact {
+            id: "2@s.whatsapp.net".into(),
+            full_name: Some("A\u{301}ngel".into()),
+            push_name: None,
+        };
+        app.contacts.insert(contact.id.clone(), contact);
+        for query in ["angel", "ÁNGEL", "A\u{301}ngel"] {
+            app.search = query.into();
+            assert_eq!(app.visible_chats().len(), 1, "{query}");
+            assert_eq!(app.matching_contacts().len(), 1, "{query}");
+        }
+        assert_eq!(app.chats[0].name, "Ángel");
+        app.search = "bob".into();
+        assert!(app.visible_chats().is_empty());
+        assert!(app.matching_contacts().is_empty());
+    }
+
+    #[test]
+    fn closing_a_chat_preserves_its_text_draft() {
+        let mut app = app();
+        let id = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(id.into(), "Ada".into()));
+        app.open_chat(id.into());
+        app.composer = "unfinished message".into();
+        app.actions.push(Action::CloseChat);
+        app.apply_actions(&egui::Context::default());
+        assert!(app.open_chat.is_none());
+        app.open_chat(id.into());
+        assert_eq!(app.composer, "unfinished message");
     }
 
     #[test]

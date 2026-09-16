@@ -111,12 +111,11 @@ mod tests {
 
     #[test]
     fn group_receipts_survive_reopening_and_use_the_last_readers_time() {
-        let path =
-            std::env::temp_dir().join(format!("zapfast-group-receipts-{}.db", std::process::id()));
-        let _ = std::fs::remove_file(&path);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("archive.db");
         let group = "123-456@g.us";
         {
-            let archive = Archive::open(&path).unwrap();
+            let archive = Archive::open_with_key(&path, &[7; 32]).unwrap();
             archive.ensure_chat(group, "Group").unwrap();
             archive
                 .insert_message(&super::super::tests::message(group, "m", 100, true), None)
@@ -131,7 +130,7 @@ mod tests {
                     .unwrap()
             );
         }
-        let archive = Archive::open(&path).unwrap();
+        let archive = Archive::open_with_key(&path, &[7; 32]).unwrap();
         assert!(
             archive
                 .group_receipt(group, "m", "b@lid", Delivery::Delivered, 130)

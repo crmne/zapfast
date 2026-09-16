@@ -3,6 +3,17 @@
 use jiff::civil::Date;
 use jiff::{Timestamp, Zoned};
 
+/// File-loader identifier for a native path. egui requires a slash after
+/// `file://` on Windows or it interprets a drive path as a UNC hostname.
+/// Keep native characters: egui's loader does not percent-decode URLs.
+pub fn image_uri(path: &std::path::Path) -> String {
+    image_uri_for_platform(&path.to_string_lossy(), cfg!(windows))
+}
+
+fn image_uri_for_platform(path: &str, windows: bool) -> String {
+    format!("file://{}{path}", if windows { "/" } else { "" })
+}
+
 /// Converts a Unix timestamp to local time.
 fn zoned(unix_seconds: i64) -> Option<Zoned> {
     let timestamp = Timestamp::from_second(unix_seconds).ok()?;
@@ -161,6 +172,23 @@ pub fn now() -> i64 {
     Timestamp::now().as_second()
 }
 
+/// Case- and accent-insensitive matching without changing displayed names.
+pub fn search_key(text: &str) -> String {
+    use icu_normalizer::DecomposingNormalizerBorrowed;
+    use icu_properties::{CodePointMapData, props::GeneralCategory};
+
+    if text.is_ascii() {
+        return text.to_ascii_lowercase();
+    }
+    DecomposingNormalizerBorrowed::new_nfd()
+        .normalize_iter(text.chars())
+        .filter(|c| {
+            CodePointMapData::<GeneralCategory>::new().get(*c) != GeneralCategory::NonspacingMark
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 /// Duration such as "0:12".
 pub fn duration(seconds: u32) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
@@ -297,6 +325,51 @@ pub fn tray_template_rgba(size: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn image_paths_keep_the_native_path_after_loader_conversion() {
+        for path in [
+            r"C:\Users\Ada\photo.jpg",
+            r"C:\Users\A B\100% #猫.png",
+            r"\\server\share\photo.jpg",
+            r"\\?\C:\cache\photo.jpg",
+        ] {
+            let uri = super::image_uri_for_platform(path, true);
+            // Mirrors egui_extras' Windows file loader: its first slash
+            // selects a native path, otherwise it prepends a UNC prefix.
+            assert_eq!(uri.strip_prefix("file:///").unwrap(), path);
+        }
+        assert_eq!(
+            super::image_uri_for_platform("/home/ada/猫 #1.png", false),
+            "file:///home/ada/猫 #1.png"
+        );
+    }
+
+    #[test]
+    fn image_loader_reads_native_paths() {
+        use egui::load::BytesPoll;
+        let dir = std::env::temp_dir().join(format!("zapfast-image-paths-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("猫 photo 100% #1.png");
+        std::fs::write(&path, b"image bytes").unwrap();
+        let ctx = egui::Context::default();
+        egui_extras::install_image_loaders(&ctx);
+        let uri = super::image_uri(&path);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match ctx.try_load_bytes(&uri).unwrap() {
+                BytesPoll::Ready { bytes, .. } => {
+                    assert_eq!(bytes.as_ref(), b"image bytes");
+                    break;
+                }
+                BytesPoll::Pending { .. } => {
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     use super::*;
 
     #[test]

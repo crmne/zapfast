@@ -41,6 +41,8 @@ pub struct Chat {
     pub unread: u32,
     pub archived: bool,
     pub pinned: bool,
+    /// Pin time in Unix milliseconds; zero for older archives with no ordering.
+    pub pinned_at: i64,
     /// Mute end as Unix seconds; `Some(0)` means indefinite.
     pub muted_until: Option<i64>,
     /// Latest message shown in the chat list.
@@ -49,6 +51,8 @@ pub struct Chat {
     pub participants: Vec<String>,
     /// Whether this is an announcement group where we cannot post.
     pub read_only: bool,
+    /// Disappearing-message duration in seconds, if enabled.
+    pub ephemeral_expiration: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,10 +76,12 @@ impl Chat {
             unread: 0,
             archived: false,
             pinned: false,
+            pinned_at: 0,
             muted_until: None,
             last: None,
             participants: Vec::new(),
             read_only: false,
+            ephemeral_expiration: None,
         }
     }
 
@@ -238,6 +244,8 @@ pub enum Content {
     Poll {
         question: String,
         options: Vec<String>,
+        #[serde(default)]
+        state: PollState,
     },
     /// "This message was deleted."
     Revoked,
@@ -245,6 +253,72 @@ pub enum Content {
     Unsupported {
         what: String,
     },
+}
+
+/// Poll information safe to send to the interface; encryption keys stay in the worker.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PollState {
+    pub selectable: usize,
+    pub counts: Vec<usize>,
+    pub selected: Vec<usize>,
+    pub voters: usize,
+    pub can_vote: bool,
+    pub history_complete: bool,
+    pub refresh_needed: bool,
+    pub refreshing: bool,
+    pub refresh_failed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PollDraft {
+    pub question: String,
+    pub options: Vec<String>,
+    pub multiple: bool,
+}
+
+impl Default for PollDraft {
+    fn default() -> Self {
+        Self {
+            question: String::new(),
+            options: vec![String::new(); 2],
+            multiple: true,
+        }
+    }
+}
+
+impl PollDraft {
+    pub fn validated(&self) -> Result<Self, &'static str> {
+        let question = self.question.trim().to_owned();
+        let options: Vec<String> = self
+            .options
+            .iter()
+            .map(|option| option.trim().to_owned())
+            .collect();
+        if question.is_empty() || question.chars().count() > 255 {
+            return Err("Enter a question of up to 255 characters.");
+        }
+        if !(2..=12).contains(&options.len())
+            || options
+                .iter()
+                .any(|option| option.is_empty() || option.chars().count() > 100)
+        {
+            return Err("Add 2–12 answers, each with 1–100 characters.");
+        }
+        let mut unique = std::collections::HashSet::new();
+        if options.iter().any(|option| !unique.insert(option)) {
+            return Err("Each answer must be different.");
+        }
+        Ok(Self {
+            question,
+            options,
+            multiple: self.multiple,
+        })
+    }
+
+    pub fn selectable(&self) -> usize {
+        if self.multiple { self.options.len() } else { 1 }
+    }
 }
 
 impl Content {
@@ -431,6 +505,7 @@ pub enum Dialog {
         chat: ChatId,
         message: String,
     },
+    CreatePoll(ChatId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -467,6 +542,19 @@ pub enum Action {
         text: String,
         /// Quoted message id.
         quoting: Option<String>,
+    },
+    CreatePoll {
+        chat: ChatId,
+        draft: PollDraft,
+    },
+    RefreshPoll {
+        chat: ChatId,
+        message: String,
+    },
+    VotePoll {
+        chat: ChatId,
+        message: String,
+        choices: Vec<usize>,
     },
     /// Updates our typing state in a chat.
     Composing {
@@ -590,6 +678,14 @@ pub enum Action {
     ScrollTo(String),
     /// Updates chat-list search text.
     Search(String),
+    ShowUpdate,
+    CloseUpdate,
+    DownloadUpdate,
+    InstallUpdate,
+    SetTheme(crate::settings::ThemeChoice),
+    SetCustomTheme(String),
+    ReloadThemes,
+    OpenThemesFolder,
     SettingsChanged,
     ZoomBy(f32),
     ResetZoom,
@@ -621,6 +717,30 @@ pub enum Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polls_validate_trimmed_questions_and_distinct_bounded_answers() {
+        let mut draft = PollDraft {
+            question: " Lunch? ".into(),
+            options: vec![" Pizza ".into(), "Pasta".into()],
+            multiple: false,
+        };
+        let valid = draft.validated().unwrap();
+        assert_eq!(valid.question, "Lunch?");
+        assert_eq!(valid.options, ["Pizza", "Pasta"]);
+        assert_eq!(valid.selectable(), 1);
+        draft.options[1] = "Pizza".into();
+        assert!(draft.validated().is_err());
+        draft.options[1].clear();
+        assert!(draft.validated().is_err());
+        draft.options = (0..13).map(|i| format!("Answer {i}")).collect();
+        assert!(draft.validated().is_err());
+        draft.options.pop();
+        draft.multiple = true;
+        assert_eq!(draft.validated().unwrap().selectable(), 12);
+        draft.question = "🍕".repeat(256);
+        assert!(draft.validated().is_err());
+    }
 
     fn media() -> Media {
         Media {

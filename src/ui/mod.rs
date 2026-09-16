@@ -6,7 +6,9 @@ pub mod dialogs;
 pub mod keys;
 pub mod login;
 pub mod picker;
+pub mod polls;
 pub mod settings;
+pub mod update;
 pub mod widgets;
 
 use egui::{Align2, CornerRadius, Frame, Margin, Stroke, vec2};
@@ -24,6 +26,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if !app.is_linked() {
         login::show(app, ui);
         dialogs::show(app, ctx);
+        update::show(app, ctx);
         toasts(app, ctx);
         return;
     }
@@ -41,6 +44,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             Page::Settings => settings::show(app, ui),
             Page::Chats => conversation::show(app, ui),
         });
+    update::show(app, ctx);
     picker::show(app, ctx);
     dialogs::show(app, ctx);
     drop_target(app, ctx);
@@ -145,26 +149,23 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
         )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if app.syncing || matches!(app.link, LinkStatus::Starting | LinkStatus::Connecting)
-                {
-                    theme::spinner(ui, 14.0, color);
-                } else {
-                    theme::icon(ui, icon, 15.0, color);
-                }
+                // Progress/connection events wake the window. A long history
+                // sync must not redraw every message just to spin this icon.
+                theme::icon(ui, icon, 15.0, color);
                 theme::text(ui, text, theme::medium(13.0), palette.text);
                 if retry || download.is_some() {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(url) = download {
+                        if download.is_some() {
                             if theme::soft_button(
                                 ui,
                                 &palette,
                                 Some(Icon::ExternalLink),
-                                "Download",
+                                "Update",
                                 false,
                             )
                             .clicked()
                             {
-                                app.actions.push(Action::OpenUrl(url));
+                                app.actions.push(Action::ShowUpdate);
                             }
                         } else if theme::soft_button(
                             ui,
@@ -317,4 +318,45 @@ pub fn standalone_header(app: &mut App, ui: &mut egui::Ui) {
                 }
             });
         });
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+    #[test]
+    fn history_sync_banner_does_not_animate_the_idle_window() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        app.syncing = true;
+        app.sync_percent = Some(42);
+        app.open_chat = None;
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut delay = std::time::Duration::ZERO;
+        for index in 0..6 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(index as f64),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| banner(&mut app, ui),
+            );
+            delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.textures_delta.clear();
+        }
+        assert!(
+            delay > std::time::Duration::from_millis(100),
+            "sync banner requested {delay:?}: {:?}",
+            ctx.repaint_causes()
+        );
+    }
 }
