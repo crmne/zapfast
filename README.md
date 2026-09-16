@@ -46,7 +46,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   right-click and choose **Reply**. Send text or a voice message; **Esc** cancels
   the reply. Replies include WhatsApp’s original-message reference, so other
   clients can jump back to it. If the original is unavailable locally, sending
-  the reply reports an error instead of sending an unrelated message.
+  the reply reports an error instead of sending an unrelated message, and the
+  message stays with you: rejected text returns to the composer, and a rejected
+  voice reply lights the Send button in that chat to send it again.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs; this

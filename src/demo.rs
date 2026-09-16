@@ -194,6 +194,16 @@ fn media(mime: &str, size: u64, width: Option<u32>, height: Option<u32>) -> Medi
     }
 }
 
+/// Generates a synthetic voice clip for demos and tests.
+pub(super) fn demo_tone(seconds: u32) -> Vec<f32> {
+    (0..crate::voice::RATE * seconds)
+        .map(|i| {
+            let t = i as f32 / crate::voice::RATE as f32;
+            (t * 220.0 * std::f32::consts::TAU).sin() * 0.4 * (t * 1.3).sin().abs()
+        })
+        .collect()
+}
+
 /// Generates a speech-like demo waveform.
 fn demo_waveform() -> Vec<u8> {
     (0..crate::voice::BARS)
@@ -1086,12 +1096,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "voice" => {
                 // Use a valid clip for playback tests.
-                let tone: Vec<f32> = (0..crate::voice::RATE * 6)
-                    .map(|i| {
-                        let t = i as f32 / crate::voice::RATE as f32;
-                        (t * 220.0 * std::f32::consts::TAU).sin() * 0.4 * (t * 1.3).sin().abs()
-                    })
-                    .collect();
+                let tone = demo_tone(6);
                 let path = app.dirs.media_cache_dir().join("demo-voice.ogg");
                 if let Ok(bytes) = crate::voice::encode(&tone) {
                     let _ = std::fs::create_dir_all(path.parent().expect("a directory"));
@@ -1117,6 +1122,19 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 }
             }
             "recording" => app.recording = Some(crate::audio::Recorder::rehearsal()),
+            // The phone rejected a voice reply: the clip is retained for a
+            // retry from this chat's composer.
+            "rejected" => {
+                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+                app.backend.record_demo_commands();
+                app.recording_retry = Some((
+                    SAMPLES[0].id.to_owned(),
+                    demo_tone(6),
+                    Some("ada-format".to_owned()),
+                ));
+            }
             "compose-emoji" => {
                 app.composer = "Andiamo 😊 con due 👍🏽 e poi testo normale".to_owned();
             }
@@ -1232,6 +1250,18 @@ mod tests {
         let (mut app, _events) = App::headless(AppDirs::under(&root), Settings::default());
         populate(&mut app);
         app
+    }
+
+    /// An app plus its event channel, so tests can deliver real worker events.
+    pub(super) fn app_events() -> (App, std::sync::mpsc::Sender<crate::backend::Event>) {
+        let root = std::env::temp_dir().join(format!(
+            "zapfast-demo-events-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (mut app, events) = App::headless(AppDirs::under(&root), Settings::default());
+        populate(&mut app);
+        (app, events)
     }
 
     /// Lays out several frames without a display to catch view panics.

@@ -341,17 +341,26 @@ impl Recorder {
         }
     }
 
-    /// Simulated recorder for demos and tests.
+    /// Simulated recorder for demos and tests: finishes with four seconds of
+    /// synthetic audio.
     #[cfg(any(test, feature = "demo"))]
     pub fn rehearsal() -> Self {
+        let samples: Vec<f32> = (0..crate::voice::RATE * 4)
+            .map(|i| {
+                let t = i as f32 / crate::voice::RATE as f32;
+                (t * 200.0 * std::f32::consts::TAU).sin() * 0.35 * (t * 0.8).sin().abs()
+            })
+            .collect();
         let levels: Vec<f32> = (0..90)
             .map(|index| 0.05 + 0.2 * ((index as f32 * 0.6).sin().abs()))
             .collect();
+        let outcome: Outcome = Default::default();
+        *outcome.lock().unwrap_or_else(|p| p.into_inner()) = Some(Ok(samples));
         Self {
             started: Instant::now() - Duration::from_millis(4_500),
             stop: Arc::new(AtomicBool::new(true)),
             levels: Arc::new(Mutex::new(levels)),
-            outcome: Default::default(),
+            outcome,
             thread: None,
         }
     }

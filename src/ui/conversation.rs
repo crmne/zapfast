@@ -785,6 +785,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     sent
                 });
             let mut send_click = false;
+            // A retained voice reply is only sent from its own chat.
+            let retrying = app
+                .recording_retry
+                .as_ref()
+                .is_some_and(|(retry_chat, _, _)| *retry_chat == chat.id);
             let line_height = ui
                 .painter()
                 .layout_no_wrap("x".to_owned(), theme::regular(BODY_SIZE), palette.text)
@@ -973,7 +978,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }
                             });
                     });
-                let ready = !app.composer.trim().is_empty() || !app.pending.is_empty();
+                let ready = !app.composer.trim().is_empty()
+                    || !app.pending.is_empty()
+                    || retrying;
                 let (fill, hover, icon) = if ready {
                     (palette.accent, palette.accent_hover, palette.on_accent)
                 } else {
@@ -1000,31 +1007,46 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     } else {
                         Icon::Send
                     };
-                    if theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
-                        .clicked()
-                    {
+                    let send = theme::circle_button(
+                        ui,
+                        icon_kind,
+                        button_width,
+                        fill,
+                        hover,
+                        icon,
+                        "Send",
+                    );
+                    #[cfg(any(test, feature = "demo"))]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::new("composer-send"), send.rect));
+                    if send.clicked() {
                         send_click = true;
                     }
                 }
             },
             );
-            if (send_key || send_click)
-                && (!app.composer.trim().is_empty() || !app.pending.is_empty())
-            {
-                let text = std::mem::take(&mut app.composer);
-                if app.pending.is_empty() {
-                    app.actions.push(Action::SendText {
-                        chat: chat.id.clone(),
-                        text,
-                        quoting: app.reply_to.clone(),
-                    });
-                } else {
-                    app.actions.push(Action::SendPending {
-                        chat: chat.id.clone(),
-                        caption: text,
-                    });
+            if send_key || send_click {
+                if !app.composer.trim().is_empty() || !app.pending.is_empty() {
+                    let text = std::mem::take(&mut app.composer);
+                    if app.pending.is_empty() {
+                        app.actions.push(Action::SendText {
+                            chat: chat.id.clone(),
+                            text,
+                            quoting: app.reply_to.clone(),
+                        });
+                    } else {
+                        app.actions.push(Action::SendPending {
+                            chat: chat.id.clone(),
+                            caption: text,
+                        });
+                    }
+                    app.focus_composer = true;
+                } else if retrying {
+                    // An empty composer with a retained voice reply: the lit
+                    // Send button retries it.
+                    app.actions.push(Action::SendRecording);
+                    app.focus_composer = true;
                 }
-                app.focus_composer = true;
             }
             if app.settings.show_shortcut_hints {
                 let hint = super::keys::label(if enter_sends {
@@ -3533,7 +3555,7 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
                     palette.accent,
                 );
             }
-            if theme::circle_button(
+            let send = theme::circle_button(
                 ui,
                 Icon::Send,
                 button,
@@ -3541,9 +3563,11 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
                 palette.accent_hover,
                 palette.on_accent,
                 "Send",
-            )
-            .clicked()
-            {
+            );
+            #[cfg(any(test, feature = "demo"))]
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(egui::Id::new("recording-send"), send.rect));
+            if send.clicked() {
                 app.actions.push(Action::SendRecording);
             }
         },

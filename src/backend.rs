@@ -488,6 +488,14 @@ pub enum Event {
     UpdateDownloaded(Result<Box<crate::updates::install::Prepared>, String>),
     UpdateInstalling(Result<(), String>),
     Error(String),
+    /// A reply could not be sent because its original is unavailable.
+    ReplyRejected {
+        chat: ChatId,
+        text: Option<String>,
+        samples: Option<Vec<f32>>,
+        quoting: Option<String>,
+        error: String,
+    },
 }
 
 /// Cross-thread window wake handle.

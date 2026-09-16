@@ -2883,14 +2883,26 @@ impl Worker {
         mentions: Vec<String>,
     ) {
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+            self.emit(Event::ReplyRejected {
+                chat,
+                text: Some(text),
+                samples: None,
+                quoting,
+                error: "Not connected to WhatsApp".to_owned(),
+            });
             return;
         };
         let (context, shown) = match self.reply_context(&chat, quoting.as_deref()) {
             Ok(Some((context, shown))) => (Some(context), Some(shown)),
             Ok(None) => (None, None),
             Err(error) => {
-                self.emit(Event::Error(error.to_owned()));
+                self.emit(Event::ReplyRejected {
+                    chat: chat.clone(),
+                    text: Some(text),
+                    samples: None,
+                    quoting,
+                    error: error.to_owned(),
+                });
                 return;
             }
         };
@@ -3857,14 +3869,26 @@ impl Worker {
     /// Encodes and sends an OGG/Opus voice message with optional quote.
     fn send_voice(&mut self, chat: ChatId, samples: Vec<f32>, quoting: Option<String>) {
         let Some(client) = self.client.clone() else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+            self.emit(Event::ReplyRejected {
+                chat,
+                text: None,
+                samples: Some(samples),
+                quoting,
+                error: "Not connected to WhatsApp".to_owned(),
+            });
             return;
         };
         let (context, shown) = match self.reply_context(&chat, quoting.as_deref()) {
             Ok(Some((context, shown))) => (Some(Box::new(context)), Some(shown)),
             Ok(None) => (None, None),
             Err(error) => {
-                self.emit(Event::Error(error.to_owned()));
+                self.emit(Event::ReplyRejected {
+                    chat: chat.clone(),
+                    text: None,
+                    samples: Some(samples),
+                    quoting,
+                    error: error.to_owned(),
+                });
                 return;
             }
         };
