@@ -56,6 +56,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   an emoji without leaving the composer, or `@` in a group to mention a member.
   Reply, react, edit, forward, delete, and check when a message was sent,
   delivered, or read.
+- **Disappearing-message timers.** Outgoing messages use the chat's known
+  timer, including replies, attachments, edits, and forwards. Forwarded copies
+  use the destination chat's timer. Received messages remain in the local archive
+  after they expire on the phone.
 - **View attachments.** ZapFast downloads files up to 64 MB automatically or
   on click. Photos, stickers, GIFs, voice messages, audio, locations, contacts,
   polls, and link previews appear in the chat. Videos and documents open in

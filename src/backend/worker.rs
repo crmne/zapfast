@@ -2668,8 +2668,8 @@ impl Worker {
         };
         // whatsapp-rust owns the forwarding rules: unwrap transient wrappers,
         // strip quote chains and secrets, and retain reusable media metadata.
-        let mut message = *original.get_base_message().prepare_for_forward();
-        let expiration = self.apply_ephemeral(&to_chat, &mut message);
+        let (message, expiration) =
+            outgoing_forward(&original, self.ephemeral_expiration(&to_chat));
         let id = client.generate_message_id();
         let mentions = self.mentions_of(&mentioned_of(&message));
         let thumbnail = thumbnail_of(&message).or_else(|| source.thumbnail.clone());
@@ -3804,6 +3804,20 @@ impl Worker {
 
 // --- free helpers ----------------------------------------------------------
 
+fn outgoing_forward(original: &wa::Message, expiration: Option<u32>) -> (wa::Message, Option<u32>) {
+    let mut message = *original.get_base_message().prepare_for_forward();
+    if let Some(mut context) = context_of(&message).cloned() {
+        // A forward belongs to the destination chat. The library retains the
+        // source timer, including when the destination has no timer at all.
+        context.expiration = None;
+        context.ephemeral_setting_timestamp = None;
+        context.ephemeral_shared_secret = None;
+        message.set_context_info(context);
+    }
+    let expiration = apply_ephemeral_expiration(&mut message, expiration);
+    (message, expiration)
+}
+
 fn apply_ephemeral_expiration(message: &mut wa::Message, expiration: Option<u32>) -> Option<u32> {
     let expiration = expiration.filter(|expiration| *expiration > 0)?;
     message
@@ -4007,7 +4021,11 @@ fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
     if let Some(image) = base.image_message.as_option() {
         return image.context_info.as_option();
     }
-    if let Some(video) = base.video_message.as_option() {
+    if let Some(video) = base
+        .video_message
+        .as_option()
+        .or(base.ptv_message.as_option())
+    {
         return video.context_info.as_option();
     }
     if let Some(audio) = base.audio_message.as_option() {
@@ -4022,8 +4040,22 @@ fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
     if let Some(location) = base.location_message.as_option() {
         return location.context_info.as_option();
     }
+    if let Some(location) = base.live_location_message.as_option() {
+        return location.context_info.as_option();
+    }
     if let Some(contact) = base.contact_message.as_option() {
         return contact.context_info.as_option();
+    }
+    if let Some(contacts) = base.contacts_array_message.as_option() {
+        return contacts.context_info.as_option();
+    }
+    if let Some(poll) = base
+        .poll_creation_message
+        .as_option()
+        .or(base.poll_creation_message_v2.as_option())
+        .or(base.poll_creation_message_v3.as_option())
+    {
+        return poll.context_info.as_option();
     }
     None
 }
@@ -5099,6 +5131,54 @@ mod tests {
                 .and_then(|info| info.expiration),
             Some(7_776_000)
         );
+    }
+
+    #[test]
+    fn forwards_use_only_the_destination_timer() {
+        let context = wa::ContextInfo {
+            expiration: Some(7_776_000),
+            ephemeral_setting_timestamp: Some(123),
+            ephemeral_shared_secret: Some(vec![1, 2, 3]),
+            is_forwarded: Some(true),
+            forwarding_score: Some(2),
+            ..Default::default()
+        };
+        let text = wa::Message::text_with_context("forward me", context.clone());
+        let image = wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage {
+                caption: Some("caption".into()),
+                direct_path: Some("/media/path".into()),
+                context_info: MessageField::some(context.clone()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let contacts = wa::Message {
+            contacts_array_message: MessageField::some(wa::message::ContactsArrayMessage {
+                context_info: MessageField::some(context),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        for original in [text, image, contacts] {
+            for timer in [None, Some(0), Some(86_400)] {
+                let expected = timer.filter(|value| *value > 0);
+                let (forward, expiration) = outgoing_forward(&original, timer);
+                assert_eq!(expiration, expected);
+                assert_eq!(forward.get_ephemeral_expiration(), expected);
+                let context = context_of(&forward).unwrap();
+                assert_eq!(context.expiration, expected);
+                assert_eq!(context.ephemeral_setting_timestamp, None);
+                assert_eq!(context.ephemeral_shared_secret, None);
+                assert_eq!(context.is_forwarded, Some(true));
+                assert_eq!(context.forwarding_score, Some(3));
+                if let Some(image) = forward.image_message.as_option() {
+                    assert_eq!(image.caption.as_deref(), Some("caption"));
+                    assert_eq!(image.direct_path.as_deref(), Some("/media/path"));
+                }
+                assert_eq!(original.get_ephemeral_expiration(), Some(7_776_000));
+            }
+        }
     }
 
     #[test]
