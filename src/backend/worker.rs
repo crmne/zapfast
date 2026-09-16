@@ -212,6 +212,10 @@ pub async fn run(
         poll_decrypting: 0,
         poll_history: Default::default(),
         poll_sending: HashSet::new(),
+        mcp_server: None,
+        ai_preview: None,
+        ai_busy: false,
+        ai_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
     worker.load_state();
     worker.backfill();
@@ -257,6 +261,10 @@ struct Worker {
     poll_decrypting: usize,
     poll_history: poll_history::Requests,
     poll_sending: HashSet<(ChatId, String)>,
+    mcp_server: Option<crate::mcp::Server>,
+    ai_preview: Option<(u64, crate::ai::Preview)>,
+    ai_busy: bool,
+    ai_cancel: Arc<std::sync::atomic::AtomicBool>,
     dirs: AppDirs,
     events: std::sync::mpsc::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
@@ -1308,6 +1316,9 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        self.ai_preview = None;
+        self.ai_cancel
+            .store(true, std::sync::atomic::Ordering::Release);
         self.stop_bot().await;
         if let Err(error) = self.archive.clear() {
             log::warn!("could not clear the archive: {error}");
@@ -2243,6 +2254,140 @@ impl Worker {
                 result,
             } => self.poll_voted(chat, message, choices, at, result),
             Command::PollDecoded { vote, choices } => self.poll_decoded(vote, choices),
+            Command::SetMcpEnabled(enabled) => {
+                if !enabled {
+                    self.mcp_server = None;
+                } else if self.mcp_server.is_none() {
+                    match crate::mcp::Server::start(&self.dirs, self.commands.clone()) {
+                        Ok(server) => self.mcp_server = Some(server),
+                        Err(_) => self.emit(Event::Error(
+                            "Could not start local MCP archive access".into(),
+                        )),
+                    }
+                }
+            }
+            Command::Mcp(request) => request.respond(&self.archive, self.mcp_server.is_some()),
+            Command::AiPreview {
+                generation,
+                chat,
+                scope,
+                target,
+            } => {
+                self.ai_preview = None;
+                let result = if let Some(target) = target {
+                    self.archive.ai_reply_preview(&chat, &target).map_err(|_| {
+                        "The selected message is no longer in the local archive".to_owned()
+                    })
+                } else if crate::ai::SCOPES.contains(&scope) {
+                    self.archive
+                        .ai_preview(&chat, scope)
+                        .map_err(|_| "Could not read the local archive".to_owned())
+                } else {
+                    Err("Choose the latest 25, 50 or 100 messages".into())
+                };
+                if let Ok(preview) = &result {
+                    self.ai_preview = Some((generation, preview.clone()));
+                }
+                self.emit(Event::AiPreview { generation, result });
+            }
+            Command::AiCancel => {
+                self.ai_preview = None;
+                self.ai_cancel
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+            Command::AiExplain {
+                generation,
+                preview_generation,
+                config,
+                question,
+                history,
+            } => {
+                if self.ai_busy {
+                    self.emit(Event::AiExplanation {
+                        generation,
+                        result: Err(
+                            "An AI or credential request is still running; try again shortly"
+                                .into(),
+                        ),
+                    });
+                    return;
+                }
+                let Some((_, preview)) = self
+                    .ai_preview
+                    .clone()
+                    .filter(|(id, _)| *id == preview_generation)
+                else {
+                    self.emit(Event::AiExplanation {
+                        generation,
+                        result: Err("Preview expired; select the scope again".into()),
+                    });
+                    return;
+                };
+                self.ai_busy = true;
+                let commands = self.commands.clone();
+                self.ai_cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let cancelled = self.ai_cancel.clone();
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let mailbox =
+                        Arc::new(std::sync::Mutex::new(crate::ai::PrivateText::default()));
+                    let mut last_wake = Instant::now();
+                    let result = crate::ai::explain_stream(
+                        &config,
+                        &preview,
+                        &question,
+                        &history,
+                        &cancelled,
+                        |delta| {
+                            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                                return;
+                            }
+                            let mut text = mailbox.lock().unwrap_or_else(|p| p.into_inner());
+                            let notify = text.0.is_empty();
+                            text.0.push_str(delta);
+                            drop(text);
+                            // Empty -> nonempty is the only notification edge. A hidden
+                            // window holds at most one queued event and one bounded buffer.
+                            if notify {
+                                let _ = events.send(Event::AiDelta {
+                                    generation,
+                                    text: mailbox.clone(),
+                                });
+                            }
+                            if last_wake.elapsed() >= Duration::from_millis(40) {
+                                waker.wake();
+                                last_wake = Instant::now();
+                            } else if notify {
+                                waker.wake_after(Duration::from_millis(40));
+                            }
+                        },
+                    );
+                    let _ = commands.send(Command::AiFinished { generation, result });
+                });
+            }
+            Command::AiStoreKey { config, key } => {
+                if self.ai_busy {
+                    self.emit(Event::AiKeyStored(Err(
+                        "An AI or credential request is still running; try again shortly".into(),
+                    )));
+                    return;
+                }
+                self.ai_busy = true;
+                let commands = self.commands.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = crate::ai::store_key(&config, &key);
+                    let _ = commands.send(Command::AiKeyStored(result));
+                });
+            }
+            Command::AiFinished { generation, result } => {
+                self.ai_busy = false;
+                self.emit(Event::AiExplanation { generation, result });
+            }
+            Command::AiKeyStored(result) => {
+                self.ai_busy = false;
+                self.emit(Event::AiKeyStored(result));
+            }
             Command::SendText {
                 chat,
                 text,
@@ -5633,6 +5778,10 @@ mod receipt_tests {
             poll_decrypting: 0,
             poll_history: Default::default(),
             poll_sending: HashSet::new(),
+            mcp_server: None,
+            ai_preview: None,
+            ai_busy: false,
+            ai_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         (worker, events_rx, inbox, wa_events)
     }

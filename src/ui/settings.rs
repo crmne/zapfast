@@ -150,6 +150,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         },
                     );
 
+                    section(ui, app, "Optional AI explanations");
+                    ai_settings(app, ui);
+                    section(ui, app, "Local MCP archive access");
+                    let mut enabled = app.settings.mcp_enabled;
+                    ui.add_enabled_ui(crate::mcp::SUPPORTED, |ui| {
+                        widgets::setting_row(ui, &palette, "Allow local MCP clients", "Off by default. Trusted programs running as your OS user can read archived chat names, IDs and text, which may include phone numbers and private information. No sending or media access. Linux only; disable to revoke access.", |ui| {
+                            if widgets::switch(ui, &palette, &mut enabled).changed() {
+                                app.actions.push(Action::SetMcpEnabled(enabled));
+                            }
+                        });
+                    });
+
                     section(ui, app, "Account");
                     let name = app.me_name.clone().unwrap_or_default();
                     let me = app.me.clone().unwrap_or_default();
@@ -227,6 +239,75 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     );
                 });
         });
+}
+
+fn ai_settings(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    ui.checkbox(
+        &mut app.ai.settings_draft.enabled,
+        "Enable AI assistant (manual submission only)",
+    );
+    ui.horizontal_wrapped(|ui| {
+        for adapter in crate::ai::Adapter::ALL {
+            ui.selectable_value(&mut app.ai.settings_draft.adapter, adapter, adapter.label());
+        }
+    });
+    ui.label("API base URL (include /v1 if required; HTTPS or localhost HTTP)");
+    ui.add(
+        egui::TextEdit::singleline(&mut app.ai.settings_draft.base_url)
+            .desired_width(f32::INFINITY),
+    );
+    ui.checkbox(
+        &mut app.ai.settings_draft.keyless,
+        "Send without an API key (local/keyless provider)",
+    );
+    ui.label("Model name");
+    ui.add(
+        egui::TextEdit::singleline(&mut app.ai.settings_draft.model)
+            .desired_width(f32::INFINITY)
+            .char_limit(200),
+    );
+    if theme::soft_button(ui, &palette, None, "Save AI configuration", false).clicked() {
+        app.actions
+            .push(Action::AiConfigure(app.ai.settings_draft.clone()));
+    }
+    ui.label("API key for the saved configuration (unless keyless mode is enabled)");
+    ui.add_enabled(
+        !app.ai.credential_pending,
+        egui::TextEdit::singleline(&mut app.ai.key_draft)
+            .password(true)
+            .char_limit(4096)
+            .desired_width(f32::INFINITY),
+    );
+    ui.add_enabled_ui(
+        !app.ai.credential_pending && app.ai.settings_draft == app.settings.ai,
+        |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        !app.ai.key_draft.is_empty(),
+                        egui::Button::new("Save key in OS store"),
+                    )
+                    .clicked()
+                {
+                    app.actions.push(Action::AiStoreKey);
+                }
+                if ui.button("Delete saved key").clicked() {
+                    app.actions.push(Action::AiDeleteKey);
+                }
+            });
+        },
+    );
+    ui.label("Keys are never saved in settings. Changing endpoint or adapter requires its own key. Nothing is uploaded until you Send a question from the assistant panel. Provider charges and privacy policies apply.");
+    if app.ai.credential_pending {
+        ui.label("Updating OS credential store…");
+    }
+    if app.backend.is_offline() {
+        ui.label("Demo only: configure your provider in real ZapFast. Keys are not saved here.");
+    }
+    if let Some(status) = &app.ai.credential_status {
+        ui.label(status);
+    }
 }
 
 fn section(ui: &mut egui::Ui, app: &App, label: &str) {

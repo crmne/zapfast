@@ -970,6 +970,90 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     multiple: false,
                 };
             }
+            "ai-preview" | "ai-answer" | "ai-error" | "ai-streaming" | "ai-replies"
+            | "ai-reply-loading" => {
+                app.settings.ai.enabled = true;
+                app.settings.ai.model = "demo-model".into();
+                app.ai.config = app.settings.ai.clone();
+                app.ai.chat = app.open_chat.clone();
+                app.ai.open = true;
+                app.ai.scope = 25;
+                app.ai.question = "What did we decide?".into();
+                app.ai.preview = Some(crate::ai::preview(&[
+                    (
+                        "sample-a".into(),
+                        false,
+                        1_750_000_000,
+                        Content::text("Let's meet Friday at noon."),
+                    ),
+                    (
+                        "sample-me".into(),
+                        true,
+                        1_750_000_060,
+                        Content::text("Agreed! See you then."),
+                    ),
+                ]));
+                if matches!(part, "ai-replies" | "ai-reply-loading") {
+                    let target = app
+                        .open_chat
+                        .as_ref()
+                        .and_then(|chat| app.conversations.get(chat))
+                        .and_then(|c| c.messages.last())
+                        .map(|m| m.id.clone())
+                        .unwrap_or_else(|| "sample-target".into());
+                    app.ai.reply_target = Some(target);
+                    app.ai.preview = Some(crate::ai::reply_preview(&[
+                        (
+                            "sample-a".into(),
+                            false,
+                            1_750_000_000,
+                            Content::text(
+                                "Friday lunch still works? I can book the little café by the station.",
+                            ),
+                        ),
+                        (
+                            "sample-me".into(),
+                            true,
+                            1_750_000_060,
+                            Content::text("Yes! I finish at noon, so 12:30 would be ideal."),
+                        ),
+                        (
+                            "sample-a".into(),
+                            false,
+                            1_750_000_120,
+                            Content::text(
+                                "Booked for 12:30 ☕ Want me to order ahead, or shall we choose when you get there?",
+                            ),
+                        ),
+                    ]));
+                    app.ai.question.clear();
+                    app.ai.pending = part == "ai-reply-loading";
+                    if !app.ai.pending {
+                        app.ai.replies = [
+                            "Let’s choose when I get there. Thanks for booking! ☕",
+                            "Thanks! I’ll have a look at the menu and let you know before Friday.",
+                            "No rush to order. I’m happy to decide together. See you at 12:30!",
+                        ]
+                        .into_iter()
+                        .map(|s| crate::ai::PrivateText(s.into()))
+                        .collect();
+                    }
+                } else if part == "ai-streaming" {
+                    app.ai.active_question = crate::ai::PrivateText(app.ai.question.clone());
+                    app.ai.answer = Some(crate::ai::PrivateText(
+                        "Sample streamed reply: You agreed to meet on Friday at noon…".into(),
+                    ));
+                } else if part == "ai-answer" {
+                    app.ai.answer = Some(crate::ai::PrivateText("You agreed to meet Person 1 on Friday at noon. The meeting place is not specified in these two messages.".into()));
+                    app.ai.submitted = true;
+                } else if part == "ai-error" {
+                    app.ai.error = Some(
+                        "AI request failed or timed out; check the endpoint and connection".into(),
+                    );
+                    app.ai.submitted = true;
+                }
+                app.dialog = None;
+            }
             "shortcuts" => app.dialog = Some(Dialog::Shortcuts),
             "about" => app.dialog = Some(Dialog::About),
             "info" => {
@@ -1310,6 +1394,12 @@ mod tests {
             "theme=Nord.json",
             "theme=Ristretto.json",
             "theme=Tokyo Night.json",
+            "ai-preview",
+            "ai-answer",
+            "ai-streaming",
+            "ai-replies",
+            "ai-reply-loading",
+            "ai-error",
             "shortcuts",
             "about",
             "info",

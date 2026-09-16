@@ -1,5 +1,6 @@
 //! ZapFast internals exposed for diagnostics and tests.
 
+pub mod ai;
 pub mod animation;
 pub mod app;
 pub mod archive;
@@ -12,6 +13,7 @@ pub mod emoji;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod markup;
+pub mod mcp;
 pub mod model;
 pub mod notify;
 pub mod paths;

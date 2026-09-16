@@ -7,10 +7,9 @@ arch=('x86_64' 'aarch64')
 url="https://zapfast.rocks"
 license=('MIT')
 install="${pkgname}.install"
-# Nothing beyond libc is linked directly; winit and glutin dlopen these at
-# startup, and this is a GUI-only application, so all of them have to be
-# there for it to run at all.
-depends=('alsa-lib' 'alsa-plugins' 'libglvnd' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrandr')
+# Include directly linked libraries (ALSA and D-Bus) as well as the GUI
+# libraries that winit and glutin load at runtime.
+depends=('alsa-lib' 'alsa-plugins' 'dbus' 'libglvnd' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrandr')
 optdepends=('org.freedesktop.secrets: archive encryption key storage'
             'noto-fonts-emoji: colour emoji in messages and reactions'
             'xdg-desktop-portal: the file picker for attachments')

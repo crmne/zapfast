@@ -91,6 +91,31 @@ pub enum Command {
         vote: crate::archive::PollVote,
         choices: Option<Vec<usize>>,
     },
+    SetMcpEnabled(bool),
+    Mcp(crate::mcp::Request),
+    AiPreview {
+        generation: u64,
+        chat: ChatId,
+        scope: usize,
+        target: Option<String>,
+    },
+    AiExplain {
+        generation: u64,
+        preview_generation: u64,
+        config: crate::ai::Config,
+        question: crate::ai::PrivateText,
+        history: Vec<crate::ai::Turn>,
+    },
+    AiCancel,
+    AiStoreKey {
+        config: crate::ai::Config,
+        key: crate::ai::PrivateText,
+    },
+    AiFinished {
+        generation: u64,
+        result: Result<crate::ai::PrivateText, String>,
+    },
+    AiKeyStored(Result<(), String>),
     SendText {
         chat: ChatId,
         text: String,
@@ -385,6 +410,20 @@ pub enum Event {
         message: String,
         error: Option<String>,
     },
+    AiPreview {
+        generation: u64,
+        result: Result<crate::ai::Preview, String>,
+    },
+    /// One shared mailbox per request coalesces deltas while the UI is asleep.
+    AiDelta {
+        generation: u64,
+        text: Arc<std::sync::Mutex<crate::ai::PrivateText>>,
+    },
+    AiExplanation {
+        generation: u64,
+        result: Result<crate::ai::PrivateText, String>,
+    },
+    AiKeyStored(Result<(), String>),
     Link(LinkStatus),
     /// Linked account identity.
     Me {
@@ -583,6 +622,20 @@ impl Backend {
         backend.commands = commands;
         backend.offline = false;
         (backend, inbox)
+    }
+
+    /// Records commands while allowing synthetic events on the same backend.
+    #[cfg(test)]
+    pub(crate) fn recording_with_events() -> (
+        Self,
+        mpsc::UnboundedReceiver<Command>,
+        std::sync::mpsc::Sender<Event>,
+    ) {
+        let (mut backend, events) = Self::detached();
+        let (commands, inbox) = mpsc::unbounded_channel();
+        backend.commands = commands;
+        backend.offline = false;
+        (backend, inbox, events)
     }
 
     /// Disables commands except shutdown.

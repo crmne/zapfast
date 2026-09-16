@@ -142,6 +142,115 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   ordinary files in the cache directory. Unlinking deletes both and removes this device from
   your phone.
 
+## Optional AI: chat assistant and reply suggestions
+
+AI is off by default. In **Settings → Optional AI explanations**, select the
+provider's API adapter (**Chat Completions**, **Responses**, or **Anthropic
+Messages**), its base URL and model name, check **Enable AI assistant (manual submission only)**, then save the configuration. Saving while unchecked keeps AI disabled. Include
+`/v1` in the base URL when your provider requires it. ZapFast appends the
+adapter's endpoint (`/chat/completions`, `/responses`, or `/messages`). HTTPS
+is required except for HTTP on localhost/loopback. URLs with credentials,
+queries or fragments are rejected; redirects are never followed.
+
+Bring your own API key. **Save key in OS store** uses Linux Secret Service
+(such as GNOME Keyring), macOS Keychain or Windows Credential Manager. Keys
+are not in settings JSON or logs, and are scoped to the exact endpoint and
+adapter. Save/delete actions affect the saved configuration; changing endpoints
+does not transfer or delete an old key. There is no plaintext fallback. Unlock
+your OS credential store if an operation fails. For a local server that needs
+no authentication, explicitly enable **Send without an API key**; this bypasses
+the credential store rather than silently falling back after a credential error.
+
+Use the chat-header **AI assistant** icon (or **More → Explain this chat**) to
+open a resizable right-side panel. It follows the currently open chat and reads
+only its local archive, with **25 / 50 / 100** message scopes and the actual
+message count. **Review context** expands the exact snapshot. The refresh icon
+reads a new local snapshot and clears prior AI turns; opening the panel or
+changing scope never contacts a provider. At compact window widths the chat list
+is temporarily hidden to leave room for the conversation and assistant.
+
+Add a question or choose a starter prompt, then press **Enter** or the send icon.
+**Shift+Enter** inserts a newline; Ctrl+Enter and Cmd+Enter also send. The send
+control becomes **Stop** while a reply streams. The compact provider row above
+the composer shows the destination host; hover it for the full endpoint and
+sharing details. Sending explicitly shares your question, the displayed
+snapshot, bounded prior AI turns and fixed explanation instructions with the
+configured provider. Saving configuration never contacts a provider. Names and sender IDs are replaced with `You` / `Person
+1` pseudonyms; timestamps are included. No raw protobuf, attachments, download
+keys, contact metadata, message/chat IDs, quotes or reactions are uploaded.
+Text and captions can themselves contain names, phone numbers or other private
+data: pseudonyms are **not anonymization**. Your provider's privacy policy,
+retention and charges apply. Responses requests set `store: false`, which does
+not override a provider's own retention policies.
+
+Replies stream into the panel and may be wrong. They never send a WhatsApp
+message; **Copy** is explicit. Follow-up turns stay in this chat only, with up to
+six recent turns and a bounded history payload. Switching chats or closing the
+panel clears its context and turns and ignores late replies. **Stop** immediately
+unlocks the question composer and discards later stream updates; an already
+submitted request cannot be recalled. A socket read may take until its timeout
+to finish, so an immediate retry can report that the previous request is still
+running. Retry is explicit and never automatic.
+
+Right-click a message and choose **AI reply**, next to Reply, for three suggested
+responses. This click (not opening the menu) explicitly shares a new local
+snapshot with your configured provider: up to 25 messages ending at the selected
+message, with that target explicitly marked, even if it is older than the latest
+loaded history. Later messages and previous assistant turns are not included.
+The panel shows the provider, actual count, shared context and loading status.
+**Generate again** is another explicit provider request. AI must be enabled;
+a missing key reports an error without falling back to keyless access.
+
+**Use reply** inserts that choice into the WhatsApp composer with the selected
+message quoted, for you to edit and send yourself. It never auto-sends. Existing
+text, a reply quote or attachments are kept unless you explicitly choose
+**Replace draft**; **Keep draft** leaves them untouched. Finish or cancel an
+ongoing edit or recording first. Only three bounded, structured replies can be
+inserted, never an arbitrary provider answer. Closing, stopping, switching chats
+or unlinking invalidates choices and late results. Reply mode replaces the
+assistant's previous local context and history, not the WhatsApp conversation.
+
+One AI/credential operation runs at a time off the chat worker. Network requests
+have a 60-second deadline (10-second connect limit), responses a 512 KiB cap,
+and transcripts a 64 KiB cap. Oversized text is visibly truncated. Non-text
+content uses omission markers; there is no media understanding, quote context
+or phone-history fetching. Context and turns are in memory, not the archive.
+Credential loading reports errors without silently sending a keyless request;
+explicit keyless mode bypasses the OS store. Detached demos show local previews
+and labeled sample answers only: provider and credential operations are disabled,
+so a demo cannot get stuck waiting for an unavailable backend.
+
+## Optional local MCP access (Linux)
+
+**Settings → Local MCP archive access → Allow local MCP clients** is off by
+default. Enable it only for trusted software: clients running as your OS user
+can read bounded archived chat names, IDs and text, which can include phone
+numbers and private content. Configure your MCP client to launch `zapfast
+--mcp` as a newline-delimited stdio MCP transport while the main app is running.
+It connects through a private same-user Unix socket; disabling access closes
+the server and revokes outstanding requests. There is no TCP listener or
+remote service. The initial MCP bridge is Linux-only, read-only, and does not
+expose raw protobuf, keys or media, fetch phone history, send messages or mark
+chats read. AI explanations and MCP access are separate opt-ins.
+
+Available tools are `list_chats`, `search_messages`, and `get_recent_messages`.
+Each call returns at most 50 rows, and message text is capped at 4,000 characters
+with a truncation flag. A typical stdio client configuration is:
+
+```json
+{
+  "mcpServers": {
+    "zapfast": {
+      "command": "/absolute/path/to/zapfast",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+Replace the command with your installed executable; the normal ZapFast app must
+already be running with local MCP access enabled.
+
 ## What it does not do yet
 
 - Play ordinary videos in the app (they open in your player), or reply to
@@ -213,14 +322,15 @@ while your login is unlocked.
 
 ### From source
 
-ZapFast needs Rust, a C/C++ toolchain, CMake and Perl (for bundled OpenSSL). `rust-toolchain.toml` pins the exact version. On Linux,
-it also needs GUI development packages:
+ZapFast needs Rust, a C/C++ toolchain, CMake and Perl (for bundled OpenSSL).
+`rust-toolchain.toml` pins the exact version. On Linux, it also needs GUI,
+ALSA audio, and D-Bus development packages:
 
 ```sh
 # Debian and Ubuntu
-sudo apt install libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev cmake perl
+sudo apt install libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libdbus-1-dev cmake perl
 # Arch
-sudo pacman -S libxkbcommon wayland mesa alsa-lib cmake perl
+sudo pacman -S libxkbcommon wayland mesa alsa-lib dbus cmake perl
 ```
 
 Then:

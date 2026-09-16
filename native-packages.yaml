@@ -65,6 +65,7 @@ nfpm:
       - libxrandr2
       - libasound2t64
       - libasound2-plugins
+      - libdbus-1-3
       - libgcc-s1
       - libstdc++6
     rpm:
@@ -84,6 +85,7 @@ nfpm:
       - libXrandr
       - alsa-lib
       - alsa-plugins-pulseaudio
+      - dbus-libs
       - libgcc
       - libstdc++
   rpm:

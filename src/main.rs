@@ -16,6 +16,10 @@ struct Cli {
     update_receipt: Option<std::path::PathBuf>,
     #[arg(long, hide = true)]
     update_error: Option<String>,
+    /// Serve read-only MCP on stdio through the running app (Linux; opt-in required).
+    #[arg(long, conflicts_with = "verbose")]
+    mcp: bool,
+
     /// Log more from the WhatsApp library.
     #[arg(short, long)]
     verbose: bool,
@@ -82,6 +86,15 @@ fn main() -> eframe::Result<()> {
     if matches!(cli.command, Some(Control::ReloadThemes)) {
         single_instance::send("reload-themes")
             .map_err(|error| eframe::Error::AppCreation(error.into()))?;
+        return Ok(());
+    }
+    if cli.mcp {
+        if zapfast::mcp::run_stdio(&paths::AppDirs::discover()).is_err() {
+            eprintln!(
+                "MCP unavailable. Start ZapFast and enable local MCP in Settings (Linux only)."
+            );
+            std::process::exit(1);
+        }
         return Ok(());
     }
     let waker = backend::Waker::default();

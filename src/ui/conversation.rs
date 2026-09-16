@@ -123,7 +123,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 }
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
-                let right_controls = 52.0;
+                let right_controls = 88.0;
                 // Treat the avatar, name, and subtitle as one info button.
                 let block = ui
                     .scope(|ui| {
@@ -209,6 +209,22 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         palette.text,
                         "More",
                     );
+                    if theme::icon_button(
+                        ui,
+                        Icon::Sparkles,
+                        18.0,
+                        if app.ai.open {
+                            palette.accent
+                        } else {
+                            palette.secondary
+                        },
+                        palette.text,
+                        "AI assistant: ask about this chat",
+                    )
+                    .clicked()
+                    {
+                        app.actions.push(Action::ExplainChat(chat.id.clone()));
+                    }
                     let width = widgets::menu_width(
                         ui,
                         &[
@@ -217,6 +233,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             "Unarchive",
                             "Copy number",
                             "Close chat",
+                            "Explain this chat",
                         ],
                         true,
                     );
@@ -224,6 +241,14 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         .width(width)
                         .frame(widgets::menu_frame(&palette))
                         .show(|ui| {
+                            if widgets::menu_item(
+                                ui,
+                                &palette,
+                                Some(Icon::Sparkles),
+                                "Explain this chat",
+                            ) {
+                                app.actions.push(Action::ExplainChat(chat.id.clone()));
+                            }
                             if widgets::menu_item(ui, &palette, Some(Icon::Info), "Info") {
                                 app.actions
                                     .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
@@ -2229,6 +2254,14 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
     {
         actions.push(Action::Reply(message.id.clone()));
+    }
+    if !matches!(message.content, Content::Revoked)
+        && widgets::menu_item(ui, &palette, Some(Icon::Sparkles), "AI reply")
+    {
+        actions.push(Action::AiReply {
+            chat: chat.clone(),
+            message: message.id.clone(),
+        });
     }
     if !matches!(
         message.content,

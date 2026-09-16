@@ -43,6 +43,10 @@ pub struct Settings {
         skip_serializing_if = "Option::is_none"
     )]
     pub system_theme_cache: Option<crate::theme::custom::CustomTheme>,
+    /// Optional AI endpoint configuration; credentials live only in the OS store.
+    pub ai: crate::ai::Config,
+    /// Explicit local MCP archive-read permission.
+    pub mcp_enabled: bool,
     /// egui zoom factor.
     pub zoom: f32,
     pub sidebar_width: f32,
@@ -85,6 +89,8 @@ impl Default for Settings {
             custom_theme: None,
             custom_theme_cache: None,
             system_theme_cache: None,
+            ai: crate::ai::Config::default(),
+            mcp_enabled: false,
             zoom: 1.0,
             sidebar_width: 320.0,
             enter_sends: true,
@@ -178,6 +184,9 @@ mod tests {
         assert!(parsed.enter_sends);
         assert!(parsed.check_for_updates);
         assert!(!parsed.download_updates_automatically);
+        assert!(!parsed.ai.enabled);
+        assert!(!parsed.mcp_enabled);
+        assert!(!serde_json::to_string(&parsed).unwrap().contains("api_key"));
     }
 
     #[test]

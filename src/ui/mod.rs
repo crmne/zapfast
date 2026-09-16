@@ -1,5 +1,6 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
+pub mod ai_panel;
 pub mod chats;
 pub mod conversation;
 pub mod dialogs;
@@ -34,8 +35,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if !macos {
         banner(app, ui);
     }
-    if app.sidebar_visible {
+    if app.sidebar_visible && !ai_panel::hides_sidebar(app, ui.available_width()) {
         chats::show(app, ui);
+    }
+    if ai_panel::visible(app) {
+        ai_panel::show(app, ui);
     }
     let palette = app.palette;
     egui::CentralPanel::default()

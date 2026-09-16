@@ -75,8 +75,11 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CloseChat);
         }
     }
-    // Enter sends a recording because the text field is hidden.
+    // Enter sends a recording because the WhatsApp text field is hidden, but
+    // the assistant's separate composer still owns Enter while it has focus.
+    let ai_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("ai-question")));
     if app.recording.is_some()
+        && !ai_focused
         && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter))
     {
         actions.push(Action::SendRecording);

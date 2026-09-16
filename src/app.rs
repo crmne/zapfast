@@ -209,6 +209,7 @@ pub struct App {
 
     pub page: Page,
     pub dialog: Option<Dialog>,
+    pub ai: crate::ai::View,
     /// Chat filter in the forwarding destination dialog.
     pub forward_search: String,
     pub poll_draft: crate::model::PollDraft,
@@ -336,7 +337,13 @@ impl App {
                 _ => Palette::dark(),
             });
         let open_chat = settings.last_chat.clone();
+        backend.send(Command::SetMcpEnabled(settings.mcp_enabled));
+        let ai = crate::ai::View {
+            settings_draft: settings.ai.clone(),
+            ..Default::default()
+        };
         Self {
+            ai,
             dirs,
             settings,
             settings_dirty: false,
@@ -952,6 +959,82 @@ impl App {
     fn handle_events(&mut self) {
         for event in self.backend.poll() {
             match event {
+                Event::AiPreview { generation, result } => {
+                    if self.ai.open
+                        && self.ai.preview_pending
+                        && self.ai.preview_generation == generation
+                        && self.ai.chat == self.open_chat
+                    {
+                        self.ai.preview_pending = false;
+                        match result {
+                            Ok(preview) => self.ai.preview = Some(preview),
+                            Err(error) => self.ai.error = Some(error),
+                        }
+                        if std::mem::take(&mut self.ai.auto_reply) && self.ai.preview.is_some() {
+                            self.submit_ai_reply();
+                        }
+                    }
+                }
+                Event::AiDelta { generation, text } => {
+                    let delta =
+                        std::mem::take(&mut *text.lock().unwrap_or_else(|p| p.into_inner()));
+                    if self.ai.accepts(generation)
+                        && self.ai.pending
+                        && self.ai.chat == self.open_chat
+                        && self.ai.reply_target.is_none()
+                    {
+                        self.ai
+                            .answer
+                            .get_or_insert_with(Default::default)
+                            .0
+                            .push_str(&delta.0);
+                    }
+                }
+                Event::AiExplanation { generation, result } => {
+                    if self.ai.accepts(generation)
+                        && self.ai.pending
+                        && self.ai.chat == self.open_chat
+                    {
+                        self.ai.pending = false;
+                        if self.ai.reply_target.is_some() {
+                            match result.and_then(|answer| crate::ai::parse_replies(&answer.0)) {
+                                Ok(replies) => self.ai.replies = replies,
+                                Err(error) => self.ai.error = Some(error),
+                            }
+                            continue;
+                        }
+                        match result {
+                            Ok(answer) => {
+                                self.ai.history.push(crate::ai::Turn {
+                                    question: std::mem::take(&mut self.ai.active_question),
+                                    assistant: answer,
+                                });
+                                while self.ai.history.len() > 6
+                                    || (self.ai.history.len() > 1
+                                        && self
+                                            .ai
+                                            .history
+                                            .iter()
+                                            .map(|t| t.question.0.len() + t.assistant.0.len())
+                                            .sum::<usize>()
+                                            > 64 * 1024)
+                                {
+                                    self.ai.history.remove(0);
+                                }
+                                self.ai.answer = None;
+                                self.ai.question.clear();
+                            }
+                            Err(error) => self.ai.error = Some(error),
+                        }
+                    }
+                }
+                Event::AiKeyStored(result) => {
+                    self.ai.credential_pending = false;
+                    self.ai.credential_status = Some(match result {
+                        Ok(()) => "OS credential updated for the saved endpoint".into(),
+                        Err(error) => error,
+                    });
+                }
                 Event::Link(status) => self.handle_link(status),
                 Event::Me { id, name, about } => {
                     self.me = Some(id);
@@ -968,6 +1051,8 @@ impl App {
                     if let Some(open) = self.open_chat.clone() {
                         if self.chat(&open).is_none() {
                             self.open_chat = None;
+                            self.ai.invalidate();
+                            self.backend.send(Command::AiCancel);
                         } else {
                             // Show archived messages immediately, including offline.
                             self.ensure_loaded(&open);
@@ -1051,6 +1136,20 @@ impl App {
                 }
                 Event::MessageUpdated(message) => {
                     let message = *message;
+                    if self.ai.chat.as_ref() == Some(&message.chat)
+                        && self.ai.reply_target.as_ref() == Some(&message.id)
+                        && (matches!(message.content, Content::Revoked)
+                            || self
+                                .conversations
+                                .get(&message.chat)
+                                .and_then(|c| c.message(&message.id))
+                                .map_or(message.edited, |existing| {
+                                    existing.content != message.content
+                                }))
+                    {
+                        self.ai.invalidate();
+                        self.backend.send(Command::AiCancel);
+                    }
                     if let Some(conversation) = self.conversations.get_mut(&message.chat)
                         && let Some(existing) = conversation.message_mut(&message.id)
                     {
@@ -1120,6 +1219,12 @@ impl App {
                     self.sticker_import_pending = false;
                 }
                 Event::MessageDeleted { chat, id } => {
+                    if self.ai.chat.as_ref() == Some(&chat)
+                        && self.ai.reply_target.as_ref() == Some(&id)
+                    {
+                        self.ai.invalidate();
+                        self.backend.send(Command::AiCancel);
+                    }
                     if let Some(conversation) = self.conversations.get_mut(&chat) {
                         conversation.messages.retain(|message| message.id != id);
                     }
@@ -1232,6 +1337,8 @@ impl App {
                 self.poll_voting.clear();
                 self.poll_creating = false;
                 self.poll_draft = Default::default();
+                self.ai.invalidate();
+                self.backend.send(Command::AiCancel);
                 self.notifications.clear_all();
                 self.chats.clear();
                 self.conversations.clear();
@@ -1368,6 +1475,107 @@ impl App {
         });
     }
 
+    fn start_ai_panel(&mut self, chat: ChatId) {
+        self.ai.invalidate();
+        self.ai.open = true;
+        self.ai.chat = Some(chat);
+        self.ai.config = self.settings.ai.clone();
+        self.backend.send(Command::AiCancel);
+        self.refresh_ai_preview(25);
+    }
+
+    fn refresh_ai_preview(&mut self, scope: usize) {
+        let Some(chat) = self.ai.chat.clone() else {
+            return;
+        };
+        self.ai.generation = self.ai.generation.wrapping_add(1);
+        self.ai.preview_generation = self.ai.generation;
+        self.ai.scope = scope;
+        self.ai.preview = None;
+        if self.backend.is_offline() {
+            let rows: Vec<_> = self
+                .conversations
+                .get(&chat)
+                .map(|c| {
+                    c.messages
+                        .iter()
+                        .take(
+                            self.ai
+                                .reply_target
+                                .as_ref()
+                                .map_or(c.messages.len(), |id| {
+                                    c.messages
+                                        .iter()
+                                        .position(|m| &m.id == id)
+                                        .map_or(0, |i| i + 1)
+                                }),
+                        )
+                        .rev()
+                        .take(scope)
+                        .rev()
+                        .map(|m| (m.sender.clone(), m.from_me, m.timestamp, m.content.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.ai.preview = Some(if self.ai.reply_target.is_some() {
+                crate::ai::reply_preview(&rows)
+            } else {
+                crate::ai::preview(&rows)
+            });
+            self.ai.preview_pending = false;
+        } else {
+            self.ai.preview_pending = true;
+            self.backend.send(Command::AiPreview {
+                generation: self.ai.preview_generation,
+                chat,
+                scope,
+                target: self.ai.reply_target.clone(),
+            });
+        }
+    }
+
+    fn submit_ai_reply(&mut self) {
+        if self.editing.is_some() || self.recording.is_some() {
+            self.ai.error =
+                Some("Finish or cancel your edit or recording before using AI reply.".into());
+            return;
+        }
+        if !self.ai.open
+            || self.ai.chat != self.open_chat
+            || self.ai.reply_target.is_none()
+            || !self.settings.ai.enabled
+            || self.ai.config != self.settings.ai
+            || self.ai.pending
+            || self.ai.preview_pending
+            || self
+                .ai
+                .preview
+                .as_ref()
+                .is_none_or(|p| !p.reply_target || p.count == 0 || p.count > 25)
+        {
+            return;
+        }
+        if self.backend.is_offline() {
+            self.ai.error = Some("Offline demo · sample replies only".into());
+            return;
+        }
+        self.ai.generation = self.ai.generation.wrapping_add(1);
+        self.ai.pending = true;
+        self.ai.submitted = true;
+        self.ai.replies.clear();
+        self.ai.replace_choice = None;
+        self.ai.error = None;
+        self.backend.send(Command::AiExplain {
+            generation: self.ai.generation,
+            preview_generation: self.ai.preview_generation,
+            config: self.ai.config.clone(),
+            question: crate::ai::PrivateText(
+                "Suggest three replies to the selected message.".into(),
+            ),
+            history: Vec::new(),
+        });
+    }
+
     fn open_chat(&mut self, id: ChatId) {
         if self.open_chat.as_deref() != Some(id.as_str()) {
             if let Some(previous) = self.open_chat.take() {
@@ -1394,6 +1602,9 @@ impl App {
         self.emoji_start = None;
         self.mention_start = None;
         self.open_chat = Some(id.clone());
+        if self.ai.open && self.ai.chat.as_ref() != Some(&id) {
+            self.start_ai_panel(id.clone());
+        }
         self.page = Page::Chats;
         self.scroll_to_bottom = true;
         self.at_bottom = true;
@@ -1825,6 +2036,8 @@ impl App {
                 }
             }
             Action::CloseChat => {
+                self.ai.invalidate();
+                self.backend.send(Command::AiCancel);
                 if let Some(chat) = self.open_chat.take() {
                     self.stop_composing(&chat);
                     let draft = std::mem::take(&mut self.composer);
@@ -1962,6 +2175,12 @@ impl App {
             }
             Action::DeleteForEveryone(id) => {
                 if let Some(chat) = self.open_chat.clone() {
+                    if self.ai.chat.as_ref() == Some(&chat)
+                        && self.ai.reply_target.as_ref() == Some(&id)
+                    {
+                        self.ai.invalidate();
+                        self.backend.send(Command::AiCancel);
+                    }
                     if let Some(message) = self
                         .conversations
                         .get_mut(&chat)
@@ -1974,6 +2193,12 @@ impl App {
             }
             Action::DeleteForMe(id) => {
                 if let Some(chat) = self.open_chat.clone() {
+                    if self.ai.chat.as_ref() == Some(&chat)
+                        && self.ai.reply_target.as_ref() == Some(&id)
+                    {
+                        self.ai.invalidate();
+                        self.backend.send(Command::AiCancel);
+                    }
                     if let Some(conversation) = self.conversations.get_mut(&chat) {
                         conversation.messages.retain(|message| message.id != id);
                     }
@@ -2196,6 +2421,235 @@ impl App {
                 }
                 self.backend.send(Command::SetPinned(chat, pinned));
             }
+            Action::SetMcpEnabled(enabled) => {
+                self.settings.mcp_enabled = enabled && crate::mcp::SUPPORTED;
+                self.backend
+                    .send(Command::SetMcpEnabled(self.settings.mcp_enabled));
+                self.mark_settings_dirty();
+            }
+            Action::AiConfigure(config) => {
+                if config.enabled
+                    && let Err(error) = config.validate()
+                {
+                    self.ai.credential_status = Some(error);
+                    return;
+                }
+                self.settings.ai = config;
+                self.ai.key_draft.clear();
+                self.ai.credential_status = Some(format!(
+                    "Configuration saved. AI assistant is {}. Keys are scoped to the endpoint and adapter",
+                    if self.settings.ai.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                ));
+                self.ai.invalidate();
+                self.backend.send(Command::AiCancel);
+                self.mark_settings_dirty();
+            }
+            Action::AiStoreKey | Action::AiDeleteKey => {
+                if self.backend.is_offline() {
+                    self.ai.credential_pending = false;
+                    self.ai.credential_status = Some("Demo only: configure your provider in real ZapFast. Your key draft has not been saved or submitted.".into());
+                    return;
+                }
+                if self.ai.credential_pending {
+                    return;
+                }
+                let key = if action == Action::AiStoreKey {
+                    std::mem::take(&mut self.ai.key_draft)
+                } else {
+                    self.ai.key_draft.clear();
+                    String::new()
+                };
+                self.ai.credential_pending = true;
+                self.ai.credential_status = None;
+                self.backend.send(Command::AiStoreKey {
+                    config: self.settings.ai.clone(),
+                    key: crate::ai::PrivateText(key),
+                });
+            }
+            Action::AiReply { chat, message } => {
+                if self.open_chat.as_ref() != Some(&chat) {
+                    return;
+                }
+                self.ai.invalidate();
+                self.backend.send(Command::AiCancel);
+                self.ai.open = true;
+                self.ai.chat = Some(chat);
+                self.ai.reply_target = Some(message);
+                self.ai.config = self.settings.ai.clone();
+                if !self.settings.ai.enabled {
+                    self.ai.error =
+                        Some("AI assistant is disabled. Enable it in AI settings.".into());
+                } else if self
+                    .ai
+                    .chat
+                    .as_ref()
+                    .and_then(|chat| self.conversations.get(chat))
+                    .and_then(|c| self.ai.reply_target.as_ref().and_then(|id| c.message(id)))
+                    .is_some_and(|m| matches!(m.content, Content::Revoked))
+                {
+                    self.ai.error =
+                        Some("The selected message was deleted. Choose another message.".into());
+                } else if self.editing.is_some() || self.recording.is_some() {
+                    self.ai.error = Some(
+                        "Finish or cancel your edit or recording before using AI reply.".into(),
+                    );
+                } else if let Err(error) = self.ai.config.validate() {
+                    self.ai.error = Some(error);
+                } else {
+                    self.ai.auto_reply = true;
+                    self.refresh_ai_preview(25);
+                    if self.backend.is_offline() {
+                        self.ai.auto_reply = false;
+                        self.submit_ai_reply();
+                    }
+                }
+            }
+            Action::AiKeepDraft => self.ai.replace_choice = None,
+            Action::AiChooseReply {
+                generation,
+                chat,
+                message,
+                choice,
+                replace,
+            } => {
+                if !self.ai.accepts(generation)
+                    || self.ai.pending
+                    || self.ai.preview_pending
+                    || self.ai.chat.as_ref() != Some(&chat)
+                    || self.open_chat.as_ref() != Some(&chat)
+                    || self.ai.reply_target.as_ref() != Some(&message)
+                    || !self.settings.ai.enabled
+                    || self.ai.config != self.settings.ai
+                {
+                    return;
+                }
+                let Some(reply) = self.ai.replies.get(choice).cloned() else {
+                    return;
+                };
+                if self.editing.is_some() || self.recording.is_some() {
+                    self.ai.replace_choice = None;
+                    self.ai.error = Some(
+                        "Finish or cancel your edit or recording before inserting a reply.".into(),
+                    );
+                    return;
+                }
+                if self
+                    .conversations
+                    .get(&chat)
+                    .and_then(|c| c.message(&message))
+                    .is_some_and(|m| matches!(m.content, Content::Revoked))
+                {
+                    self.ai.error =
+                        Some("The selected message was deleted. Choose another message.".into());
+                    return;
+                }
+                if (!self.composer.is_empty()
+                    || !self.pending.is_empty()
+                    || self.reply_to.is_some())
+                    && (!replace || self.ai.replace_choice != Some(choice))
+                {
+                    self.ai.replace_choice = Some(choice);
+                    return;
+                }
+                self.composer = reply.0;
+                self.pending.clear();
+                self.reply_to = Some(message);
+                self.composer_mentions.clear();
+                self.emoji_start = None;
+                self.mention_start = None;
+                self.focus_composer = true;
+                self.ai.invalidate();
+                self.backend.send(Command::AiCancel);
+            }
+            Action::ExplainChat(chat) => {
+                if self.open_chat.as_ref() != Some(&chat) {
+                    return;
+                }
+                if self.ai.open {
+                    self.apply(Action::AiClose, ctx);
+                } else {
+                    self.start_ai_panel(chat);
+                }
+            }
+            Action::AiClose => {
+                self.ai.invalidate();
+                self.backend.send(Command::AiCancel);
+            }
+            Action::AiStop => {
+                if self.ai.reply_target.is_some() {
+                    self.ai.generation = self.ai.generation.wrapping_add(1);
+                    self.ai.preview_generation = self.ai.generation;
+                    self.ai.auto_reply = false;
+                    self.ai.preview_pending = false;
+                    self.ai.pending = false;
+                    self.ai.replies.clear();
+                    self.ai.replace_choice = None;
+                    self.ai.error = Some("Stopped. Context already submitted cannot be recalled. Generate again to retry.".into());
+                    self.backend.send(Command::AiCancel);
+                    return;
+                }
+                self.ai.generation = self.ai.generation.wrapping_add(1);
+                self.ai.pending = false;
+                self.ai.error = Some(
+                    "Stopped. A submitted request cannot be recalled; you can retry shortly."
+                        .into(),
+                );
+                self.backend.send(Command::AiCancel);
+                // A refreshed scope can renumber sender pseudonyms.
+                self.ai.history.clear();
+                self.refresh_ai_preview(self.ai.scope);
+            }
+            Action::AiPreview(scope) => {
+                if crate::ai::SCOPES.contains(&scope)
+                    && self.ai.open
+                    && !self.ai.pending
+                    && self.ai.reply_target.is_none()
+                {
+                    self.ai.history.clear();
+                    self.ai.answer = None;
+                    self.ai.active_question = Default::default();
+                    self.ai.error = None;
+                    self.refresh_ai_preview(scope);
+                }
+            }
+            Action::AiSubmit => {
+                if self.ai.reply_target.is_some() {
+                    return;
+                }
+                if !self.ai.open
+                    || self.ai.chat != self.open_chat
+                    || self.ai.pending
+                    || self.ai.preview_pending
+                    || !self.settings.ai.enabled
+                    || self.ai.config != self.settings.ai
+                    || self.ai.question.len() > crate::ai::MAX_QUESTION
+                    || self.ai.question.trim().is_empty()
+                    || self.ai.preview.as_ref().is_none_or(|p| p.count == 0)
+                {
+                    return;
+                }
+                if self.backend.is_offline() {
+                    self.ai.error = Some("Demo only: responses below are samples. Open real ZapFast to ask your provider.".into());
+                    return;
+                }
+                self.ai.generation = self.ai.generation.wrapping_add(1);
+                self.ai.pending = true;
+                self.ai.submitted = true;
+                self.ai.answer = None;
+                self.ai.error = None;
+                self.ai.active_question = crate::ai::PrivateText(self.ai.question.clone());
+                self.backend.send(Command::AiExplain {
+                    generation: self.ai.generation,
+                    preview_generation: self.ai.preview_generation,
+                    config: self.ai.config.clone(),
+                    question: self.ai.active_question.clone(),
+                    history: self.ai.history.clone(),
+                });
+            }
             Action::ShowDialog(dialog) => {
                 self.emoji_start = None;
                 self.mention_start = None;
@@ -2365,6 +2819,8 @@ impl App {
                 }
             }
             Action::Unlink => {
+                self.ai.invalidate();
+                self.backend.send(Command::AiCancel);
                 self.dialog = None;
                 self.backend.send(Command::Unlink);
             }
@@ -3010,6 +3466,528 @@ mod tests {
         let mut output = ctx.run_ui(input, |ui| app.background_frame(ui.ctx()));
         output.textures_delta.clear();
         assert_eq!(app.chat(&chat.id).unwrap().unread, 1);
+    }
+
+    #[test]
+    fn local_unlink_and_remote_logout_discard_ai_context_and_late_results() {
+        for remote in [false, true] {
+            let root = std::env::temp_dir().join("zapfast-ai-logout-test");
+            let (mut app, _) = App::headless(AppDirs::under(&root), Settings::default());
+            let (backend, mut commands, events) = Backend::recording_with_events();
+            app.backend = backend;
+            app.ai.chat = Some("synthetic-chat".into());
+            app.ai.generation = 42;
+            app.ai.preview = Some(crate::ai::Preview {
+                count: 1,
+                ..Default::default()
+            });
+            app.ai.answer = Some(crate::ai::PrivateText("old account context".into()));
+            app.ai.open = true;
+            if remote {
+                app.handle_link(LinkStatus::LoggedOut);
+            } else {
+                app.apply(Action::Unlink, &egui::Context::default());
+            }
+            assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+            assert!(app.dialog.is_none());
+            assert!(app.ai.chat.is_none());
+            assert!(app.ai.preview.is_none());
+            assert!(app.ai.answer.is_none());
+            events
+                .send(Event::AiExplanation {
+                    generation: 42,
+                    result: Ok(crate::ai::PrivateText("late".into())),
+                })
+                .unwrap();
+            app.handle_events();
+            assert!(app.ai.answer.is_none());
+        }
+    }
+
+    #[test]
+    fn ai_reply_action_previews_then_generates_and_only_inserts_a_draft() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.settings.ai.enabled = true;
+        app.settings.ai.model = "test-model".into();
+        app.open_chat = Some("chat".into());
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::AiReply {
+                chat: "chat".into(),
+                message: "old-unloaded".into(),
+            },
+            &ctx,
+        );
+        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::AiPreview { target: Some(id), scope: 25, .. } if id == "old-unloaded")
+        );
+        assert!(commands.try_recv().is_err());
+        events
+            .send(Event::AiPreview {
+                generation: app.ai.preview_generation,
+                result: Ok(crate::ai::Preview {
+                    count: 25,
+                    reply_target: true,
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::AiExplain { history, .. } if history.is_empty())
+        );
+        assert!(commands.try_recv().is_err());
+        assert!(app.ai.pending);
+        let generation = app.ai.generation;
+        events
+            .send(Event::AiExplanation {
+                generation,
+                result: Ok(crate::ai::PrivateText(
+                    r#"{"replies":["Sounds good ☕","What time?","Not today, thanks"]}"#.into(),
+                )),
+            })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.ai.replies.len(), 3);
+        assert!(app.ai.history.is_empty());
+        let choose = Action::AiChooseReply {
+            generation,
+            chat: "chat".into(),
+            message: "old-unloaded".into(),
+            choice: 0,
+            replace: false,
+        };
+        app.composer = "My unsent draft".into();
+        app.pending
+            .push(Pending::File(PathBuf::from("unsent-photo.jpg")));
+        app.apply(choose.clone(), &ctx);
+        assert_eq!(app.composer, "My unsent draft");
+        assert_eq!(app.pending.len(), 1);
+        assert_eq!(app.ai.replace_choice, Some(0));
+        assert!(commands.try_recv().is_err());
+        app.apply(Action::AiKeepDraft, &ctx);
+        assert!(app.ai.replace_choice.is_none());
+        app.apply(choose.clone(), &ctx);
+        app.apply(
+            Action::AiChooseReply {
+                generation,
+                chat: "chat".into(),
+                message: "old-unloaded".into(),
+                choice: 0,
+                replace: true,
+            },
+            &ctx,
+        );
+        assert_eq!(app.composer, "Sounds good ☕");
+        assert!(app.pending.is_empty());
+        assert_eq!(app.reply_to.as_deref(), Some("old-unloaded"));
+        assert!(app.focus_composer);
+        assert!(!app.ai.open);
+        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        assert!(commands.try_recv().is_err()); // Insertion never emits SendText or SendPending.
+        app.composer = "New draft".into();
+        app.apply(choose, &ctx);
+        assert_eq!(app.composer, "New draft");
+    }
+
+    #[test]
+    fn ai_reply_target_updates_cancel_only_changed_content() {
+        for change in 0..6 {
+            let mut app = app();
+            let (backend, mut commands, events) = Backend::recording_with_events();
+            app.backend = backend;
+            app.open_chat = Some("chat".into());
+            app.settings.ai.enabled = true;
+            app.settings.ai.model = "test".into();
+            app.ai.config = app.settings.ai.clone();
+            app.ai.open = true;
+            app.ai.chat = Some("chat".into());
+            app.ai.reply_target = Some("target".into());
+            app.ai.replies = vec![crate::ai::PrivateText("Old suggestion".into())];
+            app.ai.replace_choice = Some(0);
+            let generation = app.ai.generation;
+            let original = message("chat", "target", 1);
+            app.conversations
+                .entry("chat".into())
+                .or_default()
+                .merge(vec![original.clone()], false);
+            let mut updated = original;
+            match change {
+                0 => {
+                    updated.status = Delivery::Read;
+                    updated.reactions.push(crate::model::Reaction {
+                        sender: "peer".into(),
+                        from_me: false,
+                        emoji: "👍".into(),
+                    });
+                }
+                1 => {
+                    updated.content = Content::text("Changed question");
+                    updated.edited = true;
+                }
+                2 => updated.content = Content::Revoked,
+                3 => updated.id = "other-message".into(),
+                4 => {
+                    app.conversations.clear();
+                    updated.edited = true;
+                    updated.content = Content::text("Unloaded edit");
+                }
+                _ => {
+                    app.conversations.clear();
+                    updated.content = Content::Revoked;
+                }
+            }
+            events
+                .send(Event::MessageUpdated(Box::new(updated)))
+                .unwrap();
+            app.handle_events();
+            if change == 0 || change == 3 {
+                assert!(app.ai.open);
+                assert_eq!(app.ai.generation, generation);
+                assert_eq!(app.ai.replies.len(), 1);
+                assert!(commands.try_recv().is_err());
+            } else {
+                assert!(!app.ai.open);
+                assert!(app.ai.replies.is_empty());
+                assert!(app.ai.replace_choice.is_none());
+                assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+                app.composer = "Keep draft".into();
+                app.apply(
+                    Action::AiChooseReply {
+                        generation,
+                        chat: "chat".into(),
+                        message: "target".into(),
+                        choice: 0,
+                        replace: true,
+                    },
+                    &egui::Context::default(),
+                );
+                assert_eq!(app.composer, "Keep draft");
+                events
+                    .send(Event::AiExplanation {
+                        generation,
+                        result: Ok(crate::ai::PrivateText(r#"["a","b","c"]"#.into())),
+                    })
+                    .unwrap();
+                app.handle_events();
+                assert!(app.ai.replies.is_empty());
+                assert!(commands.try_recv().is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn ai_reply_local_revoke_invalidates_and_cannot_regenerate() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.open_chat = Some("chat".into());
+        app.settings.ai.enabled = true;
+        app.settings.ai.model = "test".into();
+        app.ai.config = app.settings.ai.clone();
+        app.ai.open = true;
+        app.ai.chat = Some("chat".into());
+        app.ai.reply_target = Some("target".into());
+        app.ai.replies = vec![crate::ai::PrivateText("Old suggestion".into())];
+        app.conversations
+            .entry("chat".into())
+            .or_default()
+            .merge(vec![message("chat", "target", 1)], false);
+        let ctx = egui::Context::default();
+        app.apply(Action::DeleteForEveryone("target".into()), &ctx);
+        assert!(!app.ai.open);
+        assert!(app.ai.replies.is_empty());
+        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::Revoke { .. }
+        ));
+        app.apply(
+            Action::AiReply {
+                chat: "chat".into(),
+                message: "target".into(),
+            },
+            &ctx,
+        );
+        assert!(app.ai.error.as_ref().unwrap().contains("deleted"));
+        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn ai_reply_empty_composer_inserts_and_attachment_only_draft_requires_confirmation() {
+        for attachment in [false, true] {
+            let mut app = app();
+            let (backend, mut commands) = Backend::recording();
+            app.backend = backend;
+            app.open_chat = Some("chat".into());
+            app.settings.ai.enabled = true;
+            app.ai.config = app.settings.ai.clone();
+            app.ai.open = true;
+            app.ai.chat = Some("chat".into());
+            app.ai.reply_target = Some("target".into());
+            app.ai.replies = vec![crate::ai::PrivateText("Draft only".into())];
+            if attachment {
+                app.pending.push(Pending::File(PathBuf::from("unsent.jpg")));
+            }
+            app.apply(
+                Action::AiChooseReply {
+                    generation: app.ai.generation,
+                    chat: "chat".into(),
+                    message: "target".into(),
+                    choice: 0,
+                    replace: false,
+                },
+                &egui::Context::default(),
+            );
+            if attachment {
+                assert!(app.composer.is_empty());
+                assert_eq!(app.pending.len(), 1);
+                assert_eq!(app.ai.replace_choice, Some(0));
+                assert!(commands.try_recv().is_err());
+            } else {
+                assert_eq!(app.composer, "Draft only");
+                assert_eq!(app.reply_to.as_deref(), Some("target"));
+                assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+                assert!(commands.try_recv().is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn ai_reply_choices_reject_stale_chat_target_edit_close_and_stop() {
+        for invalidation in 0..9 {
+            let mut app = app();
+            let (backend, mut commands, events) = Backend::recording_with_events();
+            app.backend = backend;
+            app.open_chat = Some("chat".into());
+            app.settings.ai.enabled = true;
+            app.ai.config = app.settings.ai.clone();
+            app.ai.open = true;
+            app.ai.chat = Some("chat".into());
+            app.ai.reply_target = Some("target".into());
+            app.ai.replies = vec![crate::ai::PrivateText("Suggested".into())];
+            let generation = app.ai.generation;
+            let ctx = egui::Context::default();
+            match invalidation {
+                0 => app.ai.generation += 1,
+                1 => app.open_chat("other".into()),
+                2 => app.ai.reply_target = Some("different".into()),
+                3 => app.editing = Some("editing".into()),
+                4 => app.apply(Action::AiClose, &ctx),
+                5 => app.apply(Action::AiStop, &ctx),
+                6 => app.recording = Some(Recorder::rehearsal()),
+                7 => app.handle_link(LinkStatus::LoggedOut),
+                _ => app.settings.ai.enabled = false,
+            }
+            app.composer = "Keep this".into();
+            app.apply(
+                Action::AiChooseReply {
+                    generation,
+                    chat: "chat".into(),
+                    message: "target".into(),
+                    choice: 0,
+                    replace: true,
+                },
+                &ctx,
+            );
+            assert_eq!(app.composer, "Keep this");
+            assert!(app.reply_to.is_none());
+            events
+                .send(Event::AiExplanation {
+                    generation,
+                    result: Ok(crate::ai::PrivateText(r#"["a","b","c"]"#.into())),
+                })
+                .unwrap();
+            app.handle_events();
+            assert_eq!(app.composer, "Keep this");
+            while let Ok(command) = commands.try_recv() {
+                assert!(!matches!(
+                    command,
+                    Command::SendText { .. }
+                        | Command::SendFiles { .. }
+                        | Command::SendImage { .. }
+                        | Command::SendVoice { .. }
+                        | Command::AiExplain { .. }
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn ai_reply_disabled_and_cancelled_preview_never_submit() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.open_chat = Some("chat".into());
+        let ctx = egui::Context::default();
+        let action = Action::AiReply {
+            chat: "chat".into(),
+            message: "target".into(),
+        };
+        app.apply(action.clone(), &ctx);
+        assert!(app.ai.error.as_ref().unwrap().contains("disabled"));
+        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        assert!(commands.try_recv().is_err());
+        app.settings.ai.enabled = true;
+        app.settings.ai.model = "test".into();
+        app.apply(action, &ctx);
+        let generation = app.ai.preview_generation;
+        app.apply(Action::AiStop, &ctx);
+        events
+            .send(Event::AiPreview {
+                generation,
+                result: Ok(crate::ai::Preview {
+                    count: 1,
+                    reply_target: true,
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(!app.ai.pending);
+        while let Ok(command) = commands.try_recv() {
+            assert!(!matches!(command, Command::AiExplain { .. }));
+        }
+    }
+
+    #[test]
+    fn ai_requires_preview_and_explicit_submit_and_rejects_late_results() {
+        let root = std::env::temp_dir().join("zapfast-ai-state-test");
+        let (mut app, _) = App::headless(AppDirs::under(&root), Settings::default());
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.settings.ai.enabled = true;
+        app.settings.ai.model = "test-model".into();
+        app.open_chat = Some("synthetic-chat".into());
+        let ctx = egui::Context::default();
+        app.apply(Action::ExplainChat("synthetic-chat".into()), &ctx);
+        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::AiPreview { scope: 25, .. }
+        ));
+        // Opening reads only the local archive, never an AI request.
+        assert!(commands.try_recv().is_err());
+        app.ai.question = "What happened?".into();
+        app.apply(Action::AiSubmit, &ctx);
+        assert!(commands.try_recv().is_err());
+        events
+            .send(Event::AiPreview {
+                generation: app.ai.preview_generation,
+                result: Ok(crate::ai::Preview {
+                    count: 1,
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+        app.handle_events();
+        app.apply(Action::AiSubmit, &ctx);
+        let generation = app.ai.generation;
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::AiExplain { .. }
+        ));
+        app.apply(Action::AiSubmit, &ctx);
+        assert!(commands.try_recv().is_err());
+        events
+            .send(Event::AiDelta {
+                generation,
+                text: std::sync::Arc::new(std::sync::Mutex::new(crate::ai::PrivateText(
+                    "partial".into(),
+                ))),
+            })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.ai.answer.as_ref().unwrap().0, "partial");
+        app.apply(Action::AiStop, &ctx);
+        assert!(!app.ai.pending);
+        assert!(matches!(commands.try_recv().unwrap(), Command::AiCancel));
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::AiPreview { .. }
+        ));
+        events
+            .send(Event::AiExplanation {
+                generation,
+                result: Ok(crate::ai::PrivateText("late".into())),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(app.ai.history.is_empty());
+        assert_eq!(app.ai.answer.as_ref().unwrap().0, "partial");
+        app.apply(Action::AiClose, &ctx);
+        assert!(app.ai.answer.is_none());
+        assert!(app.ai.preview.is_none());
+    }
+
+    #[test]
+    fn ai_chat_switch_clears_history_and_rejects_old_preview_and_delta() {
+        let root = std::env::temp_dir().join("zapfast-ai-isolation-test");
+        let (mut app, _) = App::headless(AppDirs::under(&root), Settings::default());
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.open_chat = Some("first".into());
+        app.start_ai_panel("first".into());
+        let generation = app.ai.generation;
+        app.ai.history.push(crate::ai::Turn {
+            question: crate::ai::PrivateText("private".into()),
+            assistant: Default::default(),
+        });
+        app.ai.question = "private draft".into();
+        app.open_chat("second".into());
+        assert_eq!(app.ai.chat.as_deref(), Some("second"));
+        assert!(app.ai.history.is_empty());
+        assert!(app.ai.question.is_empty());
+        events
+            .send(Event::AiPreview {
+                generation,
+                result: Ok(crate::ai::Preview {
+                    count: 12,
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+        events
+            .send(Event::AiDelta {
+                generation,
+                text: std::sync::Arc::new(std::sync::Mutex::new(crate::ai::PrivateText(
+                    "private".into(),
+                ))),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(app.ai.preview.is_none());
+        assert!(app.ai.answer.is_none());
+        while let Ok(command) = commands.try_recv() {
+            assert!(!matches!(command, Command::AiExplain { .. }));
+        }
+    }
+
+    #[test]
+    fn detached_ai_never_waits_for_archive_provider_or_key_store() {
+        let root = std::env::temp_dir().join("zapfast-ai-offline-test");
+        let (mut app, _) = App::headless(AppDirs::under(&root), Settings::default());
+        app.open_chat = Some("demo".into());
+        let ctx = egui::Context::default();
+        app.apply(Action::ExplainChat("demo".into()), &ctx);
+        assert!(!app.ai.pending && !app.ai.preview_pending);
+        app.ai.key_draft = "synthetic-not-a-key".into();
+        for action in [Action::AiStoreKey, Action::AiDeleteKey] {
+            app.apply(action, &ctx);
+            assert!(!app.ai.credential_pending);
+            assert!(
+                app.ai
+                    .credential_status
+                    .as_ref()
+                    .unwrap()
+                    .contains("Demo only")
+            );
+            assert_eq!(app.ai.key_draft, "synthetic-not-a-key");
+        }
     }
 
     #[test]

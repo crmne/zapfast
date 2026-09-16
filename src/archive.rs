@@ -476,6 +476,23 @@ impl Archive {
         rows.collect()
     }
 
+    /// Bounded metadata-only MCP listing; do not load message bodies or members.
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn mcp_chats(&self, limit: usize) -> Result<Vec<Chat>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, name, kind, last_activity FROM chats
+             ORDER BY last_activity DESC, id LIMIT ?1",
+        )?;
+        statement
+            .query_map([limit.min(50) as i64], |row| {
+                let mut chat = Chat::new(row.get(0)?, row.get(1)?);
+                chat.kind = kind_from_name(&row.get::<_, String>(2)?);
+                chat.last_activity = row.get(3)?;
+                Ok(chat)
+            })?
+            .collect()
+    }
+
     pub fn chat(&self, id: &str) -> Result<Option<Chat>> {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {CHAT_COLUMNS} {CHAT_JOIN} WHERE c.id = ?1"
@@ -688,6 +705,63 @@ impl Archive {
         let mut messages: Vec<Message> = rows.collect::<Result<_>>()?;
         messages.reverse();
         Ok(messages)
+    }
+
+    /// Bounded AI projection: no raw protobuf, thumbnails, quotes or media reads.
+    pub fn ai_preview(&self, chat: &str, limit: usize) -> Result<crate::ai::Preview> {
+        self.ai_context(chat, limit.min(100), None)
+    }
+
+    /// At most 25 rows, ending at the exact archive target (including timestamp ties).
+    pub fn ai_reply_preview(&self, chat: &str, target: &str) -> Result<crate::ai::Preview> {
+        self.ai_context(chat, 25, Some(target))
+    }
+
+    fn ai_context(
+        &self,
+        chat: &str,
+        limit: usize,
+        target: Option<&str>,
+    ) -> Result<crate::ai::Preview> {
+        let mut statement = self.connection.prepare(
+            "SELECT sender, from_me, CASE WHEN length(CAST(content AS BLOB)) <= 16384 THEN content ELSE NULL END, timestamp
+             FROM messages WHERE chat = ?1 AND (?3 IS NULL OR
+               (timestamp, rowid) <= (SELECT timestamp, rowid FROM messages WHERE chat = ?1 AND id = ?3))
+             ORDER BY timestamp DESC, rowid DESC LIMIT ?2",
+        )?;
+        let mut truncated = false;
+        let mut rows = statement
+            .query_map(params![chat, limit as i64, target], |row| {
+                let content: Option<String> = row.get(2)?;
+                let content = content.and_then(|text| serde_json::from_str(&text).ok());
+                if content.is_none() {
+                    truncated = true;
+                }
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, i64>(3)?,
+                    content.unwrap_or_else(|| {
+                        Content::text("[oversized or unreadable message omitted]")
+                    }),
+                ))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        rows.reverse();
+        if target.is_some()
+            && rows
+                .last()
+                .is_none_or(|(_, _, _, content)| matches!(content, Content::Revoked))
+        {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        let mut preview = if target.is_some() {
+            crate::ai::reply_preview(&rows)
+        } else {
+            crate::ai::preview(&rows)
+        };
+        preview.truncated |= truncated;
+        Ok(preview)
     }
 
     /// Searches visible message text, filenames, polls, contacts, and places.
@@ -1226,6 +1300,143 @@ pub(crate) mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn ai_and_mcp_projections_use_the_encrypted_archive_with_poll_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("archive.db");
+        let key = [19; 32]; // Synthetic fixture, never an OS credential.
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        archive.ensure_chat("fixture-chat", "Fixture chat").unwrap();
+        let mut text = message("fixture-chat", "text", 1, false);
+        text.content = Content::text("synthetic-private-body");
+        archive
+            .insert_message(&text, Some(b"synthetic-raw-key"))
+            .unwrap();
+        let mut poll = message("fixture-chat", "poll", 2, false);
+        poll.content = Content::Poll {
+            question: "synthetic-poll-question".into(),
+            options: vec!["private-option".into(), "another-option".into()],
+            state: crate::model::PollState {
+                selectable: 1,
+                counts: vec![1, 0],
+                selected: vec![0],
+                voters: 1,
+                can_vote: true,
+                history_complete: true,
+                ..Default::default()
+            },
+        };
+        archive
+            .insert_message(&poll, Some(b"synthetic-poll-key"))
+            .unwrap();
+        for reply in [false, true] {
+            let preview = if reply {
+                archive.ai_reply_preview("fixture-chat", "poll").unwrap()
+            } else {
+                archive.ai_preview("fixture-chat", 25).unwrap()
+            };
+            assert_eq!(preview.count, 2);
+            assert!(!preview.truncated);
+            assert!(preview.transcript.0.contains("synthetic-private-body"));
+            assert!(preview.transcript.0.contains("[non-text content omitted]"));
+            for secret in [
+                "fixture-chat",
+                "synthetic-poll-question",
+                "private-option",
+                "synthetic-raw-key",
+                "synthetic-poll-key",
+            ] {
+                assert!(!preview.transcript.0.contains(secret));
+            }
+        }
+        let chats = archive.mcp_chats(50).unwrap();
+        assert_eq!(chats.len(), 1);
+        assert!(chats[0].last.is_none());
+        assert!(chats[0].participants.is_empty());
+        assert_eq!(archive.messages("fixture-chat", None, 50).unwrap().len(), 2);
+        assert_eq!(
+            archive
+                .search_messages("synthetic-poll-question", 50)
+                .unwrap()
+                .len(),
+            1
+        );
+        // Both the database and its live WAL remain encrypted after projections.
+        for file in [&path, &path.with_extension("db-wal")] {
+            let bytes = std::fs::read(file).unwrap();
+            for marker in [
+                b"synthetic-private-body".as_slice(),
+                b"synthetic-raw-key",
+                b"synthetic-poll-key",
+            ] {
+                assert!(!bytes.windows(marker.len()).any(|part| part == marker));
+            }
+        }
+        drop(archive);
+        assert!(Archive::open_with_key(&path, &[20; 32]).is_err());
+        assert!(
+            Connection::open(&path)
+                .unwrap()
+                .query_row("SELECT count(*) FROM sqlite_master", [], |row| row
+                    .get::<_, i64>(0))
+                .is_err()
+        );
+        let reopened = Archive::open_with_key(&path, &key).unwrap();
+        assert_eq!(reopened.ai_preview("fixture-chat", 25).unwrap().count, 2);
+    }
+
+    #[test]
+    fn ai_reply_context_rejects_revoked_target_but_not_earlier_revocations() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("chat", "Chat").unwrap();
+        let mut revoked = message("chat", "revoked", 1, false);
+        revoked.content = Content::Revoked;
+        archive.insert_message(&revoked, None).unwrap();
+        archive
+            .insert_message(&message("chat", "target", 2, false), None)
+            .unwrap();
+        assert!(archive.ai_reply_preview("chat", "revoked").is_err());
+        assert_eq!(archive.ai_reply_preview("chat", "target").unwrap().count, 2);
+        assert_eq!(archive.ai_preview("chat", 25).unwrap().count, 2);
+    }
+
+    #[test]
+    fn ai_reply_context_anchors_old_target_and_timestamp_ties() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "private-chat";
+        archive.ensure_chat(chat, "Private name").unwrap();
+        for i in 0..80 {
+            let mut row = message(chat, &format!("row-{i:02}"), i / 2, false);
+            row.content = Content::text(format!("body-{i:02}"));
+            archive.insert_message(&row, Some(b"raw-secret")).unwrap();
+        }
+        let preview = archive.ai_reply_preview(chat, "row-30").unwrap();
+        assert!(preview.reply_target);
+        assert_eq!(preview.count, 25);
+        assert!(preview.transcript.0.contains("body-06"));
+        assert!(!preview.transcript.0.contains("body-05"));
+        assert!(!preview.transcript.0.contains("body-31")); // Same timestamp, later rowid.
+        assert!(!preview.transcript.0.contains("body-79"));
+        assert!(preview.transcript.0.ends_with("Person 1: body-30\n"));
+        assert_eq!(
+            preview
+                .transcript
+                .0
+                .matches("SELECTED MESSAGE TO REPLY TO:")
+                .count(),
+            1
+        );
+        for secret in ["private-chat", "Private name", "row-30", "raw-secret"] {
+            assert!(!preview.transcript.0.contains(secret));
+        }
+        assert_eq!(archive.ai_reply_preview(chat, "row-00").unwrap().count, 1);
+        assert!(archive.ai_reply_preview(chat, "missing").is_err());
+        assert!(archive.ai_reply_preview("another-chat", "row-30").is_err());
+        let latest = archive.ai_preview(chat, 25).unwrap();
+        assert!(!latest.reply_target);
+        assert!(latest.transcript.0.contains("body-79"));
     }
 
     #[test]

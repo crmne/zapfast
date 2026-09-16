@@ -524,6 +524,27 @@ pub struct Toast {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    ExplainChat(ChatId),
+    AiReply {
+        chat: ChatId,
+        message: String,
+    },
+    AiChooseReply {
+        generation: u64,
+        chat: ChatId,
+        message: String,
+        choice: usize,
+        replace: bool,
+    },
+    AiKeepDraft,
+    AiPreview(usize),
+    AiSubmit,
+    AiStop,
+    AiClose,
+    AiConfigure(crate::ai::Config),
+    AiStoreKey,
+    AiDeleteKey,
+    SetMcpEnabled(bool),
     Open(Page),
     OpenChat(ChatId),
     /// Creates and opens a chat for a contact without one.
