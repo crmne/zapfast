@@ -670,7 +670,16 @@ impl Worker {
                     // paging, and MAC validation; handlers here are
                     // timestamp-guarded against the replay's original times.
                     for name in [WAPatchName::RegularLow, WAPatchName::RegularHigh] {
-                        client.resync_app_state_collection(name).await;
+                        match client.resync_app_state_collection(name).await {
+                            Ok(report) if report.all_synced() => {}
+                            Ok(report) => log::warn!(
+                                "chat preference recovery left {name:?} unsynced: {:?}",
+                                report.unsynced().collect::<Vec<_>>()
+                            ),
+                            Err(error) => {
+                                log::warn!("chat preference recovery for {name:?} failed: {error}")
+                            }
+                        }
                     }
                 });
             }
