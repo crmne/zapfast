@@ -22,7 +22,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
     let response = panel.show(ui, |ui| {
         header(app, ui);
-        list(app, ui);
+        if app.should_show_chat_lock_hint() {
+            let height = ui.available_height();
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), (height - 58.0).max(0.0)),
+                Layout::top_down(Align::Min),
+                |ui| list(app, ui),
+            );
+            ui.with_layout(Layout::bottom_up(Align::Min), |ui| chat_lock_hint(app, ui));
+        } else {
+            list(app, ui);
+        }
     });
     let width = response.response.rect.width();
     if (width - app.settings.sidebar_width).abs() > 1.0 {
@@ -368,6 +378,46 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+}
+
+fn chat_lock_hint(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
+    if ui.is_rect_visible(rect) {
+        if response.hovered() {
+            ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
+        }
+        Icon::LockOpen.image(palette.accent, 20.0).paint_at(
+            ui,
+            Rect::from_center_size(pos2(rect.left() + 28.0, rect.center().y), Vec2::splat(20.0)),
+        );
+        ui.painter().text(
+            pos2(rect.left() + 52.0, rect.top() + 18.0),
+            egui::Align2::LEFT_CENTER,
+            "Set a secret code for locked chats",
+            theme::medium(13.0),
+            palette.text,
+        );
+        ui.painter().text(
+            pos2(rect.left() + 52.0, rect.top() + 38.0),
+            egui::Align2::LEFT_CENTER,
+            "This code is local to ZapFast",
+            theme::regular(11.5),
+            palette.secondary,
+        );
+        ui.painter().hline(
+            rect.x_range(),
+            rect.top() + 0.5,
+            egui::Stroke::new(1.0, palette.outline),
+        );
+    }
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        app.actions.push(Action::DismissChatLockHint);
+        app.actions.push(Action::Open(Page::Settings));
+    }
 }
 
 /// The row the secret code reveals: the only thing the search then shows.

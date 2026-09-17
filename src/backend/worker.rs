@@ -1217,11 +1217,6 @@ impl Worker {
                 } else {
                     None
                 };
-                log::info!(
-                    "chat mute sync: muted={} until={until:?} full_sync={}",
-                    update.action.muted.unwrap_or(false),
-                    update.from_full_sync
-                );
                 let _ =
                     self.archive
                         .set_muted_at(&chat, until, update.timestamp.timestamp_millis());
@@ -1231,10 +1226,6 @@ impl Worker {
                 let chat = self.canonical(&update.jid);
                 self.ensure_chat(&chat, None);
                 let locked = update.action.locked.unwrap_or(false);
-                log::info!(
-                    "chat lock sync: locked={locked} full_sync={}",
-                    update.from_full_sync
-                );
                 let _ =
                     self.archive
                         .set_locked_at(&chat, locked, update.timestamp.timestamp_millis());

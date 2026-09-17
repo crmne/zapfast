@@ -80,6 +80,8 @@ pub struct Settings {
     pub save_contacts_to_phone: bool,
     /// Secret code that reveals the locked-chats folder in search.
     pub chat_lock_code: Option<String>,
+    /// The one-time locked-chat code hint has been opened.
+    pub chat_lock_hint_dismissed: bool,
 }
 
 impl Default for Settings {
@@ -108,6 +110,7 @@ impl Default for Settings {
             save_contacts_to_phone: true,
             voice_speed: 1.0,
             chat_lock_code: None,
+            chat_lock_hint_dismissed: false,
         }
     }
 }

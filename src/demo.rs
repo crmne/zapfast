@@ -413,8 +413,6 @@ pub fn populate(app: &mut App) {
     app.backend.set_offline(true);
     // Demo mode has no backend to handle downloads.
     app.settings.auto_download = false;
-    // The demo's locked-chats folder opens with this code typed in search.
-    app.settings.chat_lock_code = Some("1234".to_owned());
     app.link = LinkStatus::Connected;
     app.me = Some(ME.to_owned());
     app.me_name = Some("Carmine".to_owned());

@@ -849,6 +849,12 @@ impl App {
         self.chats.iter().filter(|chat| chat.locked).count()
     }
 
+    pub fn should_show_chat_lock_hint(&self) -> bool {
+        self.locked_count() > 0
+            && self.settings.chat_lock_code.is_none()
+            && !self.settings.chat_lock_hint_dismissed
+    }
+
     /// Visible chats filtered by search, archive state, and the chat filter,
     /// with pinned first.
     /// Locked chats only appear inside the locked folder.
@@ -2482,6 +2488,10 @@ impl App {
                 self.settings.show_shortcut_hints = false;
                 self.mark_settings_dirty();
             }
+            Action::DismissChatLockHint => {
+                self.settings.chat_lock_hint_dismissed = true;
+                self.mark_settings_dirty();
+            }
             Action::SettingsChanged => self.mark_settings_dirty(),
             Action::ZoomBy(delta) => {
                 self.settings.zoom = (self.settings.zoom + delta).clamp(0.6, 2.0);
@@ -3461,6 +3471,18 @@ mod tests {
             .map(|chat| chat.name.as_str())
             .collect();
         assert_eq!(names, vec!["Ada"]);
+    }
+
+    #[test]
+    fn locked_chat_code_hint_is_shown_once() {
+        let mut app = app();
+        let mut chat = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        chat.locked = true;
+        app.chats.push(chat);
+
+        assert!(app.should_show_chat_lock_hint());
+        app.apply(Action::DismissChatLockHint, &egui::Context::default());
+        assert!(!app.should_show_chat_lock_hint());
     }
 
     #[test]
