@@ -419,4 +419,83 @@ mod idle_tests {
             ctx.repaint_causes()
         );
     }
+
+    #[test]
+    fn reopening_a_scrolled_up_chat_scrolls_to_bottom() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        let mut conversation = crate::app::Conversation::default();
+        for i in 0..20 {
+            conversation.messages.push(crate::model::Message {
+                id: format!("m{i}"),
+                chat: chat.id.clone(),
+                sender: "123@s.whatsapp.net".into(),
+                sender_name: Some("Alice".into()),
+                from_me: false,
+                timestamp: 1000 + i,
+                content: crate::model::Content::text(format!("Message {i}")),
+                status: crate::model::Delivery::None,
+                delivered_at: None,
+                read_at: None,
+                quoted: None,
+                reactions: Vec::new(),
+                edited: false,
+                mentions: Vec::new(),
+                forwarded: false,
+                thumbnail: None,
+            });
+        }
+        conversation.complete = true;
+        app.conversations.insert(chat.id.clone(), conversation);
+
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+
+        // Open chat initially
+        app.open_chat = Some(chat.id.clone());
+        app.scroll_to_bottom = true;
+
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| conversation::show(&mut app, ui),
+            );
+            output.textures_delta.clear();
+        }
+        assert!(app.at_bottom, "at bottom after opening");
+
+        // Simulate user scrolling up
+        app.scroll_to_bottom = false;
+        app.at_bottom = false;
+
+        // Reopening chat requests scroll to bottom
+        app.scroll_to_bottom = true;
+
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| conversation::show(&mut app, ui),
+            );
+            output.textures_delta.clear();
+        }
+        assert!(app.at_bottom, "at bottom after reopening");
+    }
 }

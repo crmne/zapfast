@@ -1285,8 +1285,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         typing_bubble(ui, &view, &typing);
                     }
                     ui.add_space(4.0);
-                    if scroll_to_bottom && !app.at_bottom {
-                        ui.scroll_to_cursor(Some(Align::BOTTOM));
+                    if scroll_to_bottom {
+                        ui.scroll_to_rect_animation(
+                            Rect::from_min_size(ui.cursor().min, Vec2::ZERO),
+                            None,
+                            egui::style::ScrollAnimation::none(),
+                        );
                     }
                 });
         });
@@ -3390,7 +3394,7 @@ fn voice_player(
                         );
                     }
                 }
-                if matches!(status.state, State::Playing | State::Paused) {
+                if matches!(status.state, State::Playing | State::Paused) && rect.width() >= 10.0 {
                     let knob = played_until.clamp(rect.left() + 5.0, rect.right() - 5.0);
                     ui.painter().circle_filled(
                         egui::pos2(knob, rect.center().y),
