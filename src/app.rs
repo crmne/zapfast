@@ -858,7 +858,7 @@ impl App {
         let mut chats: Vec<&Chat> = self
             .chats
             .iter()
-            .filter(|chat| chat.locked == self.locked_folder)
+            .filter(|chat| chat.locked == (self.locked_folder && self.secret_code_matched()))
             .filter(|chat| chat.archived == self.show_archived || !needle.is_empty())
             .filter(|chat| {
                 !filtering
@@ -1320,6 +1320,12 @@ impl App {
         if is_open && chat.unread > 0 && self.window_focused && !self.window_hidden {
             chat.unread = 0;
             self.mark_read(&chat.id);
+        }
+        if chat.locked {
+            self.search_hits.retain(|message| message.chat != chat.id);
+            if self.open_chat.as_deref() == Some(chat.id.as_str()) {
+                self.open_chat = None;
+            }
         }
         match self.chats.iter_mut().find(|known| known.id == chat.id) {
             Some(existing) => *existing = chat,
@@ -3439,6 +3445,13 @@ mod tests {
         assert_eq!(names, vec!["Bob"]);
         assert_eq!(app.locked_count(), 1);
         app.search = "123".into();
+        assert_eq!(
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Ada"]
+        );
         app.apply(Action::Search("123".into()), &egui::Context::default());
         assert!(!app.locked_folder);
         app.apply(Action::Search(String::new()), &egui::Context::default());
@@ -3460,6 +3473,20 @@ mod tests {
         app.apply(Action::SetLocked(id, true), &egui::Context::default());
         assert!(app.open_chat.is_none());
         assert!(app.chats[0].locked);
+    }
+
+    #[test]
+    fn a_remote_lock_closes_the_chat_and_hides_search_hits() {
+        let mut app = app();
+        let id: ChatId = "2@s.whatsapp.net".into();
+        app.chats = vec![Chat::new(id.clone(), "Bob".into())];
+        app.open_chat = Some(id.clone());
+        app.search_hits.push(message(&id, "m", 1));
+        let mut chat = app.chats[0].clone();
+        chat.locked = true;
+        app.handle_chat_updated(chat);
+        assert!(app.open_chat.is_none());
+        assert!(app.search_hits.is_empty());
     }
 
     #[test]

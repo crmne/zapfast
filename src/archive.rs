@@ -358,6 +358,15 @@ impl Archive {
         self.set_locked_at(id, locked, jiff::Timestamp::now().as_millisecond())
     }
 
+    /// Records history metadata only until app-state provides its version.
+    pub fn set_locked_snapshot(&self, id: &str, locked: bool) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET locked = ?2 WHERE id = ?1 AND lock_updated_at IS NULL",
+            params![id, locked],
+        )?;
+        Ok(())
+    }
+
     /// Apply lock state in timestamp order, like pin and mute, so an old
     /// replay cannot undo a lock change just received from the phone.
     pub fn set_locked_at(&self, id: &str, locked: bool, timestamp: i64) -> Result<()> {

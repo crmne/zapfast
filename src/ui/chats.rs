@@ -281,6 +281,9 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
 
 fn list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    if app.locked_folder && !app.secret_code_matched() {
+        app.locked_folder = false;
+    }
     if app.locked_folder {
         locked_list(app, ui);
         return;
