@@ -46,7 +46,9 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    # Cold-cache Windows builds of the voice-clone deps (ort, tokenizers) run
+    # past 40 minutes; warm-cache runs take a few minutes.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
