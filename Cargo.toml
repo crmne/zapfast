@@ -102,10 +102,11 @@ webp-animation = "0.10"
 # Local, offline voice cloning (Chatterbox Turbo via ONNX Runtime) for the
 # friend-voice-unlock feature. Pinned to a commit: the `chatterbox` feature
 # depends on a vendored path crate (vendor/cbx), not something published on
-# crates.io.
-vox = { git = "https://github.com/mrtozner/vox", rev = "fd6f2abd1b55340e2c5f50551fee939172557825", default-features = false, features = ["chatterbox"] }
+# crates.io. Optional: ort-sys downloads prebuilt ONNX Runtime binaries at
+# build time, which the sandboxed, offline Flatpak build cannot do.
+vox = { git = "https://github.com/mrtozner/vox", rev = "fd6f2abd1b55340e2c5f50551fee939172557825", default-features = false, features = ["chatterbox"], optional = true }
 # Writes the WAV files vox's Chatterbox backend consumes and produces.
-hound = "3.5"
+hound = { version = "3.5", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify = "8.2"
@@ -144,6 +145,10 @@ png = "0.18"
 [features]
 # Sample data, layout tests, and screenshots. Not used in release builds.
 demo = []
+# Local voice cloning for the friend-voice-unlock feature. Off by default:
+# the Flatpak build is sandboxed and offline, and ort-sys (ONNX Runtime)
+# needs network access at build time to fetch prebuilt binaries.
+voice-clone = ["dep:vox", "dep:hound"]
 
 [profile.release]
 lto = "thin"

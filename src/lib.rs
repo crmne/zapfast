@@ -30,4 +30,5 @@ pub mod ui;
 pub mod updates;
 pub mod util;
 pub mod voice;
+#[cfg(feature = "voice-clone")]
 pub mod voice_clone;

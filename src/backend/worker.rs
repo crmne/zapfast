@@ -1925,9 +1925,17 @@ impl Worker {
     /// Accumulates a friend's voice-note seconds and unlocks their cloned
     /// voice once the total crosses the threshold.
     fn bump_voice_seconds(&mut self, chat: &str, seconds: u32) {
-        let Ok(total) = self.archive.bump_voice_seconds(chat, seconds) else {
+        let Ok(_total) = self.archive.bump_voice_seconds(chat, seconds) else {
             return;
         };
+        #[cfg(feature = "voice-clone")]
+        self.try_unlock_voice(chat, _total);
+    }
+
+    /// Builds a reference clip and unlocks the friend's cloned voice, once
+    /// their accumulated voice-note seconds cross the threshold.
+    #[cfg(feature = "voice-clone")]
+    fn try_unlock_voice(&mut self, chat: &str, total: u32) {
         if total < crate::voice_clone::UNLOCK_THRESHOLD_SECONDS {
             return;
         }
@@ -3360,6 +3368,7 @@ impl Worker {
     /// Synthesizes `message` (must be text) in the friend's cloned voice, or
     /// replays the cached synthesis. `autoplay` distinguishes a manual play
     /// tap from a background pre-synthesis kicked off by voice-auto-play.
+    #[cfg(feature = "voice-clone")]
     fn synthesize_cloned_voice(&mut self, chat: ChatId, message: String, autoplay: bool) {
         let fail = |commands: &mpsc::UnboundedSender<Command>, error: &str| {
             let _ = commands.send(Command::VoiceCloneSynthesized {
@@ -3401,6 +3410,19 @@ impl Worker {
                 result,
                 autoplay,
             });
+        });
+    }
+
+    /// Voice cloning is compiled out of this build (see the `voice-clone`
+    /// feature): the unlock threshold never fires, so this only exists to
+    /// keep the command handler and prewarm path compiling.
+    #[cfg(not(feature = "voice-clone"))]
+    fn synthesize_cloned_voice(&mut self, chat: ChatId, message: String, autoplay: bool) {
+        let _ = self.commands.send(Command::VoiceCloneSynthesized {
+            chat,
+            message,
+            result: Err("Voice cloning is not available in this build".into()),
+            autoplay,
         });
     }
 

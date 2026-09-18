@@ -1446,9 +1446,11 @@ pub(crate) mod tests {
         assert_eq!(row.voice_seconds_total, 9);
         assert!(row.voice_unlocked_at.is_none(), "9s is under the threshold");
 
+        // 15s matches voice_clone::UNLOCK_THRESHOLD_SECONDS, gated behind the
+        // optional `voice-clone` feature; this archive-level test stays
+        // feature-independent by not referencing it directly.
         let total = archive.bump_voice_seconds(chat, 6).expect("bump");
         assert_eq!(total, 15);
-        assert!(total >= crate::voice_clone::UNLOCK_THRESHOLD_SECONDS);
         archive
             .mark_voice_unlocked(chat, 1_000, "/tmp/ref.wav")
             .expect("unlock");
