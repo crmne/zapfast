@@ -2117,6 +2117,80 @@ mod tests {
         }
     }
 
+    /// Opens a chat with one text and one deleted message, double-clicks the
+    /// point chosen from the named bubble's rect and its body, and returns the
+    /// message being replied to.
+    fn reply_after_double_click(
+        id: &str,
+        point: impl Fn(egui::Rect, Option<egui::Rect>) -> egui::Pos2,
+    ) -> Option<String> {
+        let mut app = app();
+        let chat = sample_ids()[0].to_owned();
+        app.conversations.get_mut(&chat).unwrap().messages = vec![
+            message(&chat, "text", false, 100, Content::text("Double-click me")),
+            message(&chat, "gone", false, 200, Content::Revoked),
+        ];
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let key = crate::ui::conversation::bubble_id(&chat, id);
+        let rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(key.with("rect")))
+            .expect("the bubble is on screen");
+        let body = ctx.data(|data| data.get_temp::<egui::Rect>(key.with("body")));
+        let pos = point(rect, body);
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(pos), press(true)],
+            vec![press(false)],
+            vec![press(true)],
+            vec![press(false)],
+            vec![],
+        ] {
+            frame_with(&mut app, &ctx, events);
+        }
+        app.reply_to
+    }
+
+    #[test]
+    fn a_double_click_on_the_bubble_padding_replies() {
+        let reply =
+            reply_after_double_click("text", |rect, _| rect.left_center() + egui::vec2(4.0, 0.0));
+        assert_eq!(reply.as_deref(), Some("text"));
+    }
+
+    #[test]
+    fn a_double_click_beside_the_bubble_replies() {
+        let reply = reply_after_double_click("text", |rect, _| {
+            rect.right_center() + egui::vec2(120.0, 0.0)
+        });
+        assert_eq!(reply.as_deref(), Some("text"));
+    }
+
+    #[test]
+    fn a_double_click_on_the_text_selects_the_word_without_replying() {
+        let reply = reply_after_double_click("text", |_, body| {
+            let body = body.expect("a text body");
+            body.left_center() + egui::vec2(12.0, 0.0)
+        });
+        assert_eq!(reply, None);
+    }
+
+    #[test]
+    fn a_double_click_on_a_deleted_message_does_not_reply() {
+        let reply = reply_after_double_click("gone", |rect, _| {
+            rect.right_center() + egui::vec2(120.0, 0.0)
+        });
+        assert_eq!(reply, None);
+    }
+
     /// Selection continues and scrolls after the pointer leaves the window.
     #[test]
     fn a_drag_out_of_the_window_keeps_selecting() {

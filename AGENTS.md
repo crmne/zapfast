@@ -211,6 +211,8 @@ Three egui pitfalls this code has already hit:
 - `ui.horizontal` inside a right-aligned bubble lays out right to left;
   see `mirrored_row`. A bubble's own click target is registered before its
   contents (from last frame's rect) so links and quotes inside win clicks.
+  The empty strip beside it is registered earlier still, before the row. A
+  double-click on either replies; the body keeps it for selecting the word.
 - `Popup::context_menu` opens on the *response's* right-click, which those
   inner widgets take for themselves; the bubble reads the right-click from
   the input over its own rect and opens `Popup::menu` itself, so the menu

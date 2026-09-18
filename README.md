@@ -249,7 +249,9 @@ WhatsApp then sends your recent history. This can take a few minutes. A banner
 shows the progress. New messages arrive live, and your phone does not need to
 stay on the same network.
 
-Right-click a chat or message to open its menu. Open Settings from the gear or
+Right-click a chat or message to open its menu. Double-click beside a message,
+or on its edge, to reply to it (a double-click on its text still selects the
+word). Open Settings from the gear or
 with `Ctrl+,`. Use the pencil to message a new number or save a contact. You
 can also open a group member's contact card. Saved names sync through WhatsApp
 to your phone and linked devices.

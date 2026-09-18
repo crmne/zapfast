@@ -20,6 +20,9 @@ check when it was sent, delivered, and read. The reaction row has a **+** that
 opens the full emoji picker. Hover over a reaction to see who added it.
 Editing uses the composer. Press Escape to cancel.
 
+Double-click beside a message, or on its edge, to reply to it. A double-click
+on its text still selects the word.
+
 ## Stickers
 
 Right-click a sticker in a chat or the picker to save it. Saved stickers
