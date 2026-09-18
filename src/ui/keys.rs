@@ -103,6 +103,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
                 None => 0,
             };
             let next = visible[next].id.clone();
+            // Stepping through the Unread list must not shift it underfoot.
+            if app.search.trim().is_empty() && !app.show_archived {
+                actions.push(Action::KeepUnread(next.clone()));
+            }
             app.scroll_chat_into_view = Some(next.clone());
             actions.push(Action::OpenChat(next));
         }

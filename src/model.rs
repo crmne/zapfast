@@ -710,6 +710,8 @@ pub enum Action {
     CloseDialog,
     ToggleSidebar,
     SetChatFilter(ChatFilter),
+    /// A chat opened from the main list, kept there under the Unread filter.
+    KeepUnread(ChatId),
     FocusSearch,
     FocusComposer,
     HideShortcutHints,

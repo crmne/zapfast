@@ -220,6 +220,11 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
+/// Stable main-list row id used by interaction tests.
+pub fn chat_row_id(chat: &str) -> egui::Id {
+    egui::Id::new(("chat-row", chat))
+}
+
 /// Stable filter-chip id used by interaction tests.
 pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
     egui::Id::new(("chat-filter", filter.label()))
@@ -319,7 +324,15 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             }
             let chat = &chats[index - usize::from(show_archive_row)];
             // Key by chat so an open menu survives list reordering.
-            ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+            let response = ui
+                .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
+                .inner;
+            // Store the row rect for interaction tests.
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(chat_row_id(&chat.id), response.rect));
+            if response.clicked() && !app.show_archived {
+                app.actions.push(Action::KeepUnread(chat.id.clone()));
+            }
         }
     });
 }

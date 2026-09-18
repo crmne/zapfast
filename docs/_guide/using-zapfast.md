@@ -64,8 +64,8 @@ Click a message result to jump to it, or a contact to start a chat. Use
 `Alt+↑/↓` to switch chats without leaving the composer.
 
 The chips under the search bar narrow the list to **Unread**, **Private**
-(one-to-one chats), or **Groups**. Each shows how many of its chats have unread
-messages. Click the active chip again, or **All**, to see every chat. The
+(one-to-one chats), or **Groups**. A chip with unread chats shows how many it
+has. Click the active chip again, or **All**, to see every chat. The
 filter applies only to this list: search and the archive still show everything,
 and it resets when ZapFast restarts.
 
