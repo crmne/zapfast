@@ -46,7 +46,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs; this
   is not a full Unicode Bidirectional Algorithm. Emoji use the desktop's
-  color emoji font, with a bundled fallback, and emoji-only messages are larger.
+  color emoji font on Linux and the bundled Noto Color Emoji on macOS and
+  Windows, and emoji-only messages are larger.
 - **Send attachments with captions.** Paste a picture, drop files, or use the
   file picker. They stay in the composer until you send them or press Escape.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
