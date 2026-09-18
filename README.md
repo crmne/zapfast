@@ -139,8 +139,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Local storage.** Messages, contacts and sticker metadata are stored in a
   SQLCipher-encrypted archive, unlocked automatically through your OS keyring.
   Existing plaintext archives are migrated on first use. Attachments remain
-  ordinary files in the cache directory. Unlinking deletes both and removes this device from
-  your phone.
+  ordinary files in the cache directory, or in a custom folder configured in
+  Settings. Unlinking removes this device and clears cache files while
+  preserving custom folders.
 
 ## What it does not do yet
 
@@ -261,7 +262,7 @@ to your phone and linked devices.
 | Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit |
 | Device keys | `~/.local/state/zapfast/session.db` | Owned by whatsapp-rust; deleting it unlinks |
 | Messages | `~/.local/state/zapfast/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
-| Attachments, avatars | `~/.cache/zapfast/` | Safe to delete |
+| Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; attachments can be stored in a custom folder in Settings |
 | Saved stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
 | Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
 

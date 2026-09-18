@@ -190,7 +190,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             }
                         },
                     );
-                    let media = app.dirs.media_cache_dir();
+                    let media = app.dirs.media_dir();
                     widgets::setting_row(
                         ui,
                         &palette,
@@ -198,8 +198,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         &media.display().to_string(),
                         |ui| {
                             if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), "Open folder", false).clicked() {
-                                let _ = std::fs::create_dir_all(&media);
                                 app.actions.push(Action::OpenFile(media.clone()));
+                            }
+                            if theme::soft_button(ui, &palette, Some(Icon::Pencil), "Change", false).clicked() {
+                                app.actions.push(Action::PickMediaDir);
+                            }
+                            if app.settings.custom_media_dir.is_some()
+                                && theme::soft_button(ui, &palette, Some(Icon::Refresh), "Reset", false).clicked()
+                            {
+                                app.actions.push(Action::ResetMediaDir);
                             }
                         },
                     );

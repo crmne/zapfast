@@ -513,7 +513,7 @@ impl Worker {
     /// Re-derives archived rows from raw protobufs after parser changes. Also
     /// repairs moved attachment paths or clears missing files for redownload.
     fn relocate_media(&mut self) {
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let rows = match self.archive.media_paths() {
             Ok(rows) => rows,
             Err(error) => {
@@ -1356,11 +1356,35 @@ impl Worker {
             let _ = std::fs::remove_file(path);
         }
         let _ = std::fs::remove_dir_all(self.dirs.avatar_cache_dir());
-        let _ = std::fs::remove_dir_all(self.dirs.media_cache_dir());
+        self.clean_media_cache();
         self.emit(Event::Chats(Vec::new()));
         self.set_status(LinkStatus::LoggedOut);
         // Recreate the store so the next connection starts linking.
         self.start_bot().await;
+    }
+
+    /// Cleans the media cache directory on logout without removing any configured custom media subtree.
+    fn clean_media_cache(&self) {
+        let media_cache = self.dirs.media_cache_dir();
+        if let Some(custom) = &self.dirs.custom_media
+            && AppDirs::is_subpath(custom, &media_cache)
+        {
+            if let Ok(entries) = std::fs::read_dir(&media_cache) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if AppDirs::is_subpath(custom, &path) {
+                        continue;
+                    }
+                    if path.is_dir() {
+                        let _ = std::fs::remove_dir_all(&path);
+                    } else {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+            return;
+        }
+        let _ = std::fs::remove_dir_all(media_cache);
     }
 
     fn on_contact_update(&mut self, update: &wa_events::ContactUpdate) {
@@ -2573,6 +2597,40 @@ impl Worker {
                     let _ = commands.send(Command::StickerPackImported { result });
                 });
             }
+            Command::PickMediaDir => {
+                let commands = self.commands.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Some(folder) = rfd::FileDialog::new()
+                        .set_title("Select Download Directory")
+                        .pick_folder()
+                    {
+                        let _ = commands.send(Command::SetMediaDir(folder));
+                    }
+                });
+            }
+            Command::SetMediaDir(dir) => {
+                if self.dirs.is_default_media_dir(&dir) {
+                    self.dirs.custom_media = None;
+                    self.relocate_media();
+                    self.emit(Event::MediaDirChanged(None));
+                    return;
+                }
+                if self.dirs.is_cache_path(&dir) {
+                    self.emit(Event::Error(
+                        "Custom attachment folder cannot be inside the cache directory".to_owned(),
+                    ));
+                    return;
+                }
+                let _ = std::fs::create_dir_all(&dir);
+                self.dirs.custom_media = Some(dir.clone());
+                self.relocate_media();
+                self.emit(Event::MediaDirChanged(Some(dir)));
+            }
+            Command::ResetMediaDir => {
+                self.dirs.custom_media = None;
+                self.relocate_media();
+                self.emit(Event::MediaDirChanged(None));
+            }
             Command::SaveContact {
                 id,
                 full_name,
@@ -3424,7 +3482,7 @@ impl Worker {
             }
             None
         };
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let keep = |bytes: Vec<u8>| {
@@ -3915,7 +3973,7 @@ impl Worker {
             };
             let commands = self.commands.clone();
             let chat = chat.clone();
-            let dir = self.dirs.media_cache_dir();
+            let dir = self.dirs.media_dir();
             let me = self.me();
             // Attach the caption to the first file.
             let caption = if index == 0 { caption.clone() } else { None };
@@ -3974,7 +4032,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4047,7 +4105,7 @@ impl Worker {
             None => (None, None),
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4116,7 +4174,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4152,7 +4210,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {

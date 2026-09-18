@@ -1,6 +1,6 @@
 //! User preferences stored in JSON.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -76,6 +76,9 @@ pub struct Settings {
     pub names_from_contacts: bool,
     /// Also add saved contacts to the phone's address book.
     pub save_contacts_to_phone: bool,
+    /// Custom folder for downloaded attachments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_media_dir: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -102,6 +105,7 @@ impl Default for Settings {
             download_updates_automatically: false,
             names_from_contacts: true,
             save_contacts_to_phone: true,
+            custom_media_dir: None,
         }
     }
 }
@@ -195,11 +199,18 @@ mod tests {
         let settings = Settings {
             zoom: 1.25,
             enter_sends: false,
+            custom_media_dir: Some(PathBuf::from("/custom/media/path")),
             ..Settings::default()
         };
         settings.save(&path).expect("saves");
         assert_eq!(Settings::load(&path), settings);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn custom_media_dir_defaults_to_none() {
+        let parsed: Settings = serde_json::from_str("{}").expect("parses default");
+        assert_eq!(parsed.custom_media_dir, None);
     }
 }
 

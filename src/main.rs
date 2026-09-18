@@ -108,7 +108,7 @@ fn main() -> eframe::Result<()> {
     };
     // A demo must not create empty ZapFast directories that would prevent a
     // later real launch from adopting the existing FastsApp session.
-    let dirs = if demo {
+    let mut dirs = if demo {
         paths::AppDirs::under(&std::env::temp_dir().join(format!(
             "zapfast-demo-{}-{}",
             std::process::id(),
@@ -140,6 +140,7 @@ fn main() -> eframe::Result<()> {
     logger.init();
     log_panics(dirs.panic_log());
     let settings = settings::Settings::load(&dirs.settings_file());
+    dirs.custom_media = settings.custom_media_dir.clone();
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
 
     #[allow(unused_mut)]

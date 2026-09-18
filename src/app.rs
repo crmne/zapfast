@@ -310,7 +310,8 @@ impl Default for AppOptions {
 }
 
 impl App {
-    pub fn new(waker: &Waker, dirs: AppDirs, settings: Settings, options: AppOptions) -> Self {
+    pub fn new(waker: &Waker, mut dirs: AppDirs, settings: Settings, options: AppOptions) -> Self {
+        dirs.custom_media = settings.custom_media_dir.clone();
         let backend = Backend::spawn(dirs.clone(), waker.clone());
         let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
         app.custom_themes.enable_desktop_themes();
@@ -328,7 +329,11 @@ impl App {
     }
 
     /// Creates a disconnected app and event sender for demos and tests.
-    pub fn headless(dirs: AppDirs, settings: Settings) -> (Self, std::sync::mpsc::Sender<Event>) {
+    pub fn headless(
+        mut dirs: AppDirs,
+        settings: Settings,
+    ) -> (Self, std::sync::mpsc::Sender<Event>) {
+        dirs.custom_media = settings.custom_media_dir.clone();
         let (backend, events) = Backend::detached();
         (
             Self::with_backend(dirs, settings, backend, Waker::default()),
@@ -1209,6 +1214,36 @@ impl App {
                         self.update_download = crate::updates::DownloadState::Failed(error)
                     }
                 },
+                Event::MediaDirChanged(custom) => {
+                    self.dirs.custom_media = custom.clone();
+                    self.settings.custom_media_dir = custom;
+                    self.mark_settings_dirty();
+                    let dir = self.dirs.media_dir();
+                    for conversation in self.conversations.values_mut() {
+                        for message in &mut conversation.messages {
+                            let Some(media) = message.content.media_mut() else {
+                                continue;
+                            };
+                            let Some(path) = &media.path else {
+                                continue;
+                            };
+                            let Some(name) = path.file_name() else {
+                                continue;
+                            };
+                            if !path.exists() {
+                                let candidate = dir.join(name);
+                                if candidate.exists() {
+                                    media.path = Some(candidate);
+                                }
+                            }
+                        }
+                    }
+                    self.toast(if self.dirs.custom_media.is_some() {
+                        "Attachment folder updated"
+                    } else {
+                        "Attachment folder reset to default"
+                    });
+                }
                 Event::Error(message) => {
                     self.sticker_import_pending = false;
                     self.new_contact_pending = false;
@@ -2389,6 +2424,8 @@ impl App {
                     }
                 });
             }
+            Action::PickMediaDir => self.backend.send(Command::PickMediaDir),
+            Action::ResetMediaDir => self.backend.send(Command::ResetMediaDir),
             Action::HideShortcutHints => {
                 self.settings.show_shortcut_hints = false;
                 self.mark_settings_dirty();
@@ -3532,5 +3569,78 @@ mod name_tests {
             thumbnail: None,
         };
         assert_eq!(app.message_text(&message), "ciao @Carmine");
+    }
+
+    #[test]
+    fn media_dir_changed_event_updates_settings_and_dirs() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let ctx = egui::Context::default();
+        assert_eq!(app.dirs.custom_media, None);
+        assert_eq!(app.settings.custom_media_dir, None);
+
+        let chat = "15550001111@s.whatsapp.net";
+        let old_missing = directory.path().join("old_cache/photo.jpg");
+        let message = Message {
+            id: "m_img".into(),
+            chat: chat.into(),
+            sender: chat.into(),
+            sender_name: None,
+            from_me: false,
+            timestamp: 0,
+            content: Content::Image {
+                caption: None,
+                media: Media {
+                    mime: "image/jpeg".into(),
+                    size: 100,
+                    width: None,
+                    height: None,
+                    path: Some(old_missing),
+                    state: MediaState::Idle,
+                },
+            },
+            status: Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        let conversation = Conversation {
+            messages: vec![message],
+            ..Default::default()
+        };
+        app.conversations.insert(chat.into(), conversation);
+
+        let custom = directory.path().join("custom_downloads");
+        std::fs::create_dir_all(&custom).unwrap();
+        let replacement = custom.join("photo.jpg");
+        std::fs::write(&replacement, b"image payload").unwrap();
+
+        events
+            .send(Event::MediaDirChanged(Some(custom.clone())))
+            .unwrap();
+        app.background_frame(&ctx);
+        assert_eq!(app.dirs.custom_media, Some(custom.clone()));
+        assert_eq!(app.settings.custom_media_dir, Some(custom));
+        assert!(app.settings_dirty);
+
+        let repaired = app.conversations.get(chat).unwrap();
+        assert_eq!(
+            repaired.messages[0]
+                .content
+                .media()
+                .and_then(|m| m.path.as_ref()),
+            Some(&replacement)
+        );
+
+        events.send(Event::MediaDirChanged(None)).unwrap();
+        app.background_frame(&ctx);
+        assert_eq!(app.dirs.custom_media, None);
+        assert_eq!(app.settings.custom_media_dir, None);
     }
 }

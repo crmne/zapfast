@@ -12,6 +12,7 @@ pub struct AppDirs {
     pub config: PathBuf,
     pub state: PathBuf,
     pub cache: PathBuf,
+    pub custom_media: Option<PathBuf>,
 }
 
 impl AppDirs {
@@ -24,6 +25,7 @@ impl AppDirs {
                     config: fallback.join("zapfast-config"),
                     state: fallback.join("zapfast-state"),
                     cache: fallback.join("zapfast-cache"),
+                    custom_media: None,
                 }
             }
         }
@@ -39,6 +41,7 @@ impl AppDirs {
                 .map(|path| path.to_path_buf())
                 .unwrap_or_else(|| project.data_local_dir().to_path_buf()),
             cache: project.cache_dir().to_path_buf(),
+            custom_media: None,
         })
     }
 
@@ -75,6 +78,7 @@ impl AppDirs {
             config: root.join("config"),
             state: root.join("state"),
             cache: root.join("cache"),
+            custom_media: None,
         }
     }
 
@@ -106,6 +110,35 @@ impl AppDirs {
     /// Downloaded attachments keyed by message id.
     pub fn media_cache_dir(&self) -> PathBuf {
         self.cache.join("media")
+    }
+
+    /// Effective attachment directory, using a custom path when configured.
+    pub fn media_dir(&self) -> PathBuf {
+        self.custom_media
+            .clone()
+            .unwrap_or_else(|| self.media_cache_dir())
+    }
+
+    /// Returns true if `path` resolves to the default media cache directory.
+    pub fn is_default_media_dir(&self, path: &Path) -> bool {
+        let default = self.media_cache_dir();
+        match (path.canonicalize(), default.canonicalize()) {
+            (Ok(p), Ok(d)) => p == d,
+            _ => path == default,
+        }
+    }
+
+    /// Returns true if `path` is equal to or contained within `self.cache`.
+    pub fn is_cache_path(&self, path: &Path) -> bool {
+        Self::is_subpath(path, &self.cache)
+    }
+
+    /// Checks whether `child` is equal to or located within `parent`.
+    pub fn is_subpath(child: &Path, parent: &Path) -> bool {
+        match (child.canonicalize(), parent.canonicalize()) {
+            (Ok(c), Ok(p)) => c.starts_with(&p),
+            _ => child.starts_with(parent),
+        }
     }
 
     /// Profile pictures keyed by chat.
@@ -311,16 +344,43 @@ mod tests {
             config: root.join("old/data"),
             state: root.join("old/data"),
             cache: root.join("old/cache"),
+            custom_media: None,
         };
         let new = AppDirs {
             config: root.join("new/data"),
             state: root.join("new/data"),
             cache: root.join("new/cache"),
+            custom_media: None,
         };
         old.ensure().unwrap();
         std::fs::write(old.session_db(), b"session").unwrap();
         new.adopt(&old).unwrap();
         assert_eq!(std::fs::read(new.session_db()).unwrap(), b"session");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn media_dir_uses_custom_path_when_configured() {
+        let root = root("custom-media");
+        let mut dirs = AppDirs::under(&root);
+        assert_eq!(dirs.media_dir(), dirs.media_cache_dir());
+        let custom = root.join("my-custom-media");
+        dirs.custom_media = Some(custom.clone());
+        assert_eq!(dirs.media_dir(), custom);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cache_path_detection_identifies_subpaths() {
+        let root = root("cache-detection");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+
+        assert!(dirs.is_default_media_dir(&dirs.media_cache_dir()));
+        assert!(dirs.is_cache_path(&dirs.media_cache_dir()));
+        assert!(dirs.is_cache_path(&dirs.media_cache_dir().join("subfolder")));
+        assert!(!dirs.is_cache_path(&root.join("external-downloads")));
+
         std::fs::remove_dir_all(root).unwrap();
     }
 
