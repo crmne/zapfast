@@ -131,7 +131,8 @@ impl AppDirs {
     /// Reference clip built from a friend's voice notes, used to clone their
     /// voice.
     pub fn voice_ref_file(&self, chat: &str) -> PathBuf {
-        self.voice_ref_dir().join(format!("{}.wav", sanitize_stem(chat)))
+        self.voice_ref_dir()
+            .join(format!("{}.wav", sanitize_stem(chat)))
     }
 
     /// Synthesized cloned-voice audio, keyed by chat and message.
@@ -141,8 +142,11 @@ impl AppDirs {
 
     /// Cached synthesis of a single text message in a friend's cloned voice.
     pub fn voice_synth_file(&self, chat: &str, message: &str) -> PathBuf {
-        self.voice_synth_dir()
-            .join(format!("{}-{}.wav", sanitize_stem(chat), sanitize_stem(message)))
+        self.voice_synth_dir().join(format!(
+            "{}-{}.wav",
+            sanitize_stem(chat),
+            sanitize_stem(message)
+        ))
     }
 
     /// Cached profile-picture path. `full` selects the info-dialog size.

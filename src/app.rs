@@ -2042,14 +2042,16 @@ impl App {
                         self.toast_error(error);
                     }
                 } else if self.voice_clone_pending.insert(message.clone()) {
-                    self.backend.send(Command::PlayClonedVoice { chat, message });
+                    self.backend
+                        .send(Command::PlayClonedVoice { chat, message });
                 }
             }
             Action::SetVoiceAutoPlay { chat, enabled } => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.voice_auto_play = enabled;
                 }
-                self.backend.send(Command::SetVoiceAutoPlay { chat, enabled });
+                self.backend
+                    .send(Command::SetVoiceAutoPlay { chat, enabled });
             }
             Action::SeekVoice {
                 message,

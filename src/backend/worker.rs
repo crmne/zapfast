@@ -3393,7 +3393,8 @@ impl Worker {
         let cache_path = self.dirs.voice_synth_file(&chat, &message);
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            let result = crate::voice_clone::synthesize(&text, Path::new(&reference), &cache_path).await;
+            let result =
+                crate::voice_clone::synthesize(&text, Path::new(&reference), &cache_path).await;
             let _ = commands.send(Command::VoiceCloneSynthesized {
                 chat,
                 message,

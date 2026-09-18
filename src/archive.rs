@@ -1474,13 +1474,31 @@ pub(crate) mod tests {
         let chat = "1@s.whatsapp.net";
         archive.ensure_chat(chat, "Ada").expect("chat");
 
-        assert!(!archive.chat(chat).expect("chat").expect("exists").voice_auto_play);
+        assert!(
+            !archive
+                .chat(chat)
+                .expect("chat")
+                .expect("exists")
+                .voice_auto_play
+        );
 
         archive.set_voice_auto_play(chat, true).expect("set");
-        assert!(archive.chat(chat).expect("chat").expect("exists").voice_auto_play);
+        assert!(
+            archive
+                .chat(chat)
+                .expect("chat")
+                .expect("exists")
+                .voice_auto_play
+        );
 
         archive.set_voice_auto_play(chat, false).expect("unset");
-        assert!(!archive.chat(chat).expect("chat").expect("exists").voice_auto_play);
+        assert!(
+            !archive
+                .chat(chat)
+                .expect("chat")
+                .expect("exists")
+                .voice_auto_play
+        );
     }
 
     #[test]
@@ -1513,7 +1531,13 @@ pub(crate) mod tests {
         let mut text = message(chat, "m5", 50, false);
         text.content = Content::text("hey");
 
-        for row in [&friend_voice, &friend_voice_no_path, &friend_file, &own_voice, &text] {
+        for row in [
+            &friend_voice,
+            &friend_voice_no_path,
+            &friend_file,
+            &own_voice,
+            &text,
+        ] {
             archive.insert_message(row, None).expect("insert");
         }
 

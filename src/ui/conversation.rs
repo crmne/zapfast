@@ -3329,7 +3329,12 @@ fn attachment(
 
 /// Small "play in their voice" control shown on a friend's text bubble once
 /// their voice has been cloned.
-fn cloned_voice_button(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
+fn cloned_voice_button(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    actions: &mut Vec<Action>,
+) {
     use crate::audio::State;
     let palette = view.palette;
     let button = 22.0;

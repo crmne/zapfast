@@ -40,7 +40,11 @@ async fn backend() -> Result<Arc<ChatterboxBackend>, String> {
 /// Builds a reference clip from the friend's downloaded voice notes and
 /// writes it under the app's voice-clone cache, for use as the Chatterbox
 /// cloning reference.
-pub fn build_reference_clip(archive: &Archive, dirs: &AppDirs, chat: &str) -> Result<PathBuf, String> {
+pub fn build_reference_clip(
+    archive: &Archive,
+    dirs: &AppDirs,
+    chat: &str,
+) -> Result<PathBuf, String> {
     let paths = archive
         .friend_voice_note_paths(chat)
         .map_err(|error| error.to_string())?;
@@ -72,7 +76,11 @@ pub fn build_reference_clip(archive: &Archive, dirs: &AppDirs, chat: &str) -> Re
 
 /// Synthesizes `text` in the friend's cloned voice, writing (and returning)
 /// `cache_path`. Returns the cached path immediately if already synthesized.
-pub async fn synthesize(text: &str, reference_wav: &Path, cache_path: &Path) -> Result<PathBuf, String> {
+pub async fn synthesize(
+    text: &str,
+    reference_wav: &Path,
+    cache_path: &Path,
+) -> Result<PathBuf, String> {
     if cache_path.exists() {
         return Ok(cache_path.to_path_buf());
     }
@@ -89,7 +97,12 @@ pub async fn synthesize(text: &str, reference_wav: &Path, cache_path: &Path) -> 
     if let Some(parent) = cache_path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    write_wav(cache_path, &output.audio.samples, output.audio.sample_rate, output.audio.channels)?;
+    write_wav(
+        cache_path,
+        &output.audio.samples,
+        output.audio.sample_rate,
+        output.audio.channels,
+    )?;
     Ok(cache_path.to_path_buf())
 }
 
@@ -102,7 +115,9 @@ fn write_wav(path: &Path, samples: &[f32], rate: u32, channels: u16) -> Result<(
     };
     let mut writer = hound::WavWriter::create(path, spec).map_err(|error| error.to_string())?;
     for sample in samples {
-        writer.write_sample(*sample).map_err(|error| error.to_string())?;
+        writer
+            .write_sample(*sample)
+            .map_err(|error| error.to_string())?;
     }
     writer.finalize().map_err(|error| error.to_string())
 }
