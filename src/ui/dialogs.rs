@@ -74,7 +74,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {
     let mut chats: Vec<_> = app
         .chats
         .iter()
-        .filter(|chat| chat.kind != crate::model::ChatKind::Broadcast && !chat.read_only)
+        .filter(|chat| forwardable(chat))
         .filter(|chat| {
             needle.is_empty()
                 || app.chat_title(chat).to_lowercase().contains(&needle)
@@ -161,6 +161,10 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {
             to_chat,
         });
     }
+}
+
+fn forwardable(chat: &crate::model::Chat) -> bool {
+    chat.kind != crate::model::ChatKind::Broadcast && !chat.read_only && !chat.locked
 }
 
 fn title(ui: &mut egui::Ui, app: &mut App, label: &str) {
@@ -802,4 +806,23 @@ fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> bool {
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::model::{Chat, ChatKind};
+
+    #[test]
+    fn locked_chats_are_not_forward_destinations() {
+        let mut chat = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        chat.locked = true;
+
+        assert!(!super::forwardable(&chat));
+
+        chat.locked = false;
+        assert!(super::forwardable(&chat));
+
+        chat.kind = ChatKind::Broadcast;
+        assert!(!super::forwardable(&chat));
+    }
 }

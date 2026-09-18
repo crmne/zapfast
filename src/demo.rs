@@ -1883,6 +1883,11 @@ mod tests {
     fn a_chat_clicked_in_the_unread_list_stays_there_once_read() {
         use crate::model::ChatFilter;
         let mut app = app();
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.name == "Grace Hopper")
+            .expect("sample chat")
+            .unread = 1;
         app.chat_filter = ChatFilter::Unread;
         let ctx = egui::Context::default();
         app.attach(&ctx);
