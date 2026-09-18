@@ -1886,6 +1886,17 @@ impl Worker {
             // conversation there. Replayed replies cannot clear newer arrivals.
             let _ = self.archive.mark_read_to(&chat, &message.id);
         }
+        if is_new
+            && !message.from_me
+            && ChatKind::from_id(&chat) == ChatKind::Direct
+            && let Content::Audio {
+                voice_note: true,
+                seconds: Some(seconds),
+                ..
+            } = &message.content
+        {
+            self.bump_voice_seconds(&chat, *seconds);
+        }
         let mut stored = self
             .archive
             .message(&chat, &message.id)
@@ -1903,11 +1914,42 @@ impl Worker {
         });
         self.emit_chat(&chat);
         if let Some(message) = incoming {
+            self.maybe_prewarm_cloned_voice(&chat, &message);
             self.emit(Event::Incoming {
                 chat,
                 message: Box::new(message),
             });
         }
+    }
+
+    /// Accumulates a friend's voice-note seconds and unlocks their cloned
+    /// voice once the total crosses the threshold.
+    fn bump_voice_seconds(&mut self, chat: &str, seconds: u32) {
+        let Ok(total) = self.archive.bump_voice_seconds(chat, seconds) else {
+            return;
+        };
+        if total < crate::voice_clone::UNLOCK_THRESHOLD_SECONDS {
+            return;
+        }
+        let Ok(Some(row)) = self.archive.chat(chat) else {
+            return;
+        };
+        if row.voice_unlocked_at.is_some() {
+            return;
+        }
+        let clip = match crate::voice_clone::build_reference_clip(&self.archive, &self.dirs, chat) {
+            Ok(path) => path,
+            Err(error) => {
+                log::warn!("could not build a voice-clone reference clip for {chat}: {error}");
+                return;
+            }
+        };
+        let now = jiff::Timestamp::now().as_millisecond();
+        let _ = self
+            .archive
+            .mark_voice_unlocked(chat, now, &clip.to_string_lossy());
+        self.emit_chat(chat);
+        self.emit(Event::Info(format!("🔓 {}'s voice unlocked", row.name)));
     }
 
     fn quoted_of(&self, base: &wa::Message) -> Option<Quoted> {
@@ -2491,6 +2533,26 @@ impl Worker {
                 }
             }
             Command::Download { chat, message } => self.download(chat, message),
+            Command::PlayClonedVoice { chat, message } => {
+                self.synthesize_cloned_voice(chat, message, true)
+            }
+            Command::SetVoiceAutoPlay { chat, enabled } => {
+                let _ = self.archive.set_voice_auto_play(&chat, enabled);
+                self.emit_chat(&chat);
+            }
+            Command::VoiceCloneSynthesized {
+                chat,
+                message,
+                result,
+                autoplay,
+            } => {
+                self.emit(Event::VoiceCloneReady {
+                    chat,
+                    message,
+                    result,
+                    autoplay,
+                });
+            }
             Command::FetchAvatar { id, full } => self.fetch_avatar(id, full),
             Command::EditText {
                 chat,
@@ -3293,6 +3355,70 @@ impl Worker {
                 }
             });
         }
+    }
+
+    /// Synthesizes `message` (must be text) in the friend's cloned voice, or
+    /// replays the cached synthesis. `autoplay` distinguishes a manual play
+    /// tap from a background pre-synthesis kicked off by voice-auto-play.
+    fn synthesize_cloned_voice(&mut self, chat: ChatId, message: String, autoplay: bool) {
+        let fail = |commands: &mpsc::UnboundedSender<Command>, error: &str| {
+            let _ = commands.send(Command::VoiceCloneSynthesized {
+                chat: chat.clone(),
+                message: message.clone(),
+                result: Err(error.to_owned()),
+                autoplay,
+            });
+        };
+        let reference = match self.archive.chat(&chat) {
+            Ok(Some(row)) => row.voice_ref_path,
+            _ => None,
+        };
+        let Some(reference) = reference else {
+            fail(&self.commands, "This friend's voice is not unlocked yet");
+            return;
+        };
+        let text = match self.archive.message(&chat, &message) {
+            Ok(Some(row)) => match row.content {
+                Content::Text { text, .. } => text,
+                _ => {
+                    fail(&self.commands, "Only text messages can be played as voice");
+                    return;
+                }
+            },
+            _ => {
+                fail(&self.commands, "Message not found");
+                return;
+            }
+        };
+        let cache_path = self.dirs.voice_synth_file(&chat, &message);
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            let result = crate::voice_clone::synthesize(&text, Path::new(&reference), &cache_path).await;
+            let _ = commands.send(Command::VoiceCloneSynthesized {
+                chat,
+                message,
+                result,
+                autoplay,
+            });
+        });
+    }
+
+    /// Pre-synthesizes a newly arrived text message in the background when
+    /// the friend's chat has voice-auto-play on. Never plays it back.
+    fn maybe_prewarm_cloned_voice(&mut self, chat: &str, message: &Message) {
+        if message.from_me {
+            return;
+        }
+        let Content::Text { .. } = &message.content else {
+            return;
+        };
+        let Ok(Some(row)) = self.archive.chat(chat) else {
+            return;
+        };
+        if row.voice_unlocked_at.is_none() || !row.voice_auto_play {
+            return;
+        }
+        self.synthesize_cloned_voice(chat.to_owned(), message.id.clone(), false);
     }
 
     fn download(&mut self, chat: ChatId, id: String) {

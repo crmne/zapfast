@@ -1165,6 +1165,8 @@ struct View<'a> {
     now: i64,
     player: &'a crate::audio::Player,
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
+    voice_clone_pending: &'a HashSet<String>,
+    voice_clone_ready: &'a HashMap<String, PathBuf>,
 }
 
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
@@ -1209,6 +1211,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         now: crate::util::now(),
         player: &app.player,
         copy_rows: app.copy_rows.as_ref(),
+        voice_clone_pending: &app.voice_clone_pending,
+        voice_clone_ready: &app.voice_clone_ready,
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -2444,7 +2448,11 @@ fn content(
                 preview_card(ui, view, message, preview, width, actions);
             }
             let span = (message.quoted.is_some() || preview.is_some()).then_some(width);
-            rich_body(ui, view, message, text, width, Some(reserve), span, actions)
+            let footer = rich_body(ui, view, message, text, width, Some(reserve), span, actions);
+            if !own && view.chat.voice_unlocked_at.is_some() {
+                cloned_voice_button(ui, view, message, actions);
+            }
+            footer
         }
         Content::Image { caption, media } => {
             let drawn = picture(ui, view, message, media, width, None, actions);
@@ -3317,6 +3325,41 @@ fn attachment(
             None => {}
         }
     }
+}
+
+/// Small "play in their voice" control shown on a friend's text bubble once
+/// their voice has been cloned.
+fn cloned_voice_button(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
+    use crate::audio::State;
+    let palette = view.palette;
+    let button = 22.0;
+    let fill = palette.accent.gamma_multiply(0.22);
+    let hover = palette.accent.gamma_multiply(0.38);
+    ui.horizontal(|ui| {
+        if view.voice_clone_pending.contains(&message.id) {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(button), Sense::hover());
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                ui.centered_and_justified(|ui| {
+                    theme::spinner(ui, 14.0, palette.accent);
+                });
+            });
+            return;
+        }
+        let ready = view.voice_clone_ready.contains_key(&message.id);
+        let status = view.player.status(&message.id);
+        let playing = ready && status.state == State::Playing;
+        let (icon, tooltip) = if playing {
+            (Icon::Pause, "Pause")
+        } else {
+            (Icon::Mic, "Play in their voice")
+        };
+        if theme::circle_button(ui, icon, button, fill, hover, palette.accent, tooltip).clicked() {
+            actions.push(Action::PlayClonedVoice {
+                chat: view.chat.id.clone(),
+                message: message.id.clone(),
+            });
+        }
+    });
 }
 
 /// In-chat voice and audio player.

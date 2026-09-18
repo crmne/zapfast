@@ -53,6 +53,16 @@ pub struct Chat {
     pub read_only: bool,
     /// Disappearing-message duration in seconds, if enabled.
     pub ephemeral_expiration: Option<u32>,
+    /// Total seconds of incoming voice notes from this friend, accumulated
+    /// toward the voice-clone unlock threshold.
+    pub voice_seconds_total: u32,
+    /// When the friend's voice was cloned and unlocked, in epoch ms.
+    pub voice_unlocked_at: Option<i64>,
+    /// Reference clip used to clone this friend's voice, once built.
+    pub voice_ref_path: Option<String>,
+    /// When true, new incoming text messages are pre-synthesized in the
+    /// friend's voice in the background (never auto-played).
+    pub voice_auto_play: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -82,6 +92,10 @@ impl Chat {
             participants: Vec::new(),
             read_only: false,
             ephemeral_expiration: None,
+            voice_seconds_total: 0,
+            voice_unlocked_at: None,
+            voice_ref_path: None,
+            voice_auto_play: false,
         }
     }
 
@@ -573,6 +587,19 @@ pub enum Action {
     PlayVoice {
         message: String,
         path: PathBuf,
+    },
+    /// Plays a text message synthesized in the friend's cloned voice,
+    /// synthesizing (and caching) it first if needed. Only valid once the
+    /// chat's voice has been unlocked.
+    PlayClonedVoice {
+        chat: ChatId,
+        message: String,
+    },
+    /// Toggles background pre-synthesis of new incoming text from this
+    /// friend in their cloned voice. Never auto-plays.
+    SetVoiceAutoPlay {
+        chat: ChatId,
+        enabled: bool,
     },
     /// Seeks to a fraction from 0 to 1 and starts playback.
     SeekVoice {

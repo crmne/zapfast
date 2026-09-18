@@ -3,7 +3,7 @@
 //! Each message keeps its raw protobuf because attachment download keys may be
 //! needed long after history sync.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -103,7 +103,8 @@ END;
 const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
-                    c.pinned_at, c.ephemeral_expiration";
+                    c.pinned_at, c.ephemeral_expiration, c.voice_seconds_total, c.voice_unlocked_at,
+                    c.voice_ref_path, c.voice_auto_play";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -121,6 +122,10 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "pinned_at", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "pin_updated_at", "INTEGER"),
     ("chats", "mute_updated_at", "INTEGER"),
+    ("chats", "voice_seconds_total", "INTEGER NOT NULL DEFAULT 0"),
+    ("chats", "voice_unlocked_at", "INTEGER"),
+    ("chats", "voice_ref_path", "TEXT"),
+    ("chats", "voice_auto_play", "INTEGER NOT NULL DEFAULT 0"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
@@ -162,6 +167,10 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         ephemeral_expiration: row
             .get::<_, Option<u32>>(16)?
             .filter(|expiration| *expiration != 0),
+        voice_seconds_total: row.get(17)?,
+        voice_unlocked_at: row.get(18)?,
+        voice_ref_path: row.get(19)?,
+        voice_auto_play: row.get(20)?,
     })
 }
 
@@ -491,6 +500,40 @@ impl Archive {
         Ok(())
     }
 
+    /// Adds `seconds` to the friend's accumulated voice-note total and
+    /// returns the new total, for the voice-clone unlock threshold.
+    pub fn bump_voice_seconds(&self, chat: &str, seconds: u32) -> Result<u32> {
+        self.connection.execute(
+            "UPDATE chats SET voice_seconds_total = voice_seconds_total + ?2 WHERE id = ?1",
+            params![chat, seconds],
+        )?;
+        self.connection.query_row(
+            "SELECT voice_seconds_total FROM chats WHERE id = ?1",
+            params![chat],
+            |row| row.get(0),
+        )
+    }
+
+    /// Marks a chat's voice as cloned and unlocked, recording the reference
+    /// clip used. A no-op if already unlocked, so callers don't need to
+    /// check first.
+    pub fn mark_voice_unlocked(&self, chat: &str, at: i64, ref_path: &str) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET voice_unlocked_at = ?2, voice_ref_path = ?3
+             WHERE id = ?1 AND voice_unlocked_at IS NULL",
+            params![chat, at, ref_path],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_voice_auto_play(&self, chat: &str, enabled: bool) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET voice_auto_play = ?2 WHERE id = ?1",
+            params![chat, enabled],
+        )?;
+        Ok(())
+    }
+
     /// Returns recent incoming message ids and senders for read receipts.
     pub fn unread_incoming(&self, chat: &str, limit: u32) -> Result<Vec<(String, String)>> {
         let mut statement = self.connection.prepare(
@@ -702,6 +745,33 @@ impl Archive {
         let mut messages: Vec<Message> = rows.collect::<Result<_>>()?;
         messages.reverse();
         Ok(messages)
+    }
+
+    /// Downloaded voice-note file paths sent by the friend (not us), newest
+    /// first, for building a voice-clone reference clip.
+    pub fn friend_voice_note_paths(&self, chat: &str) -> Result<Vec<PathBuf>> {
+        let mut statement = self.connection.prepare(
+            "SELECT content FROM messages WHERE chat = ?1 AND from_me = 0
+             ORDER BY timestamp DESC, rowid DESC",
+        )?;
+        let rows = statement.query_map(params![chat], |row| row.get::<_, String>(0))?;
+        let mut paths = Vec::new();
+        for content in rows {
+            let content: Content = match serde_json::from_str(&content?) {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
+            if let Content::Audio {
+                media,
+                voice_note: true,
+                ..
+            } = content
+                && let Some(path) = media.path
+            {
+                paths.push(path);
+            }
+        }
+        Ok(paths)
     }
 
     /// Searches visible message text, filenames, polls, contacts, and places.
@@ -1362,6 +1432,93 @@ pub(crate) mod tests {
             archive.ephemeral_expiration(chat).expect("expiration"),
             Some(0)
         );
+    }
+
+    #[test]
+    fn voice_seconds_accumulate_and_unlock_flips_once_past_the_threshold() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+
+        assert_eq!(archive.bump_voice_seconds(chat, 4).expect("bump"), 4);
+        assert_eq!(archive.bump_voice_seconds(chat, 5).expect("bump"), 9);
+        let row = archive.chat(chat).expect("chat").expect("exists");
+        assert_eq!(row.voice_seconds_total, 9);
+        assert!(row.voice_unlocked_at.is_none(), "9s is under the threshold");
+
+        let total = archive.bump_voice_seconds(chat, 6).expect("bump");
+        assert_eq!(total, 15);
+        assert!(total >= crate::voice_clone::UNLOCK_THRESHOLD_SECONDS);
+        archive
+            .mark_voice_unlocked(chat, 1_000, "/tmp/ref.wav")
+            .expect("unlock");
+        let row = archive.chat(chat).expect("chat").expect("exists");
+        assert_eq!(row.voice_unlocked_at, Some(1_000));
+        assert_eq!(row.voice_ref_path.as_deref(), Some("/tmp/ref.wav"));
+
+        // Further voice notes keep accumulating but must not re-unlock or
+        // overwrite the original reference clip.
+        archive.bump_voice_seconds(chat, 20).expect("bump");
+        archive
+            .mark_voice_unlocked(chat, 2_000, "/tmp/other.wav")
+            .expect("no-op once unlocked");
+        let row = archive.chat(chat).expect("chat").expect("exists");
+        assert_eq!(row.voice_seconds_total, 35);
+        assert_eq!(row.voice_unlocked_at, Some(1_000), "unlock is one-shot");
+        assert_eq!(row.voice_ref_path.as_deref(), Some("/tmp/ref.wav"));
+    }
+
+    #[test]
+    fn voice_auto_play_round_trips_through_chat_rows() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+
+        assert!(!archive.chat(chat).expect("chat").expect("exists").voice_auto_play);
+
+        archive.set_voice_auto_play(chat, true).expect("set");
+        assert!(archive.chat(chat).expect("chat").expect("exists").voice_auto_play);
+
+        archive.set_voice_auto_play(chat, false).expect("unset");
+        assert!(!archive.chat(chat).expect("chat").expect("exists").voice_auto_play);
+    }
+
+    #[test]
+    fn friend_voice_note_paths_filters_to_downloaded_incoming_voice_notes() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        let audio = |voice_note: bool, path: Option<&str>| crate::model::Content::Audio {
+            media: crate::model::Media {
+                mime: "audio/ogg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                path: path.map(PathBuf::from),
+                state: crate::model::MediaState::Idle,
+            },
+            seconds: Some(5),
+            voice_note,
+            waveform: Vec::new(),
+        };
+
+        let mut friend_voice = message(chat, "m1", 10, false);
+        friend_voice.content = audio(true, Some("/tmp/friend-voice.ogg"));
+        let mut friend_voice_no_path = message(chat, "m2", 20, false);
+        friend_voice_no_path.content = audio(true, None);
+        let mut friend_file = message(chat, "m3", 30, false);
+        friend_file.content = audio(false, Some("/tmp/friend-file.ogg"));
+        let mut own_voice = message(chat, "m4", 40, true);
+        own_voice.content = audio(true, Some("/tmp/own-voice.ogg"));
+        let mut text = message(chat, "m5", 50, false);
+        text.content = Content::text("hey");
+
+        for row in [&friend_voice, &friend_voice_no_path, &friend_file, &own_voice, &text] {
+            archive.insert_message(row, None).expect("insert");
+        }
+
+        let paths = archive.friend_voice_note_paths(chat).expect("paths");
+        assert_eq!(paths, vec![PathBuf::from("/tmp/friend-voice.ogg")]);
     }
 
     #[test]

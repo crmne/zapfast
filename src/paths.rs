@@ -123,6 +123,28 @@ impl AppDirs {
         self.state.join("stickers")
     }
 
+    /// Voice-clone reference clips, keyed by chat.
+    pub fn voice_ref_dir(&self) -> PathBuf {
+        self.cache.join("voice-ref")
+    }
+
+    /// Reference clip built from a friend's voice notes, used to clone their
+    /// voice.
+    pub fn voice_ref_file(&self, chat: &str) -> PathBuf {
+        self.voice_ref_dir().join(format!("{}.wav", sanitize_stem(chat)))
+    }
+
+    /// Synthesized cloned-voice audio, keyed by chat and message.
+    pub fn voice_synth_dir(&self) -> PathBuf {
+        self.cache.join("voice-synth")
+    }
+
+    /// Cached synthesis of a single text message in a friend's cloned voice.
+    pub fn voice_synth_file(&self, chat: &str, message: &str) -> PathBuf {
+        self.voice_synth_dir()
+            .join(format!("{}-{}.wav", sanitize_stem(chat), sanitize_stem(message)))
+    }
+
     /// Cached profile-picture path. `full` selects the info-dialog size.
     pub fn avatar_file(&self, id: &str, full: bool) -> PathBuf {
         let stem: String = id
@@ -148,6 +170,13 @@ impl AppDirs {
         }
         Ok(())
     }
+}
+
+/// Turns an id into a safe filename stem.
+fn sanitize_stem(id: &str) -> String {
+    id.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 #[cfg(unix)]

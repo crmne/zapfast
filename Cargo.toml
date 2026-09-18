@@ -99,6 +99,14 @@ ogg = "0.9"
 # Converts animated Signal APNG stickers to the animated WebP used by WhatsApp.
 webp-animation = "0.10"
 
+# Local, offline voice cloning (Chatterbox Turbo via ONNX Runtime) for the
+# friend-voice-unlock feature. Pinned to a commit: the `chatterbox` feature
+# depends on a vendored path crate (vendor/cbx), not something published on
+# crates.io.
+vox = { git = "https://github.com/mrtozner/vox", rev = "fd6f2abd1b55340e2c5f50551fee939172557825", default-features = false, features = ["chatterbox"] }
+# Writes the WAV files vox's Chatterbox backend consumes and produces.
+hound = "3.5"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 notify = "8.2"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }

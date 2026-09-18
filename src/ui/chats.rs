@@ -767,6 +767,23 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
             }
         }
     }
+    if chat.voice_unlocked_at.is_some()
+        && widgets::menu_item(
+            ui,
+            palette,
+            Some(Icon::Mic),
+            if chat.voice_auto_play {
+                "Voice playback: Auto"
+            } else {
+                "Voice playback: Off"
+            },
+        )
+    {
+        app.actions.push(Action::SetVoiceAutoPlay {
+            chat: chat.id.clone(),
+            enabled: !chat.voice_auto_play,
+        });
+    }
     widgets::menu_separator(ui, palette);
     if let Some(phone) = chat.phone()
         && widgets::menu_item(ui, palette, Some(Icon::Copy), "Copy number")

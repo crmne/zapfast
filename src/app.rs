@@ -188,6 +188,10 @@ pub struct App {
     pub recording: Option<Recorder>,
     /// Voice messages with a sent played receipt.
     played_told: HashSet<String>,
+    /// Text messages currently being synthesized in a friend's cloned voice.
+    pub voice_clone_pending: HashSet<String>,
+    /// Text messages already synthesized, by message id, ready to play.
+    pub voice_clone_ready: HashMap<String, PathBuf>,
     /// Message bodies registered for transcript copy formatting.
     pub copy_rows: std::sync::Arc<std::sync::Mutex<Vec<crate::transcript::Row>>>,
     /// Previous message-list rect used by the selection hook.
@@ -399,6 +403,8 @@ impl App {
             player: Player::new(waker.clone()),
             recording: None,
             played_told: HashSet::new(),
+            voice_clone_pending: HashSet::new(),
+            voice_clone_ready: HashMap::new(),
             copy_rows: Default::default(),
             selection_view: Default::default(),
             gif_query: String::new(),
@@ -1145,6 +1151,24 @@ impl App {
                     message,
                     result,
                 } => self.handle_media(&chat, &message, result),
+                Event::VoiceCloneReady {
+                    message,
+                    result,
+                    autoplay,
+                    ..
+                } => {
+                    self.voice_clone_pending.remove(&message);
+                    match result {
+                        Ok(path) => {
+                            self.voice_clone_ready.insert(message.clone(), path.clone());
+                            if autoplay && let Err(error) = self.player.toggle(&message, &path) {
+                                self.toast_error(error);
+                            }
+                        }
+                        Err(error) if autoplay => self.toast_error(error),
+                        Err(_) => {}
+                    }
+                }
                 Event::Syncing(syncing) => {
                     if self.syncing && !syncing {
                         self.toast("History loaded");
@@ -2012,6 +2036,21 @@ impl App {
             }
             Action::ClearPending => self.pending.clear(),
             Action::PlayVoice { message, path } => self.play_voice(message, path),
+            Action::PlayClonedVoice { chat, message } => {
+                if let Some(path) = self.voice_clone_ready.get(&message).cloned() {
+                    if let Err(error) = self.player.toggle(&message, &path) {
+                        self.toast_error(error);
+                    }
+                } else if self.voice_clone_pending.insert(message.clone()) {
+                    self.backend.send(Command::PlayClonedVoice { chat, message });
+                }
+            }
+            Action::SetVoiceAutoPlay { chat, enabled } => {
+                if let Some(known) = self.chat_mut(&chat) {
+                    known.voice_auto_play = enabled;
+                }
+                self.backend.send(Command::SetVoiceAutoPlay { chat, enabled });
+            }
             Action::SeekVoice {
                 message,
                 path,

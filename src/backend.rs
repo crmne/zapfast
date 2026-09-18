@@ -172,6 +172,18 @@ pub enum Command {
         chat: ChatId,
         message: String,
     },
+    /// Synthesizes (or replays cached) a text message in the friend's
+    /// cloned voice. Only valid once the chat's voice has been unlocked.
+    PlayClonedVoice {
+        chat: ChatId,
+        message: String,
+    },
+    /// Toggles background pre-synthesis of new incoming text for this
+    /// friend's cloned voice.
+    SetVoiceAutoPlay {
+        chat: ChatId,
+        enabled: bool,
+    },
     /// Requests a profile picture; `full` selects the info-dialog size.
     FetchAvatar {
         id: String,
@@ -342,6 +354,14 @@ pub enum Command {
         id: String,
         result: Result<PathBuf, String>,
     },
+    /// Internal cloned-voice synthesis result. `autoplay` is false for
+    /// background pre-synthesis, true for a user-initiated play tap.
+    VoiceCloneSynthesized {
+        chat: ChatId,
+        message: String,
+        result: Result<PathBuf, String>,
+        autoplay: bool,
+    },
     /// Internal recent-sticker download result.
     StickerFetched {
         hash: String,
@@ -496,6 +516,15 @@ pub enum Event {
         chat: ChatId,
         message: String,
         result: Result<PathBuf, String>,
+    },
+    /// A friend's cloned-voice synthesis finished (or failed). `autoplay`
+    /// tells the UI whether this was a user-initiated tap (start playback)
+    /// or a background pre-synthesis (just mark the message ready).
+    VoiceCloneReady {
+        chat: ChatId,
+        message: String,
+        result: Result<PathBuf, String>,
+        autoplay: bool,
     },
     /// Link-time history sync state.
     Syncing(bool),

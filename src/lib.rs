@@ -30,3 +30,4 @@ pub mod ui;
 pub mod updates;
 pub mod util;
 pub mod voice;
+pub mod voice_clone;
