@@ -498,3 +498,64 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
     }
     response
 }
+
+/// Selectable pill with an optional count, used for the chat-list filters.
+pub fn filter_chip(
+    ui: &mut Ui,
+    palette: &Palette,
+    label: &str,
+    count: usize,
+    selected: bool,
+) -> egui::Response {
+    let color = if selected {
+        palette.accent
+    } else {
+        palette.secondary
+    };
+    let painter = ui.painter();
+    let text = painter.layout_no_wrap(label.to_owned(), theme::medium(12.5), color);
+    let number =
+        (count > 0).then(|| painter.layout_no_wrap(count.to_string(), theme::regular(11.5), color));
+    let gap = 5.0;
+    let width = text.size().x + number.as_ref().map_or(0.0, |number| gap + number.size().x);
+    let (rect, response) = ui.allocate_exact_size(vec2(width + 22.0, 28.0), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let radius = rect.height() / 2.0;
+        if selected {
+            ui.painter()
+                .rect_filled(rect, radius, palette.accent.gamma_multiply(0.18));
+        } else {
+            if response.hovered() {
+                ui.painter().rect_filled(rect, radius, palette.surface);
+            }
+            ui.painter().rect_stroke(
+                rect,
+                radius,
+                Stroke::new(1.0, palette.surface_active),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let mut pos = pos2(rect.left() + 11.0, rect.center().y - text.size().y / 2.0);
+        let advance = text.size().x + gap;
+        ui.painter().galley(pos, text, color);
+        if let Some(number) = number {
+            pos.x += advance;
+            pos.y = rect.center().y - number.size().y / 2.0;
+            ui.painter().galley(pos, number, color);
+        }
+    }
+    response.widget_info(|| {
+        let label = if count > 0 {
+            format!("{label}, {count} unread")
+        } else {
+            label.to_owned()
+        };
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            label,
+        )
+    });
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}

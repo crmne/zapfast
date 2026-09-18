@@ -30,6 +30,39 @@ impl ChatKind {
     }
 }
 
+/// Chat-list filter chosen from the chips under the search field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChatFilter {
+    #[default]
+    All,
+    Unread,
+    /// One-to-one chats: neither groups nor broadcasts.
+    Private,
+    Groups,
+}
+
+impl ChatFilter {
+    pub const EVERY: [Self; 4] = [Self::All, Self::Unread, Self::Private, Self::Groups];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Unread => "Unread",
+            Self::Private => "Private",
+            Self::Groups => "Groups",
+        }
+    }
+
+    pub fn matches(self, chat: &Chat) -> bool {
+        match self {
+            Self::All => true,
+            Self::Unread => chat.unread > 0,
+            Self::Private => chat.kind == ChatKind::Direct,
+            Self::Groups => chat.kind == ChatKind::Group,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chat {
     pub id: ChatId,
@@ -676,6 +709,7 @@ pub enum Action {
     ShowDialog(Dialog),
     CloseDialog,
     ToggleSidebar,
+    SetChatFilter(ChatFilter),
     FocusSearch,
     FocusComposer,
     HideShortcutHints,

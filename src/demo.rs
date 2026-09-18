@@ -1142,6 +1142,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.composer = "Look at these".into();
             }
             "archived" => app.show_archived = true,
+            "unread" => app.chat_filter = crate::model::ChatFilter::Unread,
+            "private" => app.chat_filter = crate::model::ChatFilter::Private,
+            "groups" => app.chat_filter = crate::model::ChatFilter::Groups,
             "picker" => app.picker = Some(crate::model::PickerTab::Emoji),
             "stickers" => {
                 app.picker = Some(crate::model::PickerTab::Stickers);
@@ -1375,6 +1378,9 @@ mod tests {
             "new-contact",
             "light",
             "archived",
+            "unread",
+            "private",
+            "groups",
             "offline",
             "syncing",
             "picker",
@@ -1823,6 +1829,40 @@ mod tests {
                 .any(|reaction| !reaction.from_me && reaction.emoji == "🏆"),
             "Mira's trophy should sit on the group photo"
         );
+    }
+
+    #[test]
+    fn a_filter_chip_narrows_the_chat_list_and_a_second_click_clears_it() {
+        use crate::model::ChatFilter;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let everything = app.visible_chats().len();
+        let click = |app: &mut App, filter| {
+            let rect = ctx
+                .data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::filter_chip_id(filter)))
+                .expect("the chip is on screen");
+            let pos = rect.center();
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(app, &ctx, vec![egui::Event::PointerMoved(pos), press(true)]);
+            frame_with(app, &ctx, vec![press(false)]);
+            render(app, &ctx);
+        };
+        click(&mut app, ChatFilter::Groups);
+        assert_eq!(app.chat_filter, ChatFilter::Groups);
+        let groups = app.visible_chats();
+        assert!(!groups.is_empty() && groups.len() < everything);
+        assert!(groups.iter().all(|chat| chat.is_group()));
+        click(&mut app, ChatFilter::Groups);
+        assert_eq!(app.chat_filter, ChatFilter::All);
+        assert_eq!(app.visible_chats().len(), everything);
     }
 
     #[test]

@@ -25,6 +25,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Recent history is copied to this computer after linking and stored here.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,
   and message status. Search chats, saved messages, and contacts.
+  Filter the list to unread, private (one-to-one), or group chats with the
+  chips under the search bar; each chip counts its chats with unread messages.
   Pinned chats stay in pin order (most recently pinned first), regardless of
   new messages. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.

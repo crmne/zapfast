@@ -63,6 +63,12 @@ messages stored on this computer; and finds contacts without an existing chat.
 Click a message result to jump to it, or a contact to start a chat. Use
 `Alt+↑/↓` to switch chats without leaving the composer.
 
+The chips under the search bar narrow the list to **Unread**, **Private**
+(one-to-one chats), or **Groups**. Each shows how many of its chats have unread
+messages. Click the active chip again, or **All**, to see every chat. The
+filter applies only to this list: search and the archive still show everything,
+and it resets when ZapFast restarts.
+
 Right-click a chat to pin, archive, or mute it for eight hours, one week, or
 indefinitely. These changes also apply on your phone. Click the chat header to
 see its picture, number, and group members.

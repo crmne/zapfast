@@ -3,7 +3,7 @@
 use egui::{Align, Frame, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
-use crate::model::{Action, Chat, Contact, Dialog, Message, Page};
+use crate::model::{Action, Chat, ChatFilter, Contact, Dialog, Message, Page};
 use crate::theme::{self, Icon, Palette};
 
 use super::widgets;
@@ -138,6 +138,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                 app.focus_search = false;
                 response.request_focus();
             }
+            filter_chips(app, ui);
         });
 }
 
@@ -215,7 +216,42 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                 app.focus_search = false;
                 response.request_focus();
             }
+            filter_chips(app, ui);
         });
+}
+
+/// Stable filter-chip id used by interaction tests.
+pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
+    egui::Id::new(("chat-filter", filter.label()))
+}
+
+/// Filter chips under the search field. Search and the archive list every
+/// match, so the chips hide there.
+fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
+    if app.show_archived || !app.search.trim().is_empty() {
+        return;
+    }
+    let palette = app.palette;
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+        for filter in ChatFilter::EVERY {
+            let count = match filter {
+                ChatFilter::All => 0,
+                _ => app.unread_chats(filter),
+            };
+            let selected = app.chat_filter == filter;
+            let chip = widgets::filter_chip(ui, &palette, filter.label(), count, selected);
+            // Store the chip rect for interaction tests.
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(filter_chip_id(filter), chip.rect));
+            if chip.clicked() {
+                // A second click on the active chip returns to every chat.
+                let next = if selected { ChatFilter::All } else { filter };
+                app.actions.push(Action::SetChatFilter(next));
+            }
+        }
+    });
 }
 
 fn list(app: &mut App, ui: &mut egui::Ui) {
@@ -226,10 +262,17 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     }
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
     let archived = app.archived_count();
-    let show_archive_row = !app.show_archived && archived > 0;
+    let show_archive_row = !app.show_archived && archived > 0 && app.chat_filter == ChatFilter::All;
     if chats.is_empty() && !show_archive_row {
         let (title, body) = if app.show_archived {
             ("Nothing archived", "Archived chats appear here.")
+        } else if app.chat_filter != ChatFilter::All {
+            let title = match app.chat_filter {
+                ChatFilter::Unread => "No unread chats",
+                ChatFilter::Private => "No private chats",
+                _ => "No groups",
+            };
+            (title, "Choose All to see every chat.")
         } else if app.syncing {
             ("Loading your chats", "Receiving history from your phone.")
         } else {

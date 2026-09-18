@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use crate::audio::{Player, Recorder};
 use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
 use crate::model::{
-    Action, Chat, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media, MediaState,
-    Message, Page, PickerTab, StickerPack, Toast, ToastKind,
+    Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
+    MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
@@ -233,6 +233,10 @@ pub struct App {
     pub pair_phone: String,
     pub sidebar_visible: bool,
     pub show_archived: bool,
+    /// Chat-list filter; applies to the main list, not to search or the archive.
+    pub chat_filter: ChatFilter,
+    /// Chat opened from the Unread filter, listed there until the filter changes.
+    unread_keep: Option<ChatId>,
     pub toasts: Vec<Toast>,
     pub actions: Vec<Action>,
     /// A newer release than this build, once GitHub has said so.
@@ -431,6 +435,8 @@ impl App {
             pair_phone: String::new(),
             sidebar_visible: true,
             show_archived: false,
+            chat_filter: ChatFilter::All,
+            unread_keep: None,
             toasts: Vec::new(),
             actions: Vec::new(),
             update: None,
@@ -824,13 +830,21 @@ impl App {
         names.join(", ")
     }
 
-    /// Visible chats filtered by search and archive state, with pinned first.
+    /// Visible chats filtered by search, archive state, and the chat filter,
+    /// with pinned first.
     pub fn visible_chats(&self) -> Vec<&Chat> {
         let needle = crate::util::search_key(self.search.trim());
+        let filtering = needle.is_empty() && !self.show_archived;
         let mut chats: Vec<&Chat> = self
             .chats
             .iter()
             .filter(|chat| chat.archived == self.show_archived || !needle.is_empty())
+            .filter(|chat| {
+                !filtering
+                    || self.chat_filter.matches(chat)
+                    || (self.chat_filter == ChatFilter::Unread
+                        && self.unread_keep.as_deref() == Some(chat.id.as_str()))
+            })
             .filter(|chat| {
                 needle.is_empty()
                     || crate::util::search_key(&chat.name).contains(&needle)
@@ -883,6 +897,14 @@ impl App {
 
     pub fn archived_count(&self) -> usize {
         self.chats.iter().filter(|chat| chat.archived).count()
+    }
+
+    /// Unarchived chats with unread messages that a filter would list.
+    pub fn unread_chats(&self, filter: ChatFilter) -> usize {
+        self.chats
+            .iter()
+            .filter(|chat| !chat.archived && chat.unread > 0 && filter.matches(chat))
+            .count()
     }
 
     pub fn unread_total(&self) -> u32 {
@@ -1381,6 +1403,16 @@ impl App {
     }
 
     fn open_chat(&mut self, id: ChatId) {
+        // Reading a chat opened from the Unread filter must not pull it out
+        // from under the pointer.
+        let unread = self
+            .chats
+            .iter()
+            .any(|chat| chat.id == id && chat.unread > 0);
+        if self.unread_keep.as_deref() != Some(id.as_str()) || unread {
+            self.unread_keep =
+                (self.chat_filter == ChatFilter::Unread && unread).then(|| id.clone());
+        }
         if self.open_chat.as_deref() != Some(id.as_str()) {
             self.reaction_target = None;
             self.reaction_anchor = None;
@@ -2300,6 +2332,10 @@ impl App {
                 });
             }
             Action::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
+            Action::SetChatFilter(filter) => {
+                self.chat_filter = filter;
+                self.unread_keep = None;
+            }
             Action::FocusSearch => {
                 self.sidebar_visible = true;
                 self.page = Page::Chats;
@@ -3239,6 +3275,71 @@ mod tests {
             .map(|chat| chat.name.as_str())
             .collect();
         assert_eq!(names, vec!["Ada"]);
+    }
+
+    #[test]
+    fn the_chat_filter_narrows_the_main_list_only() {
+        let mut app = app();
+        let mut ada = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        ada.last_activity = 40;
+        ada.unread = 2;
+        let mut bob = Chat::new("2@s.whatsapp.net".into(), "Bob".into());
+        bob.last_activity = 30;
+        let mut club = Chat::new("3@g.us".into(), "Club".into());
+        club.last_activity = 20;
+        club.unread = 1;
+        let mut news = Chat::new("4@newsletter".into(), "News".into());
+        news.last_activity = 10;
+        let mut old = Chat::new("5@g.us".into(), "Old group".into());
+        old.archived = true;
+        old.unread = 3;
+        app.chats = vec![ada, bob, club, news, old];
+        let names = |app: &App| -> Vec<String> {
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.name.clone())
+                .collect()
+        };
+        assert_eq!(names(&app), ["Ada", "Bob", "Club", "News"]);
+        app.chat_filter = ChatFilter::Unread;
+        assert_eq!(names(&app), ["Ada", "Club"]);
+        app.chat_filter = ChatFilter::Private;
+        assert_eq!(names(&app), ["Ada", "Bob"], "no groups or broadcasts");
+        app.chat_filter = ChatFilter::Groups;
+        assert_eq!(names(&app), ["Club"], "archived groups stay in the archive");
+        // Unread chats per chip, archived ones left out.
+        assert_eq!(app.unread_chats(ChatFilter::Unread), 2);
+        assert_eq!(app.unread_chats(ChatFilter::Private), 1);
+        assert_eq!(app.unread_chats(ChatFilter::Groups), 1);
+        // Search and the archive ignore the filter.
+        app.search = "bob".into();
+        assert_eq!(names(&app), ["Bob"]);
+        app.search = String::new();
+        app.show_archived = true;
+        assert_eq!(names(&app), ["Old group"]);
+    }
+
+    #[test]
+    fn the_unread_filter_keeps_the_open_chat_after_it_is_read() {
+        let mut app = app();
+        let mut ada = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        ada.unread = 1;
+        let bob = Chat::new("2@s.whatsapp.net".into(), "Bob".into());
+        app.chats = vec![ada, bob];
+        app.chat_filter = ChatFilter::Unread;
+        app.open_chat("1@s.whatsapp.net".into());
+        app.chats[0].unread = 0;
+        assert_eq!(app.visible_chats().len(), 1, "still listed once read");
+        // A read chat opened from the filter is not added to it.
+        app.open_chat("2@s.whatsapp.net".into());
+        assert!(app.visible_chats().is_empty());
+        // Choosing a filter again forgets the kept chat.
+        app.chats[0].unread = 1;
+        app.open_chat("1@s.whatsapp.net".into());
+        app.chats[0].unread = 0;
+        let ctx = egui::Context::default();
+        app.apply(Action::SetChatFilter(ChatFilter::Unread), &ctx);
+        assert!(app.visible_chats().is_empty());
     }
 
     #[test]
