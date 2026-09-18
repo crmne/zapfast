@@ -3384,6 +3384,11 @@ fn voice_player(
         vec2(width.max(0.0), button),
         Layout::left_to_right(Align::Center),
         |ui| {
+            // The centre the play button aligns to. The waveform and its
+            // duration stretch the row past this height, and the chip comes
+            // after them, so the chip centres on this instead of the
+            // stretched rect, which would leave it below the button.
+            let row_center = ui.max_rect().center().y;
             ui.spacing_mut().item_spacing.x = 10.0;
             match (&media.path, &media.state) {
                 (None, MediaState::Downloading) => waiting(ui),
@@ -3515,8 +3520,15 @@ fn voice_player(
                 // The label follows the click at once, faded until this
                 // clip actually plays at that speed.
                 let preparing = view.player.preparing_speed(&message.id);
-                let (rect, response) = ui.allocate_exact_size(vec2(chip, 20.0), Sense::click());
-                if ui.is_rect_visible(rect) {
+                let (rect, response) = ui.allocate_exact_size(vec2(chip, 20.0), Sense::hover());
+                // The pill rests on the play button's centre line; the
+                // allocation only reserves the width and carries the id.
+                let pill = Rect::from_center_size(
+                    egui::pos2(rect.center().x, row_center),
+                    vec2(chip, 20.0),
+                );
+                let response = ui.interact(pill, response.id, Sense::click());
+                if ui.is_rect_visible(pill) {
                     let hovered = response.hovered();
                     // The resting fill uses the hover step because incoming
                     // bubbles share the resting surface colour.
@@ -3529,7 +3541,7 @@ fn voice_player(
                     } else {
                         palette.surface_hover
                     };
-                    ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
+                    ui.painter().rect_filled(pill, pill.height() / 2.0, fill);
                     let colour = if active {
                         palette.accent
                     } else {
@@ -3546,7 +3558,7 @@ fn voice_player(
                         colour,
                     );
                     ui.painter()
-                        .galley(rect.center() - galley.size() / 2.0, galley, colour);
+                        .galley(pill.center() - galley.size() / 2.0, galley, colour);
                 }
                 if response.clicked() {
                     actions.push(Action::CycleVoiceSpeed);
