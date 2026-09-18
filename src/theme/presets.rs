@@ -20,6 +20,18 @@ const FILES: &[(&str, &str)] = &[
         "Tokyo Night.json",
         include_str!("../../assets/themes/Tokyo Night.json"),
     ),
+    (
+        "Rose Pine.json",
+        include_str!("../../assets/themes/Rose Pine.json"),
+    ),
+    (
+        "Rose Pine Moon.json",
+        include_str!("../../assets/themes/Rose Pine Moon.json"),
+    ),
+    (
+        "Rose Pine Dawn.json",
+        include_str!("../../assets/themes/Rose Pine Dawn.json"),
+    ),
 ];
 
 pub(crate) fn themes() -> impl Iterator<Item = CustomTheme> {

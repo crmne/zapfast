@@ -670,6 +670,9 @@ mod tests {
             "Catppuccin.json",
             "Nord.json",
             "Ristretto.json",
+            "Rose Pine.json",
+            "Rose Pine Moon.json",
+            "Rose Pine Dawn.json",
             "Tokyo Night.json",
         ] {
             assert!(
