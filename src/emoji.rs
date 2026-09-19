@@ -5,6 +5,7 @@
 //! tones, and joined sequences.
 
 use std::collections::HashMap;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -36,7 +37,10 @@ static FONT: OnceLock<Option<Font>> = OnceLock::new();
 
 /// Noto Color Emoji supplies bitmap glyphs on systems such as Windows whose
 /// installed emoji font uses an outline colour format this renderer cannot
-/// rasterize.
+/// rasterize. macOS uses it too: Apple Color Emoji joins flags, skin tones,
+/// and ZWJ sequences through an AAT `morx` table rather than GSUB ligatures,
+/// so every sequence would fall back to its first part, and the 190 MB font
+/// would stay in memory for nothing.
 const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
 
 /// Whether a color emoji font is available.
@@ -54,6 +58,7 @@ fn font() -> Option<&'static Font> {
 }
 
 fn load() -> Option<Font> {
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     if let Some((path, index)) = find()
         && let Ok(bytes) = std::fs::read(&path)
         && let Some(font) = load_bytes(bytes, index, &path.display().to_string())
@@ -78,12 +83,11 @@ fn load_bytes(bytes: Vec<u8>, index: u32, source: &str) -> Option<Font> {
     })
 }
 
-/// Desktop color emoji font and selected face.
+/// Desktop color emoji font and selected face. macOS and Windows always use
+/// the bundled font, so an installed copy cannot change the result there.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn find() -> Option<(PathBuf, u32)> {
     let mut candidates: Vec<PathBuf> = Vec::new();
-    if cfg!(target_os = "macos") {
-        candidates.push("/System/Library/Fonts/Apple Color Emoji.ttc".into());
-    }
     for dir in [
         "/usr/share/fonts/noto",
         "/usr/share/fonts/truetype/noto",
@@ -112,6 +116,7 @@ fn find() -> Option<(PathBuf, u32)> {
     None
 }
 
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn search(dir: &std::path::Path, depth: usize) -> Option<PathBuf> {
     if depth > 4 {
         return None;
@@ -593,6 +598,28 @@ mod tests {
         }
     }
 
+    /// A sequence the font cannot join falls back to its first part, which
+    /// still yields a glyph, so compare against that part.
+    fn assert_joined(font: &Font, font_ref: &FontRef<'_>, sequence: &str) {
+        let chars: Vec<char> = sequence.chars().collect();
+        let joined = font.glyph(font_ref, &chars).expect("sequence glyph");
+        let first = font.glyph(font_ref, &chars[..1]);
+        assert_ne!(
+            Some(joined),
+            first,
+            "{sequence} fell back to its first part"
+        );
+    }
+
+    #[test]
+    fn the_bundled_font_joins_sequences() {
+        let font = load_bytes(BUNDLED.to_vec(), 0, "test font").expect("bundled font");
+        let font_ref = font.font_ref().expect("font face");
+        for sequence in ["🇩🇪", "👍🏽", "👨‍👩‍👧"] {
+            assert_joined(&font, &font_ref, sequence);
+        }
+    }
+
     #[test]
     fn the_system_font_resolves_sequences_when_present() {
         let Some(font) = font() else {
@@ -600,16 +627,9 @@ mod tests {
         };
         let font_ref = font.font_ref().expect("font parses");
         assert!(font.glyph(&font_ref, &['😀']).is_some());
-        let flag: Vec<char> = "🇩🇪".chars().collect();
-        assert!(
-            font.glyph(&font_ref, &flag).is_some(),
-            "flags are ligatures"
-        );
-        let thumbs: Vec<char> = "👍🏽".chars().collect();
-        assert!(
-            font.glyph(&font_ref, &thumbs).is_some(),
-            "skin tones are ligatures"
-        );
+        for sequence in ["🇩🇪", "👍🏽", "👨‍👩‍👧"] {
+            assert_joined(font, &font_ref, sequence);
+        }
         let glyph = font.glyph(&font_ref, &['😀']).expect("glyph");
         let image = font.image(&font_ref, glyph).expect("picture");
         assert_eq!(image.size[0], TEXTURE_WIDTH as usize);

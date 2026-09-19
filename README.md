@@ -47,8 +47,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs; this
-  is not a full Unicode Bidirectional Algorithm. Emoji use the desktop's
-  color emoji font, with a bundled fallback, and emoji-only messages are larger.
+  is not a full Unicode Bidirectional Algorithm. Emoji use the bundled Noto
+  Color Emoji on macOS and Windows. On Linux, ZapFast prefers an installed
+  Noto Color Emoji and falls back to the bundled copy. Emoji-only messages
+  are larger.
 - **Send attachments with captions.** Paste a picture, drop files, or use the
   file picker. They stay in the composer until you send them or press Escape.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
