@@ -122,6 +122,32 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     toggle(ui, app, "Save contacts to the phone's address book", "Also add contacts saved here to your phone's address book. When off, they remain WhatsApp contacts. Names sync to linked devices either way.", |settings| &mut settings.save_contacts_to_phone);
                     toggle(ui, app, "Show shortcut hints", "", |settings| &mut settings.show_shortcut_hints);
 
+                    {
+                        let mut code = app.settings.chat_lock_code.clone().unwrap_or_default();
+                        widgets::setting_row(
+                            ui,
+                            &palette,
+                            "Secret code for locked chats",
+                            "Set a local ZapFast code, separate from your phone's secret code. Type it in the search field to reveal the locked-chats folder. Locked chats are hidden from the list, search, and notifications. Keep it empty to disable the code.",
+                            |ui| {
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut code)
+                                        .font(theme::regular(13.0))
+                                        .text_color(palette.text)
+                                        .desired_width(220.0)
+                                        .hint_text("Secret code")
+                                        .password(true),
+                                );
+                                if response.changed() {
+                                    let trimmed = code.trim().to_owned();
+                                    app.settings.chat_lock_code =
+                                        (!trimmed.is_empty()).then_some(trimmed);
+                                    app.actions.push(Action::SettingsChanged);
+                                }
+                            },
+                        );
+                    }
+
                     section(ui, app, "Window");
                     toggle(ui, app, "Keep running when the window closes", "Keep ZapFast linked in the system tray. Quit from the tray menu or with Ctrl+Q.", |settings| &mut settings.keep_running_in_background);
                     toggle(ui, app, "Notify about new messages", "Show desktop notifications when the window is hidden, in the background, or showing another chat. Muted chats do not notify you.", |settings| &mut settings.notifications);

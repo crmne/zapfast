@@ -22,6 +22,7 @@ struct Sample {
     pinned: bool,
     muted: bool,
     archived: bool,
+    locked: bool,
     lines: &'static [(bool, &'static str)],
 }
 
@@ -60,6 +61,7 @@ const SAMPLES: &[Sample] = &[
         pinned: true,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (false, "Did the analytical engine build finish?"),
             (true, "Yes! It compiles on stable now, no nightly needed."),
@@ -81,6 +83,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: true,
         archived: false,
+        locked: false,
         lines: &[
             (false, "Anyone at the meetup tonight?"),
             (true, "I'll be there around 19:00"),
@@ -96,6 +99,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (true, "Found the bug. It was a moth."),
             (false, "Literally?"),
@@ -110,6 +114,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (false, "Talk is cheap. Show me the code."),
             (true, "Pushed 😌"),
@@ -123,6 +128,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (false, "Dinner on Sunday at 13:00?"),
             (true, "We'll be there"),
@@ -137,6 +143,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (false, "The landing software held up."),
             (true, "Never doubted it."),
@@ -150,6 +157,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (
                 false,
@@ -169,6 +177,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: true,
         lines: &[(false, "הכלב הגדול קפץ"), (true, "OK הכלב end")],
     },
     Sample {
@@ -179,6 +188,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: true,
+        locked: false,
         lines: &[(false, "Reminder: your appointment is on Tuesday at 9:30.")],
     },
 ];
@@ -445,6 +455,7 @@ pub fn populate(app: &mut App) {
         };
         chat.muted_until = sample.muted.then_some(0);
         chat.archived = sample.archived;
+        chat.locked = sample.locked;
         let mut conversation = Conversation {
             complete: true,
             requested: true,
@@ -1872,6 +1883,11 @@ mod tests {
     fn a_chat_clicked_in_the_unread_list_stays_there_once_read() {
         use crate::model::ChatFilter;
         let mut app = app();
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.name == "Grace Hopper")
+            .expect("sample chat")
+            .unread = 1;
         app.chat_filter = ChatFilter::Unread;
         let ctx = egui::Context::default();
         app.attach(&ctx);

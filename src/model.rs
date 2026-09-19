@@ -78,6 +78,8 @@ pub struct Chat {
     pub pinned_at: i64,
     /// Mute end as Unix seconds; `Some(0)` means indefinite.
     pub muted_until: Option<i64>,
+    /// Chat lock: the chat lives in the locked folder, behind the secret code.
+    pub locked: bool,
     /// Latest message shown in the chat list.
     pub last: Option<LastMessage>,
     /// Canonical group-member ids, empty until loaded.
@@ -111,6 +113,7 @@ impl Chat {
             pinned: false,
             pinned_at: 0,
             muted_until: None,
+            locked: false,
             last: None,
             participants: Vec::new(),
             read_only: false,
@@ -717,6 +720,7 @@ pub enum Action {
     FocusSearch,
     FocusComposer,
     HideShortcutHints,
+    DismissChatLockHint,
     ScrollToBottom,
     /// Scrolls the open chat to a message.
     ScrollTo(String),
@@ -747,6 +751,8 @@ pub enum Action {
     CloseWindow,
     /// Mutes until Unix time, indefinitely with `Some(0)`, or unmutes with `None`.
     SetMuted(ChatId, Option<i64>),
+    /// Moves a chat into or out of the locked folder.
+    SetLocked(ChatId, bool),
     /// Sends pending attachments with the composer text as caption.
     SendPending {
         chat: ChatId,

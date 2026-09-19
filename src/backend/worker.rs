@@ -319,6 +319,8 @@ struct ParsedChat {
     pinned_at: Option<i64>,
     /// Outer None means the history chunk omitted mute metadata.
     muted_until: Option<Option<i64>>,
+    /// `None` means the history chunk omitted lock metadata.
+    locked: Option<bool>,
     ephemeral_expiration: Option<u32>,
     ephemeral_setting_timestamp: Option<i64>,
     last_activity: i64,
@@ -658,17 +660,26 @@ impl Worker {
         match self.archive.take_preferences_refresh() {
             Ok(true) => {
                 tokio::spawn(async move {
-                    use whatsapp_rust::{WAPatchName, sync_task::MajorSyncTask};
-                    // The protocol library owns collection locking, full
-                    // snapshots, and bounded retries across reconnects. Do
-                    // not reset its store or add an application retry loop.
+                    use whatsapp_rust::WAPatchName;
+                    // A full_sync request still pages from the stored version,
+                    // which returns nothing when the server considers this
+                    // device current — so the recovery replays both
+                    // collections from version zero instead. This also
+                    // redelivers `lock` mutations the archive predates. The
+                    // protocol library owns collection reservations, snapshot
+                    // paging, and MAC validation; handlers here are
+                    // timestamp-guarded against the replay's original times.
                     for name in [WAPatchName::RegularLow, WAPatchName::RegularHigh] {
-                        client
-                            .process_sync_task(MajorSyncTask::AppStateSync {
-                                name,
-                                full_sync: true,
-                            })
-                            .await;
+                        match client.resync_app_state_collection(name).await {
+                            Ok(report) if report.all_synced() => {}
+                            Ok(report) => log::warn!(
+                                "chat preference recovery left {name:?} unsynced: {:?}",
+                                report.unsynced().collect::<Vec<_>>()
+                            ),
+                            Err(error) => {
+                                log::warn!("chat preference recovery for {name:?} failed: {error}")
+                            }
+                        }
                     }
                 });
             }
@@ -1163,7 +1174,7 @@ impl Worker {
                 if let whatsapp_rust::wacore::stanza::groups::GroupNotificationAction::Ephemeral {
                     expiration,
                     ..
-                } = &update.action
+                } = &*update.action
                 {
                     self.ensure_chat(&chat, None);
                     let timestamp = update.timestamp.timestamp();
@@ -1209,6 +1220,15 @@ impl Worker {
                 let _ =
                     self.archive
                         .set_muted_at(&chat, until, update.timestamp.timestamp_millis());
+                self.emit_chat(&chat);
+            }
+            E::LockChatUpdate(update) => {
+                let chat = self.canonical(&update.jid);
+                self.ensure_chat(&chat, None);
+                let locked = update.action.locked.unwrap_or(false);
+                let _ =
+                    self.archive
+                        .set_locked_at(&chat, locked, update.timestamp.timestamp_millis());
                 self.emit_chat(&chat);
             }
             E::MarkChatAsReadUpdate(update) => {
@@ -1520,7 +1540,7 @@ impl Worker {
         };
         let push_name = (!info.push_name.is_empty()).then(|| info.push_name.clone());
         let base = message.get_base_message();
-        if let Some(expiration) = info.ephemeral_expiration
+        if let Some(expiration) = base.get_ephemeral_expiration()
             && self
                 .archive
                 .ephemeral_expiration(&chat)
@@ -1619,10 +1639,14 @@ impl Worker {
         let quoted = self.quoted_of(base);
         let mentions = self.mentions_of(&mentioned_of(base));
         let row = Message {
-            id: info.id.clone(),
+            id: info.id.to_string(),
             chat: chat.clone(),
             sender,
-            sender_name: if from_me { None } else { push_name.clone() },
+            sender_name: if from_me {
+                None
+            } else {
+                push_name.as_ref().map(ToString::to_string)
+            },
             from_me,
             timestamp: info.timestamp.timestamp(),
             content,
@@ -1822,10 +1846,10 @@ impl Worker {
         }
         let push_name = (!info.push_name.is_empty()).then(|| info.push_name.clone());
         let row = Message {
-            id: info.id.clone(),
+            id: info.id.to_string(),
             chat,
             sender: self.canonical(&info.source.sender),
-            sender_name: push_name.clone(),
+            sender_name: push_name.as_ref().map(ToString::to_string),
             from_me: false,
             timestamp: info.timestamp.timestamp(),
             content: Content::Unsupported {
@@ -2141,9 +2165,17 @@ impl Worker {
                 row.muted_until = chat
                     .muted_until
                     .unwrap_or_else(|| existing.as_ref().and_then(|row| row.muted_until));
+                row.locked = chat
+                    .locked
+                    .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.locked));
                 if let Err(error) = self.archive.upsert_chat(&row) {
                     log::warn!("could not store chat {id}: {error}");
                     continue;
+                }
+                // History has no lock timestamp, so it must not supersede
+                // an app-state update already received from the phone.
+                if let Some(locked) = chat.locked {
+                    let _ = self.archive.set_locked_snapshot(&id, locked);
                 }
             }
             if let Some(expiration) = chat.ephemeral_expiration {
@@ -2849,6 +2881,18 @@ impl Worker {
                                 .mute_chat_until(&jid, seconds * 1000)
                                 .await
                         }
+                    }
+                    .map_err(|error| error.to_string())
+                });
+            }
+            Command::SetLocked(chat, locked) => {
+                let _ = self.archive.set_locked(&chat, locked);
+                self.emit_chat(&chat);
+                self.tell_phone(&chat, move |client, jid| async move {
+                    if locked {
+                        client.chat_actions().lock_chat(&jid).await
+                    } else {
+                        client.chat_actions().unlock_chat(&jid).await
                     }
                     .map_err(|error| error.to_string())
                 });
@@ -4250,7 +4294,7 @@ impl Worker {
 // --- free helpers ----------------------------------------------------------
 
 fn outgoing_forward(original: &wa::Message, expiration: Option<u32>) -> (wa::Message, Option<u32>) {
-    let mut message = *original.get_base_message().prepare_for_forward();
+    let mut message = original.get_base_message().prepare_for_forward();
     if let Some(mut context) = context_of(&message).cloned() {
         // A forward belongs to the destination chat. The library retains the
         // source timer, including when the destination has no timer at all.
@@ -5451,6 +5495,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         }),
         ephemeral_expiration: conversation.ephemeral_expiration,
         ephemeral_setting_timestamp: conversation.ephemeral_setting_timestamp,
+        locked: conversation.locked,
         last_activity,
         pn_jid: conversation.pn_jid.clone(),
         lid_jid: conversation.lid_jid.clone(),
@@ -5920,7 +5965,7 @@ mod receipt_tests {
     fn receipt(chat: &str, ids: &[&str], kind: ReceiptType) -> wa_events::Receipt {
         let chat: Jid = chat.parse().expect("jid");
         wa_events::Receipt::builder()
-            .message_ids(ids.iter().map(|id| (*id).to_owned()).collect())
+            .message_ids(ids.iter().map(|id| (*id).into()).collect())
             .source(MessageSource {
                 chat: chat.clone(),
                 sender: chat,
@@ -6313,12 +6358,12 @@ mod receipt_tests {
                 .group_jid(group.parse().unwrap())
                 .timestamp(whatsapp_rust::wacore::time::from_secs(timestamp).unwrap())
                 .is_lid_addressing_mode(false)
-                .action(
+                .action(Box::new(
                     whatsapp_rust::wacore::stanza::groups::GroupNotificationAction::Ephemeral {
                         expiration,
                         trigger: None,
                     },
-                )
+                ))
                 .build();
             worker
                 .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
@@ -6502,6 +6547,13 @@ mod receipt_tests {
         });
         assert_eq!(chat.pinned_at, Some(1_700_000_000_000));
         assert_eq!(chat.muted_until, Some(Some(1_800_000_000)));
+        assert_eq!(chat.locked, None, "absence must preserve existing state");
+        let chat = parse_conversation(wa::Conversation {
+            id: PEER.into(),
+            locked: Some(true),
+            ..Default::default()
+        });
+        assert_eq!(chat.locked, Some(true));
         for (end, expected) in [
             (None, None),
             (Some(0), Some(None)),
@@ -6566,6 +6618,37 @@ mod receipt_tests {
             assert_eq!(after.pinned, before.pinned);
             assert_eq!(after.pinned_at, before.pinned_at);
         }
+    }
+
+    #[tokio::test]
+    async fn lock_sync_survives_stale_history_replay() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let time = whatsapp_rust::wacore::time::now_utc();
+        let lock = wa_events::LockChatUpdate::builder()
+            .jid(PEER.parse().unwrap())
+            .timestamp(time)
+            .from_full_sync(true)
+            .action(Box::new(wa::sync_action_value::LockChatAction {
+                locked: Some(true),
+            }))
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::LockChatUpdate(lock)))
+            .await;
+        let before = worker
+            .archive
+            .chat(PEER)
+            .unwrap()
+            .expect("sync creates the chat");
+        assert!(before.locked);
+
+        // A history chunk cannot supersede a timestamped app-state update.
+        worker.apply_history(history(0), true);
+        assert!(worker.archive.chat(PEER).unwrap().unwrap().locked);
+        let mut locked_history = history(0);
+        locked_history.chats[0].locked = Some(false);
+        worker.apply_history(locked_history, true);
+        assert!(worker.archive.chat(PEER).unwrap().unwrap().locked);
     }
 
     #[test]
