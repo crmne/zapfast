@@ -408,8 +408,13 @@ impl Shell {
 }
 
 impl eframe::App for Shell {
-    #[cfg(feature = "demo")]
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        // eframe's native backends never set this flag, and egui hides a text
+        // field's caret when it says the window lost focus. Mirror the
+        // viewport's real focus so the composer's caret blinks like any other
+        // text box.
+        input.focused = ctx.input(|state| state.viewport().focused.unwrap_or(true));
+        #[cfg(feature = "demo")]
         if let (Some(tour), Some(app)) = (&mut self.tour, &mut self.app) {
             tour.input(app, ctx, input);
         }
