@@ -5,6 +5,7 @@
 //! tones, and joined sequences.
 
 use std::collections::HashMap;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -57,6 +58,7 @@ fn font() -> Option<&'static Font> {
 }
 
 fn load() -> Option<Font> {
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     if let Some((path, index)) = find()
         && let Ok(bytes) = std::fs::read(&path)
         && let Some(font) = load_bytes(bytes, index, &path.display().to_string())
@@ -81,7 +83,9 @@ fn load_bytes(bytes: Vec<u8>, index: u32, source: &str) -> Option<Font> {
     })
 }
 
-/// Desktop color emoji font and selected face.
+/// Desktop color emoji font and selected face. macOS and Windows always use
+/// the bundled font, so an installed copy cannot change the result there.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn find() -> Option<(PathBuf, u32)> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     for dir in [
@@ -112,6 +116,7 @@ fn find() -> Option<(PathBuf, u32)> {
     None
 }
 
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn search(dir: &std::path::Path, depth: usize) -> Option<PathBuf> {
     if depth > 4 {
         return None;
