@@ -288,7 +288,8 @@ logs or databases. Windows uses the permissions inherited from your user profile
 
 **Settings → Appearance → Theme** uses the same picker as Spotifast, with
 Follow system, Light, Dark, and its Catppuccin, Catppuccin Latte, Nord, Ristretto,
-and Tokyo Night palettes. Choose **Open themes folder** below the picker to add
+Tokyo Night, Rose Pine, Rose Pine Moon, and Rose Pine Dawn palettes.
+Choose **Open themes folder** below the picker to add
 JSON palettes beside `settings.json`. A local file with a bundled palette's name
 overrides it. For example:
 
