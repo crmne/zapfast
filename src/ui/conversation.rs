@@ -1163,6 +1163,8 @@ struct View<'a> {
     mention_names: &'a dyn Fn(&str) -> String,
     avatars: &'a HashMap<String, Option<PathBuf>>,
     now: i64,
+    /// Animate media only while this window is active.
+    animate: bool,
     player: &'a crate::audio::Player,
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
 }
@@ -1207,6 +1209,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         mention_names: &mention_names,
         avatars: &avatars,
         now: crate::util::now(),
+        animate: app.window_focused,
         player: &app.player,
         copy_rows: app.copy_rows.as_ref(),
     };
@@ -2937,7 +2940,7 @@ fn picture(
             );
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             if ui.is_rect_visible(rect) {
-                match animation::frame(ui, path, rect) {
+                match animation::frame(ui, path, rect, view.animate && response.hovered()) {
                     animation::Frame::Ready(texture) => {
                         ui.painter().image(
                             texture.id(),
@@ -2946,7 +2949,10 @@ fn picture(
                             Color32::WHITE,
                         );
                     }
-                    _ => egui::Image::new(file_uri(path)).paint_at(ui, rect),
+                    _ => {
+                        ui.painter().rect_filled(rect, 6.0, palette.surface);
+                        theme::paint_icon(ui, Icon::Sticker, rect, 32.0, palette.secondary);
+                    }
                 }
             }
             if response
@@ -3137,7 +3143,12 @@ fn video(
     // Play downloaded GIFs in place; keep a poster for other videos.
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let playing = match (&media.path, gif) {
-        (Some(path), true) => Some(animation::frame(ui, path, rect)),
+        (Some(path), true) => Some(animation::frame(
+            ui,
+            path,
+            rect,
+            view.animate && response.hovered(),
+        )),
         _ => None,
     };
     if let Some(animation::Frame::Ready(texture)) = &playing {

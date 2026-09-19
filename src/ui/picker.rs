@@ -1,6 +1,7 @@
 //! The picker above the composer: emoji, GIFs, and stickers.
 //! Also the full emoji picker used to react to a message.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use egui::{
@@ -958,7 +959,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .show(ui, |ui| {
             if !saved.is_empty() {
                 theme::text(ui, "Saved", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &saved, true, &mut choices);
+                sticker_grid(ui, palette, &saved, true, app.window_focused, &mut choices);
                 ui.add_space(8.0);
             }
             for pack in &packs {
@@ -979,12 +980,26 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         }
                     });
                 });
-                sticker_grid(ui, palette, &pack.stickers, false, &mut choices);
+                sticker_grid(
+                    ui,
+                    palette,
+                    &pack.stickers,
+                    false,
+                    app.window_focused,
+                    &mut choices,
+                );
                 ui.add_space(8.0);
             }
             if !recent.is_empty() {
                 theme::text(ui, "Recent", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &recent, false, &mut choices);
+                sticker_grid(
+                    ui,
+                    palette,
+                    &recent,
+                    false,
+                    app.window_focused,
+                    &mut choices,
+                );
             }
         });
     if let Some(path) = choices.send {
@@ -1069,6 +1084,7 @@ fn sticker_grid(
     palette: &Palette,
     stickers: &[std::path::PathBuf],
     saved: bool,
+    animate: bool,
     choices: &mut StickerChoices,
 ) {
     let columns = 5;
@@ -1085,10 +1101,16 @@ fn sticker_grid(
                         ui.painter().rect_filled(rect, 8.0, palette.surface_hover);
                     }
                     let shown = rect.shrink(4.0);
-                    // Animate only the hovered sticker to limit decoder work.
-                    let played = response.hovered()
-                        && moves(path)
-                        && match crate::animation::frame(ui, path, rect) {
+                    // Decode only visible animated stickers. Keep a still
+                    // first frame until the focused pointer hovers the tile.
+                    let animated = moves(ui.ctx(), path);
+                    let played = animated
+                        && match crate::animation::frame(
+                            ui,
+                            path,
+                            rect,
+                            animate && response.hovered(),
+                        ) {
                             crate::animation::Frame::Ready(texture) => {
                                 let size = texture.size_vec2();
                                 let scale = (shown.width() / size.x).min(shown.height() / size.y);
@@ -1104,7 +1126,12 @@ fn sticker_grid(
                             _ => false,
                         };
                     if !played {
-                        sticker_picture(ui, path, shown);
+                        if animated {
+                            ui.painter().rect_filled(shown, 6.0, palette.surface);
+                            theme::paint_icon(ui, Icon::Sticker, shown, 24.0, palette.secondary);
+                        } else {
+                            sticker_picture(ui, path, shown);
+                        }
                     }
                 }
                 egui::Popup::context_menu(&response)
@@ -1135,8 +1162,26 @@ fn sticker_grid(
     }
 }
 
-/// Checks the WebP header for animation.
-fn moves(path: &Path) -> bool {
+/// Returns whether a sticker moves, probing each path at most once.
+fn moves(ctx: &egui::Context, path: &Path) -> bool {
+    let cache = egui::Id::new("animated-sticker-paths");
+    if let Some(animated) = ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<HashMap<std::path::PathBuf, bool>>(cache)
+            .get(path)
+            .copied()
+    }) {
+        return animated;
+    }
+    let animated = probe_motion(path);
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<HashMap<std::path::PathBuf, bool>>(cache)
+            .insert(path.to_path_buf(), animated);
+    });
+    animated
+}
+
+/// Checks a WebP header for animation without decoding the file.
+fn probe_motion(path: &Path) -> bool {
     let mut head = [0u8; 64];
     let Ok(mut file) = std::fs::File::open(path) else {
         return false;
@@ -1155,4 +1200,23 @@ fn sticker_picture(ui: &egui::Ui, path: &Path, rect: Rect) {
     egui::Image::new(crate::util::image_uri(path))
         .fit_to_exact_size(rect.size())
         .paint_at(ui, rect);
+}
+
+#[cfg(test)]
+mod motion_tests {
+    use super::*;
+
+    #[test]
+    fn sticker_motion_is_probed_once_per_path() {
+        let dir = std::env::temp_dir().join(format!("zapfast-motion-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("creates temporary directory");
+        let path = dir.join("animated.webp");
+        std::fs::write(&path, b"RIFF0000WEBPANIM").expect("writes animated header");
+        let ctx = egui::Context::default();
+        assert!(moves(&ctx, &path));
+        std::fs::remove_file(&path).expect("removes sticker after its first probe");
+        assert!(moves(&ctx, &path), "cached result avoids another file read");
+        assert!(!moves(&egui::Context::default(), &path));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
