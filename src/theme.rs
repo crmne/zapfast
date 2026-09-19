@@ -165,9 +165,9 @@ pub fn bold(size: f32) -> egui::FontId {
     egui::FontId::new(size, egui::FontFamily::Name(INTER_BOLD.into()))
 }
 
-/// Installs fonts, icons, and base style.
-pub fn install(ctx: &egui::Context) {
-    install_fonts(ctx);
+/// Installs the selected fonts, icons, and image loaders.
+pub fn install(ctx: &egui::Context, selected: Option<&str>) {
+    install_fonts(ctx, selected);
     register_icons(ctx);
     egui_extras::install_image_loaders(ctx);
 }
@@ -273,7 +273,14 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     ctx.set_global_style(style);
 }
 
-fn install_fonts(ctx: &egui::Context) {
+/// Applies an installed text family, retaining Inter and script fallbacks.
+pub fn install_fonts(ctx: &egui::Context, selected: Option<&str>) {
+    ctx.set_fonts(font_definitions(
+        selected.and_then(crate::system_fonts::selected),
+    ));
+}
+
+fn font_definitions(selected: Option<Vec<egui::FontData>>) -> egui::FontDefinitions {
     use egui::epaint::text::VariationCoords;
     use egui::{FontData, FontDefinitions, FontFamily};
     use std::sync::Arc;
@@ -322,7 +329,25 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
 
-    ctx.set_fonts(fonts);
+    if let Some(weights) = selected {
+        for ((family, name), data) in [
+            (FontFamily::Proportional, "custom-regular"),
+            (FontFamily::Name(INTER_MEDIUM.into()), "custom-medium"),
+            (FontFamily::Name(INTER_SEMIBOLD.into()), "custom-semibold"),
+            (FontFamily::Name(INTER_BOLD.into()), "custom-bold"),
+        ]
+        .into_iter()
+        .zip(weights)
+        {
+            fonts.font_data.insert(name.into(), Arc::new(data));
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .insert(0, name.into());
+        }
+    }
+    fonts
 }
 
 macro_rules! icons {
@@ -819,6 +844,31 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_weights_keep_inter_and_language_fallbacks_and_leave_code_alone() {
+        let default = font_definitions(None);
+        let custom = font_definitions(Some(
+            (0..4)
+                .map(|_| {
+                    egui::FontData::from_static(include_bytes!("../assets/fonts/InterVariable.ttf"))
+                })
+                .collect(),
+        ));
+        for family in [
+            egui::FontFamily::Proportional,
+            egui::FontFamily::Name(INTER_MEDIUM.into()),
+            egui::FontFamily::Name(INTER_SEMIBOLD.into()),
+            egui::FontFamily::Name(INTER_BOLD.into()),
+        ] {
+            assert!(custom.families[&family][0].starts_with("custom-"));
+            assert_eq!(custom.families[&family][1..], default.families[&family]);
+        }
+        assert_eq!(
+            custom.families[&egui::FontFamily::Monospace],
+            default.families[&egui::FontFamily::Monospace]
+        );
+    }
 
     #[test]
     fn every_icon_has_a_file() {

@@ -29,6 +29,8 @@ impl ThemeChoice {
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeChoice,
+    /// Installed font family, or bundled Inter when unset or unavailable.
+    pub font_family: Option<String>,
     /// Filename of the selected local JSON palette.
     pub custom_theme: Option<String>,
     #[serde(
@@ -84,6 +86,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::Dark,
+            font_family: None,
             custom_theme: None,
             custom_theme_cache: None,
             system_theme_cache: None,
@@ -197,6 +200,7 @@ mod tests {
         let path = dir.join("settings.json");
         let settings = Settings {
             zoom: 1.25,
+            font_family: Some("Example Sans".into()),
             enter_sends: false,
             voice_speed: 1.5,
             ..Settings::default()

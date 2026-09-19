@@ -648,6 +648,33 @@ mod tests {
     }
 
     #[test]
+    fn font_search_stays_open_and_the_default_can_be_restored() {
+        let mut app = super::super::tests::app();
+        app.page = Page::Settings;
+        app.settings.font_family = Some("Missing fixture font".into());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        click(&mut app, &mut tour, &ctx, "Missing fixture font");
+        click(&mut app, &mut tour, &ctx, "Search fonts");
+        frame(
+            &mut app,
+            &mut tour,
+            &ctx,
+            vec![Event::Text("no-such-fixture-family-123".into())],
+        );
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        assert_eq!(app.font_search, "no-such-fixture-family-123");
+        assert!(tour.labels.contains_key("No matching fonts"));
+        click(&mut app, &mut tour, &ctx, "Inter (default)");
+        assert!(app.settings.font_family.is_none());
+        assert!(!tour.labels.contains_key("No matching fonts"));
+    }
+
+    #[test]
     fn the_theme_dropdown_selects_spotifast_palettes_and_returns_to_follow_system() {
         let mut app = super::super::tests::app();
         app.page = Page::Settings;

@@ -1,4 +1,4 @@
-//! System font fallbacks for scripts Inter does not support.
+//! Installed font families and fallbacks for scripts Inter does not support.
 //!
 //! Installed fonts are scanned once. The best regular sans-serif face for each
 //! missing script is added to egui's fallback list.
@@ -73,8 +73,96 @@ const MAX_FACES: u32 = 64;
 ///
 /// The font scan runs once per process, across recreated windows.
 pub fn fallbacks() -> &'static [Fallback] {
-    static FONTS: OnceLock<Vec<Fallback>> = OnceLock::new();
+    &discovery().fallbacks
+}
+
+/// Installed upright faces, grouped under their typographic family name.
+struct Discovery {
+    fallbacks: Vec<Fallback>,
+    families: BTreeMap<String, Vec<Face>>,
+}
+
+#[derive(Clone, Debug)]
+struct Face {
+    path: PathBuf,
+    index: u32,
+    weight: f32,
+    stretch: f32,
+    weight_range: Option<(f32, f32)>,
+}
+
+fn discovery() -> &'static Discovery {
+    static FONTS: OnceLock<Discovery> = OnceLock::new();
     FONTS.get_or_init(load)
+}
+
+/// Available families in deterministic name order; no font bytes are loaded here.
+pub fn families() -> impl Iterator<Item = &'static str> {
+    discovery().families.keys().map(String::as_str)
+}
+
+fn closest_face(faces: &[Face], weight: f32) -> Option<&Face> {
+    faces.iter().min_by(|a, b| {
+        let distance = |face: &Face| {
+            let actual = face
+                .weight_range
+                .map_or(face.weight, |(min, max)| weight.clamp(min, max));
+            (actual - weight).abs()
+        };
+        distance(a)
+            .total_cmp(&distance(b))
+            .then_with(|| {
+                (a.stretch - 100.0)
+                    .abs()
+                    .total_cmp(&(b.stretch - 100.0).abs())
+            })
+            .then_with(|| a.path.cmp(&b.path))
+            .then_with(|| a.index.cmp(&b.index))
+    })
+}
+
+/// Load all four UI weights atomically. A missing or invalid file uses Inter instead.
+pub fn selected(name: &str) -> Option<Vec<egui::FontData>> {
+    load_family(discovery().families.get(name)?)
+}
+
+fn load_family(faces: &[Face]) -> Option<Vec<egui::FontData>> {
+    let mut loaded = BTreeMap::new();
+    [400.0, 500.0, 600.0, 700.0]
+        .into_iter()
+        .map(|weight| {
+            let face = closest_face(faces, weight)?;
+            let bytes = loaded
+                .entry(&face.path)
+                .or_insert_with(|| std::fs::read(&face.path).ok())
+                .as_ref()?;
+            let font = skrifa::FontRef::from_index(bytes, face.index).ok()?;
+            // Reject unreadable faces before handing the definitions to egui.
+            if !has_text_outlines(&font) {
+                return None;
+            }
+            let mut data = egui::FontData::from_owned(bytes.clone());
+            data.index = face.index;
+            if let Some((min, max)) = face.weight_range {
+                data.tweak.coords =
+                    egui::epaint::text::VariationCoords::new([(b"wght", weight.clamp(min, max))]);
+            }
+            Some(data)
+        })
+        .collect()
+}
+
+/// Exclude bitmap-only faces while allowing fonts for non-Latin scripts.
+fn has_text_outlines(font: &skrifa::FontRef<'_>) -> bool {
+    let charmap = font.charmap();
+    let outlines = font.outline_glyphs();
+    std::iter::once('A')
+        .chain(FALLBACK_SCRIPTS.iter().map(|(_, probe, _)| *probe))
+        .any(|probe| {
+            charmap
+                .map(probe)
+                .is_some_and(|glyph| outlines.get(glyph).is_some())
+        })
 }
 
 /// Candidate font face and interface-suitability score.
@@ -85,12 +173,13 @@ struct Candidate {
 }
 
 /// Finds and reads the best installed face for each [`FALLBACK_SCRIPTS`] entry.
-fn load() -> Vec<Fallback> {
+fn load() -> Discovery {
+    let mut families = BTreeMap::new();
     let han = han_region(&locale());
     let started = std::time::Instant::now();
     let mut best: BTreeMap<&str, Candidate> = BTreeMap::new();
     for dir in font_dirs() {
-        probe_dir(&dir, 0, han, &mut best);
+        probe_dir(&dir, 0, han, &mut best, &mut families);
     }
     log::debug!(
         "probed the system fonts in {:.1} ms, {} of {} scripts covered",
@@ -129,11 +218,20 @@ fn load() -> Vec<Fallback> {
             index: candidate.index,
         });
     }
-    fonts
+    Discovery {
+        fallbacks: fonts,
+        families,
+    }
 }
 
 /// Scans font files below `dir` and keeps the best face per script.
-fn probe_dir(dir: &Path, depth: usize, han: &str, best: &mut BTreeMap<&str, Candidate>) {
+fn probe_dir(
+    dir: &Path,
+    depth: usize,
+    han: &str,
+    best: &mut BTreeMap<&str, Candidate>,
+    families: &mut BTreeMap<String, Vec<Face>>,
+) {
     if depth >= FONT_SCAN_DEPTH {
         return;
     }
@@ -147,9 +245,9 @@ fn probe_dir(dir: &Path, depth: usize, han: &str, best: &mut BTreeMap<&str, Cand
         };
         let path = entry.path();
         if kind.is_dir() || (kind.is_symlink() && path.is_dir()) {
-            probe_dir(&path, depth + 1, han, best);
+            probe_dir(&path, depth + 1, han, best, families);
         } else if is_font_file(&path) {
-            probe_file(&path, han, best);
+            probe_file(&path, han, best, families);
         }
     }
 }
@@ -167,7 +265,12 @@ fn is_font_file(path: &Path) -> bool {
 }
 
 /// Scores each face in a font file for missing scripts.
-fn probe_file(path: &Path, han: &str, best: &mut BTreeMap<&str, Candidate>) {
+fn probe_file(
+    path: &Path,
+    han: &str,
+    best: &mut BTreeMap<&str, Candidate>,
+    families: &mut BTreeMap<String, Vec<Face>>,
+) {
     let Ok(file) = std::fs::File::open(path) else {
         return;
     };
@@ -198,6 +301,33 @@ fn probe_file(path: &Path, han: &str, best: &mut BTreeMap<&str, Candidate>) {
             .to_lowercase();
         let charmap = font.charmap();
         let outlines = font.outline_glyphs();
+        // Include script-specific text faces as well as Latin families.
+        if has_text_outlines(&font) {
+            let name = font
+                .localized_strings(skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME)
+                .english_or_first()
+                .or_else(|| {
+                    font.localized_strings(skrifa::string::StringId::FAMILY_NAME)
+                        .english_or_first()
+                })
+                .map(|name| name.to_string());
+            if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
+                let weight_range = font
+                    .axes()
+                    .iter()
+                    .find(|axis| axis.tag() == skrifa::raw::types::Tag::new(b"wght"))
+                    .map(|axis| (axis.min_value(), axis.max_value()))
+                    .filter(|(min, max)| min.is_finite() && max.is_finite() && min <= max);
+                families.entry(name).or_default().push(Face {
+                    path: path.to_owned(),
+                    index,
+                    weight: attributes.weight.value(),
+                    stretch: attributes.stretch.percentage(),
+                    weight_range,
+                });
+            }
+        }
+
         for (script, probe, hint) in FALLBACK_SCRIPTS {
             // Require an outline, not only a charmap entry from a bitmap font.
             let covers = charmap
@@ -326,6 +456,68 @@ fn font_dirs() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn face(path: &str, weight: f32) -> Face {
+        Face {
+            path: path.into(),
+            index: 0,
+            weight,
+            stretch: 100.0,
+            weight_range: None,
+        }
+    }
+
+    #[test]
+    fn chooses_available_weights_and_variable_ranges() {
+        let faces = [face("regular", 400.0), face("bold", 700.0)];
+        assert_eq!(
+            closest_face(&faces, 500.0).unwrap().path,
+            Path::new("regular")
+        );
+        assert_eq!(closest_face(&faces, 600.0).unwrap().path, Path::new("bold"));
+        let variable = Face {
+            weight_range: Some((100.0, 900.0)),
+            ..face("variable", 400.0)
+        };
+        let faces = [faces[0].clone(), variable];
+        assert_eq!(
+            closest_face(&faces, 700.0).unwrap().path,
+            Path::new("variable")
+        );
+        let faces = [
+            Face {
+                stretch: 75.0,
+                ..face("condensed", 400.0)
+            },
+            face("regular", 400.0),
+        ];
+        assert_eq!(
+            closest_face(&faces, 400.0).unwrap().path,
+            Path::new("regular")
+        );
+    }
+
+    #[test]
+    fn discovers_and_loads_a_variable_family_and_handles_deleted_fonts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Inter.ttf");
+        std::fs::write(&path, include_bytes!("../assets/fonts/InterVariable.ttf")).unwrap();
+        let mut families = BTreeMap::new();
+        probe_file(&path, "sc", &mut BTreeMap::new(), &mut families);
+        let faces = families.get("Inter Variable").expect("typographic family");
+        let fonts = load_family(faces).unwrap();
+        assert_eq!(fonts.len(), 4);
+        for (font, weight) in fonts.iter().zip([400.0, 500.0, 600.0, 700.0]) {
+            assert_eq!(
+                font.tweak.coords,
+                egui::epaint::text::VariationCoords::new([(b"wght", weight)])
+            );
+        }
+        std::fs::write(&path, b"broken font").unwrap();
+        assert!(load_family(faces).is_none());
+        std::fs::remove_file(path).unwrap();
+        assert!(load_family(faces).is_none());
+    }
 
     #[test]
     fn locales_choose_a_pan_cjk_cut() {

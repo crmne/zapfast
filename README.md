@@ -49,6 +49,12 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Arabic RTL paragraphs keep logical word order by reordering font runs; this
   is not a full Unicode Bidirectional Algorithm. Emoji use the desktop's
   color emoji font, with a bundled fallback, and emoji-only messages are larger.
+- **Custom fonts.** Settings → Appearance → Font lets you search installed font
+  families and apply one to the interface and messages, with a text preview.
+  Inter remains the default and is used if the chosen font becomes unavailable.
+  Emoji and language fallbacks are preserved; code stays monospace. Install fonts
+  through your operating system, then restart ZapFast to refresh the list. Zoom
+  remains a separate setting.
 - **Send attachments with captions.** Paste a picture, drop files, or use the
   file picker. They stay in the composer until you send them or press Escape.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
@@ -374,7 +380,9 @@ For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
-palettes without changing the desktop theme.
+palettes without changing the desktop theme. Add `font=Family Name` to preview
+an installed font, for example `--demo-page "settings,font=Noto Serif"`.
+An empty or whitespace-only `font=` value restores Inter (default).
 
 On Omarchy, run `omarchy screenrecord`, select the demo window, then press Space
 in ZapFast. Recording has no audio unless you explicitly enable desktop or

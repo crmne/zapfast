@@ -728,6 +728,7 @@ pub enum Action {
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
     SetCustomTheme(String),
+    SetFont(Option<String>),
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
