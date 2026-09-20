@@ -29,6 +29,8 @@ impl ThemeChoice {
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeChoice,
+    /// Interface language.
+    pub language: crate::i18n::Language,
     /// Filename of the selected local JSON palette.
     pub custom_theme: Option<String>,
     #[serde(
@@ -84,6 +86,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::Dark,
+            language: crate::i18n::Language::English,
             custom_theme: None,
             custom_theme_cache: None,
             system_theme_cache: None,
@@ -149,7 +152,10 @@ impl Settings {
                     Self::default()
                 }
             },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self {
+                language: crate::i18n::Language::detect(),
+                ..Self::default()
+            },
             Err(error) => {
                 log::warn!("could not read settings: {error}");
                 Self::default()

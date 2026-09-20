@@ -27,13 +27,17 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   and message status. Search chats, saved messages, and contacts.
   Filter the list to unread, private (one-to-one), or group chats with the
   chips under the search bar; a chip with unread chats shows how many it has.
+  Archived chats stay silent: they keep their unread count inside the archive
+  but never badge the main list or send notifications.
   Pinned chats stay in pin order (most recently pinned first), regardless of
   new messages. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
   Typing indicators show other participants, excluding your own linked devices.
 - **Read state across devices.** Reading a chat syncs its unread badge with
   your phone and other linked devices, including when read receipts are off.
-  Replies from another device clear preceding unread messages. The read-receipt
+  Replies from another device clear preceding unread messages. Messages sent
+  from another device still pick up delivery and read status, even when the
+  receipt arrives before the message itself. The read-receipt
   toggle also controls voice-message played receipts; account privacy is checked
   before sending receipts in direct chats. A hidden window does not read messages.
 - **Conversations.** See replies, reactions, edits, deleted messages, read
@@ -100,10 +104,18 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   choose it. GIF search needs a free GIPHY API key unless the build includes
   one.
 - **Sticker packs.** Import a pack from a `signal.art` link or `.wastickers`
-  file. Animated packs remain animated. Packs are stored as WebP files on your
-  computer.
+  file. Animated packs remain animated. Packs and saved stickers are stored
+  as WebP, PNG, or GIF files on your computer. Phone-starred favorites are not
+  synced by the protocol library, so the picker shows recent, saved, and
+  imported stickers.
 - **Consistent names.** Use names from your address book or public WhatsApp
   profile names across chats, replies, mentions, and notifications.
+  Deleted contacts show the formatted number, or "Unsaved name" when no
+  number is known. Phone numbers use the international format, as on
+  WhatsApp Web.
+- **Shared contacts.** Contact cards show each name and number with
+  **Add** (opens the new-contact dialog prefilled) and **Message**
+  (opens the chat) actions, as on WhatsApp Web.
 - **Groups.** See members, sender names, and sender pictures. Announcement
   groups are read-only for non-admins.
 - **Presence.** See online, last-seen, and typing status, and send your typing
@@ -132,6 +144,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Themes.** Light, dark, follow the system, or a local JSON palette. Native
   Linux packages can follow Omarchy colors without restarting the app. Zoom with
   Ctrl+plus and Ctrl+minus.
+- **Language.** The interface language is chosen in Settings: English or
+  Português (Brasil). Fresh installs follow the system locale; switching
+  applies immediately without relinking.
 - **Copy text.** Select part of a message or copy across messages in
   WhatsApp's `[time, date] Name:` format. Contact names and numbers are also
   selectable.

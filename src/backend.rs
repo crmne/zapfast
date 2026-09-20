@@ -99,6 +99,8 @@ pub struct CreatedPoll {
 
 #[derive(Clone, Debug)]
 pub enum Command {
+    /// Interface language for worker toasts and chat previews.
+    SetLanguage(crate::i18n::Language),
     RefreshPoll {
         chat: ChatId,
         message: String,

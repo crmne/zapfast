@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use crate::audio::{Player, Recorder};
 use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
 use crate::model::{
-    Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
-    MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
+    Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError,
+    LastMessage, Media, MediaState, Message, Page, PickerTab, Quoted, StickerPack, Toast,
+    ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
@@ -109,6 +110,8 @@ pub struct App {
     pub settings: Settings,
     settings_dirty: bool,
     last_settings_save: Instant,
+    /// Language already reported to the worker.
+    worker_lang: crate::i18n::Language,
     pub backend: Backend,
     pub palette: Palette,
     pub custom_themes: theme::custom::Catalog,
@@ -348,11 +351,14 @@ impl App {
                 _ => Palette::dark(),
             });
         let open_chat = settings.last_chat.clone();
+        let worker_lang = settings.language;
+        backend.send(Command::SetLanguage(worker_lang));
         let mut app = Self {
             dirs,
             settings,
             settings_dirty: false,
             last_settings_save: Instant::now(),
+            worker_lang,
             backend,
             palette,
             custom_themes: theme::custom::Catalog::default(),
@@ -535,16 +541,18 @@ impl App {
         let Some(chat) = self.chat(chat_id) else {
             return;
         };
-        let now = crate::util::now();
-        // Skip muted chats and delayed reconnect backlogs.
-        if chat.unread == 0 || chat.muted(now) || now - message.timestamp > 60 {
-            return;
-        }
         let reading = !self.window_hidden
             && self.window_focused
             && self.page == Page::Chats
             && self.open_chat.as_deref() == Some(chat_id);
-        if reading {
+        if !Self::should_notify(
+            chat.archived,
+            chat.muted(crate::util::now()),
+            chat.unread,
+            message.timestamp,
+            crate::util::now(),
+            reading,
+        ) {
             return;
         }
         let (name, is_group) = (self.chat_title(chat), chat.is_group());
@@ -568,6 +576,27 @@ impl App {
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
         );
+    }
+
+    /// Pure notification gate, extracted for tests. Archived chats keep
+    /// their unread count inside the archive but never notify or badge
+    /// the main list, like WhatsApp Web.
+    fn should_notify(
+        archived: bool,
+        muted: bool,
+        unread: u32,
+        message_time: i64,
+        now: i64,
+        reading: bool,
+    ) -> bool {
+        if archived || muted || unread == 0 {
+            return false;
+        }
+        // Delayed reconnect backlogs do not notify.
+        if now - message_time > 60 {
+            return false;
+        }
+        !reading
     }
 
     /// Initializes a newly created window.
@@ -639,7 +668,7 @@ impl App {
     /// message-provided fallback. Our own id becomes "You".
     pub fn display_name_or(&self, id: &str, hint: Option<&str>) -> String {
         if self.me.as_deref() == Some(id) {
-            return "You".to_owned();
+            return crate::i18n::t(self.settings.language, "person.you").to_owned();
         }
         self.person_name(id, hint)
     }
@@ -651,7 +680,9 @@ impl App {
                 .me_name
                 .clone()
                 .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| "You".to_owned());
+                .unwrap_or_else(|| {
+                    crate::i18n::t(self.settings.language, "person.you").to_owned()
+                });
         }
         self.person_name(id, None)
     }
@@ -686,7 +717,9 @@ impl App {
         }
         match crate::model::phone_of(id) {
             Some(digits) => crate::util::phone(digits),
-            None => "Unknown".to_owned(),
+            // Deleted contacts and ids without a phone mapping show a
+            // formatted number when possible, never "Unknown".
+            None => crate::i18n::t(self.settings.language, "person.unsaved").to_owned(),
         }
     }
 
@@ -734,8 +767,22 @@ impl App {
     pub fn message_text(&self, message: &Message) -> String {
         match &message.content {
             Content::Text { text, .. } => crate::markup::plain(text, &self.mention_list(message)),
-            _ => self.resolve_mention_tokens(&message.summary()),
+            _ => self.resolve_mention_tokens(&message.content.summary_in(self.settings.language)),
         }
+    }
+
+    /// Translated chat-list preview for a stored last message.
+    pub fn last_preview(&self, last: &LastMessage) -> String {
+        crate::i18n::preview(self.settings.language, last.label.as_deref(), &last.summary)
+    }
+
+    /// Translated quote preview for a stored quote.
+    pub fn quote_preview(&self, quoted: &Quoted) -> String {
+        crate::i18n::preview(
+            self.settings.language,
+            quoted.label.as_deref(),
+            &quoted.summary,
+        )
     }
 
     /// Whether a direct chat uses a saved address-book name.
@@ -759,7 +806,9 @@ impl App {
             .filter(|id| Some(id.as_str()) != me)
         {
             let name = self.display_name(id);
-            if name.starts_with('+') || name == "Unknown" {
+            if name.starts_with('+')
+                || name == crate::i18n::t(self.settings.language, "person.unsaved")
+            {
                 numbers.push((id.clone(), name));
             } else {
                 named.push((id.clone(), name));
@@ -771,7 +820,10 @@ impl App {
         if let Some(me) = me
             && chat.participants.iter().any(|id| id == me)
         {
-            named.push((me.to_owned(), "You".to_owned()));
+            named.push((
+                me.to_owned(),
+                crate::i18n::t(self.settings.language, "person.you").to_owned(),
+            ));
         }
         named
     }
@@ -814,7 +866,9 @@ impl App {
             .filter(|id| Some(id.as_str()) != me)
         {
             let name = self.display_name(id);
-            if name.starts_with('+') || name == "Unknown" {
+            if name.starts_with('+')
+                || name == crate::i18n::t(self.settings.language, "person.unsaved")
+            {
                 numbers.push(name);
             } else {
                 let name = name.trim_start_matches('~');
@@ -827,7 +881,7 @@ impl App {
         numbers.dedup();
         names.extend(numbers);
         if chat.participants.iter().any(|id| Some(id.as_str()) == me) {
-            names.push("You".to_owned());
+            names.push(crate::i18n::t(self.settings.language, "person.you").to_owned());
         }
         names.join(", ")
     }
@@ -1171,7 +1225,10 @@ impl App {
                 } => self.handle_media(&chat, &message, result),
                 Event::Syncing(syncing) => {
                     if self.syncing && !syncing {
-                        self.toast("History loaded");
+                        self.toast(crate::i18n::t(
+                            self.settings.language,
+                            "toast.history_loaded",
+                        ));
                     }
                     self.syncing = syncing;
                     if !syncing {
@@ -1208,7 +1265,10 @@ impl App {
                 Event::UpdateAvailable { version, url } => {
                     let notice = crate::updates::Release { version, url };
                     if self.update.as_ref() != Some(&notice) {
-                        self.toast(format!("ZapFast {} is available", notice.version));
+                        self.toast(crate::i18n::fill(
+                            crate::i18n::t(self.settings.language, "toast.update_available"),
+                            &[("v", &notice.version)],
+                        ));
                     }
                     self.update = Some(notice);
                 }
@@ -1254,7 +1314,7 @@ impl App {
                     }
                 }
                 if matches!(self.link, LinkStatus::Disconnected { .. }) {
-                    self.toast("Back online");
+                    self.toast(crate::i18n::t(self.settings.language, "toast.back_online"));
                 }
                 self.dialog = match self.dialog.take() {
                     Some(Dialog::PairWithPhone) => None,
@@ -1274,7 +1334,7 @@ impl App {
                 self.contacts.clear();
                 self.avatars.clear();
                 self.open_chat = None;
-                self.toast_error("This device was unlinked from your phone");
+                self.toast_error(crate::i18n::t(self.settings.language, "toast.unlinked"));
             }
             LinkStatus::Failed(message) => self.toast_error(message.clone()),
             _ => {}
@@ -1320,7 +1380,7 @@ impl App {
             Err(error) => {
                 // Show expired-file failures in the bubble, not as a toast.
                 let notice = if error.contains("403") || error.contains("404") {
-                    "No longer available on WhatsApp's servers".to_owned()
+                    crate::i18n::t(self.settings.language, "bubble.expired").to_owned()
                 } else {
                     error
                 };
@@ -1574,7 +1634,10 @@ impl App {
     /// Adds files to the open chat's composer.
     fn stage_files(&mut self, paths: Vec<PathBuf>) {
         if self.open_chat.is_none() {
-            self.toast_error("Open a chat first");
+            self.toast_error(crate::i18n::t(
+                self.settings.language,
+                "toast.open_chat_first",
+            ));
             return;
         }
         for path in paths {
@@ -1629,17 +1692,23 @@ impl App {
     #[allow(dead_code)]
     fn send_files(&mut self, paths: Vec<PathBuf>) {
         let Some(chat) = self.open_chat.clone() else {
-            self.toast_error("Open a chat first");
+            self.toast_error(crate::i18n::t(
+                self.settings.language,
+                "toast.open_chat_first",
+            ));
             return;
         };
         if paths.is_empty() {
             return;
         }
-        self.toast(format!(
-            "Sending {} file{}…",
-            paths.len(),
-            if paths.len() == 1 { "" } else { "s" }
-        ));
+        self.toast(if paths.len() == 1 {
+            crate::i18n::t(self.settings.language, "toast.sending_one").to_owned()
+        } else {
+            crate::i18n::fill(
+                crate::i18n::t(self.settings.language, "toast.sending_many"),
+                &[("n", &paths.len().to_string())],
+            )
+        });
         self.backend.send(Command::SendFiles {
             chat,
             paths,
@@ -1726,6 +1795,15 @@ impl App {
 
     pub fn mark_settings_dirty(&mut self) {
         self.settings_dirty = true;
+    }
+
+    /// Tells the worker the interface language when it changed, so its
+    /// toasts and chat previews match Settings without relinking.
+    fn sync_worker_language(&mut self) {
+        if self.worker_lang != self.settings.language {
+            self.worker_lang = self.settings.language;
+            self.backend.send(Command::SetLanguage(self.worker_lang));
+        }
     }
 
     fn save_settings(&mut self) {
@@ -1948,13 +2026,19 @@ impl App {
             }
             Action::OpenFile(path) => {
                 if let Err(error) = open::that_detached(&path) {
-                    self.toast_error(format!("Could not open {}: {error}", path.display()));
+                    self.toast_error(crate::i18n::fill(
+                        crate::i18n::t(self.settings.language, "toast.open_fail"),
+                        &[
+                            ("path", &path.display().to_string()),
+                            ("error", &error.to_string()),
+                        ],
+                    ));
                 }
             }
             Action::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
             Action::CopyText(text) => {
                 ctx.copy_text(text);
-                self.toast("Copied");
+                self.toast(crate::i18n::t(self.settings.language, "toast.copied"));
             }
             Action::Reply(id) => {
                 self.reply_to = Some(id);
@@ -2177,7 +2261,10 @@ impl App {
             Action::CloseMentions => self.mention_start = None,
             Action::SaveSticker(path) => {
                 self.backend.send(Command::SaveSticker { path });
-                self.toast("Sticker saved");
+                self.toast(crate::i18n::t(
+                    self.settings.language,
+                    "toast.sticker_saved",
+                ));
             }
             Action::ForgetSticker(path) => {
                 self.backend.send(Command::ForgetSticker { path });
@@ -2214,7 +2301,7 @@ impl App {
             }
             Action::SendGif(gif) => {
                 if let Some(chat) = self.open_chat.clone() {
-                    self.toast("Sending GIF…");
+                    self.toast(crate::i18n::t(self.settings.language, "toast.sending_gif"));
                     self.backend.send(Command::SendGif { chat, gif });
                     self.picker = None;
                     self.scroll_to_bottom = true;
@@ -2327,6 +2414,16 @@ impl App {
                     to_phone: self.settings.save_contacts_to_phone,
                 });
             }
+            Action::PrefillNewContact { phone, first, last } => {
+                self.emoji_start = None;
+                self.mention_start = None;
+                self.new_contact_phone = phone;
+                self.new_contact_name = first;
+                self.new_contact_last = last;
+                self.new_contact_pending = false;
+                self.contact_edit = None;
+                self.dialog = Some(Dialog::NewContact);
+            }
             Action::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
             Action::SetChatFilter(filter) => {
                 self.chat_filter = filter;
@@ -2433,7 +2530,10 @@ impl App {
                 self.settings.show_shortcut_hints = false;
                 self.mark_settings_dirty();
             }
-            Action::SettingsChanged => self.mark_settings_dirty(),
+            Action::SettingsChanged => {
+                self.mark_settings_dirty();
+                self.sync_worker_language();
+            }
             Action::ZoomBy(delta) => {
                 self.settings.zoom = (self.settings.zoom + delta).clamp(0.6, 2.0);
                 self.zoom_applied = false;
@@ -2447,9 +2547,7 @@ impl App {
             Action::PairWithPhone(phone) => {
                 let digits: String = phone.chars().filter(char::is_ascii_digit).collect();
                 if digits.len() < 7 {
-                    self.toast_error(
-                        "Enter the phone number with its country code, using digits only",
-                    );
+                    self.toast_error(crate::i18n::t(self.settings.language, "toast.pair_hint"));
                 } else {
                     self.backend.send(Command::PairWithPhone(digits));
                 }
@@ -2528,7 +2626,10 @@ impl App {
         }
         if let Some(error) = self.recording.as_ref().and_then(Recorder::failure) {
             self.recording = None;
-            self.toast_error(format!("Could not record: {error}"));
+            self.toast_error(crate::i18n::fill(
+                crate::i18n::t(self.settings.language, "toast.record_fail"),
+                &[("error", &error.to_string())],
+            ));
         }
         if self.player.is_playing() || self.recording.is_some() {
             self.waker.wake_after(Duration::from_millis(40));
@@ -2589,7 +2690,10 @@ impl App {
                     quoting,
                 });
             }
-            Err(error) => self.toast_error(format!("Could not record: {error}")),
+            Err(error) => self.toast_error(crate::i18n::fill(
+                crate::i18n::t(self.settings.language, "toast.record_fail"),
+                &[("error", &error.to_string())],
+            )),
         }
     }
 
@@ -3324,6 +3428,29 @@ mod tests {
     }
 
     #[test]
+    fn archived_chats_never_notify_or_badge_the_main_list() {
+        let mut app = app();
+        let mut archived = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        archived.archived = true;
+        archived.unread = 2;
+        let mut loud = Chat::new("2@s.whatsapp.net".into(), "Bob".into());
+        loud.unread = 1;
+        app.chats = vec![archived, loud];
+        // The main-list total and chips skip the archive.
+        assert_eq!(app.unread_total(), 1);
+        assert_eq!(app.unread_chats(ChatFilter::Unread), 1);
+        // Notifications skip archived chats, muted chats, backlogs, and
+        // the chat being read; anything else notifies.
+        let now = crate::util::now();
+        assert!(!App::should_notify(true, false, 2, now, now, false));
+        assert!(!App::should_notify(false, true, 1, now, now, false));
+        assert!(!App::should_notify(false, false, 0, now, now, false));
+        assert!(!App::should_notify(false, false, 1, now - 61, now, false));
+        assert!(!App::should_notify(false, false, 1, now, now, true));
+        assert!(App::should_notify(false, false, 1, now, now, false));
+    }
+
+    #[test]
     fn the_unread_filter_keeps_the_open_chat_after_it_is_read() {
         let mut app = app();
         let mut ada = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
@@ -3556,9 +3683,9 @@ mod tests {
         assert_eq!(app.display_name("1@s.whatsapp.net"), "Ada");
         assert_eq!(
             app.display_name("393331234567@s.whatsapp.net"),
-            "+39 333 123 456 7"
+            "+39 333 123 4567"
         );
-        assert_eq!(app.display_name("42@lid"), "Unknown");
+        assert_eq!(app.display_name("42@lid"), "Unsaved name");
         app.contacts.insert(
             "42@lid".into(),
             Contact {

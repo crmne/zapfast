@@ -4,6 +4,7 @@ use egui::{Align, CornerRadius, Frame, Layout, Margin, Stroke, Vec2};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
+use crate::i18n::{fill, t};
 use crate::model::{Action, Dialog};
 use crate::qr::Qr;
 use crate::theme::{self, Icon};
@@ -58,7 +59,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     theme::text(ui, "ZapFast", theme::bold(28.0), palette.text);
                     theme::text(
                         ui,
-                        "A native WhatsApp client.",
+                        t(app.settings.language, "login.tagline"),
                         theme::regular(14.5),
                         palette.secondary,
                     );
@@ -78,21 +79,29 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     match app.link.clone() {
         LinkStatus::Starting | LinkStatus::Connecting => {
-            busy(ui, palette.accent, "Connecting to WhatsApp…");
+            busy(
+                ui,
+                palette.accent,
+                t(app.settings.language, "login.connecting"),
+            );
         }
         LinkStatus::Connected | LinkStatus::Disconnected { .. } => {
-            busy(ui, palette.accent, "Linked. Waiting for your chats…");
+            busy(ui, palette.accent, t(app.settings.language, "login.linked"));
         }
         LinkStatus::LoggedOut => {
             theme::icon(ui, Icon::Smartphone, 28.0, palette.warning);
             theme::paragraph(
                 ui,
-                "This computer was unlinked from your phone. Requesting a new code.",
+                t(app.settings.language, "login.unlinked"),
                 theme::regular(14.0),
                 palette.text,
             );
             ui.add_space(8.0);
-            busy(ui, palette.accent, "Requesting a new code…");
+            busy(
+                ui,
+                palette.accent,
+                t(app.settings.language, "login.requesting"),
+            );
         }
         LinkStatus::Failed(message) => {
             theme::icon(ui, Icon::CircleAlert, 28.0, palette.danger);
@@ -105,7 +114,9 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                 .wrap(),
             );
             ui.add_space(12.0);
-            if theme::pill_button(ui, &palette, "Try again", true).clicked() {
+            if theme::pill_button(ui, &palette, t(app.settings.language, "login.retry"), true)
+                .clicked()
+            {
                 app.actions.push(Action::Reconnect);
             }
         }
@@ -120,19 +131,26 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                 busy(
                     ui,
                     palette.accent,
-                    &format!("Requesting a code for +{phone}…"),
+                    &fill(
+                        t(app.settings.language, "login.requesting_for"),
+                        &[("phone", &format!("+{phone}"))],
+                    ),
                 );
             } else if let Some(qr) = qr {
                 qr_view(app, ui, &qr);
             } else {
-                busy(ui, palette.accent, "Waiting for a code from WhatsApp…");
+                busy(
+                    ui,
+                    palette.accent,
+                    t(app.settings.language, "login.waiting_code"),
+                );
             }
         }
     }
     ui.add_space(18.0);
     theme::paragraph(
         ui,
-        "Unofficial client. Using it may be against WhatsApp's terms of service.",
+        t(app.settings.language, "login.unofficial"),
         theme::regular(11.5),
         palette.dim,
     );
@@ -156,7 +174,7 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
     let palette = app.palette;
     theme::text(
         ui,
-        "Link this computer",
+        t(app.settings.language, "login.link_title"),
         theme::semibold(16.0),
         palette.text,
     );
@@ -170,10 +188,11 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
         }
     }
     ui.add_space(4.0);
+    let lang = app.settings.language;
     let steps = [
-        "Open WhatsApp on your phone",
-        "Tap Menu or Settings, then Linked devices",
-        "Tap Link a device and point the phone at this code",
+        t(lang, "login.step1"),
+        t(lang, "login.step2"),
+        t(lang, "login.step3_qr"),
     ];
     for (index, step) in steps.iter().enumerate() {
         ui.horizontal(|ui| {
@@ -190,7 +209,7 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
     ui.add_space(10.0);
     if theme::link(
         ui,
-        "Link with phone number instead",
+        t(app.settings.language, "login.with_number"),
         theme::medium(13.0),
         palette.link,
     )
@@ -204,7 +223,7 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
     let palette = app.palette;
     theme::text(
         ui,
-        "Enter this code on your phone",
+        t(app.settings.language, "login.enter_code"),
         theme::semibold(16.0),
         palette.text,
     );
@@ -230,10 +249,11 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
             theme::text(ui, &shown, theme::bold(30.0), palette.text);
         });
     ui.add_space(8.0);
+    let lang = app.settings.language;
     let steps = [
-        "Open WhatsApp on your phone",
-        "Tap Menu or Settings, then Linked devices",
-        "Tap Link a device, then Link with phone number instead",
+        t(lang, "login.step1"),
+        t(lang, "login.step2"),
+        t(lang, "login.step3_phone"),
     ];
     for (index, step) in steps.iter().enumerate() {
         ui.horizontal(|ui| {
@@ -250,7 +270,15 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.add_space((ui.available_width() - 200.0).max(0.0) / 2.0);
-        if theme::soft_button(ui, &palette, Some(Icon::Copy), "Copy code", false).clicked() {
+        if theme::soft_button(
+            ui,
+            &palette,
+            Some(Icon::Copy),
+            t(app.settings.language, "login.copy_code"),
+            false,
+        )
+        .clicked()
+        {
             app.actions.push(Action::CopyText(code.to_owned()));
         }
     });

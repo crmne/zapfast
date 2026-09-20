@@ -3,6 +3,7 @@
 use egui::{Align, Frame, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
+use crate::i18n::t;
 use crate::model::{Action, Chat, ChatFilter, Contact, Dialog, Message, Page};
 use crate::theme::{self, Icon, Palette};
 
@@ -44,6 +45,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let palette = app.palette;
+    let lang = app.settings.language;
     Frame::new()
         .inner_margin(Margin {
             left: 14,
@@ -60,16 +62,24 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Back to chats",
+                        t(lang, "chats.back"),
                     )
                     .clicked()
                     {
                         app.show_archived = false;
                     }
-                    theme::text(ui, "Archived", theme::bold(20.0), palette.text);
+                    theme::text(
+                        ui,
+                        t(lang, "chats.archived"),
+                        theme::bold(20.0),
+                        palette.text,
+                    );
                 } else {
                     let me = app.me.clone().unwrap_or_default();
-                    let name = app.me_name.clone().unwrap_or_else(|| "You".to_owned());
+                    let name = app
+                        .me_name
+                        .clone()
+                        .unwrap_or_else(|| t(lang, "chats.you").to_owned());
                     let picture = app.avatar(&me);
                     let tooltip = match &app.me_about {
                         Some(about) => format!("{name}\n{about}"),
@@ -84,7 +94,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         app.actions.push(Action::Open(Page::Settings));
                     }
                     ui.add_space(2.0);
-                    theme::text(ui, "Chats", theme::bold(20.0), palette.text);
+                    theme::text(ui, t(lang, "chats.title"), theme::bold(20.0), palette.text);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -93,7 +103,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Settings (Ctrl+,)",
+                        t(lang, "chats.settings"),
                     )
                     .clicked()
                     {
@@ -105,7 +115,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "New contact",
+                        t(lang, "chats.new_contact"),
                     )
                     .clicked()
                     {
@@ -118,7 +128,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Hide the chat list (Ctrl+B)",
+                        t(lang, "chats.hide"),
                     )
                     .clicked()
                     {
@@ -130,7 +140,15 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             let id = egui::Id::new("chat-search");
             let width = ui.available_width();
             let mut text = app.search.clone();
-            let response = widgets::search_field(ui, &palette, id, &mut text, "Search", width);
+            let response = widgets::search_field(
+                ui,
+                &palette,
+                lang,
+                id,
+                &mut text,
+                t(lang, "chats.search"),
+                width,
+            );
             if text != app.search {
                 app.actions.push(Action::Search(text));
             }
@@ -144,6 +162,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
 
 fn macos_header(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    let lang = app.settings.language;
     let inset = theme::traffic_light_inset(ui.ctx());
     let mut drag = ui.max_rect();
     drag.min.x += inset;
@@ -162,15 +181,20 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Back to chats",
+                        t(lang, "chats.back"),
                     )
                     .clicked()
                     {
                         app.show_archived = false;
                     }
-                    theme::text(ui, "Archived", theme::bold(16.0), palette.text);
+                    theme::text(
+                        ui,
+                        t(lang, "chats.archived"),
+                        theme::bold(16.0),
+                        palette.text,
+                    );
                 } else {
-                    theme::text(ui, "Chats", theme::bold(20.0), palette.text);
+                    theme::text(ui, t(lang, "chats.title"), theme::bold(20.0), palette.text);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -179,7 +203,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "New contact (⌘N)",
+                        t(lang, "chats.new_contact_mac"),
                     )
                     .clicked()
                     {
@@ -191,7 +215,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Hide the chat list (⌘B)",
+                        t(lang, "chats.hide_mac"),
                     )
                     .clicked()
                     {
@@ -204,9 +228,10 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             let response = widgets::search_field(
                 ui,
                 &palette,
+                lang,
                 egui::Id::new("chat-search"),
                 &mut text,
-                "Search",
+                t(lang, "chats.search"),
                 ui.available_width(),
             );
             if text != app.search {
@@ -237,6 +262,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let palette = app.palette;
+    let lang = app.settings.language;
     ui.add_space(8.0);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
@@ -246,7 +272,8 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                 _ => app.unread_chats(filter),
             };
             let selected = app.chat_filter == filter;
-            let chip = widgets::filter_chip(ui, &palette, filter.label(), count, selected);
+            let chip =
+                widgets::filter_chip(ui, &palette, lang, filter.label_in(lang), count, selected);
             // Store the chip rect for interaction tests.
             ui.ctx()
                 .data_mut(|data| data.insert_temp(filter_chip_id(filter), chip.rect));
@@ -261,6 +288,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
 
 fn list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    let lang = app.settings.language;
     if !app.search.trim().is_empty() {
         results(app, ui);
         return;
@@ -270,21 +298,24 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     let show_archive_row = !app.show_archived && archived > 0 && app.chat_filter == ChatFilter::All;
     if chats.is_empty() && !show_archive_row {
         let (title, body) = if app.show_archived {
-            ("Nothing archived", "Archived chats appear here.")
+            (
+                t(lang, "chats.empty.archived.title"),
+                t(lang, "chats.empty.archived.body"),
+            )
         } else if app.chat_filter != ChatFilter::All {
             let title = match app.chat_filter {
-                ChatFilter::Unread => "No unread chats",
-                ChatFilter::Private => "No private chats",
-                _ => "No groups",
+                ChatFilter::Unread => t(lang, "chats.empty.unread"),
+                ChatFilter::Private => t(lang, "chats.empty.private"),
+                _ => t(lang, "chats.empty.groups"),
             };
-            (title, "Choose All to see every chat.")
+            (title, t(lang, "chats.empty.filtered"))
         } else if app.syncing {
-            ("Loading your chats", "Receiving history from your phone.")
-        } else {
             (
-                "No chats yet",
-                "New chats appear here. You can start one from your phone.",
+                t(lang, "chats.empty.loading.title"),
+                t(lang, "chats.empty.loading.body"),
             )
+        } else {
+            (t(lang, "chats.empty.title"), t(lang, "chats.empty.body"))
         };
         widgets::empty_state(ui, &palette, Icon::MessageCircle, title, body);
         return;
@@ -359,6 +390,7 @@ fn row_scroll_offset(
 /// Search results grouped into chats, messages, and contacts.
 fn results(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    let lang = app.settings.language;
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
     let hits: Vec<Message> = app.search_hits.clone();
     let contacts: Vec<Contact> = app.matching_contacts().into_iter().cloned().collect();
@@ -367,8 +399,8 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
             ui,
             &palette,
             Icon::Search,
-            "No results",
-            "Try another name, number, or message text.",
+            t(lang, "chats.no_results.title"),
+            t(lang, "chats.no_results.body"),
         );
         return;
     }
@@ -377,7 +409,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if !chats.is_empty() {
-                section(ui, &palette, "Chats");
+                section(ui, &palette, t(lang, "search.chats"));
                 for chat in &chats {
                     let reveal = app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
                     let response = ui
@@ -390,13 +422,13 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
             if !hits.is_empty() {
-                section(ui, &palette, "Messages");
+                section(ui, &palette, t(lang, "search.messages"));
                 for hit in &hits {
                     ui.push_id(("hit", &hit.chat, &hit.id), |ui| hit_row(app, ui, hit));
                 }
             }
             if !contacts.is_empty() {
-                section(ui, &palette, "Contacts");
+                section(ui, &palette, t(lang, "search.contacts"));
                 for contact in &contacts {
                     ui.push_id(("contact", &contact.id), |ui| contact_row(app, ui, contact));
                 }
@@ -448,7 +480,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;
         let stamp_galley = ui.painter().layout_no_wrap(
-            crate::util::chat_stamp(hit.timestamp),
+            crate::util::chat_stamp_in(hit.timestamp, app.settings.language),
             theme::regular(11.5),
             palette.dim,
         );
@@ -467,7 +499,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         if hit.from_me {
             let who = widgets::line(
                 ui,
-                "You: ",
+                &format!("{}: ", t(app.settings.language, "person.you")),
                 theme::regular(13.0),
                 palette.dim,
                 (right - x) * 0.5,
@@ -491,7 +523,10 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         }
         let words = widgets::line(
             ui,
-            &crate::markup::plain(&app.resolve_mention_tokens(&hit.summary()), &[]),
+            &crate::markup::plain(
+                &app.resolve_mention_tokens(&hit.content.summary_in(app.settings.language)),
+                &[],
+            ),
             theme::regular(13.0),
             palette.dim,
             (right - x).max(0.0),
@@ -593,7 +628,7 @@ fn archive_row(app: &mut App, ui: &mut egui::Ui, count: usize) {
         ui.painter().text(
             pos2(rect.left() + 76.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            "Archived",
+            t(app.settings.language, "chats.archived"),
             theme::medium(14.5),
             palette.text,
         );
@@ -652,7 +687,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;
         let stamp = if chat.last_activity > 0 {
-            crate::util::chat_stamp(chat.last_activity)
+            crate::util::chat_stamp_in(chat.last_activity, app.settings.language)
         } else {
             String::new()
         };
@@ -751,7 +786,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             }
             widgets::line(
                 ui,
-                &crate::markup::plain(&app.resolve_mention_tokens(&last.summary), &[]),
+                &crate::markup::plain(&app.resolve_mention_tokens(&app.last_preview(last)), &[]),
                 theme::regular(13.0),
                 preview_color,
                 (badge_right - x).max(0.0),
@@ -782,14 +817,26 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
 }
 
 fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette) {
-    if chat.unread > 0 && widgets::menu_item(ui, palette, Some(Icon::CheckCheck), "Mark as read") {
+    let lang = app.settings.language;
+    if chat.unread > 0
+        && widgets::menu_item(
+            ui,
+            palette,
+            Some(Icon::CheckCheck),
+            t(lang, "menu.mark_read"),
+        )
+    {
         app.actions.push(Action::MarkRead(chat.id.clone()));
     }
     if widgets::menu_item(
         ui,
         palette,
         Some(if chat.pinned { Icon::PinOff } else { Icon::Pin }),
-        if chat.pinned { "Unpin" } else { "Pin to top" },
+        if chat.pinned {
+            t(lang, "menu.unpin")
+        } else {
+            t(lang, "menu.pin")
+        },
     ) {
         app.actions
             .push(Action::SetPinned(chat.id.clone(), !chat.pinned));
@@ -799,9 +846,9 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         palette,
         Some(Icon::Archive),
         if chat.archived {
-            "Unarchive"
+            t(lang, "menu.unarchive")
         } else {
-            "Archive"
+            t(lang, "menu.archive")
         },
     ) {
         app.actions
@@ -809,14 +856,14 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
     }
     let now = crate::util::now();
     if chat.muted(now) {
-        if widgets::menu_item(ui, palette, Some(Icon::Bell), "Unmute") {
+        if widgets::menu_item(ui, palette, Some(Icon::Bell), t(lang, "menu.unmute")) {
             app.actions.push(Action::SetMuted(chat.id.clone(), None));
         }
     } else {
         for (label, until) in [
-            ("Mute for 8 hours", Some(now + 8 * 3600)),
-            ("Mute for a week", Some(now + 7 * 86_400)),
-            ("Mute indefinitely", Some(0)),
+            (t(lang, "menu.mute.8h"), Some(now + 8 * 3600)),
+            (t(lang, "menu.mute.week"), Some(now + 7 * 86_400)),
+            (t(lang, "menu.mute.forever"), Some(0)),
         ] {
             if widgets::menu_item(ui, palette, Some(Icon::BellOff), label) {
                 app.actions.push(Action::SetMuted(chat.id.clone(), until));
@@ -825,11 +872,11 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
     }
     widgets::menu_separator(ui, palette);
     if let Some(phone) = chat.phone()
-        && widgets::menu_item(ui, palette, Some(Icon::Copy), "Copy number")
+        && widgets::menu_item(ui, palette, Some(Icon::Copy), t(lang, "menu.copy_number"))
     {
         app.actions.push(Action::CopyText(format!("+{phone}")));
     }
-    if widgets::menu_item(ui, palette, Some(Icon::Info), "Info") {
+    if widgets::menu_item(ui, palette, Some(Icon::Info), t(lang, "menu.info")) {
         app.actions
             .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
     }

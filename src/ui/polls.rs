@@ -2,6 +2,7 @@
 
 use super::widgets;
 use crate::app::App;
+use crate::i18n::{fill, t};
 use crate::model::{Action, Content, Message, PollState};
 use crate::theme::{self, Icon, Palette};
 use egui::{Align, Layout, Sense, Stroke, pos2, vec2};
@@ -10,10 +11,22 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
     let palette = app.palette;
     ui.horizontal(|ui| {
         theme::icon(ui, Icon::ListChecks, 20.0, palette.accent);
-        theme::text(ui, "Create poll", theme::bold(18.0), palette.text);
+        theme::text(
+            ui,
+            t(app.settings.language, "poll.create"),
+            theme::bold(18.0),
+            palette.text,
+        );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if theme::icon_button(ui, Icon::X, 16.0, palette.secondary, palette.text, "Close")
-                .clicked()
+            if theme::icon_button(
+                ui,
+                Icon::X,
+                16.0,
+                palette.secondary,
+                palette.text,
+                t(app.settings.language, "poll.close"),
+            )
+            .clicked()
             {
                 app.actions.push(Action::CloseDialog);
             }
@@ -21,17 +34,27 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
     });
     ui.add_space(8.0);
     ui.add_enabled_ui(!app.poll_creating, |ui| {
-        theme::text(ui, "Question", theme::medium(13.5), palette.secondary);
+        theme::text(
+            ui,
+            t(app.settings.language, "poll.question"),
+            theme::medium(13.5),
+            palette.secondary,
+        );
         ui.add(
             egui::TextEdit::singleline(&mut app.poll_draft.question)
                 .id_salt("poll-question")
-                .hint_text("Ask a question")
+                .hint_text(t(app.settings.language, "poll.ask_hint"))
                 .char_limit(255)
                 .font(theme::regular(14.0))
                 .desired_width(f32::INFINITY),
         );
         ui.add_space(8.0);
-        theme::text(ui, "Answers", theme::medium(13.5), palette.secondary);
+        theme::text(
+            ui,
+            t(app.settings.language, "poll.answers"),
+            theme::medium(13.5),
+            palette.secondary,
+        );
         let height = (ui.ctx().content_rect().height() - 320.0).clamp(90.0, 330.0);
         let mut remove = None;
         let removable = app.poll_draft.options.len() > 2;
@@ -45,7 +68,10 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
                         ui.add(
                             egui::TextEdit::singleline(answer)
                                 .id_salt(("poll-answer", index))
-                                .hint_text(format!("Answer {}", index + 1))
+                                .hint_text(fill(
+                                    t(app.settings.language, "poll.answer_hint"),
+                                    &[("n", &(index + 1).to_string())],
+                                ))
                                 .char_limit(100)
                                 .font(theme::regular(14.0))
                                 .desired_width(width),
@@ -57,7 +83,7 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
                                 14.0,
                                 palette.dim,
                                 palette.text,
-                                "Remove answer",
+                                t(app.settings.language, "poll.remove_answer"),
                             )
                             .clicked()
                         {
@@ -70,7 +96,14 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             app.poll_draft.options.remove(index);
         }
         if app.poll_draft.options.len() < 12
-            && theme::soft_button(ui, &palette, Some(Icon::Plus), "Add answer", false).clicked()
+            && theme::soft_button(
+                ui,
+                &palette,
+                Some(Icon::Plus),
+                t(app.settings.language, "poll.add_answer"),
+                false,
+            )
+            .clicked()
         {
             app.poll_draft.options.push(String::new());
         }
@@ -79,7 +112,7 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             widgets::switch(ui, &palette, &mut app.poll_draft.multiple);
             theme::text(
                 ui,
-                "Allow multiple answers",
+                t(app.settings.language, "poll.multiple"),
                 theme::regular(13.5),
                 palette.text,
             );
@@ -88,10 +121,23 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
     ui.add_space(8.0);
     let valid = app.poll_draft.validated();
     if let Err(error) = valid.as_ref() {
-        theme::text(ui, *error, theme::regular(12.0), palette.dim);
+        theme::text(
+            ui,
+            t(app.settings.language, error),
+            theme::regular(12.0),
+            palette.dim,
+        );
     }
     ui.horizontal(|ui| {
-        if theme::soft_button(ui, &palette, None, "Cancel", false).clicked() {
+        if theme::soft_button(
+            ui,
+            &palette,
+            None,
+            t(app.settings.language, "poll.cancel"),
+            false,
+        )
+        .clicked()
+        {
             app.actions.push(Action::CloseDialog);
         }
         ui.add_enabled_ui(
@@ -101,9 +147,9 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
                     ui,
                     &palette,
                     if app.poll_creating {
-                        "Sending…"
+                        t(app.settings.language, "poll.sending")
                     } else {
-                        "Send poll"
+                        t(app.settings.language, "poll.send")
                     },
                     true,
                 )
@@ -119,9 +165,11 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn ballot(
     ui: &mut egui::Ui,
     palette: &Palette,
+    lang: crate::i18n::Language,
     message: &Message,
     width: f32,
     enabled: bool,
@@ -154,9 +202,9 @@ pub fn ballot(
             theme::text(
                 ui,
                 if state.selectable == 1 {
-                    "Select one answer"
+                    t(lang, "poll.select_one")
                 } else {
-                    "Select answers"
+                    t(lang, "poll.select_many")
                 },
                 theme::regular(11.5),
                 palette.secondary,
@@ -232,18 +280,22 @@ pub fn ballot(
                 }
             }
             let detail = if pending {
-                "Sending vote…".to_owned()
+                t(lang, "poll.sending_vote").to_owned()
             } else if state.refresh_failed {
-                "Waiting for your phone · earlier votes may be missing".into()
+                t(lang, "poll.waiting_phone").into()
             } else if state.refreshing && !state.history_complete {
-                "Loading earlier votes from your phone…".into()
+                t(lang, "poll.loading_votes").into()
             } else if !state.history_complete {
-                "Earlier votes have not been loaded yet".into()
+                t(lang, "poll.votes_missing").into()
             } else {
                 format!(
                     "{} {}",
                     state.voters,
-                    if state.voters == 1 { "voter" } else { "voters" }
+                    if state.voters == 1 {
+                        t(lang, "poll.voter_one")
+                    } else {
+                        t(lang, "poll.voter_many")
+                    }
                 )
             };
             let line = widgets::line(
@@ -261,12 +313,17 @@ pub fn ballot(
             if !state.can_vote {
                 widgets::rich_text(
                     ui,
-                    "Voting key unavailable · use your phone",
+                    t(lang, "poll.no_key"),
                     theme::regular(11.0),
                     palette.dim,
                 );
             } else if !enabled {
-                theme::text(ui, "Reconnect to vote", theme::regular(11.0), palette.dim);
+                theme::text(
+                    ui,
+                    t(lang, "poll.reconnect"),
+                    theme::regular(11.0),
+                    palette.dim,
+                );
             }
         });
     if enabled
@@ -318,7 +375,16 @@ mod tests {
         };
         let mut actions = Vec::new();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            ballot(ui, &Palette::dark(), &row, 320.0, true, false, &mut actions)
+            ballot(
+                ui,
+                &Palette::dark(),
+                crate::i18n::Language::English,
+                &row,
+                320.0,
+                true,
+                false,
+                &mut actions,
+            )
         });
         output.textures_delta.clear();
         assert!(
@@ -332,7 +398,16 @@ mod tests {
         state.refreshing = true;
         actions.clear();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            ballot(ui, &Palette::dark(), &row, 320.0, true, false, &mut actions)
+            ballot(
+                ui,
+                &Palette::dark(),
+                crate::i18n::Language::English,
+                &row,
+                320.0,
+                true,
+                false,
+                &mut actions,
+            )
         });
         output.textures_delta.clear();
         assert!(

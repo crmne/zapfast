@@ -116,23 +116,20 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
 
 /// Shortcuts shown in the help dialog.
 pub const SHORTCUTS: &[(&str, &str)] = &[
-    ("Ctrl+F / Ctrl+K", "Search chats"),
-    ("Ctrl+L", "Focus the message input"),
-    ("Alt+↑ / Alt+↓", "Previous / next chat"),
-    ("Enter", "Send (Shift+Enter for a new line)"),
-    (
-        "Escape",
-        "Dismiss the current action, return from search, or close the chat",
-    ),
-    ("Ctrl+V", "Paste text, or send a picture from the clipboard"),
-    ("Ctrl+B", "Show or hide the chat list"),
-    ("Ctrl+End", "Jump to the newest message"),
-    ("Ctrl+,", "Settings"),
-    ("Ctrl++ / Ctrl+-", "Zoom in / out"),
-    ("Ctrl+0", "Reset zoom"),
-    ("Ctrl+/", "This list"),
-    ("Ctrl+W", "Close the window (ZapFast remains in the tray)"),
-    ("Ctrl+Q", "Quit"),
+    ("Ctrl+F / Ctrl+K", "shortcut.search"),
+    ("Ctrl+L", "shortcut.focus_input"),
+    ("Alt+↑ / Alt+↓", "shortcut.prev_next"),
+    ("Enter", "shortcut.send"),
+    ("Escape", "shortcut.escape"),
+    ("Ctrl+V", "shortcut.paste"),
+    ("Ctrl+B", "shortcut.sidebar"),
+    ("Ctrl+End", "shortcut.bottom"),
+    ("Ctrl+,", "shortcut.settings"),
+    ("Ctrl++ / Ctrl+-", "shortcut.zoom"),
+    ("Ctrl+0", "shortcut.zoom_reset"),
+    ("Ctrl+/", "shortcut.list"),
+    ("Ctrl+W", "shortcut.close_window"),
+    ("Ctrl+Q", "shortcut.quit"),
 ];
 
 /// Uses Command and Option labels on macOS.

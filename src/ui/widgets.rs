@@ -337,6 +337,7 @@ pub fn empty_state(ui: &mut Ui, palette: &Palette, icon: Icon, title: &str, body
 pub fn search_field(
     ui: &mut Ui,
     palette: &Palette,
+    lang: crate::i18n::Language,
     id: egui::Id,
     text: &mut String,
     hint: &str,
@@ -403,7 +404,7 @@ pub fn search_field(
             15.0,
             palette.secondary,
             palette.text,
-            "Clear",
+            crate::i18n::t(lang, "widgets.clear"),
         )
         .clicked()
         {
@@ -503,6 +504,7 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
 pub fn filter_chip(
     ui: &mut Ui,
     palette: &Palette,
+    lang: crate::i18n::Language,
     label: &str,
     count: usize,
     selected: bool,
@@ -546,7 +548,10 @@ pub fn filter_chip(
     }
     response.widget_info(|| {
         let label = if count > 0 {
-            format!("{label}, {count} unread")
+            crate::i18n::fill(
+                crate::i18n::t(lang, "widgets.unread"),
+                &[("label", label), ("count", &count.to_string())],
+            )
         } else {
             label.to_owned()
         };

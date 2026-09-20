@@ -74,6 +74,8 @@ unicode-segmentation = "1"
 icu_properties = "2.3"
 # Canonical decomposition for accent-insensitive chat/contact search.
 icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
+# Phone-number parsing and international formatting (WhatsApp Web style).
+phonenumber = "0.3"
 # Opens downloaded attachments in their default desktop apps.
 open = "5"
 # File picker, clipboard images, and MIME detection for attachments. Clipboard

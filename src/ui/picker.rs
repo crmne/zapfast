@@ -9,6 +9,7 @@ use egui::{
 };
 
 use crate::app::App;
+use crate::i18n::t;
 use crate::model::{Action, PickerTab};
 use crate::theme::{self, Icon, Palette};
 
@@ -100,10 +101,15 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 
 fn tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette, current: PickerTab) {
     ui.horizontal(|ui| {
+        let lang = app.settings.language;
         let entries = [
-            (PickerTab::Emoji, Icon::Smile, "Emoji"),
-            (PickerTab::Gifs, Icon::Gif, "GIF"),
-            (PickerTab::Stickers, Icon::Sticker, "Stickers"),
+            (PickerTab::Emoji, Icon::Smile, t(lang, "picker.emoji")),
+            (PickerTab::Gifs, Icon::Gif, t(lang, "picker.gifs")),
+            (
+                PickerTab::Stickers,
+                Icon::Sticker,
+                t(lang, "picker.stickers"),
+            ),
         ];
         let spacing = ui.spacing().item_spacing.x;
         let total = entries
@@ -125,15 +131,37 @@ fn tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette, current: PickerTab)
 fn search_box(
     ui: &mut egui::Ui,
     palette: &Palette,
+    lang: crate::i18n::Language,
     id: &str,
     text: &mut String,
     hint: &str,
 ) -> egui::Response {
     let width = ui.available_width();
-    widgets::search_field(ui, palette, egui::Id::new(id), text, hint, width)
+    widgets::search_field(ui, palette, lang, egui::Id::new(id), text, hint, width)
 }
 
 // --- emoji ---------------------------------------------------------------
+
+/// Display name of an emoji group. Storage, jumps, and tests keep the
+/// English names; only painting translates.
+fn header_display(lang: crate::i18n::Language, label: &str) -> &str {
+    let key = match label {
+        "Frequently Used" => "emoji.frequent",
+        "Recent" => "picker.recent",
+        "Nothing matches" => "emoji.no_match",
+        "Smileys & Emotion" => "emoji.group.smileys",
+        "People & Body" => "emoji.group.people",
+        "Animals & Nature" => "emoji.group.animals",
+        "Food & Drink" => "emoji.group.food",
+        "Travel & Places" => "emoji.group.travel",
+        "Activities" => "emoji.group.activities",
+        "Objects" => "emoji.group.objects",
+        "Symbols" => "emoji.group.symbols",
+        "Flags" => "emoji.group.flags",
+        _ => return label,
+    };
+    crate::i18n::t(lang, key)
+}
 
 fn group_name(group: emojis::Group) -> &'static str {
     match group {
@@ -448,7 +476,7 @@ fn category_tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 }
                 if response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text(label)
+                    .on_hover_text(header_display(app.settings.language, label))
                     .clicked()
                 {
                     app.picker_search.clear();
@@ -496,7 +524,14 @@ fn emoji_grid(
         .flatten();
     let submit = search_active && take_plain_key(ui, Key::Enter);
     let mut search = app.picker_search.clone();
-    let response = search_box(ui, palette, search_id, &mut search, "Search emoji");
+    let response = search_box(
+        ui,
+        palette,
+        app.settings.language,
+        search_id,
+        &mut search,
+        t(app.settings.language, "emoji.search"),
+    );
     let query_changed = search != app.picker_search;
     if query_changed {
         app.picker_search = search;
@@ -603,7 +638,7 @@ fn emoji_grid(
                     ui.painter().text(
                         pos2(rect.left() + 4.0, rect.bottom() - 8.0),
                         Align2::LEFT_BOTTOM,
-                        *label,
+                        header_display(app.settings.language, label),
                         theme::semibold(12.5),
                         palette.secondary,
                     );
@@ -777,6 +812,7 @@ mod emoji_tests {
 // --- GIFs ---------------------------------------------------------------
 
 fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    let lang = app.settings.language;
     // Ask for a key when none is set or GIPHY rejects it.
     let bad_key = app.gif_error.as_ref().is_some_and(|error| error.bad_key);
     if app.settings.effective_giphy_key().is_none() || bad_key {
@@ -788,9 +824,9 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         theme::paragraph(
             ui,
             if bad_key {
-                "This GIPHY API key was rejected. Create a free key at developers.giphy.com and paste it here. It is saved in your settings."
+                t(lang, "picker.gif_key_rejected")
             } else {
-                "GIF search needs a GIPHY API key. Create a free key at developers.giphy.com and paste it here. It is saved in your settings."
+                t(lang, "picker.gif_key_missing")
             },
             theme::regular(13.0),
             palette.text,
@@ -816,7 +852,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut app.settings.giphy_key)
                         .hint_text(
-                            egui::RichText::new("GIPHY API key")
+                            egui::RichText::new(t(lang, "picker.gif_key_hint"))
                                 .color(palette.dim)
                                 .font(theme::regular(13.5)),
                         )
@@ -840,9 +876,10 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     search_box(
         ui,
         palette,
+        lang,
         "gif-search",
         &mut query,
-        "Search GIFs via GIPHY",
+        t(lang, "picker.gif_search"),
     );
     if query != app.picker_search {
         app.picker_search = query.clone();
@@ -853,7 +890,12 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if app.gif_pending {
         ui.horizontal(|ui| {
             theme::spinner(ui, 16.0, palette.accent);
-            theme::text(ui, "Searching…", theme::regular(12.5), palette.secondary);
+            theme::text(
+                ui,
+                t(lang, "picker.searching"),
+                theme::regular(12.5),
+                palette.secondary,
+            );
         });
     } else if let Some(error) = &app.gif_error {
         theme::paragraph(ui, &error.message, theme::regular(13.0), palette.danger);
@@ -906,7 +948,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 ui.vertical_centered(|ui| {
                     theme::text(
                         ui,
-                        "Search for a GIF or browse trending results.",
+                        t(lang, "picker.gif_empty"),
                         theme::regular(13.0),
                         palette.secondary,
                     );
@@ -929,6 +971,7 @@ struct StickerChoices {
 }
 
 fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    let lang = app.settings.language;
     import_row(app, ui, palette);
     ui.add_space(4.0);
     if app.stickers.is_empty() && app.stickers_saved.is_empty() && app.sticker_packs.is_empty() {
@@ -937,9 +980,9 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             theme::paragraph(
                 ui,
                 if app.stickers_pending {
-                    "Loading your stickers…"
+                    t(lang, "picker.stickers_loading")
                 } else {
-                    "Recent stickers appear here. Right-click one to save it. To import a pack, paste a signal.art link or open a .wastickers file."
+                    t(lang, "picker.stickers_empty")
                 },
                 theme::regular(13.0),
                 palette.secondary,
@@ -957,8 +1000,13 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if !saved.is_empty() {
-                theme::text(ui, "Saved", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &saved, true, &mut choices);
+                theme::text(
+                    ui,
+                    t(lang, "picker.saved"),
+                    theme::semibold(12.5),
+                    palette.secondary,
+                );
+                sticker_grid(ui, palette, lang, &saved, true, &mut choices);
                 ui.add_space(8.0);
             }
             for pack in &packs {
@@ -971,7 +1019,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                             14.0,
                             palette.dim,
                             palette.danger,
-                            "Remove this pack",
+                            t(lang, "picker.remove_pack"),
                         )
                         .clicked()
                         {
@@ -979,12 +1027,17 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         }
                     });
                 });
-                sticker_grid(ui, palette, &pack.stickers, false, &mut choices);
+                sticker_grid(ui, palette, lang, &pack.stickers, false, &mut choices);
                 ui.add_space(8.0);
             }
             if !recent.is_empty() {
-                theme::text(ui, "Recent", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &recent, false, &mut choices);
+                theme::text(
+                    ui,
+                    t(lang, "picker.recent"),
+                    theme::semibold(12.5),
+                    palette.secondary,
+                );
+                sticker_grid(ui, palette, lang, &recent, false, &mut choices);
             }
         });
     if let Some(path) = choices.send {
@@ -1003,10 +1056,11 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 
 /// Imports packs from pasted signal.art links or .wastickers files.
 fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    let lang = app.settings.language;
     ui.horizontal(|ui| {
         let spacing = ui.spacing().item_spacing.x;
-        let buttons = theme::soft_button_width(ui, "Find packs", true)
-            + theme::soft_button_width(ui, "Open file", true)
+        let buttons = theme::soft_button_width(ui, t(lang, "picker.find_packs"), true)
+            + theme::soft_button_width(ui, t(lang, "picker.open_file"), true)
             + spacing * 2.0;
         let field = Frame::new()
             .fill(palette.surface)
@@ -1017,7 +1071,7 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     egui::TextEdit::singleline(&mut app.sticker_link)
                         .id(egui::Id::new("sticker-link"))
                         .hint_text(
-                            egui::RichText::new("Paste a signal.art link")
+                            egui::RichText::new(t(lang, "picker.signal_hint"))
                                 .color(palette.dim)
                                 .font(theme::regular(13.0)),
                         )
@@ -1038,14 +1092,28 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 .push(Action::ImportStickerUrl(app.sticker_link.trim().to_owned()));
         }
         // Open the gallery where users can copy signal.art pack links.
-        if theme::soft_button(ui, palette, Some(Icon::ExternalLink), "Find packs", false)
-            .on_hover_text("Browse signalstickers.org")
-            .clicked()
+        if theme::soft_button(
+            ui,
+            palette,
+            Some(Icon::ExternalLink),
+            t(lang, "picker.find_packs"),
+            false,
+        )
+        .on_hover_text(t(lang, "picker.browse_packs"))
+        .clicked()
         {
             app.actions
                 .push(Action::OpenUrl("https://signalstickers.org/".to_owned()));
         }
-        if theme::soft_button(ui, palette, Some(Icon::FileText), "Open file", false).clicked() {
+        if theme::soft_button(
+            ui,
+            palette,
+            Some(Icon::FileText),
+            t(lang, "picker.open_file"),
+            false,
+        )
+        .clicked()
+        {
             app.actions.push(Action::PickStickerArchive);
         }
     });
@@ -1055,7 +1123,7 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             theme::spinner(ui, 14.0, palette.accent);
             theme::text(
                 ui,
-                "Importing the pack…",
+                t(lang, "picker.importing"),
                 theme::regular(12.5),
                 palette.secondary,
             );
@@ -1067,6 +1135,7 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 fn sticker_grid(
     ui: &mut egui::Ui,
     palette: &Palette,
+    lang: crate::i18n::Language,
     stickers: &[std::path::PathBuf],
     saved: bool,
     choices: &mut StickerChoices,
@@ -1075,7 +1144,7 @@ fn sticker_grid(
     let gap = 6.0;
     let cell = (ui.available_width() - gap * (columns as f32 - 1.0)) / columns as f32;
     ui.spacing_mut().item_spacing = vec2(gap, gap);
-    let menu_width = widgets::menu_width(ui, &["Remove from saved"], true);
+    let menu_width = widgets::menu_width(ui, &[t(lang, "picker.unsave")], true);
     for row in stickers.chunks(columns) {
         ui.horizontal(|ui| {
             for path in row {
@@ -1112,14 +1181,19 @@ fn sticker_grid(
                     .frame(widgets::menu_frame(palette))
                     .show(|ui| {
                         if saved {
-                            if widgets::menu_item(ui, palette, Some(Icon::X), "Remove from saved") {
+                            if widgets::menu_item(
+                                ui,
+                                palette,
+                                Some(Icon::X),
+                                t(lang, "picker.unsave"),
+                            ) {
                                 choices.forget = Some(path.clone());
                             }
                         } else if widgets::menu_item(
                             ui,
                             palette,
                             Some(Icon::Sticker),
-                            "Save sticker",
+                            t(lang, "picker.save"),
                         ) {
                             choices.save = Some(path.clone());
                         }

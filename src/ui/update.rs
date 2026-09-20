@@ -1,6 +1,7 @@
 use egui::{Align, CornerRadius, Frame, Layout, Margin, RichText, Stroke};
 
 use crate::app::App;
+use crate::i18n::t;
 use crate::model::Action;
 use crate::theme::{self, Icon};
 use crate::updates::DownloadState;
@@ -26,7 +27,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             spread: 0,
             color: palette.shadow,
         });
-    egui::Window::new("Update ZapFast")
+    egui::Window::new(t(app.settings.language, "update.title"))
         .id(egui::Id::new("zapfast-update"))
         .title_bar(false)
         .resizable(false)
@@ -37,7 +38,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.set_width(420.0_f32.min((ctx.content_rect().width() - 64.0).max(240.0)));
             ui.horizontal(|ui| {
-                theme::text(ui, "Update ZapFast", theme::bold(20.0), palette.text);
+                theme::text(
+                    ui,
+                    t(app.settings.language, "update.title"),
+                    theme::bold(20.0),
+                    palette.text,
+                );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     close |= theme::icon_button(
                         ui,
@@ -45,7 +51,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Close update",
+                        t(app.settings.language, "update.close"),
                     )
                     .clicked();
                 });
@@ -59,16 +65,17 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             );
             ui.add_space(20.0);
             let mut action = None;
-            let mut release_link = "Release notes";
+            let lang = app.settings.language;
+            let mut release_link = t(lang, "update.notes");
             match &app.update_download {
                 DownloadState::Downloading { received, total } => {
                     let checking = *total > 0 && received == total;
                     theme::text(
                         ui,
                         if checking {
-                            "Checking download…"
+                            t(lang, "update.checking")
                         } else {
-                            "Downloading update…"
+                            t(lang, "update.downloading")
                         },
                         theme::medium(14.0),
                         palette.text,
@@ -96,26 +103,29 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     }
                 }
                 DownloadState::Ready(_) => {
-                    theme::text(ui, "Ready to install", theme::semibold(14.0), palette.text);
+                    theme::text(
+                        ui,
+                        t(lang, "update.ready"),
+                        theme::semibold(14.0),
+                        palette.text,
+                    );
                     ui.add_space(6.0);
                     ui.add(
                         egui::Label::new(
-                            RichText::new(
-                                "Finish any unsent messages or recordings before restarting. ZapFast will briefly disconnect, then reconnect automatically.",
-                            )
-                            .font(theme::regular(14.0))
-                            .color(palette.secondary),
+                            RichText::new(t(lang, "update.restart_note"))
+                                .font(theme::regular(14.0))
+                                .color(palette.secondary),
                         )
                         .wrap(),
                     );
-                    action = Some(("Restart to update", Action::InstallUpdate));
+                    action = Some((t(lang, "update.restart"), Action::InstallUpdate));
                 }
                 DownloadState::Installing => {
                     ui.horizontal(|ui| {
                         theme::spinner(ui, 16.0, palette.accent);
                         theme::text(
                             ui,
-                            "Preparing to restart…",
+                            t(lang, "update.preparing"),
                             theme::regular(14.0),
                             palette.text,
                         );
@@ -132,14 +142,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         }
                         Some(Err(reason)) => {
                             message(ui, reason, palette.secondary);
-                            release_link = "Download from GitHub";
+                            release_link = t(lang, "update.download_github");
                         }
                         Some(Ok(_)) => {
                             action = Some((
                                 if matches!(app.update_download, DownloadState::Failed(_)) {
-                                    "Retry download"
+                                    t(lang, "update.retry")
                                 } else {
-                                    "Download update"
+                                    t(lang, "update.download")
                                 },
                                 Action::DownloadUpdate,
                             ));

@@ -76,7 +76,10 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
                         theme::icon(ui, Icon::Paperclip, 28.0, palette.accent);
                         theme::text(
                             ui,
-                            format!("Drop to send to {name}"),
+                            crate::i18n::fill(
+                                crate::i18n::t(app.settings.language, "banner.drop"),
+                                &[("name", &name)],
+                            ),
                             theme::semibold(15.0),
                             palette.text,
                         );
@@ -90,21 +93,30 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let update = app.update.clone();
     let (icon, text, color, retry, download) = match &app.link {
-        LinkStatus::Connected if app.syncing => (
-            Icon::Refresh,
-            match app.sync_percent {
-                Some(percent) => format!("Loading chat history… {percent}%"),
-                None => "Loading chat history…".to_owned(),
-            },
-            palette.accent,
-            false,
-            None,
-        ),
+        LinkStatus::Connected if app.syncing => {
+            let lang = app.settings.language;
+            (
+                Icon::Refresh,
+                match app.sync_percent {
+                    Some(percent) => crate::i18n::fill(
+                        crate::i18n::t(lang, "banner.loading_pct"),
+                        &[("pct", &percent.to_string())],
+                    ),
+                    None => crate::i18n::t(lang, "banner.loading").to_owned(),
+                },
+                palette.accent,
+                false,
+                None,
+            )
+        }
         LinkStatus::Connected if update.is_some() => {
             let update = update.as_ref().expect("checked above");
             (
                 Icon::Info,
-                format!("ZapFast {} is available", update.version),
+                crate::i18n::fill(
+                    crate::i18n::t(app.settings.language, "banner.available"),
+                    &[("v", &update.version)],
+                ),
                 palette.accent,
                 false,
                 Some(update.url.clone()),
@@ -113,14 +125,17 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
         LinkStatus::Connected => return,
         LinkStatus::Starting | LinkStatus::Connecting => (
             Icon::Refresh,
-            "Connecting to WhatsApp…".to_owned(),
+            crate::i18n::t(app.settings.language, "banner.connecting").to_owned(),
             palette.secondary,
             false,
             None,
         ),
         LinkStatus::Disconnected { reason } => (
             Icon::WifiOff,
-            format!("Offline ({reason}). Reconnecting…"),
+            crate::i18n::fill(
+                crate::i18n::t(app.settings.language, "banner.offline"),
+                &[("reason", reason)],
+            ),
             palette.warning,
             true,
             None,
@@ -134,7 +149,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
         ),
         LinkStatus::Unlinked { .. } | LinkStatus::LoggedOut => (
             Icon::Smartphone,
-            "Not linked to a phone".to_owned(),
+            crate::i18n::t(app.settings.language, "banner.not_linked").to_owned(),
             palette.warning,
             false,
             None,
@@ -160,7 +175,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
                                 ui,
                                 &palette,
                                 Some(Icon::ExternalLink),
-                                "Update",
+                                crate::i18n::t(app.settings.language, "banner.update"),
                                 false,
                             )
                             .clicked()
@@ -171,7 +186,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
                             ui,
                             &palette,
                             Some(Icon::Refresh),
-                            "Retry",
+                            crate::i18n::t(app.settings.language, "banner.retry"),
                             false,
                         )
                         .clicked()
@@ -310,7 +325,7 @@ pub fn standalone_header(app: &mut App, ui: &mut egui::Ui) {
                     18.0,
                     palette.secondary,
                     palette.text,
-                    &keys::label("Show the chat list (Ctrl+B)"),
+                    &keys::label(crate::i18n::t(app.settings.language, "chats.hide")),
                 )
                 .clicked()
                 {

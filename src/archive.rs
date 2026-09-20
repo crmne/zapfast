@@ -139,6 +139,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
                 sender: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
                 sender_name: row.get(9)?,
                 summary: content.summary(),
+                label: content.label_key().map(str::to_owned),
                 status: status_from_rank(row.get(11)?),
             })
         }

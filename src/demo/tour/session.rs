@@ -76,6 +76,7 @@ pub fn respond(app: &mut App) {
                             sender: row.sender.clone(),
                             sender_name: row.sender_name.clone(),
                             summary: row.summary(),
+                            label: row.content.label_key().map(str::to_owned),
                             mentions: row.mentions.clone(),
                         })
                 });
@@ -161,6 +162,7 @@ fn append(app: &mut App, row: Message) {
             sender: row.sender.clone(),
             sender_name: row.sender_name.clone(),
             summary: row.summary(),
+            label: row.content.label_key().map(str::to_owned),
             status: row.status,
         });
     }

@@ -49,22 +49,27 @@ pub fn copy_stamp(unix_seconds: i64) -> String {
 
 /// Chat-row timestamp: time today, weekday this week, or date.
 pub fn chat_stamp(unix_seconds: i64) -> String {
+    chat_stamp_in(unix_seconds, crate::i18n::Language::English)
+}
+
+/// Chat-row timestamp translated for `lang`.
+pub fn chat_stamp_in(unix_seconds: i64, lang: crate::i18n::Language) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
-    stamp_relative_to(when.date(), today(), &when)
+    stamp_relative_to(when.date(), today(), &when, lang)
 }
 
-fn stamp_relative_to(date: Date, today: Date, when: &Zoned) -> String {
+fn stamp_relative_to(date: Date, today: Date, when: &Zoned, lang: crate::i18n::Language) -> String {
     let days = today
         .since(date)
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
         0 => format!("{:02}:{:02}", when.hour(), when.minute()),
-        1 => "Yesterday".to_owned(),
-        2..=6 => weekday_name(date.weekday()).to_owned(),
-        _ => short_date(date),
+        1 => crate::i18n::t(lang, "date.yesterday").to_owned(),
+        2..=6 => crate::i18n::weekday(lang, date.weekday()).to_owned(),
+        _ => short_date_in(date, lang),
     }
 }
 
@@ -79,6 +84,11 @@ pub fn split_name(name: &str) -> (String, String) {
 
 /// Message-info timestamp with date and minute.
 pub fn moment_stamp(unix_seconds: i64) -> String {
+    moment_stamp_in(unix_seconds, crate::i18n::Language::English)
+}
+
+/// Message-info timestamp with date and minute, translated for `lang`.
+pub fn moment_stamp_in(unix_seconds: i64, lang: crate::i18n::Language) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
@@ -89,14 +99,22 @@ pub fn moment_stamp(unix_seconds: i64) -> String {
         .unwrap_or(i32::MAX);
     match days {
         0 => time,
-        1 => format!("Yesterday at {time}"),
-        2..=6 => format!("{} at {time}", weekday_name(when.date().weekday())),
-        _ => format!("{} at {time}", short_date(when.date())),
+        1 => format!("{} at {time}", crate::i18n::t(lang, "date.yesterday")),
+        2..=6 => format!(
+            "{} at {time}",
+            crate::i18n::weekday(lang, when.date().weekday())
+        ),
+        _ => format!("{} at {time}", short_date_in(when.date(), lang)),
     }
 }
 
 /// Conversation day-separator label.
 pub fn day_label(unix_seconds: i64) -> String {
+    day_label_in(unix_seconds, crate::i18n::Language::English)
+}
+
+/// Conversation day-separator label, translated for `lang`.
+pub fn day_label_in(unix_seconds: i64, lang: crate::i18n::Language) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
@@ -107,10 +125,10 @@ pub fn day_label(unix_seconds: i64) -> String {
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
-        0 => "Today".to_owned(),
-        1 => "Yesterday".to_owned(),
-        2..=6 => weekday_name(date.weekday()).to_owned(),
-        _ => long_date(date),
+        0 => crate::i18n::t(lang, "date.today").to_owned(),
+        1 => crate::i18n::t(lang, "date.yesterday").to_owned(),
+        2..=6 => crate::i18n::weekday(lang, date.weekday()).to_owned(),
+        _ => long_date_in(date, lang),
     }
 }
 
@@ -119,50 +137,21 @@ pub fn day_key(unix_seconds: i64) -> Option<Date> {
     zoned(unix_seconds).map(|when| when.date())
 }
 
-fn weekday_name(weekday: jiff::civil::Weekday) -> &'static str {
-    match weekday {
-        jiff::civil::Weekday::Monday => "Monday",
-        jiff::civil::Weekday::Tuesday => "Tuesday",
-        jiff::civil::Weekday::Wednesday => "Wednesday",
-        jiff::civil::Weekday::Thursday => "Thursday",
-        jiff::civil::Weekday::Friday => "Friday",
-        jiff::civil::Weekday::Saturday => "Saturday",
-        jiff::civil::Weekday::Sunday => "Sunday",
-    }
-}
-
-fn month_name(month: i8) -> &'static str {
-    match month {
-        1 => "January",
-        2 => "February",
-        3 => "March",
-        4 => "April",
-        5 => "May",
-        6 => "June",
-        7 => "July",
-        8 => "August",
-        9 => "September",
-        10 => "October",
-        11 => "November",
-        _ => "December",
-    }
-}
-
-fn short_date(date: Date) -> String {
+fn short_date_in(date: Date, lang: crate::i18n::Language) -> String {
     format!(
         "{} {} {}",
         date.day(),
-        &month_name(date.month())[..3],
+        &crate::i18n::month(lang, date.month())[..3],
         date.year()
     )
 }
 
-fn long_date(date: Date) -> String {
+fn long_date_in(date: Date, lang: crate::i18n::Language) -> String {
     format!(
         "{}, {} {} {}",
-        weekday_name(date.weekday()),
+        crate::i18n::weekday(lang, date.weekday()),
         date.day(),
-        month_name(date.month()),
+        crate::i18n::month(lang, date.month()),
         date.year()
     )
 }
@@ -229,11 +218,20 @@ pub fn initials(name: &str) -> String {
     initials
 }
 
-/// Formats a phone number with a plus sign and grouped digits.
+/// Formats a phone number in international form, like WhatsApp Web
+/// (`+55 11 91234-5678`). Falls back to the plus sign with grouped digits
+/// when the number does not parse.
 pub fn phone(digits: &str) -> String {
     let digits: String = digits.chars().filter(char::is_ascii_digit).collect();
     if digits.is_empty() {
         return String::new();
+    }
+    // Real phone numbers have at least seven digits; shorter strings use
+    // the grouped fallback below instead of a misleading country split.
+    if digits.len() >= 7
+        && let Ok(parsed) = format_international(&digits)
+    {
+        return parsed;
     }
     let mut out = String::from("+");
     for (index, character) in digits.chars().enumerate() {
@@ -244,6 +242,12 @@ pub fn phone(digits: &str) -> String {
         out.push(character);
     }
     out
+}
+
+fn format_international(digits: &str) -> Result<String, phonenumber::ParseError> {
+    use phonenumber::Mode;
+    let number = phonenumber::parse(None, format!("+{digits}"))?;
+    Ok(number.format().mode(Mode::International).to_string())
 }
 
 /// Stable id-derived avatar hue.
@@ -381,28 +385,53 @@ mod tests {
     }
 
     #[test]
-    fn phone_numbers_are_grouped() {
-        assert_eq!(phone("393331234567"), "+39 333 123 456 7");
-        assert_eq!(phone("15551234567"), "+15 551 234 567");
+    fn phone_numbers_use_international_format() {
+        // WhatsApp Web style masks; Brazil first since most reports come
+        // from there.
+        assert_eq!(phone("5511912345678"), "+55 11 91234-5678");
+        assert_eq!(phone("551133334444"), "+55 11 3333-4444");
+        assert_eq!(phone("15551234567"), "+1 555-123-4567");
+        assert_eq!(phone("393331234567"), "+39 333 123 4567");
         assert_eq!(phone(""), "");
+        // Unparseable input keeps the old grouped fallback.
+        assert_eq!(phone("12"), "+12");
     }
 
     #[test]
     fn stamps_fall_back_to_dates() {
+        use crate::i18n::Language;
         let when = Timestamp::from_second(1_700_000_000)
             .expect("valid")
             .to_zoned(jiff::tz::TimeZone::UTC);
         let date = when.date();
-        assert_eq!(stamp_relative_to(date, date, &when), "22:13");
         assert_eq!(
-            stamp_relative_to(date, date.tomorrow().expect("date"), &when),
+            stamp_relative_to(date, date, &when, Language::English),
+            "22:13"
+        );
+        assert_eq!(
+            stamp_relative_to(
+                date,
+                date.tomorrow().expect("date"),
+                &when,
+                Language::English
+            ),
             "Yesterday"
         );
         assert_eq!(
             stamp_relative_to(
                 date,
+                date.tomorrow().expect("date"),
+                &when,
+                Language::Portugues
+            ),
+            "Ontem"
+        );
+        assert_eq!(
+            stamp_relative_to(
+                date,
                 date.checked_add(jiff::Span::new().days(3)).expect("date"),
-                &when
+                &when,
+                Language::English
             ),
             "Tuesday"
         );
@@ -410,7 +439,8 @@ mod tests {
             stamp_relative_to(
                 date,
                 date.checked_add(jiff::Span::new().days(30)).expect("date"),
-                &when
+                &when,
+                Language::English
             ),
             "14 Nov 2023"
         );

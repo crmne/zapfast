@@ -45,11 +45,16 @@ impl ChatFilter {
     pub const EVERY: [Self; 4] = [Self::All, Self::Unread, Self::Private, Self::Groups];
 
     pub fn label(self) -> &'static str {
+        self.label_in(crate::i18n::Language::English)
+    }
+
+    pub fn label_in(self, lang: crate::i18n::Language) -> &'static str {
+        use crate::i18n::t;
         match self {
-            Self::All => "All",
-            Self::Unread => "Unread",
-            Self::Private => "Private",
-            Self::Groups => "Groups",
+            Self::All => t(lang, "filter.all"),
+            Self::Unread => t(lang, "filter.unread"),
+            Self::Private => t(lang, "filter.private"),
+            Self::Groups => t(lang, "filter.groups"),
         }
     }
 
@@ -95,6 +100,9 @@ pub struct LastMessage {
     /// Group-message sender.
     pub sender_name: Option<String>,
     pub summary: String,
+    /// i18n key of the summary label (`Content::label_key`), if any.
+    /// Plain-text previews show `summary` verbatim.
+    pub label: Option<String>,
     pub status: Delivery,
 }
 
@@ -216,6 +224,9 @@ pub struct Quoted {
     pub sender: String,
     pub sender_name: Option<String>,
     pub summary: String,
+    /// i18n key of the summary label (`Content::label_key`), if any.
+    #[serde(default)]
+    pub label: Option<String>,
     /// Mentions in quoted text.
     #[serde(default)]
     pub mentions: Vec<MentionRef>,
@@ -329,18 +340,18 @@ impl PollDraft {
             .map(|option| option.trim().to_owned())
             .collect();
         if question.is_empty() || question.chars().count() > 255 {
-            return Err("Enter a question of up to 255 characters.");
+            return Err("poll.err_question");
         }
         if !(2..=12).contains(&options.len())
             || options
                 .iter()
                 .any(|option| option.is_empty() || option.chars().count() > 100)
         {
-            return Err("Add 2–12 answers, each with 1–100 characters.");
+            return Err("poll.err_answers");
         }
         let mut unique = std::collections::HashSet::new();
         if options.iter().any(|option| !unique.insert(option)) {
-            return Err("Each answer must be different.");
+            return Err("poll.err_unique");
         }
         Ok(Self {
             question,
@@ -363,37 +374,79 @@ impl Content {
     }
 
     pub fn summary(&self) -> String {
+        self.summary_in(crate::i18n::Language::English)
+    }
+
+    /// One-line summary with the label translated; user content (captions,
+    /// names, text) is never translated. The canonical English summary stays
+    /// the search and storage form.
+    pub fn summary_in(&self, lang: crate::i18n::Language) -> String {
+        use crate::i18n::t;
         match self {
             Self::Text { text, .. } => text.lines().next().unwrap_or_default().to_owned(),
-            Self::Image { caption, .. } => with_caption("Photo", caption),
-            Self::Video { caption, gif, .. } => {
-                with_caption(if *gif { "GIF" } else { "Video" }, caption)
-            }
+            Self::Image { caption, .. } => with_caption(t(lang, "summary.photo"), caption),
+            Self::Video { caption, gif, .. } => with_caption(
+                if *gif {
+                    t(lang, "summary.gif")
+                } else {
+                    t(lang, "summary.video")
+                },
+                caption,
+            ),
             Self::Audio {
                 voice_note,
                 seconds,
                 ..
             } => {
                 let label = if *voice_note {
-                    "Voice message"
+                    t(lang, "summary.voice")
                 } else {
-                    "Audio"
+                    t(lang, "summary.audio")
                 };
                 match seconds {
                     Some(seconds) => format!("{label} ({})", crate::util::duration(*seconds)),
                     None => label.to_owned(),
                 }
             }
-            Self::Document { file_name, .. } => format!("Document: {file_name}"),
-            Self::Sticker { .. } => "Sticker".to_owned(),
+            Self::Document { file_name, .. } => {
+                format!("{}: {file_name}", t(lang, "summary.document"))
+            }
+            Self::Sticker { .. } => t(lang, "summary.sticker").to_owned(),
             Self::Location { name, .. } => match name {
-                Some(name) => format!("Location: {name}"),
-                None => "Location".to_owned(),
+                Some(name) => format!("{}: {name}", t(lang, "summary.location")),
+                None => t(lang, "summary.location").to_owned(),
             },
-            Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
-            Self::Poll { question, .. } => format!("Poll: {question}"),
-            Self::Revoked => "This message was deleted".to_owned(),
-            Self::Unsupported { what } => format!("Unsupported message ({what})"),
+            Self::Contact { display_name, .. } => {
+                format!("{}: {display_name}", t(lang, "summary.contact"))
+            }
+            Self::Poll { question, .. } => {
+                format!("{}: {question}", t(lang, "summary.poll"))
+            }
+            Self::Revoked => t(lang, "summary.deleted").to_owned(),
+            Self::Unsupported { what } => {
+                format!("{} ({what})", t(lang, "summary.unsupported"))
+            }
+        }
+    }
+
+    /// i18n key of the summary label, or `None` for plain text shown verbatim.
+    pub fn label_key(&self) -> Option<&'static str> {
+        match self {
+            Self::Text { .. } => None,
+            Self::Image { .. } => Some("summary.photo"),
+            Self::Video { gif: true, .. } => Some("summary.gif"),
+            Self::Video { .. } => Some("summary.video"),
+            Self::Audio {
+                voice_note: true, ..
+            } => Some("summary.voice"),
+            Self::Audio { .. } => Some("summary.audio"),
+            Self::Document { .. } => Some("summary.document"),
+            Self::Sticker { .. } => Some("summary.sticker"),
+            Self::Location { .. } => Some("summary.location"),
+            Self::Contact { .. } => Some("summary.contact"),
+            Self::Poll { .. } => Some("summary.poll"),
+            Self::Revoked => Some("summary.deleted"),
+            Self::Unsupported { .. } => Some("summary.unsupported"),
         }
     }
 
@@ -428,6 +481,118 @@ fn with_caption(label: &str, caption: &Option<String>) -> String {
         Some(caption) if !caption.is_empty() => format!("{label}: {caption}"),
         _ => label.to_owned(),
     }
+}
+
+/// A contact parsed from a shared vCard.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SharedContact {
+    pub name: String,
+    /// Phone numbers as digits.
+    pub phones: Vec<String>,
+}
+
+/// Splits a shared-contact payload into individual vCards. WhatsApp joins
+/// multi-contact shares into one blob, so cards split on `BEGIN:VCARD`;
+/// a payload without markers counts as one card.
+pub fn parse_shared_contacts(display_name: &str, vcard: &str) -> Vec<SharedContact> {
+    let mut cards: Vec<String> = Vec::new();
+    let mut current: Option<String> = None;
+    for line in vcard.lines() {
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("BEGIN:VCARD") {
+            current = Some(String::new());
+            continue;
+        }
+        if trimmed.eq_ignore_ascii_case("END:VCARD") {
+            if let Some(card) = current.take() {
+                cards.push(card);
+            }
+            continue;
+        }
+        if let Some(card) = current.as_mut() {
+            card.push_str(trimmed);
+            card.push('\n');
+        }
+    }
+    if cards.is_empty() && !vcard.trim().is_empty() {
+        cards.push(vcard.to_owned());
+    }
+    if cards.is_empty() {
+        return vec![SharedContact {
+            name: display_name.to_owned(),
+            phones: Vec::new(),
+        }];
+    }
+    cards
+        .iter()
+        .map(|card| parse_vcard(display_name, card))
+        .collect()
+}
+
+fn parse_vcard(display_name: &str, card: &str) -> SharedContact {
+    // Unfold continuation lines (a leading space or tab means "glue").
+    let mut lines: Vec<String> = Vec::new();
+    for line in card.lines() {
+        if (line.starts_with(' ') || line.starts_with('\t'))
+            && let Some(last) = lines.last_mut()
+        {
+            last.push_str(line.trim_start());
+        } else {
+            lines.push(line.trim().to_owned());
+        }
+    }
+    let mut name: Option<String> = None;
+    let mut structured: Option<String> = None;
+    let mut phones: Vec<String> = Vec::new();
+    for line in &lines {
+        let Some((field, value)) = line.split_once(':') else {
+            continue;
+        };
+        // iOS numbers arrive as `item1.TEL;TYPE=...:`, Android as
+        // `TEL;TYPE=CELL:`. Match the property name before any `;`.
+        let property = field
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .rsplit('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        if property == "FN" {
+            let value = value.trim().replace("\\,", ",");
+            if !value.is_empty() && name.is_none() {
+                name = Some(value);
+            }
+        } else if property == "N" {
+            if structured.is_none() {
+                structured = Some(value.to_owned());
+            }
+        } else if property == "TEL" {
+            let digits: String = value.chars().filter(char::is_ascii_digit).collect();
+            if digits.len() >= 7 && !phones.contains(&digits) {
+                phones.push(digits);
+            }
+        }
+    }
+    let name = name
+        .filter(|name| !name.is_empty())
+        .or_else(|| structured_name(structured.as_deref()))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            phones
+                .first()
+                .map(|phone| crate::util::phone(phone))
+                .unwrap_or_else(|| display_name.to_owned())
+        });
+    SharedContact { name, phones }
+}
+
+fn structured_name(n: Option<&str>) -> Option<String> {
+    let parts: Vec<&str> = n?.split(';').collect();
+    let family = parts.first().copied().unwrap_or_default().trim();
+    let given = parts.get(1).copied().unwrap_or_default().trim();
+    let full = format!("{given} {family}").trim().to_owned();
+    if full.is_empty() { None } else { Some(full) }
 }
 
 /// Attachment metadata, download state, and optional local file. Download keys
@@ -698,6 +863,12 @@ pub enum Action {
         first: String,
         last: String,
     },
+    /// Opens the new-contact dialog prefilled from a shared contact card.
+    PrefillNewContact {
+        phone: String,
+        first: String,
+        last: String,
+    },
     /// Searches GIFs or lists trending results for an empty query.
     SearchGifs(String),
     SendGif(Gif),
@@ -861,6 +1032,41 @@ mod tests {
         };
         assert_eq!(stranger.label().as_deref(), Some("~Bob"));
         assert_eq!(Contact::default().label(), None);
+    }
+
+    #[test]
+    fn shared_contacts_parse_android_and_ios_vcards() {
+        let android = "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nN:Lovelace;Ada;;;\nTEL;TYPE=CELL:+55 11 91234-5678\nEND:VCARD";
+        let parsed = parse_shared_contacts("Ada", android);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "Ada Lovelace");
+        assert_eq!(parsed[0].phones, vec!["5511912345678"]);
+        let ios = "BEGIN:VCARD\nVERSION:3.0\nN:Doe;John;;;\nitem1.TEL;TYPE=CELL:+1 555-123-4567\nitem1.X-ABLabel:Mobile\nEND:VCARD";
+        let parsed = parse_shared_contacts("John", ios);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "John Doe");
+        assert_eq!(parsed[0].phones, vec!["15551234567"]);
+    }
+
+    #[test]
+    fn shared_contacts_split_multi_card_blobs_and_dedupe() {
+        let blob = "BEGIN:VCARD\nVERSION:3.0\nFN:Ada\nTEL:+5511912345678\nTEL:+5511912345678\nEND:VCARD\nBEGIN:VCARD\nVERSION:3.0\nFN:Bob\nTEL;TYPE=WORK:+551133334444\nEND:VCARD";
+        let parsed = parse_shared_contacts("2 contacts", blob);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].phones, vec!["5511912345678"]);
+        assert_eq!(parsed[1].name, "Bob");
+        assert_eq!(parsed[1].phones, vec!["551133334444"]);
+    }
+
+    #[test]
+    fn shared_contacts_fall_back_without_markers_or_phones() {
+        let parsed = parse_shared_contacts("Mystery", "FN:No Signal\nNOTE:no phone here");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "No Signal");
+        assert!(parsed[0].phones.is_empty());
+        let parsed = parse_shared_contacts("Mystery", "");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "Mystery");
     }
 
     #[test]

@@ -492,6 +492,7 @@ pub fn populate(app: &mut App) {
                 sender: last.sender.clone(),
                 sender_name: last.sender_name.clone(),
                 summary: last.summary(),
+                label: last.content.label_key().map(str::to_owned),
                 status: last.status,
             });
         app.conversations.insert(sample.id.to_owned(), conversation);
@@ -566,6 +567,17 @@ pub fn populate(app: &mut App) {
                 waveform: demo_waveform(),
             },
         ),
+        message(
+            ada,
+            "ada-contact",
+            false,
+            base + 100,
+            Content::Contact {
+                display_name: "Grace Hopper".into(),
+                vcard: "BEGIN:VCARD\nVERSION:3.0\nFN:Grace Hopper\nTEL;TYPE=CELL:+1 555-010-1100\nEND:VCARD"
+                    .into(),
+            },
+        ),
         {
             let mut row = message(
                 ada,
@@ -579,6 +591,7 @@ pub fn populate(app: &mut App) {
                 sender: ada.into(),
                 sender_name: Some("Ada Lovelace".into()),
                 summary: "Voice message (0:42)".into(),
+                label: Some("summary.voice".into()),
                 mentions: Vec::new(),
             });
             row.edited = true;
@@ -742,6 +755,7 @@ pub fn populate(app: &mut App) {
                 sender: jonas.0.into(),
                 sender_name: Some(jonas.1.into()),
                 summary: "Save me a seat 🙏".into(),
+                label: None,
                 mentions: Vec::new(),
             });
             row.mentions = vec![MentionRef {
@@ -789,6 +803,7 @@ pub fn populate(app: &mut App) {
                 sender: last.sender.clone(),
                 sender_name: last.sender_name.clone(),
                 summary: last.summary(),
+                label: last.content.label_key().map(str::to_owned),
                 status: last.status,
             });
         }
@@ -859,6 +874,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                             sender: SAMPLES[0].id.into(),
                             sender_name: Some("שלום עולם".into()),
                             summary: "הכלב הגדול קפץ 🐕".into(),
+                            label: None,
                             mentions: Vec::new(),
                         });
                         reply
@@ -868,6 +884,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     chat.name = "שלום יזמות ונדל\"ן".into();
                     if let Some(last) = &mut chat.last {
                         last.summary = "הכלב הגדול קפץ 🐕".into();
+                        last.label = None;
                     }
                 }
                 app.conversations.get_mut(id).expect("demo group").messages = messages;
