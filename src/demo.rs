@@ -598,6 +598,30 @@ pub fn populate(app: &mut App) {
             row.status = Delivery::Delivered;
             row
         },
+        message(
+            ada,
+            "ada-poll",
+            false,
+            base + 130,
+            Content::Poll {
+                question: "Board games tonight?".into(),
+                state: crate::model::PollState {
+                    selectable: 1,
+                    counts: vec![1, 0],
+                    selected: Vec::new(),
+                    voters: 1,
+                    can_vote: true,
+                    history_complete: true,
+                    voters_list: vec![crate::model::PollVoter {
+                        id: ada.to_owned(),
+                        choices: vec![0],
+                        at: (base + 135) * 1000,
+                    }],
+                    ..Default::default()
+                },
+                options: vec!["I'm in".into(), "Next time".into()],
+            },
+        ),
         {
             let mut row = message(
                 ada,
@@ -773,11 +797,33 @@ pub fn populate(app: &mut App) {
                 question: "Pizza after the talks?".into(),
                 state: crate::model::PollState {
                     selectable: 1,
-                    counts: vec![3, 2, 0],
+                    counts: vec![3, 1, 0],
                     selected: vec![0],
-                    voters: 5,
+                    voters: 4,
                     can_vote: true,
                     history_complete: true,
+                    voters_list: vec![
+                        crate::model::PollVoter {
+                            id: ME.to_owned(),
+                            choices: vec![0],
+                            at: (group_base + 185) * 1000,
+                        },
+                        crate::model::PollVoter {
+                            id: group_members[0].0.to_owned(),
+                            choices: vec![0],
+                            at: (group_base + 190) * 1000,
+                        },
+                        crate::model::PollVoter {
+                            id: group_members[1].0.to_owned(),
+                            choices: vec![0],
+                            at: (group_base + 195) * 1000,
+                        },
+                        crate::model::PollVoter {
+                            id: group_members[2].0.to_owned(),
+                            choices: vec![1],
+                            at: (group_base + 200) * 1000,
+                        },
+                    ],
                     ..Default::default()
                 },
                 options: vec!["Yes".into(), "Only if it's Neapolitan".into(), "No".into()],

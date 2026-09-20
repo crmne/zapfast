@@ -277,6 +277,7 @@ impl Worker {
         state.counts = vec![0; options.len()];
         state.selected.clear();
         state.voters = 0;
+        state.voters_list = Vec::new();
         let mut latest = HashMap::new();
         for vote in self
             .archive
@@ -290,7 +291,10 @@ impl Worker {
             };
             latest.insert(voter, vote);
         }
-        for vote in latest.into_values() {
+        // Oldest vote first, as on WhatsApp Web.
+        let mut latest: Vec<_> = latest.into_values().collect();
+        latest.sort_by_key(|vote| (vote.at, vote.update_id.clone()));
+        for vote in latest {
             let Some(choices) = vote.choices else {
                 continue;
             };
@@ -299,9 +303,19 @@ impl Worker {
             }
             if !choices.is_empty() {
                 state.voters += 1;
+                let id = if vote.from_me {
+                    self.me()
+                } else {
+                    self.canonical_str(&vote.voter)
+                };
+                state.voters_list.push(crate::model::PollVoter {
+                    id,
+                    choices: choices.clone(),
+                    at: vote.at,
+                });
             }
-            for index in choices {
-                if let Some(count) = state.counts.get_mut(index) {
+            for index in &choices {
+                if let Some(count) = state.counts.get_mut(*index) {
                     *count += 1;
                 }
             }
@@ -881,6 +895,16 @@ mod tests {
         assert!(state.history_complete);
         assert!(!state.refreshing);
         assert!(!state.refresh_needed);
+        assert_eq!(state.voters_list.len(), 11);
+        // Oldest first, and the later own vote still closes the list.
+        assert_eq!(state.voters_list[0].choices, vec![0]);
+        assert_eq!(state.voters_list[10].choices, vec![1]);
+        assert!(
+            state
+                .voters_list
+                .windows(2)
+                .all(|pair| pair[0].at <= pair[1].at)
+        );
     }
 
     #[test]
@@ -954,6 +978,8 @@ mod tests {
         };
         assert_eq!(state.counts, vec![0, 1]);
         assert_eq!(state.voters, 1);
+        assert_eq!(state.voters_list.len(), 1);
+        assert_eq!(state.voters_list[0].id, "200@s.whatsapp.net");
         assert!(state.can_vote);
         assert_eq!(worker.poll_decrypting, 0);
     }

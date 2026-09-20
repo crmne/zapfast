@@ -299,6 +299,17 @@ pub enum Content {
     },
 }
 
+/// A person who voted in a poll, for the WhatsApp Web style vote list.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PollVoter {
+    /// Canonical chat id of the voter; the interface resolves the display name.
+    pub id: String,
+    /// Chosen option indexes, empty for a withdrawn vote.
+    pub choices: Vec<usize>,
+    /// Vote time in Unix milliseconds.
+    pub at: i64,
+}
+
 /// Poll information safe to send to the interface; encryption keys stay in the worker.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -312,6 +323,9 @@ pub struct PollState {
     pub refresh_needed: bool,
     pub refreshing: bool,
     pub refresh_failed: bool,
+    /// Latest non-withdrawn vote per person, oldest first; never persisted.
+    #[serde(skip)]
+    pub voters_list: Vec<PollVoter>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -704,6 +718,11 @@ pub enum Dialog {
         message: String,
     },
     CreatePoll(ChatId),
+    /// Shows who voted in a poll, as on WhatsApp Web.
+    PollVotes {
+        chat: ChatId,
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -3,7 +3,7 @@
 use super::widgets;
 use crate::app::App;
 use crate::i18n::{fill, t};
-use crate::model::{Action, Content, Message, PollState};
+use crate::model::{Action, Content, Dialog, Message, PollState};
 use crate::theme::{self, Icon, Palette};
 use egui::{Align, Layout, Sense, Stroke, pos2, vec2};
 
@@ -298,17 +298,48 @@ pub fn ballot(
                     }
                 )
             };
+            // Like WhatsApp Web, the vote count opens the list of who voted.
+            let voters = state.voters > 0 && !pending && !state.refresh_failed;
             let line = widgets::line(
                 ui,
                 &detail,
                 theme::regular(11.0),
-                palette.dim,
+                if voters { palette.accent } else { palette.dim },
                 width,
                 usize::MAX,
             );
-            let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+            let (rect, response) = ui.allocate_exact_size(
+                line.size(),
+                if voters {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                },
+            );
             if ui.is_rect_visible(rect) {
-                line.paint(ui, rect.min, palette.dim);
+                if voters && response.hovered() {
+                    ui.painter().rect_filled(
+                        rect.expand2(vec2(4.0, 2.0)),
+                        4.0,
+                        palette.surface_hover,
+                    );
+                }
+                line.paint(
+                    ui,
+                    rect.min,
+                    if voters { palette.accent } else { palette.dim },
+                );
+            }
+            if voters
+                && response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(t(lang, "poll.view_votes"))
+                    .clicked()
+            {
+                actions.push(Action::ShowDialog(Dialog::PollVotes {
+                    chat: message.chat.clone(),
+                    message: message.id.clone(),
+                }));
             }
             if !state.can_vote {
                 widgets::rich_text(
@@ -430,5 +461,113 @@ mod tests {
         state.selected.push(1);
         assert_eq!(selection_after_click(&state, 2), None);
         assert_eq!(selection_after_click(&state, 1), Some(vec![0]));
+    }
+
+    #[test]
+    fn the_vote_count_opens_the_voter_list_without_new_requests() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut row = crate::archive::tests::message("chat", "poll", 100, false);
+        row.content = Content::Poll {
+            question: "Lunch?".into(),
+            options: vec!["Pizza".into(), "Pasta".into()],
+            state: PollState {
+                selectable: 1,
+                can_vote: true,
+                history_complete: true,
+                voters: 2,
+                counts: vec![1, 1],
+                voters_list: vec![
+                    crate::model::PollVoter {
+                        id: "100@s.whatsapp.net".into(),
+                        choices: vec![0],
+                        at: 100_000,
+                    },
+                    crate::model::PollVoter {
+                        id: "200@s.whatsapp.net".into(),
+                        choices: vec![1],
+                        at: 200_000,
+                    },
+                ],
+                ..Default::default()
+            },
+        };
+        let mut actions = Vec::new();
+        let mut count = None;
+        // Find the painted vote-count text, then click it like a user would.
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(360.0, 240.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input.take(), |ui| {
+            ballot(
+                ui,
+                &Palette::dark(),
+                crate::i18n::Language::English,
+                &row,
+                320.0,
+                true,
+                false,
+                &mut actions,
+            );
+            let layers: Vec<_> = ctx.memory(|memory| memory.layer_ids().collect());
+            for layer in layers {
+                ctx.graphics(|graphics| {
+                    if let Some(list) = graphics.get(layer) {
+                        for clipped in list.all_entries() {
+                            if let egui::Shape::Text(text) = &clipped.shape {
+                                let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                                if text.galley.text() == "2 voters"
+                                    && rect.intersects(clipped.clip_rect)
+                                {
+                                    count = Some(rect);
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        output.textures_delta.clear();
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::VotePoll { .. })),
+            "the footer is not an option row"
+        );
+        let count = count.expect("vote count is painted");
+        for pressed in [true, false] {
+            input.events = vec![
+                egui::Event::PointerMoved(count.center()),
+                egui::Event::PointerButton {
+                    pos: count.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+            let mut output = ctx.run_ui(input.take(), |ui| {
+                ballot(
+                    ui,
+                    &Palette::dark(),
+                    crate::i18n::Language::English,
+                    &row,
+                    320.0,
+                    true,
+                    false,
+                    &mut actions,
+                );
+            });
+            output.textures_delta.clear();
+        }
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, Action::ShowDialog(Dialog::PollVotes { .. }))),
+            "clicking the vote count opens the voter list"
+        );
     }
 }

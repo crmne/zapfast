@@ -513,4 +513,137 @@ mod idle_tests {
         }
         assert!(app.at_bottom, "at bottom after reopening");
     }
+
+    #[test]
+    fn the_poll_votes_dialog_lists_who_chose_what() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        app.me = Some("me@s.whatsapp.net".into());
+        app.contacts.insert(
+            "123@s.whatsapp.net".into(),
+            crate::model::Contact {
+                id: "123@s.whatsapp.net".into(),
+                full_name: Some("Alice".into()),
+                push_name: None,
+            },
+        );
+        let chat = crate::model::Chat::new("123@g.us".into(), "Team".into());
+        app.chats.push(chat.clone());
+        let mut conversation = crate::app::Conversation::default();
+        conversation.messages.push(crate::model::Message {
+            id: "poll".into(),
+            chat: chat.id.clone(),
+            sender: "123@s.whatsapp.net".into(),
+            sender_name: Some("Alice".into()),
+            from_me: false,
+            timestamp: 1000,
+            content: crate::model::Content::Poll {
+                question: "Lunch?".into(),
+                options: vec!["Pizza".into(), "Pasta".into()],
+                state: crate::model::PollState {
+                    selectable: 1,
+                    counts: vec![2, 1],
+                    voters: 3,
+                    can_vote: true,
+                    history_complete: true,
+                    voters_list: vec![
+                        crate::model::PollVoter {
+                            id: "me@s.whatsapp.net".into(),
+                            choices: vec![0],
+                            at: 1_000_000,
+                        },
+                        crate::model::PollVoter {
+                            id: "123@s.whatsapp.net".into(),
+                            choices: vec![0],
+                            at: 2_000_000,
+                        },
+                        crate::model::PollVoter {
+                            id: "456@s.whatsapp.net".into(),
+                            choices: vec![1],
+                            at: 3_000_000,
+                        },
+                    ],
+                    ..Default::default()
+                },
+            },
+            status: crate::model::Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        });
+        conversation.complete = true;
+        app.conversations.insert(chat.id.clone(), conversation);
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        app.dialog = Some(crate::model::Dialog::PollVotes {
+            chat: chat.id.clone(),
+            message: "poll".into(),
+        });
+        let mut painted = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    dialogs::show(&mut app, ui.ctx());
+                    // Paint lists only live inside the pass, as Tour::observe assumes.
+                    let layers: Vec<_> = ui.ctx().memory(|memory| memory.layer_ids().collect());
+                    for layer in layers {
+                        ui.ctx().graphics(|graphics| {
+                            if let Some(list) = graphics.get(layer) {
+                                for clipped in list.all_entries() {
+                                    if let egui::Shape::Text(text) = &clipped.shape {
+                                        painted.push(text.galley.text().to_owned());
+                                    }
+                                }
+                            }
+                        });
+                    }
+                },
+            );
+            output.textures_delta.clear();
+        }
+        for expected in ["Lunch?", "Pizza", "Pasta", "You", "Alice"] {
+            assert!(
+                painted.iter().any(|text| text == expected),
+                "missing {expected} in the voter list: {painted:?}"
+            );
+        }
+        // Unsaved voters show their international number, as elsewhere.
+        assert!(
+            painted.iter().any(|text| text.starts_with("+45 6")),
+            "unsaved voter shows the formatted number: {painted:?}"
+        );
+        // An unknown message degrades to an explanatory line.
+        app.dialog = Some(crate::model::Dialog::PollVotes {
+            chat: chat.id.clone(),
+            message: "gone".into(),
+        });
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| dialogs::show(&mut app, ui.ctx()),
+        );
+        output.textures_delta.clear();
+    }
 }

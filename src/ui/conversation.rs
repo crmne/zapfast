@@ -2346,6 +2346,20 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     {
         actions.push(Action::Reply(message.id.clone()));
     }
+    if let Content::Poll { state, .. } = &message.content
+        && !state.voters_list.is_empty()
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::ListChecks),
+            t(lang, "poll.view_votes"),
+        )
+    {
+        actions.push(Action::ShowDialog(Dialog::PollVotes {
+            chat: chat.clone(),
+            message: message.id.clone(),
+        }));
+    }
     if !matches!(
         message.content,
         Content::Revoked | Content::Unsupported { .. } | Content::Poll { .. }

@@ -648,6 +648,42 @@ mod tests {
     }
 
     #[test]
+    fn the_demo_poll_opens_its_voter_list_through_real_clicks() {
+        let mut app = super::super::tests::app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let group = super::super::SAMPLES[1].id.to_owned();
+        app.open_chat = Some(group.clone());
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        click(&mut app, &mut tour, &ctx, "4 voters");
+        assert!(
+            matches!(app.dialog, Some(Dialog::PollVotes { .. })),
+            "the vote count opens the voter list"
+        );
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        assert!(tour.labels.contains_key("Jonas"), "voters are named");
+        frame(
+            &mut app,
+            &mut tour,
+            &ctx,
+            vec![Event::Key {
+                key: Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        assert!(app.dialog.is_none(), "Escape closes the vote list");
+    }
+
+    #[test]
     fn the_theme_dropdown_selects_spotifast_palettes_and_returns_to_follow_system() {
         let mut app = super::super::tests::app();
         app.page = Page::Settings;
@@ -801,6 +837,19 @@ mod tests {
         }
         let group = &app.conversations[super::super::SAMPLES[1].id];
         assert_eq!(group.messages.last().unwrap().mentions.len(), 1);
+        let demo_poll = group
+            .messages
+            .iter()
+            .find(|row| row.id == "group-poll")
+            .expect("demo poll");
+        let Content::Poll { state, .. } = &demo_poll.content else {
+            panic!("demo poll")
+        };
+        assert_eq!(
+            state.voters_list.len(),
+            4,
+            "demo poll carries sample voters"
+        );
         assert_eq!(app.settings.theme, ThemeChoice::Dark);
         assert!(app.backend.is_offline());
         assert!(app.composer.is_empty());

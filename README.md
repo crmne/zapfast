@@ -90,7 +90,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Polls.** Use the checklist button beside the paperclip to create a poll with
   2–12 answers. Turn off **Allow multiple answers** for a single-choice poll.
   Click an answer in a poll to vote; click a selected answer again to remove
-  it. Results and your selection are retained in the encrypted archive, including
+  it. Click the vote count, or choose **View votes** in the message menu, to see
+  who voted for each option, as on WhatsApp Web.
+  Results and your selection are retained in the encrypted archive, including
   votes received through phone history. Visible polls automatically request earlier
   votes from your phone. If it is offline, results are labelled incomplete and the
   request retries with backoff; no refresh button or relinking is needed.

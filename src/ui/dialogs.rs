@@ -2,9 +2,10 @@
 
 use egui::{Align, CornerRadius, Frame, Layout, Margin, Sense, Stroke, pos2, vec2};
 
+use super::widgets;
 use crate::app::App;
 use crate::i18n::{fill, t};
-use crate::model::{Action, Dialog};
+use crate::model::{Action, Content, Dialog};
 use crate::theme::{self, Icon};
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
@@ -36,6 +37,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ChatInfo(_) => 360.0,
                 Dialog::Forward { .. } => 420.0,
                 Dialog::CreatePoll(_) => 420.0,
+                Dialog::PollVotes { .. } => 420.0,
             });
             ui.spacing_mut().item_spacing.y = 8.0;
             match dialog {
@@ -47,6 +49,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::NewContact => new_contact(app, ui),
                 Dialog::ChatInfo(id) => chat_info(app, ui, &id),
                 Dialog::Forward { chat, message } => forward(app, ui, &chat, &message),
+                Dialog::PollVotes { chat, message } => poll_votes(app, ui, &chat, &message),
             }
         });
     if response.should_close() {
@@ -162,6 +165,178 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {
             message: message.to_owned(),
             to_chat,
         });
+    }
+}
+
+/// WhatsApp Web style list of who voted on each poll option.
+fn poll_votes(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str) {
+    let lang = app.settings.language;
+    let palette = app.palette;
+    let Some(row) = app
+        .conversations
+        .get(chat)
+        .and_then(|conversation| conversation.message(message))
+        .map(|row| row.content.clone())
+    else {
+        theme::text(
+            ui,
+            t(lang, "poll.votes_unavailable"),
+            theme::regular(13.5),
+            palette.dim,
+        );
+        return;
+    };
+    let Content::Poll {
+        question,
+        options,
+        state,
+    } = row
+    else {
+        theme::text(
+            ui,
+            t(lang, "poll.votes_unavailable"),
+            theme::regular(13.5),
+            palette.dim,
+        );
+        return;
+    };
+    // The question can hold emoji, so it goes through widgets::line, not a Label.
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - 30.0).max(60.0);
+        let line =
+            super::widgets::line(ui, &question, theme::semibold(16.0), palette.text, width, 2);
+        let (rect, _) = ui.allocate_exact_size(vec2(width, line.size().y), Sense::hover());
+        if ui.is_rect_visible(rect) {
+            line.paint(ui, rect.min, palette.text);
+        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::icon_button(
+                ui,
+                Icon::X,
+                16.0,
+                palette.secondary,
+                palette.text,
+                t(lang, "dialog.close"),
+            )
+            .clicked()
+            {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+    if !state.history_complete {
+        ui.add_space(2.0);
+        theme::text(
+            ui,
+            t(lang, "poll.votes_missing"),
+            theme::regular(12.0),
+            palette.dim,
+        );
+    }
+    ui.add_space(6.0);
+    if state.voters_list.is_empty() {
+        theme::text(
+            ui,
+            t(lang, "poll.no_votes"),
+            theme::regular(13.5),
+            palette.secondary,
+        );
+        return;
+    }
+    let mut open = None;
+    let height = (ui.ctx().content_rect().height() - 260.0).clamp(120.0, 380.0);
+    egui::ScrollArea::vertical()
+        .id_salt("poll-votes")
+        .max_height(height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            let row_height = 30.0;
+            for (index, option) in options.iter().enumerate() {
+                let voters: Vec<_> = state
+                    .voters_list
+                    .iter()
+                    .filter(|voter| voter.choices.contains(&index))
+                    .collect();
+                if voters.is_empty() {
+                    continue;
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 40.0).max(60.0);
+                    let line = super::widgets::line(
+                        ui,
+                        option,
+                        theme::semibold(13.5),
+                        palette.text,
+                        width,
+                        1,
+                    );
+                    let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                    if ui.is_rect_visible(rect) {
+                        line.paint(ui, rect.min, palette.text);
+                    }
+                    let count = state.counts.get(index).copied().unwrap_or_default();
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        theme::text(
+                            ui,
+                            count.to_string(),
+                            theme::medium(12.5),
+                            palette.secondary,
+                        );
+                    });
+                });
+                for voter in voters {
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), row_height),
+                        egui::Sense::click(),
+                    );
+                    if ui.is_rect_visible(rect) {
+                        if response.hovered() {
+                            ui.painter().rect_filled(rect, 6.0, palette.surface_hover);
+                        }
+                        let name = app.display_name_or(&voter.id, None);
+                        let name = name.trim_start_matches('~');
+                        let picture = app.avatar(&voter.id);
+                        let avatar = egui::Rect::from_center_size(
+                            egui::pos2(rect.left() + 16.0, rect.center().y),
+                            egui::Vec2::splat(24.0),
+                        );
+                        widgets::paint_avatar(
+                            ui,
+                            &palette,
+                            avatar,
+                            name,
+                            &voter.id,
+                            picture.as_deref(),
+                        );
+                        let line = super::widgets::line(
+                            ui,
+                            name,
+                            theme::regular(13.0),
+                            palette.text,
+                            rect.width() - 40.0,
+                            1,
+                        );
+                        line.paint(
+                            ui,
+                            egui::pos2(rect.left() + 34.0, rect.center().y - line.size().y / 2.0),
+                            palette.text,
+                        );
+                    }
+                    if response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        open = Some(voter.id.clone());
+                    }
+                }
+            }
+        });
+    if let Some(member) = open
+        && Some(member.as_str()) != app.me.as_deref()
+    {
+        app.actions
+            .push(Action::ShowDialog(Dialog::ChatInfo(member)));
     }
 }
 
@@ -718,7 +893,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
                             egui::pos2(rect.left() + 16.0, rect.center().y),
                             egui::Vec2::splat(24.0),
                         );
-                        super::widgets::paint_avatar(
+                        widgets::paint_avatar(
                             ui,
                             &palette,
                             avatar,
