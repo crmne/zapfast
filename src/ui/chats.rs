@@ -848,6 +848,12 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         app.actions
             .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
     }
+    if widgets::menu_item(ui, palette, Some(Icon::Trash), "Delete chat") {
+        app.actions
+            .push(Action::ShowDialog(Dialog::ConfirmDeleteChat(
+                chat.id.clone(),
+            )));
+    }
 }
 
 #[cfg(test)]

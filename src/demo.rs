@@ -1009,6 +1009,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
             }
             "unlink" => app.dialog = Some(Dialog::ConfirmUnlink),
+            "delete-chat" => {
+                app.dialog = app.open_chat.clone().map(Dialog::ConfirmDeleteChat);
+            }
             "new-contact" => app.dialog = Some(Dialog::NewContact),
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
@@ -1459,6 +1462,7 @@ mod tests {
             "info",
             "forward",
             "unlink",
+            "delete-chat",
             "new-contact",
             "light",
             "archived",

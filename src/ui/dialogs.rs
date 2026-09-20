@@ -33,6 +33,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::PairWithPhone => 380.0,
                 Dialog::NewContact => 380.0,
                 Dialog::ChatInfo(_) => 360.0,
+                Dialog::ConfirmDeleteChat(_) => 380.0,
                 Dialog::Forward { .. } => 420.0,
                 Dialog::CreatePoll(_) => 420.0,
             });
@@ -45,6 +46,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::PairWithPhone => pair_with_phone(app, ui),
                 Dialog::NewContact => new_contact(app, ui),
                 Dialog::ChatInfo(id) => chat_info(app, ui, &id),
+                Dialog::ConfirmDeleteChat(id) => confirm_delete_chat(app, ui, &id),
                 Dialog::Forward { chat, message } => forward(app, ui, &chat, &message),
             }
         });
@@ -264,6 +266,34 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
                 "https://github.com/oxidezap/whatsapp-rust".to_owned(),
             ));
         }
+    });
+}
+
+fn confirm_delete_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
+    let palette = app.palette;
+    let name = app
+        .chat(id)
+        .map_or_else(|| "this chat".to_owned(), |chat| chat.name.clone());
+    title(ui, app, "Delete chat?");
+    theme::paragraph(
+        ui,
+        format!(
+            "This deletes your chat with {name}, including all messages, on this computer and on your phone. It cannot be undone."
+        ),
+        theme::regular(13.5),
+        palette.text,
+    );
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if danger_button(ui, app, "Delete") {
+                app.actions.push(Action::DeleteChat(id.to_owned()));
+                app.actions.push(Action::CloseDialog);
+            }
+            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
     });
 }
 

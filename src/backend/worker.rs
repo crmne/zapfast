@@ -469,6 +469,20 @@ impl Worker {
         });
     }
 
+    /// Deletes attachment files that belonged to a removed chat. Only the
+    /// app's own media cache is touched; anything the user saved elsewhere
+    /// stays where it is.
+    fn drop_cached_media(&self, paths: &[std::path::PathBuf]) {
+        let cache = self.dirs.media_cache_dir();
+        for path in paths.iter().filter(|path| path.starts_with(&cache)) {
+            if let Err(error) = std::fs::remove_file(path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                log::warn!("could not remove {}: {error}", path.display());
+            }
+        }
+    }
+
     fn emit_chats(&self) {
         match self.archive.chats() {
             Ok(mut chats) => {
@@ -1298,6 +1312,35 @@ impl Worker {
                     self.archive
                         .set_locked_at(&chat, locked, update.timestamp.timestamp_millis());
                 self.emit_chat(&chat);
+            }
+            E::DeleteChatUpdate(update) => {
+                let chat = self.canonical(&update.jid);
+                match self.archive.delete_chat(&chat) {
+                    Ok(removed) => {
+                        if update.delete_media {
+                            self.drop_cached_media(&removed.media);
+                        }
+                        if removed.existed {
+                            self.emit(Event::ChatRemoved { chat });
+                        }
+                    }
+                    Err(error) => log::warn!("could not delete {chat}: {error}"),
+                }
+            }
+            E::ClearChatUpdate(update) => {
+                let chat = self.canonical(&update.jid);
+                match self.archive.clear_chat(&chat) {
+                    Ok(removed) => {
+                        if update.delete_media {
+                            self.drop_cached_media(&removed.media);
+                        }
+                        if removed.existed {
+                            self.emit(Event::ChatCleared { chat: chat.clone() });
+                            self.emit_chat(&chat);
+                        }
+                    }
+                    Err(error) => log::warn!("could not clear {chat}: {error}"),
+                }
             }
             E::MarkChatAsReadUpdate(update) => {
                 let chat = self.canonical(&update.jid);
@@ -2957,6 +3000,25 @@ impl Worker {
                         client.chat_actions().unarchive_chat(&jid, None).await
                     }
                     .map_err(|error| error.to_string())
+                });
+            }
+            Command::DeleteChat(chat) => {
+                match self.archive.delete_chat(&chat) {
+                    Ok(removed) => {
+                        self.drop_cached_media(&removed.media);
+                        self.emit(Event::ChatRemoved { chat: chat.clone() });
+                    }
+                    Err(error) => {
+                        self.emit(Event::Error(format!("Could not delete the chat: {error}")));
+                        return;
+                    }
+                }
+                self.tell_phone(&chat, move |client, jid| async move {
+                    client
+                        .chat_actions()
+                        .delete_chat(&jid, true, None)
+                        .await
+                        .map_err(|error| error.to_string())
                 });
             }
             Command::SetPinned(chat, pinned) => {

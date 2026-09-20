@@ -3,7 +3,7 @@
 //! Each message keeps its raw protobuf because attachment download keys may be
 //! needed long after history sync.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -13,6 +13,15 @@ mod encryption;
 mod polls;
 mod receipts;
 pub use polls::PollVote;
+
+/// Outcome of deleting or clearing a chat.
+#[derive(Clone, Debug, Default)]
+pub struct Removed {
+    /// Whether a chat row was present before the change.
+    pub existed: bool,
+    /// Attachment paths the removed messages pointed at.
+    pub media: Vec<PathBuf>,
+}
 
 /// Recent phone sticker metadata, last-used time, and optional local file.
 #[derive(Clone, Debug)]
@@ -969,6 +978,59 @@ impl Archive {
         Ok(deleted > 0)
     }
 
+    /// Removes a chat with everything stored for it.
+    ///
+    /// `existed` reports whether a chat row was actually there, so a replayed
+    /// sync action does not announce a removal twice.
+    pub fn delete_chat(&self, chat: &str) -> Result<Removed> {
+        let media = self.chat_media(chat)?;
+        let existed = self
+            .connection
+            .execute("DELETE FROM chats WHERE id = ?1", params![chat])?
+            > 0;
+        self.purge_chat_rows(chat)?;
+        Ok(Removed { existed, media })
+    }
+
+    /// Removes a chat's messages while keeping the chat itself, matching
+    /// WhatsApp's "clear chat". The chat list preview empties through the
+    /// message join; unread counters reset because clearing implies read.
+    pub fn clear_chat(&self, chat: &str) -> Result<Removed> {
+        let media = self.chat_media(chat)?;
+        let existed = self.connection.execute(
+            "UPDATE chats SET unread = 0, read_through = NULL, pending_read = NULL
+                 WHERE id = ?1",
+            params![chat],
+        )? > 0;
+        self.purge_chat_rows(chat)?;
+        Ok(Removed { existed, media })
+    }
+
+    /// Drops every chat-scoped row outside the `chats` table itself.
+    fn purge_chat_rows(&self, chat: &str) -> Result<()> {
+        for table in ["messages", "group_receipts", "polls", "poll_history"] {
+            self.connection.execute(
+                &format!("DELETE FROM {table} WHERE chat = ?1"),
+                params![chat],
+            )?;
+        }
+        self.connection
+            .execute("DELETE FROM poll_votes WHERE chat = ?1", params![chat])?;
+        Ok(())
+    }
+
+    /// Attachment paths recorded for one chat.
+    fn chat_media(&self, chat: &str) -> Result<Vec<PathBuf>> {
+        let mut statement = self.connection.prepare(
+            "SELECT json_extract(content, '$.media.path') AS path
+             FROM messages WHERE chat = ?1 AND path IS NOT NULL",
+        )?;
+        let rows = statement.query_map(params![chat], |row| {
+            Ok(PathBuf::from(row.get::<_, String>(0)?))
+        })?;
+        rows.collect()
+    }
+
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
         let mut statement = self.connection.prepare(
             "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
@@ -1474,6 +1536,92 @@ pub(crate) mod tests {
         assert_eq!(chat.muted_until, None);
         assert!(!chat.pinned);
         assert_eq!(chat.pinned_at, 0);
+    }
+
+    /// Builds a chat holding one text message, one downloaded image, a poll
+    /// and a group receipt, so removal has something in every chat-scoped
+    /// table to clean up.
+    fn furnished_chat(archive: &Archive, chat: &str, media: &Path) -> String {
+        archive.ensure_chat(chat, "Somebody").expect("chat");
+        archive
+            .insert_message(&message(chat, "m1", 100, false), None)
+            .expect("insert");
+        let mut image = message(chat, "m2", 200, false);
+        image.content = Content::Image {
+            caption: None,
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                path: None,
+                state: crate::model::MediaState::Idle,
+            },
+        };
+        archive.insert_message(&image, None).expect("insert");
+        archive
+            .set_media_path(chat, "m2", media)
+            .expect("media path");
+        archive.set_unread(chat, 3).expect("unread");
+        chat.to_owned()
+    }
+
+    #[test]
+    fn deleting_a_chat_removes_it_with_its_messages_and_reports_its_media() {
+        let archive = Archive::in_memory().expect("opens");
+        let media = PathBuf::from("/cache/zapfast/media/m2.jpg");
+        let gone = furnished_chat(&archive, "1@s.whatsapp.net", &media);
+        let kept = furnished_chat(&archive, "2@s.whatsapp.net", &media);
+
+        let removed = archive.delete_chat(&gone).expect("delete");
+
+        assert!(removed.existed);
+        assert_eq!(removed.media, vec![media]);
+        assert!(archive.chat(&gone).expect("chat").is_none());
+        assert!(
+            archive
+                .messages(&gone, None, 50)
+                .expect("messages")
+                .is_empty()
+        );
+        // Only the named chat goes; its neighbour is untouched.
+        assert!(archive.chat(&kept).expect("chat").is_some());
+        assert_eq!(
+            archive.messages(&kept, None, 50).expect("messages").len(),
+            2
+        );
+    }
+
+    #[test]
+    fn deleting_an_unknown_chat_reports_that_nothing_was_there() {
+        let archive = Archive::in_memory().expect("opens");
+        let removed = archive
+            .delete_chat("nobody@s.whatsapp.net")
+            .expect("delete");
+        assert!(!removed.existed);
+        assert!(removed.media.is_empty());
+    }
+
+    #[test]
+    fn clearing_a_chat_keeps_it_but_empties_its_messages_and_unread_count() {
+        let archive = Archive::in_memory().expect("opens");
+        let media = PathBuf::from("/cache/zapfast/media/m2.jpg");
+        let chat = furnished_chat(&archive, "1@s.whatsapp.net", &media);
+
+        let removed = archive.clear_chat(&chat).expect("clear");
+
+        assert!(removed.existed);
+        assert_eq!(removed.media, vec![media]);
+        let row = archive.chat(&chat).expect("chat").expect("still listed");
+        assert_eq!(row.unread, 0);
+        // The chat-list preview comes from the message join, so it empties too.
+        assert!(row.last.is_none());
+        assert!(
+            archive
+                .messages(&chat, None, 50)
+                .expect("messages")
+                .is_empty()
+        );
     }
 
     #[test]

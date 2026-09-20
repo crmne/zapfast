@@ -627,6 +627,36 @@ impl App {
         self.chats.iter_mut().find(|chat| chat.id == id)
     }
 
+    /// Drops every trace of a chat that no longer exists. Unlike closing a
+    /// chat this discards the draft, because there is nothing left to send it
+    /// to, and it clears `last_chat` so a restart does not reopen it.
+    fn forget_chat(&mut self, id: &str) {
+        self.chats.retain(|chat| chat.id != id);
+        self.conversations.remove(id);
+        self.drafts.remove(id);
+        self.draft_mentions.remove(id);
+        self.typing.remove(id);
+        self.unread_kept.remove(id);
+        if self.scroll_chat_into_view.as_deref() == Some(id) {
+            self.scroll_chat_into_view = None;
+        }
+        if self.settings.last_chat.as_deref() == Some(id) {
+            self.settings.last_chat = None;
+        }
+        if self.open_chat.as_deref() == Some(id) {
+            self.open_chat = None;
+            self.composer.clear();
+            self.composer_mentions.clear();
+            self.editing = None;
+            self.reply_to = None;
+            self.emoji_start = None;
+            self.mention_start = None;
+            self.reaction_target = None;
+            self.reaction_anchor = None;
+            self.emoji_jump = None;
+        }
+    }
+
     pub fn current_chat(&self) -> Option<&Chat> {
         self.open_chat.as_deref().and_then(|id| self.chat(id))
     }
@@ -1177,6 +1207,12 @@ impl App {
                     if self.editing.as_deref() == Some(id.as_str()) {
                         self.editing = None;
                         self.composer.clear();
+                    }
+                }
+                Event::ChatRemoved { chat } => self.forget_chat(&chat),
+                Event::ChatCleared { chat } => {
+                    if let Some(conversation) = self.conversations.get_mut(&chat) {
+                        conversation.messages.clear();
                     }
                 }
                 Event::Media {
@@ -2340,6 +2376,10 @@ impl App {
                 }
                 self.backend.send(Command::SetArchived(chat, archived));
             }
+            Action::DeleteChat(chat) => {
+                self.forget_chat(&chat);
+                self.backend.send(Command::DeleteChat(chat));
+            }
             Action::SetPinned(chat, pinned) => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.pinned = pinned;
@@ -3177,6 +3217,94 @@ mod tests {
         let mut output = ctx.run_ui(input, |ui| app.background_frame(ui.ctx()));
         output.textures_delta.clear();
         assert_eq!(app.chat(&chat.id).unwrap().unread, 1);
+    }
+
+    #[test]
+    fn deleting_a_chat_forgets_its_draft_open_state_and_restart_target() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat = "peer@s.whatsapp.net";
+        let other = "friend@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Peer".into()));
+        app.chats.push(Chat::new(other.into(), "Friend".into()));
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![message(chat, "m1", 100)], false);
+        app.drafts.insert(chat.into(), "half-written".into());
+        app.open_chat = Some(chat.into());
+        app.settings.last_chat = Some(chat.into());
+        app.unread_kept.insert(chat.into());
+        app.scroll_chat_into_view = Some(chat.into());
+
+        let ctx = egui::Context::default();
+        app.apply(Action::DeleteChat(chat.into()), &ctx);
+
+        assert!(app.chat(chat).is_none());
+        assert!(!app.conversations.contains_key(chat));
+        // The draft goes with the chat: closing would have kept it, but there
+        // is nothing left to send it to.
+        assert!(!app.drafts.contains_key(chat));
+        assert_eq!(app.open_chat, None);
+        // A restart must not try to reopen a chat that is gone.
+        assert_eq!(app.settings.last_chat, None);
+        // Nothing may keep pointing at a chat that is gone.
+        assert!(!app.unread_kept.contains(chat));
+        assert_eq!(app.scroll_chat_into_view, None);
+        // Neighbouring chats stay.
+        assert!(app.chat(other).is_some());
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::DeleteChat(id) if id == chat
+        ));
+    }
+
+    #[test]
+    fn a_chat_deleted_on_the_phone_disappears_here_too() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let chat = "peer@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Peer".into()));
+        app.open_chat = Some(chat.into());
+
+        events
+            .send(Event::ChatRemoved { chat: chat.into() })
+            .unwrap();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.background_frame(ui.ctx())
+        });
+        output.textures_delta.clear();
+
+        assert!(app.chat(chat).is_none());
+        assert_eq!(app.open_chat, None);
+    }
+
+    #[test]
+    fn a_chat_cleared_on_the_phone_keeps_the_chat_but_drops_its_messages() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let chat = "peer@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Peer".into()));
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![message(chat, "m1", 100)], false);
+
+        events
+            .send(Event::ChatCleared { chat: chat.into() })
+            .unwrap();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.background_frame(ui.ctx())
+        });
+        output.textures_delta.clear();
+
+        assert!(app.chat(chat).is_some());
+        assert!(app.conversations[chat].messages.is_empty());
     }
 
     #[test]
