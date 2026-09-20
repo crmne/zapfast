@@ -2067,6 +2067,26 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
                 app.dialog = Some(Dialog::JoinGroup);
             }
+            "delete-message" => {
+                app.dialog = app
+                    .open_chat
+                    .clone()
+                    .map(|chat| Dialog::ConfirmDeleteMessage {
+                        chat,
+                        message: "ada-emoji".to_owned(),
+                        for_everyone: true,
+                    });
+            }
+            "delete-message-mine" => {
+                app.dialog = app
+                    .open_chat
+                    .clone()
+                    .map(|chat| Dialog::ConfirmDeleteMessage {
+                        chat,
+                        message: "ada-format".to_owned(),
+                        for_everyone: false,
+                    });
+            }
             "new-contact" => app.dialog = Some(Dialog::NewContact),
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
@@ -3843,6 +3863,8 @@ mod tests {
             "quotes",
             "quote-jump",
             "select",
+            "delete-message",
+            "delete-message-mine",
             "new-contact",
             "light",
             "archived",
@@ -5473,6 +5495,71 @@ mod tests {
             .map(|chat| chat.id.clone())
             .collect();
         assert_eq!(after, listed, "every opened chat is still listed");
+    }
+
+    /// Opening the dialog must not delete anything on its own, and confirming
+    /// must delete with the scope the menu asked for.
+    #[test]
+    fn confirming_a_message_deletion_uses_the_chosen_scope() {
+        for (page, message, expected_everyone) in [
+            ("delete-message", "ada-emoji", true),
+            ("delete-message-mine", "ada-format", false),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some(page));
+            assert_eq!(
+                app.dialog,
+                Some(crate::model::Dialog::ConfirmDeleteMessage {
+                    chat: SAMPLES[0].id.to_owned(),
+                    message: message.to_owned(),
+                    for_everyone: expected_everyone,
+                })
+            );
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            // Laying the dialog out must not delete the message.
+            assert!(
+                app.conversations
+                    .values()
+                    .any(|conversation| conversation.message(message).is_some()),
+                "{page}: the message survives an open dialog"
+            );
+
+            let rect = ctx
+                .data(|data| data.get_temp::<egui::Rect>(crate::ui::dialogs::danger_button_id()))
+                .expect("the confirm button is on screen");
+            let pos = rect.center();
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos), press(true)],
+            );
+            frame_with(&mut app, &ctx, vec![press(false)]);
+
+            assert!(app.dialog.is_none(), "{page}: the dialog closes");
+            let row = app
+                .conversations
+                .values()
+                .find_map(|conversation| conversation.message(message));
+            if expected_everyone {
+                assert!(
+                    matches!(
+                        row.map(|message| &message.content),
+                        Some(crate::model::Content::Revoked)
+                    ),
+                    "{page}: a revoked message stays as a tombstone"
+                );
+            } else {
+                assert!(row.is_none(), "{page}: a local delete removes the row");
+            }
+        }
     }
 
     #[test]

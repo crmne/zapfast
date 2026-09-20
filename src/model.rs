@@ -1015,6 +1015,14 @@ pub enum Dialog {
     ConfirmDeleteChat(ChatId),
     /// Leaves a group or channel, optionally archiving the chat.
     ConfirmLeaveGroup(ChatId),
+    /// Confirms deleting one message. The archive is the only copy, so a
+    /// local delete cannot be undone either.
+    ConfirmDeleteMessage {
+        chat: ChatId,
+        message: String,
+        /// Revokes for everyone instead of deleting only this copy.
+        for_everyone: bool,
+    },
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
