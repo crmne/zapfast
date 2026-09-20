@@ -387,6 +387,11 @@ pub async fn run(
     worker.relocate_media();
     discard_attachment_staging(&worker.dirs.media_cache_dir());
     discard_attachment_staging(&worker.dirs.sticker_cache_dir());
+    // Interrupted downloads stage next to the destination, which may be a
+    // custom attachment folder rather than the cache.
+    if let Some(custom) = &worker.dirs.custom_media {
+        discard_attachment_staging(custom);
+    }
     worker.start_bot().await;
     let mut wa_events = wa_events;
     let mut tick = tokio::time::interval(Duration::from_secs(5));
