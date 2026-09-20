@@ -1176,8 +1176,11 @@ impl App {
                     | Dialog::ConfirmDeleteChat(chat)
                     | Dialog::ConfirmClearChat(chat)
             ) if chat == id
-        ) || matches!(&self.dialog, Some(Dialog::Forward { chat, .. }) if chat == id)
-        {
+        ) || matches!(
+            &self.dialog,
+            Some(Dialog::Forward { chat, .. } | Dialog::ConfirmDeleteMessage { chat, .. })
+                if chat == id
+        ) {
             self.dialog = None;
             self.poll_creating = false;
         }
@@ -7019,6 +7022,39 @@ mod tests {
         // Neighbouring chats and their search hits stay.
         assert!(app.chat(other).is_some());
         assert_eq!(app.search_hits.len(), 1);
+    }
+
+    /// A pending delete-message question belongs to one chat. When that chat
+    /// goes away the message is gone with it, so the question must not stay
+    /// open over another chat.
+    #[test]
+    fn a_removed_chat_closes_its_pending_message_deletion() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let chat = "peer@s.whatsapp.net";
+        let other = "other@s.whatsapp.net";
+        for id in [chat, other] {
+            app.chats.push(Chat::new(id.into(), "Peer".into()));
+        }
+        app.dialog = Some(Dialog::ConfirmDeleteMessage {
+            chat: other.into(),
+            message: "m1".into(),
+            for_everyone: true,
+        });
+
+        events
+            .send(Event::ChatRemoved { chat: chat.into() })
+            .unwrap();
+        app.handle_events();
+        // Another chat's question stays open.
+        assert!(app.dialog.is_some());
+
+        events
+            .send(Event::ChatRemoved { chat: other.into() })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.dialog, None);
     }
 
     #[test]

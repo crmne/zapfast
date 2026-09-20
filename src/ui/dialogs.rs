@@ -40,6 +40,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     380.0
                 }
                 Dialog::ConfirmClearChat(_) => 380.0,
+                Dialog::ConfirmDeleteMessage { .. } => 380.0,
                 Dialog::StickerPack => 420.0,
                 Dialog::StickerMaker => 400.0,
                 Dialog::Forward { .. } => 420.0,
@@ -75,6 +76,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ChatInfo(id) => chat_info(app, ui, &id),
                 Dialog::ConfirmDeleteChat(id) => confirm_delete_chat(app, ui, &id),
                 Dialog::ConfirmClearChat(id) => confirm_clear_chat(app, ui, &id),
+                Dialog::ConfirmDeleteMessage {
+                    message,
+                    for_everyone,
+                    ..
+                } => confirm_delete_message(app, ui, &message, for_everyone),
                 Dialog::Forward { chat, messages } => forward(app, ui, &chat, &messages),
                 Dialog::JoinGroup => join_group(app, ui),
                 Dialog::ConfirmStartOver => confirm_start_over(app, ui),
@@ -1048,6 +1054,42 @@ fn confirm_start_over(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// Confirms deleting one message. Enter is deliberately not bound here: a
+/// stray keypress must not destroy a message.
+fn confirm_delete_message(app: &mut App, ui: &mut egui::Ui, id: &str, for_everyone: bool) {
+    let palette = app.palette;
+    let (heading, body) = if for_everyone {
+        (
+            "Delete for everyone?",
+            "Everyone in this chat will see \"This message was deleted\" instead. It cannot be undone.",
+        )
+    } else {
+        (
+            "Delete for me?",
+            "This removes the message from this computer. Other people keep their copy. Your phone will not send it again, so it cannot be undone.",
+        )
+    };
+    title(ui, app, heading);
+    theme::paragraph(ui, body, theme::regular(13.5), palette.text);
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if danger_button(ui, app, "Delete") {
+                let action = if for_everyone {
+                    Action::DeleteForEveryone(id.to_owned())
+                } else {
+                    Action::DeleteForMe(id.to_owned())
+                };
+                app.actions.push(action);
+                app.actions.push(Action::CloseDialog);
+            }
+            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
 fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     title(ui, app, "Unlink this computer?");
@@ -1740,6 +1782,12 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
     }
 }
 
+/// Stable id of the confirm button in a destructive dialog, used by
+/// interaction tests.
+pub fn danger_button_id() -> egui::Id {
+    egui::Id::new("dialog-danger-button")
+}
+
 /// A filled button for a destructive action.
 fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> bool {
     let palette = app.palette;
@@ -1757,6 +1805,9 @@ fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> bool {
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
+    // Store the rect for interaction tests.
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(danger_button_id(), rect));
     if ui.is_rect_visible(rect) {
         let fill = if response.hovered() {
             palette.danger.gamma_multiply(0.85)

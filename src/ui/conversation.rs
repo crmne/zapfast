@@ -3663,10 +3663,18 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         actions.push(Action::Edit(message.id.clone()));
     }
     if can_revoke && widgets::menu_item(ui, &palette, Some(Icon::Trash), "Delete for everyone") {
-        actions.push(Action::DeleteForEveryone(message.id.clone()));
+        actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
+            chat: view.chat.id.clone(),
+            message: message.id.clone(),
+            for_everyone: true,
+        }));
     }
     if widgets::menu_item(ui, &palette, Some(Icon::EyeOff), "Delete for me") {
-        actions.push(Action::DeleteForMe(message.id.clone()));
+        actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
+            chat: view.chat.id.clone(),
+            message: message.id.clone(),
+            for_everyone: false,
+        }));
     }
     if let Content::Sticker { media, .. } = &message.content
         && let Some(path) = &media.path
