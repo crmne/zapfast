@@ -92,11 +92,12 @@
             version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
             src = self;
 
-            # The lock file contains git dependencies. fetchCargoVendor includes
-            # them in the fixed-output dependency tree, unlike cargoLock alone.
-            cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
-              inherit pname version src;
-              hash = "sha256-46819RWTk0moLdbba4PHI2KqPoK63EUcGMdkCbYYetQ=";
+            # Import registry dependencies directly from Cargo.lock so ordinary
+            # lock-file updates do not require refreshing a vendor hash. Git
+            # dependencies remain pinned to their exact locked revisions.
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+              allowBuiltinFetchGit = true;
             };
 
             nativeBuildInputs = with pkgs; [
