@@ -606,8 +606,10 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
+    // A disabled Ui already fades the painter; it must not react to hover.
+    let enabled = ui.is_enabled();
     if ui.is_rect_visible(rect) {
-        let hovered = response.hovered();
+        let hovered = enabled && response.hovered();
         let radius = rect.height() / 2.0;
         if primary {
             let fill = if hovered {
@@ -628,7 +630,11 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
         let pos = rect.center() - galley.size() / 2.0;
         ui.painter().galley(pos, galley, color);
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
 }
 
 /// Subtle button with an optional icon and label.

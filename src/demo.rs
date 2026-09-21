@@ -2628,6 +2628,67 @@ mod tests {
         );
     }
 
+    /// Whether AccessKit reports the button with this label as disabled.
+    fn button_disabled(app: &mut App, ctx: &egui::Context, label: &str) -> bool {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility tree");
+        tree.nodes
+            .iter()
+            // The composer field is also labelled "Message"; match buttons only.
+            .find(|(_, node)| {
+                node.role() == egui::accesskit::Role::Button && node.label() == Some(label)
+            })
+            .unwrap_or_else(|| panic!("no {label} button"))
+            .1
+            .is_disabled()
+    }
+
+    /// A button that cannot act yet must say so, on screen and to screen
+    /// readers, instead of looking like any other button and ignoring clicks.
+    #[test]
+    fn number_dialogs_disable_their_actions_until_the_number_is_complete() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+
+        let mut app = app();
+        apply_flags(&mut app, Some("phone"));
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert!(button_disabled(&mut app, &ctx, "Get a code"));
+        app.pair_phone = "15551234567".into();
+        render(&mut app, &ctx);
+        assert!(!button_disabled(&mut app, &ctx, "Get a code"));
+
+        let mut app = self::app();
+        apply_flags(&mut app, Some("new-contact"));
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert!(button_disabled(&mut app, &ctx, "Message"));
+        assert!(button_disabled(&mut app, &ctx, "Save contact"));
+        assert!(!button_disabled(&mut app, &ctx, "Cancel"));
+        app.new_contact_phone = "15551234567".into();
+        render(&mut app, &ctx);
+        assert!(!button_disabled(&mut app, &ctx, "Message"));
+        assert!(!button_disabled(&mut app, &ctx, "Save contact"));
+    }
+
     #[test]
     fn muting_a_chat_takes_effect_at_once() {
         let mut app = app();

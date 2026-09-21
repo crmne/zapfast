@@ -289,6 +289,9 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// Why the number dialogs cannot act yet.
+const NUMBER_TOO_SHORT: &str = "Enter the whole number, starting with the country code";
+
 fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     title(ui, app, "Link with a phone number");
@@ -337,8 +340,15 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let ready = app.pair_phone.chars().filter(char::is_ascii_digit).count() >= 7;
-            if (theme::pill_button(ui, &palette, "Get a code", ready).clicked() || submit) && ready
-            {
+            // Stay the main action, but look and read as unavailable until
+            // the number is long enough.
+            let get_code = ui
+                .add_enabled_ui(ready, |ui| {
+                    theme::pill_button(ui, &palette, "Get a code", true)
+                        .on_disabled_hover_text(NUMBER_TOO_SHORT)
+                })
+                .inner;
+            if (get_code.clicked() || submit) && ready {
                 app.actions
                     .push(Action::PairWithPhone(app.pair_phone.clone()));
             }
@@ -455,8 +465,22 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
             );
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let save = theme::pill_button(ui, &palette, "Save contact", ready && named).clicked();
-            let message = theme::pill_button(ui, &palette, "Message", ready && !named).clicked();
+            let (save, message) = ui
+                .add_enabled_ui(ready, |ui| {
+                    let hint = if app.new_contact_pending {
+                        "Checking the number…"
+                    } else {
+                        NUMBER_TOO_SHORT
+                    };
+                    let save = theme::pill_button(ui, &palette, "Save contact", named)
+                        .on_disabled_hover_text(hint)
+                        .clicked();
+                    let message = theme::pill_button(ui, &palette, "Message", !named)
+                        .on_disabled_hover_text(hint)
+                        .clicked();
+                    (save, message)
+                })
+                .inner;
             if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
                 app.actions.push(Action::CloseDialog);
             }
