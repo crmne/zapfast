@@ -21,6 +21,7 @@ use crate::theme::{self, Icon};
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
+    track_keyboard_focus(ctx);
     keys::handle(app, ctx);
     titlebar_strip(app, ui);
     if !app.is_linked() {
@@ -28,6 +29,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         dialogs::show(app, ctx);
         update::show(app, ctx);
         toasts(app, ctx);
+        focus_ring(app, ctx);
         return;
     }
     let macos = theme::macos_chrome(ctx);
@@ -49,6 +51,76 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     dialogs::show(app, ctx);
     drop_target(app, ctx);
     toasts(app, ctx);
+    focus_ring(app, ctx);
+}
+
+/// Where the focus ring was drawn this frame, used by interaction tests.
+pub fn focus_ring_id() -> egui::Id {
+    egui::Id::new("focus-ring")
+}
+
+/// Tab shows where focus is; a pointer press hides it again. Widgets scroll
+/// themselves into view through `theme::reveal_focus`.
+fn track_keyboard_focus(ctx: &egui::Context) {
+    let (tab, pressed) = ctx.input(|input| {
+        let tab = input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key {
+                    key: egui::Key::Tab,
+                    pressed: true,
+                    ..
+                }
+            )
+        });
+        (tab, input.pointer.any_pressed())
+    });
+    let mut keyboard = ctx.data(|data| {
+        data.get_temp::<bool>(theme::keyboard_focus_id())
+            .unwrap_or(false)
+    });
+    if tab {
+        keyboard = true;
+    } else if pressed {
+        keyboard = false;
+    }
+    ctx.data_mut(|data| data.insert_temp(theme::keyboard_focus_id(), keyboard));
+    ctx.data_mut(|data| data.remove::<egui::Rect>(focus_ring_id()));
+}
+
+/// Outlines the focused widget after keyboard navigation. Custom widgets
+/// paint themselves and never showed focus; drawing the ring here covers all
+/// of them. Text fields are left out: their caret already shows focus.
+fn focus_ring(app: &App, ctx: &egui::Context) {
+    let keyboard = ctx.data(|data| {
+        data.get_temp::<bool>(theme::keyboard_focus_id())
+            .unwrap_or(false)
+    });
+    if !keyboard || ctx.text_edit_focused() {
+        return;
+    }
+    let Some(response) = ctx
+        .memory(|memory| memory.focused())
+        .and_then(|id| ctx.read_response(id))
+    else {
+        return;
+    };
+    let rect = response.interact_rect;
+    if !rect.is_positive() {
+        return;
+    }
+    let ring = rect.expand(2.0);
+    ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        egui::Id::new("focus-ring-layer"),
+    ))
+    .rect_stroke(
+        ring,
+        CornerRadius::same(theme::RADIUS_SMALL + 2),
+        Stroke::new(2.0, app.palette.accent),
+        egui::StrokeKind::Outside,
+    );
+    ctx.data_mut(|data| data.insert_temp(focus_ring_id(), ring));
 }
 
 /// Shows where dragged files will be sent.

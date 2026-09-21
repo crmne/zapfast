@@ -255,6 +255,7 @@ fn toggle(
     let mut changed = false;
     widgets::setting_row(ui, &palette, label, description, |ui| {
         let response = widgets::switch(ui, &palette, &mut value);
+        theme::reveal_focus(&response);
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), value, label)
         });

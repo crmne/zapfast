@@ -56,6 +56,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   accessibility services. Custom buttons, chat rows, settings switches and
   message text include readable labels. Windows NVDA navigation still needs
   platform verification; keyboard and screen-reader support is not complete.
+  After Tab, the focused control is outlined and scrolled into view; using
+  the mouse hides the outline again.
 - **Safer desktop opening.** Links open only web pages or email addresses.
   Common documents and media open in their default apps; executable, script,
   and unrecognized attachment formats open their containing folder instead.

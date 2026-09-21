@@ -75,11 +75,17 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         Some(about) => format!("{name}\n{about}"),
                         None => name.clone(),
                     };
-                    let response =
-                        widgets::avatar(ui, &palette, &name, &me, 34.0, picture.as_deref())
-                            .interact(Sense::click())
-                            .on_hover_text(tooltip)
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let response = widgets::clickable_avatar(
+                        ui,
+                        &palette,
+                        &name,
+                        &me,
+                        34.0,
+                        picture.as_deref(),
+                        "Your profile and settings",
+                    )
+                    .on_hover_text(tooltip)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
                     if response.clicked() {
                         app.actions.push(Action::Open(Page::Settings));
                     }
@@ -430,6 +436,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
     );
+    theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
@@ -524,6 +531,7 @@ fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
     );
+    theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
@@ -581,6 +589,7 @@ fn archive_row(app: &mut App, ui: &mut egui::Ui, count: usize) {
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
     );
+    theme::reveal_focus(&response);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Button,
@@ -635,6 +644,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
     );
+    theme::reveal_focus(&response);
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::SelectableLabel,

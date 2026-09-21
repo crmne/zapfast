@@ -521,6 +521,7 @@ pub fn icon_button(
 ) -> Response {
     let edge = size + 12.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(edge), Sense::click());
+    reveal_focus(&response);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
@@ -556,6 +557,7 @@ pub fn circle_button(
     tooltip: &str,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click());
+    reveal_focus(&response);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
@@ -603,6 +605,7 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
     let padding = Vec2::new(18.0, 8.0);
     let size = galley.size() + padding * 2.0;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    reveal_focus(&response);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
@@ -647,6 +650,7 @@ pub fn soft_button(
     let padding = Vec2::new(12.0, 7.0);
     let size = Vec2::new(galley.size().x + icon_width, galley.size().y) + padding * 2.0;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    reveal_focus(&response);
     if ui.is_rect_visible(rect) {
         let hovered = response.hovered();
         let fill = if active {
@@ -679,6 +683,26 @@ pub fn soft_button_width(ui: &egui::Ui, label: &str, icon: bool) -> f32 {
         .layout_no_wrap(label.to_owned(), medium(13.0), Color32::WHITE);
     let icon_width = if icon { 15.0 + 6.0 } else { 0.0 };
     galley.size().x + icon_width + 24.0
+}
+
+/// Whether focus last moved by keyboard, like the web's `:focus-visible`.
+pub fn keyboard_focus_id() -> egui::Id {
+    egui::Id::new("keyboard-focus")
+}
+
+/// Scrolls a widget that keyboard focus reached into view. egui does not do
+/// this itself, and a scroll target only counts when set while the widget's
+/// scroll area is being laid out, so each focusable widget calls this.
+pub fn reveal_focus(response: &Response) {
+    let keyboard = response
+        .ctx
+        .data(|data| data.get_temp::<bool>(keyboard_focus_id()).unwrap_or(false));
+    // Once per focus change: scrolling again before the first scroll lands
+    // would overshoot.
+    if keyboard && response.gained_focus() && response.interact_rect != response.rect {
+        // Jump rather than glide: the focus should be visible at once.
+        response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+    }
 }
 
 /// Animated busy indicator with timer-based repainting.
