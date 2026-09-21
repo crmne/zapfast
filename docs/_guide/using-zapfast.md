@@ -76,8 +76,9 @@ express in their metadata, as WhatsApp's own stickers do.
 Under **+**, paste a `signal.art` link from
 [signalstickers.org](https://signalstickers.org) (or click **Find packs**), or
 open a `.wastickers` file, to import a pack. Signal packs keep each sticker's
-emoji. Open a pack's tab and use its delete button to remove it. Packs are
-stored as WebP files on your computer.
+emoji. Open a pack's tab and use its delete button to remove it; ZapFast asks
+first, since that deletes the pack's files. Packs are stored as WebP files on
+your computer.
 
 A WhatsApp sticker pack someone shares in a chat shows its name, publisher,
 and size. Click **View stickers** to download and look at it, and **Add to my
