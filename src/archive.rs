@@ -1538,9 +1538,10 @@ pub(crate) mod tests {
         assert_eq!(chat.pinned_at, 0);
     }
 
-    /// Builds a chat holding one text message, one downloaded image, a poll
-    /// and a group receipt, so removal has something in every chat-scoped
-    /// table to clean up.
+    /// Builds a chat with rows in every chat-scoped table: a text message, a
+    /// downloaded image, a poll with its history and a vote, and a group
+    /// receipt. The builder checks each table, so a missing row cannot let a
+    /// broken purge pass.
     fn furnished_chat(archive: &Archive, chat: &str, media: &Path) -> String {
         archive.ensure_chat(chat, "Somebody").expect("chat");
         archive
@@ -1563,7 +1564,43 @@ pub(crate) mod tests {
             .set_media_path(chat, "m2", media)
             .expect("media path");
         archive.set_unread(chat, 3).expect("unread");
+        archive
+            .connection
+            .execute_batch(&format!(
+                "INSERT INTO polls (chat, id, creator, secret) VALUES ('{chat}', 'p1', '{chat}', x'00');
+                 INSERT INTO poll_history (chat, id) VALUES ('{chat}', 'p1');
+                 INSERT INTO poll_votes (chat, poll, voter, sender, update_id, at, from_me)
+                     VALUES ('{chat}', 'p1', '{chat}', '{chat}', 'u1', 150, 0);
+                 INSERT INTO group_receipts (chat, id, recipient) VALUES ('{chat}', 'm1', '{chat}');"
+            ))
+            .expect("poll and receipt rows");
+        for table in CHAT_TABLES {
+            assert!(
+                rows(archive, table, chat) > 0,
+                "{table} needs a row to remove"
+            );
+        }
         chat.to_owned()
+    }
+
+    /// Every table keyed by chat besides `chats` itself.
+    const CHAT_TABLES: [&str; 5] = [
+        "messages",
+        "group_receipts",
+        "polls",
+        "poll_history",
+        "poll_votes",
+    ];
+
+    fn rows(archive: &Archive, table: &str, chat: &str) -> i64 {
+        archive
+            .connection
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE chat = ?1"),
+                params![chat],
+                |row| row.get(0),
+            )
+            .expect("count")
     }
 
     #[test]
@@ -1584,12 +1621,25 @@ pub(crate) mod tests {
                 .expect("messages")
                 .is_empty()
         );
+        for table in CHAT_TABLES {
+            assert_eq!(
+                rows(&archive, table, &gone),
+                0,
+                "{table} still holds the chat"
+            );
+        }
         // Only the named chat goes; its neighbour is untouched.
         assert!(archive.chat(&kept).expect("chat").is_some());
         assert_eq!(
             archive.messages(&kept, None, 50).expect("messages").len(),
             2
         );
+        for table in CHAT_TABLES {
+            assert!(
+                rows(&archive, table, &kept) > 0,
+                "{table} lost the other chat"
+            );
+        }
     }
 
     #[test]
@@ -1616,6 +1666,13 @@ pub(crate) mod tests {
         assert_eq!(row.unread, 0);
         // The chat-list preview comes from the message join, so it empties too.
         assert!(row.last.is_none());
+        for table in CHAT_TABLES {
+            assert_eq!(
+                rows(&archive, table, &chat),
+                0,
+                "{table} still holds the chat"
+            );
+        }
         assert!(
             archive
                 .messages(&chat, None, 50)

@@ -3,6 +3,7 @@
 use egui::{Align, Frame, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
+use crate::backend::LinkStatus;
 use crate::model::{Action, Chat, ChatFilter, Contact, Dialog, Message, Page};
 use crate::theme::{self, Icon, Palette};
 
@@ -848,7 +849,9 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         app.actions
             .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
     }
-    if widgets::menu_item(ui, palette, Some(Icon::Trash), "Delete chat") {
+    // Deleting reaches the phone, so it waits for a connection.
+    let connected = matches!(app.link, LinkStatus::Connected);
+    if widgets::menu_item_enabled(ui, palette, Some(Icon::Trash), "Delete chat", connected) {
         app.actions
             .push(Action::ShowDialog(Dialog::ConfirmDeleteChat(
                 chat.id.clone(),

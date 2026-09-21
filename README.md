@@ -67,9 +67,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Existing installations request one settings refresh after upgrading to
   recover previously lost mute settings and pin order, without relinking.
 - **Delete chats.** Remove a chat and its messages from the chat list's
-  right-click menu, which also deletes it on your phone. Chats you delete or
-  clear on the phone now disappear here as well, instead of lingering with
-  messages the other clients no longer show.
+  right-click menu. The phone deletes it first, so this needs a connection,
+  and the chat only leaves this computer once the phone has confirmed. Chats
+  you delete or clear on the phone disappear here as well, and history that
+  was already on its way does not bring them back.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
   in the chat. The playback speed cycles between 1x, 1.5x, and 2x from the
   bubble, keeping the speaker's pitch, and the last choice applies to later

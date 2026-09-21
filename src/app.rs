@@ -627,10 +627,11 @@ impl App {
         self.chats.iter_mut().find(|chat| chat.id == id)
     }
 
-    /// Drops every trace of a chat that no longer exists. Unlike closing a
-    /// chat this discards the draft, because there is nothing left to send it
-    /// to, and it clears `last_chat` so a restart does not reopen it.
+    /// Drops every trace of a chat that no longer exists. Unlike hiding a
+    /// locked chat this discards the draft, because there is nothing left to
+    /// send it to, and it clears `last_chat` so a restart does not reopen it.
     fn forget_chat(&mut self, id: &str) {
+        self.leave_chat(id);
         self.chats.retain(|chat| chat.id != id);
         self.conversations.remove(id);
         self.drafts.remove(id);
@@ -643,17 +644,42 @@ impl App {
         if self.settings.last_chat.as_deref() == Some(id) {
             self.settings.last_chat = None;
         }
+    }
+
+    /// Takes everything on screen away from a chat the user can no longer
+    /// reach, whether it was locked or deleted: its notifications, search
+    /// hits and dialogs, and, when it is open, the conversation with its
+    /// composer, recording and playback. Keeping a draft is up to the caller.
+    fn leave_chat(&mut self, id: &str) {
+        self.notifications.clear(id);
+        self.search_hits.retain(|message| message.chat != id);
+        if matches!(
+            &self.dialog,
+            Some(
+                Dialog::ChatInfo(chat) | Dialog::CreatePoll(chat) | Dialog::ConfirmDeleteChat(chat)
+            ) if chat == id
+        ) || matches!(&self.dialog, Some(Dialog::Forward { chat, .. }) if chat == id)
+        {
+            self.dialog = None;
+            self.poll_creating = false;
+        }
         if self.open_chat.as_deref() == Some(id) {
+            self.stop_composing(id);
             self.open_chat = None;
             self.composer.clear();
             self.composer_mentions.clear();
-            self.editing = None;
+            self.pending.clear();
             self.reply_to = None;
-            self.emoji_start = None;
-            self.mention_start = None;
+            self.editing = None;
+            self.picker = None;
             self.reaction_target = None;
             self.reaction_anchor = None;
+            self.emoji_start = None;
+            self.mention_start = None;
             self.emoji_jump = None;
+            self.dialog = None;
+            self.recording = None;
+            self.player.stop();
         }
     }
 
@@ -1210,11 +1236,7 @@ impl App {
                     }
                 }
                 Event::ChatRemoved { chat } => self.forget_chat(&chat),
-                Event::ChatCleared { chat } => {
-                    if let Some(conversation) = self.conversations.get_mut(&chat) {
-                        conversation.messages.clear();
-                    }
-                }
+                Event::ChatCleared { chat } => self.handle_chat_cleared(&chat),
                 Event::Media {
                     chat,
                     message,
@@ -1358,35 +1380,44 @@ impl App {
             .sort_by_key(|chat| std::cmp::Reverse(chat.last_activity));
     }
 
-    fn hide_locked_chat(&mut self, id: &str) {
-        self.notifications.clear(id);
+    /// Empties a chat that stays listed. Search hits and anything pointing at
+    /// one of its messages would otherwise refer to rows that are gone, and a
+    /// pending edit would send `EditText` for a message that no longer exists.
+    fn handle_chat_cleared(&mut self, id: &str) {
         self.search_hits.retain(|message| message.chat != id);
-        if matches!(&self.dialog, Some(Dialog::ChatInfo(chat)) | Some(Dialog::CreatePoll(chat)) if chat == id)
-            || matches!(&self.dialog, Some(Dialog::Forward { chat, .. }) if chat == id)
-        {
-            self.dialog = None;
-            self.poll_creating = false;
-        }
+        // Nothing earlier is left here, and the phone no longer has it either.
+        self.conversations.insert(
+            id.to_owned(),
+            Conversation {
+                requested: true,
+                complete: true,
+                phone_exhausted: true,
+                ..Conversation::default()
+            },
+        );
         if self.open_chat.as_deref() == Some(id) {
-            self.stop_composing(id);
-            self.open_chat = None;
-            if self.editing.is_none() && !self.composer.is_empty() {
-                self.drafts
-                    .insert(id.to_owned(), std::mem::take(&mut self.composer));
-                self.draft_mentions
-                    .insert(id.to_owned(), std::mem::take(&mut self.composer_mentions));
+            if self.editing.take().is_some() {
+                self.composer.clear();
+                self.composer_mentions.clear();
             }
-            self.composer.clear();
-            self.composer_mentions.clear();
-            self.pending.clear();
             self.reply_to = None;
-            self.editing = None;
-            self.picker = None;
             self.reaction_target = None;
-            self.dialog = None;
-            self.recording = None;
-            self.player.stop();
+            self.reaction_anchor = None;
         }
+    }
+
+    fn hide_locked_chat(&mut self, id: &str) {
+        // A locked chat still exists, so its unsent text waits as a draft.
+        if self.open_chat.as_deref() == Some(id)
+            && self.editing.is_none()
+            && !self.composer.is_empty()
+        {
+            self.drafts
+                .insert(id.to_owned(), std::mem::take(&mut self.composer));
+            self.draft_mentions
+                .insert(id.to_owned(), std::mem::take(&mut self.composer_mentions));
+        }
+        self.leave_chat(id);
     }
 
     fn handle_media(&mut self, chat: &str, id: &str, result: Result<PathBuf, String>) {
@@ -2376,10 +2407,9 @@ impl App {
                 }
                 self.backend.send(Command::SetArchived(chat, archived));
             }
-            Action::DeleteChat(chat) => {
-                self.forget_chat(&chat);
-                self.backend.send(Command::DeleteChat(chat));
-            }
+            // The chat leaves the list once the phone confirmed, through
+            // `Event::ChatRemoved`.
+            Action::DeleteChat(chat) => self.backend.send(Command::DeleteChat(chat)),
             Action::SetPinned(chat, pinned) => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.pinned = pinned;
@@ -3220,7 +3250,7 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_chat_forgets_its_draft_open_state_and_restart_target() {
+    fn a_deleted_chat_leaves_only_after_the_phone_confirmed_it() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
@@ -3237,9 +3267,27 @@ mod tests {
         app.settings.last_chat = Some(chat.into());
         app.unread_kept.insert(chat.into());
         app.scroll_chat_into_view = Some(chat.into());
+        app.search_hits.push(message(chat, "m1", 100));
+        app.search_hits.push(message(other, "m2", 100));
+        app.dialog = Some(Dialog::ChatInfo(chat.into()));
 
         let ctx = egui::Context::default();
         app.apply(Action::DeleteChat(chat.into()), &ctx);
+
+        // Nothing changes here until the phone has deleted the chat too.
+        assert!(app.chat(chat).is_some());
+        assert!(app.drafts.contains_key(chat));
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::DeleteChat(id) if id == chat))
+        );
+
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        events
+            .send(Event::ChatRemoved { chat: chat.into() })
+            .unwrap();
+        app.handle_events();
 
         assert!(app.chat(chat).is_none());
         assert!(!app.conversations.contains_key(chat));
@@ -3252,12 +3300,11 @@ mod tests {
         // Nothing may keep pointing at a chat that is gone.
         assert!(!app.unread_kept.contains(chat));
         assert_eq!(app.scroll_chat_into_view, None);
-        // Neighbouring chats stay.
+        assert!(app.search_hits.iter().all(|hit| hit.chat != chat));
+        assert!(app.dialog.is_none());
+        // Neighbouring chats and their search hits stay.
         assert!(app.chat(other).is_some());
-        assert!(matches!(
-            commands.try_recv().unwrap(),
-            Command::DeleteChat(id) if id == chat
-        ));
+        assert_eq!(app.search_hits.len(), 1);
     }
 
     #[test]
@@ -3293,6 +3340,12 @@ mod tests {
             .entry(chat.into())
             .or_default()
             .merge(vec![message(chat, "m1", 100)], false);
+        app.open_chat = Some(chat.into());
+        app.editing = Some("m1".into());
+        app.composer = "edited text".into();
+        app.reply_to = Some("m1".into());
+        app.reaction_target = Some((chat.into(), "m1".into()));
+        app.search_hits.push(message(chat, "m1", 100));
 
         events
             .send(Event::ChatCleared { chat: chat.into() })
@@ -3304,7 +3357,18 @@ mod tests {
         output.textures_delta.clear();
 
         assert!(app.chat(chat).is_some());
-        assert!(app.conversations[chat].messages.is_empty());
+        let conversation = &app.conversations[chat];
+        assert!(conversation.messages.is_empty());
+        // Nothing older remains, locally or on the phone, so neither is asked.
+        assert!(conversation.complete && conversation.phone_exhausted);
+        // Nothing may point at a message that was just removed.
+        assert_eq!(app.editing, None);
+        assert!(app.composer.is_empty());
+        assert_eq!(app.reply_to, None);
+        assert_eq!(app.reaction_target, None);
+        assert!(app.search_hits.is_empty());
+        // The chat itself stays open.
+        assert_eq!(app.open_chat.as_deref(), Some(chat));
     }
 
     #[test]

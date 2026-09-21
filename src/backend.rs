@@ -338,8 +338,13 @@ pub enum Command {
         emoji: String,
     },
     SetArchived(ChatId, bool),
-    /// Deletes a chat here and on the phone.
+    /// Deletes a chat on the phone, then here once the phone agreed.
     DeleteChat(ChatId),
+    /// Whether the phone deleted a chat requested through `DeleteChat`.
+    ChatDeleted {
+        chat: ChatId,
+        deleted: bool,
+    },
     SetPinned(ChatId, bool),
     PairWithPhone(String),
     /// Unlinks the device remotely and locally.
