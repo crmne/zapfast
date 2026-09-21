@@ -542,9 +542,7 @@ impl App {
             return;
         };
         let now = crate::util::now();
-        // Skip muted chats, locked chats (no signal that one arrived, either),
-        // and delayed reconnect backlogs.
-        if chat.unread == 0 || chat.muted(now) || chat.locked || now - message.timestamp > 60 {
+        if !notification_eligible(chat, now, message.timestamp) {
             return;
         }
         let reading = !self.window_hidden
@@ -3041,14 +3039,45 @@ impl Delivery {
     }
 }
 
+/// Whether an incoming message in this chat warrants a desktop notification.
+///
+/// Archived chats stay silent, direct and group alike, and speak up again once
+/// they are unarchived. Muted and locked chats give no signal that one arrived,
+/// and delayed reconnect backlogs are not news.
+fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
+    if chat.archived || chat.unread == 0 || chat.muted(now) || chat.locked {
+        return false;
+    }
+    now - message_at <= 60
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Content;
+    use crate::model::{ChatKind, Content};
 
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn archived_chats_do_not_qualify_for_notifications_until_unarchived() {
+        let now = crate::util::now();
+        for (id, kind) in [
+            ("1@s.whatsapp.net", ChatKind::Direct),
+            ("2@g.us", ChatKind::Group),
+        ] {
+            let mut chat = Chat::new(id.into(), "Fixture".into());
+            assert_eq!(chat.kind, kind, "fixture id picks the chat kind");
+            chat.unread = 1;
+
+            chat.archived = true;
+            assert!(!notification_eligible(&chat, now, now), "{id} archived");
+
+            chat.archived = false;
+            assert!(notification_eligible(&chat, now, now), "{id} unarchived");
+        }
     }
 
     #[test]

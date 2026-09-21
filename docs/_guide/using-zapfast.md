@@ -83,8 +83,8 @@ see its picture, number, and group members.
 
 Closing the window keeps ZapFast linked in the tray. Click the tray icon or
 launch the app again to reopen it. Notifications show the chat picture and open
-the chat when clicked. Muted chats do not send notifications. You can change
-both settings.
+the chat when clicked. Muted chats do not send notifications, and archived
+chats stay quiet until you unarchive them. You can change both settings.
 
 Press `Ctrl+/` or click the keyboard button under the composer to list all
 shortcuts.
