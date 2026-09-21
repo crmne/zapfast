@@ -1556,7 +1556,7 @@ const REACTION_AFFORDANCE_SIZE: f32 = 26.0;
 const REACTION_AFFORDANCE_GAP: f32 = 6.0;
 
 /// Places the hover reaction control beside the bubble, swapping sides near an edge.
-fn reaction_affordance_rect(bubble: Rect, bounds: Rect, own: bool) -> Rect {
+pub fn reaction_affordance_rect(bubble: Rect, bounds: Rect, own: bool) -> Rect {
     let size = Vec2::splat(REACTION_AFFORDANCE_SIZE);
     let before = bubble.left() - REACTION_AFFORDANCE_GAP - size.x;
     let after = bubble.right() + REACTION_AFFORDANCE_GAP;
