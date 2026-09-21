@@ -44,6 +44,10 @@ enum ScrollAxis {
 }
 /// Delay after the last keystroke before clearing typing state.
 const COMPOSING_TIMEOUT: Duration = Duration::from_secs(4);
+/// How long an info toast stays, including its fade.
+pub const INFO_TOAST_LIFETIME: Duration = Duration::from_millis(3200);
+/// Error toasts kept on screen at once; older ones give way to newer ones.
+const MAX_ERROR_TOASTS: usize = 3;
 /// Typing-state timeout when no stop event arrives.
 const TYPING_TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -1718,8 +1722,9 @@ impl App {
             typers.retain(|(_, since)| now.duration_since(*since) < TYPING_TIMEOUT);
         }
         self.typing.retain(|_, typers| !typers.is_empty());
-        self.toasts
-            .retain(|toast| toast.created.elapsed() < Duration::from_millis(3200));
+        self.toasts.retain(|toast| {
+            toast.kind == ToastKind::Error || toast.created.elapsed() < INFO_TOAST_LIFETIME
+        });
         if self.settings.check_for_updates
             && !self.backend.is_offline()
             && self
@@ -2032,6 +2037,11 @@ impl App {
             Action::CopyText(text) => {
                 ctx.copy_text(text);
                 self.toast("Copied");
+            }
+            Action::DismissToast(index) => {
+                if index < self.toasts.len() {
+                    self.toasts.remove(index);
+                }
             }
             Action::Reply(id) => {
                 self.reply_to = Some(id);
@@ -2571,6 +2581,24 @@ impl App {
     pub fn toast_error(&mut self, message: impl Into<String>) {
         let message = message.into();
         log::warn!("an operation failed; details are shown in the window");
+        // Errors stay until dismissed: a repeat moves to the end instead of
+        // stacking, and only the newest few are kept.
+        self.toasts
+            .retain(|toast| toast.kind != ToastKind::Error || toast.message != message);
+        while self
+            .toasts
+            .iter()
+            .filter(|toast| toast.kind == ToastKind::Error)
+            .count()
+            >= MAX_ERROR_TOASTS
+        {
+            let oldest = self
+                .toasts
+                .iter()
+                .position(|toast| toast.kind == ToastKind::Error)
+                .expect("counted above");
+            self.toasts.remove(oldest);
+        }
         self.toasts.push(Toast {
             message,
             kind: ToastKind::Error,
@@ -2707,7 +2735,12 @@ impl App {
         self.take_drops_and_pastes(ctx);
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
-        if !self.toasts.is_empty() {
+        // Only fading info toasts animate. Errors wait for the reader.
+        if self
+            .toasts
+            .iter()
+            .any(|toast| toast.kind == ToastKind::Info)
+        {
             ctx.request_repaint_after(Duration::from_millis(120));
         }
     }

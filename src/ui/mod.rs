@@ -22,6 +22,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
     keys::handle(app, ctx);
+    // The open chat's composer records its rect again below, if there is one.
+    ctx.data_mut(|data| data.remove::<egui::Rect>(composer_rect_id()));
     titlebar_strip(app, ui);
     if !app.is_linked() {
         login::show(app, ui);
@@ -184,25 +186,56 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
+/// Where the open chat's composer was drawn this frame.
+pub fn composer_rect_id() -> egui::Id {
+    egui::Id::new("composer-rect")
+}
+
+/// Stable id of a toast's close button, used by interaction tests.
+pub fn toast_close_id(index: usize) -> egui::Id {
+    egui::Id::new(("toast-close", index))
+}
+
 fn toasts(app: &mut App, ctx: &egui::Context) {
     if app.toasts.is_empty() {
         return;
     }
     let palette = app.palette;
+    let lifetime = crate::app::INFO_TOAST_LIFETIME.as_secs_f32();
+    // Errors carry buttons, so the area must take clicks while one is shown.
+    let has_error = app
+        .toasts
+        .iter()
+        .any(|toast| toast.kind == ToastKind::Error);
+    let mut actions = Vec::new();
+    // Stay clear of the composer: an error waiting to be dismissed must not
+    // cover the send button.
+    let bottom = ctx
+        .data(|data| data.get_temp::<egui::Rect>(composer_rect_id()))
+        .map_or(20.0, |composer| {
+            ctx.content_rect().bottom() - composer.top() + 12.0
+        });
     egui::Area::new(egui::Id::new("toasts"))
-        .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -20.0))
+        .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -bottom))
         .order(egui::Order::Tooltip)
-        .interactable(false)
+        .interactable(has_error)
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
-            for toast in &app.toasts {
-                let age = toast.created.elapsed().as_secs_f32();
-                let alpha = if age < 0.15 {
-                    age / 0.15
-                } else if age > 2.8 {
-                    ((3.2 - age) / 0.4).clamp(0.0, 1.0)
-                } else {
+            for (index, toast) in app.toasts.iter().enumerate() {
+                let error = toast.kind == ToastKind::Error;
+                // Errors appear at once: fading in needs frames that an idle
+                // window does not draw.
+                let alpha = if error {
                     1.0
+                } else {
+                    let age = toast.created.elapsed().as_secs_f32();
+                    if age < 0.15 {
+                        age / 0.15
+                    } else if age > lifetime - 0.4 {
+                        ((lifetime - age) / 0.4).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    }
                 };
                 ui.set_opacity(alpha);
                 Frame::new()
@@ -225,25 +258,65 @@ fn toasts(app: &mut App, ctx: &egui::Context) {
                             palette.text,
                             360.0,
                         );
-                        ui.set_width(laid.size().x + 26.0);
+                        let buttons = if error { 2.0 * 26.0 + 12.0 } else { 0.0 };
+                        ui.set_width(laid.size().x + 26.0 + buttons);
                         ui.horizontal(|ui| {
-                            let (icon, color) = match toast.kind {
-                                ToastKind::Info => (Icon::CircleCheck, palette.accent),
-                                ToastKind::Error => (Icon::CircleAlert, palette.danger),
+                            let (icon, color) = if error {
+                                (Icon::CircleAlert, palette.danger)
+                            } else {
+                                (Icon::CircleCheck, palette.accent)
                             };
                             theme::icon(ui, icon, 16.0, color);
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(&toast.message)
-                                        .font(font)
-                                        .color(palette.text),
-                                )
-                                .wrap(),
-                            );
+                            // Keep the text clear of the buttons beside it.
+                            ui.allocate_ui(vec2(laid.size().x + 1.0, 0.0), |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&toast.message)
+                                            .font(font)
+                                            .color(palette.text),
+                                    )
+                                    .wrap(),
+                                );
+                            });
+                            if error {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Min),
+                                    |ui| {
+                                        let close = theme::icon_button(
+                                            ui,
+                                            Icon::X,
+                                            14.0,
+                                            palette.secondary,
+                                            palette.text,
+                                            "Dismiss",
+                                        );
+                                        // Store the rect for interaction tests.
+                                        ui.ctx().data_mut(|data| {
+                                            data.insert_temp(toast_close_id(index), close.rect)
+                                        });
+                                        if close.clicked() {
+                                            actions.push(Action::DismissToast(index));
+                                        }
+                                        if theme::icon_button(
+                                            ui,
+                                            Icon::Copy,
+                                            14.0,
+                                            palette.secondary,
+                                            palette.text,
+                                            "Copy this message",
+                                        )
+                                        .clicked()
+                                        {
+                                            actions.push(Action::CopyText(toast.message.clone()));
+                                        }
+                                    },
+                                );
+                            }
                         });
                     });
             }
         });
+    app.actions.extend(actions);
 }
 
 /// Draggable space for the macOS traffic-light title bar.
@@ -356,6 +429,44 @@ mod idle_tests {
         assert!(
             delay > std::time::Duration::from_millis(100),
             "sync banner requested {delay:?}: {:?}",
+            ctx.repaint_causes()
+        );
+    }
+
+    #[test]
+    fn a_waiting_error_does_not_keep_the_window_repainting() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        app.toast_error("Could not record: no microphone");
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut delay = std::time::Duration::ZERO;
+        for index in 0..6 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(index as f64),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| app.frame_ui(ui),
+            );
+            delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.textures_delta.clear();
+        }
+        assert_eq!(app.toasts.len(), 1, "the error is still shown");
+        // Fading info toasts ask for a frame every 120 ms; a waiting error
+        // must not.
+        assert!(
+            delay > std::time::Duration::from_secs(1),
+            "an error toast requested {delay:?}: {:?}",
             ctx.repaint_causes()
         );
     }

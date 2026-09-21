@@ -698,7 +698,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
 
 fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
-    egui::Panel::bottom("composer")
+    let shown = egui::Panel::bottom("composer")
         .show_separator_line(false)
         .frame(
             Frame::new()
@@ -1072,6 +1072,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 });
             }
         });
+    // Toasts sit above the composer so they never cover its buttons.
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
 }
 
 fn edit_strip(app: &mut App, ui: &mut egui::Ui) {

@@ -1009,6 +1009,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
             }
             "unlink" => app.dialog = Some(Dialog::ConfirmUnlink),
+            "toasts" => {
+                app.toast("History loaded");
+                app.toast_error(
+                    "Could not open the attachment: No application knows how to open \"Notes on the Engine.pdf\" (error -10814)",
+                );
+            }
             "new-contact" => app.dialog = Some(Dialog::NewContact),
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
@@ -1459,6 +1465,7 @@ mod tests {
             "info",
             "forward",
             "unlink",
+            "toasts",
             "new-contact",
             "light",
             "archived",
@@ -1996,6 +2003,76 @@ mod tests {
             .map(|chat| chat.id.clone())
             .collect();
         assert_eq!(after, listed, "every opened chat is still listed");
+    }
+
+    #[test]
+    fn errors_stay_until_dismissed_while_info_fades() {
+        let mut app = app();
+        app.toast("Copied");
+        app.toast_error("Could not open the folder: permission denied");
+        let long_ago = std::time::Instant::now() - std::time::Duration::from_secs(60);
+        for toast in &mut app.toasts {
+            toast.created = long_ago;
+        }
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let kinds: Vec<_> = app.toasts.iter().map(|toast| toast.kind.clone()).collect();
+        assert_eq!(kinds, [crate::model::ToastKind::Error]);
+
+        let rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::toast_close_id(0)))
+            .expect("the error has a close button");
+        let pos = rect.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), press(true)],
+        );
+        frame_with(&mut app, &ctx, vec![press(false)]);
+        assert!(app.toasts.is_empty(), "the close button dismisses it");
+    }
+
+    #[test]
+    fn repeated_errors_neither_stack_nor_pile_up() {
+        let mut app = app();
+        app.toast_error("Offline");
+        app.toast_error("Offline");
+        assert_eq!(app.toasts.len(), 1, "a repeat replaces the earlier copy");
+        for index in 0..5 {
+            app.toast_error(format!("Failure {index}"));
+        }
+        let messages: Vec<_> = app
+            .toasts
+            .iter()
+            .map(|toast| toast.message.as_str())
+            .collect();
+        assert_eq!(messages, ["Failure 2", "Failure 3", "Failure 4"]);
+    }
+
+    #[test]
+    fn toasts_leave_the_composer_uncovered() {
+        let mut app = app();
+        apply_flags(&mut app, Some("toasts"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let composer = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::composer_rect_id()))
+            .expect("a chat is open");
+        let toasts = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("toasts")))
+            .expect("toasts are shown");
+        assert!(
+            toasts.bottom() <= composer.top(),
+            "toasts {toasts:?} overlap the composer {composer:?}"
+        );
     }
 
     #[test]
