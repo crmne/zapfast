@@ -440,6 +440,9 @@ pub fn search_field(
 }
 
 /// Switch control.
+/// Switch that shows its state by shape as well as colour: off is an
+/// outlined track with a small grey knob, on a filled track with a larger
+/// white knob carrying a check (WCAG 1.4.1).
 pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
     let size = vec2(40.0, 22.0);
     let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
@@ -453,11 +456,33 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
             egui::Rgba::from(palette.surface_active)..=egui::Rgba::from(palette.accent),
             t,
         );
+        let radius = rect.height() / 2.0;
+        ui.painter().rect_filled(rect, radius, Color32::from(fill));
+        // The outline keeps the off track visible on a light panel.
+        if t < 1.0 {
+            ui.painter().rect_stroke(
+                rect,
+                radius,
+                Stroke::new(1.5, palette.secondary.gamma_multiply(1.0 - t)),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let center = pos2(
+            egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t),
+            rect.center().y,
+        );
+        let knob = egui::lerp(
+            egui::Rgba::from(palette.secondary)..=egui::Rgba::from(Color32::WHITE),
+            t,
+        );
         ui.painter()
-            .rect_filled(rect, rect.height() / 2.0, Color32::from(fill));
-        let knob_x = egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t);
-        ui.painter()
-            .circle_filled(pos2(knob_x, rect.center().y), 8.0, Color32::WHITE);
+            .circle_filled(center, egui::lerp(6.0..=8.0, t), Color32::from(knob));
+        if t > 0.5 {
+            let check = Rect::from_center_size(center, Vec2::splat(12.0));
+            Icon::Check
+                .image(palette.accent.gamma_multiply((t - 0.5) * 2.0), 12.0)
+                .paint_at(ui, check);
+        }
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -583,4 +608,40 @@ pub fn filter_chip(
         )
     });
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The knob radius and the track outline a switch paints in one state.
+    fn switch_shapes(on: bool) -> (f32, f32) {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut value = on;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            switch(ui, &crate::theme::Palette::light(), &mut value);
+        });
+        output.textures_delta.clear();
+        let mut knob = 0.0_f32;
+        let mut outline = 0.0_f32;
+        for clipped in &output.shapes {
+            match &clipped.shape {
+                egui::Shape::Circle(circle) => knob = knob.max(circle.radius),
+                egui::Shape::Rect(rect) => outline = outline.max(rect.stroke.width),
+                _ => {}
+            }
+        }
+        (knob, outline)
+    }
+
+    /// On and off differ in shape, not only in colour (WCAG 1.4.1).
+    #[test]
+    fn a_switch_shows_its_state_without_colour() {
+        let (off_knob, off_outline) = switch_shapes(false);
+        let (on_knob, on_outline) = switch_shapes(true);
+        assert!(off_outline > 0.0, "the off track is outlined");
+        assert_eq!(on_outline, 0.0, "the on track is filled, not outlined");
+        assert!(on_knob > off_knob, "the knob grows when on");
+    }
 }
