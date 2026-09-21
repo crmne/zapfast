@@ -3384,10 +3384,13 @@ impl Worker {
         self.polish_poll(message);
         if let Some(quoted) = message.quoted.as_mut() {
             let sender = self.canonical_str(&quoted.sender);
-            if sender != quoted.sender || quoted.sender_name.is_none() {
-                quoted.sender_name = self.name_for(&sender);
-                quoted.sender = sender;
+            // A currently known name replaces a stale label even when the
+            // canonical id did not change; an unresolvable one keeps what
+            // the archive already has.
+            if let Some(name) = self.name_for(&sender) {
+                quoted.sender_name = Some(name);
             }
+            quoted.sender = sender;
             quoted.summary = self.pn_tokens(&quoted.summary);
             for mention in &mut quoted.mentions {
                 mention.id = self.canonical_str(&mention.id);
@@ -5653,6 +5656,67 @@ fn ensure_message_secret(raw: Vec<u8>, secret: Option<&[u8]>) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn message_quoting(sender: &str, sender_name: Option<&str>) -> Message {
+        Message {
+            id: "message".into(),
+            chat: "15550001111@s.whatsapp.net".into(),
+            sender: "15550001111@s.whatsapp.net".into(),
+            sender_name: None,
+            from_me: true,
+            timestamp: 1,
+            content: Content::text("reply"),
+            status: Delivery::Sent,
+            delivered_at: None,
+            read_at: None,
+            quoted: Some(Quoted {
+                id: "quoted".into(),
+                sender: sender.into(),
+                sender_name: sender_name.map(str::to_owned),
+                summary: "quoted message".into(),
+                mentions: Vec::new(),
+            }),
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        }
+    }
+
+    #[test]
+    fn polish_refreshes_a_stale_quote_label_when_the_sender_id_is_unchanged() {
+        const SENDER: &str = "15551234567@s.whatsapp.net";
+        let (mut worker, _events, _inbox, _wa) = receipt_tests::worker();
+        worker.contacts.insert(
+            SENDER.into(),
+            Contact {
+                id: SENDER.into(),
+                full_name: Some("Current Contact".into()),
+                push_name: None,
+            },
+        );
+        let mut message = message_quoting(SENDER, Some("+1 555 123 456 7"));
+
+        worker.polish(&mut message);
+
+        let quoted = message.quoted.expect("quote");
+        assert_eq!(quoted.sender, SENDER);
+        assert_eq!(quoted.sender_name.as_deref(), Some("Current Contact"));
+    }
+
+    #[test]
+    fn polish_preserves_an_archived_quote_label_for_an_unmapped_lid() {
+        const SENDER: &str = "424242@lid";
+        let (worker, _events, _inbox, _wa) = receipt_tests::worker();
+        let mut message = message_quoting(SENDER, Some("~Archived Sender"));
+
+        worker.polish(&mut message);
+
+        let quoted = message.quoted.expect("quote");
+        assert_eq!(quoted.sender, SENDER);
+        assert_eq!(quoted.sender_name.as_deref(), Some("~Archived Sender"));
+    }
 
     #[test]
     fn fallback_names_read_as_phones_or_ids() {
