@@ -169,6 +169,9 @@ pub struct App {
     avatar_full_requests: HashSet<String>,
     /// Whether files are being dragged over the window.
     pub dropping: bool,
+    /// A picture from the clipboard was taken this frame; the shortcut's
+    /// release must not stage a second copy.
+    paste_image_taken: bool,
     /// Open emoji, GIF, or sticker picker tab.
     pub picker: Option<PickerTab>,
     /// Picker anchor at the composer button.
@@ -397,6 +400,7 @@ impl App {
             avatars_full: HashMap::new(),
             avatar_full_requests: HashSet::new(),
             dropping: false,
+            paste_image_taken: false,
             picker: None,
             picker_anchor: None,
             picker_search: String::new(),
@@ -2817,7 +2821,7 @@ impl App {
 
     /// Handles dropped files and pasted images for the open chat.
     fn take_drops_and_pastes(&mut self, ctx: &egui::Context) {
-        let (dropped, hovering, paste) = ctx.input(|input| {
+        let (dropped, hovering) = ctx.input(|input| {
             let dropped: Vec<PathBuf> = input
                 .raw
                 .dropped_files
@@ -2825,25 +2829,63 @@ impl App {
                 .map(|file| file.path().to_path_buf())
                 .collect();
             let hovering = !input.raw.hovered_files.is_empty();
-            (dropped, hovering, wants_paste(input))
+            (dropped, hovering)
         });
         self.dropping = hovering && self.open_chat.is_some();
         if !dropped.is_empty() {
             self.actions.push(Action::SendFiles(dropped));
         }
+        self.take_image_paste(ctx, clipboard_image);
+    }
+
+    /// Stages a clipboard picture and, when the clipboard offers its pixels
+    /// and its source text together, consumes the text so the composer keeps
+    /// only the caption the user already typed.
+    fn take_image_paste(
+        &mut self,
+        ctx: &egui::Context,
+        read_image: impl FnOnce() -> Option<(usize, usize, Vec<u8>)>,
+    ) {
+        let requested = ctx.input(wants_paste);
         // Handle image paste only when the composer or no field has focus.
         let composing = ctx.memory(|memory| {
             memory.has_focus(egui::Id::new("composer-text")) || memory.focused().is_none()
         });
-        if paste && composing && self.open_chat.is_some() {
+        if requested && !self.paste_image_taken && composing && self.open_chat.is_some() {
             // egui handles text paste; the app handles clipboard images.
-            if let Some(image) = clipboard_image() {
+            if let Some((width, height, rgba)) = read_image() {
+                // Ctrl+V arrives as the clipboard's text paste, and its key
+                // release arrives in the same or the next frame; a picture is
+                // staged once, not twice.
+                self.paste_image_taken = true;
+                // A browser offers the picture's pixels and its source URL
+                // together; the URL must not land in the caption.
+                ctx.input_mut(|input| {
+                    input
+                        .events
+                        .retain(|event| !matches!(event, egui::Event::Paste(_)));
+                });
                 self.actions.push(Action::PasteImage {
-                    width: image.0,
-                    height: image.1,
-                    rgba: image.2,
+                    width,
+                    height,
+                    rgba,
                 });
             }
+        }
+        let released = ctx.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::V,
+                        pressed: false,
+                        ..
+                    }
+                )
+            })
+        });
+        if !requested || released {
+            self.paste_image_taken = false;
         }
     }
 
@@ -2950,8 +2992,9 @@ impl App {
     }
 }
 
-/// Detects paste from the key release. egui consumes the press and emits a
-/// `Paste` event only for text, so image paste has no key-press event.
+/// Detects paste from the key release, or from the text paste egui makes of
+/// it. egui consumes the press and emits a `Paste` event only for text, so
+/// image paste has no key-press event.
 /// Builds WhatsApp's full and short contact names. A first name is required.
 fn compose_name(first: &str, last: &str) -> (Option<String>, Option<String>) {
     let first = first.trim();
@@ -3012,15 +3055,16 @@ fn mention_refs(ids: &[String]) -> Vec<crate::model::MentionRef> {
 
 pub fn wants_paste(input: &egui::InputState) -> bool {
     input.events.iter().any(|event| {
-        matches!(
-            event,
-            egui::Event::Key {
-                key: egui::Key::V,
-                pressed: false,
-                modifiers,
-                ..
-            } if modifiers.command
-        )
+        matches!(event, egui::Event::Paste(_))
+            || matches!(
+                event,
+                egui::Event::Key {
+                    key: egui::Key::V,
+                    pressed: false,
+                    modifiers,
+                    ..
+                } if modifiers.command
+            )
     })
 }
 
@@ -3049,6 +3093,77 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    fn paste_release() -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::V,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }
+    }
+
+    /// One frame with the clipboard reader stubbed, returning how often it ran.
+    fn clipboard_frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        image: bool,
+    ) -> usize {
+        let mut reads = 0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                app.take_image_paste(ui.ctx(), || {
+                    reads += 1;
+                    image.then(|| (2usize, 2usize, vec![200u8; 16]))
+                });
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.composer)
+                        .id(egui::Id::new("composer-text")),
+                );
+                app.apply_actions(ui.ctx());
+            },
+        );
+        output.textures_delta.clear();
+        reads
+    }
+
+    fn clipboard_app() -> (App, egui::Context) {
+        let mut app = app();
+        app.open_chat = Some("fixture".into());
+        app.chats
+            .push(Chat::new("fixture".into(), "Fixture".into()));
+        app.composer = "caption".into();
+        let ctx = egui::Context::default();
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("composer-text")));
+        clipboard_frame(&mut app, &ctx, vec![], false);
+        (app, ctx)
+    }
+
+    #[test]
+    fn image_paste_consumes_source_text_and_stages_once() {
+        let (mut app, ctx) = clipboard_app();
+        let reads = clipboard_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Paste("https://example.org/picture.png".into())],
+            true,
+        );
+        assert_eq!(reads, 1);
+        assert_eq!(app.pending.len(), 1, "the picture is staged");
+        assert_eq!(app.composer, "caption", "the URL is not pasted");
+        assert_eq!(
+            clipboard_frame(&mut app, &ctx, vec![paste_release()], true),
+            0,
+            "the shortcut's release must not read the clipboard again"
+        );
+        assert_eq!(app.pending.len(), 1, "and must not stage a second picture");
     }
 
     #[test]
