@@ -715,7 +715,7 @@ fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
         if let Some(phone) = crate::model::phone_of(&contact.id) {
             let phone_line = widgets::line(
                 ui,
-                &format!("+{phone}"),
+                &crate::util::phone(phone),
                 theme::regular(13.0),
                 palette.dim,
                 rect.right() - 14.0 - left,

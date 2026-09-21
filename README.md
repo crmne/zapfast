@@ -146,7 +146,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Ctrl+plus and Ctrl+minus.
 - **Copy text.** Select part of a message or copy across messages in
   WhatsApp's `[time, date] Name:` format. Contact names and numbers are also
-  selectable.
+  selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
+  `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` searches, `Alt+↑/↓` switches chats and
   keeps the active chat visible in the list, `Esc` cancels the current action,
   `Ctrl+L` focuses the message input, and `Ctrl+/` lists all shortcuts (use
