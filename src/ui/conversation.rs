@@ -21,8 +21,6 @@ use crate::theme::{self, Icon, Palette};
 
 use super::widgets;
 
-/// Maximum automatic attachment download size.
-const AUTO_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 /// Group-message avatar size.
 const SENDER_AVATAR: f32 = 28.0;
 const BODY_SIZE: f32 = 14.5;
@@ -3096,7 +3094,7 @@ fn picture(
         && !matches!(media.state, MediaState::Downloading);
     let auto = ui.is_rect_visible(rect)
         && matches!(media.state, MediaState::Idle)
-        && (sticker.is_some() || (view.auto_download && media.size <= AUTO_DOWNLOAD_LIMIT));
+        && auto_download_allowed(media, sticker.is_some(), view.auto_download);
     if wants || auto {
         actions.push(Action::Download {
             chat: view.chat.id.clone(),
@@ -3104,6 +3102,12 @@ fn picture(
         });
     }
     size.x
+}
+
+/// Stickers always download when visible, while other media follows the setting.
+/// Every automatic download still respects the shared size limit.
+fn auto_download_allowed(media: &Media, sticker: bool, auto_download: bool) -> bool {
+    media.is_within_download_limit() && (sticker || auto_download)
 }
 
 /// Draws a video poster and opens the downloaded video in the default player.
@@ -3216,7 +3220,7 @@ fn video(
         && media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
-        && media.size <= AUTO_DOWNLOAD_LIMIT;
+        && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
             chat: view.chat.id.clone(),
@@ -3311,7 +3315,7 @@ fn attachment(
         && media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
-        && media.size <= AUTO_DOWNLOAD_LIMIT;
+        && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
             chat: view.chat.id.clone(),
@@ -3571,7 +3575,7 @@ fn voice_player(
     let auto = media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
-        && media.size <= AUTO_DOWNLOAD_LIMIT;
+        && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
             chat: view.chat.id.clone(),
@@ -3706,6 +3710,15 @@ mod tests {
         assert!(unknown.x > unknown.y);
         let tiny = frame_size(&media(Some(40), Some(40)), None, 340.0);
         assert!(tiny.x >= 120.0);
+    }
+
+    #[test]
+    fn visible_stickers_download_automatically_with_the_attachment_setting_off() {
+        let mut sticker = media(Some(180), Some(180));
+        assert!(auto_download_allowed(&sticker, true, false));
+        assert!(!auto_download_allowed(&sticker, false, false));
+        sticker.size = crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1;
+        assert!(!auto_download_allowed(&sticker, true, false));
     }
 
     #[test]

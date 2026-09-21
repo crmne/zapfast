@@ -438,6 +438,9 @@ fn with_caption(label: &str, caption: &Option<String>) -> String {
     }
 }
 
+/// Maximum size accepted for a downloaded attachment.
+pub(crate) const ATTACHMENT_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
+
 /// Attachment metadata, download state, and optional local file. Download keys
 /// remain in the archive's raw message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -452,6 +455,16 @@ pub struct Media {
     /// Non-persisted download state.
     #[serde(skip)]
     pub state: MediaState,
+}
+
+impl Media {
+    /// Whether the attachment's declared size can be downloaded locally.
+    ///
+    /// A missing size is represented as zero and is allowed here. The worker
+    /// still enforces the limit while streaming it from WhatsApp.
+    pub fn is_within_download_limit(&self) -> bool {
+        self.size <= ATTACHMENT_DOWNLOAD_LIMIT
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -804,6 +817,15 @@ mod tests {
             path: None,
             state: MediaState::Idle,
         }
+    }
+
+    #[test]
+    fn attachment_download_limit_includes_the_boundary() {
+        let mut item = media();
+        item.size = ATTACHMENT_DOWNLOAD_LIMIT;
+        assert!(item.is_within_download_limit());
+        item.size += 1;
+        assert!(!item.is_within_download_limit());
     }
 
     #[test]

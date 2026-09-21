@@ -1991,6 +1991,16 @@ impl App {
             Action::LoadOlder(chat) => self.load_older(&chat),
             Action::FetchOlder(chat) => self.fetch_older(&chat),
             Action::Download { chat, message } => {
+                let permitted = self
+                    .conversations
+                    .get(&chat)
+                    .and_then(|conversation| conversation.message(&message))
+                    .and_then(|message| message.content.media())
+                    .is_some_and(|media| media.is_within_download_limit());
+                if !permitted {
+                    self.toast_error("This attachment is larger than the 64 MiB download limit.");
+                    return;
+                }
                 if let Some(media) = self
                     .conversations
                     .get_mut(&chat)
@@ -3235,6 +3245,44 @@ mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn clicking_an_oversized_attachment_does_not_start_a_download() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat = "peer@s.whatsapp.net";
+        let mut attachment = message(chat, "picture", 1);
+        attachment.content = Content::Image {
+            caption: None,
+            media: Media {
+                mime: "image/jpeg".into(),
+                size: crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1,
+                width: None,
+                height: None,
+                path: None,
+                state: MediaState::Idle,
+            },
+        };
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![attachment], false);
+
+        app.apply(
+            Action::Download {
+                chat: chat.into(),
+                message: "picture".into(),
+            },
+            &egui::Context::default(),
+        );
+
+        assert!(commands.try_recv().is_err());
+        assert!(matches!(
+            app.media_of(chat, "picture").map(|media| &media.state),
+            Some(MediaState::Idle)
+        ));
     }
 
     #[test]

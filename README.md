@@ -86,7 +86,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   after they expire on the phone.
   A clock badge on chat avatars shows enabled timers and follows changes from
   the phone. Changing the default timer for new chats leaves existing chats alone.
-- **View attachments.** ZapFast downloads files up to 64 MB automatically or
+- **View attachments.** ZapFast downloads files up to 64 MiB automatically or
   on click. Photos, stickers, GIFs, voice messages, audio, locations, contacts,
   polls, and link previews appear in the chat. Videos and documents open in
   their default desktop apps. Profile pictures and downloaded images support

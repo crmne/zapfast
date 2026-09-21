@@ -37,8 +37,9 @@ pack to remove it. Packs are stored as WebP files on your computer.
 Paste a picture, drop files on the window, or select them with the paperclip.
 They stay above the composer until you send them, with the typed text as a
 caption. Press Escape or click a file's close button to remove it. Incoming
-attachments up to 64 MB download when they enter view, or on click if automatic
-downloads are off. If an attachment has expired, ZapFast asks your phone to
+non-sticker attachments up to 64 MiB download when they enter view if automatic
+downloads are on, or on click. Visible stickers download automatically up to the
+same limit. If an attachment has expired, ZapFast asks your phone to
 upload it again.
 
 ## Voice messages
