@@ -52,6 +52,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Color Emoji on macOS and Windows. On Linux, ZapFast prefers an installed
   Noto Color Emoji and falls back to the bundled copy. Emoji-only messages
   are larger.
+- **Readable text.** Secondary text in the built-in light and dark themes
+  reaches WCAG AA contrast. Inside message bubbles, times, ticks, and other
+  grey text adjust to the bubble's colour, in custom themes as well.
 - **Screen-reader access.** AccessKit exposes the interface to desktop
   accessibility services. Custom buttons, chat rows, settings switches and
   message text include readable labels. Windows NVDA navigation still needs

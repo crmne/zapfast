@@ -1522,6 +1522,11 @@ fn bubble(
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let own = message.from_me;
+    // Greys that read on the panel can vanish on the bubble; use its own.
+    let view = &View {
+        palette: view.palette.on_bubble(own),
+        ..*view
+    };
     let with_avatar = !own && (view.chat.is_group() || view.pictures);
     let max_width = ((ui.available_width() * 0.72).min(560.0)
         - if with_avatar {
