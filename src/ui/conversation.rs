@@ -2377,21 +2377,19 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         }
     }
     widgets::menu_separator(ui, &palette);
-    // Show sent, delivered, and read times as available.
-    if widgets::menu_item(
+    // Sent, delivered, and read times inform only; they are not actions.
+    widgets::menu_info(
         ui,
         &palette,
-        Some(Icon::Check),
+        Icon::Check,
         &format!("Sent {}", crate::util::moment_stamp(message.timestamp)),
-    ) {
-        actions.push(Action::CopyText(message.id.clone()));
-    }
+    );
     if message.from_me {
         if message.delivered_at.is_some() || message.status == Delivery::Delivered {
-            let _ = widgets::menu_item(
+            widgets::menu_info(
                 ui,
                 &palette,
-                Some(Icon::CheckCheck),
+                Icon::CheckCheck,
                 &match message.delivered_at {
                     Some(when) => format!("Delivered {}", crate::util::moment_stamp(when)),
                     None => "Delivered".to_owned(),
@@ -2404,16 +2402,21 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             } else {
                 "Read"
             };
-            let _ = widgets::menu_item(
+            widgets::menu_info(
                 ui,
                 &palette,
-                Some(Icon::CheckCheck),
+                Icon::CheckCheck,
                 &match message.read_at {
                     Some(when) => format!("{what} {}", crate::util::moment_stamp(when)),
                     None => what.to_owned(),
                 },
             );
         }
+    }
+    // The id helps when looking a message up for a bug report. Clicking
+    // "Sent" used to copy it without saying so.
+    if widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy message ID") {
+        actions.push(Action::CopyText(message.id.clone()));
     }
 }
 

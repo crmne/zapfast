@@ -79,7 +79,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   are dismissed first. Type `:name` to autocomplete
   an emoji without leaving the composer, or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
-  delivered, or read.
+  delivered, or read. The same right-click menu copies a message's ID, which
+  helps when looking one up for a bug report.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
   timer, including replies, attachments, edits, and forwards. Forwarded copies
   use the destination chat's timer. Received messages remain in the local archive

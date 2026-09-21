@@ -1809,6 +1809,102 @@ mod tests {
         assert!(egui::Popup::is_id_open(&ctx, popup), "and it stays open");
     }
 
+    /// One frame with AccessKit on; returns (label, role, centre) per node.
+    fn accessible_nodes(
+        app: &mut App,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, egui::accesskit::Role, egui::Pos2)> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+        let scale = ctx.pixels_per_point() as f64;
+        output
+            .platform_output
+            .accesskit_update
+            .map(|tree| {
+                tree.nodes
+                    .iter()
+                    .filter_map(|(_, node)| {
+                        let label = node.label().or_else(|| node.value())?.to_owned();
+                        let bounds = node.bounds()?;
+                        let centre = egui::pos2(
+                            ((bounds.x0 + bounds.x1) / 2.0 / scale) as f32,
+                            ((bounds.y0 + bounds.y1) / 2.0 / scale) as f32,
+                        );
+                        Some((label, node.role(), centre))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The sent, delivered, and read rows only inform. The message id is
+    /// copied by a row that says so, not by clicking "Sent".
+    #[test]
+    fn message_status_rows_are_not_actions() {
+        use egui::accesskit::Role;
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = app();
+        apply_flags(&mut app, Some("react-menu"));
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let find = |prefix: &str| {
+            nodes
+                .iter()
+                .find(|(label, _, _)| label.starts_with(prefix))
+                .unwrap_or_else(|| panic!("no {prefix} row"))
+                .clone()
+        };
+        for status in ["Sent ", "Delivered ", "Read "] {
+            let (label, role, _) = find(status);
+            assert_eq!(role, Role::Label, "{label} is information, not a button");
+        }
+        assert_eq!(find("Copy message ID").1, Role::Button);
+
+        let click = |app: &mut App, pos: egui::Pos2| {
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            accessible_nodes(app, &ctx, vec![egui::Event::PointerMoved(pos), press(true)]);
+            accessible_nodes(app, &ctx, vec![press(false)]);
+        };
+        click(&mut app, find("Sent ").2);
+        assert!(
+            app.toasts.iter().all(|toast| toast.message != "Copied"),
+            "clicking Sent copies nothing"
+        );
+
+        app.open_message_menu = Some("ada-link".into());
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let copy = nodes
+            .iter()
+            .find(|(label, _, _)| label == "Copy message ID")
+            .expect("the menu is open again")
+            .2;
+        click(&mut app, copy);
+        assert!(app.toasts.iter().any(|toast| toast.message == "Copied"));
+    }
+
     #[test]
     fn a_demo_flag_keeps_the_reaction_menu_open() {
         let mut app = app();
