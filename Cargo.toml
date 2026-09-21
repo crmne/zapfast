@@ -63,6 +63,8 @@ keyring-core = "1"
 getrandom = "0.4"
 zeroize = "1"
 rand = "0.10"
+# Stages attachment copies without overwriting files in a chosen folder.
+tempfile = "3"
 # Streaming release downloads, with restricted redirect hosts.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 qrcode = { version = "0.14", default-features = false }
@@ -131,7 +133,6 @@ windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_
 winresource = "0.1"
 
 [dev-dependencies]
-tempfile = "3"
 # Creates small APNGs in sticker-import tests. Already included through image.
 png = "0.18"
 

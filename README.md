@@ -153,8 +153,21 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Local storage.** Messages, contacts and sticker metadata are stored in a
   SQLCipher-encrypted archive, unlocked automatically through your OS keyring.
   Existing plaintext archives are migrated on first use. Attachments remain
-  ordinary files in the cache directory. Unlinking deletes both and removes this device from
-  your phone.
+  ordinary files in the cache directory, or in a custom folder configured in
+  Settings under **Downloaded attachments → Change**. Changing or resetting the
+  folder copies existing downloaded attachments to the chosen location and updates
+  their archived paths. Originals are kept, and existing files in the destination
+  are never overwritten. A failed copy leaves the setting and archive paths unchanged.
+  If custom storage is disconnected, saved paths are retained. Changing or resetting
+  the folder fails without updating saved paths if a recorded custom file is
+  unavailable; reconnect the storage or restore missing custom files before retrying.
+  This also protects files
+  when an unmounted drive leaves an empty, readable mount point. Missing files in
+the default cache can still be cleared for redownload.
+  **Reset** uses the default cache again. Custom folders must be outside the app's
+  cache and data folders (the archive, session store, logs, and settings live
+  there). Unlinking removes this device and clears cache files while preserving
+  custom folders and the attachments copied there.
 
 ## What it does not do yet
 
@@ -306,7 +319,7 @@ startup rollback; an unused legacy column is retained for 0.14 compatibility.
 | Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit |
 | Device keys | `~/.local/state/zapfast/session.db` | Owned by whatsapp-rust; deleting it unlinks |
 | Messages | `~/.local/state/zapfast/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
-| Attachments, avatars | `~/.cache/zapfast/` | Safe to delete |
+| Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; attachments can be stored in a custom folder in Settings |
 | Saved stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
 | Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
 

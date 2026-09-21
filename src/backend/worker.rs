@@ -35,6 +35,7 @@ use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
 mod device_store;
+mod media_storage;
 mod poll_history;
 mod polls;
 
@@ -724,10 +725,17 @@ impl Worker {
         self.emit_chats();
     }
 
-    /// Re-derives archived rows from raw protobufs after parser changes. Also
-    /// repairs moved attachment paths or clears missing files for redownload.
+    /// Repairs disposable cache paths without forgetting unavailable external files.
     fn relocate_media(&mut self) {
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
+        if self.dirs.custom_media.is_some() && std::fs::read_dir(&dir).is_err() {
+            log::warn!("attachment folder unavailable; keeping archived paths");
+            return;
+        }
+        // A same-named file is evidence of identity only inside the cache the
+        // app itself manages. A custom folder is user-controlled, so a file
+        // there with a matching name must never be adopted by inference.
+        let cache = self.dirs.media_cache_dir();
         let rows = match self.archive.media_paths() {
             Ok(rows) => rows,
             Err(error) => {
@@ -737,17 +745,23 @@ impl Worker {
         };
         let (mut moved, mut forgotten) = (0, 0);
         for (chat, id, path) in rows {
-            if path.exists() {
+            // Existence errors and missing external files do not prove deletion.
+            // An unmounted drive may even leave a readable, empty mount point.
+            if !matches!(path.try_exists(), Ok(false))
+                || !media_storage::is_disposable_source(&self.dirs, &path)
+            {
                 continue;
             }
-            let candidate = path.file_name().map(|name| dir.join(name));
-            match candidate.filter(|candidate| candidate.exists()) {
-                Some(candidate) => {
+            let candidate = path.file_name().map(|name| cache.join(name));
+            match candidate.as_ref().map(|candidate| candidate.try_exists()) {
+                Some(Ok(true)) => {
+                    let candidate = candidate.unwrap();
                     if self.archive.set_media_path(&chat, &id, &candidate).is_ok() {
                         moved += 1;
                     }
                 }
-                None => {
+                Some(Err(_)) => continue,
+                Some(Ok(false)) | None => {
                     if self.archive.clear_media_path(&chat, &id).is_ok() {
                         forgotten += 1;
                     }
@@ -757,7 +771,7 @@ impl Worker {
         if moved + forgotten > 0 {
             log::info!(
                 "attachments: {moved} re-pointed to {}, {forgotten} to fetch again",
-                dir.display()
+                cache.display()
             );
         }
     }
@@ -1604,7 +1618,7 @@ impl Worker {
             let _ = std::fs::remove_file(path);
         }
         let _ = std::fs::remove_dir_all(self.dirs.avatar_cache_dir());
-        let _ = std::fs::remove_dir_all(self.dirs.media_cache_dir());
+        self.clean_media_cache();
         self.emit(Event::Chats(Vec::new()));
         self.privacy_ready = false;
         self.privacy_recovering = false;
@@ -1612,6 +1626,38 @@ impl Worker {
         self.set_status(LinkStatus::LoggedOut);
         // Recreate the store so the next connection starts linking.
         self.start_bot().await;
+    }
+
+    /// Cleans the media cache directory on logout without removing any configured custom media subtree.
+    fn clean_media_cache(&self) {
+        let media_cache = self.dirs.media_cache_dir();
+        if let Some(custom) = &self.dirs.custom_media
+            && AppDirs::is_subpath(&media_cache, custom)
+        {
+            if !AppDirs::is_subpath(custom, &media_cache) {
+                let _ = std::fs::remove_dir_all(&media_cache);
+            }
+            return;
+        }
+        if let Some(custom) = &self.dirs.custom_media
+            && AppDirs::is_subpath(custom, &media_cache)
+        {
+            if let Ok(entries) = std::fs::read_dir(&media_cache) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if AppDirs::is_subpath(custom, &path) {
+                        continue;
+                    }
+                    if path.is_dir() {
+                        let _ = std::fs::remove_dir_all(&path);
+                    } else {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+            return;
+        }
+        let _ = std::fs::remove_dir_all(media_cache);
     }
 
     fn on_contact_update(&mut self, update: &wa_events::ContactUpdate) {
@@ -2867,6 +2913,23 @@ impl Worker {
                     let _ = commands.send(Command::StickerPackImported { result });
                 });
             }
+            Command::PickMediaDir => {
+                let commands = self.commands.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Some(folder) = rfd::FileDialog::new()
+                        .set_title("Select Download Directory")
+                        .pick_folder()
+                    {
+                        let _ = commands.send(Command::SetMediaDir(folder));
+                    }
+                });
+            }
+            Command::SetMediaDir(dir) => {
+                self.change_media_dir(Some(dir)).await;
+            }
+            Command::ResetMediaDir => {
+                self.change_media_dir(None).await;
+            }
             Command::SaveContact {
                 id,
                 full_name,
@@ -3708,7 +3771,7 @@ impl Worker {
             }
             None
         };
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let path = media_path(&dir, &chat, &id, &mime, file_name.as_deref());
@@ -4199,7 +4262,7 @@ impl Worker {
             };
             let commands = self.commands.clone();
             let chat = chat.clone();
-            let dir = self.dirs.media_cache_dir();
+            let dir = self.dirs.media_dir();
             let me = self.me();
             // Attach the caption to the first file.
             let caption = if index == 0 { caption.clone() } else { None };
@@ -4258,7 +4321,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4331,7 +4394,7 @@ impl Worker {
             None => (None, None),
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4400,7 +4463,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4436,7 +4499,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.dirs.media_dir();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4481,7 +4544,7 @@ impl Worker {
     }
 
     /// Archives and sends an uploaded attachment message.
-    fn outbound(&mut self, chat: ChatId, row: Message, raw: Vec<u8>) {
+    fn outbound(&mut self, chat: ChatId, mut row: Message, raw: Vec<u8>) {
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
@@ -4490,6 +4553,17 @@ impl Worker {
             self.emit(Event::Error("Could not encode the attachment".to_owned()));
             return;
         };
+        if let Some(media) = row.content.media_mut()
+            && let Some(path) = &media.path
+        {
+            match self.keep_current_media(path) {
+                Ok(path) => media.path = Some(path),
+                Err(error) => {
+                    self.emit(Event::Error(error));
+                    return;
+                }
+            }
+        }
         let expiration = self.apply_ephemeral(&chat, &mut message);
         let raw = message.encode_to_vec();
         let id = row.id.clone();
@@ -5472,12 +5546,7 @@ async fn file_outbound(
         &prepared.mime,
         prepared.file_name.as_deref(),
     );
-    tokio::fs::create_dir_all(dir)
-        .await
-        .map_err(|error| error.to_string())?;
-    tokio::fs::write(&path, &prepared.bytes)
-        .await
-        .map_err(|error| error.to_string())?;
+    let path = media_storage::save(path, prepared.bytes).await?;
     let mut content = prepared.content;
     if let Some(media) = content.media_mut() {
         media.path = Some(path);

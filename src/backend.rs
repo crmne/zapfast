@@ -283,6 +283,12 @@ pub enum Command {
     },
     /// Selects and imports a .wastickers or zip archive.
     PickStickerArchive,
+    /// Opens a folder picker to choose a custom attachment download directory.
+    PickMediaDir,
+    /// Sets the custom attachment download directory.
+    SetMediaDir(PathBuf),
+    /// Resets the attachment download directory to the default cache directory.
+    ResetMediaDir,
     /// Deletes an imported pack directory.
     DeleteStickerPack {
         dir: PathBuf,
@@ -543,6 +549,11 @@ pub enum Event {
     },
     UpdateDownloaded(Result<Box<crate::updates::install::Prepared>, String>),
     UpdateInstalling(Result<(), String>),
+    /// Attachment download directory changed (`None` indicates default).
+    MediaDirChanged {
+        custom: Option<PathBuf>,
+        paths: std::collections::HashMap<PathBuf, Option<PathBuf>>,
+    },
     Error(String),
 }
 

@@ -553,6 +553,18 @@ impl Archive {
         Ok(Some(message))
     }
 
+    /// Updates a folder change atomically, including paths cleared for redownload.
+    pub fn set_media_paths(
+        &self,
+        paths: &[(String, String, Option<std::path::PathBuf>)],
+    ) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        for (chat, id, path) in paths {
+            self.put_media_path(chat, id, path.as_deref())?;
+        }
+        transaction.commit()
+    }
+
     /// Returns all recorded attachment paths.
     pub fn media_paths(&self) -> Result<Vec<(String, String, std::path::PathBuf)>> {
         let mut statement = self.connection.prepare(
@@ -1920,6 +1932,46 @@ pub(crate) mod tests {
         );
         let reread = archive.message(chat, "p1").expect("read").expect("exists");
         assert_eq!(reread.content, updated.content);
+    }
+
+    #[test]
+    fn media_folder_updates_roll_back_every_row_on_database_failure() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        for id in ["first", "second"] {
+            let mut row = message(chat, id, 1, false);
+            row.content = Content::Image {
+                caption: None,
+                media: crate::model::Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    path: Some("old.jpg".into()),
+                    state: Default::default(),
+                },
+            };
+            archive.insert_message(&row, None).unwrap();
+        }
+        archive
+            .connection
+            .execute_batch(
+                "CREATE TRIGGER reject_second BEFORE UPDATE ON messages
+             WHEN OLD.id = 'second' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;",
+            )
+            .unwrap();
+        assert!(
+            archive
+                .set_media_paths(&[
+                    (chat.into(), "first".into(), Some("new.jpg".into())),
+                    (chat.into(), "second".into(), None),
+                ])
+                .is_err()
+        );
+        for (_, _, path) in archive.media_paths().unwrap() {
+            assert_eq!(path, Path::new("old.jpg"));
+        }
     }
 
     #[test]

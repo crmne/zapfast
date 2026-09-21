@@ -898,6 +898,17 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            "custom-media" => {
+                app.page = Page::Settings;
+                let custom = app
+                    .dirs
+                    .config
+                    .parent()
+                    .unwrap()
+                    .join("Downloads/Attachments");
+                app.settings.custom_media_dir = Some(custom.clone());
+                app.dirs.custom_media = Some(custom);
+            }
             "omarchy" | "omarchy-light" => {
                 let mut themes: Vec<_> = crate::theme::presets::themes().collect();
                 let filename = if part == "omarchy-light" {
@@ -1436,6 +1447,7 @@ mod tests {
             "rtl",
             "disappearing",
             "settings",
+            "custom-media",
             "update",
             "update-downloading",
             "update-ready",

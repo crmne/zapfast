@@ -642,6 +642,7 @@ pub enum Action {
     SendRecording,
     OpenFile(PathBuf),
     OpenFolder(PathBuf),
+    OpenMediaDir,
     OpenUrl(String),
     CopyText(String),
     /// Starts a reply to a message in the open chat.
@@ -752,6 +753,10 @@ pub enum Action {
     SetCustomTheme(String),
     ReloadThemes,
     OpenThemesFolder,
+    /// Opens the folder picker for the attachment download directory.
+    PickMediaDir,
+    /// Resets the attachment download directory to default.
+    ResetMediaDir,
     SettingsChanged,
     ZoomBy(f32),
     ResetZoom,
