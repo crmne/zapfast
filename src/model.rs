@@ -651,6 +651,12 @@ pub enum Action {
     StartRecording,
     CancelRecording,
     SendRecording,
+    /// Opens a supported image attachment in ZapFast's native preview.
+    PreviewImage(PathBuf),
+    ZoomImageIn,
+    ZoomImageOut,
+    FitImage,
+    CloseImagePreview,
     OpenFile(PathBuf),
     OpenFolder(PathBuf),
     OpenUrl(String),

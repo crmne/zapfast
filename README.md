@@ -125,9 +125,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   the phone. Changing the default timer for new chats leaves existing chats alone.
 - **View attachments.** ZapFast downloads files up to 64 MiB automatically or
   on click. Photos, stickers, GIFs, voice messages, audio, locations, contacts,
-  polls, and link previews appear in the chat. Videos and documents open in
-  their default desktop apps. Profile pictures and downloaded images support
-  Windows drive paths and filenames with spaces or non-ASCII characters.
+  polls, and link previews appear in the chat. Click a downloaded JPEG, PNG,
+  WebP, or GIF photo to preview it in ZapFast with fit and zoom controls, or
+  choose **Open externally**. Unsupported pictures, videos, and documents keep
+  opening in their default desktop apps. Profile pictures and downloaded images
+  support Windows drive paths and filenames with spaces or non-ASCII characters.
   If an attachment has expired, ZapFast asks your
   phone to upload it again. Downloads stop after two minutes with an inline
   retry error if they cannot finish; the menu disables Download while one is running.

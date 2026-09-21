@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::audio::{Player, Recorder};
 use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
+use crate::image_preview::PreviewState;
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
     MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
@@ -205,6 +206,8 @@ pub struct App {
     pub player: Player,
     /// Active voice recorder.
     pub recording: Option<Recorder>,
+    /// Image currently shown in the native preview.
+    pub image_preview: Option<PreviewState>,
     /// Voice messages with a sent played receipt.
     played_told: HashSet<String>,
     /// Message bodies registered for transcript copy formatting.
@@ -431,6 +434,7 @@ impl App {
             pending: Vec::new(),
             player: Player::new(waker.clone()),
             recording: None,
+            image_preview: None,
             played_told: HashSet::new(),
             copy_rows: Default::default(),
             selection_view: Default::default(),
@@ -2280,6 +2284,34 @@ impl App {
                 }
                 self.backend.send(Command::Download { chat, message });
             }
+            Action::PreviewImage(path) => {
+                if crate::safety::can_preview_image(&path) && path.is_file() {
+                    self.image_preview = Some(PreviewState::new(path));
+                    self.dialog = None;
+                    self.picker = None;
+                } else {
+                    self.actions.push(Action::OpenFile(path));
+                }
+            }
+            Action::ZoomImageIn => {
+                if let Some(preview) = &mut self.image_preview {
+                    preview.zoom_in();
+                }
+            }
+            Action::ZoomImageOut => {
+                if let Some(preview) = &mut self.image_preview {
+                    preview.zoom_out();
+                }
+            }
+            Action::FitImage => {
+                if let Some(preview) = &mut self.image_preview {
+                    preview.fit();
+                }
+            }
+            Action::CloseImagePreview => {
+                self.image_preview = None;
+                self.refocus_composer(ctx);
+            }
             Action::OpenFile(path) => {
                 if crate::safety::can_open_attachment(&path) && path.is_file() {
                     if let Err(error) = open::that_detached(&path) {
@@ -3649,6 +3681,50 @@ mod tests {
             chat.archived = false;
             assert!(notification_eligible(&chat, now, now), "{id} unarchived");
         }
+    }
+
+    #[test]
+    fn image_preview_opens_zooms_fits_and_closes() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let file = tempfile::NamedTempFile::with_suffix(".png").unwrap();
+        std::fs::write(file.path(), b"not a real image").unwrap();
+
+        app.apply(Action::PreviewImage(file.path().to_owned()), &ctx);
+        let preview = app.image_preview.as_ref().expect("preview opens");
+        assert_eq!(preview.path(), file.path());
+        assert!(preview.is_fit());
+
+        app.apply(Action::ZoomImageIn, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().zoom(), 1.25);
+        app.apply(Action::FitImage, &ctx);
+        assert!(app.image_preview.as_ref().unwrap().is_fit());
+
+        app.image_preview.as_mut().unwrap().zoom_in();
+        app.apply(Action::CloseImagePreview, &ctx);
+        assert!(app.image_preview.is_none());
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn unsupported_media_falls_back_to_the_external_opener() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let file = tempfile::NamedTempFile::with_suffix(".heic").unwrap();
+        std::fs::write(file.path(), b"not a real image").unwrap();
+
+        app.apply(Action::PreviewImage(file.path().to_owned()), &ctx);
+
+        assert!(
+            app.image_preview.is_none(),
+            "no preview for unsupported media"
+        );
+        assert!(
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::OpenFile(path) if path == file.path())),
+            "the external opener is queued instead"
+        );
     }
 
     #[test]

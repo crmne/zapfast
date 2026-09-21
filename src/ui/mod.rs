@@ -4,6 +4,7 @@ pub mod chats;
 pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
+pub mod image_preview;
 pub mod keys;
 pub mod login;
 pub mod picker;
@@ -65,6 +66,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     update::show(app, ctx);
     picker::show(app, ctx);
     dialogs::show(app, ctx);
+    image_preview::show(app, ctx);
     drop_target(app, ctx);
     toasts(app, ctx);
     focus_ring(app, ctx);

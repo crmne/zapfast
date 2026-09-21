@@ -6,7 +6,9 @@ use crate::app::App;
 use crate::model::{Action, Dialog, Page};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
-    let editing_text = ctx.text_edit_focused();
+    if app.image_preview.is_some() && preview_keys(app, ctx) {
+        return;
+    }
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         let mut key = |modifiers: Modifiers, key: Key, action: Action| {
@@ -131,6 +133,42 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         }
     }
     app.actions.extend(actions);
+}
+
+/// Handles keys while the image preview is open. Every input key is swallowed
+/// so a shortcut cannot reach the chat behind it. Returns false when the
+/// preview should not take the frame's input.
+fn preview_keys(app: &mut App, ctx: &egui::Context) -> bool {
+    let mut actions = Vec::new();
+    ctx.input_mut(|input| {
+        if input.consume_key(Modifiers::NONE, Key::Escape) {
+            actions.push(Action::CloseImagePreview);
+        }
+        let mut event_actions = Vec::new();
+        for event in &input.events {
+            match event {
+                egui::Event::Key {
+                    key,
+                    modifiers,
+                    pressed: true,
+                    ..
+                } => {
+                    if let Some(action) =
+                        crate::image_preview::preview_action(*key, *modifiers)
+                    {
+                        event_actions.push(action);
+                    }
+                }
+                _ => {}
+            }
+        }
+        actions.extend(event_actions);
+        input
+            .events
+            .retain(|event| !crate::image_preview::consumes_key(event));
+    });
+    app.actions.extend(actions);
+    true
 }
 
 /// Shortcuts shown in the help dialog.

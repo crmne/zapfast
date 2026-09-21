@@ -3168,7 +3168,15 @@ fn picture(
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
-                    actions.push(Action::OpenFile(path.clone()));
+                    let action = match crate::image_preview::open_target(path, sticker.is_none()) {
+                        crate::image_preview::OpenTarget::Preview => {
+                            Action::PreviewImage(path.clone())
+                        }
+                        crate::image_preview::OpenTarget::External => {
+                            Action::OpenFile(path.clone())
+                        }
+                    };
+                    actions.push(action);
                 }
                 size.x
             }

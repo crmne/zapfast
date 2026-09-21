@@ -1254,6 +1254,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 }
             }
             "recording" => app.recording = Some(crate::audio::Recorder::rehearsal()),
+            // Shows the native image preview over the demo chat.
+            "preview" => {
+                let (photo, _) = sample_files(app);
+                app.image_preview = Some(crate::image_preview::PreviewState::new(photo));
+            }
             "compose-emoji" => {
                 app.composer = "Andiamo 😊 con due 👍🏽 e poi testo normale".to_owned();
             }
@@ -1709,6 +1714,7 @@ mod tests {
             "compose-emoji",
             "voice",
             "recording",
+            "preview",
             "gifs",
             "gifs-badkey",
             "react-menu",

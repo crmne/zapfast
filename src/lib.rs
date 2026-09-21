@@ -10,6 +10,7 @@ pub mod bidi;
 pub mod demo;
 pub mod diagnostics;
 pub mod emoji;
+pub mod image_preview;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod markup;
