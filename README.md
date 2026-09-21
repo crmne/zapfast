@@ -267,6 +267,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   background, and tag it with emojis.
   Animated packs remain animated. Packs are stored as WebP files on your
   computer.
+  Removing a pack asks first, since it deletes those files.
 - **Consistent names.** Use names from your address book or public WhatsApp
   profile names across chats, replies, mentions, and notifications.
 - **Groups.** See members, sender names, and sender pictures. Announcement

@@ -2077,6 +2077,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         for_everyone: true,
                     });
             }
+            "remove-pack" => {
+                apply_flags(app, Some("stickers"));
+                app.dialog = Some(Dialog::ConfirmRemoveStickerPack {
+                    name: "Happy Frogs".to_owned(),
+                    dir: std::path::PathBuf::from("Happy Frogs"),
+                });
+            }
             "delete-message-mine" => {
                 app.dialog = app
                     .open_chat
@@ -3865,6 +3872,7 @@ mod tests {
             "select",
             "delete-message",
             "delete-message-mine",
+            "remove-pack",
             "new-contact",
             "light",
             "archived",
@@ -5560,6 +5568,48 @@ mod tests {
                 assert!(row.is_none(), "{page}: a local delete removes the row");
             }
         }
+    }
+
+    /// The confirmation opens over the sticker picker; answering it must not
+    /// count as a click outside the picker.
+    #[test]
+    fn confirming_a_pack_removal_keeps_the_picker_open() {
+        let mut app = app();
+        // Without the chat list the picker sits left of the centred dialog.
+        apply_flags(&mut app, Some("remove-pack,nosidebar"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert!(app.picker.is_some(), "the picker is open under the dialog");
+        let rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::dialogs::danger_button_id()))
+            .expect("the confirm button is on screen");
+        let pos = rect.center();
+        let picker = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("picker")))
+            .expect("the picker is laid out");
+        assert!(
+            !picker.contains(pos),
+            "the button must lie outside the picker for this test to mean anything"
+        );
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), press(true)],
+        );
+        frame_with(&mut app, &ctx, vec![press(false)]);
+        assert!(app.dialog.is_none(), "the dialog closes");
+        assert_eq!(
+            app.picker,
+            Some(crate::model::PickerTab::Stickers),
+            "the picker stays open"
+        );
     }
 
     #[test]

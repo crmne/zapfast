@@ -1023,6 +1023,11 @@ pub enum Dialog {
         /// Revokes for everyone instead of deleting only this copy.
         for_everyone: bool,
     },
+    /// Confirms removing an imported sticker pack from disk.
+    ConfirmRemoveStickerPack {
+        name: String,
+        dir: PathBuf,
+    },
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,

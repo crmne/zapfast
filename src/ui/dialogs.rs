@@ -40,6 +40,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     380.0
                 }
                 Dialog::ConfirmDeleteMessage { .. } => 380.0,
+                Dialog::ConfirmRemoveStickerPack { .. } => 380.0,
                 Dialog::StickerPack => 420.0,
                 Dialog::StickerMaker => 400.0,
                 Dialog::Forward { .. } => 420.0,
@@ -79,6 +80,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     for_everyone,
                     ..
                 } => confirm_delete_message(app, ui, &message, for_everyone),
+                Dialog::ConfirmRemoveStickerPack { name, dir } => {
+                    confirm_remove_sticker_pack(app, ui, &name, dir)
+                }
                 Dialog::Forward { chat, messages } => forward(app, ui, &chat, &messages),
                 Dialog::JoinGroup => join_group(app, ui),
                 Dialog::ConfirmStartOver => confirm_start_over(app, ui),
@@ -1039,6 +1043,36 @@ fn confirm_delete_message(app: &mut App, ui: &mut egui::Ui, id: &str, for_everyo
                     Action::DeleteForMe(id.to_owned())
                 };
                 app.actions.push(action);
+                app.actions.push(Action::CloseDialog);
+            }
+            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn confirm_remove_sticker_pack(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    name: &str,
+    dir: std::path::PathBuf,
+) {
+    let palette = app.palette;
+    title(ui, app, "Remove sticker pack?");
+    theme::paragraph(
+        ui,
+        format!(
+            "This deletes \"{name}\" and its stickers from this computer. To use it again, import it again."
+        ),
+        theme::regular(13.5),
+        palette.text,
+    );
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if danger_button(ui, app, "Remove") {
+                app.actions.push(Action::DeleteStickerPack(dir));
                 app.actions.push(Action::CloseDialog);
             }
             if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
