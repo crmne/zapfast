@@ -26,6 +26,10 @@ const AUTO_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 /// Group-message avatar size.
 const SENDER_AVATAR: f32 = 28.0;
 const BODY_SIZE: f32 = 14.5;
+/// Footer label on an outgoing message that failed to send.
+const NOT_SENT: &str = "Not sent";
+const NOT_SENT_HINT: &str =
+    "This message could not be sent, and ZapFast will not retry it. Send it again yourself.";
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let Some(chat) = app.current_chat().cloned() else {
@@ -2091,7 +2095,20 @@ fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
     } else {
         0.0
     };
-    time + edited + if message.from_me { 19.0 } else { 0.0 }
+    let not_sent = if not_sent(message) {
+        ui.painter()
+            .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), Color32::WHITE)
+            .size()
+            .x
+            + 6.0
+    } else {
+        0.0
+    };
+    time + edited + not_sent + if message.from_me { 19.0 } else { 0.0 }
+}
+
+fn not_sent(message: &Message) -> bool {
+    message.from_me && message.status == Delivery::Failed
 }
 
 /// Paints the time and ticks at the bubble's right edge without widening it.
@@ -2106,9 +2123,18 @@ fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<
         ui.painter()
             .layout_no_wrap("edited".to_owned(), font, palette.dim)
     });
+    // A red dot alone does not say what went wrong or what to do. The word
+    // uses the text colour: the danger red on an outgoing bubble is too faint
+    // to read, and the red icon beside it already carries the alarm.
+    let failed = not_sent(message).then(|| {
+        ui.painter()
+            .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), palette.text)
+    });
     let tick_width = if message.from_me { 19.0 } else { 0.0 };
-    let width =
-        time.size().x + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0) + tick_width;
+    let width = time.size().x
+        + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0)
+        + failed.as_ref().map_or(0.0, |galley| galley.size().x + 6.0)
+        + tick_width;
     let rect = match slot {
         Some(slot) => slot,
         None => {
@@ -2136,6 +2162,26 @@ fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<
             edited,
             palette.dim,
         );
+    }
+    if let Some(failed) = failed {
+        x -= failed.size().x + 6.0;
+        let label = Rect::from_min_size(
+            pos2(x, rect.center().y - failed.size().y / 2.0),
+            failed.size(),
+        );
+        ui.painter().galley(label.min, failed, palette.text);
+        // Explain on hover and to screen readers; hovering takes no clicks
+        // from the bubble.
+        let status = Rect::from_min_max(label.min, pos2(rect.right(), label.max.y));
+        let response = ui.interact(
+            status,
+            ui.id().with(("not-sent", &message.id)),
+            Sense::hover(),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, NOT_SENT_HINT)
+        });
+        response.on_hover_text(NOT_SENT_HINT);
     }
 }
 
@@ -3706,6 +3752,42 @@ mod tests {
         assert!(unknown.x > unknown.y);
         let tiny = frame_size(&media(Some(40), Some(40)), None, 340.0);
         assert!(tiny.x >= 120.0);
+    }
+
+    #[test]
+    fn a_failed_footer_reserves_room_for_its_label() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut message = Message {
+            id: "fixture".into(),
+            chat: "1@s.whatsapp.net".into(),
+            sender: "me@s.whatsapp.net".into(),
+            sender_name: None,
+            from_me: true,
+            timestamp: 1000,
+            content: Content::text("Fixture"),
+            status: Delivery::Sent,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        let mut widths = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            widths.push(footer_width(ui, &message));
+            message.status = Delivery::Failed;
+            widths.push(footer_width(ui, &message));
+            // Only our own messages can fail to send.
+            message.from_me = false;
+            widths.push(footer_width(ui, &message) + 19.0);
+        });
+        output.textures_delta.clear();
+        assert!(widths[1] > widths[0] + 30.0, "{widths:?}");
+        assert_eq!(widths[2], widths[0]);
     }
 
     #[test]

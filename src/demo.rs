@@ -999,6 +999,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "shortcuts" => app.dialog = Some(Dialog::Shortcuts),
             "about" => app.dialog = Some(Dialog::About),
+            "failed" => {
+                // The newest outgoing message in the open chat failed to send.
+                if let Some(message) = app
+                    .open_chat
+                    .clone()
+                    .and_then(|chat| app.conversations.get_mut(&chat))
+                    .and_then(|conversation| {
+                        conversation
+                            .messages
+                            .iter_mut()
+                            .rev()
+                            .find(|message| message.from_me)
+                    })
+                {
+                    message.status = crate::model::Delivery::Failed;
+                }
+            }
             "info" => {
                 app.dialog = app.open_chat.clone().map(Dialog::ChatInfo);
             }
@@ -1456,6 +1473,7 @@ mod tests {
             "theme=Tokyo Night.json",
             "shortcuts",
             "about",
+            "failed",
             "info",
             "forward",
             "unlink",
@@ -2606,6 +2624,47 @@ mod tests {
         assert!(copied.starts_with('['), "{copied:?}");
         assert!(copied.matches("] ").count() >= 2, "{copied:?}");
         assert!(copied.lines().count() >= 2, "{copied:?}");
+    }
+
+    /// A failed message must say so in words, to screen readers as well as on
+    /// screen, not only with a red icon.
+    #[test]
+    fn a_failed_message_is_labelled_for_screen_readers() {
+        let mut app = app();
+        apply_flags(&mut app, Some("failed"));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility tree");
+        let hints = tree
+            .nodes
+            .iter()
+            .filter(|(_, node)| {
+                node.label()
+                    .or_else(|| node.value())
+                    .is_some_and(|label| label.starts_with("This message could not be sent"))
+            })
+            .count();
+        assert_eq!(hints, 1, "exactly the failed message carries the hint");
     }
 
     /// Voice controls keep their width and order in right-aligned bubbles.

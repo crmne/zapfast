@@ -45,6 +45,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   list and individual receipts are saved locally; later membership changes
   do not change that list. If the original recipients are unknown, ZapFast
   waits for the phone's aggregate status instead of guessing from one reader.
+  A message that could not be sent says "Not sent" beside its time. ZapFast
+  does not retry it; send it again yourself.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs; this
