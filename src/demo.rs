@@ -2269,6 +2269,61 @@ mod tests {
     }
 
     #[test]
+    fn clicking_the_hover_reaction_control_opens_the_picker_for_that_message() {
+        use crate::model::Action;
+
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+
+        let chat = sample_ids()[0].to_owned();
+        let message = "ada-link";
+        assert!(app.reaction_target.is_none());
+
+        let bubble = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(crate::ui::conversation::bubble_id(&chat, message))
+            })
+            .expect("the message bubble is on screen");
+        let affordance = crate::ui::conversation::reaction_affordance_rect(
+            bubble,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 780.0)).shrink(2.0),
+            false,
+        );
+        assert!(
+            bubble
+                .expand(4.0)
+                .union(affordance)
+                .contains(affordance.center()),
+            "the control sits beside the bubble"
+        );
+
+        let pos = affordance.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), press(true)],
+        );
+        frame_with(&mut app, &ctx, vec![press(false)]);
+
+        assert!(
+            app.actions.iter().any(|action| matches!(
+                action,
+                Action::OpenReactionPicker { chat: id, message: target }
+                    if id == &chat && target == message
+            )),
+            "the hover control opens the existing picker for this message"
+        );
+    }
+
+    #[test]
     fn switching_chats_closes_the_reaction_picker() {
         let mut app = app();
         apply_flags(&mut app, Some("react-picker"));

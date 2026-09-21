@@ -1552,6 +1552,100 @@ fn typing_dots(ui: &mut egui::Ui, palette: &Palette) {
     }
 }
 
+const REACTION_AFFORDANCE_SIZE: f32 = 26.0;
+const REACTION_AFFORDANCE_GAP: f32 = 6.0;
+
+/// Places the hover reaction control beside the bubble, swapping sides near an edge.
+fn reaction_affordance_rect(bubble: Rect, bounds: Rect, own: bool) -> Rect {
+    let size = Vec2::splat(REACTION_AFFORDANCE_SIZE);
+    let before = bubble.left() - REACTION_AFFORDANCE_GAP - size.x;
+    let after = bubble.right() + REACTION_AFFORDANCE_GAP;
+    let (preferred, fallback) = if own {
+        (before, after)
+    } else {
+        (after, before)
+    };
+    let fits = |x: f32| x >= bounds.left() && x + size.x <= bounds.right();
+    let x = if fits(preferred) {
+        preferred
+    } else if fits(fallback) {
+        fallback
+    } else {
+        preferred.clamp(bounds.left(), (bounds.right() - size.x).max(bounds.left()))
+    };
+    let y = (bubble.top() + 4.0).clamp(bounds.top(), (bounds.bottom() - size.y).max(bounds.top()));
+    Rect::from_min_size(pos2(x, y), size)
+}
+
+/// Includes the small gap so moving from the bubble to the control does not hide it.
+fn reaction_affordance_visible(pointer: Option<egui::Pos2>, bubble: Rect, button: Rect) -> bool {
+    pointer.is_some_and(|pointer| bubble.union(button).contains(pointer))
+}
+
+/// Draws a Smile control beside a hovered message and opens the existing picker.
+fn reaction_affordance(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    bubble: &egui::Response,
+    actions: &mut Vec<Action>,
+) {
+    let bounds = ui.clip_rect().shrink(2.0);
+    if bounds.width() < REACTION_AFFORDANCE_SIZE || bounds.height() < REACTION_AFFORDANCE_SIZE {
+        return;
+    }
+    let rect = reaction_affordance_rect(bubble.rect, bounds, message.from_me);
+    let pointer = ui.input(|input| input.pointer.interact_pos());
+    // Stay hidden under any floating layer, as the context menu does.
+    let uncovered = pointer.is_some_and(|pos| {
+        ui.ctx()
+            .layer_id_at(pos)
+            .is_none_or(|layer| layer == bubble.layer_id)
+    });
+    if !uncovered || !reaction_affordance_visible(pointer, bubble.rect, rect) {
+        return;
+    }
+
+    // Acquire under the same layer as the bubble so the row strip keeps clicks.
+    let response = ui.interact(rect, bubble.id.with("react"), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "React")
+    });
+    theme::reveal_focus(&response);
+    if ui.is_rect_visible(rect) {
+        ui.painter().circle_filled(
+            rect.center(),
+            rect.width() / 2.0,
+            if response.hovered() {
+                view.palette.surface_hover
+            } else {
+                view.palette.surface.gamma_multiply(0.72)
+            },
+        );
+        theme::paint_icon(
+            ui,
+            Icon::Smile,
+            rect.shrink(5.0),
+            15.0,
+            if response.hovered() {
+                view.palette.text
+            } else {
+                view.palette.secondary
+            },
+        );
+    }
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("React")
+        .clicked()
+    {
+        actions.push(Action::OpenReactionPicker {
+            chat: view.chat.id.clone(),
+            message: message.id.clone(),
+        });
+    }
+}
+
 /// Draws a message row and returns its bubble response for scrolling.
 fn bubble(
     ui: &mut egui::Ui,
@@ -1940,6 +2034,8 @@ fn bubble_frame(
     // Inner widgets own their clicks, so this fires only on the bubble's padding
     // and footer. Double-click on the body keeps selecting the word.
     reply_on_double_click(&bubble, message, actions);
+
+    reaction_affordance(ui, view, message, &bubble, actions);
     // Read right-click from input because inner widgets own their responses.
     // Open only when no floating layer covers the chat panel.
     let right_clicked = ui.input(|input| {
@@ -3906,6 +4002,47 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn reaction_affordance_sits_beside_the_bubble_without_clipping() {
+        let bounds = Rect::from_min_max(pos2(0.0, 0.0), pos2(400.0, 300.0));
+        let incoming = Rect::from_min_max(pos2(20.0, 20.0), pos2(140.0, 80.0));
+        let outgoing = Rect::from_min_max(pos2(260.0, 20.0), pos2(380.0, 80.0));
+
+        let incoming_button = reaction_affordance_rect(incoming, bounds, false);
+        let outgoing_button = reaction_affordance_rect(outgoing, bounds, true);
+
+        assert!(incoming_button.left() > incoming.right());
+        assert!(outgoing_button.right() < outgoing.left());
+        assert!(bounds.contains_rect(incoming_button));
+        assert!(bounds.contains_rect(outgoing_button));
+
+        let edge = Rect::from_min_max(pos2(360.0, 260.0), pos2(398.0, 298.0));
+        assert!(bounds.contains_rect(reaction_affordance_rect(edge, bounds, false)));
+    }
+
+    #[test]
+    fn reaction_affordance_stays_visible_while_crossing_to_its_button() {
+        let bubble = Rect::from_min_max(pos2(20.0, 20.0), pos2(140.0, 80.0));
+        let button = Rect::from_min_max(pos2(146.0, 24.0), pos2(172.0, 50.0));
+
+        assert!(reaction_affordance_visible(
+            Some(bubble.center()),
+            bubble,
+            button
+        ));
+        assert!(reaction_affordance_visible(
+            Some(button.center()),
+            bubble,
+            button
+        ));
+        assert!(!reaction_affordance_visible(
+            Some(pos2(300.0, 200.0)),
+            bubble,
+            button
+        ));
+        assert!(!reaction_affordance_visible(None, bubble, button));
     }
 
     #[test]
