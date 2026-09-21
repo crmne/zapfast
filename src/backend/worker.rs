@@ -34,6 +34,7 @@ use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
 mod device_store;
+mod interactive;
 mod poll_history;
 mod polls;
 
@@ -228,6 +229,7 @@ pub async fn run(
     };
     worker.load_state();
     worker.backfill();
+    worker.backfill_interactive();
     worker.relocate_media();
     worker.start_bot().await;
     let mut wa_events = wa_events;
@@ -3242,7 +3244,10 @@ impl Worker {
         };
         if matches!(
             source.content,
-            Content::Revoked | Content::Unsupported { .. } | Content::Poll { .. }
+            Content::Revoked
+                | Content::Unsupported { .. }
+                | Content::Poll { .. }
+                | Content::Interactive { .. }
         ) {
             self.emit(Event::Error("This message cannot be forwarded".to_owned()));
             return;
@@ -3460,7 +3465,14 @@ impl Worker {
             });
             return;
         };
-        let base = message.get_base_message().clone();
+        let original = message.get_base_message();
+        let base = match interactive::image(original) {
+            Some(image) => wa::Message {
+                image_message: MessageField::some(image.clone()),
+                ..Default::default()
+            },
+            None => original.clone(),
+        };
         let (downloadable, mime, file_name): (Box<dyn Downloadable>, String, Option<String>) =
             if let Some(image) = base.image_message.as_option() {
                 (
@@ -4652,7 +4664,7 @@ fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
     {
         return poll.context_info.as_option();
     }
-    None
+    interactive::context(base)
 }
 
 /// Returns raw JIDs mentioned by a message.
@@ -4690,7 +4702,7 @@ fn thumbnail_of(base: &wa::Message) -> Option<Vec<u8>> {
     } else if let Some(text) = base.extended_text_message.as_option() {
         text.jpeg_thumbnail.clone()
     } else {
-        None
+        interactive::image(base).and_then(|image| image.jpeg_thumbnail.clone())
     };
     bytes.filter(|bytes| !bytes.is_empty())
 }
@@ -4851,16 +4863,8 @@ fn classify(base: &wa::Message) -> Option<Content> {
     if base.sticker_pack_message.is_set() {
         return unsupported("sticker pack");
     }
-    if base.interactive_message.is_set()
-        || base.buttons_message.is_set()
-        || base.list_message.is_set()
-        || base.template_message.is_set()
-        || base.buttons_response_message.is_set()
-        || base.list_response_message.is_set()
-        || base.interactive_response_message.is_set()
-        || base.template_button_reply_message.is_set()
-    {
-        return unsupported("interactive message");
+    if let Some(content) = interactive::classify(base) {
+        return Some(content);
     }
     if base.product_message.is_set() || base.order_message.is_set() {
         return unsupported("product");
@@ -6037,7 +6041,7 @@ mod receipt_tests {
     use crate::model::{Content, Delivery, Message};
 
     const ME: &str = "15550001111@s.whatsapp.net";
-    const PEER: &str = "4917663430455@s.whatsapp.net";
+    pub(super) const PEER: &str = "4917663430455@s.whatsapp.net";
     const PEER_LID: &str = "167650256810092@lid";
 
     /// Creates a test worker with an in-memory archive and open channels.
@@ -6128,7 +6132,7 @@ mod receipt_tests {
         (worker, events_rx, inbox, wa_events)
     }
 
-    fn own_message(id: &str, timestamp: i64) -> Message {
+    pub(super) fn own_message(id: &str, timestamp: i64) -> Message {
         Message {
             id: id.into(),
             chat: PEER.into(),

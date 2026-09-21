@@ -61,6 +61,16 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Safer desktop opening.** Links open only web pages or email addresses.
   Common documents and media open in their default apps; executable, script,
   and unrecognized attachment formats open their containing folder instead.
+- **Read interactive messages.** Business templates and button messages show their
+  image above the text and their options in separate rows below the timestamp.
+  Web-link buttons open in your browser; reply and form options have a phone icon
+  and must be used on your phone. Received interactive replies look like ordinary
+  replies. Lists and carousel text can also be read, selected, copied, and searched.
+  Images use the same download, retry, and automatic-download setting as photos.
+  Previously unsupported messages are recovered from the local archive when their
+  original message is available and they have not been edited, without relinking.
+  Other embedded attachments, carousel images, and templates containing only a
+  reference to server-side text still need the phone.
 - **Send attachments with captions.** Paste a picture, drop files, or use the
   file picker. They stay in the composer until you send them or press Escape.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
@@ -163,6 +173,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - Play ordinary videos in the app (they open in your player), or reply to
   a message with an attachment.
 - Calls, status posts, communities, newsletters, and group administration.
+- Send interactive button replies or submit forms; use those options on your
+  phone. Web-link buttons do work in ZapFast. Embedded videos and documents,
+  carousel images, and templates without readable text still need the phone.
 
 ## Installing
 
@@ -320,6 +333,22 @@ The protocol dependency includes the upstream WhatsApp Business pairing fix.
 Device-store migration waits until an updated window is acknowledged, preserving
 startup rollback; an unused legacy column is retained for 0.14 compatibility.
 
+### Interactive messages
+
+Business messages keep their image, formatted text, timestamp, and options
+together in one bubble. Link buttons open in your browser. Options with a phone
+icon are readable here but must be selected on your phone; hovering explains
+this. Replies received from your other devices appear as ordinary quoted replies
+when the original message is included.
+
+| Text and reply options | Image and website link |
+| --- | --- |
+| ![Offline demo of an interactive text message with separate option rows and a quoted reply](docs/screenshot-interactive.png) | ![Offline demo of an interactive image message with phone-only options and an active website link](docs/screenshot-interactive-media.png) |
+
+These screenshots use synthetic offline chats. See the
+[usage guide](https://zapfast.rocks/using-zapfast/#interactive-messages) for
+download behavior and the remaining limitations.
+
 ## Files
 
 | What | Linux | Notes |
@@ -436,6 +465,16 @@ Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.
+
+Use `--demo-page interactive` for text and button messages, or
+`--demo-page interactive-media` for messages with an image. Add `,light` to
+preview either in the light theme. Capture the app's own frame without desktop
+content:
+
+```sh
+./target/debug/zapfast --demo --demo-page interactive-media --demo-shot interactive.png
+./target/debug/zapfast --demo --demo-page interactive-media,light --demo-shot interactive-light.png
+```
 
 On Omarchy, run `omarchy screenrecord`, select the demo window, then press Space
 in ZapFast. Recording has no audio unless you explicitly enable desktop or

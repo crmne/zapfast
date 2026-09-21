@@ -1,6 +1,6 @@
 ---
 title: Using ZapFast
-description: Send messages and use attachments, voice messages, and keyboard shortcuts.
+description: Send messages and use attachments, interactive messages, voice messages, and keyboard shortcuts.
 redirect_from:
   - /using-fastsapp/
 nav_order: 3
@@ -40,6 +40,39 @@ caption. Press Escape or click a file's close button to remove it. Incoming
 attachments up to 64 MB download when they enter view, or on click if automatic
 downloads are off. If an attachment has expired, ZapFast asks your phone to
 upload it again.
+
+## Interactive messages
+
+Business templates and button messages show their image above the formatted
+text, with options in separate rows below the timestamp. Lists and carousel
+text are readable too. You can select the message body, use **Copy text** to
+include its option labels, and find these messages through search.
+
+- **Web links** have an external-link icon. Click one to open it in your browser,
+  or focus it with the keyboard and press Enter.
+- **Phone options** have a phone icon and muted text. Reply buttons, list choices,
+  calls, and forms must be used on your phone. Hover over an option to see its
+  explanation. ZapFast does not send a response when you click it.
+- **Replies from your other devices** appear as ordinary replies, with a quote
+  when the original message is included.
+
+Images follow the same automatic-download setting, size limit, and retry
+behavior as other photos. Click a downloaded image to open it.
+
+| Dark theme | Light theme |
+| --- | --- |
+| ![Synthetic business message with an image, three phone options, a quoted reply, and a website link in the dark theme](/screenshot-interactive-media.png) | ![The same synthetic interactive messages in the light theme](/screenshot-interactive-light.png) |
+
+Both screenshots use offline demo content.
+
+Previously unsupported messages are recovered automatically from the local
+archive when their original data is available and they have not been edited.
+You do not need to link again. Edited messages keep their current text.
+
+Embedded videos and documents, carousel images, and templates containing only
+a reference to server-side text still need your phone. A **More content on your
+phone** note marks content ZapFast cannot display. Interactive messages cannot
+yet be forwarded from ZapFast.
 
 ## Voice messages
 

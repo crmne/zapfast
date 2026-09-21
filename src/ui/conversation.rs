@@ -1852,7 +1852,8 @@ fn bubble_frame(
             // Bubbles without cards use the natural text width.
             let cap = ((max_width - 20.0).min(ui.available_width())).max(0.0);
             let reserve = footer_width(ui, message);
-            let slot = match settled_width(ui, view, message, cap) {
+            let settled = settled_width(ui, view, message, cap);
+            let slot = match settled {
                 Some(width) => {
                     if let Some(quoted) = &message.quoted {
                         quote_block(ui, view, message, quoted, width, actions);
@@ -1862,6 +1863,12 @@ fn bubble_frame(
                 None => content(ui, view, message, cap, reserve, actions),
             };
             footer(ui, &palette, message, slot);
+            if let Content::Interactive {
+                card: Some(card), ..
+            } = &message.content
+            {
+                interactive_buttons(ui, &palette, message, card, settled.unwrap_or(cap), actions);
+            }
         });
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
@@ -1925,10 +1932,18 @@ const CARD_WIDTH: f32 = 320.0;
 
 /// Returns the shared card width, bounded by [`CARD_WIDTH`] and `cap`.
 fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
+    if let Content::Interactive {
+        card: Some(card), ..
+    } = &message.content
+        && card.image.is_some()
+    {
+        return Some(CARD_WIDTH.min(cap));
+    }
     let card = message.quoted.is_some()
         || match &message.content {
             Content::Text { preview, .. } => preview.is_some(),
             Content::Document { .. } | Content::Audio { .. } | Content::Poll { .. } => true,
+            Content::Interactive { card, .. } => card.is_some(),
             // Videos without a poster use the file-row layout.
             Content::Video { .. } => message.thumbnail.is_none(),
             _ => false,
@@ -1943,7 +1958,7 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
 fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
     let palette = view.palette;
     let text = match &message.content {
-        Content::Text { text, .. } => text,
+        Content::Text { text, .. } | Content::Interactive { text, .. } => text,
         Content::Image {
             caption: Some(caption),
             ..
@@ -2305,7 +2320,10 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     }
     if !matches!(
         message.content,
-        Content::Revoked | Content::Unsupported { .. } | Content::Poll { .. }
+        Content::Revoked
+            | Content::Unsupported { .. }
+            | Content::Poll { .. }
+            | Content::Interactive { .. }
     ) && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
     {
         actions.push(Action::ShowDialog(Dialog::Forward {
@@ -2314,7 +2332,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         }));
     }
     let text = match &message.content {
-        Content::Text { text, .. } => Some(text.clone()),
+        Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.clone(),
@@ -2452,7 +2470,7 @@ fn content(
     let own = message.from_me;
     // Add non-text messages to cross-message transcript copies.
     let has_body = match &message.content {
-        Content::Text { .. } => true,
+        Content::Text { .. } | Content::Interactive { .. } => true,
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.is_some(),
@@ -2465,6 +2483,34 @@ fn content(
             .push(transcript_row(view, message, String::new(), Vec::new()));
     }
     match &message.content {
+        Content::Interactive { text, card } => {
+            let Some(card) = card else {
+                let span = message.quoted.is_some().then_some(width);
+                return rich_body(ui, view, message, text, width, Some(reserve), span, actions);
+            };
+            if let Some(image) = &card.image {
+                picture(ui, view, message, image, width, None, actions);
+                ui.add_space(4.0);
+                if card.body.is_empty() {
+                    return None;
+                }
+            }
+            let body = if card.body.is_empty() {
+                "Interactive message"
+            } else {
+                &card.body
+            };
+            rich_body(
+                ui,
+                view,
+                message,
+                body,
+                width,
+                Some(reserve),
+                Some(width),
+                actions,
+            )
+        }
         Content::Text { text, preview } => {
             if let Some(preview) = preview {
                 preview_card(ui, view, message, preview, width, actions);
@@ -2675,6 +2721,125 @@ fn content(
             None
         }
     }
+}
+
+/// Full-width action rows below the message timestamp, matching business cards.
+/// Unavailable replies stay visibly distinct from links that work on this device.
+fn interactive_buttons(
+    ui: &mut egui::Ui,
+    palette: &theme::Palette,
+    message: &Message,
+    card: &crate::model::InteractiveCard,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    let spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    for (index, button) in card.buttons.iter().enumerate() {
+        let enabled = button.url.is_some();
+        // Muted/link colours target incoming surfaces; outgoing tinted bubbles
+        // need the main foreground to keep small labels readable in both themes.
+        let color = if message.from_me {
+            palette.text
+        } else if enabled {
+            palette.link
+        } else {
+            palette.secondary
+        };
+        let icon = if enabled {
+            Icon::ExternalLink
+        } else {
+            Icon::Smartphone
+        };
+        let line = widgets::line(
+            ui,
+            &button.label,
+            theme::medium(14.0),
+            color,
+            (width - 48.0).max(1.0),
+            2,
+        );
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, _) = ui.allocate_exact_size(
+            vec2(width, (line.size().y + 22.0).max(44.0)),
+            Sense::hover(),
+        );
+        let response = ui.interact(
+            rect,
+            bubble_id(&message.chat, &message.id).with(("interactive-action", index)),
+            sense,
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &button.label)
+        });
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                bubble_id(&message.chat, &message.id).with(("interactive-button", index)),
+                rect,
+            )
+        });
+        if ui.is_rect_visible(rect) {
+            ui.painter().hline(
+                rect.left() - 10.0..=rect.right() + 10.0,
+                rect.top(),
+                Stroke::new(1.0, palette.secondary.gamma_multiply(0.2)),
+            );
+            if enabled && (response.hovered() || response.has_focus()) {
+                ui.painter().rect_filled(
+                    rect.shrink2(vec2(0.0, 1.0)),
+                    4.0,
+                    palette.link.gamma_multiply(0.10),
+                );
+            }
+            if response.has_focus() {
+                ui.painter().rect_stroke(
+                    rect.shrink(2.0),
+                    4.0,
+                    Stroke::new(1.0, palette.link),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            let content_width = line.size().x + 22.0;
+            let left = rect.center().x - content_width / 2.0;
+            theme::paint_icon(
+                ui,
+                icon,
+                Rect::from_center_size(egui::pos2(left + 7.0, rect.center().y), Vec2::splat(14.0)),
+                14.0,
+                color,
+            );
+            line.paint(
+                ui,
+                egui::pos2(left + 22.0, rect.center().y - line.size().y / 2.0),
+                color,
+            );
+        }
+        if let Some(url) = &button.url {
+            if response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(format!("{}\n{url}", button.label))
+                .clicked()
+            {
+                actions.push(Action::OpenUrl(url.clone()));
+            }
+        } else {
+            response.on_hover_text(format!("{}\nUse this option on your phone", button.label));
+        }
+    }
+    if card.needs_phone {
+        ui.add_space(6.0);
+        widgets::rich_text(
+            ui,
+            "More content on your phone",
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    ui.spacing_mut().item_spacing.y = spacing;
 }
 
 /// Draws formatted message text. `reserve` leaves footer space on the last

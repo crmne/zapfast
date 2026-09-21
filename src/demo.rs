@@ -825,6 +825,102 @@ pub fn populate(app: &mut App) {
 }
 
 /// Applies the UI state selected by `--demo-page`.
+fn interactive_sample(app: &mut App, with_image: bool) {
+    use crate::model::{InteractiveButton, InteractiveCard};
+    let id = SAMPLES[0].id;
+    let now = crate::util::now();
+    let body = if with_image {
+        "A little more room for your day. 🌤️\n\nExplore the new *Cedar Mobile* plans, with more data for the things you enjoy."
+    } else {
+        "Hi! Our *creative workshop* starts tonight at 19:00. 🎨\n\nWe saved a few free places for this session. Choose an option below to find out more."
+    };
+    let labels = if with_image {
+        ["View plans", "Maybe later", "Stop messages"]
+    } else {
+        ["Tell me more", "Send the invitation", "Stop messages"]
+    };
+    let mut picture = with_image.then(|| media("image/jpeg", 48_000, Some(900), Some(1200)));
+    if let Some(picture) = &mut picture {
+        picture.path = Some(sample_files(app).0);
+    }
+    let text = std::iter::once(body.to_owned())
+        .chain(labels.iter().map(|label| format!("• {label}")))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut messages = vec![message(
+        id,
+        "interactive-card",
+        false,
+        now - 180,
+        Content::Interactive {
+            text,
+            card: Some(Box::new(InteractiveCard {
+                body: body.into(),
+                buttons: labels
+                    .iter()
+                    .map(|label| InteractiveButton {
+                        label: (*label).into(),
+                        url: None,
+                    })
+                    .collect(),
+                image: picture,
+                needs_phone: false,
+            })),
+        },
+    )];
+    let mut reply = message(
+        id,
+        "interactive-reply",
+        true,
+        now - 120,
+        Content::Interactive {
+            text: labels[0].into(),
+            card: None,
+        },
+    );
+    reply.quoted = Some(Quoted {
+        id: "interactive-card".into(),
+        sender: id.into(),
+        sender_name: Some("Cedar Studio".into()),
+        summary: body.lines().next().unwrap().into(),
+        mentions: Vec::new(),
+    });
+    messages.push(reply);
+    messages.push(message(
+        id,
+        "interactive-link",
+        false,
+        now - 60,
+        Content::Interactive {
+            text: "Here are all the details.\n\n• Visit our website".into(),
+            card: Some(Box::new(InteractiveCard {
+                body: "Here are all the details.".into(),
+                buttons: vec![InteractiveButton {
+                    label: "Visit our website".into(),
+                    url: Some("https://example.com/".into()),
+                }],
+                ..Default::default()
+            })),
+        },
+    ));
+    if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == id) {
+        chat.name = "Cedar Studio".into();
+        let last = messages.last().unwrap();
+        chat.last_activity = last.timestamp;
+        chat.last = Some(crate::model::LastMessage {
+            from_me: last.from_me,
+            sender: last.sender.clone(),
+            sender_name: None,
+            summary: last.summary(),
+            status: last.status,
+        });
+    }
+    app.conversations.get_mut(id).unwrap().messages = messages;
+    app.open_chat = Some(id.into());
+    app.typing.clear();
+    app.scroll_to_bottom = true;
+}
+
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -832,6 +928,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     for part in page.split(',').map(str::trim) {
         match part {
             "chat" | "" => {}
+            "interactive" | "interactive-media" => {
+                interactive_sample(app, part == "interactive-media")
+            }
             "empty" => app.open_chat = None,
             "channel" => {
                 let id = "fixture@newsletter";
@@ -1343,6 +1442,144 @@ mod tests {
     }
 
     #[test]
+    fn interactive_text_participates_in_selection_and_transcripts() {
+        let mut app = app();
+        apply_flags(&mut app, Some("interactive"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let rows = app.copy_rows.lock().unwrap();
+        assert!(rows.iter().any(|row| row.body.contains("Tell me more")));
+        assert!(
+            rows.iter()
+                .all(|row| !row.body.contains("View full message"))
+        );
+        assert!(rows.iter().filter(|row| row.body == "Tell me more").count() == 1);
+        let body =
+            crate::ui::conversation::bubble_id(SAMPLES[0].id, "interactive-reply").with("body");
+        let rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(body))
+            .expect("selectable body");
+        assert!(rect.is_positive());
+    }
+
+    #[test]
+    fn interactive_links_open_by_click_and_keyboard_while_phone_options_do_not_send() {
+        let mut app = app();
+        apply_flags(&mut app, Some("interactive"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let run = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output
+                .platform_output
+                .commands
+                .into_iter()
+                .filter_map(|command| match command {
+                    egui::OutputCommand::OpenUrl(url) => Some(url.url),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        for (id, expected) in [
+            ("interactive-card", Vec::new()),
+            ("interactive-link", vec!["https://example.com/".to_owned()]),
+        ] {
+            let button = crate::ui::conversation::bubble_id(SAMPLES[0].id, id)
+                .with(("interactive-button", 0usize));
+            let rect = ctx
+                .data(|data| data.get_temp::<egui::Rect>(button))
+                .unwrap();
+            let pos = rect.center();
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: egui::Modifiers::NONE,
+            };
+            run(&mut app, vec![egui::Event::PointerMoved(pos), press(true)]);
+            assert_eq!(run(&mut app, vec![press(false)]), expected);
+            assert_eq!(app.conversations[SAMPLES[0].id].messages.len(), 3);
+        }
+        let button = crate::ui::conversation::bubble_id(SAMPLES[0].id, "interactive-link")
+            .with(("interactive-action", 0usize));
+        ctx.memory_mut(|memory| memory.request_focus(button));
+        assert_eq!(
+            run(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]),
+            vec!["https://example.com/"]
+        );
+    }
+
+    #[test]
+    fn interactive_rows_stay_inside_the_bubble_at_narrow_widths() {
+        for (width, light, own) in [
+            (640.0, false, false),
+            (640.0, true, false),
+            (1180.0, false, false),
+            (640.0, false, true),
+            (1180.0, true, true),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some("interactive-media"));
+            if own {
+                let message = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+                message.from_me = true;
+                message.sender = ME.into();
+            }
+            if light {
+                app.settings.theme = ThemeChoice::Light;
+            }
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            for _ in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 1100.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        app.frame_ui(ui);
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let bubble = crate::ui::conversation::bubble_id(SAMPLES[0].id, "interactive-card");
+            let bounds = ctx
+                .data(|data| data.get_temp::<egui::Rect>(bubble.with("rect")))
+                .unwrap();
+            assert!(bounds.right() <= width + 1.0, "{bounds:?}");
+            for index in 0..3usize {
+                let row = ctx
+                    .data(|data| {
+                        data.get_temp::<egui::Rect>(bubble.with(("interactive-button", index)))
+                    })
+                    .unwrap();
+                assert!(row.left() >= bounds.left() && row.right() <= bounds.right());
+                assert!(row.height() >= 44.0);
+            }
+        }
+    }
+
+    #[test]
     fn the_sample_has_every_kind_of_row() {
         let app = app();
         assert!(app.chats.len() >= 5);
@@ -1443,6 +1680,8 @@ mod tests {
             "channel",
             "locked",
             "keyring",
+            "interactive",
+            "interactive-media",
             "empty",
             "rtl",
             "disappearing",

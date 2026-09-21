@@ -244,6 +244,12 @@ pub enum Content {
         #[serde(default)]
         preview: Option<LinkPreview>,
     },
+    /// Readable text plus presentation metadata. Raw protocol data stays in the worker.
+    Interactive {
+        text: String,
+        #[serde(default)]
+        card: Option<Box<InteractiveCard>>,
+    },
     Image {
         caption: Option<String>,
         media: Media,
@@ -294,6 +300,23 @@ pub enum Content {
     Unsupported {
         what: String,
     },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InteractiveCard {
+    /// Message text without the action labels, which have their own rows.
+    pub body: String,
+    pub buttons: Vec<InteractiveButton>,
+    pub image: Option<Media>,
+    /// Unrenderable attachments, forms, or missing message text.
+    pub needs_phone: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InteractiveButton {
+    pub label: String,
+    /// Only HTTP(S) links are actionable locally. Other choices need a phone.
+    pub url: Option<String>,
 }
 
 /// Poll information safe to send to the interface; encryption keys stay in the worker.
@@ -372,7 +395,9 @@ impl Content {
 
     pub fn summary(&self) -> String {
         match self {
-            Self::Text { text, .. } => text.lines().next().unwrap_or_default().to_owned(),
+            Self::Text { text, .. } | Self::Interactive { text, .. } => {
+                text.lines().next().unwrap_or_default().to_owned()
+            }
             Self::Image { caption, .. } => with_caption("Photo", caption),
             Self::Video { caption, gif, .. } => {
                 with_caption(if *gif { "GIF" } else { "Video" }, caption)
@@ -412,6 +437,9 @@ impl Content {
             | Self::Audio { media, .. }
             | Self::Document { media, .. }
             | Self::Sticker { media, .. } => Some(media),
+            Self::Interactive {
+                card: Some(card), ..
+            } => card.image.as_ref(),
             _ => None,
         }
     }
@@ -423,6 +451,9 @@ impl Content {
             | Self::Audio { media, .. }
             | Self::Document { media, .. }
             | Self::Sticker { media, .. } => Some(media),
+            Self::Interactive {
+                card: Some(card), ..
+            } => card.image.as_mut(),
             _ => None,
         }
     }

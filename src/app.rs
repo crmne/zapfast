@@ -740,7 +740,9 @@ impl App {
     /// One-line plain-text message summary with resolved mentions.
     pub fn message_text(&self, message: &Message) -> String {
         match &message.content {
-            Content::Text { text, .. } => crate::markup::plain(text, &self.mention_list(message)),
+            Content::Text { text, .. } | Content::Interactive { text, .. } => {
+                crate::markup::plain(text, &self.mention_list(message))
+            }
             _ => self.resolve_mention_tokens(&message.summary()),
         }
     }

@@ -556,7 +556,8 @@ impl Archive {
     /// Returns all recorded attachment paths.
     pub fn media_paths(&self) -> Result<Vec<(String, String, std::path::PathBuf)>> {
         let mut statement = self.connection.prepare(
-            "SELECT chat, id, json_extract(content, '$.media.path') AS path
+            "SELECT chat, id, coalesce(json_extract(content, '$.media.path'),
+                 json_extract(content, '$.card.image.path')) AS path
              FROM messages WHERE path IS NOT NULL",
         )?;
         let rows = statement.query_map([], |row| {
@@ -932,6 +933,20 @@ impl Archive {
         let mut statement = self
             .connection
             .prepare("SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
+    /// Legacy placeholders and flat interactive messages eligible for the card
+    /// upgrade. Deleted, edited, and already structured cards are left intact.
+    pub fn interactive_placeholders(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND edited = 0 AND json_valid(content)
+             AND ((json_extract(content, '$.kind') = 'unsupported'
+                   AND json_extract(content, '$.what') = 'interactive message')
+                  OR (json_extract(content, '$.kind') = 'interactive'
+                      AND json_extract(content, '$.card') IS NULL))",
+        )?;
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect()
     }
