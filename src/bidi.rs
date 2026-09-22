@@ -135,6 +135,15 @@ pub fn reorder_rtl_runs(galley: &mut Galley) {
     if !galley.text().chars().any(is_strong_rtl) {
         return;
     }
+    // A later paint can widen the galley for selection. Running alignment and
+    // bound refresh again would change that rect without moving any glyphs.
+    if galley
+        .rows
+        .iter()
+        .all(|placed| placed.row.glyphs.is_empty() || already_visual(&placed.row.glyphs))
+    {
+        return;
+    }
     let text = galley.job.text.clone();
     let overflow = galley.job.wrap.overflow_character;
     for placed in &mut galley.rows {
