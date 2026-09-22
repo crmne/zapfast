@@ -188,7 +188,22 @@ impl AppDirs {
             }
             // A missing folder may be an unmounted drive; retain the path so
             // the archive rows keep pointing at it, as `ensure_media_dir` does.
-            Err(_) => return Some(custom),
+            // The app-data boundaries still apply to it: a not-yet-created
+            // folder inside state or config must not start receiving
+            // downloads if it appears later, and `is_subpath` falls back to
+            // the lexical comparison for paths that do not exist yet.
+            Err(_) => {
+                if AppDirs::is_subpath(&custom, &self.state)
+                    || AppDirs::is_subpath(&custom, &self.config)
+                {
+                    log::warn!(
+                        "ignoring persisted attachment folder inside the app data folders: {}",
+                        custom.display()
+                    );
+                    return None;
+                }
+                return Some(custom);
+            }
         }
         if AppDirs::is_subpath(&custom, &self.state) || AppDirs::is_subpath(&custom, &self.config) {
             log::warn!(
@@ -499,6 +514,12 @@ mod tests {
             dirs.validated_custom_media(Some(missing.clone())),
             Some(missing)
         );
+        // Except when it lives inside the app data folders: boundaries apply
+        // to not-yet-created paths too, before they can start receiving files.
+        let missing_in_state = root.join("state/future-attachments");
+        assert_eq!(dirs.validated_custom_media(Some(missing_in_state)), None);
+        let missing_in_config = root.join("config/future-attachments");
+        assert_eq!(dirs.validated_custom_media(Some(missing_in_config)), None);
         // A valid folder is kept, with symlinks and '.' segments resolved.
         let valid = root.join("downloads/./sub");
         std::fs::create_dir_all(&valid).unwrap();
