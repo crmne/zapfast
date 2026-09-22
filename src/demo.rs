@@ -2270,8 +2270,6 @@ mod tests {
 
     #[test]
     fn clicking_the_hover_reaction_control_opens_the_picker_for_that_message() {
-        use crate::model::Action;
-
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
@@ -2324,12 +2322,9 @@ mod tests {
         );
         frame_with(&mut app, &ctx, vec![press(false)]);
 
-        assert!(
-            app.actions.iter().any(|action| matches!(
-                action,
-                Action::OpenReactionPicker { chat: id, message: target }
-                    if id == &chat && target == message
-            )),
+        assert_eq!(
+            app.reaction_target,
+            Some((chat.clone(), message.to_owned())),
             "the hover control opens the existing picker for this message"
         );
     }
