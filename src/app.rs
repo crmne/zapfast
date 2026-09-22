@@ -2169,8 +2169,7 @@ impl App {
                 }
             }
             Action::SetVoiceSpeed(speed) => {
-                self.player.set_speed(speed);
-                self.settings.voice_speed = speed;
+                self.settings.voice_speed = self.player.set_speed(speed);
                 self.mark_settings_dirty();
             }
             Action::StartRecording => {
@@ -3743,6 +3742,21 @@ mod tests {
         assert!(app.open_chat.is_none());
         app.open_chat(id.into());
         assert_eq!(app.composer, "unfinished message");
+    }
+
+    #[test]
+    fn direct_speed_selection_reaches_player_and_settings() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+
+        for speed in crate::audio::SPEEDS {
+            app.apply(Action::SetVoiceSpeed(speed), &ctx);
+            assert_eq!(app.player.speed(), speed);
+            assert_eq!(app.settings.voice_speed, speed);
+        }
+
+        app.apply(Action::SetVoiceSpeed(4.0), &ctx);
+        assert_eq!(app.settings.voice_speed, crate::audio::SPEEDS[4]);
     }
 
     #[test]

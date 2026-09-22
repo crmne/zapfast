@@ -3366,10 +3366,19 @@ fn voice_player(
     // their space back while the audio is still downloading.
     let shows_chip = media.path.is_some();
     let speed_button = 34.0;
-    let speeds = crate::audio::SPEEDS.len() as f32;
-    let speeds_width = speeds * speed_button + (speeds - 1.0) * 10.0;
-    let wave_width =
-        (width - button - 10.0 - if shows_chip { speeds_width + 10.0 } else { 0.0 }).max(0.0);
+    let wave_width = (width - button - 10.0).max(0.0);
+    let speed_rows = if shows_chip {
+        let row_width = (width - button - 10.0).max(speed_button);
+        let buttons_per_row = ((row_width + 4.0) / (speed_button + 4.0)).floor().max(1.0) as usize;
+        crate::audio::SPEEDS.len().div_ceil(buttons_per_row)
+    } else {
+        0
+    };
+    let speed_height = if speed_rows == 0 {
+        0.0
+    } else {
+        speed_rows as f32 * 20.0 + (speed_rows - 1) as f32 * 4.0
+    };
     let bars: Vec<u8> = if !waveform.is_empty() {
         waveform.to_vec()
     } else if let Some(bars) = view.player.bars(&message.id) {
@@ -3391,7 +3400,14 @@ fn voice_player(
     };
     // Force left-to-right layout at the player's width inside own bubbles.
     ui.allocate_ui_with_layout(
-        vec2(width.max(0.0), button),
+        vec2(
+            width.max(0.0),
+            if shows_chip {
+                bar_height + speed_height + 4.0
+            } else {
+                button
+            },
+        ),
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -3518,59 +3534,74 @@ fn voice_player(
                 };
                 theme::text(ui, text, theme::regular(11.5), palette.secondary);
             });
-            // Speed buttons, one per supported speed, like the phone.
+            // Speed buttons, one per supported speed, like the phone. Wrapping
+            // keeps the controls inside narrow message bubbles.
             if shows_chip {
                 let speed = view.player.speed();
                 // The label follows the click at once, faded until this
                 // clip actually plays at that speed.
                 let preparing = view.player.preparing_speed(&message.id);
-                for option in crate::audio::SPEEDS {
-                    let selected = (option - speed).abs() < f32::EPSILON;
-                    let (rect, response) =
-                        ui.allocate_exact_size(vec2(speed_button, 20.0), Sense::click());
-                    if ui.is_rect_visible(rect) {
-                        let hovered = response.hovered();
-                        // The resting fill uses the hover step because incoming
-                        // bubbles share the resting surface colour.
-                        let fill = if selected {
-                            palette
-                                .accent
-                                .gamma_multiply(if hovered { 0.42 } else { 0.30 })
-                        } else if hovered {
-                            palette.surface_active
-                        } else {
-                            palette.surface_hover
-                        };
-                        ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
-                        let colour = if selected {
-                            palette.accent
-                        } else {
-                            palette.secondary
-                        };
-                        let colour = if preparing && selected {
-                            colour.gamma_multiply(0.5)
-                        } else {
-                            colour
-                        };
-                        let galley = ui.painter().layout_no_wrap(
-                            speed_label(option),
-                            theme::medium(10.5),
-                            colour,
-                        );
-                        ui.painter()
-                            .galley(rect.center() - galley.size() / 2.0, galley, colour);
-                    }
-                    if response.clicked() {
-                        actions.push(Action::SetVoiceSpeed(option));
-                    }
-                    response
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(if preparing && selected {
-                            "Preparing playback speed"
-                        } else {
-                            "Playback speed"
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    for option in crate::audio::SPEEDS {
+                        let selected = (option - speed).abs() < f32::EPSILON;
+                        let label = speed_label(option);
+                        let (rect, response) =
+                            ui.allocate_exact_size(vec2(speed_button, 20.0), Sense::click());
+                        theme::reveal_focus(&response);
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::Button,
+                                ui.is_enabled(),
+                                selected,
+                                format!("Playback speed {label}"),
+                            )
                         });
-                }
+                        if ui.is_rect_visible(rect) {
+                            let hovered = response.hovered();
+                            // The resting fill uses the hover step because incoming
+                            // bubbles share the resting surface colour.
+                            let fill = if selected {
+                                palette
+                                    .accent
+                                    .gamma_multiply(if hovered { 0.42 } else { 0.30 })
+                            } else if hovered {
+                                palette.surface_active
+                            } else {
+                                palette.surface_hover
+                            };
+                            ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
+                            let colour = if selected {
+                                palette.accent
+                            } else {
+                                palette.secondary
+                            };
+                            let colour = if preparing && selected {
+                                colour.gamma_multiply(0.5)
+                            } else {
+                                colour
+                            };
+                            let galley =
+                                ui.painter()
+                                    .layout_no_wrap(label, theme::medium(10.5), colour);
+                            ui.painter().galley(
+                                rect.center() - galley.size() / 2.0,
+                                galley,
+                                colour,
+                            );
+                        }
+                        if response.clicked() {
+                            actions.push(Action::SetVoiceSpeed(option));
+                        }
+                        response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(if preparing && selected {
+                                "Preparing playback speed"
+                            } else {
+                                "Playback speed"
+                            });
+                    }
+                });
             }
         },
     );

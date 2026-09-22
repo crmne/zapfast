@@ -145,7 +145,7 @@ impl Player {
     /// been built, so the voice keeps its pitch. Until then playback
     /// continues at the speed already queued. Speeds outside 1x to 2x, such
     /// as a hand-edited setting, are clamped, and non-finite ones play at 1x.
-    pub fn set_speed(&mut self, speed: f32) {
+    pub fn set_speed(&mut self, speed: f32) -> f32 {
         self.speed = if speed.is_finite() {
             speed.clamp(SPEEDS[0], SPEEDS[SPEEDS.len() - 1])
         } else {
@@ -153,6 +153,7 @@ impl Player {
         };
         self.apply_speed();
         self.ensure_stretch();
+        self.speed
     }
 
     /// Whether `message` is still playing at an earlier speed while the
