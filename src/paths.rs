@@ -140,11 +140,7 @@ impl AppDirs {
 
     /// Returns true if `path` resolves to the default media cache directory.
     pub fn is_default_media_dir(&self, path: &Path) -> bool {
-        let default = self.media_cache_dir();
-        match (path.canonicalize(), default.canonicalize()) {
-            (Ok(p), Ok(d)) => p == d,
-            _ => path == default,
-        }
+        Self::resolved_for_compare(path) == Self::resolved_for_compare(&self.media_cache_dir())
     }
 
     /// Returns true if `path` is equal to or contained within `self.cache`.
@@ -163,7 +159,7 @@ impl AppDirs {
     /// the missing components appear.
     fn resolved_for_compare(path: &Path) -> PathBuf {
         if let Ok(resolved) = path.canonicalize() {
-            return resolved;
+            return simplify_verbatim(resolved);
         }
         let components: Vec<_> = path.components().collect();
         let mut existing = 0;
@@ -176,6 +172,7 @@ impl AppDirs {
         }
         let base = PathBuf::from_iter(&components[..existing])
             .canonicalize()
+            .map(simplify_verbatim)
             .unwrap_or_else(|_| PathBuf::from_iter(&components[..existing]));
         let mut out = base;
         for component in &components[existing..] {
@@ -198,6 +195,18 @@ impl AppDirs {
     /// kept: it may be a disconnected mount that returns later.
     pub fn validated_custom_media(&self, custom: Option<PathBuf>) -> Option<PathBuf> {
         let custom = custom?;
+        // The app only ever persists absolute canonical paths (a folder
+        // picker plus `try_change_media_dir`), so a relative entry means a
+        // hand-edited settings file. Keeping it would make every media path
+        // resolve against whatever the process working directory happens to
+        // be, outside every boundary check below.
+        if custom.is_relative() {
+            log::warn!(
+                "ignoring persisted attachment folder that is not an absolute path: {}",
+                custom.display()
+            );
+            return None;
+        }
         // The cache boundary check runs first and works lexically, so a
         // hand-edited path equal to the default media folder is rejected even
         // before that folder has ever been created on disk.
@@ -311,6 +320,27 @@ fn adopt_directory(from: &Path, to: &Path) -> std::io::Result<()> {
         std::fs::rename(from, to)?;
     }
     Ok(())
+}
+
+/// Canonical paths on Windows carry the `\\?\` verbatim prefix, which never
+/// compares equal to the plain spelling of the same path, so a resolved child
+/// would not match a parent that has nothing to canonicalize yet. Strip the
+/// prefix the way `dunce` does; on other platforms this is the identity.
+#[cfg(windows)]
+fn simplify_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.as_os_str().to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path
+    }
+}
+
+#[cfg(not(windows))]
+fn simplify_verbatim(path: PathBuf) -> PathBuf {
+    path
 }
 
 #[cfg(test)]
@@ -589,6 +619,40 @@ mod tests {
                 &dirs.config
             ));
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validated_custom_media_rejects_relative_paths() {
+        let root = root("validated-relative");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        // The app only persists absolute canonical paths, so a relative entry
+        // means a hand-edited settings file; keeping it would resolve every
+        // media path against the process working directory instead.
+        assert_eq!(
+            dirs.validated_custom_media(Some(PathBuf::from("attachments"))),
+            None
+        );
+        assert_eq!(
+            dirs.validated_custom_media(Some(PathBuf::from("state/attachments"))),
+            None
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn default_media_dir_matches_dotladen_spellings_before_it_exists() {
+        let root = root("default-media-resolution");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        assert!(dirs.is_default_media_dir(&dirs.media_cache_dir()));
+        // The default folder is created lazily; equivalent spellings of it
+        // must still count as the default, not as a custom folder.
+        assert!(dirs.is_default_media_dir(&dirs.cache.join("media")));
+        assert!(dirs.is_default_media_dir(&dirs.cache.join("./media")));
+        assert!(dirs.is_default_media_dir(&dirs.cache.join("sub/../media")));
+        assert!(!dirs.is_default_media_dir(&dirs.cache.join("media2")));
         std::fs::remove_dir_all(root).unwrap();
     }
 
