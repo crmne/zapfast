@@ -3311,6 +3311,7 @@ fn interactive_buttons(
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &button.label)
         });
+        theme::reveal_focus(&response);
         ui.ctx().data_mut(|data| {
             data.insert_temp(
                 bubble_id(&message.chat, &message.id).with(("interactive-button", index)),

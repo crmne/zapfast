@@ -780,6 +780,27 @@ mod tests {
     }
 
     #[test]
+    fn unarchived_live_polls_leave_no_baseline_behind() {
+        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
+        let info = incoming_poll_info();
+        let chat = info.source.chat.to_non_ad_string();
+        // A removed chat drops the creation without archiving it.
+        worker
+            .archive
+            .remove_chat_through(&chat, 100, false)
+            .unwrap();
+        worker.ingest(&Arc::new(creation_archive(&content(), &[7; 32])), &info);
+        assert!(
+            worker
+                .archive
+                .message(&chat, "live-poll")
+                .unwrap()
+                .is_none()
+        );
+        assert!(!worker.archive.has_poll_history(&chat, "live-poll").unwrap());
+    }
+
+    #[test]
     fn offline_recovered_and_replayed_polls_still_need_the_phone_snapshot() {
         for source in ["offline", "pdo", "archived"] {
             let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();

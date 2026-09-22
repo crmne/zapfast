@@ -2093,15 +2093,16 @@ impl Worker {
         // A new, normally delivered creation has no earlier votes to recover.
         // Offline delivery, PDO recovery and replay of an archived poll do not
         // establish that baseline: they may already have votes on the phone.
-        if is_poll
+        let poll_baseline = is_poll
             && !info.is_offline
             && info.unavailable_request_id.is_none()
-            && matches!(self.archive.message(&chat, &row.id), Ok(None))
-            && let Err(error) = self.archive.mark_poll_history(&chat, &row.id)
-        {
-            log::warn!("could not store a live poll baseline: {error}");
-        }
-        self.store_message(row, Some(message.encode_to_vec()), push_name.as_deref());
+            && matches!(self.archive.message(&chat, &row.id), Ok(None));
+        self.archive_message(
+            row,
+            Some(message.encode_to_vec()),
+            push_name.as_deref(),
+            poll_baseline,
+        );
         if is_poll {
             self.pump_poll_votes();
         }
@@ -2305,6 +2306,19 @@ impl Worker {
 
     /// Archives a message and emits chat and row updates.
     fn store_message(&mut self, message: Message, raw: Option<Vec<u8>>, push_name: Option<&str>) {
+        self.archive_message(message, raw, push_name, false);
+    }
+
+    /// Stores `message`; `poll_baseline` records a live poll creation's
+    /// zero-vote baseline once the row is archived, before the interface
+    /// hears of it. A skipped or failed insert leaves no baseline behind.
+    fn archive_message(
+        &mut self,
+        message: Message,
+        raw: Option<Vec<u8>>,
+        push_name: Option<&str>,
+        poll_baseline: bool,
+    ) {
         if self.predates_removal(&message.chat, message.timestamp) {
             return;
         }
@@ -2325,6 +2339,9 @@ impl Worker {
         if let Err(error) = self.archive.insert_message(&message, raw.as_deref()) {
             log::warn!("could not store a message: {error}");
             return;
+        }
+        if poll_baseline && let Err(error) = self.archive.mark_poll_history(&chat, &message.id) {
+            log::warn!("could not store a live poll baseline: {error}");
         }
         let unread = is_new
             && !message.from_me
@@ -3930,12 +3947,12 @@ impl Worker {
             },
             None if card.is_none() => original.clone(),
             None => {
-                self.emit(Event::Media {
-                    card,
+                self.downloaded(
                     chat,
-                    message: id,
-                    result: Err("This card has no downloadable image".into()),
-                });
+                    id,
+                    card,
+                    Err("This card has no downloadable image".to_owned()),
+                );
                 return;
             }
         };
