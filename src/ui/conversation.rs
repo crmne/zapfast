@@ -3972,12 +3972,12 @@ mod tests {
         };
         let mut widths = Vec::new();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            widths.push(footer_width(ui, &message));
+            widths.push(footer_width(ui, &message, false));
             message.status = Delivery::Failed;
-            widths.push(footer_width(ui, &message));
+            widths.push(footer_width(ui, &message, false));
             // Only our own messages can fail to send.
             message.from_me = false;
-            widths.push(footer_width(ui, &message) + 19.0);
+            widths.push(footer_width(ui, &message, false) + 19.0);
         });
         output.textures_delta.clear();
         assert!(widths[1] > widths[0] + 30.0, "{widths:?}");
