@@ -18,20 +18,31 @@ pub(super) fn is_disposable_source(dirs: &AppDirs, path: &Path) -> bool {
 }
 
 /// Removes newly published copies on failure, but never touches the source files.
-#[derive(Default)]
-struct Copies(Vec<PathBuf>);
+struct Copies {
+    published: Vec<PathBuf>,
+    /// The destination, resolved once, so the per-file same-folder check does
+    /// not repeat the syscall for every copied attachment.
+    canonical_dir: PathBuf,
+}
 
 impl Drop for Copies {
     fn drop(&mut self) {
-        for path in &self.0 {
+        for path in &self.published {
             let _ = std::fs::remove_file(path);
         }
     }
 }
 
 impl Copies {
+    fn new(dir: &Path) -> std::io::Result<Self> {
+        Ok(Self {
+            published: Vec::new(),
+            canonical_dir: dir.canonicalize()?,
+        })
+    }
+
     fn keep(mut self) {
-        self.0.clear();
+        self.published.clear();
     }
 
     fn copy(&mut self, source: &Path, dir: &Path) -> std::io::Result<PathBuf> {
@@ -41,10 +52,10 @@ impl Copies {
         if !input.metadata()?.is_file() {
             return Err(std::io::ErrorKind::InvalidInput.into());
         }
-        if source
+        if let Some(parent) = source
             .parent()
             .and_then(|parent| parent.canonicalize().ok())
-            == Some(dir.canonicalize()?)
+            && parent == self.canonical_dir
         {
             return Ok(source.to_owned());
         }
@@ -52,7 +63,7 @@ impl Copies {
         std::io::copy(&mut input, &mut staged)?;
         staged.as_file().sync_all()?;
         let path = publish(staged, &dir.join(name))?;
-        self.0.push(path.clone());
+        self.published.push(path.clone());
         Ok(path)
     }
 }
@@ -144,7 +155,7 @@ impl Worker {
             let custom = custom.map(|_| dir.clone());
             // Even an empty archive must not accept an unwritable directory.
             let _probe = tempfile::NamedTempFile::new_in(&dir)?;
-            let mut copies = Copies::default();
+            let mut copies = Copies::new(&dir)?;
             let mut updates = Vec::new();
             let mut paths: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
             for (chat, id, source) in rows {
@@ -188,7 +199,7 @@ impl Worker {
             .dirs
             .ensure_media_dir()
             .map_err(|error| error.to_string())?;
-        let mut copies = Copies::default();
+        let mut copies = Copies::new(&dir).map_err(|error| error.to_string())?;
         let path = copies
             .copy(source, &dir)
             .map_err(|error| error.to_string())?;
@@ -223,6 +234,20 @@ mod tests {
         worker.archive.insert_message(&message, None).unwrap();
     }
 
+    /// A test worker rooted in `root` instead of the shared temp dir.
+    fn worker_in(
+        root: &Path,
+    ) -> (
+        Worker,
+        std::sync::mpsc::Receiver<Event>,
+        tokio::sync::mpsc::UnboundedReceiver<Command>,
+        tokio::sync::mpsc::UnboundedReceiver<super::super::RuntimeEvent>,
+    ) {
+        let (mut worker, events, commands, wa) = super::super::receipt_tests::worker();
+        worker.dirs = AppDirs::under(root);
+        (worker, events, commands, wa)
+    }
+
     fn archived_path(worker: &Worker, id: &str) -> Option<PathBuf> {
         worker
             .archive
@@ -239,8 +264,7 @@ mod tests {
     #[tokio::test]
     async fn folder_changes_copy_existing_files_update_rows_and_survive_unlink_cleanup() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, events, _commands, _wa) = worker_in(root.path());
         let old = worker.dirs.ensure_media_dir().unwrap().join("photo.jpg");
         std::fs::write(&old, b"fixture").unwrap();
         attachment(&worker, "image", &old);
@@ -283,8 +307,7 @@ mod tests {
     #[tokio::test]
     async fn collisions_preserve_unrelated_files_and_report_the_actual_new_path() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, events, _commands, _wa) = worker_in(root.path());
         let old = worker.dirs.ensure_media_dir().unwrap().join("photo.jpg");
         std::fs::write(&old, b"fixture").unwrap();
         attachment(&worker, "image", &old);
@@ -308,8 +331,7 @@ mod tests {
     #[tokio::test]
     async fn failed_copy_keeps_the_previous_folder_and_archive_paths() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, events, _commands, _wa) = worker_in(root.path());
         let old = worker.dirs.ensure_media_dir().unwrap().join("photo.jpg");
         std::fs::write(&old, b"fixture").unwrap();
         attachment(&worker, "image", &old);
@@ -331,8 +353,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_or_cache_folders_are_rejected_and_default_selection_resets() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, events, _commands, _wa) = worker_in(root.path());
         worker.dirs.ensure().unwrap();
         let blocked = root.path().join("file");
         std::fs::write(&blocked, b"fixture").unwrap();
@@ -354,8 +375,7 @@ mod tests {
     #[tokio::test]
     async fn a_download_started_in_the_old_folder_finishes_in_the_current_folder() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, events, _commands, _wa) = worker_in(root.path());
         let old = worker.dirs.ensure_media_dir().unwrap().join("late.jpg");
         attachment(&worker, "image", &old);
         worker
@@ -382,8 +402,7 @@ mod tests {
     #[tokio::test]
     async fn a_download_that_cannot_move_to_the_current_folder_fails_without_a_stale_path() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, events, _commands, _wa) = worker_in(root.path());
         let old = worker.dirs.ensure_media_dir().unwrap().join("late.jpg");
         attachment(&worker, "image", &old);
         worker
@@ -421,7 +440,7 @@ mod tests {
         std::fs::write(&source, b"fixture").unwrap();
         let dir = root.path().join("target");
         std::fs::create_dir_all(&dir).unwrap();
-        let mut copies = Copies::default();
+        let mut copies = Copies::new(&dir).unwrap();
         let target = copies.copy(&source, &dir).unwrap();
         assert!(target.exists());
         drop(copies);
@@ -444,8 +463,7 @@ mod tests {
     #[test]
     fn legacy_custom_cache_subtrees_survive_cleanup() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, _events, _commands, _wa) = worker_in(root.path());
         let cache = worker.dirs.ensure_media_dir().unwrap();
         let custom = cache.join("legacy/custom");
         std::fs::create_dir_all(&custom).unwrap();
@@ -469,8 +487,7 @@ mod tests {
         // without depending on platform ACLs or whether tests run as root.
         for unavailable in ["missing", "empty", "not-directory"] {
             let root = tempfile::tempdir().unwrap();
-            let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
-            worker.dirs = AppDirs::under(root.path());
+            let (mut worker, _events, _commands, _wa) = worker_in(root.path());
             let custom = root.path().join("mounted");
             std::fs::create_dir_all(&custom).unwrap();
             let source = custom.join("photo.jpg");
@@ -502,8 +519,7 @@ mod tests {
     #[test]
     fn startup_does_not_replace_an_external_path_with_a_same_named_cache_file() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, _events, _commands, _wa) = worker_in(root.path());
         // Legacy archives can retain paths outside the currently configured folder.
         let source = root.path().join("offline/photo.jpg");
         attachment(&worker, "image", &source);
@@ -518,8 +534,7 @@ mod tests {
     #[test]
     fn startup_never_adopts_a_same_named_file_in_the_custom_folder() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, _events, _commands, _wa) = worker_in(root.path());
         let cache = worker.dirs.ensure_media_dir().unwrap();
         // A stale default-cache row that vanished after an interrupted change.
         let stale = cache.join("photo.jpg");
@@ -539,8 +554,7 @@ mod tests {
     #[test]
     fn startup_still_repairs_and_clears_disposable_cache_paths() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, _events, _commands, _wa) = worker_in(root.path());
         let cache = worker.dirs.ensure_media_dir().unwrap();
         let existing = cache.join("existing.jpg");
         let moved = cache.join("moved.jpg");
@@ -561,8 +575,7 @@ mod tests {
         for unavailable in ["missing", "empty", "not-directory"] {
             for destination in ["new", "default", "same"] {
                 let root = tempfile::tempdir().unwrap();
-                let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
-                worker.dirs = AppDirs::under(root.path());
+                let (mut worker, events, _commands, _wa) = worker_in(root.path());
                 let custom = root.path().join("mounted");
                 std::fs::create_dir_all(&custom).unwrap();
                 let source = custom.join("photo.jpg");
@@ -613,8 +626,7 @@ mod tests {
     async fn missing_external_file_rolls_back_copies_even_with_readable_folders() {
         for custom_configured in [false, true] {
             let root = tempfile::tempdir().unwrap();
-            let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
-            worker.dirs = AppDirs::under(root.path());
+            let (mut worker, events, _commands, _wa) = worker_in(root.path());
             let source_dir = root.path().join("external");
             std::fs::create_dir_all(&source_dir).unwrap();
             let present = source_dir.join("present.jpg");
@@ -658,8 +670,7 @@ mod tests {
     #[tokio::test]
     async fn unavailable_custom_folder_without_archived_files_can_be_reset() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, events, _commands, _wa) = worker_in(root.path());
         let unavailable = root.path().join("offline");
         worker.dirs.custom_media = Some(unavailable.clone());
 
@@ -675,8 +686,7 @@ mod tests {
     #[tokio::test]
     async fn ancestor_custom_folder_preserves_copies_but_not_disposable_cache() {
         let root = tempfile::tempdir().unwrap();
-        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
-        worker.dirs = AppDirs::under(root.path());
+        let (mut worker, _events, _commands, _wa) = worker_in(root.path());
         let cache = worker.dirs.ensure_media_dir().unwrap();
         let source = cache.join("photo.jpg");
         std::fs::write(&source, b"preserved").unwrap();
@@ -699,7 +709,7 @@ mod tests {
         let missing = root.path().join("missing.jpg");
         let directory = root.path().join("directory.jpg");
         std::fs::create_dir(&directory).unwrap();
-        let mut copies = Copies::default();
+        let mut copies = Copies::new(root.path()).unwrap();
         assert!(copies.copy(&missing, root.path()).is_err());
         assert!(copies.copy(&directory, root.path()).is_err());
         assert!(directory.is_dir());

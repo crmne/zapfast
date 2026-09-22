@@ -334,6 +334,7 @@ impl Default for AppOptions {
 
 impl App {
     pub fn new(waker: &Waker, mut dirs: AppDirs, settings: Settings, options: AppOptions) -> Self {
+        // The backend gets its own clone of the configured attachment folder.
         dirs.custom_media = settings.custom_media_dir.clone();
         let backend = Backend::spawn(dirs.clone(), waker.clone());
         let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
@@ -352,11 +353,7 @@ impl App {
     }
 
     /// Creates a disconnected app and event sender for demos and tests.
-    pub fn headless(
-        mut dirs: AppDirs,
-        settings: Settings,
-    ) -> (Self, std::sync::mpsc::Sender<Event>) {
-        dirs.custom_media = settings.custom_media_dir.clone();
+    pub fn headless(dirs: AppDirs, settings: Settings) -> (Self, std::sync::mpsc::Sender<Event>) {
         let (backend, events) = Backend::detached();
         (
             Self::with_backend(dirs, settings, backend, Waker::default()),
@@ -364,7 +361,10 @@ impl App {
         )
     }
 
-    fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
+    fn with_backend(mut dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
+        // Every app, demos and tests included, agrees with the persisted
+        // attachment-folder setting; `new` wires the backend clone itself.
+        dirs.custom_media = settings.custom_media_dir.clone();
         let palette = settings
             .cached_palette()
             .unwrap_or_else(|| match settings.theme {
