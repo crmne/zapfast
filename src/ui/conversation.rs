@@ -1596,12 +1596,14 @@ fn reaction_affordance(
     }
     let rect = reaction_affordance_rect(bubble.rect, bounds, message.from_me);
     let pointer = ui.input(|input| input.pointer.interact_pos());
-    // Stay hidden under any floating layer, as the context menu does.
-    let uncovered = pointer.is_some_and(|pos| {
-        ui.ctx()
-            .layer_id_at(pos)
-            .is_none_or(|layer| layer == bubble.layer_id)
-    });
+    // Stay hidden under any floating layer, as the context menu does. The
+    // affordance sits beside the bubble, so test the bubble itself rather than
+    // the pointer, which may already be over the button, outside the bubble's
+    // layer.
+    let uncovered = ui
+        .ctx()
+        .layer_id_at(bubble.rect.center())
+        .is_none_or(|layer| layer == bubble.layer_id);
     if !uncovered || !reaction_affordance_visible(pointer, bubble.rect, rect) {
         return;
     }
