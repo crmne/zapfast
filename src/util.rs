@@ -24,10 +24,25 @@ fn today() -> Date {
     Zoned::now().date()
 }
 
-/// Local message time such as "14:05".
-pub fn clock(unix_seconds: i64) -> String {
+/// Formats an hour and minute of day as 24-hour "14:05" or 12-hour "2:05 PM".
+fn time_of_day(hour: i8, minute: i8, use_12h: bool) -> String {
+    if use_12h {
+        let (hour, meridiem) = match hour {
+            0 => (12, "AM"),
+            1..=11 => (hour, "AM"),
+            12 => (12, "PM"),
+            _ => (hour - 12, "PM"),
+        };
+        format!("{hour}:{minute:02} {meridiem}")
+    } else {
+        format!("{hour:02}:{minute:02}")
+    }
+}
+
+/// Local message time such as "14:05" or "2:05 PM".
+pub fn clock(unix_seconds: i64, use_12h: bool) -> String {
     zoned(unix_seconds)
-        .map(|when| format!("{:02}:{:02}", when.hour(), when.minute()))
+        .map(|when| time_of_day(when.hour(), when.minute(), use_12h))
         .unwrap_or_default()
 }
 
@@ -48,20 +63,20 @@ pub fn copy_stamp(unix_seconds: i64) -> String {
 }
 
 /// Chat-row timestamp: time today, weekday this week, or date.
-pub fn chat_stamp(unix_seconds: i64) -> String {
+pub fn chat_stamp(unix_seconds: i64, use_12h: bool) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
-    stamp_relative_to(when.date(), today(), &when)
+    stamp_relative_to(when.date(), today(), &when, use_12h)
 }
 
-fn stamp_relative_to(date: Date, today: Date, when: &Zoned) -> String {
+fn stamp_relative_to(date: Date, today: Date, when: &Zoned, use_12h: bool) -> String {
     let days = today
         .since(date)
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
-        0 => format!("{:02}:{:02}", when.hour(), when.minute()),
+        0 => time_of_day(when.hour(), when.minute(), use_12h),
         1 => "Yesterday".to_owned(),
         2..=6 => weekday_name(date.weekday()).to_owned(),
         _ => short_date(date),
@@ -78,11 +93,11 @@ pub fn split_name(name: &str) -> (String, String) {
 }
 
 /// Message-info timestamp with date and minute.
-pub fn moment_stamp(unix_seconds: i64) -> String {
+pub fn moment_stamp(unix_seconds: i64, use_12h: bool) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
-    let time = format!("{:02}:{:02}", when.hour(), when.minute());
+    let time = time_of_day(when.hour(), when.minute(), use_12h);
     let days = today()
         .since(when.date())
         .map(|span| span.get_days())
@@ -421,16 +436,17 @@ mod tests {
             .expect("valid")
             .to_zoned(jiff::tz::TimeZone::UTC);
         let date = when.date();
-        assert_eq!(stamp_relative_to(date, date, &when), "22:13");
+        assert_eq!(stamp_relative_to(date, date, &when, false), "22:13");
         assert_eq!(
-            stamp_relative_to(date, date.tomorrow().expect("date"), &when),
+            stamp_relative_to(date, date.tomorrow().expect("date"), &when, false),
             "Yesterday"
         );
         assert_eq!(
             stamp_relative_to(
                 date,
                 date.checked_add(jiff::Span::new().days(3)).expect("date"),
-                &when
+                &when,
+                false
             ),
             "Tuesday"
         );
@@ -438,10 +454,22 @@ mod tests {
             stamp_relative_to(
                 date,
                 date.checked_add(jiff::Span::new().days(30)).expect("date"),
-                &when
+                &when,
+                false
             ),
             "14 Nov 2023"
         );
+    }
+
+    #[test]
+    fn time_of_day_switches_between_24_and_12_hour() {
+        assert_eq!(time_of_day(0, 5, false), "00:05");
+        assert_eq!(time_of_day(14, 5, false), "14:05");
+        assert_eq!(time_of_day(0, 5, true), "12:05 AM");
+        assert_eq!(time_of_day(9, 5, true), "9:05 AM");
+        assert_eq!(time_of_day(12, 0, true), "12:00 PM");
+        assert_eq!(time_of_day(14, 5, true), "2:05 PM");
+        assert_eq!(time_of_day(23, 59, true), "11:59 PM");
     }
 
     #[test]

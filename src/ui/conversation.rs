@@ -303,7 +303,10 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
         }
         if let Some(seen) = presence.last_seen {
             return (
-                format!("last seen {}", crate::util::chat_stamp(seen).to_lowercase()),
+                format!(
+                    "last seen {}",
+                    crate::util::chat_stamp(seen, app.settings.use_12h).to_lowercase()
+                ),
                 palette.secondary,
             );
         }
@@ -1178,6 +1181,8 @@ struct View<'a> {
     poll_voting: &'a HashSet<(ChatId, String)>,
     /// Show avatars for all incoming messages, not only groups.
     pictures: bool,
+    /// Show message times in 12-hour (AM/PM) format.
+    use_12h: bool,
     anchor: Option<&'a str>,
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
@@ -1227,6 +1232,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         pictures: app.settings.show_sender_pictures,
+        use_12h: app.settings.use_12h,
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
         } else {
@@ -1902,7 +1908,7 @@ fn bubble_frame(
             // no more than the cap. Text spans that width and stays left-aligned.
             // Bubbles without cards use the natural text width.
             let cap = ((max_width - 20.0).min(ui.available_width())).max(0.0);
-            let reserve = footer_width(ui, message);
+            let reserve = footer_width(ui, message, view.use_12h);
             let slot = match settled_width(ui, view, message, cap) {
                 Some(width) => {
                     if let Some(quoted) = &message.quoted {
@@ -1912,7 +1918,7 @@ fn bubble_frame(
                 }
                 None => content(ui, view, message, cap, reserve, actions),
             };
-            footer(ui, &palette, message, slot);
+            footer(ui, &palette, message, slot, view.use_12h);
         });
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
@@ -2080,7 +2086,7 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
         .map(|row| row.row.size.x)
         .fold(0.0, f32::max);
     let last = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
-    let reserve = footer_width(ui, message);
+    let reserve = footer_width(ui, message, view.use_12h);
     Some(if last + 8.0 + reserve <= cap {
         widest.max(last + 8.0 + reserve)
     } else {
@@ -2178,12 +2184,12 @@ fn mirrored_row(
 }
 
 /// Width of the message footer.
-fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
+fn footer_width(ui: &egui::Ui, message: &Message, use_12h: bool) -> f32 {
     let font = theme::regular(11.0);
     let time = ui
         .painter()
         .layout_no_wrap(
-            crate::util::clock(message.timestamp),
+            crate::util::clock(message.timestamp, use_12h),
             font.clone(),
             Color32::WHITE,
         )
@@ -2215,10 +2221,16 @@ fn not_sent(message: &Message) -> bool {
 }
 
 /// Paints the time and ticks at the bubble's right edge without widening it.
-fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<Rect>) {
+fn footer(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    message: &Message,
+    slot: Option<Rect>,
+    use_12h: bool,
+) {
     let font = theme::regular(11.0);
     let time = ui.painter().layout_no_wrap(
-        crate::util::clock(message.timestamp),
+        crate::util::clock(message.timestamp, use_12h),
         font.clone(),
         palette.secondary,
     );
@@ -2555,7 +2567,10 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         ui,
         &palette,
         Icon::Check,
-        &format!("Sent {}", crate::util::moment_stamp(message.timestamp)),
+        &format!(
+            "Sent {}",
+            crate::util::moment_stamp(message.timestamp, view.use_12h)
+        ),
     );
     if message.from_me {
         if message.delivered_at.is_some() || message.status == Delivery::Delivered {
@@ -2564,7 +2579,10 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 &palette,
                 Icon::CheckCheck,
                 &match message.delivered_at {
-                    Some(when) => format!("Delivered {}", crate::util::moment_stamp(when)),
+                    Some(when) => format!(
+                        "Delivered {}",
+                        crate::util::moment_stamp(when, view.use_12h)
+                    ),
                     None => "Delivered".to_owned(),
                 },
             );
@@ -2580,7 +2598,9 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 &palette,
                 Icon::CheckCheck,
                 &match message.read_at {
-                    Some(when) => format!("{what} {}", crate::util::moment_stamp(when)),
+                    Some(when) => {
+                        format!("{what} {}", crate::util::moment_stamp(when, view.use_12h))
+                    }
                     None => what.to_owned(),
                 },
             );

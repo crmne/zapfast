@@ -837,7 +837,10 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             let status = if presence.online {
                 "online".to_owned()
             } else if let Some(seen) = presence.last_seen {
-                format!("last seen {}", crate::util::chat_stamp(seen).to_lowercase())
+                format!(
+                    "last seen {}",
+                    crate::util::chat_stamp(seen, app.settings.use_12h).to_lowercase()
+                )
             } else {
                 String::new()
             };
@@ -935,7 +938,10 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             if until == 0 {
                 "Muted".to_owned()
             } else {
-                format!("Muted until {}", crate::util::chat_stamp(until))
+                format!(
+                    "Muted until {}",
+                    crate::util::chat_stamp(until, app.settings.use_12h)
+                )
             },
             theme::regular(12.5),
             palette.secondary,

@@ -99,6 +99,8 @@ pub struct Settings {
     pub names_from_contacts: bool,
     /// Voice and audio playback speed multiplier.
     pub voice_speed: f32,
+    /// Show message times in 12-hour (AM/PM) format instead of 24-hour.
+    pub use_12h: bool,
     /// Also add saved contacts to the phone's address book.
     pub save_contacts_to_phone: bool,
     /// Legacy plaintext code, accepted once and rewritten as a verifier.
@@ -136,6 +138,7 @@ impl Default for Settings {
             names_from_contacts: true,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
+            use_12h: false,
             chat_lock_code: None,
             chat_lock_code_hash: None,
             chat_lock_hint_dismissed: false,
