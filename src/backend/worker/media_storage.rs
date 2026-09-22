@@ -69,31 +69,55 @@ impl Copies {
 }
 
 fn publish(mut staged: tempfile::NamedTempFile, preferred: &Path) -> std::io::Result<PathBuf> {
-    let name = preferred
-        .file_name()
-        .ok_or(std::io::ErrorKind::InvalidInput)?;
+    if preferred.file_name().is_none() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
     let mut target = preferred.to_owned();
     loop {
         match staged.persist_noclobber(&target) {
             Ok(_) => return Ok(target),
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
                 staged = error.file;
-                // Never overwrite a user's file or mistake it for this attachment.
-                let mut unique =
-                    std::ffi::OsString::from(format!("{:016x}-", rand::random::<u64>()));
-                unique.push(name);
-                target = preferred.with_file_name(unique);
+                target = collision_safe_name(preferred);
             }
             Err(error) => return Err(error.error),
         }
     }
 }
 
+/// A stand-in file name that preserves the original name and extension after
+/// a collision, so a user's unrelated file is never overwritten or mistaken
+/// for this attachment.
+pub(super) fn collision_safe_name(preferred: &Path) -> PathBuf {
+    let name = preferred
+        .file_name()
+        .ok_or(std::io::ErrorKind::InvalidInput)
+        .map(|name| {
+            let mut unique = std::ffi::OsString::from(format!("{:016x}-", rand::random::<u64>()));
+            unique.push(name);
+            unique
+        });
+    match name {
+        Ok(unique) => preferred.with_file_name(unique),
+        Err(_) => preferred.to_owned(),
+    }
+}
+
 /// Save new downloads and uploaded attachments with the same no-clobber policy.
-pub(super) async fn save(path: PathBuf, bytes: Vec<u8>) -> Result<PathBuf, String> {
+/// The managed default cache is created on demand; a configured custom folder
+/// must already exist, so a disconnected mount is never recreated locally and
+/// hidden when the drive is mounted again.
+pub(super) async fn save(dirs: &AppDirs, path: PathBuf, bytes: Vec<u8>) -> Result<PathBuf, String> {
+    let dirs = dirs.clone();
     tokio::task::spawn_blocking(move || {
         let dir = path.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
-        std::fs::create_dir_all(dir)?;
+        if dirs.custom_media.is_some() {
+            if !dir.is_dir() {
+                return Err(std::io::Error::other(super::ATTACHMENT_FOLDER_UNAVAILABLE));
+            }
+        } else {
+            std::fs::create_dir_all(dir)?;
+        }
         let mut staged = tempfile::NamedTempFile::new_in(dir)?;
         staged.write_all(&bytes)?;
         staged.as_file().sync_all()?;
@@ -451,13 +475,37 @@ mod tests {
     #[tokio::test]
     async fn new_downloads_do_not_overwrite_existing_files() {
         let root = tempfile::tempdir().unwrap();
-        let preferred = root.path().join("downloads/photo.jpg");
-        let first = save(preferred.clone(), b"first".to_vec()).await.unwrap();
-        let second = save(preferred.clone(), b"second".to_vec()).await.unwrap();
+        let dirs = AppDirs::under(root.path());
+        let preferred = dirs.media_cache_dir().join("photo.jpg");
+        let first = save(&dirs, preferred.clone(), b"first".to_vec())
+            .await
+            .unwrap();
+        let second = save(&dirs, preferred.clone(), b"second".to_vec())
+            .await
+            .unwrap();
         assert_eq!(first, preferred);
         assert_ne!(first, second);
         assert_eq!(std::fs::read(first).unwrap(), b"first");
         assert_eq!(std::fs::read(second).unwrap(), b"second");
+    }
+
+    #[tokio::test]
+    async fn saving_requires_the_custom_folder_to_exist_without_recreating_it() {
+        let root = tempfile::tempdir().unwrap();
+        let mut dirs = AppDirs::under(root.path());
+        let custom = root.path().join("mounted");
+        dirs.custom_media = Some(custom.clone());
+        let error = save(&dirs, custom.join("photo.jpg"), b"send".to_vec())
+            .await
+            .expect_err("a vanished custom folder fails instead of being recreated");
+        assert_eq!(error, super::super::ATTACHMENT_FOLDER_UNAVAILABLE);
+        assert!(!custom.exists(), "must not recreate the mount point");
+
+        std::fs::create_dir(&custom).unwrap();
+        let saved = save(&dirs, custom.join("photo.jpg"), b"send".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(saved, custom.join("photo.jpg"));
     }
 
     #[test]

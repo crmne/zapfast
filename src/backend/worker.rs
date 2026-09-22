@@ -153,7 +153,7 @@ async fn download_attachment(
             // Close the verified file before publishing it, including on Windows.
             drop(writer);
             match publish_attachment(&temporary, path).await {
-                Ok(()) => Ok(path.to_path_buf()),
+                Ok(published) => Ok(published),
                 Err(error) => {
                     let _ = tokio::fs::remove_file(&temporary).await;
                     Err(error.to_string())
@@ -173,18 +173,27 @@ async fn download_attachment(
 }
 
 /// Publishes a complete attachment only after its download has been verified.
-async fn publish_attachment(temporary: &Path, path: &Path) -> Result<(), String> {
-    // Windows does not replace an existing destination during rename. A stale
-    // cache file has no archive reference, and active downloads are deduplicated.
-    #[cfg(windows)]
-    if path.exists() {
-        tokio::fs::remove_file(path)
-            .await
-            .map_err(|error| error.to_string())?;
+/// Never replaces an existing file: a name collision publishes under a unique
+/// name instead, and the caller stores and reports that actual path. Unix
+/// rename replaces silently, so the destination must be probed first.
+async fn publish_attachment(temporary: &Path, path: &Path) -> Result<PathBuf, String> {
+    let mut target = path.to_owned();
+    loop {
+        // Never overwrite a user's file or mistake it for this attachment.
+        // The recheck after a failed rename closes the probe/rename race on
+        // platforms that refuse to replace a destination.
+        if target.try_exists().map_err(|error| error.to_string())? {
+            target = media_storage::collision_safe_name(&target);
+            continue;
+        }
+        match tokio::fs::rename(temporary, &target).await {
+            Ok(()) => return Ok(target),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                target = media_storage::collision_safe_name(&target);
+            }
+            Err(error) => return Err(error.to_string()),
+        }
     }
-    tokio::fs::rename(temporary, path)
-        .await
-        .map_err(|error| error.to_string())
 }
 
 /// A hidden, per-attempt path in the destination directory, so a verified
@@ -4571,7 +4580,7 @@ impl Worker {
             };
             let commands = self.commands.clone();
             let chat = chat.clone();
-            let dir = self.dirs.media_dir();
+            let dirs = self.dirs.clone();
             let me = self.me();
             // Attach the caption to the first file.
             let caption = if index == 0 { caption.clone() } else { None };
@@ -4593,7 +4602,7 @@ impl Worker {
                         .map(|name| name.to_string_lossy().into_owned());
                     let prepared =
                         prepare_media(&client, bytes, &mime, file_name.as_deref(), false).await?;
-                    file_outbound(&client, &chat, &me, &dir, prepared, caption, mentions).await
+                    file_outbound(&client, &chat, &me, &dirs, prepared, caption, mentions).await
                 }
                 .await;
                 match outcome {
@@ -4630,7 +4639,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_dir();
+        let dirs = self.dirs.clone();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4642,7 +4651,7 @@ impl Worker {
                 .await
                 .map_err(|error| error.to_string())??;
                 let prepared = prepare_media(&client, encoded, "image/jpeg", None, false).await?;
-                file_outbound(&client, &chat, &me, &dir, prepared, caption, mentions).await
+                file_outbound(&client, &chat, &me, &dirs, prepared, caption, mentions).await
             }
             .await;
             match outcome {
@@ -4703,7 +4712,7 @@ impl Worker {
             None => (None, None),
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_dir();
+        let dirs = self.dirs.clone();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4719,7 +4728,7 @@ impl Worker {
                 .await
                 .map_err(|error| error.to_string())??;
                 let prepared = prepare_voice(&client, bytes, seconds, waveform, context).await?;
-                file_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new()).await
+                file_outbound(&client, &chat, &me, &dirs, prepared, None, Vec::new()).await
             }
             .await;
             match outcome {
@@ -4772,7 +4781,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_dir();
+        let dirs = self.dirs.clone();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4780,7 +4789,7 @@ impl Worker {
                     .await
                     .map_err(|error| error.to_string())?;
                 let prepared = prepare_sticker(&client, bytes).await?;
-                file_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new()).await
+                file_outbound(&client, &chat, &me, &dirs, prepared, None, Vec::new()).await
             }
             .await;
             match outcome {
@@ -4808,7 +4817,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_dir();
+        let dirs = self.dirs.clone();
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -4830,7 +4839,7 @@ impl Worker {
                     video.width = Some(gif.width);
                     video.height = Some(gif.height);
                 }
-                file_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new()).await
+                file_outbound(&client, &chat, &me, &dirs, prepared, None, Vec::new()).await
             }
             .await;
             match outcome {
@@ -5827,11 +5836,12 @@ async fn file_outbound(
     client: &Client,
     chat: &str,
     me: &str,
-    dir: &Path,
+    dirs: &AppDirs,
     mut prepared: Prepared,
     caption: Option<String>,
     mentions: Vec<String>,
 ) -> Result<(Message, Vec<u8>), String> {
+    let dir = dirs.media_dir();
     if let Some(caption) = caption.filter(|caption| !caption.trim().is_empty()) {
         match &mut prepared.content {
             Content::Image { caption: slot, .. }
@@ -5857,13 +5867,13 @@ async fn file_outbound(
     }
     let id = client.generate_message_id();
     let path = media_path(
-        dir,
+        &dir,
         chat,
         &id,
         &prepared.mime,
         prepared.file_name.as_deref(),
     );
-    let path = media_storage::save(path, prepared.bytes).await?;
+    let path = media_storage::save(dirs, path, prepared.bytes).await?;
     let mut content = prepared.content;
     if let Some(media) = content.media_mut() {
         media.path = Some(path);
@@ -6360,6 +6370,40 @@ mod tests {
             b"complete attachment"
         );
         std::fs::remove_dir_all(&directory).expect("removes staging directory");
+    }
+
+    #[tokio::test]
+    async fn download_publish_uses_the_preferred_path_without_a_collision() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("photo.jpg");
+        let (temporary, file) = temporary_attachment_file(&destination).expect("staging file");
+        drop(file);
+        std::fs::write(&temporary, b"downloaded").expect("writes verified download");
+
+        let published = publish_attachment(&temporary, &destination).await.unwrap();
+
+        assert_eq!(published, destination);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"downloaded");
+    }
+
+    #[tokio::test]
+    async fn download_publish_never_replaces_an_unrelated_same_named_file() {
+        let root = tempfile::tempdir().unwrap();
+        // The destination can sit in a user-controlled custom attachment folder.
+        let dir = root.path().join("downloads");
+        std::fs::create_dir_all(&dir).unwrap();
+        let destination = dir.join("photo.jpg");
+        std::fs::write(&destination, b"unrelated").unwrap();
+        let (temporary, file) = temporary_attachment_file(&destination).expect("staging file");
+        drop(file);
+        std::fs::write(&temporary, b"downloaded").expect("writes verified download");
+
+        let published = publish_attachment(&temporary, &destination).await.unwrap();
+
+        assert_eq!(std::fs::read(&destination).unwrap(), b"unrelated");
+        assert_ne!(published, destination);
+        assert_eq!(published.extension().unwrap(), "jpg");
+        assert_eq!(std::fs::read(&published).unwrap(), b"downloaded");
     }
 
     #[test]
