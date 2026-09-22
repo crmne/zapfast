@@ -19,13 +19,16 @@ use crate::model::{
 };
 use crate::theme::{self, Icon, Palette};
 
+use super::focus::{Stop, TabStop};
 use super::widgets;
 
-/// Maximum automatic attachment download size.
-const AUTO_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 /// Group-message avatar size.
 const SENDER_AVATAR: f32 = 28.0;
 const BODY_SIZE: f32 = 14.5;
+/// Footer label on an outgoing message that failed to send.
+const NOT_SENT: &str = "Not sent";
+const NOT_SENT_HINT: &str =
+    "This message could not be sent, and ZapFast will not retry it. Send it again yourself.";
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let Some(chat) = app.current_chat().cloned() else {
@@ -77,7 +80,7 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
         ui.painter().text(
             center + vec2(0.0, 56.0),
             Align2::CENTER_CENTER,
-            "Ctrl+K to search · Ctrl+/ for shortcuts",
+            super::keys::label("Ctrl+K to search · ? for keyboard shortcuts"),
             theme::regular(12.5),
             palette.dim,
         );
@@ -117,6 +120,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         palette.text,
                         "Show the chat list (Ctrl+B)",
                     )
+                    .tab_stop(Stop::Sidebar)
                     .clicked()
                 {
                     app.actions.push(Action::ToggleSidebar);
@@ -698,7 +702,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
 
 fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
-    egui::Panel::bottom("composer")
+    let shown = egui::Panel::bottom("composer")
         .show_separator_line(false)
         .frame(
             Frame::new()
@@ -710,6 +714,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 if chat.kind == crate::model::ChatKind::Broadcast {
                     ui.vertical_centered(|ui| {
                         theme::text(ui, "Channels are read-only in ZapFast", theme::regular(13.5), palette.secondary);
+                    });
+                    return;
+                }
+                if chat.locked {
+                    ui.vertical_centered(|ui| {
+                        theme::text(ui, "Locked chats are read-only in ZapFast", theme::regular(13.5), palette.secondary);
                     });
                     return;
                 }
@@ -820,11 +830,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         palette.text,
                         "Send files (or drop them on the window)",
                     )
+                    .tab_stop(Stop::Attach)
                     .clicked()
                 {
                     app.actions.push(Action::Attach);
                 }
-                if app.editing.is_none() && theme::icon_button(ui, Icon::ListChecks, 20.0, palette.secondary, palette.text, "Create poll").clicked() {
+                if app.editing.is_none() && theme::icon_button(ui, Icon::ListChecks, 20.0, palette.secondary, palette.text, "Create poll").tab_stop(Stop::Poll).clicked() {
                     app.actions.push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
                 }
                 if app.editing.is_none() {
@@ -839,14 +850,14 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         },
                         palette.text,
                         "Emoji, GIFs, and stickers",
-                    );
+                    ).tab_stop(Stop::Emoji);
                     app.picker_anchor = Some(smile.rect);
                     if smile.clicked() {
                         app.actions.push(Action::TogglePicker(PickerTab::Emoji));
                     }
                 }
                 let field_width = (ui.available_width() - button_width - 10.0).max(0.0);
-                Frame::new()
+                let field = Frame::new()
                     .fill(palette.surface)
                     .corner_radius(CornerRadius::same(theme::RADIUS + 4))
                     .inner_margin(Margin::symmetric(12, 7))
@@ -921,7 +932,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .translate(output.galley_pos.to_vec2());
                                     crate::emoji::paint_cluster(ui, cluster, rect);
                                 }
-                                let response = &output.response.response;
+                                let response = output.response.response.clone().tab_stop(Stop::Composer);
                                 ui.ctx().accesskit_node_builder(response.id, |node| node.set_label("Message"));
                                 if response.changed() {
                                     app.actions.push(Action::Composing {
@@ -980,6 +991,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }
                             });
                     });
+                theme::focus_outline(ui, id, field.response.rect, f32::from(theme::RADIUS + 4));
                 let ready = !app.composer.trim().is_empty() || !app.pending.is_empty();
                 let (fill, hover, icon) = if ready {
                     (palette.accent, palette.accent_hover, palette.on_accent)
@@ -997,6 +1009,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         palette.secondary,
                         "Record a voice message",
                     )
+                    .tab_stop(Stop::Send)
                     .clicked()
                     {
                         app.actions.push(Action::StartRecording);
@@ -1008,6 +1021,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         Icon::Send
                     };
                     if theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
+                        .tab_stop(Stop::Send)
                         .clicked()
                     {
                         send_click = true;
@@ -1072,6 +1086,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 });
             }
         });
+    // Toasts sit above the composer so they never cover its buttons.
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
 }
 
 fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
@@ -1165,12 +1182,17 @@ struct View<'a> {
     anchor: Option<&'a str>,
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
+    reaction: Option<&'a str>,
+    reaction_emoji: &'a [(String, u32)],
+    keyboard_navigation: &'a std::cell::Cell<bool>,
     /// Resolves a name with the message's stored name as fallback.
     names_or: &'a dyn Fn(&str, Option<&str>) -> String,
     /// Resolves mention names without replacing our name with "You".
     mention_names: &'a dyn Fn(&str) -> String,
     avatars: &'a HashMap<String, Option<PathBuf>>,
     now: i64,
+    /// Animate media only while this window is active.
+    animate: bool,
     player: &'a crate::audio::Player,
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
 }
@@ -1197,6 +1219,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     }
     let names_or = |id: &str, hint: Option<&str>| app.display_name_or(id, hint);
     let mention_names = |id: &str| app.mention_name(id);
+    let keyboard_navigation = std::cell::Cell::new(false);
     let view = View {
         palette,
         chat,
@@ -1212,10 +1235,18 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             app.scroll_anchor.as_deref()
         },
         open_menu: app.open_message_menu.as_deref(),
+        reaction: app
+            .reaction_target
+            .as_ref()
+            .filter(|(id, _)| id == &chat.id)
+            .map(|(_, message)| message.as_str()),
+        reaction_emoji: &app.settings.reaction_emoji,
+        keyboard_navigation: &keyboard_navigation,
         names_or: &names_or,
         mention_names: &mention_names,
         avatars: &avatars,
         now: crate::util::now(),
+        animate: app.window_focused,
         player: &app.player,
         copy_rows: app.copy_rows.as_ref(),
     };
@@ -1229,7 +1260,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
-        .stick_to_bottom(true)
+        .stick_to_bottom(view.reaction.is_none())
+        .scroll_source(if view.reaction.is_some() {
+            egui::scroll_area::ScrollSource::NONE
+        } else {
+            Default::default()
+        })
         .animated(false)
         .show(ui, |ui| {
             // Scroll while selecting near an edge. `scroll_with_delta` also
@@ -1242,7 +1278,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         viewport.contains(origin) && origin.x < viewport.right() - 16.0
                     })
             });
-            if held_inside && let Some(pointer) = ui.input(|input| input.pointer.latest_pos()) {
+            if view.reaction.is_none()
+                && held_inside
+                && let Some(pointer) = ui.input(|input| input.pointer.latest_pos())
+            {
                 let delta = edge_scroll(pointer.y, viewport.top(), viewport.bottom());
                 if delta != 0.0 {
                     if delta < 0.0 {
@@ -1297,7 +1336,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         typing_bubble(ui, &view, &typing);
                     }
                     ui.add_space(4.0);
-                    if scroll_to_bottom {
+                    if scroll_to_bottom && !keyboard_navigation.get() && view.reaction.is_none() {
                         ui.scroll_to_rect_animation(
                             Rect::from_min_size(ui.cursor().min, Vec2::ZERO),
                             None,
@@ -1334,7 +1373,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     app.conversations
         .insert(chat.id.clone(), std::mem::take(&mut conversation));
     app.at_bottom = at_bottom;
-    if app.scroll_to_bottom && reader_scrolled {
+    if app.scroll_to_bottom && (reader_scrolled || keyboard_navigation.get()) {
         app.scroll_to_bottom = false;
     }
     if anchored {
@@ -1524,6 +1563,11 @@ fn bubble(
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let own = message.from_me;
+    // Greys that read on the panel can vanish on the bubble; use its own.
+    let view = &View {
+        palette: view.palette.on_bubble(own),
+        ..*view
+    };
     let with_avatar = !own && (view.chat.is_group() || view.pictures);
     let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
     let max_width = ((ui.available_width() * if carousel { 0.95 } else { 0.72 })
@@ -1540,7 +1584,7 @@ fn bubble(
     let previous = ui.ctx().data(|data| data.get_temp::<Rect>(id.with("rect")));
     if let Some(rect) = previous {
         let strip = Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
-        let strip = ui.interact(strip, id.with("row"), Sense::click());
+        let strip = ui.interact(strip, id.with("row"), Sense::CLICK);
         reply_on_double_click(&strip, message, actions);
     }
     let mut response = None;
@@ -1549,8 +1593,15 @@ fn bubble(
         |ui| {
             if with_avatar {
                 ui.horizontal_top(|ui| {
-                    let (rect, avatar) =
-                        ui.allocate_exact_size(Vec2::splat(SENDER_AVATAR), Sense::click());
+                    let (rect, avatar) = ui.allocate_exact_size(
+                        Vec2::splat(SENDER_AVATAR),
+                        if show_sender {
+                            Sense::CLICK
+                        } else {
+                            Sense::hover()
+                        },
+                    );
+                    theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR / 2.0);
                     if show_sender
                         && avatar
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1800,7 +1851,7 @@ fn bubble_frame(
     // the first frame's rect.
     let rect_id = bubble_id.with("rect");
     let previous = ui.ctx().data(|data| data.get_temp::<Rect>(rect_id));
-    let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::click()));
+    let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::CLICK));
     let inner = Frame::new()
         .fill(fill)
         .corner_radius(CornerRadius::same(10))
@@ -1825,7 +1876,7 @@ fn bubble_frame(
                     .interact(
                         response.rect,
                         ui.id().with(("sender", &message.id)),
-                        Sense::click(),
+                        Sense::CLICK,
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if response.clicked() {
@@ -1886,8 +1937,27 @@ fn bubble_frame(
         });
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
-    let bubble =
-        early.unwrap_or_else(|| ui.interact(inner.response.rect, bubble_id, Sense::click()));
+    let bubble = early.unwrap_or_else(|| ui.interact(inner.response.rect, bubble_id, Sense::CLICK));
+    theme::reveal_focus(&bubble);
+    theme::focus_outline(ui, bubble.id, inner.response.rect, 10.0);
+    if ui.ctx().data(|data| {
+        data.get_temp::<bool>(theme::keyboard_focus_id())
+            .unwrap_or(false)
+    }) && let Some(focused) = ui
+        .memory(|memory| memory.focused())
+        .and_then(|id| ui.ctx().read_response(id))
+        && (focused.id == bubble.id || inner.response.rect.contains(focused.rect.center()))
+    {
+        view.keyboard_navigation.set(true);
+        if focused.gained_focus() && !ui.clip_rect().contains_rect(focused.rect) {
+            ui.scroll_to_rect_animation(
+                inner.response.rect.expand(4.0),
+                None,
+                egui::style::ScrollAnimation::none(),
+            );
+        }
+    }
+    let reacting = view.reaction == Some(message.id.as_str());
     // Inner widgets own their clicks, so this fires only on the bubble's padding
     // and footer. Double-click on the body keeps selecting the word.
     reply_on_double_click(&bubble, message, actions);
@@ -1907,7 +1977,7 @@ fn bubble_frame(
                 .is_none_or(|layer| layer == bubble.layer_id)
         });
     let force_menu = view.open_menu == Some(message.id.as_str());
-    let quick = quick_reactions(message).len() as f32 + 1.0;
+    let quick = quick_reactions(message, view.reaction_emoji).len() as f32 + 1.0;
     let width = widgets::menu_width(
         ui,
         &[
@@ -1918,7 +1988,9 @@ fn bubble_frame(
         true,
     )
     .max(quick * 36.0 + 12.0);
-    let open = if right_clicked || force_menu {
+    let keyboard_clicked =
+        bubble.clicked() && bubble.has_focus() && !ui.input(|input| input.pointer.any_click());
+    let open = if right_clicked || force_menu || reacting || keyboard_clicked {
         Some(egui::SetOpenCommand::Bool(true))
     } else if bubble.clicked() {
         Some(egui::SetOpenCommand::Bool(false))
@@ -1927,16 +1999,51 @@ fn bubble_frame(
     };
     let popup = egui::Popup::menu(&bubble)
         .open_memory(open)
+        .close_behavior(if reacting {
+            egui::PopupCloseBehavior::IgnoreClicks
+        } else {
+            egui::PopupCloseBehavior::CloseOnClickOutside
+        })
         .width(width)
         .frame(widgets::menu_frame(&palette));
-    let popup = if force_menu {
+    let popup = if reacting {
+        // Keep the menu next to the picker, anchored to this message rather
+        // than whichever pointer position happened to open the emoji grid.
+        let screen = ui.ctx().content_rect();
+        let menu = ui
+            .ctx()
+            .data(|data| data.get_temp::<Rect>(bubble_id.with("menu-rect")))
+            .unwrap_or(bubble.rect);
+        let x = menu.left().clamp(
+            screen.left() + 8.0,
+            (screen.right() - width - 468.0).max(screen.left() + 8.0),
+        );
+        popup.at_position(pos2(x, menu.top()))
+    } else if force_menu || keyboard_clicked {
         popup.at_position(bubble.rect.left_top() + vec2(12.0, 8.0))
     } else {
         popup.at_pointer_fixed()
     };
-    popup.show(|ui| {
+    let menu = popup.show(|ui| {
         context_menu(ui, view, message, actions);
     });
+    if let Some(menu) = menu {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(bubble_id.with("menu-rect"), menu.response.rect));
+    }
+    // Keep the target explicit for every menu action, not just the emoji
+    // picker. Paint in the message layer so the menu itself remains above it.
+    if egui::Popup::is_id_open(ui.ctx(), bubble_id.with("popup")) {
+        ui.painter().rect_stroke(
+            inner.response.rect.expand(2.0),
+            12.0,
+            Stroke::new(theme::FOCUS_STROKE_WIDTH, palette.accent),
+            egui::StrokeKind::Outside,
+        );
+    }
+    if reacting && !egui::Popup::is_id_open(ui.ctx(), bubble_id.with("popup")) {
+        actions.push(Action::ClosePicker);
+    }
     // Store this frame's final rect for later scrolling.
     inner.response
 }
@@ -2134,7 +2241,20 @@ fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
     } else {
         0.0
     };
-    time + edited + if message.from_me { 19.0 } else { 0.0 }
+    let not_sent = if not_sent(message) {
+        ui.painter()
+            .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), Color32::WHITE)
+            .size()
+            .x
+            + 6.0
+    } else {
+        0.0
+    };
+    time + edited + not_sent + if message.from_me { 19.0 } else { 0.0 }
+}
+
+fn not_sent(message: &Message) -> bool {
+    message.from_me && message.status == Delivery::Failed
 }
 
 /// Paints the time and ticks at the bubble's right edge without widening it.
@@ -2149,9 +2269,18 @@ fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<
         ui.painter()
             .layout_no_wrap("edited".to_owned(), font, palette.dim)
     });
+    // A red dot alone does not say what went wrong or what to do. The word
+    // uses the text colour: the danger red on an outgoing bubble is too faint
+    // to read, and the red icon beside it already carries the alarm.
+    let failed = not_sent(message).then(|| {
+        ui.painter()
+            .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), palette.text)
+    });
     let tick_width = if message.from_me { 19.0 } else { 0.0 };
-    let width =
-        time.size().x + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0) + tick_width;
+    let width = time.size().x
+        + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0)
+        + failed.as_ref().map_or(0.0, |galley| galley.size().x + 6.0)
+        + tick_width;
     let rect = match slot {
         Some(slot) => slot,
         None => {
@@ -2179,6 +2308,26 @@ fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<
             edited,
             palette.dim,
         );
+    }
+    if let Some(failed) = failed {
+        x -= failed.size().x + 6.0;
+        let label = Rect::from_min_size(
+            pos2(x, rect.center().y - failed.size().y / 2.0),
+            failed.size(),
+        );
+        ui.painter().galley(label.min, failed, palette.text);
+        // Explain on hover and to screen readers; hovering takes no clicks
+        // from the bubble.
+        let status = Rect::from_min_max(label.min, pos2(rect.right(), label.max.y));
+        let response = ui.interact(
+            status,
+            ui.id().with(("not-sent", &message.id)),
+            Sense::hover(),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, NOT_SENT_HINT)
+        });
+        response.on_hover_text(NOT_SENT_HINT);
     }
 }
 
@@ -2259,8 +2408,20 @@ pub(crate) fn reaction_choice(current: Option<&str>, emoji: &str) -> String {
 }
 
 /// Quick reactions plus our current reaction when needed.
-fn quick_reactions(message: &Message) -> Vec<&str> {
-    let mut list = QUICK_REACTIONS.to_vec();
+fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> Vec<&'a str> {
+    let mut list = Vec::new();
+    for emoji in preferred
+        .iter()
+        .map(|(emoji, _)| emoji.as_str())
+        .chain(QUICK_REACTIONS.iter().copied())
+    {
+        if emojis::get(emoji).is_some() && !list.contains(&emoji) {
+            list.push(emoji);
+        }
+        if list.len() == QUICK_REACTIONS.len() {
+            break;
+        }
+    }
     if let Some(mine) = own_reaction(message)
         && !list.contains(&mine)
     {
@@ -2278,10 +2439,11 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            for emoji in quick_reactions(message) {
+            for emoji in quick_reactions(message, view.reaction_emoji) {
                 let chosen = mine == Some(emoji);
                 let line = widgets::line(ui, emoji, theme::regular(20.0), palette.text, 40.0, 1);
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+                theme::focus_outline(ui, response.id, rect, 17.0);
                 if chosen {
                     ui.painter()
                         .circle_filled(rect.center(), 17.0, palette.surface_active);
@@ -2312,6 +2474,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 }
             }
             let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+            theme::focus_outline(ui, response.id, rect, 17.0);
             if ui.is_rect_visible(rect) {
                 let hovered = response.hovered();
                 ui.painter().circle_filled(
@@ -2336,7 +2499,6 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                     chat: chat.clone(),
                     message: message.id.clone(),
                 });
-                ui.close();
             }
         },
     );
@@ -2413,7 +2575,18 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 }
             }
             None => {
-                if widgets::menu_item(ui, &palette, Some(Icon::Download), "Download") {
+                let downloading = matches!(media.state, MediaState::Downloading);
+                if widgets::menu_item_enabled(
+                    ui,
+                    &palette,
+                    Some(Icon::Download),
+                    if downloading {
+                        "Downloading…"
+                    } else {
+                        "Download"
+                    },
+                    !downloading,
+                ) {
                     actions.push(Action::Download {
                         card: None,
                         chat: chat.clone(),
@@ -2424,21 +2597,19 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         }
     }
     widgets::menu_separator(ui, &palette);
-    // Show sent, delivered, and read times as available.
-    if widgets::menu_item(
+    // Sent, delivered, and read times inform only; they are not actions.
+    widgets::menu_info(
         ui,
         &palette,
-        Some(Icon::Check),
+        Icon::Check,
         &format!("Sent {}", crate::util::moment_stamp(message.timestamp)),
-    ) {
-        actions.push(Action::CopyText(message.id.clone()));
-    }
+    );
     if message.from_me {
         if message.delivered_at.is_some() || message.status == Delivery::Delivered {
-            let _ = widgets::menu_item(
+            widgets::menu_info(
                 ui,
                 &palette,
-                Some(Icon::CheckCheck),
+                Icon::CheckCheck,
                 &match message.delivered_at {
                     Some(when) => format!("Delivered {}", crate::util::moment_stamp(when)),
                     None => "Delivered".to_owned(),
@@ -2451,16 +2622,21 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             } else {
                 "Read"
             };
-            let _ = widgets::menu_item(
+            widgets::menu_info(
                 ui,
                 &palette,
-                Some(Icon::CheckCheck),
+                Icon::CheckCheck,
                 &match message.read_at {
                     Some(when) => format!("{what} {}", crate::util::moment_stamp(when)),
                     None => what.to_owned(),
                 },
             );
         }
+    }
+    // The id helps when looking a message up for a bug report. Clicking
+    // "Sent" used to copy it without saying so.
+    if widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy message ID") {
+        actions.push(Action::CopyText(message.id.clone()));
     }
 }
 
@@ -3035,8 +3211,7 @@ fn carousel_picture(
     } else if !matches!(media.state, MediaState::Downloading)
         && (clicked
             || (visible
-                && view.auto_download
-                && media.size <= AUTO_DOWNLOAD_LIMIT
+                && auto_download_allowed(media, false, view.auto_download)
                 && matches!(media.state, MediaState::Idle)))
     {
         actions.push(Action::Download {
@@ -3307,7 +3482,9 @@ fn rich_body(
             laid.placements().to_vec(),
         ));
     // Click links and drag to select text.
-    let (rect, response) = ui.allocate_exact_size(allocation, Sense::click_and_drag());
+    // Text selection and pointer links do not need a sequential Tab stop.
+    // The surrounding transcript remains available to accessibility readers.
+    let (rect, response) = ui.allocate_exact_size(allocation, Sense::CLICK | Sense::DRAG);
     // Store the body rect for selection tests.
     ui.ctx().data_mut(|data| {
         data.insert_temp(bubble_id(&view.chat.id, &message.id).with("body"), rect);
@@ -3495,7 +3672,12 @@ fn fit_sticker(width: f32, height: f32) -> Vec2 {
 }
 
 /// Reserved size for an image or video before and after download.
-fn frame_size(media: &Media, thumbnail_hint: Option<(u32, u32)>, limit: f32) -> Vec2 {
+fn frame_size(
+    media: &Media,
+    thumbnail_hint: Option<(u32, u32)>,
+    max_width: f32,
+    max_height: f32,
+) -> Vec2 {
     let (w, h) = match (media.width, media.height) {
         (Some(w), Some(h)) if w > 0 && h > 0 => (w as f32, h as f32),
         _ => match thumbnail_hint {
@@ -3503,7 +3685,7 @@ fn frame_size(media: &Media, thumbnail_hint: Option<(u32, u32)>, limit: f32) -> 
             _ => (4.0, 3.0),
         },
     };
-    fit_picture(w, h, limit, PICTURE_HEIGHT.min(limit * 1.3))
+    fit_picture(w, h, max_width, max_height)
 }
 
 /// Draws an image or sticker, using its preview until downloaded. Returns its width.
@@ -3529,7 +3711,7 @@ fn picture(
             );
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             if ui.is_rect_visible(rect) {
-                match animation::frame(ui, path, rect) {
+                match animation::frame(ui, path, rect, view.animate && response.hovered()) {
                     animation::Frame::Ready(texture) => {
                         ui.painter().image(
                             texture.id(),
@@ -3538,7 +3720,10 @@ fn picture(
                             Color32::WHITE,
                         );
                     }
-                    _ => egui::Image::new(file_uri(path)).paint_at(ui, rect),
+                    _ => {
+                        ui.painter().rect_filled(rect, 6.0, palette.surface);
+                        theme::paint_icon(ui, Icon::Sticker, rect, 32.0, palette.secondary);
+                    }
                 }
             }
             if response
@@ -3575,7 +3760,7 @@ fn picture(
                 let size = if sticker.is_some() {
                     Vec2::splat(STICKER_SIDE)
                 } else {
-                    frame_size(media, None, max_width)
+                    frame_size(media, None, max_width, max_height)
                 };
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                 if ui.is_rect_visible(rect) {
@@ -3588,7 +3773,7 @@ fn picture(
                 let size = if sticker.is_some() {
                     Vec2::splat(STICKER_SIDE)
                 } else {
-                    frame_size(media, None, max_width)
+                    frame_size(media, None, max_width, max_height)
                 };
                 let (rect, response) = ui.allocate_exact_size(size, Sense::click());
                 if ui.is_rect_visible(rect) {
@@ -3609,7 +3794,7 @@ fn picture(
             }
         };
     }
-    let size = frame_size(media, None, max_width);
+    let size = frame_size(media, None, max_width, max_height);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     if ui.is_rect_visible(rect) {
         let thumbnail = message
@@ -3681,7 +3866,7 @@ fn picture(
         && !matches!(media.state, MediaState::Downloading);
     let auto = ui.is_rect_visible(rect)
         && matches!(media.state, MediaState::Idle)
-        && (sticker.is_some() || (view.auto_download && media.size <= AUTO_DOWNLOAD_LIMIT));
+        && auto_download_allowed(media, sticker.is_some(), view.auto_download);
     if wants || auto {
         actions.push(Action::Download {
             card: None,
@@ -3690,6 +3875,12 @@ fn picture(
         });
     }
     size.x
+}
+
+/// Stickers always download when visible, while other media follows the setting.
+/// Every automatic download still respects the shared size limit.
+fn auto_download_allowed(media: &Media, sticker: bool, auto_download: bool) -> bool {
+    media.is_within_download_limit() && (sticker || auto_download)
 }
 
 /// Draws a video poster and opens the downloaded video in the default player.
@@ -3726,11 +3917,17 @@ fn video(
         return width;
     };
     let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
-    let size = frame_size(media, Some((16, 9)), width.min(PICTURE_WIDTH));
+    let limit = width.min(PICTURE_WIDTH);
+    let size = frame_size(media, Some((16, 9)), limit, PICTURE_HEIGHT.min(limit * 1.3));
     // Play downloaded GIFs in place; keep a poster for other videos.
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let playing = match (&media.path, gif) {
-        (Some(path), true) => Some(animation::frame(ui, path, rect)),
+        (Some(path), true) => Some(animation::frame(
+            ui,
+            path,
+            rect,
+            view.animate && response.hovered(),
+        )),
         _ => None,
     };
     if let Some(animation::Frame::Ready(texture)) = &playing {
@@ -3802,7 +3999,7 @@ fn video(
         && media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
-        && media.size <= AUTO_DOWNLOAD_LIMIT;
+        && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
             card: None,
@@ -3899,7 +4096,7 @@ fn attachment(
         && media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
-        && media.size <= AUTO_DOWNLOAD_LIMIT;
+        && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
             card: None,
@@ -4162,7 +4359,7 @@ fn voice_player(
     let auto = media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
-        && media.size <= AUTO_DOWNLOAD_LIMIT;
+        && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
             card: None,
@@ -4285,19 +4482,82 @@ mod tests {
     }
 
     #[test]
+    fn picture_placeholder_matches_decoded_dimensions() {
+        for limit in [200.0, PICTURE_WIDTH] {
+            for (width, height) in [(900, 1200), (600, 1600), (1600, 900)] {
+                assert_eq!(
+                    frame_size(
+                        &media(Some(width), Some(height)),
+                        None,
+                        limit,
+                        PICTURE_HEIGHT
+                    ),
+                    fit_picture(width as f32, height as f32, limit, PICTURE_HEIGHT),
+                    "decoding a {width}x{height} photo must not shift the transcript"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn picture_frames_keep_their_shape_within_the_limit() {
-        let landscape = frame_size(&media(Some(1600), Some(1200)), None, 340.0);
+        let landscape = frame_size(&media(Some(1600), Some(1200)), None, 340.0, PICTURE_HEIGHT);
         assert!((landscape.x - 340.0).abs() < 0.01);
         assert!((landscape.y - 255.0).abs() < 0.01);
-        let tall = frame_size(&media(Some(600), Some(1200)), None, 340.0);
+        let tall = frame_size(&media(Some(600), Some(1200)), None, 340.0, PICTURE_HEIGHT);
         assert!(tall.y > 340.0 && tall.y <= PICTURE_HEIGHT);
         let exact = fit_picture(900.0, 1600.0, PICTURE_WIDTH, PICTURE_HEIGHT);
         assert!((exact.y - PICTURE_HEIGHT).abs() < 0.01);
         assert!(exact.x < PICTURE_WIDTH);
-        let unknown = frame_size(&media(None, None), Some((16, 9)), 340.0);
+        let unknown = frame_size(&media(None, None), Some((16, 9)), 340.0, PICTURE_HEIGHT);
         assert!(unknown.x > unknown.y);
-        let tiny = frame_size(&media(Some(40), Some(40)), None, 340.0);
+        let tiny = frame_size(&media(Some(40), Some(40)), None, 340.0, PICTURE_HEIGHT);
         assert!(tiny.x >= 120.0);
+    }
+
+    #[test]
+    fn a_failed_footer_reserves_room_for_its_label() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut message = Message {
+            id: "fixture".into(),
+            chat: "1@s.whatsapp.net".into(),
+            sender: "me@s.whatsapp.net".into(),
+            sender_name: None,
+            from_me: true,
+            timestamp: 1000,
+            content: Content::text("Fixture"),
+            status: Delivery::Sent,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        let mut widths = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            widths.push(footer_width(ui, &message));
+            message.status = Delivery::Failed;
+            widths.push(footer_width(ui, &message));
+            // Only our own messages can fail to send.
+            message.from_me = false;
+            widths.push(footer_width(ui, &message) + 19.0);
+        });
+        output.textures_delta.clear();
+        assert!(widths[1] > widths[0] + 30.0, "{widths:?}");
+        assert_eq!(widths[2], widths[0]);
+    }
+
+    #[test]
+    fn visible_stickers_download_automatically_with_the_attachment_setting_off() {
+        let mut sticker = media(Some(180), Some(180));
+        assert!(auto_download_allowed(&sticker, true, false));
+        assert!(!auto_download_allowed(&sticker, false, false));
+        sticker.size = crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1;
+        assert!(!auto_download_allowed(&sticker, true, false));
     }
 
     #[test]
@@ -4376,7 +4636,7 @@ mod reaction_tests {
     fn only_our_own_reaction_counts_as_chosen() {
         let message = with_reactions(vec![reaction(false, "😂"), reaction(true, "❤️")]);
         assert_eq!(own_reaction(&message), Some("❤️"));
-        assert_eq!(quick_reactions(&message), QUICK_REACTIONS.to_vec());
+        assert_eq!(quick_reactions(&message, &[]), QUICK_REACTIONS.to_vec());
         assert_eq!(
             own_reaction(&with_reactions(vec![reaction(false, "😂")])),
             None
@@ -4384,9 +4644,19 @@ mod reaction_tests {
     }
 
     #[test]
+    fn quick_reactions_start_with_preferences_and_fill_with_unique_defaults() {
+        let message = with_reactions(Vec::new());
+        let preferred = vec![("🦀".into(), 5), ("👍".into(), 2), ("invalid".into(), 1)];
+        let quick = quick_reactions(&message, &preferred);
+        assert_eq!(&quick[..2], &["🦀", "👍"]);
+        assert_eq!(quick.len(), 6);
+        assert_eq!(quick.iter().filter(|&&emoji| emoji == "👍").count(), 1);
+    }
+
+    #[test]
     fn an_unusual_reaction_of_ours_joins_the_quick_row() {
         let message = with_reactions(vec![reaction(true, "🦀")]);
-        let quick = quick_reactions(&message);
+        let quick = quick_reactions(&message, &[]);
         assert_eq!(quick.len(), QUICK_REACTIONS.len() + 1);
         assert_eq!(quick.last(), Some(&"🦀"));
     }
@@ -4405,7 +4675,7 @@ mod reaction_tests {
         assert_eq!(own_reaction(&message), None);
         assert_eq!(message.reactions[0].emoji, "🏆");
         assert!(!message.reactions[0].from_me);
-        assert_eq!(quick_reactions(&message), QUICK_REACTIONS.to_vec());
+        assert_eq!(quick_reactions(&message, &[]), QUICK_REACTIONS.to_vec());
     }
 }
 

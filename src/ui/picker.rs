@@ -1,6 +1,7 @@
 //! The picker above the composer: emoji, GIFs, and stickers.
 //! Also the full emoji picker used to react to a message.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use egui::{
@@ -331,9 +332,32 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
     };
     let palette = app.palette;
     let screen = ctx.content_rect();
-    let outer_width = WIDTH + f32::from(FRAME_MARGIN) * 2.0;
+    let menu = ctx
+        .data(|data| {
+            data.get_temp::<Rect>(conversation::bubble_id(&chat, &message).with("menu-rect"))
+        })
+        .or(app.reaction_anchor);
+    let width = menu.map_or(WIDTH, |menu| {
+        (screen.right() - menu.right() - 32.0).clamp(260.0, WIDTH)
+    });
+    let outer_width = width + f32::from(FRAME_MARGIN) * 2.0;
     let outer_height = HEIGHT + f32::from(FRAME_MARGIN) * 2.0;
-    let pos = place_picker(screen, app.reaction_anchor, outer_width, outer_height);
+    let pos = if let Some(menu) = menu
+        && menu.right() + outer_width + 16.0 <= screen.right()
+    {
+        pos2(
+            menu.right() + 8.0,
+            menu.top()
+                .min((screen.bottom() - outer_height - 8.0).max(screen.top() + 8.0)),
+        )
+    } else {
+        place_picker(screen, menu, outer_width, outer_height)
+    };
+    let preview = app
+        .conversations
+        .get(&chat)
+        .and_then(|conversation| conversation.message(&message))
+        .map(|message| (app.display_name(&message.sender), message.content.summary()));
     let area = egui::Area::new(egui::Id::new("reaction-picker"))
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
@@ -355,12 +379,49 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                             color: palette.shadow,
                         })
                         .show(ui, |ui| {
-                            ui.set_width(WIDTH);
+                            ui.set_width(width);
                             ui.set_height(HEIGHT);
                             ui.spacing_mut().item_spacing.y = 6.0;
-                            let body_height = HEIGHT - 44.0;
+                            ui.horizontal(|ui| {
+                                theme::text(
+                                    ui,
+                                    "React to message",
+                                    theme::semibold(13.0),
+                                    palette.text,
+                                );
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if theme::icon_button(
+                                        ui,
+                                        Icon::X,
+                                        14.0,
+                                        palette.secondary,
+                                        palette.text,
+                                        "Close reactions",
+                                    )
+                                    .clicked()
+                                    {
+                                        app.actions.push(Action::ClosePicker);
+                                    }
+                                });
+                            });
+                            if let Some((name, summary)) = &preview {
+                                let line = widgets::line(
+                                    ui,
+                                    &format!("{name}: {summary}"),
+                                    theme::regular(12.0),
+                                    palette.secondary,
+                                    width,
+                                    1,
+                                );
+                                let (rect, _) = ui.allocate_exact_size(
+                                    vec2(width, line.size().y),
+                                    Sense::hover(),
+                                );
+                                line.paint(ui, rect.min, palette.secondary);
+                            }
+                            let body_height = HEIGHT - 100.0;
                             ui.allocate_ui_with_layout(
-                                vec2(WIDTH, body_height),
+                                vec2(width, body_height),
                                 Layout::top_down(Align::Min),
                                 |ui| {
                                     if let Some(emoji) = emoji_grid(
@@ -392,12 +453,12 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
             );
         });
     let rect = area.response.rect;
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("reaction-picker-rect"), rect));
     let clicked_outside = ctx.input(|input| {
         input.pointer.any_pressed()
-            && input
-                .pointer
-                .interact_pos()
-                .is_some_and(|pos| !rect.contains(pos))
+            && input.pointer.interact_pos().is_some_and(|pos| {
+                !rect.contains(pos) && !menu.is_some_and(|menu| menu.contains(pos))
+            })
     });
     if clicked_outside {
         app.actions.push(Action::ClosePicker);
@@ -405,7 +466,11 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
 }
 
 fn category_tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
-    let has_recent = !usable_recent(&app.settings.recent_emoji).is_empty();
+    let has_recent = app
+        .settings
+        .reaction_emoji
+        .iter()
+        .any(|(emoji, _)| emojis::get(emoji).is_some());
     let tabs: Vec<_> = category_entries(has_recent).collect();
     let default = tabs.first().map(|(_, _, label)| *label);
     let current = visible_category(ui, "reaction-emoji-grid", &app.picker_search)
@@ -510,12 +575,18 @@ fn emoji_grid(
     let width = ui.available_width() - 6.0;
     let columns = ((width / CELL).floor() as usize).max(1);
     let cell = width / columns as f32;
-    let rows = rows_for(
-        &app.picker_search,
-        &app.settings.recent_emoji,
-        columns,
-        recent_label,
-    );
+    let frequent: Vec<_> = app
+        .settings
+        .reaction_emoji
+        .iter()
+        .map(|(emoji, _)| emoji.clone())
+        .collect();
+    let recent = if app.reaction_target.is_some() {
+        &frequent
+    } else {
+        &app.settings.recent_emoji
+    };
+    let rows = rows_for(&app.picker_search, recent, columns, recent_label);
     let emoji_count = rows
         .iter()
         .map(|row| match row {
@@ -808,7 +879,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 .push(Action::OpenUrl("https://developers.giphy.com/".to_owned()));
         }
         ui.add_space(6.0);
-        Frame::new()
+        let field = Frame::new()
             .fill(palette.surface)
             .corner_radius(CornerRadius::same(theme::RADIUS))
             .inner_margin(Margin::symmetric(10, 6))
@@ -831,7 +902,14 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 if response.lost_focus() && !app.settings.giphy_key.trim().is_empty() {
                     app.actions.push(Action::SearchGifs(String::new()));
                 }
+                response
             });
+        theme::focus_outline(
+            ui,
+            field.inner.id,
+            field.response.rect,
+            f32::from(theme::RADIUS),
+        );
         return;
     }
     let mut query = app.picker_search.clone();
@@ -958,7 +1036,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .show(ui, |ui| {
             if !saved.is_empty() {
                 theme::text(ui, "Saved", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &saved, true, &mut choices);
+                sticker_grid(ui, palette, &saved, true, app.window_focused, &mut choices);
                 ui.add_space(8.0);
             }
             for pack in &packs {
@@ -979,12 +1057,26 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         }
                     });
                 });
-                sticker_grid(ui, palette, &pack.stickers, false, &mut choices);
+                sticker_grid(
+                    ui,
+                    palette,
+                    &pack.stickers,
+                    false,
+                    app.window_focused,
+                    &mut choices,
+                );
                 ui.add_space(8.0);
             }
             if !recent.is_empty() {
                 theme::text(ui, "Recent", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &recent, false, &mut choices);
+                sticker_grid(
+                    ui,
+                    palette,
+                    &recent,
+                    false,
+                    app.window_focused,
+                    &mut choices,
+                );
             }
         });
     if let Some(path) = choices.send {
@@ -1026,8 +1118,14 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         .frame(Frame::NONE)
                         .desired_width(ui.available_width() - buttons - 26.0),
                 )
-            })
-            .inner;
+            });
+        theme::focus_outline(
+            ui,
+            field.inner.id,
+            field.response.rect,
+            f32::from(theme::RADIUS),
+        );
+        let field = field.inner;
         let pasted = field.changed()
             && crate::backend::sticker_import::looks_like_signal_url(app.sticker_link.trim());
         let submitted = field.lost_focus()
@@ -1069,6 +1167,7 @@ fn sticker_grid(
     palette: &Palette,
     stickers: &[std::path::PathBuf],
     saved: bool,
+    animate: bool,
     choices: &mut StickerChoices,
 ) {
     let columns = 5;
@@ -1085,10 +1184,16 @@ fn sticker_grid(
                         ui.painter().rect_filled(rect, 8.0, palette.surface_hover);
                     }
                     let shown = rect.shrink(4.0);
-                    // Animate only the hovered sticker to limit decoder work.
-                    let played = response.hovered()
-                        && moves(path)
-                        && match crate::animation::frame(ui, path, rect) {
+                    // Decode only visible animated stickers. Keep a still
+                    // first frame until the focused pointer hovers the tile.
+                    let animated = moves(ui.ctx(), path);
+                    let played = animated
+                        && match crate::animation::frame(
+                            ui,
+                            path,
+                            rect,
+                            animate && response.hovered(),
+                        ) {
                             crate::animation::Frame::Ready(texture) => {
                                 let size = texture.size_vec2();
                                 let scale = (shown.width() / size.x).min(shown.height() / size.y);
@@ -1104,7 +1209,12 @@ fn sticker_grid(
                             _ => false,
                         };
                     if !played {
-                        sticker_picture(ui, path, shown);
+                        if animated {
+                            ui.painter().rect_filled(shown, 6.0, palette.surface);
+                            theme::paint_icon(ui, Icon::Sticker, shown, 24.0, palette.secondary);
+                        } else {
+                            sticker_picture(ui, path, shown);
+                        }
                     }
                 }
                 egui::Popup::context_menu(&response)
@@ -1135,8 +1245,26 @@ fn sticker_grid(
     }
 }
 
-/// Checks the WebP header for animation.
-fn moves(path: &Path) -> bool {
+/// Returns whether a sticker moves, probing each path at most once.
+fn moves(ctx: &egui::Context, path: &Path) -> bool {
+    let cache = egui::Id::new("animated-sticker-paths");
+    if let Some(animated) = ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<HashMap<std::path::PathBuf, bool>>(cache)
+            .get(path)
+            .copied()
+    }) {
+        return animated;
+    }
+    let animated = probe_motion(path);
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<HashMap<std::path::PathBuf, bool>>(cache)
+            .insert(path.to_path_buf(), animated);
+    });
+    animated
+}
+
+/// Checks a WebP header for animation without decoding the file.
+fn probe_motion(path: &Path) -> bool {
     let mut head = [0u8; 64];
     let Ok(mut file) = std::fs::File::open(path) else {
         return false;
@@ -1155,4 +1283,23 @@ fn sticker_picture(ui: &egui::Ui, path: &Path, rect: Rect) {
     egui::Image::new(crate::util::image_uri(path))
         .fit_to_exact_size(rect.size())
         .paint_at(ui, rect);
+}
+
+#[cfg(test)]
+mod motion_tests {
+    use super::*;
+
+    #[test]
+    fn sticker_motion_is_probed_once_per_path() {
+        let dir = std::env::temp_dir().join(format!("zapfast-motion-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("creates temporary directory");
+        let path = dir.join("animated.webp");
+        std::fs::write(&path, b"RIFF0000WEBPANIM").expect("writes animated header");
+        let ctx = egui::Context::default();
+        assert!(moves(&ctx, &path));
+        std::fs::remove_file(&path).expect("removes sticker after its first probe");
+        assert!(moves(&ctx, &path), "cached result avoids another file read");
+        assert!(!moves(&egui::Context::default(), &path));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

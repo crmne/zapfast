@@ -6,6 +6,7 @@ use crate::app::App;
 use crate::model::{Action, Dialog, Page};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
+    let editing_text = ctx.text_edit_focused();
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         let mut key = |modifiers: Modifiers, key: Key, action: Action| {
@@ -15,10 +16,26 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         };
         key(Modifiers::COMMAND, Key::F, Action::FocusSearch);
         key(Modifiers::COMMAND, Key::K, Action::FocusSearch);
+        if app.is_linked() {
+            key(
+                Modifiers::COMMAND,
+                Key::N,
+                Action::ShowDialog(Dialog::NewChat),
+            );
+        }
+        if !editing_text {
+            key(
+                Modifiers::NONE,
+                Key::Questionmark,
+                Action::ShowDialog(Dialog::Shortcuts),
+            );
+        }
         if app.page == Page::Chats
             && app.open_chat.is_some()
             && app.dialog.is_none()
             && !app.show_update
+            && app.picker.is_none()
+            && app.reaction_target.is_none()
             && app.recording.is_none()
         {
             key(Modifiers::COMMAND, Key::L, Action::FocusComposer);
@@ -41,8 +58,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     // Escape cancels the topmost state. Menus handle Escape themselves.
     let menu_open = egui::Popup::is_any_open(ctx);
     let search_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search")));
-    let escape =
-        !menu_open && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+    let escape = (!menu_open || app.reaction_target.is_some())
+        && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     if escape {
         if app.show_update {
             actions.push(Action::CloseUpdate);
@@ -73,6 +90,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             }
         } else if app.open_chat.is_some() {
             actions.push(Action::CloseChat);
+        } else if app.locked_folder {
+            actions.push(Action::CloseLockedFolder);
         }
     }
     // Enter sends a recording because the text field is hidden.
@@ -124,13 +143,17 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "Escape",
         "Dismiss the current action, return from search, or close the chat",
     ),
-    ("Ctrl+V", "Paste text, or send a picture from the clipboard"),
+    ("Ctrl+N", "New chat or message yourself"),
+    (
+        "Ctrl+V",
+        "Paste text, or stage a picture from the clipboard",
+    ),
     ("Ctrl+B", "Show or hide the chat list"),
     ("Ctrl+End", "Jump to the newest message"),
     ("Ctrl+,", "Settings"),
     ("Ctrl++ / Ctrl+-", "Zoom in / out"),
     ("Ctrl+0", "Reset zoom"),
-    ("Ctrl+/", "This list"),
+    ("? / Ctrl+/", "Keyboard shortcuts (? when not typing)"),
     ("Ctrl+W", "Close the window (ZapFast remains in the tray)"),
     ("Ctrl+Q", "Quit"),
 ];

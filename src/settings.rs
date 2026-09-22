@@ -83,6 +83,8 @@ pub struct Settings {
     pub show_shortcut_hints: bool,
     /// Recently used emoji, newest first.
     pub recent_emoji: Vec<String>,
+    /// Emoji reaction usage on this device, most-used first (recent breaks ties).
+    pub reaction_emoji: Vec<(String, u32)>,
     /// User GIPHY API key. Empty uses the optional built-in key.
     pub giphy_key: String,
     /// Keep the app linked in the tray when the window closes.
@@ -125,6 +127,7 @@ impl Default for Settings {
             last_chat: None,
             show_shortcut_hints: true,
             recent_emoji: Vec::new(),
+            reaction_emoji: Vec::new(),
             giphy_key: String::new(),
             keep_running_in_background: true,
             notifications: true,

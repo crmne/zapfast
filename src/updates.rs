@@ -8,6 +8,7 @@ use serde::Deserialize;
 pub mod install;
 #[cfg(target_os = "macos")]
 mod macos;
+mod signing;
 mod transfer;
 pub use transfer::{Source, download};
 

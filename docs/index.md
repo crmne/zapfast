@@ -19,7 +19,7 @@ hero:
       link: https://github.com/crmne/zapfast
   image:
     src: /screenshot.png
-    alt: "ZapFast showing a chat with a photo, a document, a voice message, a quoted reply, and a link preview"
+    alt: "ZapFast showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview"
     width: 1387
     height: 1040
 

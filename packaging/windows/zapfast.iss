@@ -13,6 +13,9 @@
 #ifndef Arch
   #error Arch must be defined on the ISCC command line (x86_64 or aarch64)
 #endif
+#ifndef NumericVersion
+  #define NumericVersion Version
+#endif
 #ifndef Binary
   #error Binary must be defined on the ISCC command line
 #endif
@@ -55,7 +58,7 @@ WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
 UninstallDisplayIcon={app}\{#AppExeName}
-VersionInfoVersion={#Version}.0
+VersionInfoVersion={#NumericVersion}.0
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked

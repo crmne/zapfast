@@ -116,7 +116,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     };
                     toggle(ui, app, "Send read receipts", receipts_note, |settings| &mut settings.send_read_receipts);
                     toggle(ui, app, "Show when you are typing", "", |settings| &mut settings.send_typing);
-                    toggle(ui, app, "Download attachments automatically", "Download pictures, videos, voice messages, and documents up to 64 MB when they enter view. When off, click a file to download it.", |settings| &mut settings.auto_download);
+                    toggle(ui, app, "Download attachments automatically", "Download non-sticker attachments up to 64 MiB when they enter view. Visible stickers also download automatically up to this limit. When off, click an attachment up to this limit to download it.", |settings| &mut settings.auto_download);
                     toggle(ui, app, "Show sender pictures in every chat", "WhatsApp shows them in groups only.", |settings| &mut settings.show_sender_pictures);
                     toggle(ui, app, "Names from your address book", "Prefer saved contact names. When off, prefer public WhatsApp profile names. This applies throughout the app.", |settings| &mut settings.names_from_contacts);
                     toggle(ui, app, "Save contacts to the phone's address book", "Also add contacts saved here to your phone's address book. When off, they remain WhatsApp contacts. Names sync to linked devices either way.", |settings| &mut settings.save_contacts_to_phone);
@@ -132,7 +132,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             ui,
                             &palette,
                             "Secret code for locked chats",
-                            "Set a local ZapFast code, separate from your phone's secret code. Type it in the search field to reveal the locked-chats folder. Locked chats are hidden from the list, search, and notifications. Keep it empty to disable the code.",
+                            "Open the Locked tab in the chat list and enter this local ZapFast code, separate from your phone's code. Leaving the tab or closing the window locks it again. Locked chats are hidden from ordinary search and notifications. This is a local visibility control, not an extra encryption layer. Keep it empty to remove the code.",
                             |ui| {
                                 let response = ui.add(
                                     egui::TextEdit::singleline(&mut code)
@@ -144,15 +144,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 );
                                 if response.changed() {
                                     let trimmed = code.trim().to_owned();
-                                    app.settings.set_chat_lock_code(Some(&trimmed));
-                                    app.actions.push(Action::SettingsChanged);
+                                    app.actions.push(Action::SetChatLockCode(Some(trimmed)));
                                 }
                                 if app.settings.chat_lock_code_hash.is_some()
                                     && ui.small_button("Clear").clicked()
                                 {
                                     code.clear();
-                                    app.settings.set_chat_lock_code(None);
-                                    app.actions.push(Action::SettingsChanged);
+                                    app.actions.push(Action::SetChatLockCode(None));
                                 }
                                 ui.data_mut(|data| data.insert_temp(code_id, code));
                             },

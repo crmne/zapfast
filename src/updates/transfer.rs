@@ -6,9 +6,10 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::{Release, install};
+use super::{Release, install, signing};
 
 const DOWNLOAD_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
+const MANIFEST_LIMIT: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Default)]
 pub enum Source {
@@ -144,6 +145,22 @@ pub fn download_for(
     installation: install::Installation,
     progress: impl Fn(u64, u64),
 ) -> Result<install::Prepared> {
+    download_with_key(
+        release,
+        source,
+        installation,
+        progress,
+        &signing::trusted_key()?,
+    )
+}
+
+fn download_with_key(
+    release: &Release,
+    source: &Source,
+    installation: install::Installation,
+    progress: impl Fn(u64, u64),
+    trusted_key: &[u8],
+) -> Result<install::Prepared> {
     ensure!(
         super::parse(&release.version).is_some_and(|(_, pre)| !pre)
             && release
@@ -195,7 +212,12 @@ pub fn download_for(
     };
     let package = asset(&metadata, &name)?;
     let checksums = asset(&metadata, "checksums.txt")?;
-    for candidate in [package, checksums] {
+    let signature = asset(&metadata, "checksums.txt.sig")?;
+    ensure!(
+        checksums.size <= MANIFEST_LIMIT && signature.size == 64,
+        "Invalid signed update metadata size"
+    );
+    for candidate in [package, checksums, signature] {
         let url = reqwest::Url::parse(&candidate.browser_download_url)?;
         ensure!(
             source.allowed(&url),
@@ -213,13 +235,28 @@ pub fn download_for(
             );
         }
     }
-    let mut checksum_text = String::new();
+    let mut checksum_bytes = Vec::new();
     http.get(&checksums.browser_download_url)
         .send()?
         .error_for_status()?
-        .take(1024 * 1024)
-        .read_to_string(&mut checksum_text)?;
-    let expected = checksum(&checksum_text, &name)?;
+        .take(MANIFEST_LIMIT + 1)
+        .read_to_end(&mut checksum_bytes)?;
+    ensure!(
+        checksum_bytes.len() as u64 == checksums.size,
+        "Invalid update checksum download size"
+    );
+    let mut signature_bytes = Vec::new();
+    http.get(&signature.browser_download_url)
+        .send()?
+        .error_for_status()?
+        .take(65)
+        .read_to_end(&mut signature_bytes)?;
+    // Do not parse a checksum, download a package, or create staging files
+    // until the manifest is authorized by the embedded publisher key.
+    signing::verify(&checksum_bytes, &signature_bytes, trusted_key)?;
+    let checksum_text =
+        std::str::from_utf8(&checksum_bytes).context("Invalid update checksum text")?;
+    let expected = checksum(checksum_text, &name)?;
     let directory = install::staging(&installation)?;
     let result = (|| -> Result<install::Prepared> {
         let archive = directory.join(&name);
@@ -303,8 +340,11 @@ mod tests {
     #[cfg(all(feature = "demo", any(target_os = "windows", target_os = "linux")))]
     #[test]
     fn update_downloads_preserve_integrity_checks() {
+        use ring::signature::KeyPair;
         use std::net::TcpListener;
-        for interrupted in [false, true] {
+        for failure in ["checksum", "interrupted", "forged", "unsigned"] {
+            let interrupted = failure == "interrupted";
+            let key = signing::fixture_key();
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let base = format!("http://{}", listener.local_addr().unwrap());
             let platform = if cfg!(windows) {
@@ -314,29 +354,41 @@ mod tests {
             };
             let name = format!("zapfast-v0.8.0-{}-{platform}", std::env::consts::ARCH);
             let payload = b"damaged download";
-            let hash = if interrupted {
+            let hash = if interrupted || failure == "forged" {
                 crate::updates::hex(&Sha256::digest(payload))
             } else {
                 "0".repeat(64)
             };
             let checksums = format!("{hash}  {name}\n");
-            let metadata = serde_json::json!({"tag_name":"v0.8.0", "assets":[
-                {"name":name,"size":payload.len() + usize::from(interrupted),"browser_download_url":format!("{base}/package")},
-                {"name":"checksums.txt","size":checksums.len(),"browser_download_url":format!("{base}/checksums")}
-            ]}).to_string();
-            let expected_urls =
-                ["latest.json", "checksums", "package"].map(|path| format!("GET /{path} HTTP/1.1"));
+            let original = format!("{}  {name}\n", "0".repeat(64));
+            let signed = if failure == "forged" {
+                &original
+            } else {
+                &checksums
+            };
+            let signature = key.sign(signed.as_bytes());
+            let mut assets = vec![
+                serde_json::json!({"name":name,"size":payload.len() + usize::from(interrupted),"browser_download_url":format!("{base}/package")}),
+                serde_json::json!({"name":"checksums.txt","size":checksums.len(),"browser_download_url":format!("{base}/checksums")}),
+            ];
+            if failure != "unsigned" {
+                assets.push(serde_json::json!({"name":"checksums.txt.sig","size":64,"browser_download_url":format!("{base}/signature")}));
+            }
+            let metadata = serde_json::json!({"tag_name":"v0.8.0", "assets":assets}).to_string();
+            let mut replies = vec![(metadata.into_bytes(), "latest.json")];
+            if failure != "unsigned" {
+                replies.extend([
+                    (checksums.into_bytes(), "checksums"),
+                    (signature.as_ref().to_vec(), "signature"),
+                ]);
+                if failure != "forged" {
+                    replies.push((payload.to_vec(), "package"));
+                }
+            }
             let server = std::thread::spawn(move || {
                 listener.set_nonblocking(true).unwrap();
-                for body in [
-                    metadata.into_bytes(),
-                    checksums.into_bytes(),
-                    payload.to_vec(),
-                ]
-                .into_iter()
-                .zip(expected_urls)
-                {
-                    let (body, expected_request) = body;
+                for (body, path) in replies {
+                    let expected_request = format!("GET /{path} HTTP/1.1");
                     let deadline = std::time::Instant::now() + Duration::from_secs(5);
                     let mut stream = loop {
                         match listener.accept() {
@@ -384,18 +436,19 @@ mod tests {
                 version: "0.8.0".into(),
                 url: base.clone(),
             };
-            let error = download_for(
+            let error = download_with_key(
                 &release,
                 &Source::local(&base).unwrap(),
                 installation,
                 |_, _| {},
+                key.public_key().as_ref(),
             )
             .unwrap_err();
             assert!(
-                error.to_string().contains(if interrupted {
-                    "interrupted"
-                } else {
-                    "verified"
+                error.to_string().contains(match failure {
+                    "interrupted" => "interrupted",
+                    "unsigned" => "checksums.txt.sig",
+                    _ => "verified",
                 }),
                 "{error:#}"
             );
@@ -414,6 +467,15 @@ mod tests {
         assert!(checksum(&valid, "other.zip").is_err());
         assert!(checksum(&(valid.clone() + &valid), "app.zip").is_err());
         assert!(checksum("invalid app.zip", "app.zip").is_err());
+        // A correctly signed old manifest cannot authorize a renamed/new
+        // version: the selected version is part of the exact asset filename.
+        assert!(
+            checksum(
+                &format!("{digest} zapfast-v0.8.0-test.zip\n"),
+                "zapfast-v0.9.0-test.zip"
+            )
+            .is_err()
+        );
     }
 
     #[test]
