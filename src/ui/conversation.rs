@@ -853,24 +853,25 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             .min_scrolled_height(0.0)
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
-                                // Replace emoji with placeholders in the galley, then
-                                // paint their color bitmaps over the field.
+                                // Keep emoji in the buffer so character offsets match, then
+                                // paint their color bitmaps over the transparent glyphs.
                                 let mut clusters: Vec<(usize, usize, String)> = Vec::new();
                                 let format = egui::TextFormat::simple(
                                     theme::regular(BODY_SIZE),
                                     palette.text,
                                 );
+                                let composer_rtl = crate::bidi::base_rtl(&app.composer);
                                 let mut layouter = |ui: &egui::Ui,
                                                     text: &dyn egui::TextBuffer,
                                                     wrap: f32| {
-                                    let (mut job, found) =
-                                        crate::emoji::editor_job(text.as_str(), &format);
-                                    job.wrap.max_width = wrap;
+                                    let (galley, found) = crate::bidi::layout_editor(
+                                        ui,
+                                        text.as_str(),
+                                        &format,
+                                        wrap,
+                                        true,
+                                    );
                                     clusters = found;
-                                    let mut galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-                                    crate::bidi::reorder_rtl_runs(std::sync::Arc::make_mut(
-                                        &mut galley,
-                                    ));
                                     galley
                                 };
                                 let output = egui::TextEdit::multiline(&mut app.composer)
@@ -890,6 +891,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .text_color(palette.text)
                                     .desired_rows(1)
                                     .desired_width(f32::INFINITY)
+                                    .horizontal_align(if composer_rtl {
+                                        Align::RIGHT
+                                    } else {
+                                        Align::LEFT
+                                    })
                                     .return_key(if enter_sends {
                                         Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
                                     } else {
@@ -898,21 +904,18 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .layouter(&mut layouter)
                                     .show(ui);
                                 for (start, length, cluster) in &clusters {
-                                    let left = output
-                                        .galley
-                                        .pos_from_cursor(egui::text::CCursor::new(*start));
-                                    let right = output.galley.pos_from_cursor(
-                                        egui::text::CCursor::new(start + length),
-                                    );
+                                    let Some(bounds) = crate::bidi::char_bounds(
+                                        &output.galley,
+                                        *start,
+                                        start + length,
+                                    ) else {
+                                        continue;
+                                    };
                                     // Skip emoji clusters split across rows.
-                                    if (left.top() - right.top()).abs() > 1.0 {
+                                    if bounds.height() > line_height * 1.5 {
                                         continue;
                                     }
-                                    let rect = Rect::from_min_max(
-                                        left.left_top(),
-                                        egui::pos2(right.left(), left.bottom()),
-                                    )
-                                    .translate(output.galley_pos.to_vec2());
+                                    let rect = bounds.translate(output.galley_pos.to_vec2());
                                     crate::emoji::paint_cluster(ui, cluster, rect);
                                 }
                                 let response = &output.response.response;
@@ -1837,7 +1840,7 @@ fn bubble_frame(
                 }
                 None => content(ui, view, message, cap, reserve, actions),
             };
-            footer(ui, &palette, message, slot);
+            footer(ui, &palette, message, slot, footer_on_leading(message));
         });
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
@@ -2060,8 +2063,27 @@ fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
     time + edited + if message.from_me { 19.0 } else { 0.0 }
 }
 
-/// Paints the time and ticks at the bubble's right edge without widening it.
-fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<Rect>) {
+/// Whether the time and ticks belong on the leading (left) side of the bubble.
+fn footer_on_leading(message: &Message) -> bool {
+    match &message.content {
+        Content::Text { text, .. } => crate::bidi::last_base_rtl(text),
+        Content::Image { caption, .. }
+        | Content::Video { caption, .. }
+        | Content::Document { caption, .. } => {
+            caption.as_deref().is_some_and(crate::bidi::last_base_rtl)
+        }
+        _ => false,
+    }
+}
+
+/// Paints the time and ticks. A right-to-left last line keeps them on the left.
+fn footer(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    message: &Message,
+    slot: Option<Rect>,
+    leading: bool,
+) {
     let font = theme::regular(11.0);
     let time = ui.painter().layout_no_wrap(
         crate::util::clock(message.timestamp),
@@ -2083,7 +2105,11 @@ fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<
             rect
         }
     };
-    let mut x = rect.right();
+    let mut x = if leading && slot.is_none() {
+        rect.left() + width
+    } else {
+        rect.right()
+    };
     if message.from_me {
         let ticks = Rect::from_center_size(pos2(x - 7.5, rect.center().y), Vec2::splat(15.0));
         widgets::ticks(ui, palette, ticks, message.status);
@@ -2626,13 +2652,21 @@ fn rich_body(
         link: palette.link,
         mention: palette.accent,
     };
-    let laid = markup::layout(ui, text, &mentions, &style, width);
-    let size = laid.galley.size();
+    let mut laid = markup::layout(ui, text, &mentions, &style, width);
+    let rtl = crate::bidi::last_base_rtl(text);
     let last_row = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
     let inline = reserve.filter(|reserve| last_row + 8.0 + reserve <= width);
-    let mut allocation = match inline {
-        Some(reserve) => vec2(size.x.max(last_row + 8.0 + reserve), size.y),
-        None => size,
+    if rtl && let Some(reserve) = inline {
+        crate::bidi::reserve_leading(Arc::make_mut(&mut laid.galley), reserve + 8.0);
+    }
+    let size = laid.galley.size();
+    let mut allocation = if rtl {
+        size
+    } else {
+        match inline {
+            Some(reserve) => vec2(size.x.max(last_row + 8.0 + reserve), size.y),
+            None => size,
+        }
     };
     if let Some(span) = span {
         // Span the card width and keep the text left-aligned in own bubbles.
@@ -2662,13 +2696,18 @@ fn rich_body(
             .ctx()
             .plugin_opt::<egui::text_selection::LabelSelectionState>()
             .is_some_and(|plugin| plugin.lock().has_selection());
+    let origin = if rtl {
+        pos2(rect.right() - laid.galley.size().x, rect.top())
+    } else {
+        rect.min
+    };
     if visible || selection_alive {
-        markup::paint_selectable(ui, &laid, &response, rect.min, palette.text, visible);
+        markup::paint_selectable(ui, &laid, &response, origin, palette.text, visible);
     }
     if !laid.links.is_empty()
         && let Some(pos) = response.hover_pos()
     {
-        let cursor = laid.galley.cursor_from_pos(pos - rect.min);
+        let cursor = laid.galley.cursor_from_pos(pos - origin);
         if let Some(url) = laid.link_at(cursor.index.0) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             if response.clicked() {
@@ -2677,10 +2716,17 @@ fn rich_body(
         }
     }
     inline.map(|reserve| {
-        Rect::from_min_max(
-            pos2(rect.right() - reserve, rect.bottom() - 15.0),
-            rect.right_bottom(),
-        )
+        if rtl {
+            Rect::from_min_max(
+                pos2(origin.x, rect.bottom() - 15.0),
+                pos2(origin.x + reserve, rect.bottom()),
+            )
+        } else {
+            Rect::from_min_max(
+                pos2(rect.right() - reserve, rect.bottom() - 15.0),
+                rect.right_bottom(),
+            )
+        }
     })
 }
 

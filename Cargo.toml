@@ -72,6 +72,8 @@ jiff = "0.2"
 unicode-segmentation = "1"
 # Unicode bidi properties; already included through URL/IDNA handling.
 icu_properties = "2.3"
+# Unicode Bidirectional Algorithm for mixed Hebrew, Arabic, and Latin text.
+unicode-bidi = "0.3.18"
 # Canonical decomposition for accent-insensitive chat/contact search.
 icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
 # Opens downloaded attachments in their default desktop apps.
@@ -98,6 +100,12 @@ opus = "0.4"
 ogg = "0.9"
 # Converts animated Signal APNG stickers to the animated WebP used by WhatsApp.
 webp-animation = "0.10"
+
+[patch.crates-io]
+# Local cursor and cluster fixes for right-to-left text. epaint 0.36 still
+# assumes glyph order is both logical and left-to-right, and its continuation
+# glyphs treat cluster offsets as ascending. No upstream release has both fixes.
+epaint = { path = "third_party/epaint" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify = "8.2"
