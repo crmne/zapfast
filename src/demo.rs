@@ -2288,11 +2288,17 @@ mod tests {
             .read_response(id)
             .expect("the message bubble is on screen")
             .rect;
-        let affordance = crate::ui::conversation::reaction_affordance_rect(
-            bubble,
-            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 780.0)).shrink(2.0),
-            false,
+
+        // Hover the message so the control appears, then read where it landed
+        // instead of recomputing it from an assumed clip rect.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(bubble.center())],
         );
+        let affordance = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("react-rect")))
+            .expect("the hover control is on screen");
         assert!(
             bubble
                 .expand(4.0)
@@ -2308,7 +2314,8 @@ mod tests {
             pressed,
             modifiers: egui::Modifiers::NONE,
         };
-        // Hover first: the control only exists while the pointer is on the message.
+        // The pointer must travel to the control, which exists only while it is
+        // on the message, so move, press, and release each in their own frame.
         frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
         frame_with(
             &mut app,

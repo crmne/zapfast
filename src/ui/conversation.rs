@@ -1606,6 +1606,11 @@ fn reaction_affordance(
         return;
     }
 
+    // Publish where the control actually landed, the same way the bubble rect is
+    // published, so tests can act on the real rect instead of guessing it.
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(bubble.id.with("react-rect"), rect));
+
     // Acquire under the same layer as the bubble so the row strip keeps clicks.
     let response = ui.interact(rect, bubble.id.with("react"), Sense::click());
     response.widget_info(|| {
