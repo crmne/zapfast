@@ -987,6 +987,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            "wallpaper" => app.page = Page::Wallpaper,
             "omarchy" | "omarchy-light" => {
                 let mut themes: Vec<_> = crate::theme::presets::themes().collect();
                 let filename = if part == "omarchy-light" {
@@ -1663,6 +1664,8 @@ mod tests {
             "rtl",
             "disappearing",
             "settings",
+            "wallpaper",
+            "wallpaper,light",
             "update",
             "update-downloading",
             "update-ready",

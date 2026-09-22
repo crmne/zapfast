@@ -2838,6 +2838,14 @@ impl App {
                     self.apply_theme(ctx);
                 }
             }
+            Action::SetWallpaperColor(color) => {
+                if self.palette.dark {
+                    self.settings.dark_wallpaper_color = color;
+                } else {
+                    self.settings.wallpaper_color = color;
+                }
+                self.mark_settings_dirty();
+            }
             Action::ReloadThemes => self.load_custom_themes(),
             Action::OpenThemesFolder => {
                 let directory = self.dirs.config.join("themes");

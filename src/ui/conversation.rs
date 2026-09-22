@@ -18,6 +18,7 @@ use crate::model::{
     PickerTab,
 };
 use crate::theme::{self, Icon, Palette};
+use crate::wallpaper;
 
 use super::focus::{Stop, TabStop};
 use super::widgets;
@@ -39,6 +40,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         empty(app, ui);
         return;
     };
+    if app.settings.show_wallpaper {
+        wallpaper::paint(ui, app.settings.wallpaper_color_for(app.palette.dark));
+    }
     header(app, ui, &chat);
     if theme::macos_chrome(ui.ctx()) {
         super::banner(app, ui);

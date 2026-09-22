@@ -419,6 +419,13 @@ Linux watches the themes folder for changes without periodic repaints. On other
 platforms, use `zapfast reload-themes` after editing. The command also works while
 the window is closed and never launches a stopped app.
 
+**Settings → Appearance → Wallpaper** offers WhatsApp's light and dark wallpaper
+colours, with a live preview of the selected colour and doodles. **Add WhatsApp
+doodles** controls only the SVG layer, so disabling it leaves the selected
+background colour in place. Light and dark selections are stored independently,
+and the embedded SVG is rendered at its native size and repeated across the
+conversation without stretching.
+
 On Omarchy, **Follow system** and **Omarchy** read the active desktop palette and
 follow its changes in native, portable, and source builds, even without installed
 hooks. Other desktops keep their normal light/dark system preference. Native
