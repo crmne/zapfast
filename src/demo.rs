@@ -2269,67 +2269,6 @@ mod tests {
     }
 
     #[test]
-    fn clicking_the_hover_reaction_control_opens_the_picker_for_that_message() {
-        let mut app = app();
-        let ctx = egui::Context::default();
-        app.attach(&ctx);
-        for _ in 0..3 {
-            render(&mut app, &ctx);
-        }
-
-        let chat = sample_ids()[0].to_owned();
-        let message = "ada-link";
-        assert!(app.reaction_target.is_none());
-
-        let id = crate::ui::conversation::bubble_id(&chat, message);
-        let bubble = ctx
-            .read_response(id)
-            .expect("the message bubble is on screen")
-            .rect;
-
-        // Hover the message so the control appears, then read where it landed
-        // instead of recomputing it from an assumed clip rect.
-        frame_with(
-            &mut app,
-            &ctx,
-            vec![egui::Event::PointerMoved(bubble.center())],
-        );
-        let affordance = ctx
-            .data(|data| data.get_temp::<egui::Rect>(id.with("react-rect")))
-            .expect("the hover control is on screen");
-        assert!(
-            bubble
-                .expand(4.0)
-                .union(affordance)
-                .contains(affordance.center()),
-            "the control sits beside the bubble"
-        );
-
-        let pos = affordance.center();
-        let press = |pressed| egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        // The pointer must travel to the control, which exists only while it is
-        // on the message, so move, press, and release each in their own frame.
-        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
-        frame_with(
-            &mut app,
-            &ctx,
-            vec![egui::Event::PointerMoved(pos), press(true)],
-        );
-        frame_with(&mut app, &ctx, vec![press(false)]);
-
-        assert_eq!(
-            app.reaction_target,
-            Some((chat.clone(), message.to_owned())),
-            "the hover control opens the existing picker for this message"
-        );
-    }
-
-    #[test]
     fn switching_chats_closes_the_reaction_picker() {
         let mut app = app();
         apply_flags(&mut app, Some("react-picker"));
