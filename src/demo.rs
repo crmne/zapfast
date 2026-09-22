@@ -3375,12 +3375,12 @@ mod tests {
             .get(&chat)
             .and_then(|conversation| {
                 conversation.messages.iter().rev().find_map(|message| {
-                    if message.from_me {
-                        if let Content::Text { text, .. } = &message.content {
-                            return Some((message.id.clone(), text.clone()));
+                    match (&message.from_me, &message.content) {
+                        (true, Content::Text { text, .. }) => {
+                            Some((message.id.clone(), text.clone()))
                         }
+                        _ => None,
                     }
-                    None
                 })
             })
             .expect("an own text message");
