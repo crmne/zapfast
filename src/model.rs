@@ -407,10 +407,26 @@ impl Content {
             },
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
-            Self::Interactive { header, body, .. } => {
+            Self::Interactive {
+                header,
+                body,
+                footer,
+                buttons,
+            } => {
                 let text = body.lines().next().unwrap_or_default();
                 if text.is_empty() {
-                    header.clone().unwrap_or_default()
+                    header
+                        .as_deref()
+                        .filter(|text| !text.is_empty())
+                        .or_else(|| footer.as_deref().filter(|text| !text.is_empty()))
+                        .or_else(|| {
+                            buttons
+                                .iter()
+                                .map(String::as_str)
+                                .find(|text| !text.is_empty())
+                        })
+                        .unwrap_or_default()
+                        .to_owned()
                 } else {
                     text.to_owned()
                 }

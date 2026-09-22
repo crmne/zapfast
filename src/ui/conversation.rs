@@ -2460,7 +2460,12 @@ fn content(
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.is_some(),
-        Content::Interactive { body, .. } => !body.is_empty(),
+        Content::Interactive {
+            header,
+            body,
+            footer,
+            buttons,
+        } => !body.is_empty() || header.is_some() || footer.is_some() || !buttons.is_empty(),
         _ => false,
     };
     if !has_body {
@@ -2668,14 +2673,17 @@ fn content(
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
                         for label in buttons {
-                            let galley = ui.painter().layout_no_wrap(
-                                label.clone(),
+                            let line = widgets::line(
+                                ui,
+                                label,
                                 theme::medium(13.0),
                                 palette.accent,
+                                (width - 32.0).max(1.0),
+                                1,
                             );
                             let padding = vec2(16.0, 7.0);
-                            let (rect, _) = ui
-                                .allocate_exact_size(galley.size() + padding * 2.0, Sense::hover());
+                            let (rect, _) =
+                                ui.allocate_exact_size(line.size() + padding * 2.0, Sense::hover());
                             if ui.is_rect_visible(rect) {
                                 ui.painter().rect_stroke(
                                     rect,
@@ -2683,11 +2691,7 @@ fn content(
                                     Stroke::new(1.0, palette.accent),
                                     egui::StrokeKind::Inside,
                                 );
-                                ui.painter().galley(
-                                    rect.center() - galley.size() / 2.0,
-                                    galley,
-                                    palette.accent,
-                                );
+                                line.paint(ui, rect.center() - line.size() / 2.0, palette.accent);
                             }
                         }
                     });

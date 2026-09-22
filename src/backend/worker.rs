@@ -5848,6 +5848,122 @@ mod tests {
     }
 
     #[test]
+    fn buttons_messages_keep_body_and_footer_for_read_only_rendering() {
+        let message = wa::Message {
+            buttons_message: MessageField::some(wa::message::ButtonsMessage {
+                content_text: Some("Choose an option".into()),
+                footer_text: Some("Reply is not sent".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            classify(&message),
+            Some(Content::Interactive {
+                header: None,
+                body: "Choose an option".into(),
+                footer: Some("Reply is not sent".into()),
+                buttons: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn list_messages_convert_title_description_and_footer() {
+        let message = wa::Message {
+            list_message: MessageField::some(wa::message::ListMessage {
+                title: Some("Menu".into()),
+                description: Some("Pick one".into()),
+                footer_text: Some("Today only".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            classify(&message),
+            Some(Content::Interactive {
+                header: Some("Menu".into()),
+                body: "Pick one".into(),
+                footer: Some("Today only".into()),
+                buttons: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn hydrated_templates_convert_text_and_title() {
+        let message = wa::Message {
+            template_message: MessageField::some(wa::message::TemplateMessage {
+                hydrated_template: MessageField::some(
+                    wa::message::template_message::HydratedFourRowTemplate {
+                        title: Some(
+                            wa::message::template_message::hydrated_four_row_template::Title::
+                                HydratedTitleText("Offer".into()),
+                        ),
+                        hydrated_content_text: Some("Details".into()),
+                        hydrated_footer_text: Some("Expires soon".into()),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            classify(&message),
+            Some(Content::Interactive {
+                header: Some("Offer".into()),
+                body: "Details".into(),
+                footer: Some("Expires soon".into()),
+                buttons: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn business_interactive_messages_keep_header_body_and_footer() {
+        let message = wa::Message {
+            interactive_message: MessageField::some(wa::message::InteractiveMessage {
+                header: MessageField::some(wa::message::interactive_message::Header {
+                    title: Some("Order update".into()),
+                    ..Default::default()
+                }),
+                body: MessageField::some(wa::message::interactive_message::Body {
+                    text: Some("Your order is ready".into()),
+                }),
+                footer: MessageField::some(wa::message::interactive_message::Footer {
+                    text: Some("Thanks".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            classify(&message),
+            Some(Content::Interactive {
+                header: Some("Order update".into()),
+                body: "Your order is ready".into(),
+                footer: Some("Thanks".into()),
+                buttons: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn interactive_content_accepts_footer_or_buttons_without_body() {
+        assert!(matches!(
+            interactive_content(None, None, Some("Footer".into()), Vec::new()),
+            Some(Content::Interactive { .. })
+        ));
+        assert!(matches!(
+            interactive_content(None, None, None, vec!["Button".into()]),
+            Some(Content::Interactive { .. })
+        ));
+        assert_eq!(interactive_content(None, None, None, Vec::new()), None);
+    }
+
+    #[test]
     fn unsafe_preview_metadata_cannot_launch_a_desktop_handler() {
         let message = wa::Message {
             extended_text_message: MessageField::some(wa::message::ExtendedTextMessage {
