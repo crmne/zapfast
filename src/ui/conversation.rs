@@ -1757,6 +1757,13 @@ fn transcript_row(
         Content::Location { .. } => Some("[location]".to_owned()),
         Content::Contact { display_name, .. } => Some(format!("[contact: {display_name}]")),
         Content::Poll { question, .. } => Some(format!("[poll: {question}]")),
+        Content::Interactive {
+            card: Some(card), ..
+        } if card.body.is_empty()
+            && (card.image.is_some() || card.carousel.iter().any(|card| card.image.is_some())) =>
+        {
+            Some("[photo]".to_owned())
+        }
         _ => None,
     };
     let reactions = if message.reactions.is_empty() {
@@ -2675,7 +2682,11 @@ fn content(
     let own = message.from_me;
     // Add non-text messages to cross-message transcript copies.
     let has_body = match &message.content {
-        Content::Text { .. } | Content::Interactive { .. } => true,
+        Content::Text { .. } => true,
+        // Image-only cards and carousels without a body draw no text.
+        Content::Interactive { card, .. } => card.as_ref().is_none_or(|card| {
+            !card.body.is_empty() || (card.image.is_none() && card.carousel.is_empty())
+        }),
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.is_some(),

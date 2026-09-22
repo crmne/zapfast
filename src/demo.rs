@@ -1822,6 +1822,37 @@ mod tests {
     }
 
     #[test]
+    fn image_only_interactive_cards_join_transcripts() {
+        for single in [true, false] {
+            let mut app = app();
+            carousel_sample(&mut app, 2);
+            let message = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+            let Content::Interactive {
+                card: Some(card), ..
+            } = &mut message.content
+            else {
+                panic!("interactive sample");
+            };
+            card.body.clear();
+            if single {
+                card.image = card.carousel[0].image.clone();
+                card.carousel.clear();
+            }
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let rows = app.copy_rows.lock().unwrap();
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| row.marker.as_deref() == Some("[photo]"))
+                    .count(),
+                1,
+                "single card: {single}"
+            );
+        }
+    }
+
+    #[test]
     fn interactive_links_and_replies_activate_by_click_and_keyboard() {
         let mut app = app();
         apply_flags(&mut app, Some("interactive"));
