@@ -918,6 +918,11 @@ impl Worker {
             if matches!(existing.content, Content::Revoked) {
                 continue;
             }
+            // Edits do not replace the raw protobuf; keep an edited interactive
+            // body, as `backfill_interactive` does.
+            if existing.edited && matches!(content, Content::Interactive { .. }) {
+                continue;
+            }
             if let (Some(new), Some(old)) = (content.media_mut(), existing.content.media()) {
                 new.path = old.path.clone();
             }

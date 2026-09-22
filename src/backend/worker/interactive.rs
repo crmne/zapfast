@@ -939,6 +939,31 @@ mod tests {
     }
 
     #[test]
+    fn generic_backfill_keeps_edited_interactive_bodies() {
+        let (mut worker, _events, _commands, _wa) = worker();
+        worker.archive.ensure_chat(PEER, "Demo").unwrap();
+        let mut edited = own_message("edited-interactive", 1);
+        edited.content = Content::text("edited text");
+        edited.edited = true;
+        worker
+            .archive
+            .insert_message(&edited, Some(&buttons().encode_to_vec()))
+            .unwrap();
+        // An archive that never reached the current derived version.
+        worker.backfill();
+        worker.backfill_interactive();
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "edited-interactive")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::text("edited text")
+        );
+    }
+
+    #[test]
     fn backfill_recovers_search_and_preview_preserving_local_message_state() {
         let (mut worker, _events, _commands, _wa) = worker();
         worker.archive.ensure_chat(PEER, "Demo").unwrap();
