@@ -288,6 +288,13 @@ pub enum Content {
         #[serde(default)]
         state: PollState,
     },
+    /// A received business message: buttons, list, or template.
+    Interactive {
+        header: Option<String>,
+        body: String,
+        footer: Option<String>,
+        buttons: Vec<String>,
+    },
     /// "This message was deleted."
     Revoked,
     /// Unsupported content with a user-facing description.
@@ -400,6 +407,14 @@ impl Content {
             },
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
+            Self::Interactive { header, body, .. } => {
+                let text = body.lines().next().unwrap_or_default();
+                if text.is_empty() {
+                    header.clone().unwrap_or_default()
+                } else {
+                    text.to_owned()
+                }
+            }
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
         }

@@ -1929,6 +1929,7 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
         || match &message.content {
             Content::Text { preview, .. } => preview.is_some(),
             Content::Document { .. } | Content::Audio { .. } | Content::Poll { .. } => true,
+            Content::Interactive { .. } => true,
             // Videos without a poster use the file-row layout.
             Content::Video { .. } => message.thumbnail.is_none(),
             _ => false,
@@ -2305,7 +2306,10 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     }
     if !matches!(
         message.content,
-        Content::Revoked | Content::Unsupported { .. } | Content::Poll { .. }
+        Content::Revoked
+            | Content::Unsupported { .. }
+            | Content::Poll { .. }
+            | Content::Interactive { .. }
     ) && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
     {
         actions.push(Action::ShowDialog(Dialog::Forward {
@@ -2456,6 +2460,7 @@ fn content(
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.is_some(),
+        Content::Interactive { body, .. } => !body.is_empty(),
         _ => false,
     };
     if !has_body {
@@ -2637,6 +2642,59 @@ fn content(
                 actions,
             );
             None
+        }
+        Content::Interactive {
+            header,
+            body,
+            footer,
+            buttons,
+        } => {
+            ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing.y = 4.0;
+                if let Some(header) = header {
+                    widgets::rich_text(ui, header, theme::bold(14.5), palette.text);
+                }
+                let rect = if body.is_empty() {
+                    None
+                } else {
+                    rich_body(ui, view, message, body, width, None, None, actions)
+                };
+                if let Some(footer) = footer {
+                    widgets::rich_text(ui, footer, theme::regular(12.5), palette.secondary);
+                }
+                if !buttons.is_empty() {
+                    ui.add_space(2.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                        for label in buttons {
+                            let galley = ui.painter().layout_no_wrap(
+                                label.clone(),
+                                theme::medium(13.0),
+                                palette.accent,
+                            );
+                            let padding = vec2(16.0, 7.0);
+                            let (rect, _) = ui
+                                .allocate_exact_size(galley.size() + padding * 2.0, Sense::hover());
+                            if ui.is_rect_visible(rect) {
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    rect.height() / 2.0,
+                                    Stroke::new(1.0, palette.accent),
+                                    egui::StrokeKind::Inside,
+                                );
+                                ui.painter().galley(
+                                    rect.center() - galley.size() / 2.0,
+                                    galley,
+                                    palette.accent,
+                                );
+                            }
+                        }
+                    });
+                }
+                rect
+            })
+            .inner
         }
         Content::Revoked => {
             mirrored_row(

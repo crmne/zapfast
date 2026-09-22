@@ -3242,7 +3242,10 @@ impl Worker {
         };
         if matches!(
             source.content,
-            Content::Revoked | Content::Unsupported { .. } | Content::Poll { .. }
+            Content::Revoked
+                | Content::Unsupported { .. }
+                | Content::Poll { .. }
+                | Content::Interactive { .. }
         ) {
             self.emit(Event::Error("This message cannot be forwarded".to_owned()));
             return;
@@ -4695,6 +4698,131 @@ fn thumbnail_of(base: &wa::Message) -> Option<Vec<u8>> {
     bytes.filter(|bytes| !bytes.is_empty())
 }
 
+/// Assembles a received business message into visible content, keeping the
+/// text and button labels and dropping the send/select machinery. Returns
+/// `None` when nothing is worth showing.
+fn interactive_content(
+    header: Option<String>,
+    body: Option<String>,
+    footer: Option<String>,
+    buttons: Vec<String>,
+) -> Option<Content> {
+    let header = non_empty(&header);
+    let body = non_empty(&body);
+    let footer = non_empty(&footer);
+    let buttons: Vec<String> = buttons
+        .into_iter()
+        .filter_map(|label| non_empty(&Some(label)))
+        .collect();
+    if header.is_none() && body.is_none() && footer.is_none() && buttons.is_empty() {
+        return None;
+    }
+    Some(Content::Interactive {
+        header,
+        body: body.unwrap_or_default(),
+        footer,
+        buttons,
+    })
+}
+
+/// `Message.ButtonsMessage`: a header, a body, a footer, and quick-reply
+/// buttons whose display text is all that renders read-only.
+fn buttons_content(buttons: &wa::message::ButtonsMessage) -> Option<Content> {
+    let header = buttons.header.as_ref().and_then(|header| match header {
+        wa::message::buttons_message::Header::Text(text) => Some(text.clone()),
+        _ => None,
+    });
+    let labels = buttons
+        .buttons
+        .iter()
+        .filter_map(|button| {
+            button
+                .button_text
+                .as_option()
+                .and_then(|text| text.display_text.clone())
+        })
+        .collect();
+    interactive_content(
+        header,
+        buttons.content_text.clone(),
+        buttons.footer_text.clone(),
+        labels,
+    )
+}
+
+/// `Message.ListMessage`: a title, a description, and selectable rows listed
+/// under sections. Rows become the button-like entries.
+fn list_content(list: &wa::message::ListMessage) -> Option<Content> {
+    let labels = list
+        .sections
+        .iter()
+        .flat_map(|section| section.rows.iter())
+        .filter_map(|row| non_empty(&row.title))
+        .collect();
+    interactive_content(
+        non_empty(&list.title),
+        non_empty(&list.description),
+        non_empty(&list.footer_text),
+        labels,
+    )
+}
+
+/// `Message.TemplateMessage`: a hydrated template carries title, content,
+/// footer, and buttons in one place.
+fn template_content(template: &wa::message::TemplateMessage) -> Option<Content> {
+    let Some(hydrated) = template.hydrated_template.as_option() else {
+        return None;
+    };
+    let header = hydrated.title.as_ref().and_then(|title| match title {
+        wa::message::template_message::hydrated_four_row_template::Title::HydratedTitleText(
+            text,
+        ) => Some(text.clone()),
+        _ => None,
+    });
+    let labels = hydrated
+        .hydrated_buttons
+        .iter()
+        .filter_map(|button| button.hydrated_button.as_ref())
+        .filter_map(|button| match button {
+            wa::hydrated_template_button::HydratedButton::QuickReplyButton(button) => {
+                button.display_text.clone()
+            }
+            wa::hydrated_template_button::HydratedButton::UrlButton(button) => {
+                button.display_text.clone()
+            }
+            wa::hydrated_template_button::HydratedButton::CallButton(button) => {
+                button.display_text.clone()
+            }
+        })
+        .collect();
+    interactive_content(
+        header,
+        hydrated.hydrated_content_text.clone(),
+        hydrated.hydrated_footer_text.clone(),
+        labels,
+    )
+}
+
+/// `Message.InteractiveMessage`: a business flow envelope with a header,
+/// body, and footer. Native-flow buttons are not rendered yet.
+fn business_content(interactive: &wa::message::InteractiveMessage) -> Option<Content> {
+    interactive_content(
+        interactive
+            .header
+            .as_option()
+            .and_then(|header| non_empty(&header.title)),
+        interactive
+            .body
+            .as_option()
+            .and_then(|body| non_empty(&body.text)),
+        interactive
+            .footer
+            .as_option()
+            .and_then(|footer| non_empty(&footer.text)),
+        Vec::new(),
+    )
+}
+
 /// Converts a protocol message to visible content, or `None` for internal traffic.
 fn classify(base: &wa::Message) -> Option<Content> {
     if let Some(text) = base.text_content() {
@@ -4851,11 +4979,19 @@ fn classify(base: &wa::Message) -> Option<Content> {
     if base.sticker_pack_message.is_set() {
         return unsupported("sticker pack");
     }
-    if base.interactive_message.is_set()
-        || base.buttons_message.is_set()
-        || base.list_message.is_set()
-        || base.template_message.is_set()
-        || base.buttons_response_message.is_set()
+    if let Some(buttons) = base.buttons_message.as_option() {
+        return buttons_content(buttons).or_else(|| unsupported("interactive message"));
+    }
+    if let Some(list) = base.list_message.as_option() {
+        return list_content(list).or_else(|| unsupported("interactive message"));
+    }
+    if let Some(template) = base.template_message.as_option() {
+        return template_content(template).or_else(|| unsupported("interactive message"));
+    }
+    if let Some(interactive) = base.interactive_message.as_option() {
+        return business_content(interactive).or_else(|| unsupported("interactive message"));
+    }
+    if base.buttons_response_message.is_set()
         || base.list_response_message.is_set()
         || base.interactive_response_message.is_set()
         || base.template_button_reply_message.is_set()
