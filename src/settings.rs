@@ -318,7 +318,14 @@ mod tests {
         std::fs::write(&path, r#"{"chat_lock_code":"1234"}"#).unwrap();
         let settings = Settings::load(&path);
         assert!(settings.verifies_chat_lock_code("1234"));
-        assert!(!std::fs::read_to_string(path).unwrap().contains("1234"));
+        // The random hex verifier may contain "1234" by chance, so check
+        // fields rather than searching the file for the digits.
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert!(stored.get("chat_lock_code").is_none());
+        let verifier = stored["chat_lock_code_hash"].as_str().unwrap();
+        assert_ne!(verifier.trim(), "1234");
+        assert!(verifier.contains('$'));
     }
 }
 
