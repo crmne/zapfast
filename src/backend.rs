@@ -153,6 +153,12 @@ pub enum Command {
         quoting: Option<String>,
         mentions: Vec<String>,
     },
+    ReplyInteractive {
+        chat: ChatId,
+        message: String,
+        button: usize,
+        choice: Option<usize>,
+    },
     /// Forwards an archived message to another chat.
     Forward {
         from_chat: ChatId,
@@ -183,6 +189,7 @@ pub enum Command {
     /// Requests messages before the archive's earliest message.
     FetchOlder(ChatId),
     Download {
+        card: Option<usize>,
         chat: ChatId,
         message: String,
     },
@@ -354,6 +361,7 @@ pub enum Command {
     },
     /// Internal attachment-download result.
     Downloaded {
+        card: Option<usize>,
         chat: ChatId,
         id: String,
         result: Result<PathBuf, String>,
@@ -434,6 +442,11 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    InteractiveReplyState {
+        chat: ChatId,
+        message: String,
+        pending: bool,
+    },
     PollCreated {
         chat: ChatId,
         error: Option<String>,
@@ -509,6 +522,7 @@ pub enum Event {
         recent: Vec<PathBuf>,
     },
     Media {
+        card: Option<usize>,
         chat: ChatId,
         message: String,
         result: Result<PathBuf, String>,

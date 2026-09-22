@@ -310,13 +310,37 @@ pub struct InteractiveCard {
     pub image: Option<Media>,
     /// Unrenderable attachments, forms, or missing message text.
     pub needs_phone: bool,
+    /// Independent carousel cards, in wire order. No protocol ids or keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub carousel: Vec<InteractiveCard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InteractiveButton {
     pub label: String,
-    /// Only HTTP(S) links are actionable locally. Other choices need a phone.
+    /// Validated HTTP(S) target, also retained for older archived cards.
     pub url: Option<String>,
+    /// Non-link action. Protocol option ids stay in the worker.
+    #[serde(default)]
+    pub action: InteractiveAction,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum InteractiveAction {
+    #[default]
+    Unavailable,
+    Reply,
+    Copy(String),
+    Select(Vec<InteractiveOption>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InteractiveOption {
+    pub section: String,
+    pub title: String,
+    pub description: String,
 }
 
 /// Poll information safe to send to the interface; encryption keys stay in the worker.
@@ -332,6 +356,18 @@ pub struct PollState {
     pub refresh_needed: bool,
     pub refreshing: bool,
     pub refresh_failed: bool,
+    /// Latest decrypted votes only. Derived on load, never stored in content JSON.
+    #[serde(skip)]
+    pub votes: Vec<PollVoter>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PollVoter {
+    pub id: String,
+    pub name: String,
+    pub from_me: bool,
+    pub timestamp: i64,
+    pub choices: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -441,6 +477,18 @@ impl Content {
                 card: Some(card), ..
             } => card.image.as_ref(),
             _ => None,
+        }
+    }
+
+    pub fn media_at_mut(&mut self, card_index: Option<usize>) -> Option<&mut Media> {
+        match card_index {
+            None => self.media_mut(),
+            Some(index) => match self {
+                Self::Interactive {
+                    card: Some(card), ..
+                } => card.carousel.get_mut(index)?.image.as_mut(),
+                _ => None,
+            },
         }
     }
 
@@ -578,6 +626,15 @@ pub enum Dialog {
         message: String,
     },
     CreatePoll(ChatId),
+    PollResults {
+        chat: ChatId,
+        message: String,
+    },
+    InteractiveList {
+        chat: ChatId,
+        message: String,
+        button: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -615,6 +672,12 @@ pub enum Action {
         /// Quoted message id.
         quoting: Option<String>,
     },
+    ReplyInteractive {
+        chat: ChatId,
+        message: String,
+        button: usize,
+        choice: Option<usize>,
+    },
     CreatePoll {
         chat: ChatId,
         draft: PollDraft,
@@ -638,6 +701,7 @@ pub enum Action {
     /// Requests messages older than the local archive.
     FetchOlder(ChatId),
     Download {
+        card: Option<usize>,
         chat: ChatId,
         message: String,
     },

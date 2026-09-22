@@ -2,14 +2,18 @@
 //! Never expose flow JSON, internal ids, or template substitution parameters.
 
 use super::{Content, MessageExt, Worker, forwarded_of, mentioned_of, wa};
-use crate::model::{InteractiveButton, InteractiveCard};
+use crate::model::{InteractiveAction, InteractiveButton, InteractiveCard, InteractiveOption};
 use whatsapp_rust::waproto::buffa::Message as _;
+
+mod replies;
 
 #[derive(Default)]
 struct Text {
     parts: Vec<String>,
     body: Vec<String>,
     buttons: Vec<InteractiveButton>,
+    /// Kept beside display rows while parsing, never serialized into the model.
+    replies: Vec<Vec<wa::Message>>,
     omitted: bool,
 }
 
@@ -21,25 +25,29 @@ impl Text {
         }
     }
 
-    fn option(&mut self, value: Option<&str>) {
-        self.button(value, None);
-    }
-
-    fn button(&mut self, value: Option<&str>, url: Option<&str>) {
+    fn action(
+        &mut self,
+        value: Option<&str>,
+        url: Option<&str>,
+        action: InteractiveAction,
+        replies: Vec<wa::Message>,
+    ) {
         if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
             self.parts.push(format!("• {value}"));
             self.buttons.push(InteractiveButton {
                 label: value.to_owned(),
                 url: url.and_then(web_url),
+                action,
             });
+            self.replies.push(replies);
         } else {
             self.omitted = true;
         }
     }
 
     fn native_button(&mut self, name: Option<&str>, json: Option<&str>) {
-        // Extract labels and explicit web-link targets only. Hidden ids, form
-        // responses, payment payloads, and URLs in other flows stay private.
+        // Only recognized actions are executable. Never echo arbitrary JSON
+        // back to the sender or expose private flow fields to the interface.
         let Some(json) = json.filter(|json| json.len() <= 64 * 1024) else {
             self.omitted = true;
             return;
@@ -48,14 +56,18 @@ impl Text {
             self.omitted = true;
             return;
         };
-        self.button(
-            value
-                .get("display_text")
-                .and_then(|v| v.as_str())
-                .or_else(|| value.get("title").and_then(|v| v.as_str())),
+        let label = value
+            .get("display_text")
+            .and_then(|v| v.as_str())
+            .or_else(|| value.get("title").and_then(|v| v.as_str()));
+        let (action, replies) = replies::native(name, label, &value);
+        self.action(
+            label,
             (name == Some("cta_url"))
                 .then(|| value.get("url").and_then(|v| v.as_str()))
                 .flatten(),
+            action,
+            replies,
         );
     }
 
@@ -118,8 +130,23 @@ impl Text {
                 Some(HydratedButton::UrlButton(button)) => button.url.as_deref(),
                 _ => None,
             };
-            self.button(label, url);
+            let reply = match &button.hydrated_button {
+                Some(HydratedButton::QuickReplyButton(reply)) => {
+                    replies::template(reply.id.as_deref(), label, button.index)
+                }
+                _ => None,
+            };
+            self.reply_button(label, url, reply);
         }
+    }
+
+    fn reply_button(&mut self, label: Option<&str>, url: Option<&str>, reply: Option<wa::Message>) {
+        let action = if reply.is_some() {
+            InteractiveAction::Reply
+        } else {
+            InteractiveAction::Unavailable
+        };
+        self.action(label, url, action, reply.into_iter().collect());
     }
 
     fn finish(self, base: &wa::Message, is_request: bool) -> Content {
@@ -131,25 +158,62 @@ impl Text {
                 image.height,
             )
         });
-        let carousel = envelope(base).is_some_and(|message| {
-            matches!(
-                message.interactive_message,
-                Some(wa::message::interactive_message::InteractiveMessage::CarouselMessage(_))
-            )
-        });
+        let children = carousel_messages(base);
+        let carousel = children.is_some();
         let needs_phone = self.omitted
-            || (self.body.is_empty() && image.is_none())
+            || (!carousel && self.body.is_empty() && image.is_none())
             || has_unrendered_content(base);
         let card = is_request.then(|| {
+            let body = if let Some(parent) = envelope(base).filter(|_| carousel) {
+                let mut parent = parent.clone();
+                parent.interactive_message = None;
+                let mut text = Text::default();
+                text.interactive(&parent, 0);
+                text.body.join("\n\n")
+            } else {
+                self.body.join("\n\n")
+            };
             Box::new(InteractiveCard {
-                body: if carousel {
-                    self.parts.join("\n\n")
-                } else {
-                    self.body.join("\n\n")
-                },
+                body,
                 buttons: if carousel { Vec::new() } else { self.buttons },
                 image,
                 needs_phone,
+                carousel: children
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|child| {
+                        let mut text = Text::default();
+                        text.interactive(child, 1);
+                        let base = wa::Message {
+                            interactive_message: super::MessageField::some(child.clone()),
+                            ..Default::default()
+                        };
+                        let picture = image_at(&base, None);
+                        // Local actions need no carousel reply envelope. Keep other
+                        // actions disabled until the library supports that envelope.
+                        for button in &mut text.buttons {
+                            if matches!(
+                                button.action,
+                                InteractiveAction::Reply | InteractiveAction::Select(_)
+                            ) {
+                                button.action = InteractiveAction::Unavailable;
+                            }
+                        }
+                        InteractiveCard {
+                            body: text.body.join("\n\n"),
+                            buttons: text.buttons,
+                            image: picture.map(|m| {
+                                super::media(m.mimetype.as_ref(), m.file_length, m.width, m.height)
+                            }),
+                            thumbnail: picture.and_then(|m| m.jpeg_thumbnail.clone()),
+                            needs_phone: text.omitted
+                                || has_unrendered_content(&base)
+                                || carousel_messages(&base).is_some(),
+                            ..Default::default()
+                        }
+                    })
+                    .collect(),
+                thumbnail: None,
             })
         });
         Content::Interactive {
@@ -164,11 +228,19 @@ impl Text {
 }
 
 pub(super) fn classify(base: &wa::Message) -> Option<Content> {
-    let mut text = Text::default();
-    let is_request = base.interactive_message.is_set()
+    let text = parse(base)?;
+    Some(text.finish(base, is_request(base)))
+}
+
+fn is_request(base: &wa::Message) -> bool {
+    base.interactive_message.is_set()
         || base.buttons_message.is_set()
         || base.list_message.is_set()
-        || base.template_message.is_set();
+        || base.template_message.is_set()
+}
+
+fn parse(base: &wa::Message) -> Option<Text> {
+    let mut text = Text::default();
     if let Some(message) = base.interactive_message.as_option() {
         text.interactive(message, 0);
     } else if let Some(message) = base.buttons_message.as_option() {
@@ -182,8 +254,16 @@ pub(super) fn classify(base: &wa::Message) -> Option<Content> {
                 .button_text
                 .as_option()
                 .and_then(|label| label.display_text.as_deref());
-            if label.is_some_and(|label| !label.trim().is_empty()) {
-                text.option(label);
+            if let Some(flow) = button.native_flow_info.as_option()
+                && button.r#type == Some(wa::message::buttons_message::button::Type::NATIVE_FLOW)
+            {
+                text.native_button(flow.name.as_deref(), flow.params_json.as_deref());
+            } else if label.is_some_and(|label| !label.trim().is_empty()) {
+                let reply = (button.r#type
+                    == Some(wa::message::buttons_message::button::Type::RESPONSE))
+                .then(|| replies::buttons(button.button_id.as_deref(), label))
+                .flatten();
+                text.reply_button(label, None, reply);
             } else if let Some(flow) = button.native_flow_info.as_option() {
                 text.native_button(flow.name.as_deref(), flow.params_json.as_deref());
             } else {
@@ -195,18 +275,30 @@ pub(super) fn classify(base: &wa::Message) -> Option<Content> {
         text.push(message.description.as_deref());
         text.push(message.footer_text.as_deref());
         if message.button_text.is_some() {
-            text.option(message.button_text.as_deref());
+            let (options, replies) = replies::list(message);
+            let action = if options.is_empty() {
+                InteractiveAction::Unavailable
+            } else {
+                InteractiveAction::Select(options)
+            };
+            text.action(message.button_text.as_deref(), None, action, replies);
         }
         for section in &message.sections {
-            text.push(section.title.as_deref());
+            if let Some(title) = &section.title {
+                text.parts.push(title.clone());
+            }
             for row in &section.rows {
                 let label = row
                     .title
                     .as_deref()
                     .filter(|title| !title.trim().is_empty())
                     .map(|title| format!("• {title}"));
-                text.push(label.as_deref());
-                text.push(row.description.as_deref());
+                if let Some(label) = label {
+                    text.parts.push(label);
+                }
+                if let Some(description) = &row.description {
+                    text.parts.push(description.clone());
+                }
             }
         }
     } else if let Some(message) = base.template_message.as_option() {
@@ -242,7 +334,7 @@ pub(super) fn classify(base: &wa::Message) -> Option<Content> {
         let message = base.template_button_reply_message.as_option()?;
         text.push(message.selected_display_text.as_deref());
     }
-    Some(text.finish(base, is_request))
+    Some(text)
 }
 
 /// Keep URL actions within the same schemes as ordinary web links.
@@ -305,6 +397,35 @@ pub(super) fn image(base: &wa::Message) -> Option<&wa::message::ImageMessage> {
     None
 }
 
+fn carousel_messages(base: &wa::Message) -> Option<&[wa::message::InteractiveMessage]> {
+    if let Some(wa::message::interactive_message::InteractiveMessage::CarouselMessage(carousel)) =
+        &envelope(base)?.interactive_message
+    {
+        Some(&carousel.cards)
+    } else {
+        None
+    }
+}
+
+pub(super) fn image_at(
+    base: &wa::Message,
+    card: Option<usize>,
+) -> Option<&wa::message::ImageMessage> {
+    match card {
+        None => image(base),
+        Some(index) => {
+            let child = carousel_messages(base)?.get(index)?;
+            if let Some(wa::message::interactive_message::header::Media::ImageMessage(image)) =
+                &child.header.as_option()?.media
+            {
+                Some(image)
+            } else {
+                None
+            }
+        }
+    }
+}
+
 fn has_unrendered_content(base: &wa::Message) -> bool {
     use wa::message::interactive_message::InteractiveMessage as Payload;
     let image = image(base).is_some();
@@ -319,11 +440,7 @@ fn has_unrendered_content(base: &wa::Message) -> bool {
             || message.bloks_widget.is_set()
             || matches!(
                 message.interactive_message,
-                Some(
-                    Payload::CarouselMessage(_)
-                        | Payload::ShopStorefrontMessage(_)
-                        | Payload::CollectionMessage(_)
-                )
+                Some(Payload::ShopStorefrontMessage(_) | Payload::CollectionMessage(_))
             );
     }
     if let Some(template) = hydrated(base) {
@@ -388,7 +505,7 @@ pub(super) fn context(base: &wa::Message) -> Option<&wa::ContextInfo> {
 impl Worker {
     pub(super) fn backfill_interactive(&mut self) {
         const KEY: &str = "interactive_text";
-        if self.archive.meta(KEY).ok().flatten().as_deref() == Some("2") {
+        if self.archive.meta(KEY).ok().flatten().as_deref() == Some("4") {
             return;
         }
         let result = (|| -> anyhow::Result<usize> {
@@ -398,9 +515,31 @@ impl Worker {
                     continue;
                 };
                 let base = message.get_base_message();
-                let Some(content) = classify(base) else {
+                let Some(mut content) = classify(base) else {
                     continue;
                 };
+                if let Some(old) = self.archive.message(&chat, &id)? {
+                    if let (Some(old_media), Some(new_media)) =
+                        (old.content.media(), content.media_mut())
+                    {
+                        new_media.path = old_media.path.clone();
+                    }
+                    if let (
+                        Content::Interactive {
+                            card: Some(old), ..
+                        },
+                        Content::Interactive {
+                            card: Some(new), ..
+                        },
+                    ) = (&old.content, &mut content)
+                    {
+                        for (old, new) in old.carousel.iter().zip(&mut new.carousel) {
+                            if let (Some(old), Some(new)) = (&old.image, &mut new.image) {
+                                new.path = old.path.clone();
+                            }
+                        }
+                    }
+                }
                 self.archive.set_derived(
                     &chat,
                     &id,
@@ -411,7 +550,7 @@ impl Worker {
                 )?;
                 updated += 1;
             }
-            self.archive.set_meta(KEY, "2")?;
+            self.archive.set_meta(KEY, "4")?;
             Ok(updated)
         })();
         match result {
@@ -934,6 +1073,145 @@ mod tests {
                 .unwrap()
                 .content,
             Content::text("changed")
+        );
+    }
+    #[test]
+    fn carousel_cards_keep_their_own_actions_images_and_cached_paths() {
+        use wa::message::interactive_message::{
+            Body, CarouselMessage, Header, InteractiveMessage as Payload, NativeFlowMessage,
+            header::Media as HeaderMedia, native_flow_message::NativeFlowButton,
+        };
+        let cards = (0..2).map(|index| wa::message::InteractiveMessage {
+            body: MessageField::some(Body { text: Some(format!("Card {index}")) }),
+            header: MessageField::some(Header {
+                media: Some(HeaderMedia::ImageMessage(Box::new(wa::message::ImageMessage {
+                    direct_path: Some(format!("/image-{index}")), media_key: Some(vec![index as u8; 32]), jpeg_thumbnail: Some(vec![index as u8]), ..Default::default()
+                }))), ..Default::default()
+            }),
+            interactive_message: Some(Payload::NativeFlowMessage(Box::new(NativeFlowMessage {
+                buttons: vec![
+                    NativeFlowButton { name: Some("cta_copy".into()), button_params_json: Some(format!(r#"{{"display_text":"Copy","copy_code":"CODE{index}"}}"#)) },
+                    NativeFlowButton { name: Some("cta_url".into()), button_params_json: Some(format!(r#"{{"display_text":"Open","url":"https://example.com/{index}"}}"#)) },
+                    NativeFlowButton { name: Some("quick_reply".into()), button_params_json: Some(r#"{"display_text":"Reply","id":"hidden"}"#.into()) },
+                ], ..Default::default()
+            }))), ..Default::default()
+        }).collect();
+        let raw = wa::Message {
+            interactive_message: MessageField::some(wa::message::InteractiveMessage {
+                body: MessageField::some(Body {
+                    text: Some("Collection".into()),
+                }),
+                interactive_message: Some(Payload::CarouselMessage(Box::new(CarouselMessage {
+                    cards,
+                    ..Default::default()
+                }))),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let content = classify(&raw).unwrap();
+        let Content::Interactive {
+            card: Some(card), ..
+        } = &content
+        else {
+            panic!("card")
+        };
+        assert_eq!(card.body, "Collection");
+        assert!(!card.needs_phone);
+        assert_eq!(card.carousel.len(), 2);
+        assert!(image_at(&raw, Some(2)).is_none());
+        for (index, child) in card.carousel.iter().enumerate() {
+            assert_eq!(child.body, format!("Card {index}"));
+            assert_eq!(
+                child.buttons[0].action,
+                InteractiveAction::Copy(format!("CODE{index}"))
+            );
+            assert_eq!(
+                child.buttons[1].url,
+                Some(format!("https://example.com/{index}"))
+            );
+            assert_eq!(child.buttons[2].action, InteractiveAction::Unavailable);
+            assert_eq!(
+                image_at(&raw, Some(index)).unwrap().direct_path,
+                Some(format!("/image-{index}"))
+            );
+            assert_eq!(child.thumbnail, Some(vec![index as u8]));
+        }
+        let (mut worker, _, _, _) = worker();
+        worker.archive.ensure_chat(PEER, "Demo").unwrap();
+        let mut row = own_message("carousel", 123);
+        row.content = content;
+        worker
+            .archive
+            .insert_message(&row, Some(&raw.encode_to_vec()))
+            .unwrap();
+        for index in 0..2 {
+            worker
+                .archive
+                .put_media_path_at(
+                    PEER,
+                    &row.id,
+                    Some(index),
+                    Some(std::path::Path::new(&format!("/tmp/card-{index}.jpg"))),
+                )
+                .unwrap();
+        }
+        assert_eq!(worker.archive.carousel_media_paths().unwrap().len(), 2);
+        worker.archive.set_meta("interactive_text", "3").unwrap();
+        worker.backfill_interactive();
+        let mut row = worker.archive.message(PEER, &row.id).unwrap().unwrap();
+        assert_eq!(
+            row.content.media_at_mut(Some(1)).unwrap().path.as_deref(),
+            Some(std::path::Path::new("/tmp/card-1.jpg"))
+        );
+        assert!(
+            worker
+                .archive
+                .put_media_path_at(PEER, &row.id, Some(9), None)
+                .unwrap()
+                .is_none()
+        );
+        worker
+            .archive
+            .put_media_path_at(PEER, &row.id, Some(0), None)
+            .unwrap();
+        let paths = worker.archive.carousel_media_paths().unwrap();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].2, 1);
+    }
+
+    #[test]
+    fn list_choices_belong_to_the_menu_not_the_message_body() {
+        let raw = wa::Message {
+            list_message: MessageField::some(wa::message::ListMessage {
+                title: Some("Workshop sessions".into()),
+                description: Some("Choose a session".into()),
+                button_text: Some("Browse".into()),
+                list_type: Some(wa::message::list_message::ListType::SINGLE_SELECT),
+                sections: vec![wa::message::list_message::Section {
+                    title: Some("Morning".into()),
+                    rows: vec![wa::message::list_message::Row {
+                        title: Some("Drawing".into()),
+                        description: Some("Materials included".into()),
+                        row_id: Some("private".into()),
+                    }],
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let Content::Interactive {
+            text,
+            card: Some(card),
+        } = classify(&raw).unwrap()
+        else {
+            panic!("card")
+        };
+        assert_eq!(card.body, "Workshop sessions\n\nChoose a session");
+        assert!(text.contains("Drawing"));
+        assert!(!text.contains("private"));
+        assert!(
+            matches!(&card.buttons[0].action, InteractiveAction::Select(options) if options[0].description == "Materials included")
         );
     }
 }

@@ -35,10 +35,21 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ChatInfo(_) => 360.0,
                 Dialog::Forward { .. } => 420.0,
                 Dialog::CreatePoll(_) => 420.0,
+                Dialog::PollResults { .. } | Dialog::InteractiveList { .. } => {
+                    420.0_f32.min((ui.ctx().content_rect().width() - 64.0).max(180.0))
+                }
             });
             ui.spacing_mut().item_spacing.y = 8.0;
             match dialog {
                 Dialog::CreatePoll(chat) => super::polls::create(app, ui, &chat),
+                Dialog::PollResults { chat, message } => {
+                    super::polls::results(app, ui, &chat, &message)
+                }
+                Dialog::InteractiveList {
+                    chat,
+                    message,
+                    button,
+                } => interactive_list(app, ui, &chat, &message, button),
                 Dialog::Shortcuts => shortcuts(app, ui),
                 Dialog::About => about(app, ui),
                 Dialog::ConfirmUnlink => confirm_unlink(app, ui),
@@ -51,6 +62,173 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     if response.should_close() {
         app.actions.push(Action::CloseDialog);
     }
+}
+
+fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str, button: usize) {
+    use super::widgets;
+    use crate::model::{Content, InteractiveAction};
+
+    let palette = app.palette;
+    let row = app
+        .conversations
+        .get(chat)
+        .and_then(|c| c.message(message))
+        .cloned();
+    let selected = row.as_ref().and_then(|row| match &row.content {
+        Content::Interactive {
+            card: Some(card), ..
+        } => card.buttons.get(button),
+        _ => None,
+    });
+    ui.horizontal(|ui| {
+        let label = selected.map_or("Choose an option", |button| button.label.as_str());
+        let heading = widgets::line(
+            ui,
+            label,
+            theme::semibold(18.0),
+            palette.text,
+            (ui.available_width() - 36.0).max(1.0),
+            2,
+        );
+        let (rect, _) = ui.allocate_exact_size(heading.size(), Sense::hover());
+        heading.paint(ui, rect.min, palette.text);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::icon_button(ui, Icon::X, 16.0, palette.secondary, palette.text, "Close")
+                .clicked()
+            {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+    let Some(InteractiveAction::Select(options)) = selected.map(|button| &button.action) else {
+        widgets::rich_text(
+            ui,
+            "This list is no longer available.",
+            theme::regular(14.0),
+            palette.secondary,
+        );
+        return;
+    };
+    let available = row.as_ref().is_some_and(|row| !row.from_me && !row.edited)
+        && app.chat(chat).is_some_and(|chat| chat.can_send());
+    let pending = app
+        .interactive_sending
+        .contains(&(chat.to_owned(), message.to_owned()));
+    let enabled = available && app.link.is_connected() && !pending;
+    if !enabled {
+        let reason = if !available {
+            "This list can no longer receive replies."
+        } else if pending {
+            "Sending reply…"
+        } else {
+            "Connect to WhatsApp to reply"
+        };
+        widgets::rich_text(ui, reason, theme::regular(13.0), palette.secondary);
+    }
+    ui.add_space(8.0);
+    let height = (ui.ctx().content_rect().height() - 200.0).clamp(100.0, 420.0);
+    egui::ScrollArea::vertical()
+        .id_salt(("interactive-list", chat, message, button))
+        .max_height(height)
+        .min_scrolled_height(height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                let mut section = "";
+                for (choice, option) in options.iter().enumerate() {
+                    if section != option.section {
+                        section = &option.section;
+                        if !section.is_empty() {
+                            ui.add_space(8.0);
+                            widgets::rich_text(
+                                ui,
+                                section,
+                                theme::semibold(12.5),
+                                palette.secondary,
+                            );
+                            ui.add_space(4.0);
+                        }
+                    }
+                    let id = super::conversation::bubble_id(chat, message).with((
+                        "interactive-option",
+                        button,
+                        choice,
+                    ));
+                    if interactive_option(ui, &palette, option, id).clicked() {
+                        app.actions.push(Action::ReplyInteractive {
+                            chat: chat.to_owned(),
+                            message: message.to_owned(),
+                            button,
+                            choice: Some(choice),
+                        });
+                        app.actions.push(Action::CloseDialog);
+                    }
+                }
+            });
+        });
+}
+
+/// List choices preserve emoji and wrap their descriptions without clipping.
+fn interactive_option(
+    ui: &mut egui::Ui,
+    palette: &crate::theme::Palette,
+    option: &crate::model::InteractiveOption,
+    id: egui::Id,
+) -> egui::Response {
+    let width = ui.available_width().max(1.0);
+    let title = super::widgets::line(
+        ui,
+        &option.title,
+        theme::medium(14.0),
+        palette.text,
+        (width - 52.0).max(1.0),
+        2,
+    );
+    let description = (!option.description.is_empty()).then(|| {
+        super::widgets::line(
+            ui,
+            &option.description,
+            theme::regular(12.5),
+            palette.secondary,
+            (width - 52.0).max(1.0),
+            3,
+        )
+    });
+    let height =
+        (title.size().y + description.as_ref().map_or(0.0, |line| line.size().y + 4.0) + 20.0)
+            .max(60.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &option.title)
+    });
+    ui.ctx().data_mut(|data| data.insert_temp(id, rect));
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(
+            rect,
+            8.0,
+            palette
+                .text
+                .gamma_multiply(if response.is_pointer_button_down_on() {
+                    0.10
+                } else {
+                    0.06
+                }),
+        );
+    }
+    ui.painter().circle_stroke(
+        egui::pos2(rect.right() - 18.0, rect.center().y),
+        7.0,
+        Stroke::new(1.5, palette.secondary),
+    );
+    theme::reveal_focus(&response);
+    let pos = rect.min + vec2(10.0, 10.0);
+    title.paint(ui, pos, palette.text);
+    if let Some(description) = description {
+        description.paint(ui, pos + vec2(0.0, title.size().y + 4.0), palette.secondary);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {

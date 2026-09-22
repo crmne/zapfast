@@ -226,6 +226,7 @@ pub struct App {
     pub poll_draft: crate::model::PollDraft,
     pub poll_creating: bool,
     pub poll_voting: HashSet<(ChatId, String)>,
+    pub interactive_sending: HashSet<(ChatId, String)>,
     /// Contact-name editor buffers.
     pub contact_edit: Option<(String, String)>,
     /// New-contact buffers and lookup state.
@@ -433,6 +434,7 @@ impl App {
             poll_draft: Default::default(),
             poll_creating: false,
             poll_voting: HashSet::new(),
+            interactive_sending: HashSet::new(),
             contact_edit: None,
             new_contact_phone: String::new(),
             new_contact_name: String::new(),
@@ -1125,6 +1127,17 @@ impl App {
                         self.stage_files(paths);
                     }
                 }
+                Event::InteractiveReplyState {
+                    chat,
+                    message,
+                    pending,
+                } => {
+                    if pending {
+                        self.interactive_sending.insert((chat, message));
+                    } else {
+                        self.interactive_sending.remove(&(chat, message));
+                    }
+                }
                 Event::PollCreated { chat, error } => {
                     self.poll_creating = false;
                     if let Some(error) = error {
@@ -1150,7 +1163,24 @@ impl App {
                         && let Some(existing) = conversation.message_mut(&message.id)
                     {
                         let state = existing.content.media().map(|media| media.state.clone());
+                        let carousel_states = match &existing.content {
+                            Content::Interactive {
+                                card: Some(card), ..
+                            } => card
+                                .carousel
+                                .iter()
+                                .map(|card| card.image.as_ref().map(|media| media.state.clone()))
+                                .collect::<Vec<_>>(),
+                            _ => Vec::new(),
+                        };
                         *existing = message;
+                        for (index, state) in carousel_states.into_iter().enumerate() {
+                            if let (Some(state), Some(media)) =
+                                (state, existing.content.media_at_mut(Some(index)))
+                            {
+                                media.state = state;
+                            }
+                        }
                         if let (Some(state), Some(media)) = (state, existing.content.media_mut()) {
                             media.state = state;
                         }
@@ -1224,10 +1254,11 @@ impl App {
                     }
                 }
                 Event::Media {
+                    card,
                     chat,
                     message,
                     result,
-                } => self.handle_media(&chat, &message, result),
+                } => self.handle_media(&chat, &message, card, result),
                 Event::Syncing(syncing) => {
                     if self.syncing && !syncing {
                         self.toast("History loaded");
@@ -1325,6 +1356,7 @@ impl App {
             }
             LinkStatus::LoggedOut => {
                 self.poll_voting.clear();
+                self.interactive_sending.clear();
                 self.poll_creating = false;
                 self.poll_draft = Default::default();
                 self.notifications.clear_all();
@@ -1401,7 +1433,13 @@ impl App {
         }
     }
 
-    fn handle_media(&mut self, chat: &str, id: &str, result: Result<PathBuf, String>) {
+    fn handle_media(
+        &mut self,
+        chat: &str,
+        id: &str,
+        card: Option<usize>,
+        result: Result<PathBuf, String>,
+    ) {
         let Some(message) = self
             .conversations
             .get_mut(chat)
@@ -1409,7 +1447,7 @@ impl App {
         else {
             return;
         };
-        let Some(media) = message.content.media_mut() else {
+        let Some(media) = message.content.media_at_mut(card) else {
             return;
         };
         match result {
@@ -2006,6 +2044,24 @@ impl App {
                 }
                 self.backend.send(Command::RefreshPoll { chat, message });
             }
+            Action::ReplyInteractive {
+                chat,
+                message,
+                button,
+                choice,
+            } => {
+                if self.link.is_connected() && self.chat(&chat).is_some_and(|chat| chat.can_send())
+                {
+                    self.backend.send(Command::ReplyInteractive {
+                        chat,
+                        message,
+                        button,
+                        choice,
+                    });
+                    self.scroll_to_bottom = true;
+                    self.at_bottom = true;
+                }
+            }
             Action::CreatePoll { chat, draft } => {
                 if !self.poll_creating {
                     match draft.validated() {
@@ -2040,16 +2096,24 @@ impl App {
             Action::MarkRead(chat) => self.mark_read(&chat),
             Action::LoadOlder(chat) => self.load_older(&chat),
             Action::FetchOlder(chat) => self.fetch_older(&chat),
-            Action::Download { chat, message } => {
+            Action::Download {
+                card,
+                chat,
+                message,
+            } => {
                 if let Some(media) = self
                     .conversations
                     .get_mut(&chat)
                     .and_then(|conversation| conversation.message_mut(&message))
-                    .and_then(|message| message.content.media_mut())
+                    .and_then(|message| message.content.media_at_mut(card))
                 {
                     media.state = MediaState::Downloading;
                 }
-                self.backend.send(Command::Download { chat, message });
+                self.backend.send(Command::Download {
+                    card,
+                    chat,
+                    message,
+                });
             }
             Action::OpenFile(path) => {
                 if crate::safety::can_open_attachment(&path) && path.is_file() {
@@ -2865,7 +2929,13 @@ impl App {
                     ended |= matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel);
                 }
             }
-            (sum, pointish, ended)
+            // Precision wheels can report points too. If egui has remapped
+            // their vertical input to horizontal (Shift, including the rest
+            // of an active gesture), keep that direction and native smoothing.
+            let remapped = sum.y != 0.0
+                && input.smooth_scroll_delta.x != 0.0
+                && input.smooth_scroll_delta.y == 0.0;
+            (sum, pointish && !remapped, ended)
         });
         let now = Instant::now();
         if raw != egui::Vec2::ZERO {
@@ -2911,6 +2981,14 @@ impl App {
                 self.glide = (slower.length() > GLIDE_STOP).then_some(slower);
             }
             ctx.request_repaint_after(Duration::from_millis(8));
+        }
+        // egui already maps Shift + mouse wheel to the horizontal axis. The
+        // raw wheel event still has a vertical delta, so applying the trackpad
+        // axis lock to it would discard the remapped input (including its
+        // smoothing tail). Discrete mouse-wheel input needs no gesture lock.
+        if !self.scroll_from_trackpad {
+            self.scroll_lock = None;
+            return;
         }
         let held = self
             .scroll_lock
@@ -3051,6 +3129,44 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn interactive_send_events_release_only_the_matching_message() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let ctx = egui::Context::default();
+        for id in ["first", "second"] {
+            events
+                .send(Event::InteractiveReplyState {
+                    chat: "chat".into(),
+                    message: id.into(),
+                    pending: true,
+                })
+                .unwrap();
+        }
+        app.background_frame(&ctx);
+        assert_eq!(app.interactive_sending.len(), 2);
+        events
+            .send(Event::InteractiveReplyState {
+                chat: "chat".into(),
+                message: "first".into(),
+                pending: false,
+            })
+            .unwrap();
+        app.background_frame(&ctx);
+        assert!(
+            !app.interactive_sending
+                .contains(&("chat".into(), "first".into()))
+        );
+        assert!(
+            app.interactive_sending
+                .contains(&("chat".into(), "second".into()))
+        );
+        events.send(Event::Link(LinkStatus::LoggedOut)).unwrap();
+        app.background_frame(&ctx);
+        assert!(app.interactive_sending.is_empty());
     }
 
     #[test]

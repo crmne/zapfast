@@ -542,10 +542,20 @@ impl Archive {
     }
 
     fn put_media_path(&self, chat: &str, id: &str, path: Option<&Path>) -> Result<Option<Message>> {
+        self.put_media_path_at(chat, id, None, path)
+    }
+
+    pub fn put_media_path_at(
+        &self,
+        chat: &str,
+        id: &str,
+        card: Option<usize>,
+        path: Option<&Path>,
+    ) -> Result<Option<Message>> {
         let Some(mut message) = self.message(chat, id)? else {
             return Ok(None);
         };
-        let Some(media) = message.content.media_mut() else {
+        let Some(media) = message.content.media_at_mut(card) else {
             return Ok(None);
         };
         media.path = path.map(Path::to_path_buf);
@@ -565,6 +575,24 @@ impl Archive {
                 row.get(0)?,
                 row.get(1)?,
                 std::path::PathBuf::from(row.get::<_, String>(2)?),
+            ))
+        })?;
+        rows.collect()
+    }
+
+    /// Includes each carousel attachment separately so moves and cache cleanup
+    /// never reuse one card's image for another.
+    pub fn carousel_media_paths(&self) -> Result<Vec<(String, String, usize, std::path::PathBuf)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT m.chat, m.id, c.key, json_extract(c.value, '$.image.path') AS image_path
+             FROM messages m, json_each(m.content, '$.card.carousel') c WHERE image_path IS NOT NULL",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get::<_, u32>(2)? as usize,
+                std::path::PathBuf::from(row.get::<_, String>(3)?),
             ))
         })?;
         rows.collect()
@@ -937,21 +965,20 @@ impl Archive {
         rows.collect()
     }
 
-    /// Legacy placeholders and flat interactive messages eligible for the card
-    /// upgrade. Deleted, edited, and already structured cards are left intact.
+    /// Interactive messages eligible for a derived presentation upgrade.
+    /// Deleted and edited rows are left intact; callers preserve local media paths.
     pub fn interactive_placeholders(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
         let mut statement = self.connection.prepare(
             "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND edited = 0 AND json_valid(content)
              AND ((json_extract(content, '$.kind') = 'unsupported'
                    AND json_extract(content, '$.what') = 'interactive message')
-                  OR (json_extract(content, '$.kind') = 'interactive'
-                      AND json_extract(content, '$.card') IS NULL))",
+                  OR json_extract(content, '$.kind') = 'interactive')",
         )?;
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect()
     }
 
-    /// Replaces protobuf-derived fields while preserving local file state.
+    /// Replaces protobuf-derived fields. Callers must retain local media paths.
     pub fn set_derived(
         &self,
         chat: &str,

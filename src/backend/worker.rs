@@ -226,6 +226,7 @@ pub async fn run(
         poll_decrypting: 0,
         poll_history: Default::default(),
         poll_sending: HashSet::new(),
+        interactive_sending: HashMap::new(),
     };
     worker.load_state();
     worker.backfill();
@@ -295,6 +296,7 @@ struct Worker {
     poll_decrypting: usize,
     poll_history: poll_history::Requests,
     poll_sending: HashSet<(ChatId, String)>,
+    interactive_sending: HashMap<(ChatId, String), String>,
     dirs: AppDirs,
     events: std::sync::mpsc::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
@@ -571,7 +573,19 @@ impl Worker {
     /// repairs moved attachment paths or clears missing files for redownload.
     fn relocate_media(&mut self) {
         let dir = self.dirs.media_cache_dir();
-        let rows = match self.archive.media_paths() {
+        let rows = match self.archive.media_paths().and_then(|rows| {
+            let mut all: Vec<_> = rows
+                .into_iter()
+                .map(|(chat, id, path)| (chat, id, None, path))
+                .collect();
+            all.extend(
+                self.archive
+                    .carousel_media_paths()?
+                    .into_iter()
+                    .map(|(chat, id, card, path)| (chat, id, Some(card), path)),
+            );
+            Ok(all)
+        }) {
             Ok(rows) => rows,
             Err(error) => {
                 log::warn!("could not list attachments: {error}");
@@ -579,19 +593,27 @@ impl Worker {
             }
         };
         let (mut moved, mut forgotten) = (0, 0);
-        for (chat, id, path) in rows {
+        for (chat, id, card, path) in rows {
             if path.exists() {
                 continue;
             }
             let candidate = path.file_name().map(|name| dir.join(name));
             match candidate.filter(|candidate| candidate.exists()) {
                 Some(candidate) => {
-                    if self.archive.set_media_path(&chat, &id, &candidate).is_ok() {
+                    if self
+                        .archive
+                        .put_media_path_at(&chat, &id, card, Some(&candidate))
+                        .is_ok()
+                    {
                         moved += 1;
                     }
                 }
                 None => {
-                    if self.archive.clear_media_path(&chat, &id).is_ok() {
+                    if self
+                        .archive
+                        .put_media_path_at(&chat, &id, card, None)
+                        .is_ok()
+                    {
                         forgotten += 1;
                     }
                 }
@@ -1429,6 +1451,7 @@ impl Worker {
         self.presence_subscribed.clear();
         self.read_sync = ReadSync::default();
         self.poll_sending.clear();
+        self.interactive_sending.clear();
         self.poll_history = Default::default();
         self.pending_older.clear();
         self.pending_avatars.clear();
@@ -1740,6 +1763,17 @@ impl Worker {
         };
         let is_poll = matches!(row.content, Content::Poll { .. });
         self.remember_poll(&row, message, &info.source.sender.to_non_ad_string(), None);
+        // A new, normally delivered creation has no earlier votes to recover.
+        // Offline delivery, PDO recovery and replay of an archived poll do not
+        // establish that baseline: they may already have votes on the phone.
+        if is_poll
+            && !info.is_offline
+            && info.unavailable_request_id.is_none()
+            && matches!(self.archive.message(&chat, &row.id), Ok(None))
+            && let Err(error) = self.archive.mark_poll_history(&chat, &row.id)
+        {
+            log::warn!("could not store a live poll baseline: {error}");
+        }
         self.store_message(row, Some(message.encode_to_vec()), push_name.as_deref());
         if is_poll {
             self.pump_poll_votes();
@@ -2502,6 +2536,7 @@ impl Worker {
     async fn handle_command(&mut self, command: Command) {
         let destination = match &command {
             Command::SendText { chat, .. }
+            | Command::ReplyInteractive { chat, .. }
             | Command::SendVoice { chat, .. }
             | Command::SendFiles { chat, .. }
             | Command::SendImage { chat, .. }
@@ -2568,6 +2603,14 @@ impl Worker {
                 quoting,
                 mentions,
             } => self.send_text(chat, text, quoting, mentions),
+            Command::ReplyInteractive {
+                chat,
+                message,
+                button,
+                choice,
+            } => {
+                self.reply_interactive(chat, message, button, choice);
+            }
             Command::Forward {
                 from_chat,
                 message,
@@ -2627,7 +2670,11 @@ impl Worker {
                     let _ = self.archive.set_ephemeral(&chat, expiration, timestamp);
                 }
             }
-            Command::Download { chat, message } => self.download(chat, message),
+            Command::Download {
+                card,
+                chat,
+                message,
+            } => self.download_media(chat, message, card),
             Command::FetchAvatar { id, full } => self.fetch_avatar(id, full),
             Command::EditText {
                 chat,
@@ -3062,6 +3109,20 @@ impl Worker {
                 self.handle_failed_group(chat, permanent);
             }
             Command::Sent { chat, id, error } => {
+                let completed = self.interactive_sending.iter().find_map(
+                    |((pending_chat, source), pending_id)| {
+                        (pending_chat == &chat && pending_id == &id).then(|| source.clone())
+                    },
+                );
+                if let Some(message) = completed {
+                    self.interactive_sending
+                        .remove(&(chat.clone(), message.clone()));
+                    self.emit(Event::InteractiveReplyState {
+                        chat: chat.clone(),
+                        message,
+                        pending: false,
+                    });
+                }
                 if id.is_empty() {
                     // This is a command failure, not a failed message send.
                     if let Some(error) = error {
@@ -3082,12 +3143,18 @@ impl Worker {
                     self.emit(Event::Error(format!("Message not sent: {error}")));
                 }
             }
-            Command::Downloaded { chat, id, result } => {
+            Command::Downloaded {
+                card,
+                chat,
+                id,
+                result,
+            } => {
                 if let Ok(path) = &result {
-                    let _ = self.archive.set_media_path(&chat, &id, path);
+                    let _ = self.archive.put_media_path_at(&chat, &id, card, Some(path));
                 }
                 let for_picker = self.sticker_downloads.remove(&(chat.clone(), id.clone()));
                 self.emit(Event::Media {
+                    card,
                     chat,
                     message: id,
                     result,
@@ -3448,8 +3515,13 @@ impl Worker {
     }
 
     fn download(&mut self, chat: ChatId, id: String) {
+        self.download_media(chat, id, None);
+    }
+
+    fn download_media(&mut self, chat: ChatId, id: String, card: Option<usize>) {
         let Some(client) = self.client.clone() else {
             self.emit(Event::Media {
+                card,
                 chat,
                 message: id,
                 result: Err("Not connected to WhatsApp".to_owned()),
@@ -3459,6 +3531,7 @@ impl Worker {
         let raw = self.archive.raw(&chat, &id).ok().flatten();
         let Some(message) = raw.and_then(|raw| wa::Message::decode_from_slice(&raw).ok()) else {
             self.emit(Event::Media {
+                card,
                 chat,
                 message: id,
                 result: Err("Attachment download keys are missing".to_owned()),
@@ -3466,12 +3539,21 @@ impl Worker {
             return;
         };
         let original = message.get_base_message();
-        let base = match interactive::image(original) {
+        let base = match interactive::image_at(original, card) {
             Some(image) => wa::Message {
                 image_message: MessageField::some(image.clone()),
                 ..Default::default()
             },
-            None => original.clone(),
+            None if card.is_none() => original.clone(),
+            None => {
+                self.emit(Event::Media {
+                    card,
+                    chat,
+                    message: id,
+                    result: Err("This card has no downloadable image".into()),
+                });
+                return;
+            }
         };
         let (downloadable, mime, file_name): (Box<dyn Downloadable>, String, Option<String>) =
             if let Some(image) = base.image_message.as_option() {
@@ -3510,6 +3592,7 @@ impl Worker {
                 )
             } else {
                 self.emit(Event::Media {
+                    card,
                     chat,
                     message: id,
                     result: Err("This message has no downloadable file".to_owned()),
@@ -3588,7 +3671,9 @@ impl Worker {
         tokio::spawn(async move {
             let keep = |bytes: Vec<u8>| {
                 let dir = dir.clone();
-                let path = media_path(&dir, &chat, &id, &mime, file_name.as_deref());
+                let cache_id =
+                    card.map_or_else(|| id.clone(), |index| format!("{id}-card-{index}"));
+                let path = media_path(&dir, &chat, &cache_id, &mime, file_name.as_deref());
                 async move {
                     tokio::fs::create_dir_all(&dir)
                         .await
@@ -3637,7 +3722,12 @@ impl Worker {
                     }
                 }
             };
-            let _ = commands.send(Command::Downloaded { chat, id, result });
+            let _ = commands.send(Command::Downloaded {
+                card,
+                chat,
+                id,
+                result,
+            });
         });
     }
 
@@ -6128,6 +6218,7 @@ mod receipt_tests {
             poll_decrypting: 0,
             poll_history: Default::default(),
             poll_sending: HashSet::new(),
+            interactive_sending: HashMap::new(),
         };
         (worker, events_rx, inbox, wa_events)
     }

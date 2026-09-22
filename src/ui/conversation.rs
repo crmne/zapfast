@@ -1159,6 +1159,7 @@ struct View<'a> {
     auto_download: bool,
     connected: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
+    interactive_pending: &'a HashSet<(ChatId, String)>,
     /// Show avatars for all incoming messages, not only groups.
     pictures: bool,
     anchor: Option<&'a str>,
@@ -1203,6 +1204,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         auto_download: app.settings.auto_download,
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
+        interactive_pending: &app.interactive_sending,
         pictures: app.settings.show_sender_pictures,
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
@@ -1523,7 +1525,9 @@ fn bubble(
 ) -> Option<egui::Response> {
     let own = message.from_me;
     let with_avatar = !own && (view.chat.is_group() || view.pictures);
-    let max_width = ((ui.available_width() * 0.72).min(560.0)
+    let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
+    let max_width = ((ui.available_width() * if carousel { 0.95 } else { 0.72 })
+        .min(if carousel { 920.0 } else { 560.0 })
         - if with_avatar {
             SENDER_AVATAR + 8.0
         } else {
@@ -1781,7 +1785,8 @@ fn bubble_frame(
     let palette = view.palette;
     let own = message.from_me;
     // Draw stickers without a bubble.
-    let fill = if matches!(message.content, Content::Sticker { .. }) {
+    let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
+    let fill = if carousel || matches!(message.content, Content::Sticker { .. }) {
         Color32::TRANSPARENT
     } else if own {
         palette.bubble_out
@@ -1863,11 +1868,20 @@ fn bubble_frame(
                 None => content(ui, view, message, cap, reserve, actions),
             };
             footer(ui, &palette, message, slot);
+            if matches!(message.content, Content::Poll { .. }) {
+                super::polls::results_button(
+                    ui,
+                    &palette,
+                    message,
+                    settled.unwrap_or(cap),
+                    actions,
+                );
+            }
             if let Content::Interactive {
                 card: Some(card), ..
             } = &message.content
             {
-                interactive_buttons(ui, &palette, message, card, settled.unwrap_or(cap), actions);
+                interactive_buttons(ui, view, message, card, settled.unwrap_or(cap), actions);
             }
         });
     ui.ctx()
@@ -1929,9 +1943,23 @@ fn bubble_frame(
 
 /// Minimum shared width for cards inside message bubbles.
 const CARD_WIDTH: f32 = 320.0;
+const CAROUSEL_CARD_WIDTH: f32 = 280.0;
+const CAROUSEL_GAP: f32 = 8.0;
 
 /// Returns the shared card width, bounded by [`CARD_WIDTH`] and `cap`.
 fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
+    if let Content::Interactive {
+        card: Some(card), ..
+    } = &message.content
+        && !card.carousel.is_empty()
+    {
+        // Keep short carousels, their heading and their timestamp together.
+        // Wider strips still occupy the cap and scroll horizontally.
+        let count = card.carousel.len();
+        let cards = count as f32 * (CAROUSEL_CARD_WIDTH + 20.0);
+        let gaps = count.saturating_sub(1) as f32 * CAROUSEL_GAP;
+        return Some((cards + gaps).min(cap));
+    }
     if let Content::Interactive {
         card: Some(card), ..
     } = &message.content
@@ -2387,6 +2415,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             None => {
                 if widgets::menu_item(ui, &palette, Some(Icon::Download), "Download") {
                     actions.push(Action::Download {
+                        card: None,
                         chat: chat.clone(),
                         message: message.id.clone(),
                     });
@@ -2488,6 +2517,10 @@ fn content(
                 let span = message.quoted.is_some().then_some(width);
                 return rich_body(ui, view, message, text, width, Some(reserve), span, actions);
             };
+            if !card.carousel.is_empty() {
+                carousel(ui, view, message, card, width, actions);
+                return None;
+            }
             if let Some(image) = &card.image {
                 picture(ui, view, message, image, width, None, actions);
                 ui.add_space(4.0);
@@ -2723,20 +2756,330 @@ fn content(
     }
 }
 
-/// Full-width action rows below the message timestamp, matching business cards.
-/// Unavailable replies stay visibly distinct from links that work on this device.
-fn interactive_buttons(
+/// Horizontal, independently cached cards with overlaid previous/next controls.
+/// Keep a partial next card visible and preserve native wheel/touchpad scrolling.
+fn carousel(
     ui: &mut egui::Ui,
-    palette: &theme::Palette,
+    view: &View<'_>,
     message: &Message,
     card: &crate::model::InteractiveCard,
     width: f32,
     actions: &mut Vec<Action>,
 ) {
+    if !card.body.is_empty() {
+        rich_body(
+            ui,
+            view,
+            message,
+            &card.body,
+            width,
+            None,
+            Some(width),
+            actions,
+        );
+        ui.add_space(4.0);
+    }
+    // Reserve a glimpse of the next card only when there is another card.
+    let inset = if card.carousel.len() > 1 { 36.0 } else { 20.0 };
+    let card_width = CAROUSEL_CARD_WIDTH.min((width - inset).max(140.0));
+    let id = bubble_id(&message.chat, &message.id);
+    for direction in [-1, 1] {
+        ui.ctx().data_mut(|data| {
+            data.remove::<Rect>(id.with(("carousel-arrow", direction)));
+        });
+    }
+    let output = egui::ScrollArea::horizontal()
+        .id_salt(("carousel", &message.chat, &message.id))
+        .max_width(width)
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .auto_shrink([false, true])
+        .show_viewport(ui, |ui, viewport| {
+            let strip = ui
+                .with_layout(Layout::left_to_right(Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.x = CAROUSEL_GAP;
+                    for (index, child) in card.carousel.iter().enumerate() {
+                        let mut row = message.clone();
+                        row.id = format!("{}-card-{index}", message.id);
+                        row.thumbnail = child.thumbnail.clone();
+                        row.content = Content::Interactive {
+                            text: child.body.clone(),
+                            card: None,
+                        };
+                        ui.push_id(("carousel-card", index), |ui| {
+                            let response = Frame::new()
+                                .fill(if message.from_me {
+                                    view.palette.bubble_out
+                                } else {
+                                    view.palette.bubble_in
+                                })
+                                .corner_radius(10)
+                                .inner_margin(Margin {
+                                    left: 10,
+                                    right: 10,
+                                    top: 6,
+                                    bottom: 5,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_width(card_width);
+                                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                        ui.set_width(card_width);
+                                        if child.image.is_some() {
+                                            carousel_picture(
+                                                ui, view, message, index, child, card_width,
+                                                actions,
+                                            );
+                                        }
+                                        if !child.body.is_empty() {
+                                            rich_body(
+                                                ui,
+                                                view,
+                                                &row,
+                                                &child.body,
+                                                card_width,
+                                                None,
+                                                Some(card_width),
+                                                actions,
+                                            );
+                                        }
+                                        interactive_buttons(
+                                            ui, view, &row, child, card_width, actions,
+                                        );
+                                    });
+                                });
+                            ui.ctx().data_mut(|data| {
+                                data.insert_temp(
+                                    bubble_id(&message.chat, &message.id)
+                                        .with(("carousel-card", index)),
+                                    response.response.rect,
+                                )
+                            });
+                        });
+                    }
+                })
+                .response
+                .rect;
+            let limit = (strip.width() - viewport.width()).max(0.0);
+            let visible = Rect::from_min_size(
+                pos2(strip.left() + viewport.left(), strip.top()),
+                vec2(viewport.width(), strip.height()),
+            );
+            if limit > 1.0 {
+                for direction in [-1, 1] {
+                    let available = if direction < 0 {
+                        viewport.left() > 1.0
+                    } else {
+                        viewport.left() < limit - 1.0
+                    };
+                    if !available {
+                        continue;
+                    }
+                    let x = if direction < 0 {
+                        visible.left() + 26.0
+                    } else {
+                        visible.right() - 26.0
+                    };
+                    let rect =
+                        Rect::from_center_size(pos2(x, visible.center().y), Vec2::splat(40.0));
+                    let arrow = carousel_arrow(
+                        ui,
+                        &view.palette,
+                        rect,
+                        id.with(("carousel-arrow", direction)),
+                        direction < 0,
+                    );
+                    if arrow.clicked() {
+                        let step = card_width + 20.0 + CAROUSEL_GAP;
+                        let target = (viewport.left() + direction as f32 * step).clamp(0.0, limit);
+                        // Issue this inside the horizontal ScrollArea so the
+                        // conversation's vertical scroll cannot consume it.
+                        ui.scroll_with_delta(vec2(viewport.left() - target, 0.0));
+                    }
+                }
+            }
+            visible
+        });
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id.with("carousel-viewport"), output.inner));
+}
+
+fn carousel_arrow(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    rect: Rect,
+    id: egui::Id,
+    previous: bool,
+) -> egui::Response {
+    let label = if previous {
+        "Previous card"
+    } else {
+        "Next card"
+    };
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    ui.ctx().data_mut(|data| data.insert_temp(id, rect));
+    theme::reveal_focus(&response);
+    if ui.is_rect_visible(rect) {
+        let fill = if response.hovered() || response.has_focus() {
+            palette.surface_hover
+        } else {
+            palette.overlay
+        };
+        ui.painter()
+            .circle_filled(rect.center() + vec2(0.0, 2.0), 21.0, palette.shadow);
+        ui.painter().circle_filled(rect.center(), 20.0, fill);
+        ui.painter().circle_stroke(
+            rect.center(),
+            19.5,
+            Stroke::new(
+                1.0,
+                if response.has_focus() {
+                    palette.link
+                } else {
+                    palette.outline
+                },
+            ),
+        );
+        theme::paint_icon(
+            ui,
+            if previous {
+                Icon::ChevronLeft
+            } else {
+                Icon::ChevronRight
+            },
+            rect,
+            if response.is_pointer_button_down_on() {
+                21.0
+            } else {
+                23.0
+            },
+            palette.text,
+        );
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(label)
+}
+
+/// A carousel uses a short image preview; opening it shows the full picture.
+fn carousel_picture(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    index: usize,
+    card: &crate::model::InteractiveCard,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    let Some(media) = &card.image else { return };
+    let size = vec2(width, width * 0.56);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let visible = ui.is_rect_visible(rect);
+    if visible {
+        ui.painter().rect_filled(rect, 6.0, view.palette.surface);
+        let uri = media.path.as_ref().map(|path| file_uri(path)).or_else(|| {
+            card.thumbnail.as_deref().map(|bytes| {
+                thumbnail_uri(
+                    ui.ctx(),
+                    &message.chat,
+                    &format!("{}-card-{index}", message.id),
+                    bytes,
+                )
+            })
+        });
+        if let Some(uri) = uri {
+            let image = egui::Image::new(uri);
+            let dimensions = match image.load_for_size(ui.ctx(), size) {
+                Ok(egui::load::TexturePoll::Ready { texture }) => texture.size,
+                _ => vec2(
+                    media.width.unwrap_or(16) as f32,
+                    media.height.unwrap_or(9) as f32,
+                ),
+            };
+            let ratio = dimensions.x / dimensions.y.max(1.0);
+            let target = size.x / size.y.max(1.0);
+            let uv_size = if ratio > target {
+                vec2(target / ratio, 1.0)
+            } else {
+                vec2(1.0, ratio / target)
+            };
+            image
+                .uv(Rect::from_center_size(pos2(0.5, 0.5), uv_size))
+                .fit_to_exact_size(size)
+                .corner_radius(6.0)
+                .paint_at(ui, rect);
+        }
+        if media.path.is_none() {
+            let disc = Rect::from_center_size(rect.center(), Vec2::splat(42.0));
+            ui.painter()
+                .circle_filled(disc.center(), 21.0, Color32::from_black_alpha(130));
+            match &media.state {
+                MediaState::Downloading => theme::paint_spinner(ui, disc, 20.0, Color32::WHITE),
+                MediaState::Failed(_) => {
+                    theme::paint_icon(ui, Icon::CircleAlert, disc, 20.0, Color32::WHITE)
+                }
+                MediaState::Idle => {
+                    theme::paint_icon(ui, Icon::Download, disc, 20.0, Color32::WHITE)
+                }
+            }
+        }
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let clicked = response.clicked();
+    if let MediaState::Failed(error) = &media.state {
+        response.on_hover_text(format!("{error} · Click to retry"));
+    }
+    if let Some(path) = &media.path {
+        if clicked {
+            actions.push(Action::OpenFile(path.clone()));
+        }
+    } else if !matches!(media.state, MediaState::Downloading)
+        && (clicked
+            || (visible
+                && view.auto_download
+                && media.size <= AUTO_DOWNLOAD_LIMIT
+                && matches!(media.state, MediaState::Idle)))
+    {
+        actions.push(Action::Download {
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+            card: Some(index),
+        });
+    }
+}
+
+/// Full-width action rows below the message timestamp, matching business cards.
+/// Show only executable actions as active, with the same keyboard path as clicks.
+fn interactive_buttons(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    card: &crate::model::InteractiveCard,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    use crate::model::InteractiveAction;
+    let palette = &view.palette;
     let spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;
     for (index, button) in card.buttons.iter().enumerate() {
-        let enabled = button.url.is_some();
+        let sends = matches!(
+            button.action,
+            InteractiveAction::Reply | InteractiveAction::Select(_)
+        );
+        let enabled = button.url.is_some()
+            || match &button.action {
+                InteractiveAction::Copy(_) => true,
+                InteractiveAction::Reply | InteractiveAction::Select(_) => {
+                    view.connected
+                        && view.chat.can_send()
+                        && !message.from_me
+                        && !message.edited
+                        && !view
+                            .interactive_pending
+                            .contains(&(message.chat.clone(), message.id.clone()))
+                }
+                InteractiveAction::Unavailable => false,
+            };
         // Muted/link colours target incoming surfaces; outgoing tinted bubbles
         // need the main foreground to keep small labels readable in both themes.
         let color = if message.from_me {
@@ -2746,10 +3089,15 @@ fn interactive_buttons(
         } else {
             palette.secondary
         };
-        let icon = if enabled {
-            Icon::ExternalLink
+        let icon = if button.url.is_some() {
+            Some(Icon::ExternalLink)
         } else {
-            Icon::Smartphone
+            match button.action {
+                InteractiveAction::Reply => None,
+                InteractiveAction::Select(_) => Some(Icon::ListChecks),
+                InteractiveAction::Copy(_) => Some(Icon::Copy),
+                InteractiveAction::Unavailable => Some(Icon::Smartphone),
+            }
         };
         let line = widgets::line(
             ui,
@@ -2768,8 +3116,20 @@ fn interactive_buttons(
             vec2(width, (line.size().y + 22.0).max(44.0)),
             Sense::hover(),
         );
+        // Action rows belong to the card itself, including its side padding.
+        // The final row follows the bubble's bottom corners and margin.
+        let last = index + 1 == card.buttons.len() && !card.needs_phone;
+        let row_rect = Rect::from_min_max(
+            rect.min - vec2(10.0, 0.0),
+            rect.max + vec2(10.0, if last { 5.0 } else { 0.0 }),
+        );
+        let corners = CornerRadius {
+            sw: if last { 10 } else { 0 },
+            se: if last { 10 } else { 0 },
+            ..CornerRadius::ZERO
+        };
         let response = ui.interact(
-            rect,
+            row_rect,
             bubble_id(&message.chat, &message.id).with(("interactive-action", index)),
             sense,
         );
@@ -2779,22 +3139,28 @@ fn interactive_buttons(
         ui.ctx().data_mut(|data| {
             data.insert_temp(
                 bubble_id(&message.chat, &message.id).with(("interactive-button", index)),
-                rect,
+                row_rect,
             )
         });
         if ui.is_rect_visible(rect) {
+            if enabled && (response.hovered() || response.has_focus()) {
+                ui.painter().rect_filled(
+                    row_rect,
+                    corners,
+                    palette
+                        .text
+                        .gamma_multiply(if response.is_pointer_button_down_on() {
+                            0.08
+                        } else {
+                            0.04
+                        }),
+                );
+            }
             ui.painter().hline(
-                rect.left() - 10.0..=rect.right() + 10.0,
+                row_rect.x_range(),
                 rect.top(),
                 Stroke::new(1.0, palette.secondary.gamma_multiply(0.2)),
             );
-            if enabled && (response.hovered() || response.has_focus()) {
-                ui.painter().rect_filled(
-                    rect.shrink2(vec2(0.0, 1.0)),
-                    4.0,
-                    palette.link.gamma_multiply(0.10),
-                );
-            }
             if response.has_focus() {
                 ui.painter().rect_stroke(
                     rect.shrink(2.0),
@@ -2803,22 +3169,51 @@ fn interactive_buttons(
                     egui::StrokeKind::Inside,
                 );
             }
-            let content_width = line.size().x + 22.0;
+            let inset = if icon.is_some() { 22.0 } else { 0.0 };
+            let content_width = line.size().x + inset;
             let left = rect.center().x - content_width / 2.0;
-            theme::paint_icon(
-                ui,
-                icon,
-                Rect::from_center_size(egui::pos2(left + 7.0, rect.center().y), Vec2::splat(14.0)),
-                14.0,
-                color,
-            );
+            if let Some(icon) = icon {
+                theme::paint_icon(
+                    ui,
+                    icon,
+                    Rect::from_center_size(
+                        egui::pos2(left + 7.0, rect.center().y),
+                        Vec2::splat(14.0),
+                    ),
+                    14.0,
+                    color,
+                );
+            }
             line.paint(
                 ui,
-                egui::pos2(left + 22.0, rect.center().y - line.size().y / 2.0),
+                egui::pos2(left + inset, rect.center().y - line.size().y / 2.0),
                 color,
             );
         }
-        if let Some(url) = &button.url {
+        let reply = |choice| Action::ReplyInteractive {
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+            button: index,
+            choice,
+        };
+        if !enabled {
+            let reason = if sends
+                && view
+                    .interactive_pending
+                    .contains(&(message.chat.clone(), message.id.clone()))
+            {
+                "Sending reply…"
+            } else if sends && !view.connected {
+                "Connect to WhatsApp to reply"
+            } else if sends && !view.chat.can_send() {
+                "This conversation is read-only"
+            } else if sends && message.from_me {
+                "Reply options are for the recipient"
+            } else {
+                "Open this option in WhatsApp Web or on your phone"
+            };
+            response.on_hover_text(format!("{}\n{reason}", button.label));
+        } else if let Some(url) = &button.url {
             if response
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(format!("{}\n{url}", button.label))
@@ -2827,14 +3222,39 @@ fn interactive_buttons(
                 actions.push(Action::OpenUrl(url.clone()));
             }
         } else {
-            response.on_hover_text(format!("{}\nUse this option on your phone", button.label));
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            match &button.action {
+                InteractiveAction::Reply => {
+                    if response
+                        .on_hover_text(format!("Send reply: {}", button.label))
+                        .clicked()
+                    {
+                        actions.push(reply(None));
+                    }
+                }
+                InteractiveAction::Copy(code) => {
+                    if response.on_hover_text("Copy code").clicked() {
+                        actions.push(Action::CopyText(code.clone()));
+                    }
+                }
+                InteractiveAction::Select(_) => {
+                    if response.clicked() {
+                        actions.push(Action::ShowDialog(crate::model::Dialog::InteractiveList {
+                            chat: message.chat.clone(),
+                            message: message.id.clone(),
+                            button: index,
+                        }));
+                    }
+                }
+                InteractiveAction::Unavailable => {}
+            }
         }
     }
     if card.needs_phone {
         ui.add_space(6.0);
         widgets::rich_text(
             ui,
-            "More content on your phone",
+            "More content in WhatsApp Web or on your phone",
             theme::regular(12.0),
             palette.secondary,
         );
@@ -3264,6 +3684,7 @@ fn picture(
         && (sticker.is_some() || (view.auto_download && media.size <= AUTO_DOWNLOAD_LIMIT));
     if wants || auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
@@ -3384,6 +3805,7 @@ fn video(
         && media.size <= AUTO_DOWNLOAD_LIMIT;
     if auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
@@ -3395,6 +3817,7 @@ fn video(
             Some(path) => actions.push(Action::OpenFile(path.clone())),
             None if !matches!(media.state, MediaState::Downloading) => {
                 actions.push(Action::Download {
+                    card: None,
                     chat: view.chat.id.clone(),
                     message: message.id.clone(),
                 })
@@ -3479,6 +3902,7 @@ fn attachment(
         && media.size <= AUTO_DOWNLOAD_LIMIT;
     if auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
@@ -3501,6 +3925,7 @@ fn attachment(
             Some(path) => actions.push(Action::OpenFile(path.clone())),
             None if !matches!(media.state, MediaState::Downloading) => {
                 actions.push(Action::Download {
+                    card: None,
                     chat: view.chat.id.clone(),
                     message: message.id.clone(),
                 })
@@ -3572,6 +3997,7 @@ fn voice_player(
                     .clicked()
                     {
                         actions.push(Action::Download {
+                            card: None,
                             chat: view.chat.id.clone(),
                             message: message.id.clone(),
                         });
@@ -3739,6 +4165,7 @@ fn voice_player(
         && media.size <= AUTO_DOWNLOAD_LIMIT;
     if auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
