@@ -356,7 +356,36 @@ mod tests {
     use super::*;
     use egui::text::{FontData, FontDefinitions, FontFamily, LayoutJob, TextFormat};
     use egui::{Color32, FontId, Pos2, vec2};
-    use std::sync::Arc;
+    use std::{path::PathBuf, sync::Arc};
+
+    const RTL_FONT_CANDIDATES: &[&str] = &[
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\tahoma.ttf",
+    ];
+
+    fn rtl_font() -> PathBuf {
+        std::env::var_os("ZAPFAST_TEST_RTL_FONT")
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+            .or_else(|| {
+                RTL_FONT_CANDIDATES
+                    .iter()
+                    .map(PathBuf::from)
+                    .find(|path| path.is_file())
+            })
+            .expect(
+                "set ZAPFAST_TEST_RTL_FONT or install a Hebrew/Arabic-capable sans \
+                 (DejaVu, Liberation, Arial) for RTL layout tests",
+            )
+    }
 
     #[test]
     fn first_strong_direction_uses_unicode_bidi_classes() {
@@ -424,32 +453,15 @@ mod tests {
     }
 
     fn layout_raw(text: &str) -> Galley {
-        const CANDIDATES: &[&str] = &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Arial Unicode.ttf",
-            r"C:\Windows\Fonts\arial.ttf",
-            r"C:\Windows\Fonts\tahoma.ttf",
-        ];
-        let path = CANDIDATES
-            .iter()
-            .copied()
-            .find(|path| std::path::Path::new(path).is_file())
-            .expect(
-                "install a Hebrew/Arabic-capable sans (DejaVu, Liberation, Arial) for RTL layout tests",
-            );
+        let path = rtl_font();
         let ctx = egui::Context::default();
         let mut fonts = FontDefinitions::default();
         let inter = include_bytes!("../assets/fonts/InterVariable.ttf");
         fonts
             .font_data
             .insert("inter".into(), Arc::new(FontData::from_static(inter)));
-        let face = std::fs::read(path).unwrap_or_else(|error| panic!("read {path}: {error}"));
+        let face =
+            std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
         fonts
             .font_data
             .insert("rtl-fallback".into(), Arc::new(FontData::from_owned(face)));
@@ -796,17 +808,7 @@ mod tests {
         fonts
             .font_data
             .insert("inter".into(), Arc::new(FontData::from_static(inter)));
-        let path = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            r"C:\Windows\Fonts\arial.ttf",
-        ]
-        .into_iter()
-        .find(|path| std::path::Path::new(path).is_file())
-        .expect("RTL-capable sans for decoration test");
-        let face = std::fs::read(path).unwrap();
+        let face = std::fs::read(rtl_font()).unwrap();
         fonts
             .font_data
             .insert("rtl-fallback".into(), Arc::new(FontData::from_owned(face)));

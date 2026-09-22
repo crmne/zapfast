@@ -22,6 +22,7 @@ struct Sample {
     pinned: bool,
     muted: bool,
     archived: bool,
+    locked: bool,
     lines: &'static [(bool, &'static str)],
 }
 
@@ -60,6 +61,7 @@ const SAMPLES: &[Sample] = &[
         pinned: true,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (false, "Did the analytical engine build finish?"),
             (true, "Yes! It compiles on stable now, no nightly needed."),
@@ -81,6 +83,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: true,
         archived: false,
+        locked: false,
         lines: &[
             (false, "Anyone at the meetup tonight?"),
             (true, "I'll be there around 19:00"),
@@ -96,6 +99,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (true, "Found the bug. It was a moth."),
             (false, "Literally?"),
@@ -110,6 +114,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (false, "Talk is cheap. Show me the code."),
             (true, "Pushed 😌"),
@@ -123,6 +128,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (false, "Dinner on Sunday at 13:00?"),
             (true, "We'll be there"),
@@ -137,6 +143,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (false, "The landing software held up."),
             (true, "Never doubted it."),
@@ -150,6 +157,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: false,
         lines: &[
             (
                 false,
@@ -169,6 +177,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: false,
+        locked: true,
         lines: &[(false, "הכלב הגדול קפץ"), (true, "OK הכלב end")],
     },
     Sample {
@@ -179,6 +188,7 @@ const SAMPLES: &[Sample] = &[
         pinned: false,
         muted: false,
         archived: true,
+        locked: false,
         lines: &[(false, "Reminder: your appointment is on Tuesday at 9:30.")],
     },
 ];
@@ -445,6 +455,7 @@ pub fn populate(app: &mut App) {
         };
         chat.muted_until = sample.muted.then_some(0);
         chat.archived = sample.archived;
+        chat.locked = sample.locked;
         let mut conversation = Conversation {
             complete: true,
             requested: true,
@@ -1965,6 +1976,11 @@ mod tests {
     fn a_chat_clicked_in_the_unread_list_stays_there_once_read() {
         use crate::model::ChatFilter;
         let mut app = app();
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.name == "Grace Hopper")
+            .expect("sample chat")
+            .unread = 1;
         app.chat_filter = ChatFilter::Unread;
         let ctx = egui::Context::default();
         app.attach(&ctx);
@@ -2687,6 +2703,158 @@ mod tests {
         );
         assert!(app.editing.is_none());
         assert!(app.composer.is_empty());
+    }
+
+    /// Runs one frame of the given height with these input events.
+    fn frame_sized(app: &mut App, ctx: &egui::Context, height: f32, events: Vec<egui::Event>) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, height),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+    }
+
+    fn tab() -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    fn ring(ctx: &egui::Context) -> Option<egui::Rect> {
+        ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::focus_ring_id()))
+    }
+
+    /// Tab outlines the focused control; a click hides the outline again.
+    #[test]
+    fn keyboard_focus_is_outlined_until_the_pointer_is_used() {
+        let mut app = app();
+        apply_flags(&mut app, Some("settings"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert_eq!(ring(&ctx), None, "no outline before any key");
+        for _ in 0..3 {
+            frame_sized(&mut app, &ctx, 780.0, tab());
+            frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        }
+        let focused = ctx
+            .memory(|memory| memory.focused())
+            .and_then(|id| ctx.read_response(id))
+            .expect("Tab focuses a control");
+        let outline = ring(&ctx).expect("the focused control is outlined");
+        assert!(outline.contains_rect(focused.interact_rect));
+
+        let pos = egui::pos2(900.0, 40.0);
+        frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert_eq!(ring(&ctx), None, "the pointer hides the outline");
+    }
+
+    /// The profile picture in the chat-list header is the first control Tab
+    /// reaches outside macOS. Registered as hover first and made clickable
+    /// afterwards, it dropped focus on every frame and Tab went nowhere.
+    #[test]
+    fn a_clickable_avatar_keeps_keyboard_focus() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let palette = crate::theme::Palette::dark();
+        let mut id = None;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let response = crate::ui::widgets::clickable_avatar(
+                    ui,
+                    &palette,
+                    "Fixture",
+                    "1@s.whatsapp.net",
+                    34.0,
+                    None,
+                    "Your profile and settings",
+                );
+                if id.is_none() {
+                    response.request_focus();
+                    id = Some(response.id);
+                }
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(ctx.memory(|memory| memory.focused()), id);
+    }
+
+    /// egui does not scroll to focus by itself; Tab must not lead the focus
+    /// out of sight in a long page.
+    #[test]
+    fn tab_scrolls_the_focused_control_into_view() {
+        let mut app = app();
+        apply_flags(&mut app, Some("settings"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let height = 420.0;
+        for _ in 0..3 {
+            frame_sized(&mut app, &ctx, height, Vec::new());
+        }
+        // The chat list only lays out rows it shows.
+        let row = |ctx: &egui::Context, id: &str| {
+            ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::chat_row_id(id)))
+        };
+        let ids: Vec<String> = app.chats.iter().map(|chat| chat.id.clone()).collect();
+        let hidden: Vec<&String> = ids
+            .iter()
+            .filter(|id| row(&ctx, id).is_none_or(|rect| rect.top() >= height))
+            .collect();
+        assert!(
+            !hidden.is_empty(),
+            "the window is short enough to hide rows"
+        );
+        let mut reached_hidden = false;
+        for _ in 0..30 {
+            frame_sized(&mut app, &ctx, height, tab());
+            // egui moves focus at the end of the Tab frame; the next frame
+            // scrolls, and egui asks for the frames that show the result.
+            for _ in 0..3 {
+                frame_sized(&mut app, &ctx, height, Vec::new());
+            }
+            let Some(focused) = ctx
+                .memory(|memory| memory.focused())
+                .and_then(|id| ctx.read_response(id))
+            else {
+                continue;
+            };
+            assert_eq!(
+                focused.interact_rect, focused.rect,
+                "the focused control is fully visible"
+            );
+            reached_hidden |= hidden
+                .iter()
+                .any(|id| row(&ctx, id).is_some_and(|rect| rect == focused.rect));
+        }
+        assert!(reached_hidden, "Tab reached chats that were out of view");
     }
 
     #[test]

@@ -740,6 +740,7 @@ pub enum Action {
     FocusSearch,
     FocusComposer,
     HideShortcutHints,
+    DismissChatLockHint,
     ScrollToBottom,
     /// Scrolls the open chat to a message.
     ScrollTo(String),
@@ -774,6 +775,8 @@ pub enum Action {
     CloseWindow,
     /// Mutes until Unix time, indefinitely with `Some(0)`, or unmutes with `None`.
     SetMuted(ChatId, Option<i64>),
+    /// Moves a chat into or out of the locked folder.
+    SetLocked(ChatId, bool),
     /// Sends pending attachments with the composer text as caption.
     SendPending {
         chat: ChatId,

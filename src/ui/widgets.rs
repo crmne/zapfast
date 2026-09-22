@@ -142,6 +142,30 @@ pub fn avatar(
     response
 }
 
+/// An avatar that acts as a button. It must be created clickable: first
+/// creating it for hover and then calling `interact` registers the same id
+/// twice, and the unfocusable first registration makes egui drop keyboard
+/// focus from it on every frame.
+pub fn clickable_avatar(
+    ui: &mut Ui,
+    palette: &Palette,
+    name: &str,
+    id: &str,
+    size: f32,
+    picture: Option<&Path>,
+    label: &str,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    if ui.is_rect_visible(rect) {
+        paint_avatar(ui, palette, rect, name, id, picture);
+    }
+    response
+}
+
 pub fn paint_avatar(
     ui: &Ui,
     palette: &Palette,
@@ -261,6 +285,7 @@ pub fn menu_item_enabled(
             Sense::hover()
         },
     );
+    theme::reveal_focus(&response);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled && ui.is_enabled(), label)
     });
@@ -544,6 +569,7 @@ pub fn filter_chip(
     let gap = 5.0;
     let width = text.size().x + number.as_ref().map_or(0.0, |number| gap + number.size().x);
     let (rect, response) = ui.allocate_exact_size(vec2(width + 22.0, 28.0), Sense::click());
+    theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
         let radius = rect.height() / 2.0;
         if selected {

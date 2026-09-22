@@ -56,6 +56,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   accessibility services. Custom buttons, chat rows, settings switches and
   message text include readable labels. Windows NVDA navigation still needs
   platform verification; keyboard and screen-reader support is not complete.
+  After Tab, the focused control is outlined and scrolled into view; using
+  the mouse hides the outline again.
 - **Safer desktop opening.** Links open only web pages or email addresses.
   Common documents and media open in their default apps; executable, script,
   and unrecognized attachment formats open their containing folder instead.
@@ -129,7 +131,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   system tray. Reopen it from the tray or by launching it again. Quit from the
   tray or with `Ctrl+Q`, or disable this behavior in Settings.
 - **Desktop notifications.** Get notifications with the chat picture when you
-  are away from the open chat. Muted chats do not notify you. Windows notifications
+  are away from the open chat. Muted chats do not notify you, and archived
+  chats stay quiet until you unarchive them. Windows notifications
   identify ZapFast as the sender and show chat pictures as small circular icons;
   installed and portable builds register this identity in the current user's registry.
   On Linux,
@@ -187,6 +190,16 @@ yay -S zapfast-bin      # the released build, ready made
 yay -S zapfast          # the release, built from source
 yay -S zapfast-git      # built from the latest commit
 ```
+
+With [Nix](https://nixos.org), install the package directly from its flake:
+
+```sh
+nix profile install github:crmne/zapfast
+```
+
+NixOS configurations can add the repository as a flake input and include
+`inputs.zapfast.packages.${pkgs.system}.default` in
+`environment.systemPackages`.
 
 Builds for every release are on the
 [releases page](https://github.com/crmne/zapfast/releases):
@@ -264,6 +277,10 @@ cargo install --path .
 zapfast
 ```
 
+With Nix, `nix develop` provides the pinned Rust toolchain and all native build
+dependencies. From the checkout, use `nix build .#zapfast` to build the package
+or `nix run .#zapfast` to run it.
+
 The desktop file and icon are in `packaging/`.
 
 `whatsapp-rust` is pinned to a Git commit because version 0.7.0 on crates.io
@@ -292,10 +309,15 @@ to your phone and linked devices.
 
 ### Locked chats
 
-Chats locked on your phone stay hidden from ZapFast's chat list, search,
-unread counts, forwarding destinations, and desktop notifications. Unlock a
-chat on your phone to show it here. Locking an open conversation closes it.
-ZapFast does not store a separate secret code or offer a desktop reveal flow.
+**Lock chat** in a chat's right-click menu moves the chat into a locked
+folder: it disappears from the chat list, search, and the unread badge, and
+its messages never raise a desktop notification. The lock state syncs
+with your phone and other linked devices.
+
+Set a **secret code for locked chats** in Settings, then type the code in the
+search field: a "Locked chats" entry appears below the search. Click it to
+open the folder; leaving it (back button, or changing the search) hides the
+locked chats again until you retype the code.
 
 On the first start after upgrading, chats wait for WhatsApp's lock-state
 recovery before appearing. Failed recovery retries while keeping chats hidden.

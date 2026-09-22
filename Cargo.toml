@@ -22,6 +22,8 @@ path = "src/main.rs"
 anyhow = "1"
 # Hashes saved stickers by content. Already included through wacore.
 sha2 = "0.11"
+# Already in the tree through rustls; used for the locked-chat code verifier.
+ring = "0.17"
 # Decrypts Signal sticker packs. All four crates are already included through
 # wacore at these versions.
 aes = "0.9"

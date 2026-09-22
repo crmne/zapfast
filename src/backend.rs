@@ -251,6 +251,8 @@ pub enum Command {
     },
     /// Syncs chat mute state. `Some(0)` is indefinite and `None` unmutes.
     SetMuted(ChatId, Option<i64>),
+    /// Locks or unlocks a chat (the locked folder).
+    SetLocked(ChatId, bool),
     /// Normalizes, encodes, and sends mono 48 kHz push-to-talk audio.
     SendVoice {
         chat: ChatId,

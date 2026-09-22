@@ -3215,6 +3215,18 @@ impl Worker {
                     .map_err(|error| error.to_string())
                 });
             }
+            Command::SetLocked(chat, locked) => {
+                let _ = self.archive.set_locked(&chat, locked);
+                self.emit_chat(&chat);
+                self.tell_phone(&chat, move |client, jid| async move {
+                    if locked {
+                        client.chat_actions().lock_chat(&jid).await
+                    } else {
+                        client.chat_actions().unlock_chat(&jid).await
+                    }
+                    .map_err(|error| error.to_string())
+                });
+            }
             Command::PairWithPhone(phone) => {
                 let Some(client) = self.client.clone() else {
                     self.emit(Event::Error("Not connected to WhatsApp yet".to_owned()));

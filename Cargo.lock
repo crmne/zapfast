@@ -7395,6 +7395,7 @@ dependencies = [
  "reqwest",
  "resvg",
  "rfd",
+ "ring",
  "rodio",
  "rusqlite",
  "serde",

@@ -639,7 +639,7 @@ mod tests {
                 version: "99.0.0".into(),
             };
             // Simulate a parent which exits after the helper starts watching it.
-            let mut parent = Command::new("/bin/sleep").arg("0.2").spawn().unwrap();
+            let mut parent = Command::new("sleep").arg("0.2").spawn().unwrap();
             let job = stage.join("handoff.json");
             serde_json::to_writer(
                 File::create(&job).unwrap(),
