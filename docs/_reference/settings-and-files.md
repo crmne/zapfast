@@ -48,6 +48,8 @@ Changes on the Settings page are saved to `settings.json` immediately:
   MiB when they enter view, or only when clicked. Visible stickers download
   automatically up to the same limit.
 - **Show sender pictures**: avatars next to group messages.
+- **12-hour time**: show timestamps such as `2:05 PM` instead of `14:05`.
+  Off by default. Message copy keeps its existing 24-hour timestamp format.
 - **Names from your address book**: use contact names everywhere. When off,
   prefer public profile names.
 - **Send read receipts**: the blue ticks others see.

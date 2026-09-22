@@ -273,6 +273,7 @@ mod tests {
         assert!(parsed.enter_sends);
         assert!(parsed.check_for_updates);
         assert!(!parsed.download_updates_automatically);
+        assert!(!parsed.use_12h);
     }
 
     #[test]
@@ -291,10 +292,16 @@ mod tests {
             zoom: 1.25,
             enter_sends: false,
             voice_speed: 1.5,
+            use_12h: true,
             ..Settings::default()
         };
         settings.save(&path).expect("saves");
         assert_eq!(Settings::load(&path), settings);
+        assert!(
+            serde_json::from_str::<Settings>(&std::fs::read_to_string(&path).expect("reads"))
+                .expect("parses")
+                .use_12h
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
