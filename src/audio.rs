@@ -50,15 +50,18 @@ impl Status {
     };
 }
 
-/// Playback speeds, in the order the speed button cycles them.
-pub const SPEEDS: [f32; 3] = [1.0, 1.5, 2.0];
+/// Playback speeds, in ascending order, matching the phone.
+pub const SPEEDS: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
 
-/// Label for a playback speed, like `1x` or `1.5x`.
+/// Label for a playback speed, like `1x`, `1.25x`, or `1.5x`.
 pub fn speed_label(speed: f32) -> String {
     if speed.fract() == 0.0 {
         format!("{}x", speed as i32)
     } else {
-        format!("{speed:.1}x")
+        // Keep both decimals for 1.25 and 1.75; drop the trailing zero on 1.5.
+        let text = format!("{speed:.2}");
+        let text = text.trim_end_matches('0').trim_end_matches('.');
+        format!("{text}x")
     }
 }
 
@@ -158,17 +161,6 @@ impl Player {
         self.loaded.as_ref().is_some_and(|loaded| {
             loaded.message == message && !loaded.done && loaded.factor != self.speed
         })
-    }
-
-    /// Cycles 1x, 1.5x, and 2x, wrapping back to 1x.
-    pub fn cycle_speed(&mut self) -> f32 {
-        let next = SPEEDS
-            .iter()
-            .copied()
-            .find(|&candidate| candidate > self.speed)
-            .unwrap_or(SPEEDS[0]);
-        self.set_speed(next);
-        self.speed
     }
 
     /// The samples that play at `speed` and the speed they represent: the
@@ -645,21 +637,24 @@ mod tests {
     #[test]
     fn speed_labels_match_the_button() {
         assert_eq!(speed_label(SPEEDS[0]), "1x");
-        assert_eq!(speed_label(1.5), "1.5x");
-        assert_eq!(speed_label(SPEEDS[2]), "2x");
+        assert_eq!(speed_label(SPEEDS[1]), "1.25x");
+        assert_eq!(speed_label(SPEEDS[2]), "1.5x");
+        assert_eq!(speed_label(SPEEDS[3]), "1.75x");
+        assert_eq!(speed_label(SPEEDS[4]), "2x");
     }
 
     #[test]
-    fn cycling_wraps_through_every_speed() {
+    fn setting_a_speed_clamps_to_the_supported_range() {
         let mut player = Player::new(Waker::default());
         assert_eq!(player.speed(), SPEEDS[0]);
-        assert_eq!(player.cycle_speed(), 1.5);
-        assert_eq!(player.cycle_speed(), 2.0);
-        assert_eq!(player.cycle_speed(), 1.0);
-        // A speed set by hand still cycles up to the next known one.
         player.set_speed(1.75);
-        assert_eq!(player.cycle_speed(), 2.0);
-        assert_eq!(player.speed(), 2.0);
+        assert_eq!(player.speed(), 1.75);
+        // Beyond the fastest speed clamps to it.
+        player.set_speed(4.0);
+        assert_eq!(player.speed(), SPEEDS[SPEEDS.len() - 1]);
+        // A non-finite speed plays at 1x.
+        player.set_speed(f32::NAN);
+        assert_eq!(player.speed(), SPEEDS[0]);
     }
 
     #[test]

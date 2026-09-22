@@ -2168,8 +2168,9 @@ impl App {
                     self.toast_error(error);
                 }
             }
-            Action::CycleVoiceSpeed => {
-                self.settings.voice_speed = self.player.cycle_speed();
+            Action::SetVoiceSpeed(speed) => {
+                self.player.set_speed(speed);
+                self.settings.voice_speed = speed;
                 self.mark_settings_dirty();
             }
             Action::StartRecording => {
