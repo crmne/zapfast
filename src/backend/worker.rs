@@ -63,6 +63,11 @@ const THUMBNAIL_SIDE: u32 = 96;
 /// Sticker download batch size for the picker.
 const STICKER_FETCH_LIMIT: usize = 40;
 const ATTACHMENT_LIMIT_ERROR: &str = "This attachment is larger than the 64 MiB download limit";
+/// A missing custom folder may be a disconnected mount; the download fails so
+/// it can be retried after reconnecting, instead of saving into a recreated
+/// local directory that the returning mount hides.
+const ATTACHMENT_FOLDER_UNAVAILABLE: &str =
+    "Attachment folder is unavailable. Reconnect it and retry";
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(120);
 
 async fn with_attachment_deadline<T>(
@@ -223,14 +228,30 @@ fn discard_attachment_staging(dir: &Path) {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with('.')
-            && name.ends_with(".part")
+        // Only this app's own staging names, never unrelated hidden .part
+        // files that happen to share a custom attachment folder.
+        if is_attachment_staging(&name)
             && entry.path().is_file()
             && let Err(_) = std::fs::remove_file(entry.path())
         {
             log::warn!("could not remove incomplete attachment");
         }
     }
+}
+
+/// Matches the exact staging names `temporary_attachment_path` generates,
+/// `.{file}.{16 hex digits}.part`.
+fn is_attachment_staging(name: &str) -> bool {
+    let Some(name) = name
+        .strip_prefix('.')
+        .and_then(|name| name.strip_suffix(".part"))
+    else {
+        return false;
+    };
+    let Some((file, random)) = name.rsplit_once('.') else {
+        return false;
+    };
+    !file.is_empty() && random.len() == 16 && random.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn account_allows_receipts(
@@ -3897,6 +3918,17 @@ impl Worker {
         }
     }
 
+    /// A configured custom folder must already exist before use: recreating a
+    /// disconnected mount would save the attachment locally and hide it when
+    /// the drive is mounted again. The managed default cache is always ready.
+    fn media_dir_ready(&self) -> Result<PathBuf, String> {
+        let dir = self.dirs.media_dir();
+        if self.dirs.custom_media.is_some() && !dir.is_dir() {
+            return Err(ATTACHMENT_FOLDER_UNAVAILABLE.to_owned());
+        }
+        Ok(dir)
+    }
+
     fn download(&mut self, chat: ChatId, id: String) {
         if !self.downloads.insert((chat.clone(), id.clone())) {
             return;
@@ -3915,6 +3947,13 @@ impl Worker {
             return;
         };
         let base = message.get_base_message().clone();
+        let dir = match self.media_dir_ready() {
+            Ok(dir) => dir,
+            Err(error) => {
+                self.downloaded(chat, id, Err(error));
+                return;
+            }
+        };
         let (downloadable, mime, file_name): (Box<dyn Downloadable>, String, Option<String>) =
             if let Some(image) = base.image_message.as_option() {
                 (
@@ -4029,7 +4068,6 @@ impl Worker {
             }
             None
         };
-        let dir = self.dirs.media_dir();
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let path = media_path(&dir, &chat, &id, &mime, file_name.as_deref());
@@ -6245,6 +6283,52 @@ mod tests {
         assert!(!attachment_is_too_large(None));
         assert!(!attachment_is_too_large(Some(ATTACHMENT_DOWNLOAD_LIMIT)));
         assert!(attachment_is_too_large(Some(ATTACHMENT_DOWNLOAD_LIMIT + 1)));
+    }
+
+    #[test]
+    fn staging_cleanup_removes_only_this_apps_own_part_files() {
+        let root = tempfile::tempdir().unwrap();
+        let own = root.path().join(".photo.a1b2c3d4e5f60718.part");
+        std::fs::write(&own, b"partial").unwrap();
+        // Another application's staging file sharing the same custom folder.
+        let foreign = root.path().join(".other-app.part");
+        std::fs::write(&foreign, b"user data").unwrap();
+        // Near-miss names that lack the 16-hex random component or its dots.
+        let short = root.path().join(".photo.a1b2.part");
+        std::fs::write(&short, b"user data").unwrap();
+        let bare = root.path().join(".photo.part");
+        std::fs::write(&bare, b"user data").unwrap();
+        let visible = root.path().join("photo.a1b2c3d4e5f60718.part");
+        std::fs::write(&visible, b"user data").unwrap();
+
+        discard_attachment_staging(root.path());
+
+        assert!(!own.exists());
+        for kept in [foreign, short, bare, visible] {
+            assert!(kept.exists(), "never deletes {}", kept.display());
+        }
+    }
+
+    #[test]
+    fn downloads_require_the_custom_folder_to_exist_without_recreating_it() {
+        let root = tempfile::tempdir().unwrap();
+        let (worker, _events, _inbox, _wa) = receipt_tests::worker();
+        let dirs = crate::paths::AppDirs::under(root.path());
+        dirs.ensure().unwrap();
+        let mut worker = worker;
+        worker.dirs = dirs;
+        assert!(
+            worker.media_dir_ready().is_ok(),
+            "the default cache is managed"
+        );
+
+        let custom = root.path().join("mounted");
+        worker.dirs.custom_media = Some(custom.clone());
+        let error = worker.media_dir_ready().expect_err("missing custom folder");
+        assert_eq!(error, ATTACHMENT_FOLDER_UNAVAILABLE);
+        assert!(!custom.exists(), "must not recreate the mount point");
+        std::fs::create_dir(&custom).unwrap();
+        assert_eq!(worker.media_dir_ready().unwrap(), custom);
     }
 
     #[test]

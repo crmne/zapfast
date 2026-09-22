@@ -2342,7 +2342,7 @@ impl App {
             Action::OpenMediaDir => match self.dirs.ensure_media_dir() {
                 Ok(path) => self.apply(Action::OpenFolder(path), ctx),
                 Err(error) => {
-                    self.toast_error(format!("Could not create attachment folder: {error}"))
+                    self.toast_error(format!("Could not open attachment folder: {error}"))
                 }
             },
             Action::CopyText(text) => {

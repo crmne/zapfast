@@ -119,9 +119,21 @@ impl AppDirs {
             .unwrap_or_else(|| self.media_cache_dir())
     }
 
-    /// Creates the effective attachment folder before opening it in the desktop.
+    /// Creates the default attachment folder before use. A configured custom
+    /// folder must already exist: recreating a disconnected mount would save
+    /// into it locally and hide the file when the drive is mounted again.
     pub fn ensure_media_dir(&self) -> std::io::Result<PathBuf> {
         let dir = self.media_dir();
+        if self.custom_media.is_some() {
+            return match std::fs::metadata(&dir) {
+                Ok(metadata) if metadata.is_dir() => Ok(dir),
+                Ok(_) => Err(std::io::Error::new(
+                    std::io::ErrorKind::NotADirectory,
+                    "Attachment folder is not a directory",
+                )),
+                Err(error) => Err(error),
+            };
+        }
         std::fs::create_dir_all(&dir)?;
         Ok(dir)
     }
@@ -392,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_media_folder_creates_it_before_and_after_cache_cleanup() {
+    fn opening_media_folder_creates_the_cache_but_never_a_custom_folder() {
         let root = tempfile::tempdir().unwrap();
         let mut dirs = AppDirs::under(root.path());
         dirs.ensure().unwrap();
@@ -401,8 +413,14 @@ mod tests {
         std::fs::remove_dir_all(dirs.media_cache_dir()).unwrap();
         assert!(dirs.ensure_media_dir().unwrap().is_dir());
 
-        dirs.custom_media = Some(root.path().join("custom"));
-        assert!(dirs.ensure_media_dir().unwrap().is_dir());
+        // A missing custom folder may be a disconnected mount; recreating it
+        // would save locally and hide the file when the drive is mounted.
+        let missing = root.path().join("custom");
+        dirs.custom_media = Some(missing.clone());
+        assert!(dirs.ensure_media_dir().is_err());
+        assert!(!missing.exists());
+        std::fs::create_dir(&missing).unwrap();
+        assert_eq!(dirs.ensure_media_dir().unwrap(), missing);
         let blocked = root.path().join("file");
         std::fs::write(&blocked, b"fixture").unwrap();
         dirs.custom_media = Some(blocked.clone());
