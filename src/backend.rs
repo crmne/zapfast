@@ -270,6 +270,7 @@ pub enum Command {
     SendSticker {
         chat: ChatId,
         path: PathBuf,
+        quoting: Option<String>,
     },
     /// Saves a sticker file.
     SaveSticker {

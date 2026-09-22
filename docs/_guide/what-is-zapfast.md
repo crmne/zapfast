@@ -16,7 +16,7 @@ In our Linux test, it opened in under a second and used about 150 MB of idle
 RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
 [See the measurements](/benchmarks/).
 
-![ZapFast showing a chat with a photo, a voice message, and a link preview](/screenshot.png)
+![ZapFast showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview](/screenshot.png)
 
 ## What it does
 

@@ -2608,7 +2608,12 @@ impl App {
             }
             Action::SendSticker(path) => {
                 if let Some(chat) = self.open_chat.clone() {
-                    self.backend.send(Command::SendSticker { chat, path });
+                    let quoting = self.reply_to.take();
+                    self.backend.send(Command::SendSticker {
+                        chat,
+                        path,
+                        quoting,
+                    });
                     self.picker = None;
                     self.scroll_to_bottom = true;
                     self.at_bottom = true;
@@ -4122,6 +4127,30 @@ mod tests {
             &ctx,
         );
         assert!(matches!(commands.try_recv(), Ok(Command::Download { .. })));
+    }
+
+    #[test]
+    fn sending_a_sticker_consumes_the_pending_reply() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        app.reply_to = Some("quoted-message".into());
+
+        app.apply(
+            Action::SendSticker(std::path::PathBuf::from("sticker.webp")),
+            &egui::Context::default(),
+        );
+
+        assert!(app.reply_to.is_none());
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::SendSticker {
+                chat,
+                quoting: Some(id),
+                ..
+            }) if chat == "fixture@s.whatsapp.net" && id == "quoted-message"
+        ));
     }
 
     #[test]

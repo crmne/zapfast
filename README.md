@@ -11,11 +11,11 @@ WhatsApp Web and its Chromium processes. [See the measurements](https://zapfast.
 ZapFast is a sibling of [Spotifast](https://spotifast.rocks),
 with the same native UI for a different service.
 
-![ZapFast showing a chat with a photo, a document, a voice message, a quoted reply, and a link](docs/screenshot.png)
+![ZapFast showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview](docs/screenshot.png)
 
 See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
-![A group chat with sender names and pictures, a photo with reactions, a reply with a mention, and a poll](docs/screenshot-group.png)
+![A titled group chat with participant names, reactions, a quoted mention, and a poll](docs/screenshot-group.png)
 
 ![The linking screen with the QR code](docs/screenshot-link.png)
 
@@ -54,7 +54,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   does not retry it; send it again yourself.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
-  Arabic RTL paragraphs keep logical word order by reordering font runs; this
+  Arabic RTL paragraphs keep logical word order by reordering font runs,
+  including shaped Arabic ligatures in messages and reply previews. This
   is not a full Unicode Bidirectional Algorithm. Emoji use the bundled Noto
   Color Emoji on macOS and Windows. On Linux, ZapFast prefers an installed
   Noto Color Emoji and falls back to the bundled copy. Emoji-only messages
@@ -130,6 +131,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   If an attachment has expired, ZapFast asks your
   phone to upload it again. Downloads stop after two minutes with an inline
   retry error if they cannot finish; the menu disables Download while one is running.
+  Cached attachment filenames use extensions of at most 16 ASCII letters, digits,
+  or hyphens; invalid or empty extensions are saved as `.bin`.
 - **Polls.** Use the checklist button beside the paperclip to create a poll with
   2–12 answers. Turn off **Allow multiple answers** for a single-choice poll.
   Click an answer in a poll to vote; click a selected answer again to remove

@@ -170,6 +170,9 @@ fn ltr_run_right_of_rtl(glyphs: &[Glyph], runs: &[Range<usize>]) -> bool {
     }
 }
 
+// Compare character sets rather than counts: shaped RTL runs can repeat a
+// character in their zero-width continuation entries. Dropping those entries
+// instead loses letters consumed by ligatures and prevents matching the word.
 fn paragraph_letter_tokens(paragraph: &str) -> Vec<Vec<char>> {
     paragraph
         .split_whitespace()
@@ -180,6 +183,7 @@ fn paragraph_letter_tokens(paragraph: &str) -> Vec<Vec<char>> {
                 .filter(|c| (is_rtl(*c) || is_strong_ltr(*c)) && !is_nonspacing_mark(*c))
                 .collect();
             chars.sort_unstable();
+            chars.dedup();
             chars
         })
         .filter(|chars| !chars.is_empty())
@@ -191,13 +195,16 @@ fn letter_run_charsets(glyphs: &[Glyph], runs: &[Range<usize>]) -> Vec<Vec<char>
     for run in runs {
         let mut chars: Vec<char> = glyphs[run.clone()]
             .iter()
-            .filter(|glyph| is_rtl_letter(glyph) || is_ltr_letter(glyph))
+            // Shaping can put a ligature's remaining letters in zero-width
+            // continuation glyphs. Their characters still identify the word.
+            .filter(|glyph| is_strong_rtl(glyph.chr) || is_strong_ltr(glyph.chr))
             .map(|glyph| glyph.chr)
             .collect();
         if chars.is_empty() {
             continue;
         }
         chars.sort_unstable();
+        chars.dedup();
         out.push(chars);
     }
     out
@@ -209,13 +216,14 @@ fn leftmost_letter_charset(glyphs: &[Glyph], runs: &[Range<usize>]) -> Option<Ve
         let slice = &glyphs[run.clone()];
         let mut chars: Vec<char> = slice
             .iter()
-            .filter(|glyph| is_rtl_letter(glyph) || is_ltr_letter(glyph))
+            .filter(|glyph| is_strong_rtl(glyph.chr) || is_strong_ltr(glyph.chr))
             .map(|glyph| glyph.chr)
             .collect();
         if chars.is_empty() {
             continue;
         }
         chars.sort_unstable();
+        chars.dedup();
         let x = min_x(slice);
         if best.as_ref().is_none_or(|(best_x, _)| x < *best_x) {
             best = Some((x, chars));

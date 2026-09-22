@@ -915,6 +915,35 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
+            "arabic-reply" => {
+                let chat = SAMPLES[0].id;
+                let now = crate::util::now();
+                let original = message(
+                    chat,
+                    "arabic-original",
+                    false,
+                    now - 120,
+                    Content::text("مساء الخير"),
+                );
+                let mut messages = vec![original];
+                for (id, own) in [("arabic-incoming", false), ("arabic-outgoing", true)] {
+                    let mut reply =
+                        message(chat, id, own, now - 60, Content::text("Reply preview test"));
+                    reply.quoted = Some(Quoted {
+                        id: "arabic-original".into(),
+                        sender: chat.into(),
+                        sender_name: Some("Demo contact".into()),
+                        summary: "مساء الخير".into(),
+                        mentions: Vec::new(),
+                    });
+                    messages.push(reply);
+                }
+                app.conversations.get_mut(chat).unwrap().messages = messages;
+                app.open_chat = Some(chat.into());
+                app.reply_to = Some("arabic-original".into());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "rtl" => {
                 let id = SAMPLES[1].id;
                 let now = crate::util::now();
@@ -1436,6 +1465,65 @@ mod tests {
             // Headless tests must apply font-atlas updates themselves.
             output.textures_delta.clear();
         }
+    }
+
+    #[test]
+    fn issue_126_arabic_word_order_in_both_quotes_and_composer() {
+        fn collect(shape: &egui::Shape, galleys: &mut Vec<std::sync::Arc<egui::Galley>>) {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == "مساء الخير" => {
+                    galleys.push(text.galley.clone());
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, galleys);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut app = app();
+        apply_flags(&mut app, Some("arabic-reply"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let mut galleys = Vec::new();
+        for shape in shapes {
+            collect(&shape.shape, &mut galleys);
+        }
+        assert_eq!(
+            galleys.len(),
+            4,
+            "original, incoming quote, outgoing quote, composer preview"
+        );
+        let mut reversed = Vec::new();
+        for (index, galley) in galleys.into_iter().enumerate() {
+            let x = |letter| {
+                galley
+                    .rows
+                    .iter()
+                    .flat_map(|row| row.glyphs.iter())
+                    .find(|glyph| glyph.chr == letter)
+                    .expect("Arabic glyph")
+                    .pos
+                    .x
+            };
+            if x('م') <= x('خ') {
+                reversed.push((index, x('م'), x('خ')));
+            }
+            assert_eq!(galley.text(), "مساء الخير", "copy retains logical order");
+            let mut repeated = (*galley).clone();
+            crate::bidi::reorder_rtl_runs(&mut repeated);
+            assert_eq!(
+                repeated, *galley,
+                "a second layout correction must not reverse the words again"
+            );
+        }
+        assert!(
+            reversed.is_empty(),
+            "مساء must be right of الخير; reversed instances (index, م x, خ x): {reversed:?}"
+        );
     }
 
     #[test]
