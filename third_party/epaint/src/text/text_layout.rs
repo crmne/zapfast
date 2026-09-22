@@ -249,11 +249,12 @@ fn layout_shaped_run(
 
     // Track how many glyphs we emit per cluster so we can add zero-width
     // continuation glyphs when a cluster has more chars than glyphs.
-    // RTL shaping reports cluster offsets in descending order. Ranges must
-    // not assume the next cluster is to the right in the byte string.
+    // Cluster ids are byte offsets. RTL shaping visits them in descending
+    // order, and a Hebrew letter plus its niqqud can be one cluster, so the
+    // logical range is the next higher cluster boundary, not one scalar.
+    let cluster_bounds = cluster_boundaries(glyph_buffer, run_text.len());
     let mut cluster_start_byte: usize = 0;
     let mut cluster_glyph_count: usize = 0;
-    let mut cluster_descended = false;
 
     for (info, pos) in iter::zip(glyph_buffer.glyph_infos(), glyph_buffer.glyph_positions()) {
         let glyph_id = skrifa::GlyphId::new(info.glyph_id);
@@ -292,14 +293,7 @@ fn layout_shaped_run(
         let is_new_cluster = ctx.prev_cluster.is_none_or(|pc| pc != cluster);
         if is_new_cluster {
             if ctx.prev_cluster.is_some() {
-                let current = cluster as usize;
-                let range = if current >= cluster_start_byte {
-                    cluster_start_byte..current
-                } else {
-                    cluster_descended = true;
-                    let len = utf8_len_at(run_text, cluster_start_byte);
-                    cluster_start_byte..cluster_start_byte + len
-                };
+                let range = cluster_char_range(&cluster_bounds, cluster_start_byte);
                 emit_continuation_glyphs(
                     ctx,
                     paragraph,
@@ -400,19 +394,12 @@ fn layout_shaped_run(
     }
 
     // Emit continuation glyphs for the last cluster in the run.
-    // A descending (RTL) run's last buffer cluster is the first logical
-    // character, so it does not extend to the end of the run text.
     if ctx.prev_cluster.is_some() {
-        let end = if cluster_descended {
-            cluster_start_byte + utf8_len_at(run_text, cluster_start_byte)
-        } else {
-            run_text.len()
-        };
         emit_continuation_glyphs(
             ctx,
             paragraph,
             run_text,
-            cluster_start_byte..end,
+            cluster_char_range(&cluster_bounds, cluster_start_byte),
             cluster_glyph_count,
             face_metrics,
             text_byte_offset,
@@ -420,11 +407,28 @@ fn layout_shaped_run(
     }
 }
 
-/// Byte length of the character starting at `index`, or 0 when `index` is out of range.
-fn utf8_len_at(text: &str, index: usize) -> usize {
-    text.get(index..)
-        .and_then(|rest| rest.chars().next())
-        .map_or(0, char::len_utf8)
+/// Sorted byte offsets where each shaped cluster starts, plus the run length.
+fn cluster_boundaries(glyph_buffer: &harfrust::GlyphBuffer, text_len: usize) -> Vec<usize> {
+    let mut bounds: Vec<usize> = glyph_buffer
+        .glyph_infos()
+        .iter()
+        .map(|info| info.cluster as usize)
+        .filter(|start| *start <= text_len)
+        .collect();
+    bounds.push(text_len);
+    bounds.sort_unstable();
+    bounds.dedup();
+    bounds
+}
+
+/// Logical bytes covered by the cluster that starts at `cluster`.
+fn cluster_char_range(bounds: &[usize], cluster: usize) -> Range<usize> {
+    let end = bounds
+        .iter()
+        .copied()
+        .find(|&boundary| boundary > cluster)
+        .unwrap_or(cluster);
+    cluster..end
 }
 
 /// Emit zero-width continuation glyphs when a cluster has more characters than
@@ -1496,6 +1500,15 @@ mod tests {
 
     use super::{super::*, *};
     use crate::text::cursor::CCursor;
+
+    #[test]
+    fn a_descending_cluster_keeps_the_marks_that_follow_its_base() {
+        // Visual order visits the later letter first. The earlier cluster still
+        // owns every mark up to the next base, not only its own scalar.
+        let bounds = [0usize, 6, 8];
+        assert_eq!(cluster_char_range(&bounds, 0), 0..6);
+        assert_eq!(cluster_char_range(&bounds, 6), 6..8);
+    }
 
     #[test]
     fn test_zero_max_width() {

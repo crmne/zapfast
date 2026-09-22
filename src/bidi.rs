@@ -416,10 +416,12 @@ fn rtl_run_end(glyphs: &[Glyph], start: usize) -> Option<usize> {
 }
 
 fn align_rtl_paragraphs(galley: &mut Galley, text: &str) {
+    // Align the ink, not `row.size.x`. Shaping can leave the row box a fraction
+    // of a pixel wider than the last glyph, and that slack depends on the font.
     let width = galley
         .rows
         .iter()
-        .map(|placed| placed.row.size.x)
+        .map(|placed| content_right(&placed.row.glyphs))
         .fold(0.0_f32, f32::max);
     if width <= 0.0 {
         return;
@@ -430,16 +432,20 @@ fn align_rtl_paragraphs(galley: &mut Galley, text: &str) {
         let last = galley.rows[index].ends_with_newline || index + 1 == galley.rows.len();
         if paragraphs.get(paragraph).is_some_and(|text| base_rtl(text)) {
             let row = Arc::make_mut(&mut galley.rows[index].row);
-            let delta = width - row.size.x;
+            let delta = width - content_right(&row.glyphs);
             if delta > 0.01 {
                 shift_all(row, delta);
-                row.size.x = width;
+                row.size.x = (row.size.x + delta).max(width);
             }
         }
         if last {
             paragraph += 1;
         }
     }
+}
+
+fn content_right(glyphs: &[Glyph]) -> f32 {
+    glyphs.iter().map(Glyph::max_x).fold(0.0_f32, f32::max)
 }
 
 fn shift_all(row: &mut egui::epaint::text::Row, delta: f32) {
