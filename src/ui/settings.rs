@@ -291,7 +291,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
         super::banner(app, ui);
     }
     let palette = app.palette;
-    let body_height = ui.available_height().max(600.0);
+    let body_height = ui.available_height().max(0.0);
     ui.with_layout(
         Layout::left_to_right(Align::Min).with_main_align(Align::Min),
         |ui| {
@@ -344,41 +344,48 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                             .max_rect(palette_rect)
                             .layout(Layout::top_down(Align::Min).with_main_align(Align::Min)),
                         |ui| {
-                            ui.allocate_ui_with_layout(
-                                vec2(palette_width, 28.0),
-                                Layout::top_down(Align::Center),
-                                |ui| {
-                                    let mut doodles = app.settings.show_wallpaper;
-                                    let checkbox = ui.checkbox(&mut doodles, "Add WhatsApp doodles");
-                                    checkbox.on_hover_text(
-                                        "Show the default WhatsApp doodles over the selected colour.",
+                            egui::ScrollArea::vertical()
+                                .id_salt("wallpaper-palette")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.allocate_ui_with_layout(
+                                        vec2(palette_width, 28.0),
+                                        Layout::top_down(Align::Center),
+                                        |ui| {
+                                            let mut doodles = app.settings.show_wallpaper;
+                                            let checkbox =
+                                                ui.checkbox(&mut doodles, "Add WhatsApp doodles");
+                                            checkbox.on_hover_text(
+                                                "Show the default WhatsApp doodles over the selected colour.",
+                                            );
+                                            if doodles != app.settings.show_wallpaper {
+                                                app.actions.push(Action::SetWallpaperDoodles(doodles));
+                                            }
+                                        },
                                     );
-                                    if doodles != app.settings.show_wallpaper {
-                                        app.settings.show_wallpaper = doodles;
-                                        app.actions.push(Action::SettingsChanged);
-                                    }
-                                },
-                            );
-                            ui.add_space(18.0);
-                            let button_width = 80.0;
-                            let item_spacing = ui.spacing().item_spacing.x;
-                            let columns = ((palette_width + item_spacing)
-                                / (button_width + item_spacing))
-                                .floor()
-                                .max(1.0) as usize;
-                            let grid_width = button_width * columns as f32
-                                + item_spacing * columns.saturating_sub(1) as f32;
-                            ui.horizontal(|ui| {
-                                ui.add_space((palette_width - grid_width).max(0.0) / 2.0);
-                                ui.horizontal_wrapped(|ui| {
-                                    let selected = app.settings.wallpaper_color_for(palette.dark);
-                                    for color in WallpaperColor::choices(palette.dark) {
-                                        if wallpaper_color_button(ui, *color, selected) {
-                                            app.actions.push(Action::SetWallpaperColor(*color));
-                                        }
-                                    }
+                                    ui.add_space(18.0);
+                                    let button_width = 80.0;
+                                    let item_spacing = ui.spacing().item_spacing.x;
+                                    let columns = ((palette_width + item_spacing)
+                                        / (button_width + item_spacing))
+                                        .floor()
+                                        .max(1.0)
+                                        as usize;
+                                    let grid_width = button_width * columns as f32
+                                        + item_spacing * columns.saturating_sub(1) as f32;
+                                    ui.horizontal(|ui| {
+                                        ui.add_space((palette_width - grid_width).max(0.0) / 2.0);
+                                        ui.horizontal_wrapped(|ui| {
+                                            let selected =
+                                                app.settings.wallpaper_color_for(palette.dark);
+                                            for color in WallpaperColor::choices(palette.dark) {
+                                                if wallpaper_color_button(ui, *color, selected) {
+                                                    app.actions.push(Action::SetWallpaperColor(*color));
+                                                }
+                                            }
+                                        });
+                                    });
                                 });
-                            });
                         },
                     );
                 },

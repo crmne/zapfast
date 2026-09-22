@@ -2846,6 +2846,10 @@ impl App {
                 }
                 self.mark_settings_dirty();
             }
+            Action::SetWallpaperDoodles(show) => {
+                self.settings.show_wallpaper = show;
+                self.mark_settings_dirty();
+            }
             Action::ReloadThemes => self.load_custom_themes(),
             Action::OpenThemesFolder => {
                 let directory = self.dirs.config.join("themes");
