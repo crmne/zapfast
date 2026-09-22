@@ -2275,17 +2275,19 @@ mod tests {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
-        render(&mut app, &ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
 
         let chat = sample_ids()[0].to_owned();
         let message = "ada-link";
         assert!(app.reaction_target.is_none());
 
+        let id = crate::ui::conversation::bubble_id(&chat, message);
         let bubble = ctx
-            .data(|data| {
-                data.get_temp::<egui::Rect>(crate::ui::conversation::bubble_id(&chat, message))
-            })
-            .expect("the message bubble is on screen");
+            .read_response(id)
+            .expect("the message bubble is on screen")
+            .rect;
         let affordance = crate::ui::conversation::reaction_affordance_rect(
             bubble,
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 780.0)).shrink(2.0),
@@ -2306,6 +2308,8 @@ mod tests {
             pressed,
             modifiers: egui::Modifiers::NONE,
         };
+        // Hover first: the control only exists while the pointer is on the message.
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
         frame_with(
             &mut app,
             &ctx,
