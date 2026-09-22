@@ -130,6 +130,53 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::OpenChat(next));
         }
     }
+    // Arrow Up in an empty, focused composer edits the user's most recent
+    // message, as WhatsApp does. The key keeps its normal meaning everywhere
+    // else: it navigates open overlays and moves the cursor in a non-empty
+    // field.
+    let composer_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text")));
+    let edit_previous = composer_focused
+        && app.page == Page::Chats
+        && app.open_chat.is_some()
+        && app
+            .open_chat
+            .as_ref()
+            .and_then(|chat| app.conversations.get(chat))
+            .is_some_and(|chat| chat.can_send())
+        && app.composer.is_empty()
+        && app.pending.is_empty()
+        && app.editing.is_none()
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.recording.is_none()
+        && !menu_open
+        && ctx.input_mut(|input| {
+            let mut taken = false;
+            input.events.retain(|event| {
+                if taken {
+                    return true;
+                }
+                let matches = matches!(
+                    event,
+                    egui::Event::Key {
+                        key: found,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if *found == Key::ArrowUp && *modifiers == Modifiers::NONE
+                );
+                taken |= matches;
+                !matches
+            });
+            taken
+        });
+    if edit_previous {
+        if let Some(id) = app.previous_own_editable() {
+            actions.push(Action::Edit(id));
+        }
+    }
     app.actions.extend(actions);
 }
 
@@ -138,6 +185,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+F / Ctrl+K", "Search chats"),
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
+    ("↑", "Edit the previous message (when the input is empty)"),
     ("Enter", "Send (Shift+Enter for a new line)"),
     (
         "Escape",

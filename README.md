@@ -189,10 +189,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
   `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` searches, `Alt+↑/↓` switches chats and
-  keeps the active chat visible in the list, `Esc` cancels the current action,
-  `Ctrl+L` focuses the message input, `Ctrl+N` opens New chat, and `?` (outside
-  text fields) or `Ctrl+/` opens Keyboard shortcuts (use
-  Command instead of Ctrl on macOS). The × at the left of the shortcut hints
+  keeps the active chat visible in the list, `↑` in an empty input edits your
+  previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
+  message input, `Ctrl+N` opens New chat, and `?` (outside text fields) or
+  `Ctrl+/` opens Keyboard shortcuts (use Command instead of Ctrl on macOS).
+  The × at the left of the shortcut hints
   hides the bar; restore it with **Show shortcut hints** in Settings.
 - **Local storage.** Messages, contacts and sticker metadata are stored in a
   SQLCipher-encrypted archive, unlocked automatically through your OS keyring.

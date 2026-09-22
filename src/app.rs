@@ -1765,6 +1765,19 @@ impl App {
         }
     }
 
+    /// The most recent own text message in the open chat, for Arrow-Up
+    /// editing. Non-text and revoked messages cannot be edited and are
+    /// skipped.
+    pub(crate) fn previous_own_editable(&self) -> Option<String> {
+        let conversation = self.conversations.get(self.open_chat.as_deref()?)?;
+        conversation
+            .messages
+            .iter()
+            .rev()
+            .find(|message| self.can_edit(message))
+            .map(|message| message.id.clone())
+    }
+
     /// Updates typing state after composer changes.
     pub fn note_keystroke(&mut self) {
         self.last_keystroke = Some(Instant::now());

@@ -3363,6 +3363,52 @@ mod tests {
         assert!(app.composer.is_empty());
     }
 
+    #[test]
+    fn arrow_up_in_an_empty_composer_edits_the_previous_own_message() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let chat = sample_ids()[0].to_owned();
+        let expected = app
+            .conversations
+            .get(&chat)
+            .and_then(|conversation| {
+                conversation.messages.iter().rev().find_map(|message| {
+                    if message.from_me {
+                        if let Content::Text { text, .. } = &message.content {
+                            return Some((message.id.clone(), text.clone()));
+                        }
+                    }
+                    None
+                })
+            })
+            .expect("an own text message");
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowUp, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.editing.as_deref(), Some(expected.0.as_str()));
+        assert_eq!(app.composer, expected.1);
+    }
+
+    #[test]
+    fn arrow_up_leaves_a_non_empty_composer_alone() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        frame_with(&mut app, &ctx, vec![egui::Event::Text("draft".into())]);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowUp, egui::Modifiers::NONE)],
+        );
+        assert!(app.editing.is_none());
+        assert_eq!(app.composer, "draft");
+    }
+
     /// Runs one frame of the given height with these input events.
     fn frame_sized(
         app: &mut App,
