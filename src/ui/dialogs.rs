@@ -199,12 +199,17 @@ fn interactive_option(
         (title.size().y + description.as_ref().map_or(0.0, |line| line.size().y + 4.0) + 20.0)
             .max(60.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let response = ui.interact(rect, id, Sense::click());
+    let sense = if ui.is_enabled() {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let response = ui.interact(rect, id, sense);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &option.title)
     });
     ui.ctx().data_mut(|data| data.insert_temp(id, rect));
-    if response.hovered() || response.has_focus() {
+    if ui.is_enabled() && (response.hovered() || response.has_focus()) {
         ui.painter().rect_filled(
             rect,
             8.0,
@@ -228,7 +233,11 @@ fn interactive_option(
     if let Some(description) = description {
         description.paint(ui, pos + vec2(0.0, title.size().y + 4.0), palette.secondary);
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    if ui.is_enabled() {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
 }
 
 fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {

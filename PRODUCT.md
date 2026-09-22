@@ -1,9 +1,5 @@
 # Product
 
-## Register
-
-product
-
 ## Users and purpose
 
 ZapFast serves people reading and sending WhatsApp messages on Linux, macOS,
