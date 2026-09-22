@@ -61,15 +61,21 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Safer desktop opening.** Links open only web pages or email addresses.
   Common documents and media open in their default apps; executable, script,
   and unrecognized attachment formats open their containing folder instead.
-- **Read interactive messages.** Business templates and button messages show their
+- **Use interactive messages.** Business templates and button messages show their
   image above the text and their options in separate rows below the timestamp.
-  Web-link buttons open in your browser; reply and form options have a phone icon
-  and must be used on your phone. Received interactive replies look like ordinary
-  replies. Lists and carousel text can also be read, selected, copied, and searched.
+  Reply buttons send the selected option with a quote of the original message.
+  Simple lists open a choice dialog, web links open in your browser, and copy-code
+  buttons copy to the clipboard. Unavailable actions have a phone icon and an
+  explanation. Lists group choices by section, with descriptions and keyboard support.
+  Carousels show separate cards in a horizontal strip, with images, web links,
+  and copy-code actions. Short carousels keep the timestamp beside their last
+  card. When more cards are offscreen, overlaid previous/next arrows move one
+  card at a time. **Shift + mouse wheel** and horizontal touchpad scrolling also
+  work over the cards, without a bottom scrollbar. Their text can be selected, copied, and searched.
   Images use the same download, retry, and automatic-download setting as photos.
   Previously unsupported messages are recovered from the local archive when their
   original message is available and they have not been edited, without relinking.
-  Other embedded attachments, carousel images, and templates containing only a
+  Other embedded attachments and templates containing only a
   reference to server-side text still need the phone.
 - **Send attachments with captions.** Paste a picture, drop files, or use the
   file picker. They stay in the composer until you send them or press Escape.
@@ -108,10 +114,14 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Polls.** Use the checklist button beside the paperclip to create a poll with
   2–12 answers. Turn off **Allow multiple answers** for a single-choice poll.
   Click an answer in a poll to vote; click a selected answer again to remove
-  it. Results and your selection are retained in the encrypted archive, including
-  votes received through phone history. Visible polls automatically request earlier
-  votes from your phone. If it is offline, results are labelled incomplete and the
-  request retries with backoff; no refresh button or relinking is needed.
+  it. Each option shows a result bar and a checkmark for your selection.
+  **Show votes** lists participants and vote times, updating as votes arrive.
+  Results and your selection are retained in the encrypted archive, including
+  votes received through phone history. New polls received live start at zero votes
+  without asking the phone for earlier results. Polls from history or offline
+  delivery automatically request earlier votes when visible. Until a usable
+  snapshot arrives, results are labelled incomplete and requests retry with backoff;
+  no refresh button or relinking is needed.
   Voting needs the original poll's key;
   if that key is missing, the message explains that voting is available on your
   phone. Creating polls in disappearing-message chats is not yet supported by
@@ -173,9 +183,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - Play ordinary videos in the app (they open in your player), or reply to
   a message with an attachment.
 - Calls, status posts, communities, newsletters, and group administration.
-- Send interactive button replies or submit forms; use those options on your
-  phone. Web-link buttons do work in ZapFast. Embedded videos and documents,
-  carousel images, and templates without readable text still need the phone.
+- Submit interactive forms, payments, shopping flows, or carousel selections.
+  Use these in WhatsApp Web or on your phone. Embedded videos and documents,
+  and templates without readable text also need another client.
 
 ## Installing
 
@@ -336,14 +346,31 @@ startup rollback; an unused legacy column is retained for 0.14 compatibility.
 ### Interactive messages
 
 Business messages keep their image, formatted text, timestamp, and options
-together in one bubble. Link buttons open in your browser. Options with a phone
-icon are readable here but must be selected on your phone; hovering explains
-this. Replies received from your other devices appear as ordinary quoted replies
-when the original message is included.
+together in one bubble. Reply buttons immediately send the selected response,
+quoting the original message so the business can recognize your choice. Simple
+list buttons open a centered dialog with sections, descriptions, and a full-row
+selection target; choosing an item sends that response. Hover highlights
+the full action row, following the card edges. Link buttons
+open your browser, and copy-code buttons copy the offered code locally.
+
+Carousels retain separate cards and images in a horizontally scrollable strip.
+Each card can open web links or copy codes; reply, calling, and shopping actions
+that require an unsupported carousel envelope stay unavailable.
+
+Reply buttons require a connection and a writable conversation. They pause while
+sending, and become available again if the send fails. Actions with a phone icon
+are unavailable in ZapFast; use WhatsApp Web or your phone. Hovering explains
+which restriction applies. Replies from other devices retain their quotes too.
 
 | Text and reply options | Image and website link |
 | --- | --- |
-| ![Offline demo of an interactive text message with separate option rows and a quoted reply](docs/screenshot-interactive.png) | ![Offline demo of an interactive image message with phone-only options and an active website link](docs/screenshot-interactive-media.png) |
+| ![Offline demo of an interactive text message with separate option rows and a quoted reply](docs/screenshot-interactive.png) | ![Offline demo of an interactive image message with working reply options and an active website link](docs/screenshot-interactive-media.png) |
+
+![Offline demo with a reply button, a session list, a copy-code action, and an unavailable form](docs/screenshot-interactive-actions.png)
+
+| Carousel cards | Poll participant details |
+| --- | --- |
+| ![Synthetic carousel with independent images, copy-code and web actions](docs/screenshot-carousel.png) | ![Synthetic poll results listing voters and vote times](docs/screenshot-poll-results.png) |
 
 These screenshots use synthetic offline chats. See the
 [usage guide](https://zapfast.rocks/using-zapfast/#interactive-messages) for
@@ -467,8 +494,13 @@ For deterministic theme screenshots, `--demo-page settings,omarchy` and
 palettes without changing the desktop theme.
 
 Use `--demo-page interactive` for text and button messages, or
-`--demo-page interactive-media` for messages with an image. Add `,light` to
-preview either in the light theme. Capture the app's own frame without desktop
+`--demo-page interactive-media` for messages with an image, and
+`--demo-page interactive-list` for a list message,
+`--demo-page interactive-list-dialog` for its grouped choice dialog, `--demo-page carousel`
+for a scrolling strip or `--demo-page carousel-pair` for two cards, and `--demo-page poll-empty`, `poll-voted`, or `poll-results`
+for voting states. Use `--demo-page interactive-actions` for reply, list, copy-code, and unavailable
+form actions. Add `,light` to
+preview any of these in the light theme. Capture the app's own frame without desktop
 content:
 
 ```sh

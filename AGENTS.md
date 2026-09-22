@@ -46,15 +46,32 @@ protocol. These notes are for coding agents and new contributors.
   a disposable archive. Tests use fixtures and mock credentials only.
 - `src/model.rs` holds the app's own types. Views never touch a protobuf;
   the worker translates in `classify()` and `parse_conversation()`.
+- Interactive messages are parsed in `backend/worker/interactive.rs`. Views receive
+  labels and local capabilities, never protocol option ids. `ReplyInteractive`
+  carries only the archived message id and visible button/choice indices;
+  `interactive/replies.rs` re-resolves them from raw protobuf and uses the library's
+  quote context and normal send path. Only known quick replies and single-select
+  lists may send responses. Copy-code actions stay local. Do not turn arbitrary
+  flow JSON into replies or fall back to sending its visible label as plain text.
+  The versioned archive backfill must preserve downloaded image paths and edits.
+  Carousel cards retain independent images and local actions. Download commands
+  carry an optional card index, and the archive stores each image path separately.
+  The version-4 backfill preserves those paths when rebuilding derived content.
+  See [compatibility notes](docs/interactive-message-actions.md) for response
+  families, source references, and live-test limits.
 - Poll creation, voting, and decryption use whatsapp-rust's `Client::polls()`.
   `backend/worker/polls.rs` retains the original creator identity and key in the
   encrypted archive; `archive/polls.rs` keeps each voter's latest timestamp and
   message id, including encrypted updates whose parent has not arrived yet.
   History replay must not undo a newer vote or withdrawal. Decryption runs in
-  batches of eight, with failures retried after reconnecting. The interface only
-  receives option counts and its own selection, never keys or protobufs. Visible
-  polls request phone history automatically, anchored after the creation message
-  so the response includes its vote snapshot. `poll_history.rs` serializes these
+  batches of eight, with failures retried after reconnecting. The interface receives
+  option counts, its own selection, and the latest decrypted voter names/times
+  for the results dialog, never keys or protobufs. New, non-offline poll creations
+  received through normal delivery start with a complete zero-vote baseline,
+  persisted in `poll_history`. PDO recovery and
+  duplicate deliveries do not establish that baseline. Visible polls without a
+  complete baseline request phone history automatically, anchored after the
+  creation message so the response includes its vote snapshot. `poll_history.rs` serializes these
   requests and retries from 30 seconds to 15 minutes without an interface timer.
   History request timestamps are Unix seconds: the library argument and wire
   field misleadingly end in `Ms`. Do not multiply archive timestamps by 1,000.

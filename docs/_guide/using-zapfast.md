@@ -44,35 +44,88 @@ upload it again.
 ## Interactive messages
 
 Business templates and button messages show their image above the formatted
-text, with options in separate rows below the timestamp. Lists and carousel
-text are readable too. You can select the message body, use **Copy text** to
+text, with options in separate rows below the timestamp. Lists open a grouped
+choice dialog, and carousels show separate image cards in a horizontal strip. You can select the message body, use **Copy text** to
 include its option labels, and find these messages through search.
 
 - **Web links** have an external-link icon. Click one to open it in your browser,
   or focus it with the keyboard and press Enter.
-- **Phone options** have a phone icon and muted text. Reply buttons, list choices,
-  calls, and forms must be used on your phone. Hover over an option to see its
-  explanation. ZapFast does not send a response when you click it.
-- **Replies from your other devices** appear as ordinary replies, with a quote
-  when the original message is included.
+- **Reply buttons** send the selected response immediately, quoting the original
+  message. ZapFast includes the option identifier so the business can recognize
+  the choice. Legacy buttons, hydrated templates, and native-flow quick replies
+  are supported.
+- **Simple lists** open a dialog with section headings and descriptions. Select an
+  item to send it. Legacy single-select lists and native-flow `single_select`
+  menus are supported. Opening or dismissing the dialog does not send anything.
+- **Copy-code buttons** copy the supplied code to your clipboard without sending
+  a message.
+- **Unavailable options** have a phone icon and muted text. Forms, payments,
+  shopping flows, calls, and carousel choices need WhatsApp Web or your phone.
+  Hover over an option to see its explanation. Unsupported or incomplete actions
+  never send a guessed text response.
+
+Replies require a connection and a writable chat, and cannot be sent to your own
+outgoing cards. During a send, the card waits for its result before accepting
+another reply. A failed send shows the normal failure status and allows another
+attempt.
+
+**Replies from your other devices** appear as ordinary replies, with a quote
+when the original message is included.
 
 Images follow the same automatic-download setting, size limit, and retry
 behavior as other photos. Click a downloaded image to open it.
 
 | Dark theme | Light theme |
 | --- | --- |
-| ![Synthetic business message with an image, three phone options, a quoted reply, and a website link in the dark theme](/screenshot-interactive-media.png) | ![The same synthetic interactive messages in the light theme](/screenshot-interactive-light.png) |
+| ![Synthetic business message with an image, three reply buttons, a quoted reply, and a website link in the dark theme](/screenshot-interactive-media.png) | ![The same synthetic interactive messages in the light theme](/screenshot-interactive-light.png) |
 
-Both screenshots use offline demo content.
+![Synthetic reply, list-selection, copy-code, and unavailable-form actions](/screenshot-interactive-actions.png)
+
+All screenshots use offline demo content.
 
 Previously unsupported messages are recovered automatically from the local
 archive when their original data is available and they have not been edited.
-You do not need to link again. Edited messages keep their current text.
+Existing cards gain their supported actions too. You do not need to link again.
+Edited messages keep their current text, and downloaded images stay available.
 
-Embedded videos and documents, carousel images, and templates containing only
-a reference to server-side text still need your phone. A **More content on your
-phone** note marks content ZapFast cannot display. Interactive messages cannot
-yet be forwarded from ZapFast.
+Embedded videos, documents, and templates containing only
+a reference to server-side text still need another client. A **More content in
+WhatsApp Web or on your phone** note marks content ZapFast cannot display.
+Interactive messages cannot yet be forwarded from ZapFast.
+
+### Lists, polls, and carousels
+
+Lists open a centered dialog, like **Show votes**, with the message's title,
+sections, option names, and descriptions.
+Click an option or focus it and press Enter to send that selection. Close the
+dialog or press Escape to leave without choosing.
+
+Poll options show a result track even before votes arrive, and your selection
+has a checkmark. **Show votes** opens participant names and vote times. If phone
+history is still arriving, the dialog explains that earlier votes may be missing.
+New polls received live start at zero without requesting earlier votes. Polls
+received from history or while offline still recover results from the phone.
+Polls archived by older builds may also need this recovery because those builds
+did not retain whether the poll originally arrived live.
+
+Carousel messages keep each card's image, text, and actions together. The timestamp
+sits below the last card when the strip fits. When cards extend beyond the view,
+round previous/next arrows appear over the strip. Click an arrow or focus it and
+press Enter to move one card at a time. The arrows disappear at their respective
+ends; **Shift + mouse wheel** and horizontal touchpad scrolling remain available
+over the cards, without a bottom scrollbar. Image downloads follow your automatic-download
+setting. Web links and copy-code buttons work; calls and unsupported carousel
+reply actions remain unavailable.
+
+| Carousel cards | Poll result details |
+| --- | --- |
+| ![Synthetic carousel with separate image cards and local actions](/screenshot-carousel.png) | ![Synthetic poll results showing participants and vote times](/screenshot-poll-results.png) |
+
+| Grouped list dialog | Poll selection and results |
+| --- | --- |
+| ![Synthetic list dialog with section headings, descriptions and option selectors](/screenshot-interactive-list.png) | ![Synthetic poll with vote counts, result tracks and the selected answer](/screenshot-poll-voted.png) |
+
+![Synthetic carousel cards in the light theme](/screenshot-carousel-light.png)
 
 ## Voice messages
 

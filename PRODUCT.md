@@ -22,7 +22,12 @@ separated action rows.
 
 - Keep messages readable and the composer immediately available.
 - Use existing shared controls and theme colours consistently.
-- Make working actions and unavailable actions distinguishable.
+- Make working actions and unavailable actions distinguishable. Reply buttons
+  send immediately, lists open dialogs with grouped choices, and copy-code actions stay local.
+  Carousels keep independent cards in a horizontal strip. Poll results disclose
+  known voters and vote times, preserving incomplete-history notices.
+  Disable only unsupported actions or replies blocked by connection, chat
+  permissions, or an in-flight send.
 - Preserve selection, copying, emoji, links, and narrow-window usability.
 - Validate screenshots with synthetic offline content only.
 

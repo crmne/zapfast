@@ -29,9 +29,9 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
   You can add captions to attachments before sending them.
 - **Plays media in the chat.** Voice messages, GIFs, and animated stickers
   play in place. The required audio and video decoders are built in.
-- **Reads interactive messages.** Business templates show their text, images,
-  and options. Web-link buttons open in your browser, and interactive replies
-  appear as ordinary replies. [See examples and limitations](/using-zapfast/#interactive-messages).
+- **Uses interactive messages.** Business templates show their text, images,
+  and options. Reply buttons and simple lists send the selected response with
+  a quote, web links open in your browser, and copy-code buttons use the clipboard. [See examples and limitations](/using-zapfast/#interactive-messages).
 - **Uses consistent names.** Choose address-book names or public WhatsApp
   profile names for chats, mentions, replies, and notifications.
 - **Runs in the background.** Closing the window keeps ZapFast in the system
@@ -49,10 +49,10 @@ ZapFast does not currently support:
   messages and GIFs do play in place.
 - Replying with an attachment (replying with text or a voice message
   works).
-- Sending interactive button replies, submitting forms, or forwarding
-  interactive messages. Use those options on your phone. Embedded videos and
-  documents, carousel images, and templates without readable text also need
-  the phone.
+- Interactive forms, payments, shopping flows, carousel selections, or forwarding
+  interactive messages. Use these in WhatsApp Web or on your phone. Embedded
+  videos, documents, and templates without readable text
+  also need another client.
 - Colour emoji on Windows: Segoe UI Emoji is not a bitmap font, so emoji
   stay monochrome there for now.
 
