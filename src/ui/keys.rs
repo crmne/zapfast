@@ -3,7 +3,7 @@
 use egui::{Key, Modifiers};
 
 use crate::app::App;
-use crate::model::{Action, Dialog, Page};
+use crate::model::{Action, Chat, Dialog, Page};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
     let editing_text = ctx.text_edit_focused();
@@ -140,9 +140,9 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         && app.open_chat.is_some()
         && app
             .open_chat
-            .as_ref()
-            .and_then(|chat| app.conversations.get(chat))
-            .is_some_and(|chat| chat.can_send())
+            .as_deref()
+            .and_then(|id| app.chat(id))
+            .is_some_and(Chat::can_send)
         && app.composer.is_empty()
         && app.pending.is_empty()
         && app.editing.is_none()
