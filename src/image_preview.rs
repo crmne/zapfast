@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn preview_keys_map_to_zoom_commands_and_ignore_text_fields() {
-        use egui::{Event, Key, Modifiers};
+        use egui::{Key, Modifiers};
 
         assert_eq!(
             preview_action(Key::Equals, Modifiers::COMMAND),
