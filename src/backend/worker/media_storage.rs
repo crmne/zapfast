@@ -9,12 +9,28 @@ use crate::paths::AppDirs;
 
 /// Only known cache files may be forgotten automatically. An absent external
 /// file may belong to an unmounted drive, even if its mount point is readable.
+/// A custom subtree is protected only when the custom folder itself lives
+/// inside the managed cache; an ancestor custom folder (allowed by the
+/// folder-change validation) must not make every cache path non-disposable.
 pub(super) fn is_disposable_source(dirs: &AppDirs, path: &Path) -> bool {
     AppDirs::is_subpath(path, &dirs.media_cache_dir())
-        && !dirs
-            .custom_media
-            .as_ref()
-            .is_some_and(|custom| AppDirs::is_subpath(path, custom))
+        && !dirs.custom_media.as_ref().is_some_and(|custom| {
+            AppDirs::is_subpath(custom, &dirs.media_cache_dir())
+                && AppDirs::is_subpath(path, custom)
+        })
+}
+
+/// Stages a copy under the same `.part` naming the download path uses, so
+/// startup cleanup removes the remains of a process that died mid-copy. A
+/// generic `NamedTempFile` name would orphan its hidden `.tmp` file forever
+/// in a persistent custom folder.
+fn staging_file(dir: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    let (path, file) =
+        super::temporary_attachment_file(&dir.join("zapfast")).map_err(std::io::Error::other)?;
+    Ok(tempfile::NamedTempFile::from_parts(
+        file,
+        tempfile::TempPath::try_from_path(path)?,
+    ))
 }
 
 /// Removes newly published copies on failure, but never touches the source files.
@@ -59,7 +75,7 @@ impl Copies {
         {
             return Ok(source.to_owned());
         }
-        let mut staged = tempfile::NamedTempFile::new_in(dir)?;
+        let mut staged = staging_file(dir)?;
         std::io::copy(&mut input, &mut staged)?;
         staged.as_file().sync_all()?;
         let path = publish(staged, &dir.join(name))?;
@@ -118,7 +134,7 @@ pub(super) async fn save(dirs: &AppDirs, path: PathBuf, bytes: Vec<u8>) -> Resul
         } else {
             std::fs::create_dir_all(dir)?;
         }
-        let mut staged = tempfile::NamedTempFile::new_in(dir)?;
+        let mut staged = staging_file(dir)?;
         staged.write_all(&bytes)?;
         staged.as_file().sync_all()?;
         publish(staged, &path)
@@ -178,7 +194,7 @@ impl Worker {
             }
             let custom = custom.map(|_| dir.clone());
             // Even an empty archive must not accept an unwritable directory.
-            let _probe = tempfile::NamedTempFile::new_in(&dir)?;
+            let _probe = staging_file(&dir)?;
             let mut copies = Copies::new(&dir)?;
             let mut updates = Vec::new();
             let mut paths: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
@@ -749,6 +765,47 @@ mod tests {
         assert!(!cache.exists());
         assert_eq!(std::fs::read(saved).unwrap(), b"preserved");
         assert_eq!(std::fs::read(unrelated).unwrap(), b"unrelated");
+    }
+
+    #[test]
+    fn disposable_cache_paths_stay_disposable_unless_custom_lives_inside_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let mut dirs = AppDirs::under(root.path());
+        dirs.ensure().unwrap();
+        let cache = dirs.media_cache_dir();
+        let cached = cache.join("cached.jpg");
+        // No custom folder: plain cache rules.
+        assert!(is_disposable_source(&dirs, &cached));
+        // A custom folder outside the cache leaves cache paths disposable.
+        dirs.custom_media = Some(root.path().join("downloads"));
+        assert!(is_disposable_source(&dirs, &cached));
+        // A custom folder that is an ancestor of the cache (allowed by the
+        // folder-change validation) must not turn every cache path into a
+        // protected external file: missing cache attachments still clear so
+        // they can be fetched again.
+        dirs.custom_media = Some(root.path().to_path_buf());
+        assert!(is_disposable_source(&dirs, &cached));
+        // Only a custom subtree inside the cache is protected.
+        let legacy = cache.join("legacy/custom");
+        std::fs::create_dir_all(&legacy).unwrap();
+        dirs.custom_media = Some(legacy.clone());
+        assert!(!is_disposable_source(&dirs, &legacy.join("saved.jpg")));
+        assert!(is_disposable_source(&dirs, &cached));
+    }
+
+    #[test]
+    fn staging_files_use_the_cleanup_recognized_part_naming() {
+        let root = tempfile::tempdir().unwrap();
+        let staged = staging_file(root.path()).unwrap();
+        let name = staged.path().file_name().unwrap().to_string_lossy();
+        let Some(random) = name
+            .strip_prefix(".zapfast.")
+            .and_then(|name| name.strip_suffix(".part"))
+        else {
+            panic!("staging name does not match the cleanup pattern: {name}");
+        };
+        assert_eq!(random.len(), 16);
+        assert!(random.bytes().all(|byte| byte.is_ascii_hexdigit()));
     }
 
     #[test]

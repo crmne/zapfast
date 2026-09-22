@@ -129,18 +129,26 @@ fn attachment_is_too_large(size: Option<u64>) -> bool {
 }
 
 /// Streams a verified attachment to disk without accepting more than 64 MiB.
+/// `create_dir` marks the managed default cache, which is created on demand;
+/// a configured custom folder must already exist, so a mount that vanishes
+/// between the preflight check and this task never gets recreated locally.
 async fn download_attachment(
     client: &Client,
     downloadable: &dyn Downloadable,
     dir: &Path,
     path: &Path,
+    create_dir: bool,
 ) -> Result<PathBuf, String> {
     if attachment_is_too_large(downloadable.file_length()) {
         return Err(ATTACHMENT_LIMIT_ERROR.to_owned());
     }
-    tokio::fs::create_dir_all(dir)
-        .await
-        .map_err(|error| error.to_string())?;
+    if create_dir {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|error| error.to_string())?;
+    } else if !dir.is_dir() {
+        return Err(ATTACHMENT_FOLDER_UNAVAILABLE.to_owned());
+    }
     let (temporary, file) = temporary_attachment_file(path)?;
     let result = client
         .download_to_writer(
@@ -208,7 +216,7 @@ fn temporary_attachment_path(path: &Path) -> PathBuf {
 
 /// Creates an exclusive temporary file, retrying a vanishingly unlikely name
 /// collision without ever opening another download's staging file.
-fn temporary_attachment_file(path: &Path) -> Result<(PathBuf, std::fs::File), String> {
+pub(super) fn temporary_attachment_file(path: &Path) -> Result<(PathBuf, std::fs::File), String> {
     for _ in 0..8 {
         let temporary = temporary_attachment_path(path);
         match std::fs::OpenOptions::new()
@@ -4082,10 +4090,14 @@ impl Worker {
             None
         };
         let commands = self.commands.clone();
+        // The managed-versus-custom distinction is decided by the preflight
+        // check above and travels with the task, so a vanished mount is never
+        // recreated between the check and the write.
+        let create_dir = self.dirs.custom_media.is_none();
         tokio::spawn(async move {
             let path = media_path(&dir, &chat, &id, &mime, file_name.as_deref());
             let result = with_attachment_deadline(ATTACHMENT_TIMEOUT, async {
-                match download_attachment(&client, &*downloadable, &dir, &path).await {
+                match download_attachment(&client, &*downloadable, &dir, &path, create_dir).await {
                     Ok(path) => Ok(path),
                     Err(error) => {
                         let text = error.to_string();
@@ -4104,8 +4116,10 @@ impl Worker {
                                     Ok(MediaRetryResult::Success { direct_path }) => {
                                         match refreshed(direct_path) {
                                             Some(again) => {
-                                                download_attachment(&client, &*again, &dir, &path)
-                                                    .await
+                                                download_attachment(
+                                                    &client, &*again, &dir, &path, create_dir,
+                                                )
+                                                .await
                                             }
                                             None => Err(text),
                                         }
@@ -4189,7 +4203,8 @@ impl Worker {
                 let result = async {
                     let path = dir.join(format!("{hash}.webp"));
                     let sticker = PhoneSticker(meta);
-                    download_attachment(&client, &sticker, &dir, &path).await
+                    // The sticker cache is managed, so it is created on demand.
+                    download_attachment(&client, &sticker, &dir, &path, true).await
                 }
                 .await;
                 let _ = commands.send(Command::StickerFetched { hash, result });
@@ -6366,10 +6381,15 @@ mod tests {
         std::fs::write(&bare, b"user data").unwrap();
         let visible = root.path().join("photo.a1b2c3d4e5f60718.part");
         std::fs::write(&visible, b"user data").unwrap();
+        // The same naming media-storage copies stage under, so an interrupted
+        // folder change is cleaned up just like an interrupted download.
+        let copy = root.path().join(".zapfast.b2c3d4e5f6071819.part");
+        std::fs::write(&copy, b"partial").unwrap();
 
         discard_attachment_staging(root.path());
 
         assert!(!own.exists());
+        assert!(!copy.exists());
         for kept in [foreign, short, bare, visible] {
             assert!(kept.exists(), "never deletes {}", kept.display());
         }

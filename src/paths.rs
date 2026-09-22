@@ -160,6 +160,46 @@ impl AppDirs {
         }
     }
 
+    /// Validates a persisted custom folder before wiring it into the runtime.
+    /// A hand-edited settings file, or a path whose symlink was swapped since
+    /// it was saved, must not make downloads write into the cache, session,
+    /// archive, or settings directories. A folder that no longer exists is
+    /// kept: it may be a disconnected mount that returns later.
+    pub fn validated_custom_media(&self, custom: Option<PathBuf>) -> Option<PathBuf> {
+        let custom = custom?;
+        // The cache boundary check runs first and works lexically, so a
+        // hand-edited path equal to the default media folder is rejected even
+        // before that folder has ever been created on disk.
+        if self.is_default_media_dir(&custom) || self.is_cache_path(&custom) {
+            log::warn!(
+                "ignoring persisted attachment folder inside the cache: {}",
+                custom.display()
+            );
+            return None;
+        }
+        match std::fs::metadata(&custom) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                log::warn!(
+                    "ignoring persisted attachment folder that is not a directory: {}",
+                    custom.display()
+                );
+                return None;
+            }
+            // A missing folder may be an unmounted drive; retain the path so
+            // the archive rows keep pointing at it, as `ensure_media_dir` does.
+            Err(_) => return Some(custom),
+        }
+        if AppDirs::is_subpath(&custom, &self.state) || AppDirs::is_subpath(&custom, &self.config) {
+            log::warn!(
+                "ignoring persisted attachment folder inside the app data folders: {}",
+                custom.display()
+            );
+            return None;
+        }
+        Some(custom.canonicalize().unwrap_or(custom))
+    }
+
     /// Profile pictures keyed by chat.
     pub fn avatar_cache_dir(&self) -> PathBuf {
         self.cache.join("avatars")
@@ -426,6 +466,45 @@ mod tests {
         dirs.custom_media = Some(blocked.clone());
         assert!(dirs.ensure_media_dir().is_err());
         assert_eq!(std::fs::read(blocked).unwrap(), b"fixture");
+    }
+
+    #[test]
+    fn validated_custom_media_rejects_boundaries_but_keeps_valid_and_missing_folders() {
+        let root = root("validated-custom");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        // The default cache and its subfolders are never adopted from settings.
+        assert_eq!(
+            dirs.validated_custom_media(Some(dirs.media_cache_dir())),
+            None
+        );
+        let nested = dirs.cache.join("media/nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        assert_eq!(dirs.validated_custom_media(Some(nested)), None);
+        // Neither are folders inside the app data directories.
+        let in_state = root.join("state/attachments");
+        std::fs::create_dir_all(&in_state).unwrap();
+        assert_eq!(dirs.validated_custom_media(Some(in_state)), None);
+        let in_config = root.join("config/attachments");
+        std::fs::create_dir_all(&in_config).unwrap();
+        assert_eq!(dirs.validated_custom_media(Some(in_config)), None);
+        // A file instead of a folder is dropped, never followed.
+        let file = root.join("settings-file");
+        std::fs::write(&file, b"fixture").unwrap();
+        assert_eq!(dirs.validated_custom_media(Some(file.clone())), None);
+        assert_eq!(std::fs::read(file).unwrap(), b"fixture");
+        // A missing folder is kept: it may be a disconnected mount.
+        let missing = root.join("mounted");
+        assert_eq!(
+            dirs.validated_custom_media(Some(missing.clone())),
+            Some(missing)
+        );
+        // A valid folder is kept, with symlinks and '.' segments resolved.
+        let valid = root.join("downloads/./sub");
+        std::fs::create_dir_all(&valid).unwrap();
+        let kept = dirs.validated_custom_media(Some(valid.clone())).unwrap();
+        assert_eq!(kept, valid.canonicalize().unwrap());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
