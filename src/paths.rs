@@ -154,10 +154,41 @@ impl AppDirs {
 
     /// Checks whether `child` is equal to or located within `parent`.
     pub fn is_subpath(child: &Path, parent: &Path) -> bool {
-        match (child.canonicalize(), parent.canonicalize()) {
-            (Ok(c), Ok(p)) => c.starts_with(&p),
-            _ => child.starts_with(parent),
+        Self::resolved_for_compare(child).starts_with(Self::resolved_for_compare(parent))
+    }
+
+    /// Resolves a path as far as it currently exists, following symlinks in
+    /// existing ancestors and collapsing `.` and `..` in the missing tail, so
+    /// a not-yet-created path is compared by where it will actually live once
+    /// the missing components appear.
+    fn resolved_for_compare(path: &Path) -> PathBuf {
+        if let Ok(resolved) = path.canonicalize() {
+            return resolved;
         }
+        let components: Vec<_> = path.components().collect();
+        let mut existing = 0;
+        for len in (1..=components.len()).rev() {
+            let prefix = PathBuf::from_iter(&components[..len]);
+            if prefix.try_exists().unwrap_or(false) {
+                existing = len;
+                break;
+            }
+        }
+        let base = PathBuf::from_iter(&components[..existing])
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from_iter(&components[..existing]));
+        let mut out = base;
+        for component in &components[existing..] {
+            use std::path::Component;
+            match component {
+                Component::ParentDir => {
+                    out.pop();
+                }
+                Component::CurDir => {}
+                _ => out.push(component.as_os_str()),
+            }
+        }
+        out
     }
 
     /// Validates a persisted custom folder before wiring it into the runtime.
@@ -190,8 +221,9 @@ impl AppDirs {
             // the archive rows keep pointing at it, as `ensure_media_dir` does.
             // The app-data boundaries still apply to it: a not-yet-created
             // folder inside state or config must not start receiving
-            // downloads if it appears later, and `is_subpath` falls back to
-            // the lexical comparison for paths that do not exist yet.
+            // downloads if it appears later. `is_subpath` compares such a path
+            // by where it will resolve once it appears, `..` segments and
+            // symlinked ancestors included.
             Err(_) => {
                 if AppDirs::is_subpath(&custom, &self.state)
                     || AppDirs::is_subpath(&custom, &self.config)
@@ -525,6 +557,62 @@ mod tests {
         std::fs::create_dir_all(&valid).unwrap();
         let kept = dirs.validated_custom_media(Some(valid.clone())).unwrap();
         assert_eq!(kept, valid.canonicalize().unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn is_subpath_resolves_dotdot_and_symlink_ancestors_in_missing_paths() {
+        let root = root("subpath-resolution");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        // A `..` segment in a missing path collapses against the existing
+        // ancestors, so it cannot smuggle the folder into app data.
+        assert!(AppDirs::is_subpath(
+            &root.join("scratch/../state/attachments"),
+            &dirs.state
+        ));
+        assert!(!AppDirs::is_subpath(
+            &root.join("scratch/../downloads"),
+            &dirs.state
+        ));
+        #[cfg(unix)]
+        {
+            // A symlinked ancestor resolves too: the path lands in app data
+            // as soon as the missing component appears under the link.
+            std::os::unix::fs::symlink(&dirs.state, root.join("linked-state")).unwrap();
+            assert!(AppDirs::is_subpath(
+                &root.join("linked-state/attachments"),
+                &dirs.state
+            ));
+            assert!(!AppDirs::is_subpath(
+                &root.join("linked-state/attachments"),
+                &dirs.config
+            ));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validated_custom_media_normalizes_missing_paths_before_boundary_checks() {
+        let root = root("validated-missing-normalized");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        // `..` segments must not smuggle a not-yet-created folder past the
+        // app-data checks: it resolves into `state` once it appears.
+        let dotdot = root.join("scratch/../state/attachments");
+        assert_eq!(dirs.validated_custom_media(Some(dotdot)), None);
+        // The same shape staying outside app data is kept as configured.
+        let outside = root.join("scratch/../downloads");
+        assert_eq!(
+            dirs.validated_custom_media(Some(outside.clone())),
+            Some(outside)
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&dirs.state, root.join("linked-state")).unwrap();
+            let via_link = root.join("linked-state/attachments");
+            assert_eq!(dirs.validated_custom_media(Some(via_link)), None);
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
