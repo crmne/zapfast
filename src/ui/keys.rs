@@ -153,9 +153,7 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) -> bool {
                 ..
             } = event
             {
-                if let Some(action) = crate::image_preview::preview_action(*key, *modifiers) {
-                    event_actions.push(action);
-                }
+                event_actions.extend(crate::image_preview::preview_action(*key, *modifiers));
             }
         }
         actions.extend(event_actions);
