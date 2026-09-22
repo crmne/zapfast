@@ -3823,6 +3823,15 @@ impl Worker {
 
     /// Files the result and releases any picker request that started it.
     fn downloaded(&mut self, chat: ChatId, id: String, result: Result<PathBuf, String>) {
+        // The download captured the folder that was current when it started;
+        // a change since then leaves the file behind, so file it in the
+        // current one and fail the download if that copy does not hold.
+        let result = match result {
+            Ok(path) => self.keep_current_media(&path).map_err(|error| {
+                format!("Could not move the finished attachment into the current folder: {error}")
+            }),
+            Err(error) => Err(error),
+        };
         if let Ok(path) = &result {
             let _ = self.archive.set_media_path(&chat, &id, path);
         }

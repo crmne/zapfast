@@ -379,6 +379,41 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), b"fixture");
     }
 
+    #[tokio::test]
+    async fn a_download_that_cannot_move_to_the_current_folder_fails_without_a_stale_path() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
+        worker.dirs = AppDirs::under(root.path());
+        let old = worker.dirs.ensure_media_dir().unwrap().join("late.jpg");
+        attachment(&worker, "image", &old);
+        worker
+            .change_media_dir(Some(root.path().join("downloads")))
+            .await;
+        let _ = events.try_recv().unwrap();
+        std::fs::write(&old, b"fixture").unwrap();
+        // Take the current folder away so the finished file cannot move there.
+        let custom = worker.dirs.custom_media.clone().unwrap();
+        std::fs::remove_dir_all(&custom).unwrap();
+        std::fs::write(&custom, b"blocked").unwrap();
+
+        worker
+            .handle_command(Command::Downloaded {
+                chat: CHAT.into(),
+                id: "image".into(),
+                result: Ok(old.clone()),
+            })
+            .await;
+        assert_eq!(archived_path(&worker, "image"), None);
+        assert!(
+            matches!(
+                events.try_recv().unwrap(),
+                Event::Media { result: Err(_), .. }
+            ),
+            "a stale folder path must never reach the archive or the interface"
+        );
+        assert!(events.try_recv().is_err());
+    }
+
     #[test]
     fn failed_operation_removes_only_new_copies() {
         let root = tempfile::tempdir().unwrap();
