@@ -4770,9 +4770,7 @@ fn list_content(list: &wa::message::ListMessage) -> Option<Content> {
 /// `Message.TemplateMessage`: a hydrated template carries title, content,
 /// footer, and buttons in one place.
 fn template_content(template: &wa::message::TemplateMessage) -> Option<Content> {
-    let Some(hydrated) = template.hydrated_template.as_option() else {
-        return None;
-    };
+    let hydrated = template.hydrated_template.as_option()?;
     let header = hydrated.title.as_ref().and_then(|title| match title {
         wa::message::template_message::hydrated_four_row_template::Title::HydratedTitleText(
             text,
