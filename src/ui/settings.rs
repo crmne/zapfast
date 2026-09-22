@@ -439,9 +439,7 @@ fn wallpaper_color_button(
             Stroke::NONE
         })
         .corner_radius(CornerRadius::ZERO);
-    let response =
-        ui.add(button)
-            .on_hover_text(format!("{} RGB: {:?}", color.label(), color.rgb()));
+    let response = ui.add(button).on_hover_text(color.label());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), color.label())
     });
