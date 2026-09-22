@@ -20,15 +20,10 @@ pub fn open_target(path: &Path, rendered: bool) -> OpenTarget {
 }
 
 /// Keyboard command the preview handles while it owns the window.
-pub fn preview_action(
-    key: Key,
-    modifiers: Modifiers,
-) -> Option<crate::model::Action> {
+pub fn preview_action(key: Key, modifiers: Modifiers) -> Option<crate::model::Action> {
     let command = modifiers.command || modifiers.ctrl;
     match (command, key) {
-        (true, Key::Plus) | (true, Key::Equals) => {
-            Some(crate::model::Action::ZoomImageIn)
-        }
+        (true, Key::Plus) | (true, Key::Equals) => Some(crate::model::Action::ZoomImageIn),
         (true, Key::Minus) => Some(crate::model::Action::ZoomImageOut),
         (true, Key::Num0) => Some(crate::model::Action::FitImage),
         (false, Key::Plus) | (false, Key::Equals) if !modifiers.any() => {
@@ -66,11 +61,7 @@ pub fn zoomed_size(width: f32, height: f32, zoom: f32) -> (f32, f32) {
 
 /// Requests enough source pixels for the preview's current zoom level.
 pub fn texture_size(canvas: egui::Vec2, fit: bool, zoom: f32) -> egui::Vec2 {
-    if fit {
-        canvas
-    } else {
-        canvas * zoom.max(0.0)
-    }
+    if fit { canvas } else { canvas * zoom.max(0.0) }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -143,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_keys_map_to_zoom_commands_and_ignore_text_fields() {
+    fn preview_keys_map_to_zoom_commands_including_shifted_equals() {
         use egui::{Key, Modifiers};
 
         assert_eq!(
@@ -151,7 +142,14 @@ mod tests {
             Some(crate::model::Action::ZoomImageIn)
         );
         assert_eq!(
-            preview_action(Key::Equals, Modifiers { ctrl: true, shift: true, ..Default::default() }),
+            preview_action(
+                Key::Equals,
+                Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
             Some(crate::model::Action::ZoomImageIn)
         );
         assert_eq!(
@@ -191,8 +189,14 @@ mod tests {
         assert_eq!(fit_size(0.0, 0.0, 800.0, 700.0), (0.0, 0.0));
         assert_eq!(zoomed_size(320.0, 240.0, 2.0), (640.0, 480.0));
         assert_eq!(zoomed_size(320.0, 240.0, 0.25), (80.0, 60.0));
-        assert_eq!(texture_size(egui::vec2(800.0, 600.0), true, 4.0), egui::vec2(800.0, 600.0));
-        assert_eq!(texture_size(egui::vec2(800.0, 600.0), false, 2.0), egui::vec2(1600.0, 1200.0));
+        assert_eq!(
+            texture_size(egui::vec2(800.0, 600.0), true, 4.0),
+            egui::vec2(800.0, 600.0)
+        );
+        assert_eq!(
+            texture_size(egui::vec2(800.0, 600.0), false, 2.0),
+            egui::vec2(1600.0, 1200.0)
+        );
     }
 
     #[test]

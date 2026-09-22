@@ -9,6 +9,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     if app.image_preview.is_some() && preview_keys(app, ctx) {
         return;
     }
+    let editing_text = ctx.text_edit_focused();
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         let mut key = |modifiers: Modifiers, key: Key, action: Action| {
@@ -135,9 +136,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     app.actions.extend(actions);
 }
 
-/// Handles keys while the image preview is open. Every input key is swallowed
-/// so a shortcut cannot reach the chat behind it. Returns false when the
-/// preview should not take the frame's input.
+/// Handles keys while the image preview is open and swallows them so no
+/// shortcut reaches the chat behind it.
 fn preview_keys(app: &mut App, ctx: &egui::Context) -> bool {
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
@@ -153,9 +153,7 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) -> bool {
                     pressed: true,
                     ..
                 } => {
-                    if let Some(action) =
-                        crate::image_preview::preview_action(*key, *modifiers)
-                    {
+                    if let Some(action) = crate::image_preview::preview_action(*key, *modifiers) {
                         event_actions.push(action);
                     }
                 }
