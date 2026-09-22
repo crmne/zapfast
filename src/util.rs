@@ -229,11 +229,14 @@ pub fn initials(name: &str) -> String {
     initials
 }
 
-/// Formats a phone number with a plus sign and grouped digits.
+/// Formats a phone number with a plus sign and country-appropriate grouping.
 pub fn phone(digits: &str) -> String {
     let digits: String = digits.chars().filter(char::is_ascii_digit).collect();
     if digits.is_empty() {
         return String::new();
+    }
+    if let Some(formatted) = brazilian_phone(&digits) {
+        return formatted;
     }
     let mut out = String::from("+");
     for (index, character) in digits.chars().enumerate() {
@@ -244,6 +247,27 @@ pub fn phone(digits: &str) -> String {
         out.push(character);
     }
     out
+}
+
+/// Formats Brazil's `+55` numbers as `(DDD) XXXX-XXXX` or `(DDD) XXXXX-XXXX`.
+///
+/// WhatsApp stores direct-chat ids in international form, while Brazilian
+/// numbers use a two-digit area code and either eight-digit fixed lines or
+/// nine-digit mobile numbers.
+fn brazilian_phone(digits: &str) -> Option<String> {
+    let national = digits.strip_prefix("55")?;
+    let subscriber_len = match national.len() {
+        10 | 11 => national.len() - 2,
+        _ => return None,
+    };
+    let area = &national[..2];
+    let subscriber = &national[2..2 + subscriber_len];
+    let split = subscriber.len() - 4;
+    Some(format!(
+        "+55 ({area}) {}-{}",
+        &subscriber[..split],
+        &subscriber[split..]
+    ))
 }
 
 /// Stable id-derived avatar hue.
@@ -384,6 +408,10 @@ mod tests {
     fn phone_numbers_are_grouped() {
         assert_eq!(phone("393331234567"), "+39 333 123 456 7");
         assert_eq!(phone("15551234567"), "+15 551 234 567");
+        assert_eq!(phone("5511999999999"), "+55 (11) 99999-9999");
+        assert_eq!(phone("551140028922"), "+55 (11) 4002-8922");
+        assert_eq!(phone("551149508333"), "+55 (11) 4950-8333");
+        assert_eq!(phone("+55 (11) 99999-9999"), "+55 (11) 99999-9999");
         assert_eq!(phone(""), "");
     }
 

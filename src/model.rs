@@ -68,6 +68,8 @@ pub struct Chat {
     pub id: ChatId,
     /// Best known address-book, push, or phone-number name.
     pub name: String,
+    /// Distinguishes an actual subject "Group" from older cached placeholders.
+    pub group_subject_known: bool,
     pub kind: ChatKind,
     /// Latest-message Unix timestamp used for ordering.
     pub last_activity: i64,
@@ -106,6 +108,7 @@ impl Chat {
         Self {
             id,
             name,
+            group_subject_known: false,
             kind,
             last_activity: 0,
             unread: 0,
@@ -551,9 +554,15 @@ pub enum Dialog {
     ConfirmUnlink,
     /// Phone number used for pairing-code linking.
     PairWithPhone,
+    /// Contacts and the self-chat shortcut.
+    NewChat,
     /// Manually entered number for messaging or saving a contact.
     NewContact,
+    UnlockLockedChats,
+    ConfirmLockChat(ChatId),
     ChatInfo(ChatId),
+    /// Confirms deleting a chat, which cannot be undone.
+    ConfirmDeleteChat(ChatId),
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
@@ -568,6 +577,8 @@ pub enum ToastKind {
     Error,
 }
 
+/// Info toasts fade after a few seconds; errors stay until dismissed so they
+/// can be read to the end and copied.
 #[derive(Clone, Debug)]
 pub struct Toast {
     pub message: String,
@@ -645,6 +656,8 @@ pub enum Action {
     OpenMediaDir,
     OpenUrl(String),
     CopyText(String),
+    /// Closes the toast at this index. Only errors wait to be dismissed.
+    DismissToast(usize),
     /// Starts a reply to a message in the open chat.
     Reply(String),
     CancelReply,
@@ -730,6 +743,8 @@ pub enum Action {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Deletes a chat here and on the phone.
+    DeleteChat(ChatId),
     SetPinned(ChatId, bool),
     ShowDialog(Dialog),
     CloseDialog,
@@ -741,6 +756,12 @@ pub enum Action {
     FocusComposer,
     HideShortcutHints,
     DismissChatLockHint,
+    OpenLockedFolder,
+    UnlockLockedFolder(String),
+    CreateChatLockCode(String),
+    MessageYourself,
+    CloseLockedFolder,
+    SetChatLockCode(Option<String>),
     ScrollToBottom,
     /// Scrolls the open chat to a message.
     ScrollTo(String),

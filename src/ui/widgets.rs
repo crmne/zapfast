@@ -94,7 +94,7 @@ pub fn selectable_rich_text(
 ) -> egui::Response {
     let width = ui.available_width().max(1.0);
     let line = line(ui, text, font, color, width, 1);
-    let (rect, response) = ui.allocate_exact_size(line.size(), Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(line.size(), Sense::CLICK | Sense::DRAG);
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
     // Register emoji placements so copied text restores the original sequences.
@@ -157,6 +157,7 @@ pub fn clickable_avatar(
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
     theme::reveal_focus(&response);
+    theme::focus_outline(ui, response.id, rect, size / 2.0);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
@@ -338,6 +339,36 @@ pub fn menu_item_enabled(
     clicked
 }
 
+/// A menu row that only informs: no hover, no pointer, not a button. It is
+/// set apart by its smaller type and dimmed icon; the text keeps full contrast.
+pub fn menu_info(ui: &mut Ui, palette: &Palette, icon: Icon, label: &str) {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let icon_rect =
+        Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(14.0));
+    icon.image(palette.dim, 14.0).paint_at(ui, icon_rect);
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        label.to_string(),
+        theme::regular(12.5),
+        palette.text,
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: (rect.right() - 10.0 - (rect.left() + 36.0)).max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('\u{2026}'),
+    };
+    let galley = crate::bidi::layout_job(ui, job);
+    ui.painter().galley(
+        pos2(rect.left() + 36.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        palette.text,
+    );
+}
+
 pub fn menu_separator(ui: &mut Ui, palette: &Palette) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
     ui.painter().hline(
@@ -399,14 +430,6 @@ pub fn search_field(
         palette.surface
     };
     ui.painter().rect_filled(rect, height / 2.0, fill);
-    if has_focus {
-        ui.painter().rect_stroke(
-            rect,
-            height / 2.0,
-            Stroke::new(1.5, palette.accent),
-            egui::StrokeKind::Inside,
-        );
-    }
     let icon_rect =
         Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(16.0));
     Icon::Search
@@ -435,6 +458,7 @@ pub fn search_field(
             .desired_width(field_rect.width())
             .vertical_align(Align::Center),
     );
+    theme::focus_outline(ui, response.id, rect, height / 2.0);
     ui.ctx()
         .accesskit_node_builder(response.id, |node| node.set_label(hint));
     if !text.is_empty() {
@@ -465,6 +489,9 @@ pub fn search_field(
 }
 
 /// Switch control.
+/// Switch that shows its state by shape as well as colour: off is an
+/// outlined track with a small grey knob, on a filled track with a larger
+/// white knob carrying a check (WCAG 1.4.1).
 pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
     let size = vec2(40.0, 22.0);
     let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
@@ -478,11 +505,33 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
             egui::Rgba::from(palette.surface_active)..=egui::Rgba::from(palette.accent),
             t,
         );
+        let radius = rect.height() / 2.0;
+        ui.painter().rect_filled(rect, radius, Color32::from(fill));
+        // The outline keeps the off track visible on a light panel.
+        if t < 1.0 {
+            ui.painter().rect_stroke(
+                rect,
+                radius,
+                Stroke::new(1.5, palette.secondary.gamma_multiply(1.0 - t)),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let center = pos2(
+            egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t),
+            rect.center().y,
+        );
+        let knob = egui::lerp(
+            egui::Rgba::from(palette.secondary)..=egui::Rgba::from(Color32::WHITE),
+            t,
+        );
         ui.painter()
-            .rect_filled(rect, rect.height() / 2.0, Color32::from(fill));
-        let knob_x = egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t);
-        ui.painter()
-            .circle_filled(pos2(knob_x, rect.center().y), 8.0, Color32::WHITE);
+            .circle_filled(center, egui::lerp(6.0..=8.0, t), Color32::from(knob));
+        if t > 0.5 {
+            let check = Rect::from_center_size(center, Vec2::splat(12.0));
+            Icon::Check
+                .image(palette.accent.gamma_multiply((t - 0.5) * 2.0), 12.0)
+                .paint_at(ui, check);
+        }
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -568,8 +617,9 @@ pub fn filter_chip(
         (count > 0).then(|| painter.layout_no_wrap(count.to_string(), theme::regular(11.5), color));
     let gap = 5.0;
     let width = text.size().x + number.as_ref().map_or(0.0, |number| gap + number.size().x);
-    let (rect, response) = ui.allocate_exact_size(vec2(width + 22.0, 28.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(width + 18.0, 28.0), Sense::click());
     theme::reveal_focus(&response);
+    theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
     if ui.is_rect_visible(rect) {
         let radius = rect.height() / 2.0;
         if selected {
@@ -586,7 +636,7 @@ pub fn filter_chip(
                 egui::StrokeKind::Inside,
             );
         }
-        let mut pos = pos2(rect.left() + 11.0, rect.center().y - text.size().y / 2.0);
+        let mut pos = pos2(rect.left() + 9.0, rect.center().y - text.size().y / 2.0);
         let advance = text.size().x + gap;
         ui.painter().galley(pos, text, color);
         if let Some(number) = number {
@@ -609,4 +659,40 @@ pub fn filter_chip(
         )
     });
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The knob radius and the track outline a switch paints in one state.
+    fn switch_shapes(on: bool) -> (f32, f32) {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut value = on;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            switch(ui, &crate::theme::Palette::light(), &mut value);
+        });
+        output.textures_delta.clear();
+        let mut knob = 0.0_f32;
+        let mut outline = 0.0_f32;
+        for clipped in &output.shapes {
+            match &clipped.shape {
+                egui::Shape::Circle(circle) => knob = knob.max(circle.radius),
+                egui::Shape::Rect(rect) => outline = outline.max(rect.stroke.width),
+                _ => {}
+            }
+        }
+        (knob, outline)
+    }
+
+    /// On and off differ in shape, not only in colour (WCAG 1.4.1).
+    #[test]
+    fn a_switch_shows_its_state_without_colour() {
+        let (off_knob, off_outline) = switch_shapes(false);
+        let (on_knob, on_outline) = switch_shapes(true);
+        assert!(off_outline > 0.0, "the off track is outlined");
+        assert_eq!(on_outline, 0.0, "the on track is filled, not outlined");
+        assert!(on_knob > off_knob, "the knob grows when on");
+    }
 }

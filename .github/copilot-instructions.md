@@ -34,6 +34,10 @@ task explicitly changes it.
   interface redesign without explicit maintainer approval of its visual scope.
 - Prefer existing dependencies. Flag new crates, changes to network access,
   storage formats, permissions, or release packaging for explicit scrutiny.
+- Follow the trunk-based branch policy in `AGENTS.md`. Maintainer and agent
+  work goes directly to a linear `main`; do not create a branch unless the
+  maintainer explicitly requests one. Every ordinary release tag, including a
+  prerelease, must already be reachable from `origin/main`.
 - Require focused regression tests and the full checks from `AGENTS.md` for
   code changes. Do not weaken a lint or test to make a change pass.
 

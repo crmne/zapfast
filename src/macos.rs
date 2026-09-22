@@ -2,9 +2,9 @@
 //! just like the link and tray; reopening replaces only its repaint callback.
 
 use std::cell::RefCell;
-use std::sync::Mutex;
+use std::sync::{Arc, LazyLock, Mutex};
 
-use objc2_app_kit::{NSApplication, NSView, NSWindowButton};
+use objc2_app_kit::{NSApplication, NSText, NSView, NSWindowButton};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem as Native, Submenu};
 
@@ -14,7 +14,24 @@ thread_local! {
     static MENU: RefCell<Option<Menu>> = const { RefCell::new(None) };
 }
 static EVENTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static EDIT_EVENTS: LazyLock<Arc<Mutex<Vec<egui::Event>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
 static REPAINT: Mutex<Option<egui::Context>> = Mutex::new(None);
+
+/// Menu edits must reach the input before egui processes focus and selection.
+struct MenuInput(Arc<Mutex<Vec<egui::Event>>>);
+
+impl egui::plugin::Plugin for MenuInput {
+    fn debug_name(&self) -> &'static str {
+        "zapfast-macos-menu"
+    }
+
+    fn input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+        input
+            .events
+            .extend(self.0.lock().unwrap_or_else(|p| p.into_inner()).drain(..));
+    }
+}
 
 fn item(id: &str, text: &str, shortcut: Option<&str>) -> MenuItem {
     MenuItem::with_id(
@@ -43,7 +60,7 @@ fn build_menu() -> tray_icon::menu::Result<Menu> {
     ])?;
     let file = Submenu::new("File", true);
     file.append_items(&[
-        &item("new", "New Contact…", Some("Super+KeyN")),
+        &item("new", "New Chat…", Some("Super+KeyN")),
         &Native::separator(),
         &item("close", "Close Window", Some("Super+KeyW")),
     ])?;
@@ -90,6 +107,7 @@ fn build_menu() -> tray_icon::menu::Result<Menu> {
 }
 
 pub fn attach(ctx: &egui::Context) {
+    ctx.add_plugin(MenuInput(Arc::clone(&EDIT_EVENTS)));
     // Layout tests use headless contexts on test threads, without an NSApp.
     if objc2::MainThreadMarker::new().is_none() {
         return;
@@ -99,10 +117,17 @@ pub fn attach(ctx: &egui::Context) {
         if native_edit(&event.id.0) {
             return;
         }
-        EVENTS
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(event.id.0);
+        if let Some(edit) = edit_event(&event.id.0) {
+            EDIT_EVENTS
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(edit);
+        } else {
+            EVENTS
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(event.id.0);
+        }
         if let Some(ctx) = &*REPAINT.lock().unwrap_or_else(|p| p.into_inner()) {
             ctx.request_repaint();
         }
@@ -143,16 +168,15 @@ fn native_edit(id: &str) -> bool {
     let Some(responder) = app.keyWindow().and_then(|window| window.firstResponder()) else {
         return false;
     };
-    // The pinned winit version installs WinitView as its first responder.
-    if responder.class().name().to_bytes() == b"WinitView" {
+    // Only native text editors (including a file dialog's field editor) can
+    // handle these selectors. GL views and AccessKit's dynamically subclassed
+    // WinitView must use egui, regardless of their Objective-C class name.
+    if responder.downcast_ref::<NSText>().is_none() {
         return false;
     }
     // SAFETY: standard AppKit editing selectors; nil target walks the native
     // responder chain, and these actions accept a nil sender.
-    unsafe {
-        app.sendAction_to_from(selector, None, None);
-    }
-    true
+    unsafe { app.sendAction_to_from(selector, None, None) }
 }
 
 fn edit_event(id: &str) -> Option<egui::Event> {
@@ -193,7 +217,7 @@ fn action(id: &str, hidden: bool) -> Option<Action> {
     Some(match id {
         "about" => Action::ShowDialog(Dialog::About),
         "settings" => Action::Open(Page::Settings),
-        "new" => Action::ShowDialog(Dialog::NewContact),
+        "new" => Action::ShowDialog(Dialog::NewChat),
         "close" => Action::CloseWindow,
         "quit" => Action::Quit,
         "search" => Action::FocusSearch,
@@ -216,31 +240,17 @@ fn action(id: &str, hidden: bool) -> Option<Action> {
     })
 }
 
-pub fn drain(ctx: &egui::Context, hidden: bool) -> Vec<Action> {
+pub fn drain(hidden: bool) -> Vec<Action> {
+    if hidden {
+        EDIT_EVENTS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+    }
     let events = std::mem::take(&mut *EVENTS.lock().unwrap_or_else(|p| p.into_inner()));
     let mut actions = Vec::new();
     for id in events {
-        if let Some(event) = edit_event(&id) {
-            if !hidden {
-                ctx.input_mut(|input| input.events.push(event));
-                if id == "paste" {
-                    // Image paste follows the same key-release path as Cmd+V.
-                    ctx.input_mut(|input| {
-                        input.events.push(egui::Event::Key {
-                            key: egui::Key::V,
-                            physical_key: None,
-                            pressed: false,
-                            repeat: false,
-                            modifiers: egui::Modifiers {
-                                command: true,
-                                mac_cmd: true,
-                                ..Default::default()
-                            },
-                        })
-                    });
-                }
-            }
-        } else if let Some(action) = action(&id, hidden) {
+        if let Some(action) = action(&id, hidden) {
             if hidden
                 && matches!(
                     action,
@@ -321,6 +331,38 @@ pub fn update_window(frame: &eframe::Frame, ctx: &egui::Context, linked: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_edits_reach_the_focused_text_field_before_the_pass() {
+        let ctx = egui::Context::default();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        ctx.add_plugin(MenuInput(Arc::clone(&events)));
+        let id = egui::Id::new("menu-edit-fixture");
+        let mut text = String::from("draft");
+        let mut frame = |event: Option<egui::Event>| {
+            events.lock().unwrap().extend(event);
+            ctx.memory_mut(|memory| memory.request_focus(id));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut text).id(id));
+            });
+            output.textures_delta.clear();
+            output
+        };
+        let _ = frame(None);
+        let _ = frame(edit_event("select-all"));
+        let output = frame(edit_event("cut"));
+        assert!(output.platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(value) if value == "draft")
+        }));
+        let _ = frame(Some(egui::Event::Paste("replacement".into())));
+        let _ = frame(edit_event("select-all"));
+        let output = frame(edit_event("copy"));
+        assert!(output.platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(value) if value == "replacement")
+        }));
+        assert_eq!(text, "replacement");
+        assert!(events.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn menu_uses_the_apps_close_quit_and_edit_paths() {

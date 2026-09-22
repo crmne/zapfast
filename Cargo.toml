@@ -1,6 +1,6 @@
 [package]
 name = "zapfast"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -22,7 +22,7 @@ path = "src/main.rs"
 anyhow = "1"
 # Hashes saved stickers by content. Already included through wacore.
 sha2 = "0.11"
-# Already in the tree through rustls; used for the locked-chat code verifier.
+# Already in the tree through rustls; verifies lock codes and update signatures.
 ring = "0.17"
 # Decrypts Signal sticker packs. All four crates are already included through
 # wacore at these versions.
@@ -121,7 +121,7 @@ apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 # stay on the main thread.
 objc2 = "0.6"
 raw-window-handle = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication", "NSText", "NSView", "NSWindow"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDate", "NSGeometry", "NSObjCRuntime", "NSRunLoop", "NSString"] }
 
 [target.'cfg(windows)'.dependencies]

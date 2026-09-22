@@ -345,7 +345,10 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
             std::env::var("FLATPAK_ID").unwrap_or_else(|_| "zapfast".to_owned())
         })
         .with_inner_size(demo_size)
-        .with_min_inner_size([720.0, 480.0])
+        // Keep the floor small enough that Windows can still snap the window
+        // into narrow Aero Snap and LG Screen Split zones (a 2560 px ultrawide
+        // split four ways is about 640 px wide, which a 720 px minimum blocks).
+        .with_min_inner_size([400.0, 300.0])
         .with_icon(app_icon())
         // macOS uses a full-size content view under the traffic lights.
         .with_fullsize_content_view(true)

@@ -30,6 +30,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Pinned chats stay in pin order (most recently pinned first), regardless of
   new messages. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
+  The filters stay on one row and scroll horizontally in narrow sidebars.
+  Unnamed groups use a shared participant summary for their title and subtitle;
+  repeated first names appear as `Andrea ×3`, with your own entry shown as `You`.
+  Incomplete group metadata preserves known names and retries with backoff;
+  an empty cached subject remains eligible for recovery.
   Typing indicators show other participants, excluding your own linked devices.
   Newsletter channels are read-only; publishing channel posts is not supported.
 - **Read state across devices.** Reading a chat syncs its unread badge with
@@ -45,6 +50,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   list and individual receipts are saved locally; later membership changes
   do not change that list. If the original recipients are unknown, ZapFast
   waits for the phone's aggregate status instead of guessing from one reader.
+  A message that could not be sent says "Not sent" beside its time. ZapFast
+  does not retry it; send it again yourself.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs; this
@@ -52,22 +59,43 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Color Emoji on macOS and Windows. On Linux, ZapFast prefers an installed
   Noto Color Emoji and falls back to the bundled copy. Emoji-only messages
   are larger.
+- **Readable text.** Secondary text in the built-in light and dark themes
+  reaches WCAG AA contrast. Inside message bubbles, times, ticks, and other
+  grey text adjust to the bubble's colour, in custom themes as well.
 - **Screen-reader access.** AccessKit exposes the interface to desktop
   accessibility services. Custom buttons, chat rows, settings switches and
   message text include readable labels. Windows NVDA navigation still needs
   platform verification; keyboard and screen-reader support is not complete.
-  After Tab, the focused control is outlined and scrolled into view; using
-  the mouse hides the outline again.
+  In the chat view, Tab cycles through the message input, send/voice button,
+  attachments, polls, emoji, profile, sidebar toggle, New chat, Settings, search,
+  and chat filters, then returns to the input. Shift+Tab reverses that order;
+  hidden controls are skipped. Messages, reactions and chat rows are not stops
+  in this cycle; Alt+Up/Down switches conversations. Menus, dialogs and Settings
+  keep their own Tab navigation. Every focus border is a single one-pixel inset
+  outline following the control's shape, including circular voice buttons.
+  Text fields stay outlined while active; other outlines hide when you use the
+  mouse. Focus stays below menus, dialogs, and toasts.
 - **Safer desktop opening.** Links open only web pages or email addresses.
   Common documents and media open in their default apps; executable, script,
   and unrecognized attachment formats open their containing folder instead.
+- **Errors stay readable.** Confirmations such as "Copied" fade after a few
+  seconds. Error messages stay above the composer until you dismiss them, and
+  a button copies their text for a bug report. A repeated error replaces its
+  earlier copy, and only the three newest are kept.
 - **Send attachments with captions.** Paste a picture, drop files, or use the
   file picker. They stay in the composer until you send them or press Escape.
+  Pasting a picture uses its image data without adding the source URL or HTML
+  to your caption. Text-only clipboard contents still paste as text.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
   applies on your phone and to desktop notifications. Mute changes from your
   phone survive history arriving later, including during initial linking.
   Existing installations request one settings refresh after upgrading to
   recover previously lost mute settings and pin order, without relinking.
+- **Delete chats.** Remove a chat and its messages from the chat list's
+  right-click menu. The phone deletes it first, so this needs a connection,
+  and the chat only leaves this computer once the phone has confirmed. Chats
+  you delete or clear on the phone disappear here as well, and history that
+  was already on its way does not bring them back.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
   in the chat. The playback speed cycles between 1x, 1.5x, and 2x from the
   bubble, keeping the speaker's pitch, and the last choice applies to later
@@ -81,7 +109,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   are dismissed first. Type `:name` to autocomplete
   an emoji without leaving the composer, or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
-  delivered, or read.
+  delivered, or read. The same right-click menu copies a message's ID, which
+  helps when looking one up for a bug report.
+  Opening a message's context menu outlines that message until the menu closes.
+  The full reaction picker stays beside the menu and adds a target preview.
+  The conversation stays still while you choose; the emoji
+  grid can scroll. Quick reactions learn from usage on this computer, independently
+  of inserted emoji. These preferences do not sync from the phone.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
   timer, including replies, attachments, edits, and forwards. Forwarded copies
   use the destination chat's timer. Received messages remain in the local archive
@@ -94,7 +128,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   their default desktop apps. Profile pictures and downloaded images support
   Windows drive paths and filenames with spaces or non-ASCII characters.
   If an attachment has expired, ZapFast asks your
-  phone to upload it again.
+  phone to upload it again. Downloads stop after two minutes with an inline
+  retry error if they cannot finish; the menu disables Download while one is running.
 - **Polls.** Use the checklist button beside the paperclip to create a poll with
   2–12 answers. Turn off **Allow multiple answers** for a single-choice poll.
   Click an answer in a poll to vote; click a selected answer again to remove
@@ -121,7 +156,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Presence.** See online, last-seen, and typing status, and send your typing
   status.
 - **Idle rendering.** History-sync progress updates when data arrives. Animated
-  stickers and GIFs play only while their message or picker tile is visible.
+  stickers and GIFs show a still first frame and play while hovered in the
+  focused window, keeping idle conversations from continuously repainting.
 - **Sync recovery.** A conflicting app-state collection is recovered through
   whatsapp-rust, including requesting a fresh snapshot from the paired phone
   when validation fails. Private read-state updates run one at a time. Failures
@@ -147,10 +183,12 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Ctrl+plus and Ctrl+minus.
 - **Copy text.** Select part of a message or copy across messages in
   WhatsApp's `[time, date] Name:` format. Contact names and numbers are also
-  selectable.
+  selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
+  `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` searches, `Alt+↑/↓` switches chats and
   keeps the active chat visible in the list, `Esc` cancels the current action,
-  `Ctrl+L` focuses the message input, and `Ctrl+/` lists all shortcuts (use
+  `Ctrl+L` focuses the message input, `Ctrl+N` opens New chat, and `?` (outside
+  text fields) or `Ctrl+/` opens Keyboard shortcuts (use
   Command instead of Ctrl on macOS). The × at the left of the shortcut hints
   hides the bar; restore it with **Show shortcut hints** in Settings.
 - **Local storage.** Messages, contacts and sticker metadata are stored in a
@@ -303,7 +341,9 @@ stay on the same network.
 Right-click a chat or message to open its menu. Double-click beside a message,
 or on its edge, to reply to it (a double-click on its text still selects the
 word). Open Settings from the gear or
-with `Ctrl+,`. Use the pencil to message a new number or save a contact. You
+with `Ctrl+,`. The pencil opens **New chat**, with **Message yourself** and
+**+ Add contact** at the top, followed by searchable contacts. Add contact also
+lets you message a new number without saving it. You
 can also open a group member's contact card. Saved names sync through WhatsApp
 to your phone and linked devices.
 
@@ -314,10 +354,16 @@ folder: it disappears from the chat list, search, and the unread badge, and
 its messages never raise a desktop notification. The lock state syncs
 with your phone and other linked devices.
 
-Set a **secret code for locked chats** in Settings, then type the code in the
-search field: a "Locked chats" entry appears below the search. Click it to
-open the folder; leaving it (back button, or changing the search) hides the
-locked chats again until you retype the code.
+Choose **Locked** beside the other chat filters, type your local code, and press
+Enter or choose **Open locked chats**.
+The tab appears when locked chats exist, without a count or names before opening.
+If no local code exists, it offers to set one up. The local code is separate
+from your phone's code and is a visibility control, not an extra encryption layer.
+Search inside the open tab filters its chats. Leaving it, changing or clearing
+the code in Settings, or closing the window hides the locked chats and closes
+any open locked conversation. Typing the code into ordinary search remains
+an alternative way in. Revealed locked chats are currently read-only:
+sending messages and forwarding into them remain disabled.
 
 On the first start after upgrading, chats wait for WhatsApp's lock-state
 recovery before appearing. Failed recovery retries while keeping chats hidden.
@@ -328,7 +374,10 @@ logging. Panic logs record the source location without the panic payload.
 Pairing signature failures and rate limits retain a diagnostic category.
 
 Offline previews for these states use `--demo --demo-page channel`,
-`--demo --demo-page locked`, and `--demo --demo-page keyring`.
+`--demo --demo-page locked`, `--demo --demo-page locked-open`, and
+`--demo --demo-page keyring`. The open locked-folder preview uses `demo-code`.
+Use `--demo-page locked-prompt`, `locked-setup`, `new-chat`, `unnamed-group`,
+or `react-picker` for the new dialogs, shared group summaries, and reactions.
 
 The protocol dependency includes the upstream WhatsApp Business pairing fix.
 Device-store migration waits until an updated window is acknowledged, preserving
@@ -394,8 +443,13 @@ Click **Update** in the banner to download and verify a newer release, then
 **Restart to update** when convenient. **Download updates automatically** is
 optional and off by default; it downloads in the background and still waits for
 you to restart. Downloads contact GitHub's API and release-asset hosts and are
-checked against the release's SHA-256 checksums. The updater keeps a backup and
-restores it if the updated app cannot start.
+checked against the release's SHA-256 checksums. Before downloading a package,
+the updater verifies the checksum manifest's Ed25519 publisher signature using
+its embedded public key. Missing or invalid signatures stop the update.
+The updater keeps a backup and restores it if the updated app cannot start.
+Release builds also carry GitHub provenance attestations, independently
+verifiable with `gh attestation verify FILE -R crmne/zapfast`.
+See [update signing](packaging/UPDATE_SIGNING.md) for key custody and recovery.
 
 The in-app updater supports marked portable downloads, the Windows installer,
 and the macOS app in Applications. Keep `zapfast-portable.txt` beside a portable
@@ -424,6 +478,8 @@ ZAPFAST_GIPHY_KEY=your-key cargo build --release
 The earlier `FASTSAPP_GIPHY_KEY` build variable remains supported as a fallback.
 
 `AGENTS.md` describes the architecture and the rules for changes.
+CI checks the complete lockfile against RustSec advisories with `cargo audit`.
+Candidate-specific manual checks and results are tracked in the release PR.
 
 ### Recording a demo
 
@@ -447,6 +503,7 @@ Noto emoji font; demo GIF search uses these local fixtures. The tour makes no
 sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
+Use `--demo-page chat-menu` to preview the compact chat context menu.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.

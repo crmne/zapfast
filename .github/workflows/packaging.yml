@@ -39,7 +39,7 @@ jobs:
   packaging:
     permissions:
       contents: write
-    uses: crmne/native-packages/.github/workflows/package.yml@f002ce91c1180528734538fa47d235d387fd351f # v0.6.0
+    uses: crmne/native-packages/.github/workflows/package.yml@dc0cb1586894ca0239c53fd02d4da8064712671c # v0.7.0
     with:
       targets: linux-amd64,linux-arm64
       version: ${{ inputs.version || 'v0.13.1' }}

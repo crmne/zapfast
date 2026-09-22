@@ -346,6 +346,14 @@ pub enum Command {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Deletes a chat on the phone, then here once the phone agreed.
+    DeleteChat(ChatId),
+    /// Whether the phone deleted a chat requested through `DeleteChat`.
+    ChatDeleted {
+        chat: ChatId,
+        deleted: bool,
+        through: i64,
+    },
     SetPinned(ChatId, bool),
     PairWithPhone(String),
     /// Unlinks the device remotely and locally.
@@ -502,6 +510,15 @@ pub enum Event {
     MessageDeleted {
         chat: ChatId,
         id: String,
+    },
+    /// A chat was deleted here or on a linked device.
+    ChatRemoved {
+        chat: ChatId,
+    },
+    /// A chat's messages were cleared while the chat itself stays.
+    ChatCleared {
+        chat: ChatId,
+        through: i64,
     },
     /// GIF search results or failure.
     Gifs {
