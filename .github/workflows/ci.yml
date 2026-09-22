@@ -18,6 +18,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked --no-default-features
+      - name: Audit all locked dependencies
+        run: cargo audit
+
   quality:
     name: quality
     runs-on: ubuntu-latest
@@ -32,6 +44,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev cmake perl
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Formatting
         run: cargo fmt --all --check
       - name: Clippy (default features)
@@ -46,7 +60,7 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +74,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev cmake perl
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The demo feature carries the headless layout test of every screen.
       - name: Tests (default features)
         run: cargo test --locked --all-targets
@@ -98,4 +114,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-arm64
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --locked --all-targets --all-features --target aarch64-pc-windows-msvc
+
+  nix:
+    name: Nix package (${{ matrix.system }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            system: x86_64-linux
+          - os: ubuntu-24.04-arm
+            system: aarch64-linux
+    steps:
+      - uses: actions/checkout@v7
+      - uses: wimpysworld/nothing-but-nix@v9
+      - uses: cachix/install-nix-action@v31
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          save: ${{ github.ref == 'refs/heads/main' }}
+          primary-key: nix-${{ matrix.system }}-${{ hashFiles('**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ matrix.system }}-
+      - name: Check flake outputs
+        run: nix flake check --no-build
+      - name: Build package
+        run: nix build .#default

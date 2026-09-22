@@ -900,7 +900,7 @@ mod tests {
         let session_path = directory.path().join("session.db");
         let bot = Bot::builder()
             .with_backend(
-                SqliteStore::new(session_path.to_str().unwrap())
+                whatsapp_rust::store::SqliteStore::new(session_path.to_str().unwrap())
                     .await
                     .unwrap(),
             )

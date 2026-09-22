@@ -90,7 +90,11 @@ pub fn respond(app: &mut App) {
                     .collect();
                 append(app, row);
             }
-            Command::SendSticker { chat, path } => {
+            Command::SendSticker {
+                chat,
+                path,
+                quoting,
+            } => {
                 let mut media = super::super::media(
                     "image/webp",
                     path.metadata().map_or(0, |meta| meta.len()),
@@ -98,7 +102,7 @@ pub fn respond(app: &mut App) {
                     Some(192),
                 );
                 media.path = Some(path);
-                let row = outgoing(
+                let mut row = outgoing(
                     app,
                     &chat,
                     Content::Sticker {
@@ -106,6 +110,18 @@ pub fn respond(app: &mut App) {
                         animated: false,
                     },
                 );
+                row.quoted = quoting.and_then(|id| {
+                    app.conversations
+                        .get(&chat)?
+                        .message(&id)
+                        .map(|row| Quoted {
+                            id,
+                            sender: row.sender.clone(),
+                            sender_name: row.sender_name.clone(),
+                            summary: row.summary(),
+                            mentions: row.mentions.clone(),
+                        })
+                });
                 append(app, row);
             }
             Command::SearchGifs { .. } => {

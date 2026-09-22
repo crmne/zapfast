@@ -1,3 +1,6 @@
+duplicates: close
+followups: selective
+
 report_bots:
   - honeybadger[bot]
 
@@ -11,6 +14,8 @@ labels:
   wontfix: The exact request is explicitly ruled out by repository documentation.
 sources:
 - README.md
+- CONTRIBUTING.md
+- CHANGELOG.md
 - docs/_guide/*.md
 - docs/_reference/*.md
 - src/*.rs
@@ -28,16 +33,24 @@ replies:
 instructions: |
   Triage this project's issues and discussions using the supplied report and
   latest comments. Add at most two justified labels to issues; no labels on
-  discussions. For a new issue, give a brief initial assessment: state what
-  the report establishes and one useful next check. Follow-up replies must add
-  something useful, not repeat the assessment. Error-monitoring reports are
+  discussions. On the first assessment of a newly opened issue, condense a long
+  or scattered report into one helpful recap: the problem, relevant environment,
+  and key evidence. Short clear requests may need only labels. Do not invent a
+  next check. After that, reply only with a necessary clarification, supported
+  answer or workaround, applicable policy, verified released fix, or useful
+  related-issue link. Never recap follow-up comments. Honor requests for the
+  triage bot to stop. Error-monitoring reports are
   written for the maintainer: use the supplied exception and backtrace,
   distinguish facts from unverified causes, and do not request details already
   present. Ask for one missing non-sensitive fact only when it prevents useful
   investigation, never for information already supplied. Choose source files
   for a useful technical answer and cite only what those files establish;
-  otherwise leave reply null. Leave uncertain diagnoses, product decisions,
-  duplicate detection, and closure to the maintainer. Do not promise
+  otherwise leave reply null. Leave uncertain diagnoses and product decisions
+  to the maintainer. Use the tools to search and read relevant docs, source,
+  issues, and releases. Close only clear duplicates under the configured rules.
+  Name a fixed version only when release evidence establishes it; code on main
+  is not a release.
+  Do not promise
   implementation, releases, or tests. Never repeat secrets or private data.
   Keep replies short, direct, and free of status chatter, implementation
   plans, headings, and em dashes.
@@ -49,9 +62,9 @@ instructions: |
   authorization values, or QR payloads; request only a redacted error if
   needed.
 
-  For user bug reports, prefer a report-based observation and one concrete
-  diagnostic question the reporter can answer. Do not select source files just
-  to restate the report or suggest inspecting code. For technical questions,
+  For user bug reports, ask one direct question only when its answer is necessary
+  to investigate and has not already been supplied or requested. Do not select
+  source files just to restate the report or suggest inspecting code. For technical questions,
   prefer relevant guides over implementation files. If the supplied files do
   not establish an answer, stay silent rather than posting that the docs do not
   cover it. For feature requests, check relevant documentation for existing

@@ -211,10 +211,34 @@ Three egui pitfalls this code has already hit:
 - `ui.horizontal` inside a right-aligned bubble lays out right to left;
   see `mirrored_row`. A bubble's own click target is registered before its
   contents (from last frame's rect) so links and quotes inside win clicks.
+  The empty strip beside it is registered earlier still, before the row. A
+  double-click on either replies; the body keeps it for selecting the word.
 - `Popup::context_menu` opens on the *response's* right-click, which those
   inner widgets take for themselves; the bubble reads the right-click from
   the input over its own rect and opens `Popup::menu` itself, so the menu
   comes up anywhere on the message.
+
+## Branches
+
+Use trunk-based development. Work on `main` and keep releasable work there.
+Commit directly to `main`, one topic per commit, with each commit compiling and
+passing the relevant checks on its own. Feature branches and pull requests are
+for outside contributors; the maintainer's own work, and work done with the
+maintainer, does not go through them. Do not create or push a branch unless the
+maintainer explicitly asks for one.
+
+Keep `main` linear. Squash outside pull requests into one focused commit while
+preserving contributor credit. Never create or push merge commits. When
+updating a local checkout, use fast-forward-only pulls and rebase unpublished
+local commits if needed. Before pushing, verify that the commits being added
+contain no merge commits. Rewriting published history requires explicit
+maintainer approval, an exact force-with-lease guard, and a recovery ref.
+
+Every normal release, including a release candidate or other prerelease, must
+tag a commit already pushed to and reachable from `origin/main`. A release
+branch is allowed only for an explicitly requested backport to an older
+supported line. Prefer fixing forward on `main`; do not create backport or
+release branches speculatively.
 
 ## Releasing
 
@@ -239,9 +263,11 @@ released, which goes out as soon as it is fixed.
 
 A release is not finished when the tag is pushed. Do these in order:
 
-1. Bump `version` in `Cargo.toml` and update `Cargo.lock` with a build. Run
-   the full checks, commit, and push before tagging so the binaries report
-   the right version.
+1. From a clean, up-to-date `main`, bump `version` in `Cargo.toml` and update
+   `Cargo.lock` with a build. Run the full checks, commit, and push `main`.
+   Before tagging, verify the release commit is reachable from `origin/main`
+   so the binaries report the right version and the release contains the
+   canonical history.
 2. Tag `vX.Y.Z` and push the tag. Wait for every platform build, artifact,
    and `checksums.txt`.
 3. Replace the generated GitHub notes with written release notes. Start with

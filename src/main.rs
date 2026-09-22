@@ -137,6 +137,25 @@ fn main() -> eframe::Result<()> {
             Err(error) => eprintln!("not keeping a log file: {error}"),
         }
     }
+    logger.format(|buffer, record| {
+        use std::io::Write;
+        let message = record.args().to_string();
+        let message = if zapfast::diagnostics::is_protocol_target(record.target())
+            || zapfast::diagnostics::is_protocol_target(record.module_path().unwrap_or_default())
+        {
+            zapfast::diagnostics::protocol_summary(&message)
+        } else {
+            &message
+        };
+        writeln!(
+            buffer,
+            "[{} {} {}] {}",
+            buffer.timestamp(),
+            record.level(),
+            record.target(),
+            message
+        )
+    });
     logger.init();
     log_panics(dirs.panic_log());
     let settings = settings::Settings::load(&dirs.settings_file());
@@ -281,16 +300,19 @@ impl std::io::Write for Tee {
 
 /// Writes panics to `path` before process exit.
 fn log_panics(path: std::path::PathBuf) {
-    let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        previous(info);
         let thread = std::thread::current();
         let entry = format!(
-            "{} zapfast {} on thread {:?}: {info}\n",
+            "{} zapfast {} on thread {:?}, panic at {} (payload omitted)\n",
             jiff::Timestamp::now(),
             env!("CARGO_PKG_VERSION"),
             thread.name().unwrap_or("unnamed"),
+            info.location().map_or_else(
+                || "unknown location".to_owned(),
+                |location| location.to_string()
+            ),
         );
+        eprint!("{entry}");
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -322,7 +344,10 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
             std::env::var("FLATPAK_ID").unwrap_or_else(|_| "zapfast".to_owned())
         })
         .with_inner_size(demo_size)
-        .with_min_inner_size([720.0, 480.0])
+        // Keep the floor small enough that Windows can still snap the window
+        // into narrow Aero Snap and LG Screen Split zones (a 2560 px ultrawide
+        // split four ways is about 640 px wide, which a 720 px minimum blocks).
+        .with_min_inner_size([400.0, 300.0])
         .with_icon(app_icon())
         // macOS uses a full-size content view under the traffic lights.
         .with_fullsize_content_view(true)
@@ -449,12 +474,19 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if let Some(app) = self.app.as_mut() {
             app.frame_ui(ui);
+            let startup = app.backend.take_startup();
             if let Some(receipt) = self.update_receipt.take() {
                 std::thread::spawn(move || {
                     if let Err(error) = zapfast::updates::install::acknowledge(&receipt) {
                         log::warn!("could not acknowledge the update: {error:#}");
+                        return;
+                    }
+                    if let Some(startup) = startup {
+                        let _ = startup.send(());
                     }
                 });
+            } else if let Some(startup) = startup {
+                let _ = startup.send(());
             }
             #[cfg(feature = "demo")]
             if let Some(tour) = self.tour.as_mut() {

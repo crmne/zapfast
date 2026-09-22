@@ -116,11 +116,46 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     };
                     toggle(ui, app, "Send read receipts", receipts_note, |settings| &mut settings.send_read_receipts);
                     toggle(ui, app, "Show when you are typing", "", |settings| &mut settings.send_typing);
-                    toggle(ui, app, "Download attachments automatically", "Download pictures, videos, voice messages, and documents up to 64 MB when they enter view. When off, click a file to download it.", |settings| &mut settings.auto_download);
+                    toggle(ui, app, "Download attachments automatically", "Download non-sticker attachments up to 64 MiB when they enter view. Visible stickers also download automatically up to this limit. When off, click an attachment up to this limit to download it.", |settings| &mut settings.auto_download);
                     toggle(ui, app, "Show sender pictures in every chat", "WhatsApp shows them in groups only.", |settings| &mut settings.show_sender_pictures);
                     toggle(ui, app, "Names from your address book", "Prefer saved contact names. When off, prefer public WhatsApp profile names. This applies throughout the app.", |settings| &mut settings.names_from_contacts);
                     toggle(ui, app, "Save contacts to the phone's address book", "Also add contacts saved here to your phone's address book. When off, they remain WhatsApp contacts. Names sync to linked devices either way.", |settings| &mut settings.save_contacts_to_phone);
                     toggle(ui, app, "Show shortcut hints", "", |settings| &mut settings.show_shortcut_hints);
+
+                    {
+                        // The buffer lives in egui memory: the hash is the only
+                        // stored form, so there is nothing to read it back from.
+                        let code_id = ui.id().with("chat_lock_code");
+                        let mut code: String =
+                            ui.data_mut(|data| data.get_temp(code_id).unwrap_or_default());
+                        widgets::setting_row(
+                            ui,
+                            &palette,
+                            "Secret code for locked chats",
+                            "Open the Locked tab in the chat list and enter this local ZapFast code, separate from your phone's code. Leaving the tab or closing the window locks it again. Locked chats are hidden from ordinary search and notifications. This is a local visibility control, not an extra encryption layer. Keep it empty to remove the code.",
+                            |ui| {
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut code)
+                                        .font(theme::regular(13.0))
+                                        .text_color(palette.text)
+                                        .desired_width(220.0)
+                                        .hint_text("Secret code")
+                                        .password(true),
+                                );
+                                if response.changed() {
+                                    let trimmed = code.trim().to_owned();
+                                    app.actions.push(Action::SetChatLockCode(Some(trimmed)));
+                                }
+                                if app.settings.chat_lock_code_hash.is_some()
+                                    && ui.small_button("Clear").clicked()
+                                {
+                                    code.clear();
+                                    app.actions.push(Action::SetChatLockCode(None));
+                                }
+                                ui.data_mut(|data| data.insert_temp(code_id, code));
+                            },
+                        );
+                    }
 
                     section(ui, app, "Window");
                     toggle(ui, app, "Keep running when the window closes", "Keep ZapFast linked in the system tray. Quit from the tray menu or with Ctrl+Q.", |settings| &mut settings.keep_running_in_background);
@@ -186,7 +221,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         &archive.display().to_string(),
                         |ui| {
                             if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), "Open folder", false).clicked() {
-                                app.actions.push(Action::OpenFile(app.dirs.state.clone()));
+                                app.actions.push(Action::OpenFolder(app.dirs.state.clone()));
                             }
                         },
                     );
@@ -199,7 +234,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         |ui| {
                             if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), "Open folder", false).clicked() {
                                 let _ = std::fs::create_dir_all(&media);
-                                app.actions.push(Action::OpenFile(media.clone()));
+                                app.actions.push(Action::OpenFolder(media.clone()));
                             }
                         },
                     );
@@ -254,7 +289,12 @@ fn toggle(
     let mut value = *field(&mut app.settings);
     let mut changed = false;
     widgets::setting_row(ui, &palette, label, description, |ui| {
-        changed = widgets::switch(ui, &palette, &mut value).changed();
+        let response = widgets::switch(ui, &palette, &mut value);
+        theme::reveal_focus(&response);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), value, label)
+        });
+        changed = response.changed();
     });
     if changed {
         *field(&mut app.settings) = value;

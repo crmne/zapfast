@@ -902,19 +902,36 @@ mod tests {
     }
 
     fn install_fonts(ctx: &egui::Context) {
+        // DejaVu, Liberation, and Arial stay ahead of the extra fallbacks so the
+        // font that already satisfies these tests is unchanged when it is installed.
+        // `ZAPFAST_TEST_RTL_FONT` overrides the search.
         const CANDIDATES: &[&str] = &[
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
             "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial Unicode.ttf",
             r"C:\Windows\Fonts\arial.ttf",
+            r"C:\Windows\Fonts\tahoma.ttf",
         ];
-        let path = CANDIDATES
-            .iter()
-            .copied()
-            .find(|path| std::path::Path::new(path).is_file())
-            .expect("install a Hebrew/Arabic-capable sans for RTL layout tests");
+        let path = std::env::var_os("ZAPFAST_TEST_RTL_FONT")
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_file())
+            .or_else(|| {
+                CANDIDATES
+                    .iter()
+                    .map(std::path::PathBuf::from)
+                    .find(|path| path.is_file())
+            })
+            .expect(
+                "set ZAPFAST_TEST_RTL_FONT or install a Hebrew/Arabic-capable sans \
+                 (DejaVu, Liberation, Arial) for RTL layout tests",
+            );
+        let path = path.to_str().expect("utf-8 font path");
         let mut fonts = FontDefinitions::default();
         let inter = include_bytes!("../assets/fonts/InterVariable.ttf");
         fonts

@@ -1,19 +1,25 @@
 //! The picker above the composer: emoji, GIFs, and stickers.
+//! Also the full emoji picker used to react to a message.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use egui::{
-    Align2, CornerRadius, Frame, Key, Margin, Modifiers, Rect, Sense, Stroke, Vec2, pos2, vec2,
+    Align, Align2, CornerRadius, Frame, Key, Layout, Margin, Modifiers, Rect, Sense, Stroke, Vec2,
+    pos2, vec2,
 };
 
 use crate::app::App;
 use crate::model::{Action, PickerTab};
 use crate::theme::{self, Icon, Palette};
 
+use super::conversation;
 use super::widgets;
 
 const WIDTH: f32 = 420.0;
 const HEIGHT: f32 = 400.0;
+/// Frame inner margin on each side. Placement uses the outer size.
+const FRAME_MARGIN: i8 = 10;
 /// Minimum emoji cell width. Columns expand to fill the grid.
 const CELL: f32 = 40.0;
 
@@ -27,6 +33,10 @@ enum Row {
 }
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
+    if app.reaction_target.is_some() {
+        reaction_picker(app, ctx);
+        return;
+    }
     let Some(tab) = app.picker else {
         return;
     };
@@ -140,8 +150,20 @@ fn group_name(group: emojis::Group) -> &'static str {
     }
 }
 
-fn rows_for(app: &App, columns: usize) -> Vec<Row> {
-    let query = app.picker_search.trim().to_lowercase();
+fn usable_recent(recent: &[String]) -> Vec<&'static str> {
+    recent
+        .iter()
+        .filter_map(|emoji| emojis::get(emoji).map(|emoji| emoji.as_str()))
+        .collect()
+}
+
+fn rows_for(
+    query: &str,
+    recent: &[String],
+    columns: usize,
+    recent_label: &'static str,
+) -> Vec<Row> {
+    let query = query.trim().to_lowercase();
     let mut rows = Vec::new();
     let mut next = 0;
     let mut chunk = |rows: &mut Vec<Row>, list: Vec<&'static str>| {
@@ -171,14 +193,9 @@ fn rows_for(app: &App, columns: usize) -> Vec<Row> {
         }
         return rows;
     }
-    if !app.settings.recent_emoji.is_empty() {
-        rows.push(Row::Header("Recent"));
-        let recent: Vec<&'static str> = app
-            .settings
-            .recent_emoji
-            .iter()
-            .filter_map(|emoji| emojis::get(emoji).map(|emoji| emoji.as_str()))
-            .collect();
+    let recent = usable_recent(recent);
+    if !recent.is_empty() {
+        rows.push(Row::Header(recent_label));
         chunk(&mut rows, recent);
     }
     for group in emojis::Group::iter() {
@@ -189,6 +206,81 @@ fn rows_for(app: &App, columns: usize) -> Vec<Row> {
         );
     }
     rows
+}
+
+fn place_picker(screen: Rect, anchor: Option<Rect>, width: f32, height: f32) -> egui::Pos2 {
+    let max_x = (screen.right() - width - 8.0).max(screen.left() + 8.0);
+    let x = match anchor {
+        Some(anchor) => anchor.left().clamp(screen.left() + 8.0, max_x),
+        None => (screen.center().x - width / 2.0).clamp(screen.left() + 8.0, max_x),
+    };
+    let y = match anchor {
+        Some(anchor) => {
+            let above = anchor.top() - height - 10.0;
+            if above >= screen.top() + 8.0 {
+                above
+            } else {
+                (anchor.bottom() + 10.0)
+                    .min((screen.bottom() - height - 8.0).max(screen.top() + 8.0))
+            }
+        }
+        None => (screen.center().y - height / 2.0).max(screen.top() + 8.0),
+    };
+    pos2(x, y)
+}
+
+/// Category tabs under the reaction emoji grid, WhatsApp-style.
+const CATEGORIES: &[(Option<emojis::Group>, &str, &str)] = &[
+    (None, "🕒", "Frequently Used"),
+    (
+        Some(emojis::Group::SmileysAndEmotion),
+        "😀",
+        "Smileys & Emotion",
+    ),
+    (Some(emojis::Group::PeopleAndBody), "👋", "People & Body"),
+    (
+        Some(emojis::Group::AnimalsAndNature),
+        "🐻",
+        "Animals & Nature",
+    ),
+    (Some(emojis::Group::FoodAndDrink), "🍔", "Food & Drink"),
+    (
+        Some(emojis::Group::TravelAndPlaces),
+        "🚗",
+        "Travel & Places",
+    ),
+    (Some(emojis::Group::Activities), "⚽", "Activities"),
+    (Some(emojis::Group::Objects), "💡", "Objects"),
+    (Some(emojis::Group::Symbols), "🔣", "Symbols"),
+    (Some(emojis::Group::Flags), "🏁", "Flags"),
+];
+
+fn category_entries(
+    has_recent: bool,
+) -> impl Iterator<Item = (Option<emojis::Group>, &'static str, &'static str)> {
+    CATEGORIES
+        .iter()
+        .copied()
+        .filter(move |(group, _, _)| group.is_some() || has_recent)
+}
+
+fn header_row(rows: &[Row], label: &str) -> Option<usize> {
+    rows.iter().position(|row| match row {
+        Row::Header(found) => *found == label,
+        Row::Emoji { .. } => false,
+    })
+}
+
+/// Scroll target for a category tab. A stale Recent / Frequently Used jump
+/// falls back to the first Unicode group when that header is absent.
+fn resolve_jump(jump: Option<&'static str>, rows: &[Row]) -> Option<&'static str> {
+    let label = jump?;
+    if header_row(rows, label).is_some() {
+        return Some(label);
+    }
+    emojis::Group::iter()
+        .map(group_name)
+        .find(|name| header_row(rows, name).is_some())
 }
 
 fn take_plain_key(ui: &mut egui::Ui, key: Key) -> bool {
@@ -229,9 +321,232 @@ fn move_emoji_selection(selected: usize, count: usize, columns: usize, key: Key)
 }
 
 fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    if let Some(emoji) = emoji_grid(app, ui, palette, "emoji-search", "emoji-grid", "Recent") {
+        app.actions.push(Action::InsertEmoji(emoji));
+    }
+}
+
+fn reaction_picker(app: &mut App, ctx: &egui::Context) {
+    let Some((chat, message)) = app.reaction_target.clone() else {
+        return;
+    };
+    let palette = app.palette;
+    let screen = ctx.content_rect();
+    let menu = ctx
+        .data(|data| {
+            data.get_temp::<Rect>(conversation::bubble_id(&chat, &message).with("menu-rect"))
+        })
+        .or(app.reaction_anchor);
+    let width = menu.map_or(WIDTH, |menu| {
+        (screen.right() - menu.right() - 32.0).clamp(260.0, WIDTH)
+    });
+    let outer_width = width + f32::from(FRAME_MARGIN) * 2.0;
+    let outer_height = HEIGHT + f32::from(FRAME_MARGIN) * 2.0;
+    let pos = if let Some(menu) = menu
+        && menu.right() + outer_width + 16.0 <= screen.right()
+    {
+        pos2(
+            menu.right() + 8.0,
+            menu.top()
+                .min((screen.bottom() - outer_height - 8.0).max(screen.top() + 8.0)),
+        )
+    } else {
+        place_picker(screen, menu, outer_width, outer_height)
+    };
+    let preview = app
+        .conversations
+        .get(&chat)
+        .and_then(|conversation| conversation.message(&message))
+        .map(|message| (app.display_name(&message.sender), message.content.summary()));
+    let area = egui::Area::new(egui::Id::new("reaction-picker"))
+        .fixed_pos(pos)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            // Picker chrome stays LTR even in RTL chats, matching WhatsApp.
+            ui.allocate_ui_with_layout(
+                vec2(outer_width, outer_height),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    Frame::new()
+                        .fill(palette.overlay)
+                        .stroke(Stroke::new(1.0, palette.outline))
+                        .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+                        .inner_margin(Margin::same(FRAME_MARGIN))
+                        .shadow(egui::epaint::Shadow {
+                            offset: [0, 8],
+                            blur: 28,
+                            spread: 0,
+                            color: palette.shadow,
+                        })
+                        .show(ui, |ui| {
+                            ui.set_width(width);
+                            ui.set_height(HEIGHT);
+                            ui.spacing_mut().item_spacing.y = 6.0;
+                            ui.horizontal(|ui| {
+                                theme::text(
+                                    ui,
+                                    "React to message",
+                                    theme::semibold(13.0),
+                                    palette.text,
+                                );
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if theme::icon_button(
+                                        ui,
+                                        Icon::X,
+                                        14.0,
+                                        palette.secondary,
+                                        palette.text,
+                                        "Close reactions",
+                                    )
+                                    .clicked()
+                                    {
+                                        app.actions.push(Action::ClosePicker);
+                                    }
+                                });
+                            });
+                            if let Some((name, summary)) = &preview {
+                                let line = widgets::line(
+                                    ui,
+                                    &format!("{name}: {summary}"),
+                                    theme::regular(12.0),
+                                    palette.secondary,
+                                    width,
+                                    1,
+                                );
+                                let (rect, _) = ui.allocate_exact_size(
+                                    vec2(width, line.size().y),
+                                    Sense::hover(),
+                                );
+                                line.paint(ui, rect.min, palette.secondary);
+                            }
+                            let body_height = HEIGHT - 100.0;
+                            ui.allocate_ui_with_layout(
+                                vec2(width, body_height),
+                                Layout::top_down(Align::Min),
+                                |ui| {
+                                    if let Some(emoji) = emoji_grid(
+                                        app,
+                                        ui,
+                                        &palette,
+                                        "reaction-emoji-search",
+                                        "reaction-emoji-grid",
+                                        "Frequently Used",
+                                    ) {
+                                        let current = app
+                                            .conversations
+                                            .get(&chat)
+                                            .and_then(|conversation| conversation.message(&message))
+                                            .and_then(conversation::own_reaction);
+                                        app.actions.push(Action::React {
+                                            chat: chat.clone(),
+                                            message: message.clone(),
+                                            emoji: conversation::reaction_choice(current, &emoji),
+                                        });
+                                    }
+                                },
+                            );
+                            ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                                category_tabs(app, ui, &palette);
+                            });
+                        });
+                },
+            );
+        });
+    let rect = area.response.rect;
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("reaction-picker-rect"), rect));
+    let clicked_outside = ctx.input(|input| {
+        input.pointer.any_pressed()
+            && input.pointer.interact_pos().is_some_and(|pos| {
+                !rect.contains(pos) && !menu.is_some_and(|menu| menu.contains(pos))
+            })
+    });
+    if clicked_outside {
+        app.actions.push(Action::ClosePicker);
+    }
+}
+
+fn category_tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    let has_recent = app
+        .settings
+        .reaction_emoji
+        .iter()
+        .any(|(emoji, _)| emojis::get(emoji).is_some());
+    let tabs: Vec<_> = category_entries(has_recent).collect();
+    let default = tabs.first().map(|(_, _, label)| *label);
+    let current = visible_category(ui, "reaction-emoji-grid", &app.picker_search)
+        .filter(|label| tabs.iter().any(|&(_, _, tab)| tab == *label));
+    let cell = ((ui.available_width() - 4.0) / tabs.len() as f32).clamp(24.0, 36.0);
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), cell),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let extra = (ui.available_width() - cell * tabs.len() as f32).max(0.0) / 2.0;
+            ui.add_space(extra);
+            for &(_, glyph, label) in &tabs {
+                let selected = current == Some(label)
+                    || (current.is_none()
+                        && app.picker_search.is_empty()
+                        && Some(label) == default);
+                let (rect, response) = ui.allocate_exact_size(vec2(cell, cell), Sense::click());
+                if ui.is_rect_visible(rect) {
+                    if selected {
+                        ui.painter().rect_filled(
+                            rect.shrink(2.0),
+                            6.0,
+                            palette.accent.gamma_multiply(0.22),
+                        );
+                    } else if response.hovered() {
+                        ui.painter()
+                            .rect_filled(rect.shrink(2.0), 6.0, palette.surface_hover);
+                    }
+                    let line =
+                        widgets::line(ui, glyph, theme::regular(16.0), palette.text, cell, 1);
+                    line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
+                    if selected {
+                        ui.painter().hline(
+                            rect.x_range().shrink(6.0),
+                            rect.bottom() - 3.0,
+                            Stroke::new(2.0, palette.accent),
+                        );
+                    }
+                }
+                if response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(label)
+                    .clicked()
+                {
+                    app.picker_search.clear();
+                    app.emoji_selected = 0;
+                    app.emoji_jump = Some(label);
+                }
+            }
+        },
+    );
+}
+
+fn visible_category(ui: &egui::Ui, scroll_salt: &str, query: &str) -> Option<&'static str> {
+    if !query.trim().is_empty() {
+        return None;
+    }
+    ui.ctx()
+        .data(|data| {
+            data.get_temp::<Option<&'static str>>(egui::Id::new(("emoji-visible", scroll_salt)))
+        })
+        .flatten()
+}
+
+fn emoji_grid(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    search_id: &'static str,
+    scroll_salt: &'static str,
+    recent_label: &'static str,
+) -> Option<String> {
     let newly_opened = app.picker_focus;
     let search_active =
-        app.picker_focus || ui.memory(|memory| memory.has_focus(egui::Id::new("emoji-search")));
+        app.picker_focus || ui.memory(|memory| memory.has_focus(egui::Id::new(search_id)));
     let movement = search_active
         .then(|| {
             [
@@ -246,7 +561,7 @@ fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .flatten();
     let submit = search_active && take_plain_key(ui, Key::Enter);
     let mut search = app.picker_search.clone();
-    let response = search_box(ui, palette, "emoji-search", &mut search, "Search emoji");
+    let response = search_box(ui, palette, search_id, &mut search, "Search emoji");
     let query_changed = search != app.picker_search;
     if query_changed {
         app.picker_search = search;
@@ -260,7 +575,18 @@ fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let width = ui.available_width() - 6.0;
     let columns = ((width / CELL).floor() as usize).max(1);
     let cell = width / columns as f32;
-    let rows = rows_for(app, columns);
+    let frequent: Vec<_> = app
+        .settings
+        .reaction_emoji
+        .iter()
+        .map(|(emoji, _)| emoji.clone())
+        .collect();
+    let recent = if app.reaction_target.is_some() {
+        &frequent
+    } else {
+        &app.settings.recent_emoji
+    };
+    let rows = rows_for(&app.picker_search, recent, columns, recent_label);
     let emoji_count = rows
         .iter()
         .map(|row| match row {
@@ -290,11 +616,16 @@ fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     });
     // `show_rows` must use the same zero spacing as the grid.
     ui.spacing_mut().item_spacing = Vec2::ZERO;
-    let scroll_id = ui.make_persistent_id("emoji-grid");
+    let scroll_id = ui.make_persistent_id(scroll_salt);
     let mut grid = egui::ScrollArea::vertical()
-        .id_salt("emoji-grid")
+        .id_salt(scroll_salt)
         .auto_shrink([false, false]);
-    if newly_opened || query_changed {
+    let jump = resolve_jump(app.emoji_jump.take(), &rows);
+    if let Some(label) = jump
+        && let Some(row) = header_row(&rows, label)
+    {
+        grid = grid.vertical_scroll_offset(row as f32 * row_height);
+    } else if newly_opened || query_changed {
         grid = grid.vertical_scroll_offset(0.0);
     } else if movement.is_some()
         && let Some(row) = rows.iter().position(|row| match row {
@@ -318,6 +649,20 @@ fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         };
         grid = grid.vertical_scroll_offset(target.max(0.0));
     }
+    let offset =
+        egui::scroll_area::State::load(ui.ctx(), scroll_id).map_or(0.0, |state| state.offset.y);
+    let visible_index = (offset / row_height).floor() as usize;
+    let visible_label = rows
+        .iter()
+        .take(visible_index.saturating_add(1).min(rows.len()))
+        .rev()
+        .find_map(|row| match row {
+            Row::Header(label) => Some(*label),
+            Row::Emoji { .. } => None,
+        });
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(egui::Id::new(("emoji-visible", scroll_salt)), visible_label);
+    });
     grid.show_rows(ui, row_height, rows.len(), |ui, range| {
         for row in &rows[range] {
             match row {
@@ -384,9 +729,7 @@ fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             }
         }
     });
-    if let Some(emoji) = picked {
-        app.actions.push(Action::InsertEmoji(emoji));
-    }
+    picked
 }
 
 #[cfg(test)]
@@ -401,6 +744,104 @@ mod emoji_tests {
         assert_eq!(move_emoji_selection(10, 25, 10, Key::ArrowUp), 0);
         assert_eq!(move_emoji_selection(20, 25, 10, Key::ArrowDown), 20);
         assert_eq!(move_emoji_selection(24, 25, 10, Key::ArrowRight), 24);
+    }
+
+    #[test]
+    fn search_finds_emoji_by_name_and_shortcode() {
+        let rows = rows_for("crab", &[], 8, "Recent");
+        let found: Vec<&str> = rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Emoji { values, .. } => Some(values.as_slice()),
+                Row::Header(_) => None,
+            })
+            .flatten()
+            .copied()
+            .collect();
+        assert!(found.contains(&"🦀"), "{found:?}");
+    }
+
+    #[test]
+    fn empty_query_lists_recent_then_groups() {
+        let rows = rows_for("", &["👍".into()], 8, "Frequently Used");
+        assert!(matches!(rows.first(), Some(Row::Header("Frequently Used"))));
+        assert!(
+            rows.iter()
+                .any(|row| matches!(row, Row::Header("Smileys & Emotion")))
+        );
+        assert!(rows.iter().any(|row| matches!(row, Row::Header("Flags"))));
+    }
+
+    #[test]
+    fn empty_recent_omits_the_recent_header() {
+        for recent in [Vec::new(), vec!["not-an-emoji".into()]] {
+            let rows = rows_for("", &recent, 8, "Frequently Used");
+            assert!(
+                !rows.iter().any(|row| matches!(
+                    row,
+                    Row::Header("Frequently Used") | Row::Header("Recent")
+                )),
+                "{recent:?}"
+            );
+            assert!(
+                matches!(rows.first(), Some(Row::Header("Smileys & Emotion"))),
+                "{recent:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_recent_omits_the_frequently_used_tab() {
+        let labels: Vec<&str> = category_entries(false).map(|(_, _, label)| label).collect();
+        assert!(!labels.contains(&"Frequently Used"));
+        assert_eq!(labels.first().copied(), Some("Smileys & Emotion"));
+        let with_recent: Vec<&str> = category_entries(true).map(|(_, _, label)| label).collect();
+        assert_eq!(with_recent.first().copied(), Some("Frequently Used"));
+        assert_eq!(with_recent.len(), labels.len() + 1);
+    }
+
+    #[test]
+    fn empty_recent_jump_falls_back_to_the_first_unicode_group() {
+        let empty = rows_for("", &[], 8, "Frequently Used");
+        assert_eq!(
+            resolve_jump(Some("Frequently Used"), &empty),
+            Some("Smileys & Emotion")
+        );
+        assert_eq!(
+            resolve_jump(Some("Recent"), &rows_for("", &[], 8, "Recent")),
+            Some("Smileys & Emotion")
+        );
+        assert_eq!(resolve_jump(Some("Flags"), &empty), Some("Flags"));
+        assert_eq!(resolve_jump(None, &empty), None);
+        let with_recent = rows_for("", &["👍".into()], 8, "Frequently Used");
+        assert_eq!(
+            resolve_jump(Some("Frequently Used"), &with_recent),
+            Some("Frequently Used")
+        );
+    }
+
+    #[test]
+    fn place_picker_keeps_the_framed_size_on_screen() {
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(500.0, 450.0));
+        let outer_width = WIDTH + f32::from(FRAME_MARGIN) * 2.0;
+        let outer_height = HEIGHT + f32::from(FRAME_MARGIN) * 2.0;
+        let anchor = Rect::from_min_size(pos2(460.0, 10.0), vec2(34.0, 34.0));
+        let inner = place_picker(screen, Some(anchor), WIDTH, HEIGHT);
+        let outer = place_picker(screen, Some(anchor), outer_width, outer_height);
+        assert!(
+            inner.x + outer_width > screen.right() - 8.0,
+            "inner size would clip the framed picker on the right: {inner:?}"
+        );
+        assert!(
+            outer.x + outer_width <= screen.right() - 8.0 + 0.01,
+            "outer size stays on the right: {outer:?}"
+        );
+        assert!(
+            outer.y + outer_height <= screen.bottom() - 8.0 + 0.01,
+            "outer size stays on the bottom: {outer:?}"
+        );
+        assert!(outer.x >= screen.left() + 8.0 - 0.01);
+        assert!(outer.y >= screen.top() + 8.0 - 0.01);
     }
 }
 
@@ -438,7 +879,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 .push(Action::OpenUrl("https://developers.giphy.com/".to_owned()));
         }
         ui.add_space(6.0);
-        Frame::new()
+        let field = Frame::new()
             .fill(palette.surface)
             .corner_radius(CornerRadius::same(theme::RADIUS))
             .inner_margin(Margin::symmetric(10, 6))
@@ -461,7 +902,14 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 if response.lost_focus() && !app.settings.giphy_key.trim().is_empty() {
                     app.actions.push(Action::SearchGifs(String::new()));
                 }
+                response
             });
+        theme::focus_outline(
+            ui,
+            field.inner.id,
+            field.response.rect,
+            f32::from(theme::RADIUS),
+        );
         return;
     }
     let mut query = app.picker_search.clone();
@@ -588,7 +1036,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .show(ui, |ui| {
             if !saved.is_empty() {
                 theme::text(ui, "Saved", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &saved, true, &mut choices);
+                sticker_grid(ui, palette, &saved, true, app.window_focused, &mut choices);
                 ui.add_space(8.0);
             }
             for pack in &packs {
@@ -609,12 +1057,26 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         }
                     });
                 });
-                sticker_grid(ui, palette, &pack.stickers, false, &mut choices);
+                sticker_grid(
+                    ui,
+                    palette,
+                    &pack.stickers,
+                    false,
+                    app.window_focused,
+                    &mut choices,
+                );
                 ui.add_space(8.0);
             }
             if !recent.is_empty() {
                 theme::text(ui, "Recent", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &recent, false, &mut choices);
+                sticker_grid(
+                    ui,
+                    palette,
+                    &recent,
+                    false,
+                    app.window_focused,
+                    &mut choices,
+                );
             }
         });
     if let Some(path) = choices.send {
@@ -656,8 +1118,14 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         .frame(Frame::NONE)
                         .desired_width(ui.available_width() - buttons - 26.0),
                 )
-            })
-            .inner;
+            });
+        theme::focus_outline(
+            ui,
+            field.inner.id,
+            field.response.rect,
+            f32::from(theme::RADIUS),
+        );
+        let field = field.inner;
         let pasted = field.changed()
             && crate::backend::sticker_import::looks_like_signal_url(app.sticker_link.trim());
         let submitted = field.lost_focus()
@@ -699,6 +1167,7 @@ fn sticker_grid(
     palette: &Palette,
     stickers: &[std::path::PathBuf],
     saved: bool,
+    animate: bool,
     choices: &mut StickerChoices,
 ) {
     let columns = 5;
@@ -715,10 +1184,16 @@ fn sticker_grid(
                         ui.painter().rect_filled(rect, 8.0, palette.surface_hover);
                     }
                     let shown = rect.shrink(4.0);
-                    // Animate only the hovered sticker to limit decoder work.
-                    let played = response.hovered()
-                        && moves(path)
-                        && match crate::animation::frame(ui, path, rect) {
+                    // Decode only visible animated stickers. Keep a still
+                    // first frame until the focused pointer hovers the tile.
+                    let animated = moves(ui.ctx(), path);
+                    let played = animated
+                        && match crate::animation::frame(
+                            ui,
+                            path,
+                            rect,
+                            animate && response.hovered(),
+                        ) {
                             crate::animation::Frame::Ready(texture) => {
                                 let size = texture.size_vec2();
                                 let scale = (shown.width() / size.x).min(shown.height() / size.y);
@@ -734,7 +1209,12 @@ fn sticker_grid(
                             _ => false,
                         };
                     if !played {
-                        sticker_picture(ui, path, shown);
+                        if animated {
+                            ui.painter().rect_filled(shown, 6.0, palette.surface);
+                            theme::paint_icon(ui, Icon::Sticker, shown, 24.0, palette.secondary);
+                        } else {
+                            sticker_picture(ui, path, shown);
+                        }
                     }
                 }
                 egui::Popup::context_menu(&response)
@@ -765,8 +1245,26 @@ fn sticker_grid(
     }
 }
 
-/// Checks the WebP header for animation.
-fn moves(path: &Path) -> bool {
+/// Returns whether a sticker moves, probing each path at most once.
+fn moves(ctx: &egui::Context, path: &Path) -> bool {
+    let cache = egui::Id::new("animated-sticker-paths");
+    if let Some(animated) = ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<HashMap<std::path::PathBuf, bool>>(cache)
+            .get(path)
+            .copied()
+    }) {
+        return animated;
+    }
+    let animated = probe_motion(path);
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<HashMap<std::path::PathBuf, bool>>(cache)
+            .insert(path.to_path_buf(), animated);
+    });
+    animated
+}
+
+/// Checks a WebP header for animation without decoding the file.
+fn probe_motion(path: &Path) -> bool {
     let mut head = [0u8; 64];
     let Ok(mut file) = std::fs::File::open(path) else {
         return false;
@@ -785,4 +1283,23 @@ fn sticker_picture(ui: &egui::Ui, path: &Path, rect: Rect) {
     egui::Image::new(crate::util::image_uri(path))
         .fit_to_exact_size(rect.size())
         .paint_at(ui, rect);
+}
+
+#[cfg(test)]
+mod motion_tests {
+    use super::*;
+
+    #[test]
+    fn sticker_motion_is_probed_once_per_path() {
+        let dir = std::env::temp_dir().join(format!("zapfast-motion-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("creates temporary directory");
+        let path = dir.join("animated.webp");
+        std::fs::write(&path, b"RIFF0000WEBPANIM").expect("writes animated header");
+        let ctx = egui::Context::default();
+        assert!(moves(&ctx, &path));
+        std::fs::remove_file(&path).expect("removes sticker after its first probe");
+        assert!(moves(&ctx, &path), "cached result avoids another file read");
+        assert!(!moves(&egui::Context::default(), &path));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

@@ -30,11 +30,46 @@ impl ChatKind {
     }
 }
 
+/// Chat-list filter chosen from the chips under the search field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChatFilter {
+    #[default]
+    All,
+    Unread,
+    /// One-to-one chats: neither groups nor broadcasts.
+    Private,
+    Groups,
+}
+
+impl ChatFilter {
+    pub const EVERY: [Self; 4] = [Self::All, Self::Unread, Self::Private, Self::Groups];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Unread => "Unread",
+            Self::Private => "Private",
+            Self::Groups => "Groups",
+        }
+    }
+
+    pub fn matches(self, chat: &Chat) -> bool {
+        match self {
+            Self::All => true,
+            Self::Unread => chat.unread > 0,
+            Self::Private => chat.kind == ChatKind::Direct,
+            Self::Groups => chat.kind == ChatKind::Group,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chat {
     pub id: ChatId,
     /// Best known address-book, push, or phone-number name.
     pub name: String,
+    /// Distinguishes an actual subject "Group" from older cached placeholders.
+    pub group_subject_known: bool,
     pub kind: ChatKind,
     /// Latest-message Unix timestamp used for ordering.
     pub last_activity: i64,
@@ -51,6 +86,8 @@ pub struct Chat {
     pub participants: Vec<String>,
     /// Whether this is an announcement group where we cannot post.
     pub read_only: bool,
+    /// Hidden while WhatsApp chat lock is enabled on the phone.
+    pub locked: bool,
     /// Disappearing-message duration in seconds, if enabled.
     pub ephemeral_expiration: Option<u32>,
 }
@@ -71,6 +108,7 @@ impl Chat {
         Self {
             id,
             name,
+            group_subject_known: false,
             kind,
             last_activity: 0,
             unread: 0,
@@ -81,8 +119,14 @@ impl Chat {
             last: None,
             participants: Vec::new(),
             read_only: false,
+            locked: false,
             ephemeral_expiration: None,
         }
+    }
+
+    /// Newsletter publishing permissions are not supported by this client.
+    pub fn can_send(&self) -> bool {
+        !self.locked && !self.read_only && self.kind != ChatKind::Broadcast
     }
 
     pub fn is_group(&self) -> bool {
@@ -397,6 +441,9 @@ fn with_caption(label: &str, caption: &Option<String>) -> String {
     }
 }
 
+/// Maximum size accepted for a downloaded attachment.
+pub(crate) const ATTACHMENT_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
+
 /// Attachment metadata, download state, and optional local file. Download keys
 /// remain in the archive's raw message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -411,6 +458,16 @@ pub struct Media {
     /// Non-persisted download state.
     #[serde(skip)]
     pub state: MediaState,
+}
+
+impl Media {
+    /// Whether the attachment's declared size can be downloaded locally.
+    ///
+    /// A missing size is represented as zero and is allowed here. The worker
+    /// still enforces the limit while streaming it from WhatsApp.
+    pub fn is_within_download_limit(&self) -> bool {
+        self.size <= ATTACHMENT_DOWNLOAD_LIMIT
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -497,9 +554,15 @@ pub enum Dialog {
     ConfirmUnlink,
     /// Phone number used for pairing-code linking.
     PairWithPhone,
+    /// Contacts and the self-chat shortcut.
+    NewChat,
     /// Manually entered number for messaging or saving a contact.
     NewContact,
+    UnlockLockedChats,
+    ConfirmLockChat(ChatId),
     ChatInfo(ChatId),
+    /// Confirms deleting a chat, which cannot be undone.
+    ConfirmDeleteChat(ChatId),
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
@@ -514,6 +577,8 @@ pub enum ToastKind {
     Error,
 }
 
+/// Info toasts fade after a few seconds; errors stay until dismissed so they
+/// can be read to the end and copied.
 #[derive(Clone, Debug)]
 pub struct Toast {
     pub message: String,
@@ -580,13 +645,18 @@ pub enum Action {
         path: PathBuf,
         fraction: f32,
     },
+    /// Cycles voice playback speed between 1x, 1.5x, and 2x.
+    CycleVoiceSpeed,
     /// Starts, cancels, or sends a voice recording.
     StartRecording,
     CancelRecording,
     SendRecording,
     OpenFile(PathBuf),
+    OpenFolder(PathBuf),
     OpenUrl(String),
     CopyText(String),
+    /// Closes the toast at this index. Only errors wait to be dismissed.
+    DismissToast(usize),
     /// Starts a reply to a message in the open chat.
     Reply(String),
     CancelReply,
@@ -615,6 +685,11 @@ pub enum Action {
     /// Toggles a picker tab.
     TogglePicker(PickerTab),
     ClosePicker,
+    /// Opens the full emoji picker to react to a message.
+    OpenReactionPicker {
+        chat: ChatId,
+        message: String,
+    },
     /// Inserts an emoji at the composer cursor.
     InsertEmoji(String),
     /// Replaces an active `:query` with its selected emoji.
@@ -667,13 +742,25 @@ pub enum Action {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Deletes a chat here and on the phone.
+    DeleteChat(ChatId),
     SetPinned(ChatId, bool),
     ShowDialog(Dialog),
     CloseDialog,
     ToggleSidebar,
+    SetChatFilter(ChatFilter),
+    /// A chat opened from the main list, kept there under the Unread filter.
+    KeepUnread(ChatId),
     FocusSearch,
     FocusComposer,
     HideShortcutHints,
+    DismissChatLockHint,
+    OpenLockedFolder,
+    UnlockLockedFolder(String),
+    CreateChatLockCode(String),
+    MessageYourself,
+    CloseLockedFolder,
+    SetChatLockCode(Option<String>),
     ScrollToBottom,
     /// Scrolls the open chat to a message.
     ScrollTo(String),
@@ -704,6 +791,8 @@ pub enum Action {
     CloseWindow,
     /// Mutes until Unix time, indefinitely with `Some(0)`, or unmutes with `None`.
     SetMuted(ChatId, Option<i64>),
+    /// Moves a chat into or out of the locked folder.
+    SetLocked(ChatId, bool),
     /// Sends pending attachments with the composer text as caption.
     SendPending {
         chat: ChatId,
@@ -752,6 +841,15 @@ mod tests {
             path: None,
             state: MediaState::Idle,
         }
+    }
+
+    #[test]
+    fn attachment_download_limit_includes_the_boundary() {
+        let mut item = media();
+        item.size = ATTACHMENT_DOWNLOAD_LIMIT;
+        assert!(item.is_within_download_limit());
+        item.size += 1;
+        assert!(!item.is_within_download_limit());
     }
 
     #[test]

@@ -50,6 +50,18 @@ impl Status {
     };
 }
 
+/// Playback speeds, in the order the speed button cycles them.
+pub const SPEEDS: [f32; 3] = [1.0, 1.5, 2.0];
+
+/// Label for a playback speed, like `1x` or `1.5x`.
+pub fn speed_label(speed: f32) -> String {
+    if speed.fract() == 0.0 {
+        format!("{}x", speed as i32)
+    } else {
+        format!("{speed:.1}x")
+    }
+}
+
 type Decoded = Arc<Mutex<Option<Result<Vec<f32>, String>>>>;
 
 /// Plays one clip at a time through the default output device.
@@ -58,6 +70,13 @@ pub struct Player {
     output: Option<(rodio::MixerDeviceSink, rodio::Player)>,
     loaded: Option<Loaded>,
     decoding: Option<Decoding>,
+    /// Playback speed applied to the current clip and to later ones.
+    speed: f32,
+    /// Time-compressed copies of the loaded clip, one per speed already
+    /// built, dropped when the clip changes.
+    stretches: Vec<(f32, Arc<Vec<f32>>)>,
+    /// Compression being built for the loaded message.
+    stretching: Option<Stretching>,
     /// Generated waveforms for clips that did not include one.
     bars: HashMap<String, Vec<u8>>,
 }
@@ -65,11 +84,31 @@ pub struct Player {
 struct Loaded {
     message: String,
     samples: Arc<Vec<f32>>,
-    /// Start position of the queued audio after seeking.
+    /// Samples queued in the sink: the clip itself or its compression.
+    buffer: Arc<Vec<f32>>,
+    /// Speed the queued buffer represents; 1 plays the clip as recorded.
+    factor: f32,
+    /// Restart position in the clip's own timeline.
     base: Duration,
     paused: bool,
     done: bool,
 }
+
+struct Stretching {
+    factor: f32,
+    slot: StretchedSlot,
+    /// Set when this job is replaced or the clip changes, so the worker
+    /// stops instead of piling up behind the next one.
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Drop for Stretching {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+}
+
+type StretchedSlot = Arc<Mutex<Option<Arc<Vec<f32>>>>>;
 
 struct Decoding {
     message: String,
@@ -85,7 +124,141 @@ impl Player {
             output: None,
             loaded: None,
             decoding: None,
+            speed: SPEEDS[0],
+            stretches: Vec::new(),
+            stretching: None,
             bars: HashMap::new(),
+        }
+    }
+
+    /// Current playback speed multiplier.
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
+
+    /// Sets the playback speed for the clip playing now and for later ones.
+    ///
+    /// Speeds above 1x play a time-compressed copy of the clip, once it has
+    /// been built, so the voice keeps its pitch. Until then playback
+    /// continues at the speed already queued. Speeds outside 1x to 2x, such
+    /// as a hand-edited setting, are clamped, and non-finite ones play at 1x.
+    pub fn set_speed(&mut self, speed: f32) {
+        self.speed = if speed.is_finite() {
+            speed.clamp(SPEEDS[0], SPEEDS[SPEEDS.len() - 1])
+        } else {
+            SPEEDS[0]
+        };
+        self.apply_speed();
+        self.ensure_stretch();
+    }
+
+    /// Whether `message` is still playing at an earlier speed while the
+    /// compression for the chosen one builds.
+    pub fn preparing_speed(&self, message: &str) -> bool {
+        self.loaded.as_ref().is_some_and(|loaded| {
+            loaded.message == message && !loaded.done && loaded.factor != self.speed
+        })
+    }
+
+    /// Cycles 1x, 1.5x, and 2x, wrapping back to 1x.
+    pub fn cycle_speed(&mut self) -> f32 {
+        let next = SPEEDS
+            .iter()
+            .copied()
+            .find(|&candidate| candidate > self.speed)
+            .unwrap_or(SPEEDS[0]);
+        self.set_speed(next);
+        self.speed
+    }
+
+    /// The samples that play at `speed` and the speed they represent: the
+    /// clip itself at 1x, its compression once built, and otherwise whatever
+    /// is queued, so a speed still building does not drop playback to 1x.
+    fn buffer_for(
+        loaded: &Loaded,
+        stretches: &[(f32, Arc<Vec<f32>>)],
+        speed: f32,
+    ) -> (Arc<Vec<f32>>, f32) {
+        if speed <= 1.0 {
+            return (Arc::clone(&loaded.samples), 1.0);
+        }
+        match stretches.iter().find(|(factor, _)| *factor == speed) {
+            Some((factor, compressed)) => (Arc::clone(compressed), *factor),
+            None => (Arc::clone(&loaded.buffer), loaded.factor),
+        }
+    }
+
+    /// Restarts playback on the buffer for the current speed, keeping the
+    /// position, when it differs from what is queued.
+    fn apply_speed(&mut self) {
+        let Some(loaded) = self.loaded.as_ref() else {
+            return;
+        };
+        let (wanted, _) = Self::buffer_for(loaded, &self.stretches, self.speed);
+        if self.output.is_none() || Arc::ptr_eq(&wanted, &loaded.buffer) {
+            return;
+        }
+        let total = clip_length(loaded.samples.len());
+        let fraction = if total > Duration::ZERO {
+            (self.status(&loaded.message).position.as_secs_f64() / total.as_secs_f64()) as f32
+        } else {
+            0.0
+        }
+        .clamp(0.0, 1.0);
+        let paused = loaded.paused;
+        if self.restart(fraction).is_ok() && paused {
+            if let Some((_, sink)) = &self.output {
+                sink.pause();
+            }
+            if let Some(loaded) = self.loaded.as_mut() {
+                loaded.paused = true;
+            }
+        }
+    }
+
+    /// Builds the compression for the current speed in the background, if it
+    /// is still missing. Replacing an outstanding job cancels it, and so does
+    /// going back to 1x, which needs none.
+    fn ensure_stretch(&mut self) {
+        let factor = self.speed;
+        if factor <= 1.0 {
+            self.stretching = None;
+            return;
+        }
+        if self.stretches.iter().any(|(built, _)| *built == factor)
+            || self
+                .stretching
+                .as_ref()
+                .is_some_and(|job| job.factor == factor)
+        {
+            return;
+        }
+        let Some(loaded) = &self.loaded else {
+            return;
+        };
+        let samples = Arc::clone(&loaded.samples);
+        let waker = self.waker.clone();
+        let slot: StretchedSlot = Default::default();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let thread_slot = Arc::clone(&slot);
+        let thread_cancelled = Arc::clone(&cancelled);
+        let spawned = std::thread::Builder::new()
+            .name("voice-stretch".to_owned())
+            .spawn(move || {
+                let Some(compressed) =
+                    crate::timestretch::speed_up_unless(&samples, factor, &thread_cancelled)
+                else {
+                    return;
+                };
+                *thread_slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(compressed));
+                waker.wake();
+            });
+        if spawned.is_ok() {
+            self.stretching = Some(Stretching {
+                factor,
+                slot,
+                cancelled,
+            });
         }
     }
 
@@ -123,6 +296,8 @@ impl Player {
         self.output = None;
         self.loaded = None;
         self.decoding = None;
+        self.stretches.clear();
+        self.stretching = None;
     }
 
     /// Whether audio is currently playing.
@@ -156,7 +331,7 @@ impl Player {
                 let position = self
                     .output
                     .as_ref()
-                    .map(|(_, sink)| loaded.base + sink.get_pos())
+                    .map(|(_, sink)| loaded.base + sink.get_pos().mul_f32(loaded.factor))
                     .unwrap_or(loaded.base)
                     .min(total);
                 Status {
@@ -193,17 +368,32 @@ impl Player {
             if samples.is_empty() {
                 return Err("The clip is empty".to_owned());
             }
+            let samples = Arc::new(samples);
             self.bars
                 .entry(message.clone())
                 .or_insert_with(|| voice::waveform(&samples));
             self.loaded = Some(Loaded {
                 message,
-                samples: Arc::new(samples),
+                buffer: Arc::clone(&samples),
+                factor: 1.0,
+                samples,
                 base: Duration::ZERO,
                 paused: false,
                 done: false,
             });
             self.restart(start)?;
+            self.ensure_stretch();
+        }
+        let compressed = self
+            .stretching
+            .as_ref()
+            .and_then(|job| job.slot.lock().unwrap_or_else(|p| p.into_inner()).take());
+        if let Some(samples) = compressed {
+            let factor = self.stretching.take().expect("just seen").factor;
+            self.stretches.push((factor, samples));
+            self.apply_speed();
+            // The speed may have moved on while this compression built.
+            self.ensure_stretch();
         }
         let ended = match (&mut self.loaded, &self.output) {
             (Some(loaded), Some((_, sink))) if !loaded.done && !loaded.paused && sink.empty() => {
@@ -248,9 +438,11 @@ impl Player {
         let Some(loaded) = self.loaded.as_mut() else {
             return Ok(());
         };
-        let samples = Arc::clone(&loaded.samples);
-        let offset =
-            ((fraction.clamp(0.0, 1.0) * samples.len() as f32) as usize).min(samples.len());
+        // The sink always plays at 1x: running it faster sharpens the voice,
+        // so speeds above 1x queue a time-compressed copy of the clip.
+        let (buffer, factor) = Self::buffer_for(loaded, &self.stretches, self.speed);
+        let total = clip_length(loaded.samples.len());
+        let offset = ((fraction.clamp(0.0, 1.0) * buffer.len() as f32) as usize).min(buffer.len());
         if self.output.is_none() {
             let device = rodio::DeviceSinkBuilder::open_default_sink()
                 .map_err(|error| format!("No sound output: {error}"))?;
@@ -262,10 +454,13 @@ impl Player {
         sink.append(SamplesBuffer::new(
             mono(),
             rate(),
-            samples[offset..].to_vec(),
+            buffer[offset..].to_vec(),
         ));
         sink.play();
-        loaded.base = clip_length(offset);
+        loaded.buffer = buffer;
+        loaded.factor = factor;
+        loaded.base =
+            Duration::from_secs_f64(fraction.clamp(0.0, 1.0) as f64 * total.as_secs_f64());
         loaded.paused = false;
         loaded.done = false;
         Ok(())
@@ -447,6 +642,109 @@ pub fn recording_path(dir: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[test]
+    fn speed_labels_match_the_button() {
+        assert_eq!(speed_label(SPEEDS[0]), "1x");
+        assert_eq!(speed_label(1.5), "1.5x");
+        assert_eq!(speed_label(SPEEDS[2]), "2x");
+    }
+
+    #[test]
+    fn cycling_wraps_through_every_speed() {
+        let mut player = Player::new(Waker::default());
+        assert_eq!(player.speed(), SPEEDS[0]);
+        assert_eq!(player.cycle_speed(), 1.5);
+        assert_eq!(player.cycle_speed(), 2.0);
+        assert_eq!(player.cycle_speed(), 1.0);
+        // A speed set by hand still cycles up to the next known one.
+        player.set_speed(1.75);
+        assert_eq!(player.cycle_speed(), 2.0);
+        assert_eq!(player.speed(), 2.0);
+    }
+
+    #[test]
+    fn a_speed_still_building_keeps_the_queued_one() {
+        let samples = Arc::new(vec![0.0; 12]);
+        let one_and_a_half = Arc::new(vec![0.0; 8]);
+        let double = Arc::new(vec![0.0; 6]);
+        let loaded = Loaded {
+            message: "clip".to_owned(),
+            samples: Arc::clone(&samples),
+            buffer: Arc::clone(&one_and_a_half),
+            factor: 1.5,
+            base: Duration::ZERO,
+            paused: false,
+            done: false,
+        };
+        let mut stretches = vec![(1.5, Arc::clone(&one_and_a_half))];
+
+        let (buffer, factor) = Player::buffer_for(&loaded, &stretches, 2.0);
+        assert!(Arc::ptr_eq(&buffer, &one_and_a_half));
+        assert_eq!(factor, 1.5);
+
+        stretches.push((2.0, Arc::clone(&double)));
+        let (buffer, factor) = Player::buffer_for(&loaded, &stretches, 2.0);
+        assert!(Arc::ptr_eq(&buffer, &double));
+        assert_eq!(factor, 2.0);
+        // Both built speeds stay available when cycling back.
+        let (buffer, _) = Player::buffer_for(&loaded, &stretches, 1.5);
+        assert!(Arc::ptr_eq(&buffer, &one_and_a_half));
+        let (buffer, factor) = Player::buffer_for(&loaded, &stretches, 1.0);
+        assert!(Arc::ptr_eq(&buffer, &samples));
+        assert_eq!(factor, 1.0);
+    }
+
+    #[test]
+    fn a_speed_is_preparing_until_the_clip_plays_at_it() {
+        let samples = Arc::new(vec![0.0; 12]);
+        let mut player = Player::new(Waker::default());
+        player.loaded = Some(Loaded {
+            message: "clip".to_owned(),
+            buffer: Arc::clone(&samples),
+            samples,
+            factor: 1.0,
+            base: Duration::ZERO,
+            paused: true,
+            done: false,
+        });
+        assert!(!player.preparing_speed("clip"));
+        player.speed = 2.0;
+        assert!(player.preparing_speed("clip"));
+        assert!(!player.preparing_speed("another clip"));
+        if let Some(loaded) = player.loaded.as_mut() {
+            loaded.factor = 2.0;
+        }
+        assert!(!player.preparing_speed("clip"));
+    }
+
+    #[test]
+    fn unusable_speeds_are_kept_in_range() {
+        let mut player = Player::new(Waker::default());
+        player.set_speed(f32::NAN);
+        assert_eq!(player.speed(), 1.0);
+        player.set_speed(f32::INFINITY);
+        assert_eq!(player.speed(), 1.0);
+        player.set_speed(50.0);
+        assert_eq!(player.speed(), 2.0);
+        player.set_speed(-3.0);
+        assert_eq!(player.speed(), 1.0);
+    }
+
+    #[test]
+    fn going_back_to_one_x_cancels_the_outstanding_compression() {
+        let mut player = Player::new(Waker::default());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        player.set_speed(2.0);
+        player.stretching = Some(Stretching {
+            factor: 2.0,
+            slot: Default::default(),
+            cancelled: Arc::clone(&cancelled),
+        });
+        player.set_speed(1.0);
+        assert!(player.stretching.is_none());
+        assert!(cancelled.load(Ordering::Relaxed));
+    }
+
     /// Plays a one-second test tone:
     /// `cargo test audio::tests::plays -- --ignored --nocapture`.
     #[test]
@@ -478,6 +776,48 @@ mod tests {
         assert!(seen_playing, "never heard it playing");
         assert_eq!(player.status("clip").state, State::Idle, "ends on its own");
         assert_eq!(player.bars("clip").map(<[u8]>::len), Some(voice::BARS));
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Plays a two-second tone at double speed and checks the position
+    /// outruns the clock:
+    /// `cargo test audio::tests::doubles -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "makes a sound on this machine"]
+    fn doubles_the_position_rate_on_this_machine() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("zapfast-audio-speed-test.ogg");
+        let tone: Vec<f32> = (0..voice::RATE * 2)
+            .map(|i| (i as f32 * 330.0 * std::f32::consts::TAU / voice::RATE as f32).sin() * 0.3)
+            .collect();
+        std::fs::write(&path, voice::encode(&tone).expect("encodes")).expect("written");
+        let mut player = Player::new(Waker::default());
+        player.set_speed(2.0);
+        player.toggle("clip", &path).expect("starts decoding");
+        let started = Instant::now();
+        let mut seen: Vec<(Duration, Duration)> = Vec::new();
+        while started.elapsed() < Duration::from_secs(6) {
+            player.poll().expect("plays");
+            let status = player.status("clip");
+            // The clip starts at 1x while its compression builds; measure
+            // only after the compressed buffer has taken over.
+            if status.state == State::Playing && status.position > Duration::from_millis(600) {
+                seen.push((started.elapsed(), status.position));
+            }
+            if status.state == State::Idle && !seen.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let (first_wall, first_position) = seen.first().expect("played");
+        let (last_wall, last_position) = seen.last().expect("played");
+        let wall = *last_wall - *first_wall;
+        let advanced = *last_position - *first_position;
+        assert!(wall > Duration::from_millis(200), "played for {wall:?}");
+        assert!(
+            advanced.as_secs_f32() >= 1.5 * wall.as_secs_f32(),
+            "position advanced {advanced:?} over {wall:?} of wall time"
+        );
         let _ = std::fs::remove_file(path);
     }
 

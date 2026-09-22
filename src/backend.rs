@@ -42,6 +42,62 @@ impl LinkStatus {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected)
     }
+
+    /// Stable, non-sensitive description suitable for the desktop log.
+    pub(crate) fn log_label(&self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Unlinked { .. } => "unlinked",
+            Self::Connecting => "connecting",
+            Self::Connected => "connected",
+            Self::Disconnected { .. } => "disconnected",
+            Self::LoggedOut => "logged out",
+            Self::Failed(_) => "failed",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LinkStatus;
+
+    #[test]
+    fn backend_waits_for_window_acknowledgement_before_touching_storage() {
+        let directory = tempfile::tempdir().unwrap();
+        let dirs = crate::paths::AppDirs::under(directory.path());
+        let mut backend = super::Backend::spawn(dirs.clone(), super::Waker::default());
+        assert!(!dirs.session_db().exists());
+        assert!(!dirs.archive_db().exists());
+        // Closing before a first frame must cancel startup without connecting
+        // or hanging while joining the waiting worker.
+        backend.shutdown();
+        assert!(!dirs.session_db().exists());
+        assert!(!dirs.archive_db().exists());
+    }
+
+    #[test]
+    fn link_logs_redact_pairing_credentials() {
+        let qr = "qr-payload-that-links-an-account";
+        let code = "12345678";
+        let phone = "573001234567";
+        let status = LinkStatus::Unlinked {
+            qr: Some(qr.into()),
+            pair_code: Some(code.into()),
+            pairing_phone: Some(phone.into()),
+        };
+
+        // The previous Debug formatting leaked every field into zapfast.log.
+        let previous = format!("link: {status:?}");
+        assert!(previous.contains(qr));
+        assert!(previous.contains(code));
+        assert!(previous.contains(phone));
+
+        let current = format!("link: {}", status.log_label());
+        assert_eq!(current, "link: unlinked");
+        assert!(!current.contains(qr));
+        assert!(!current.contains(code));
+        assert!(!current.contains(phone));
+    }
 }
 
 /// Oldest loaded message timestamp and id used as a page boundary.
@@ -195,6 +251,8 @@ pub enum Command {
     },
     /// Syncs chat mute state. `Some(0)` is indefinite and `None` unmutes.
     SetMuted(ChatId, Option<i64>),
+    /// Locks or unlocks a chat (the locked folder).
+    SetLocked(ChatId, bool),
     /// Normalizes, encodes, and sends mono 48 kHz push-to-talk audio.
     SendVoice {
         chat: ChatId,
@@ -212,6 +270,7 @@ pub enum Command {
     SendSticker {
         chat: ChatId,
         path: PathBuf,
+        quoting: Option<String>,
     },
     /// Saves a sticker file.
     SaveSticker {
@@ -282,6 +341,14 @@ pub enum Command {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Deletes a chat on the phone, then here once the phone agreed.
+    DeleteChat(ChatId),
+    /// Whether the phone deleted a chat requested through `DeleteChat`.
+    ChatDeleted {
+        chat: ChatId,
+        deleted: bool,
+        through: i64,
+    },
     SetPinned(ChatId, bool),
     PairWithPhone(String),
     /// Unlinks the device remotely and locally.
@@ -439,6 +506,15 @@ pub enum Event {
         chat: ChatId,
         id: String,
     },
+    /// A chat was deleted here or on a linked device.
+    ChatRemoved {
+        chat: ChatId,
+    },
+    /// A chat's messages were cleared while the chat itself stays.
+    ChatCleared {
+        chat: ChatId,
+        through: i64,
+    },
     /// GIF search results or failure.
     Gifs {
         query: String,
@@ -519,6 +595,7 @@ impl Waker {
 
 /// UI handle to the backend runtime.
 pub struct Backend {
+    startup: Option<tokio::sync::oneshot::Sender<()>>,
     commands: mpsc::UnboundedSender<Command>,
     events: std::sync::mpsc::Receiver<Event>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -538,17 +615,21 @@ impl Backend {
             .build()
             .expect("unable to start the async runtime");
         let worker_commands = command_tx.clone();
+        let (startup, started) = tokio::sync::oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("zapfast-backend".to_string())
             .spawn(move || {
                 runtime.block_on(async move {
-                    worker::run(dirs, event_tx, worker_commands, command_rx, waker).await;
+                    if started.await.is_ok() {
+                        worker::run(dirs, event_tx, worker_commands, command_rx, waker).await;
+                    }
                 });
                 runtime.shutdown_timeout(Duration::from_secs(3));
             })
             .expect("unable to start the backend thread");
 
         Self {
+            startup: Some(startup),
             commands: command_tx,
             events: event_rx,
             thread: Some(thread),
@@ -564,6 +645,7 @@ impl Backend {
         let (event_tx, event_rx) = std::sync::mpsc::channel();
         (
             Self {
+                startup: None,
                 commands: command_tx,
                 events: event_rx,
                 thread: None,
@@ -628,7 +710,14 @@ impl Backend {
         self.events.try_iter().collect()
     }
 
+    /// Start database migrations only after the first window frame has been
+    /// acknowledged by the update helper. Dropping this permit cancels startup.
+    pub fn take_startup(&mut self) -> Option<tokio::sync::oneshot::Sender<()>> {
+        self.startup.take()
+    }
+
     pub fn shutdown(&mut self) {
+        self.startup.take();
         self.send(Command::Shutdown);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();

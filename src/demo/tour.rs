@@ -662,6 +662,7 @@ mod tests {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
         click(&mut app, &mut tour, &ctx, "Dark");
+        let menu_pos = tour.labels["Nord.json"];
         for name in [
             "Follow system",
             "Light",
@@ -671,10 +672,53 @@ mod tests {
             "Nord.json",
             "Ristretto.json",
             "Tokyo Night.json",
+            "Rose Pine.json",
+            "Rose Pine Moon.json",
+            "Rose Pine Dawn.json",
         ] {
+            // The bundled choices now exceed the popup's visible height.
+            // Scroll over the menu, as a user would, to reveal later entries.
+            for _ in 0..20 {
+                if tour.labels.contains_key(name) {
+                    break;
+                }
+                frame(
+                    &mut app,
+                    &mut tour,
+                    &ctx,
+                    vec![
+                        Event::PointerMoved(menu_pos),
+                        Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: vec2(0.0, -30.0),
+                            modifiers: Modifiers::NONE,
+                            phase: egui::TouchPhase::Move,
+                        },
+                    ],
+                );
+            }
             assert!(
                 tour.labels.contains_key(name),
                 "missing theme choice {name}"
+            );
+        }
+        for _ in 0..20 {
+            if tour.labels.contains_key("Follow system") {
+                break;
+            }
+            frame(
+                &mut app,
+                &mut tour,
+                &ctx,
+                vec![
+                    Event::PointerMoved(menu_pos),
+                    Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: vec2(0.0, 30.0),
+                        modifiers: Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ],
             );
         }
         click(&mut app, &mut tour, &ctx, "Nord.json");
