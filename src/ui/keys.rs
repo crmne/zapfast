@@ -146,18 +146,16 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) -> bool {
         }
         let mut event_actions = Vec::new();
         for event in &input.events {
-            match event {
-                egui::Event::Key {
-                    key,
-                    modifiers,
-                    pressed: true,
-                    ..
-                } => {
-                    if let Some(action) = crate::image_preview::preview_action(*key, *modifiers) {
-                        event_actions.push(action);
-                    }
+            if let egui::Event::Key {
+                key,
+                modifiers,
+                pressed: true,
+                ..
+            } = event
+            {
+                if let Some(action) = crate::image_preview::preview_action(*key, *modifiers) {
+                    event_actions.push(action);
                 }
-                _ => {}
             }
         }
         actions.extend(event_actions);
