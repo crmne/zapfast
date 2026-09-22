@@ -265,17 +265,26 @@ pub fn verify_version(executable: &Path, expected: &str) -> Result<()> {
     }
 }
 
-pub fn handoff(prepared: &Prepared, arguments: Vec<String>) -> Result<()> {
-    ensure!(
-        hash(&prepared.payload)? == prepared.sha256,
-        "The staged update changed. Download it again."
-    );
+fn helper(prepared: &Prepared) -> Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    if prepared.installation.kind == Kind::MacBundle {
+        return super::macos::helper(prepared);
+    }
     let helper = prepared.directory.join(if cfg!(windows) {
         "helper.exe"
     } else {
         "helper"
     });
     fs::copy(std::env::current_exe()?, &helper)?;
+    Ok(helper)
+}
+
+pub fn handoff(prepared: &Prepared, arguments: Vec<String>) -> Result<()> {
+    ensure!(
+        hash(&prepared.payload)? == prepared.sha256,
+        "The staged update changed. Download it again."
+    );
+    let helper = helper(prepared)?;
     let job = prepared.directory.join("handoff.json");
     let mut file = File::create(&job)?;
     serde_json::to_writer(
