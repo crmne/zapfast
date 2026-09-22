@@ -172,10 +172,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             });
             taken
         });
-    if edit_previous {
-        if let Some(id) = app.previous_own_editable() {
-            actions.push(Action::Edit(id));
-        }
+    if let Some(id) = edit_previous.then(|| app.previous_own_editable()).flatten() {
+        actions.push(Action::Edit(id));
     }
     app.actions.extend(actions);
 }
