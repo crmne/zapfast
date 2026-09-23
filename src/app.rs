@@ -53,6 +53,9 @@ pub const INFO_TOAST_LIFETIME: Duration = Duration::from_millis(3200);
 const MAX_ERROR_TOASTS: usize = 3;
 /// Typing-state timeout when no stop event arrives.
 const TYPING_TIMEOUT: Duration = Duration::from_secs(12);
+/// How long other apps' media stays paused while the next voice message of a
+/// run downloads. A stalled download must not keep music paused for good.
+const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
 
 /// Loaded chat history and paging state.
 #[derive(Default)]
@@ -271,8 +274,12 @@ pub struct App {
     video_chat: Option<ChatId>,
     /// Video to play once its download finishes.
     video_wanted: Option<(ChatId, String)>,
-    /// Voice or audio message to play once its download finishes.
-    voice_wanted: Option<(ChatId, String)>,
+    /// Chat whose voice messages carry on into the next unheard one when a
+    /// clip ends. Leaving the chat, or playing a video, ends the run.
+    voice_chat: Option<ChatId>,
+    /// Next voice message of a run, playing once its download finishes, and
+    /// when the download began. Media stays paused for a short while meanwhile.
+    voice_wanted: Option<(ChatId, String, Instant)>,
     /// Active voice recorder.
     pub recording: Option<Recorder>,
     /// A voice message the worker refused, kept with its chat so it can be
@@ -579,6 +586,7 @@ impl App {
             video: crate::video::Player::new(waker.clone()),
             video_chat: None,
             video_wanted: None,
+            voice_chat: None,
             voice_wanted: None,
             recording: None,
             media_hold: None,
@@ -2293,10 +2301,10 @@ impl App {
                 } else if self
                     .voice_wanted
                     .as_ref()
-                    .is_some_and(|(wanted_chat, wanted)| wanted_chat == chat && wanted == id)
+                    .is_some_and(|(wanted_chat, wanted, _)| wanted_chat == chat && wanted == id)
                 {
                     self.voice_wanted = None;
-                    // Leaving a chat stops its audio, so a clip that lands
+                    // Leaving the chat ended the run, so a clip that lands
                     // after that is not started.
                     if self.open_chat.as_deref() == Some(chat) {
                         self.actions.push(Action::PlayVoice {
@@ -2307,6 +2315,13 @@ impl App {
                 }
             }
             Err(error) => {
+                if self
+                    .voice_wanted
+                    .as_ref()
+                    .is_some_and(|(wanted_chat, wanted, _)| wanted_chat == chat && wanted == id)
+                {
+                    self.voice_wanted = None;
+                }
                 // Show expired-file failures in the bubble, not as a toast.
                 let notice = if error.contains("403") || error.contains("404") {
                     "No longer available on WhatsApp's servers".to_owned()
@@ -2445,6 +2460,9 @@ impl App {
             self.chat_search_index = 0;
             self.reply_to = None;
             self.editing = None;
+            // A run of voice messages belongs to the chat it started in.
+            self.voice_chat = None;
+            self.voice_wanted = None;
         }
         self.emoji_start = None;
         self.mention_start = None;
@@ -3281,6 +3299,8 @@ impl App {
             Action::PlayVoice { message, path } => self.play_voice(message, path),
             Action::PlayVideo { message, path } => self.play_video(message, path),
             Action::PlayVideoWhenDownloaded(message) => {
+                self.voice_chat = None;
+                self.voice_wanted = None;
                 self.video_wanted = self.open_chat.clone().map(|chat| (chat, message));
             }
             Action::SeekVideo { message, fraction } => self.video.seek(&message, fraction),
@@ -3290,6 +3310,11 @@ impl App {
                 path,
                 fraction,
             } => {
+                // One sound at a time, and the clip the reader picked wins
+                // over one a run is still fetching.
+                self.video.stop();
+                self.voice_wanted = None;
+                self.voice_chat = self.open_chat.clone();
                 if let Err(error) = self.player.seek(&message, &path, fraction) {
                     self.toast_error(error);
                 }
@@ -4215,13 +4240,26 @@ impl App {
     /// Pauses other apps' music while recording or playing audio, as the
     /// settings allow, and resumes it once neither needs quiet.
     fn hold_media(&mut self) {
-        let wanted = self.pauses_media
-            && (self.recording.is_some() && self.settings.pause_media_while_recording
-                || self.settings.pause_media_while_playing
-                    && (self.player.is_playing() || self.video.is_active() && !self.video.muted()));
+        let wanted = self.pauses_media && self.wants_quiet();
         if wanted != self.media_hold.is_some() {
             self.media_hold = wanted.then(crate::media_pause::hold);
         }
+    }
+
+    /// Whether recording or playback needs other apps' media paused now. A
+    /// run of voice messages keeps it paused while the next clip downloads, so
+    /// music does not resume and pause again between clips, but only for a
+    /// while.
+    fn wants_quiet(&self) -> bool {
+        let fetching_next = self
+            .voice_wanted
+            .as_ref()
+            .is_some_and(|(_, _, since)| since.elapsed() < VOICE_FETCH_HOLD);
+        self.recording.is_some() && self.settings.pause_media_while_recording
+            || self.settings.pause_media_while_playing
+                && (self.player.is_playing()
+                    || fetching_next
+                    || self.video.is_active() && !self.video.muted())
     }
 
     /// Keeps the backend following receipts for exactly the group message
@@ -4258,6 +4296,13 @@ impl App {
         if self.player.is_playing() || self.recording.is_some() {
             self.waker.wake_after(Duration::from_millis(40));
         }
+        // Let the media hold lapse on time if the next clip never lands.
+        if let Some((_, _, since)) = &self.voice_wanted {
+            let left = VOICE_FETCH_HOLD.saturating_sub(since.elapsed());
+            if !left.is_zero() {
+                self.waker.wake_after(left);
+            }
+        }
     }
 
     /// Shows the playing video's frames, stops it once its chat is left, and
@@ -4281,8 +4326,10 @@ impl App {
         let Some(chat) = self.open_chat.clone() else {
             return;
         };
-        // One sound at a time.
+        // One sound at a time; a video also ends a run of voice messages.
         self.player.stop();
+        self.voice_chat = None;
+        self.voice_wanted = None;
         let starting = self.video.message() != Some(message.as_str());
         self.video.toggle(&message, &path);
         self.video_chat = Some(chat.clone());
@@ -4299,6 +4346,8 @@ impl App {
     /// Plays or pauses audio and sends the first played receipt when needed.
     fn play_voice(&mut self, message: String, path: PathBuf) {
         self.video.stop();
+        self.voice_wanted = None;
+        self.voice_chat = self.open_chat.clone();
         if let Err(error) = self.player.toggle(&message, &path) {
             self.toast_error(error);
             return;
@@ -4333,13 +4382,17 @@ impl App {
         });
     }
 
-    /// Starts the next unplayed voice or audio message after one plays to its
-    /// end, as the phone and WhatsApp Web do. A clip that is not downloaded
-    /// yet is fetched first and plays when it lands.
+    /// Starts the next unheard voice message after one plays to its end, as
+    /// the phone does. Only a clip that finished in the chat the reader is
+    /// still in carries on. A clip that is not downloaded yet is fetched first
+    /// and plays when it lands.
     fn continue_voice(&mut self, finished: &str) {
         let Some(chat) = self.open_chat.clone() else {
             return;
         };
+        if self.voice_chat.as_ref() != Some(&chat) {
+            return;
+        }
         let Some(next) = self.next_voice_after(&chat, finished) else {
             return;
         };
@@ -4355,7 +4408,7 @@ impl App {
                 path,
             }),
             None => {
-                self.voice_wanted = Some((chat.clone(), next.clone()));
+                self.voice_wanted = Some((chat.clone(), next.clone(), Instant::now()));
                 self.actions.push(Action::Download {
                     card: None,
                     chat,
@@ -4365,22 +4418,32 @@ impl App {
         }
     }
 
-    /// The next voice or audio message in a chat after `finished` that the
-    /// reader has not heard yet, skipping their own messages and anything
-    /// already played in this session.
+    /// The next voice message after `finished` that the reader has not heard
+    /// yet. As on the phone, the run goes through consecutive voice messages:
+    /// the reader's own and those already played here are passed over, and
+    /// anything else, an audio file included, ends it.
     fn next_voice_after(&self, chat: &str, finished: &str) -> Option<String> {
         let conversation = self.conversations.get(chat)?;
         let position = conversation
             .messages
             .iter()
             .position(|message| message.id == finished)?;
+        let voice_note = |message: &Message| {
+            matches!(
+                message.content,
+                Content::Audio {
+                    voice_note: true,
+                    ..
+                }
+            )
+        };
+        if !voice_note(&conversation.messages[position]) {
+            return None;
+        }
         conversation.messages[position + 1..]
             .iter()
-            .find(|message| {
-                !message.from_me
-                    && matches!(message.content, Content::Audio { .. })
-                    && !self.played_told.contains(&message.id)
-            })
+            .take_while(|message| voice_note(message))
+            .find(|message| !message.from_me && !self.played_told.contains(&message.id))
             .map(|message| message.id.clone())
     }
 
@@ -6078,23 +6141,28 @@ mod tests {
         let chat = "1@s.whatsapp.net";
         app.chats = vec![Chat::new(chat.into(), "Ada".into())];
         app.open_chat = Some(chat.into());
+        app.settings.pause_media_while_playing = true;
         app.conversations.entry(chat.into()).or_default().merge(
             vec![
                 voice(chat, "first", 1, Some("first.ogg")),
-                message(chat, "text", 2),
-                voice(chat, "second", 3, None),
+                voice(chat, "second", 2, None),
             ],
             false,
         );
         app.played_told.insert("first".into());
+        app.voice_chat = Some(chat.into());
 
         app.continue_voice("first");
         assert_eq!(
             app.voice_wanted
                 .as_ref()
-                .map(|(chat, id)| (chat.as_str(), id.as_str())),
+                .map(|(chat, id, _)| (chat.as_str(), id.as_str())),
             Some((chat, "second")),
             "a clip that is not downloaded yet is fetched first"
+        );
+        assert!(
+            app.wants_quiet(),
+            "music stays paused while the next clip downloads"
         );
         app.apply_actions(&ctx);
         assert!(matches!(
@@ -6110,21 +6178,30 @@ mod tests {
             )),
             "the fetched clip plays when it lands"
         );
+        assert!(app.voice_wanted.is_none());
     }
 
     #[test]
-    fn the_next_voice_message_skips_heard_and_own_audio() {
+    fn a_voice_run_goes_through_consecutive_unheard_voice_messages() {
         let mut app = app();
         let chat = "1@s.whatsapp.net";
         app.open_chat = Some(chat.into());
         let mut own = voice(chat, "own", 2, None);
         own.from_me = true;
+        let mut song = voice(chat, "song", 6, None);
+        if let Content::Audio { voice_note, .. } = &mut song.content {
+            *voice_note = false;
+        }
         app.conversations.entry(chat.into()).or_default().merge(
             vec![
                 voice(chat, "played", 1, None),
                 own,
                 voice(chat, "heard", 3, None),
                 voice(chat, "waiting", 4, None),
+                message(chat, "text", 5),
+                voice(chat, "after text", 6, None),
+                song,
+                voice(chat, "after song", 7, None),
             ],
             false,
         );
@@ -6134,12 +6211,89 @@ mod tests {
         assert_eq!(
             app.next_voice_after(chat, "played").as_deref(),
             Some("waiting"),
-            "own audio and clips already heard are skipped"
+            "own voice messages and those already heard are passed over"
         );
         assert_eq!(
             app.next_voice_after(chat, "waiting"),
             None,
-            "nothing follows the last voice message"
+            "a message in between ends the run"
+        );
+        assert_eq!(
+            app.next_voice_after(chat, "after text"),
+            None,
+            "an audio file ends the run"
+        );
+        assert_eq!(
+            app.next_voice_after(chat, "song"),
+            None,
+            "an audio file does not start one"
+        );
+    }
+
+    #[test]
+    fn leaving_the_chat_or_playing_a_video_ends_a_voice_run() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        let other = "2@s.whatsapp.net";
+        app.chats = vec![
+            Chat::new(chat.into(), "Ada".into()),
+            Chat::new(other.into(), "Bob".into()),
+        ];
+        app.conversations.entry(chat.into()).or_default().merge(
+            vec![
+                voice(chat, "first", 1, Some("first.ogg")),
+                voice(chat, "second", 2, Some("second.ogg")),
+                voice(chat, "third", 3, None),
+            ],
+            false,
+        );
+        app.open_chat = Some(chat.into());
+        app.voice_chat = Some(chat.into());
+        app.voice_wanted = Some((chat.into(), "third".into(), Instant::now()));
+
+        app.open_chat(other.into());
+        app.open_chat(chat.into());
+        assert!(app.voice_wanted.is_none(), "a pending clip is dropped");
+        app.continue_voice("first");
+        assert!(
+            app.actions.is_empty(),
+            "a clip from before does not carry on"
+        );
+        app.handle_media(chat, "third", None, Ok(PathBuf::from("third.ogg")));
+        assert!(app.actions.is_empty(), "nor does one that lands later");
+
+        app.voice_chat = Some(chat.into());
+        app.voice_wanted = Some((chat.into(), "third".into(), Instant::now()));
+        app.actions
+            .push(Action::PlayVideoWhenDownloaded("video".into()));
+        app.apply_actions(&ctx);
+        assert!(app.voice_wanted.is_none() && app.voice_chat.is_none());
+    }
+
+    #[test]
+    fn a_failed_download_ends_the_wait_for_the_next_voice_message() {
+        let mut app = app();
+        let chat = "1@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.settings.pause_media_while_playing = true;
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![voice(chat, "next", 1, None)], false);
+        app.voice_wanted = Some((chat.into(), "next".into(), Instant::now()));
+        app.handle_media(chat, "next", None, Err("404".into()));
+        assert!(app.voice_wanted.is_none());
+        assert!(!app.wants_quiet(), "music resumes");
+
+        app.voice_wanted = Some((
+            chat.into(),
+            "next".into(),
+            Instant::now() - VOICE_FETCH_HOLD,
+        ));
+        assert!(
+            !app.wants_quiet(),
+            "a download that takes too long does not keep music paused"
         );
     }
 
