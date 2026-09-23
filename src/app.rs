@@ -4195,6 +4195,91 @@ mod tests {
     }
 
     #[test]
+    fn carousel_downloads_track_each_card_separately() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        let card = || crate::model::InteractiveCard {
+            image: Some(Media {
+                mime: "image/jpeg".into(),
+                size: 100,
+                width: None,
+                height: None,
+                path: None,
+                state: MediaState::Idle,
+            }),
+            ..Default::default()
+        };
+        let mut carousel = message(chat, "carousel", 1);
+        carousel.content = Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                carousel: vec![card(), card()],
+                ..Default::default()
+            })),
+        };
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![carousel.clone()], false);
+        let images = |app: &App| -> Vec<Media> {
+            match &app.conversations[chat].message("carousel").unwrap().content {
+                Content::Interactive {
+                    card: Some(card), ..
+                } => card
+                    .carousel
+                    .iter()
+                    .map(|card| card.image.clone().unwrap())
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::Download {
+                card: Some(1),
+                chat: chat.into(),
+                message: "carousel".into(),
+            },
+            &ctx,
+        );
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Download { card: Some(1), .. })
+        ));
+        let states = |app: &App| {
+            images(app)
+                .into_iter()
+                .map(|media| media.state)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(states(&app), [MediaState::Idle, MediaState::Downloading]);
+        // A worker update carries no download state; the card keeps its own.
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        events
+            .send(Event::MessageUpdated(Box::new(carousel)))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(states(&app), [MediaState::Idle, MediaState::Downloading]);
+        let path = PathBuf::from("/cache/zapfast/media/carousel-card-1.jpg");
+        events
+            .send(Event::Media {
+                card: Some(1),
+                chat: chat.into(),
+                message: "carousel".into(),
+                result: Ok(path.clone()),
+            })
+            .unwrap();
+        app.handle_events();
+        let images = images(&app);
+        assert_eq!(images[0].path, None);
+        assert_eq!(images[1].path, Some(path));
+        assert_eq!(images[1].state, MediaState::Idle);
+    }
+
+    #[test]
     fn clicking_an_oversized_attachment_does_not_start_a_download() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();

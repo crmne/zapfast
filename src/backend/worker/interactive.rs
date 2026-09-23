@@ -825,6 +825,47 @@ mod tests {
     }
 
     #[test]
+    fn a_finished_card_download_is_filed_under_that_card_only() {
+        let (mut worker, events, _commands, _wa) = worker();
+        worker.archive.ensure_chat(PEER, "Demo").unwrap();
+        let card = || InteractiveCard {
+            image: Some(super::super::media(
+                Some(&"image/jpeg".to_owned()),
+                Some(1),
+                None,
+                None,
+            )),
+            ..Default::default()
+        };
+        let mut carousel = own_message("carousel", 1);
+        carousel.content = Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(InteractiveCard {
+                carousel: vec![card(), card()],
+                ..Default::default()
+            })),
+        };
+        worker.archive.insert_message(&carousel, None).unwrap();
+        let key = (PEER.to_owned(), "carousel".to_owned(), Some(1));
+        worker.downloads.insert(key.clone());
+        let path = std::path::PathBuf::from("/cache/zapfast/media/carousel-card-1.jpg");
+        worker.downloaded(PEER.into(), "carousel".into(), Some(1), Ok(path.clone()));
+        assert!(!worker.downloads.contains(&key));
+        assert_eq!(
+            worker.archive.carousel_media_paths().unwrap(),
+            [(PEER.to_owned(), "carousel".to_owned(), 1, path)]
+        );
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            crate::backend::Event::Media {
+                card: Some(1),
+                result: Ok(_),
+                ..
+            }
+        )));
+    }
+
+    #[test]
     fn nested_images_keep_the_library_download_metadata_and_archive_paths() {
         use wa::message::{
             buttons_message::Header,
