@@ -16,6 +16,8 @@ pub enum Stop {
     NewChat,
     Settings,
     Search,
+    /// The Labels menu chip, when labels are not shown one chip each.
+    Labels,
     All,
     Unread,
     Private,
@@ -23,6 +25,9 @@ pub enum Stop {
     Channels,
     Archived,
     Locked,
+    /// One chip in the label row, by its position among the labels.
+    Label(u8),
+    ManageLabels,
 }
 
 #[derive(Clone, Copy, Debug)]

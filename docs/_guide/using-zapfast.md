@@ -170,21 +170,26 @@ see its picture, number, and group members.
 ## Labels
 
 Labels are yours alone. They stay on this computer, they never reach your phone,
-and nobody else sees them. Make one from the **Labels** entries in any chat's
-right-click menu, or from the **+** in the tab bar, and give it a name and one of
-the offered colours. Twenty is the ceiling, the same as WhatsApp Business.
+and nobody else sees them. They are not WhatsApp Business labels, and ZapFast
+does not read or change those. Open **Labels** in any chat's right-click menu
+and choose **Manage labels…** to make one, with a name and one of the offered
+colours. ZapFast keeps up to twenty.
 
-A chat can wear several labels at once. Open a chat's right-click menu to see
-them: one entry per label, and the ones the chat wears show a checkmark. Deleting
-a label takes it off every chat and nothing else; the chats keep their messages.
+A chat can wear several labels at once. The **Labels** submenu of a chat's
+right-click menu lists them, with a checkmark beside the ones the chat wears;
+click one to add or remove it. Deleting a label takes it off every chat and
+nothing else; the chats keep their messages.
 
-Turn on **Show labels as tabs** in the settings to put a bar of tabs above the
-chat list. **All** comes first, then one tab per label showing its colour, its
-name, and the number of unread messages in the chats wearing it. Click a tab to
-show only those chats; click the active tab again to go back to **All**.
+Once a label exists, a **Labels** chip leads the chips under the search bar.
+Pick a label from it to list only the chats wearing that label, channels
+included. A label is one more chip: picking it lets go of **Unread** or
+**Groups**, and picking one of those lets go of the label. Like the other
+chips, it does not narrow search or the archive.
 
-With the setting off, the same filter sits in a **Labels** menu beside the filter
-chips.
+Turn on **Show labels as chips** in the settings to give each label its own
+chip instead, in a row under the others, with its colour and the number of
+unread chats wearing it, followed by a **+** that opens the label manager.
+Click the active label chip again, or **All**, to see every chat.
 
 ## Notifications and the tray
 

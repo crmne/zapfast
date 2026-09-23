@@ -900,34 +900,15 @@ impl Worker {
         }
     }
 
-    /// Creates a label, telling the user why one was refused.
+    /// Creates a label. The app refuses a full set or a taken name first,
+    /// in the user's language; the archive checks again and says nothing.
     fn create_label(&mut self, name: String, color_hex: String) {
-        let existing = self.archive.labels().unwrap_or_default();
-        if existing.len() >= crate::archive::LABEL_LIMIT {
-            self.emit(Event::Error(format!(
-                "Labels stop at {}; delete one first.",
-                crate::archive::LABEL_LIMIT
-            )));
-            return;
-        }
-        if existing
-            .iter()
-            .any(|label| label.name.eq_ignore_ascii_case(name.trim()))
-        {
-            self.emit(Event::Error(
-                "A label with that name already exists.".to_owned(),
-            ));
-            return;
-        }
         match self
             .archive
             .create_label(&name, &color_hex, crate::util::now())
         {
-            Ok(Some(label)) => {
-                log::info!("label {} created", label.name);
-                self.emit_labels();
-            }
-            Ok(None) => {}
+            Ok(Some(_)) => self.emit_labels(),
+            Ok(None) => log::info!("label not created: full, empty, or taken"),
             Err(error) => log::warn!("could not create label: {error}"),
         }
     }
@@ -4358,9 +4339,7 @@ impl Worker {
                 color_hex,
             } => match self.archive.update_label(&id, &name, &color_hex) {
                 Ok(true) => self.emit_labels(),
-                Ok(false) => self.emit(Event::Error(
-                    "That name is already taken by another label.".to_owned(),
-                )),
+                Ok(false) => log::info!("label not updated: gone, empty, or taken"),
                 Err(error) => log::warn!("could not update label: {error}"),
             },
             Command::DeleteLabel(id) => match self.archive.delete_label(&id) {
@@ -4373,7 +4352,6 @@ impl Worker {
                     log::warn!("could not assign labels: {error}");
                 }
                 self.emit_chat(&chat);
-                self.emit_labels();
             }
             Command::SetLocked(chat, locked) => {
                 let _ = self.archive.set_locked(&chat, locked);

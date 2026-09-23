@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 16:56+0200\n"
+"POT-Creation-Date: 2026-09-23 18:56+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -16,23 +16,23 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
-#: src/model.rs:59
+#: src/model.rs:70
 msgid "All"
 msgstr "Todas"
 
-#: src/model.rs:60
+#: src/model.rs:71
 msgid "Unread"
 msgstr "Não lidas"
 
-#: src/model.rs:61
+#: src/model.rs:72
 msgid "Private"
 msgstr "Privadas"
 
-#: src/model.rs:62
+#: src/model.rs:73
 msgid "Groups"
 msgstr "Grupos"
 
-#: src/model.rs:63
+#: src/model.rs:74
 msgid "Channels"
 msgstr "Canais"
 
@@ -135,19 +135,19 @@ msgstr "Novembro"
 msgid "December"
 msgstr "Dezembro"
 
-#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:169
+#: src/ui/chats.rs:112 src/ui/chats.rs:227 src/ui/settings.rs:169
 msgid "Chats"
 msgstr "Conversas"
 
-#: src/ui/chats.rs:168 src/ui/chats.rs:267
+#: src/ui/chats.rs:169 src/ui/chats.rs:268
 msgid "Search"
 msgstr "Buscar"
 
-#: src/ui/chats.rs:365
+#: src/ui/chats.rs:369
 msgid "Archived"
 msgstr "Arquivadas"
 
-#: src/ui/chats.rs:382
+#: src/ui/chats.rs:386
 msgid "Locked"
 msgstr "Trancadas"
 
@@ -217,7 +217,7 @@ msgstr "Ativar som"
 msgid "Mute"
 msgstr "Silenciar"
 
-#: src/ui/dialogs.rs:1151
+#: src/ui/dialogs.rs:1153
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -240,22 +240,34 @@ msgstr "Idioma"
 msgid "Auto"
 msgstr "Automático"
 
-#: src/ui/settings.rs:186
+#: src/ui/settings.rs:181
+msgid "Show labels as chips"
+msgstr "Mostrar etiquetas como chips"
+
+#: src/ui/settings.rs:181
+msgid ""
+"Give each label its own chip, in a row under All, Unread and Groups. When "
+"off, they share one Labels chip."
+msgstr ""
+"Cada etiqueta ganha seu próprio chip, numa linha abaixo de Todas, Não lidas "
+"e Grupos. Desativado, elas dividem um chip Etiquetas."
+
+#: src/ui/settings.rs:190
 msgid "Pause music while recording"
 msgstr "Pausar a música ao gravar"
 
-#: src/ui/settings.rs:186
+#: src/ui/settings.rs:190
 msgid ""
 "Pause media players while you record a voice message and resume them "
 "afterwards."
 msgstr ""
 "Pausa os players enquanto você grava uma mensagem de voz e os retoma depois."
 
-#: src/ui/settings.rs:187
+#: src/ui/settings.rs:191
 msgid "Pause music while playing voice messages"
 msgstr "Pausar a música ao ouvir mensagens de voz"
 
-#: src/ui/settings.rs:187
+#: src/ui/settings.rs:191
 msgid ""
 "Pause media players while a voice or audio message plays and resume them "
 "when it stops."
@@ -263,76 +275,76 @@ msgstr ""
 "Pausa os players enquanto uma mensagem de voz ou áudio toca e os retoma "
 "quando ela termina."
 
-#: src/ui/settings.rs:226
+#: src/ui/settings.rs:230
 msgid "Window"
 msgstr "Janela"
 
-#: src/ui/settings.rs:271
+#: src/ui/settings.rs:275
 msgid "Network"
 msgstr "Rede"
 
-#: src/ui/settings.rs:303
+#: src/ui/settings.rs:307
 msgid "Account"
 msgstr "Conta"
 
-#: src/ui/settings.rs:307
+#: src/ui/settings.rs:311
 msgid "Files"
 msgstr "Arquivos"
 
-#: src/ui/settings.rs:353 src/ui/settings.rs:614 src/ui/settings.rs:776
+#: src/ui/settings.rs:357 src/ui/settings.rs:618 src/ui/settings.rs:780
 msgid "About"
 msgstr "Sobre"
 
-#: src/ui/settings.rs:434
+#: src/ui/settings.rs:438
 msgid "Add doodles"
 msgstr "Adicionar desenhos"
 
-#: src/ui/settings.rs:438
+#: src/ui/settings.rs:442
 msgid "Show the default doodles over the selected colour."
 msgstr "Mostrar os desenhos padrão sobre a cor selecionada."
 
-#: src/ui/settings.rs:583
+#: src/ui/settings.rs:587
 msgid "Change profile picture"
 msgstr "Alterar foto do perfil"
 
-#: src/ui/settings.rs:606
+#: src/ui/settings.rs:610
 msgid "Your name"
 msgstr "Seu nome"
 
-#: src/ui/settings.rs:622
+#: src/ui/settings.rs:626
 msgid "Linked device"
 msgstr "Dispositivo conectado"
 
-#: src/ui/settings.rs:633
+#: src/ui/settings.rs:637
 msgid "Edit your name and About"
 msgstr "Editar seu nome e recado"
 
-#: src/ui/settings.rs:650
+#: src/ui/settings.rs:654
 msgid "Unlink this computer"
 msgstr "Desconectar este computador"
 
-#: src/ui/settings.rs:670
+#: src/ui/settings.rs:674
 msgid "Save"
 msgstr "Salvar"
 
-#: src/ui/settings.rs:680
+#: src/ui/settings.rs:684
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/ui/settings.rs:744
+#: src/ui/settings.rs:748
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "Um cliente nativo do WhatsApp feito com Rust, egui e whatsapp-rust."
 
-#: src/ui/settings.rs:755
+#: src/ui/settings.rs:759
 #, rust-format
 msgid "Update to {version}"
 msgstr "Atualizar para {version}"
 
-#: src/ui/settings.rs:765
+#: src/ui/settings.rs:769
 msgid "Keyboard shortcuts"
 msgstr "Atalhos de teclado"
 
-#: src/ui/settings.rs:787
+#: src/ui/settings.rs:791
 msgid "Source code"
 msgstr "Código-fonte"
 
@@ -342,7 +354,7 @@ msgstr "Código-fonte"
 msgid "Built with love by {name}"
 msgstr "Feito com amor por {name}"
 
-#: src/ui/message_info.rs:28
+#: src/ui/message_info.rs:28 src/ui/labels.rs:271
 msgid "Close"
 msgstr "Fechar"
 
@@ -409,6 +421,130 @@ msgstr[1] "{} restantes"
 msgid "No one yet"
 msgstr "Ninguém ainda"
 
-#: src/app.rs:3740
+#: src/app.rs:939
+#, rust-format
+msgid "A label named “{name}” already exists."
+msgstr "Já existe uma etiqueta chamada “{name}”."
+
+#: src/app.rs:3420 src/ui/labels.rs:294
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "Você tem {limit} etiquetas, o máximo que o ZapFast guarda."
+
+#: src/app.rs:3888
 msgid "This video opens in your system player"
 msgstr "Este vídeo abre no player do sistema"
+
+#: src/ui/labels.rs:68
+msgctxt "label colour"
+msgid "Blue"
+msgstr "Azul"
+
+#: src/ui/labels.rs:69
+msgctxt "label colour"
+msgid "Green"
+msgstr "Verde"
+
+#: src/ui/labels.rs:70
+msgctxt "label colour"
+msgid "Yellow"
+msgstr "Amarelo"
+
+#: src/ui/labels.rs:71
+msgctxt "label colour"
+msgid "Orange"
+msgstr "Laranja"
+
+#: src/ui/labels.rs:72
+msgctxt "label colour"
+msgid "Red"
+msgstr "Vermelho"
+
+#: src/ui/labels.rs:73
+msgctxt "label colour"
+msgid "Pink"
+msgstr "Rosa"
+
+#: src/ui/labels.rs:74
+msgctxt "label colour"
+msgid "Purple"
+msgstr "Roxo"
+
+#: src/ui/labels.rs:75
+msgctxt "label colour"
+msgid "Teal"
+msgstr "Verde-azulado"
+
+#: src/ui/labels.rs:76
+msgctxt "label colour"
+msgid "Grey"
+msgstr "Cinza"
+
+#: src/ui/labels.rs:77
+msgctxt "label colour"
+msgid "Sky blue"
+msgstr "Azul-celeste"
+
+#: src/ui/labels.rs:78
+msgctxt "label colour"
+msgid "Colour"
+msgstr "Cor"
+
+#: src/ui/labels.rs:149
+msgid "Manage labels"
+msgstr "Gerenciar etiquetas"
+
+#: src/ui/labels.rs:172 src/ui/labels.rs:223 src/ui/labels.rs:260
+msgid "Labels"
+msgstr "Etiquetas"
+
+#: src/ui/labels.rs:192
+msgid "All chats"
+msgstr "Todas as conversas"
+
+#: src/ui/labels.rs:207 src/ui/labels.rs:247
+msgid "Manage labels…"
+msgstr "Gerenciar etiquetas…"
+
+#: src/ui/labels.rs:283
+msgid ""
+"Labels stay on this computer. They do not reach your phone or anyone you "
+"chat with."
+msgstr ""
+"As etiquetas ficam neste computador. Elas não chegam ao seu celular nem a "
+"quem conversa com você."
+
+#: src/ui/labels.rs:304
+msgid "New label"
+msgstr "Nova etiqueta"
+
+#: src/ui/labels.rs:318
+msgid "Create"
+msgstr "Criar"
+
+#: src/ui/labels.rs:348
+msgid ""
+"No labels yet. Create one above, then add chats to it from their right-click "
+"menu."
+msgstr ""
+"Nenhuma etiqueta ainda. Crie uma acima e adicione conversas pelo menu do "
+"botão direito delas."
+
+#: src/ui/labels.rs:383
+msgid "Next colour"
+msgstr "Próxima cor"
+
+#: src/ui/labels.rs:432
+#, rust-format
+msgid "{} chat"
+msgid_plural "{} chats"
+msgstr[0] "{} conversa"
+msgstr[1] "{} conversas"
+
+#: src/ui/labels.rs:453
+msgid "Rename or recolour"
+msgstr "Renomear ou trocar a cor"
+
+#: src/ui/labels.rs:478
+msgid "Delete this label. Its chats keep their messages."
+msgstr "Excluir esta etiqueta. As conversas dela mantêm as mensagens."

@@ -55,9 +55,10 @@ Changes on the Settings page are saved to `settings.json` immediately:
   window closes.
 - **Notifications**: use desktop notifications with the chat picture.
 - **Check for updates**: ask GitHub once a day whether a newer release exists.
-- **Show labels as tabs**: put your labels in a bar above the chat list. With it
-  off, labels live in a menu beside the filter chips. Labels themselves are stored in the
-  archive, next to your chats.
+- **Show labels as chips**: give each label its own chip, in a row under the
+  filter chips. With it off, labels share one **Labels** chip. Labels
+  themselves are kept in the message archive, next to your chats, and never
+  leave this computer.
 - **GIPHY API key**: required for GIF search unless the build includes one.
   Set `ZAPFAST_GIPHY_KEY` at compile time to include a default key.
   The earlier `FASTSAPP_GIPHY_KEY` remains a fallback for existing builds.

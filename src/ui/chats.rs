@@ -157,7 +157,6 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                     }
                 });
             });
-            labels::tab_bar(app, ui, &palette);
             ui.add_space(6.0);
             let id = egui::Id::new("chat-search");
             let width = ui.available_width();
@@ -259,7 +258,6 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     }
                 });
             });
-            labels::tab_bar(app, ui, &palette);
             ui.add_space(6.0);
             let mut text = app.search.clone();
             let response = widgets::search_field(
@@ -307,7 +305,8 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
-                labels::filter_menu(app, ui, &palette);
+                // First, so a chosen label is never scrolled out of sight.
+                labels::menu_chip(app, ui, &palette);
                 for filter in ChatFilter::EVERY {
                     let count = match filter {
                         ChatFilter::All => 0,
@@ -315,6 +314,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                     };
                     let selected = !app.locked_folder_open()
                         && !app.show_archived
+                        && app.label_filter.is_none()
                         && app.chat_filter == filter;
                     let chip = widgets::filter_chip(
                         ui,
@@ -401,6 +401,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(4.0);
             })
         });
+    labels::chip_row(app, ui, &palette);
 }
 
 fn list(app: &mut App, ui: &mut egui::Ui) {
@@ -1031,6 +1032,7 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         }
     }
     sound_menu(app, ui, palette, chat);
+    labels::chat_menu(app, ui, chat, palette);
     if widgets::menu_item(
         ui,
         palette,
@@ -1051,8 +1053,6 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
             Action::ShowDialog(Dialog::ConfirmLockChat(chat.id.clone()))
         });
     }
-    widgets::menu_separator(ui, palette);
-    labels::chat_menu(app, ui, chat, palette);
     widgets::menu_separator(ui, palette);
     if let Some(phone) = chat.phone()
         && widgets::menu_item(ui, palette, Some(Icon::Copy), "Copy number")

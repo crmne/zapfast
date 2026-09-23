@@ -1,8 +1,9 @@
 //! Local chat labels: a name, a colour, and the chats that wear them.
 //!
-//! Labels never leave this computer. A plain WhatsApp account has no labels on
-//! the server, so nothing here syncs to the phone and nothing here talks to the
-//! protocol.
+//! Labels never leave this computer. They are not WhatsApp Business labels or
+//! WhatsApp lists: nothing here syncs to the phone and nothing here talks to
+//! the protocol. The tables say `local_` so that a synced kind can live beside
+//! them one day without a clash.
 
 use rusqlite::params;
 
@@ -10,24 +11,24 @@ use super::{Archive, Result};
 use crate::model::Label;
 
 pub const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS labels (
+CREATE TABLE IF NOT EXISTS local_labels (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     color TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS chat_labels (
+CREATE TABLE IF NOT EXISTS local_chat_labels (
     chat TEXT NOT NULL,
     label TEXT NOT NULL,
     PRIMARY KEY (chat, label)
 );
-CREATE INDEX IF NOT EXISTS chat_labels_by_label ON chat_labels (label);
+CREATE INDEX IF NOT EXISTS local_chat_labels_by_label ON local_chat_labels (label);
 ";
 
-/// WhatsApp Business allows twenty labels per account; keep the same ceiling.
+/// Most labels kept, so the chip row and the chat menu stay short.
 pub const LABEL_LIMIT: usize = 20;
 /// Longest label name kept, in characters.
-const NAME_LIMIT: usize = 32;
+pub const NAME_LIMIT: usize = 32;
 /// Colour used when the given one is not a hex colour.
 pub const DEFAULT_COLOR: &str = "#3b82f6";
 
@@ -35,7 +36,7 @@ impl Archive {
     /// Labels in the order they were created.
     pub fn labels(&self) -> Result<Vec<Label>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, name, color, created_at FROM labels ORDER BY created_at ASC, name ASC",
+            "SELECT id, name, color, created_at FROM local_labels ORDER BY created_at ASC, rowid ASC",
         )?;
         let rows = statement.query_map([], |row| {
             Ok(Label {
@@ -64,7 +65,7 @@ impl Archive {
             return Ok(None);
         }
         let taken: i64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM labels WHERE lower(name) = lower(?1)",
+            "SELECT COUNT(*) FROM local_labels WHERE lower(name) = lower(?1)",
             params![name],
             |row| row.get(0),
         )?;
@@ -78,7 +79,7 @@ impl Archive {
             created_at,
         };
         self.connection.execute(
-            "INSERT INTO labels (id, name, color, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO local_labels (id, name, color, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![label.id, label.name, label.color_hex, label.created_at],
         )?;
         Ok(Some(label))
@@ -91,7 +92,7 @@ impl Archive {
             return Ok(false);
         }
         let taken: i64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM labels WHERE lower(name) = lower(?1) AND id <> ?2",
+            "SELECT COUNT(*) FROM local_labels WHERE lower(name) = lower(?1) AND id <> ?2",
             params![name, id],
             |row| row.get(0),
         )?;
@@ -99,7 +100,7 @@ impl Archive {
             return Ok(false);
         }
         let changed = self.connection.execute(
-            "UPDATE labels SET name = ?2, color = ?3 WHERE id = ?1",
+            "UPDATE local_labels SET name = ?2, color = ?3 WHERE id = ?1",
             params![id, name, clean_color(color_hex)],
         )?;
         Ok(changed > 0)
@@ -107,40 +108,43 @@ impl Archive {
 
     /// Deletes a label and takes it off every chat that wore it.
     pub fn delete_label(&self, id: &str) -> Result<bool> {
-        self.connection
-            .execute("DELETE FROM chat_labels WHERE label = ?1", params![id])?;
-        let changed = self
-            .connection
-            .execute("DELETE FROM labels WHERE id = ?1", params![id])?;
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM local_chat_labels WHERE label = ?1",
+            params![id],
+        )?;
+        let changed = transaction.execute("DELETE FROM local_labels WHERE id = ?1", params![id])?;
+        transaction.commit()?;
         Ok(changed > 0)
     }
 
     /// Replaces the labels of one chat; a shorter list unassigns the rest.
     ///
-    /// Unknown ids are dropped by the foreign key-less schema, so callers can
-    /// hand over what the UI holds without pre-filtering.
+    /// Ids of labels that no longer exist are skipped, so a menu drawn just
+    /// before a delete cannot bring a label back onto a chat.
     pub fn set_chat_labels(&self, chat: &str, labels: &[String]) -> Result<()> {
-        self.connection
-            .execute("DELETE FROM chat_labels WHERE chat = ?1", params![chat])?;
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM local_chat_labels WHERE chat = ?1",
+            params![chat],
+        )?;
         for label in labels {
-            if label.trim().is_empty() {
-                continue;
-            }
-            self.connection.execute(
-                "INSERT OR IGNORE INTO chat_labels (chat, label) VALUES (?1, ?2)",
+            transaction.execute(
+                "INSERT OR IGNORE INTO local_chat_labels (chat, label)
+                 SELECT ?1, id FROM local_labels WHERE id = ?2",
                 params![chat, label],
             )?;
         }
-        Ok(())
+        transaction.commit()
     }
 
     /// The label ids a chat wears, in creation order.
     pub fn chat_labels(&self, chat: &str) -> Result<Vec<String>> {
         let mut statement = self.connection.prepare(
-            "SELECT chat_labels.label FROM chat_labels
-             JOIN labels ON labels.id = chat_labels.label
-             WHERE chat_labels.chat = ?1
-             ORDER BY labels.created_at ASC, labels.name ASC",
+            "SELECT local_chat_labels.label FROM local_chat_labels
+             JOIN local_labels ON local_labels.id = local_chat_labels.label
+             WHERE local_chat_labels.chat = ?1
+             ORDER BY local_labels.created_at ASC, local_labels.rowid ASC",
         )?;
         let rows = statement.query_map(params![chat], |row| row.get::<_, String>(0))?;
         rows.collect()
@@ -155,7 +159,7 @@ impl Archive {
                 format!("label-{created_at}-{suffix}")
             };
             let taken: i64 = self.connection.query_row(
-                "SELECT COUNT(*) FROM labels WHERE id = ?1",
+                "SELECT COUNT(*) FROM local_labels WHERE id = ?1",
                 params![id],
                 |row| row.get(0),
             )?;
@@ -304,6 +308,42 @@ mod tests {
             "deleting a label takes it off every chat"
         );
         assert_eq!(archive.labels().expect("labels").len(), 1);
+    }
+
+    #[test]
+    fn labels_made_in_the_same_second_keep_their_order() {
+        let archive = archive();
+        for name in ["Zeta", "Alpha", "Mid"] {
+            archive
+                .create_label(name, "#111111", 7)
+                .expect("create")
+                .expect("created");
+        }
+        let names: Vec<String> = archive
+            .labels()
+            .expect("labels")
+            .into_iter()
+            .map(|label| label.name)
+            .collect();
+        assert_eq!(names, ["Zeta", "Alpha", "Mid"]);
+    }
+
+    #[test]
+    fn a_deleted_label_cannot_be_put_back_on_a_chat() {
+        let archive = archive();
+        archive
+            .ensure_chat("1@s.whatsapp.net", "Ana")
+            .expect("chat");
+        archive
+            .set_chat_labels("1@s.whatsapp.net", &["label-gone".to_owned()])
+            .expect("assign");
+        let stored: i64 = archive
+            .connection
+            .query_row("SELECT COUNT(*) FROM local_chat_labels", [], |row| {
+                row.get(0)
+            })
+            .expect("count");
+        assert_eq!(stored, 0);
     }
 
     #[test]

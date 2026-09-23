@@ -12,7 +12,7 @@ use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Mess
 mod drafts;
 mod encryption;
 mod labels;
-pub use labels::{DEFAULT_COLOR, LABEL_LIMIT};
+pub use labels::{DEFAULT_COLOR, LABEL_LIMIT, NAME_LIMIT};
 mod polls;
 mod receipts;
 pub use polls::PollVote;
@@ -1194,7 +1194,7 @@ impl Archive {
             "group_receipts",
             "polls",
             "poll_history",
-            "chat_labels",
+            "local_chat_labels",
             "drafts",
         ] {
             self.connection.execute(
@@ -1501,7 +1501,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM chat_labels; DELETE FROM labels;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels;",
         )
     }
 }
@@ -1850,7 +1850,7 @@ pub(crate) mod tests {
                  INSERT INTO poll_votes (chat, poll, voter, sender, update_id, at, from_me)
                      VALUES ('{chat}', 'p1', '{chat}', '{chat}', 'u1', 150, 0);
                  INSERT INTO group_receipts (chat, id, recipient) VALUES ('{chat}', 'm1', '{chat}');
-                 INSERT INTO chat_labels (chat, label) VALUES ('{chat}', 'label-1');
+                 INSERT INTO local_chat_labels (chat, label) VALUES ('{chat}', 'label-1');
                  INSERT INTO drafts (chat, text, updated_at) VALUES ('{chat}', 'unsent', 150);"
             ))
             .expect("poll and receipt rows");
@@ -1870,7 +1870,7 @@ pub(crate) mod tests {
         "polls",
         "poll_history",
         "poll_votes",
-        "chat_labels",
+        "local_chat_labels",
         "drafts",
     ];
 

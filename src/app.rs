@@ -878,20 +878,26 @@ impl App {
         chat.labels.iter().any(|worn| worn == label)
     }
 
-    /// Unread messages across the chats wearing a label.
+    /// Unread chats wearing a label, counted the way the other chips count.
     ///
-    /// Archived chats are left out, because a label lists the ones it can show.
-    pub fn label_unread(&self, id: &str) -> u32 {
+    /// Archived and locked chats are left out, because the label's chip does
+    /// not list them.
+    pub fn label_unread(&self, id: &str) -> usize {
         self.chats
             .iter()
-            .filter(|chat| !chat.archived && self.chat_wears(chat, id))
-            .map(|chat| chat.unread)
-            .sum()
+            .filter(|chat| {
+                !chat.archived && !chat.locked && chat.unread > 0 && self.chat_wears(chat, id)
+            })
+            .count()
     }
 
-    /// Drops filters and edits that point at labels which are gone.
+    /// Drops filters, edits and chat labels that point at labels which are
+    /// gone, so a deleted label leaves the list before the chats reload.
     fn prune_labels(&mut self) {
         let known: Vec<String> = self.labels.iter().map(|label| label.id.clone()).collect();
+        for chat in &mut self.chats {
+            chat.labels.retain(|id| known.contains(id));
+        }
         if self
             .label_filter
             .as_ref()
@@ -908,15 +914,31 @@ impl App {
         }
     }
 
-    /// Picks the label the chat list shows. A label replaces the chip filter,
-    /// which is what a tab click means.
+    /// Picks the label the chat list shows. A label is one more chip in the
+    /// filter row, so it replaces the chip filter, and leaves the archive and
+    /// the locked folder the way the other chips do.
     fn select_label(&mut self, label: Option<String>) {
-        if label.is_some() && self.locked_folder {
+        if self.locked_folder {
             self.close_locked_folder();
+            self.search.clear();
+            self.search_hits.clear();
         }
         self.label_filter = label;
         self.chat_filter = ChatFilter::All;
+        self.show_archived = false;
         self.unread_kept.clear();
+    }
+
+    /// Why a label name cannot be used, if it cannot. `except` is the label
+    /// being renamed, which may keep its own name.
+    fn label_name_refusal(&self, name: &str, except: Option<&str>) -> Option<String> {
+        let taken = self.labels.iter().any(|label| {
+            Some(label.id.as_str()) != except && label.name.to_lowercase() == name.to_lowercase()
+        });
+        taken.then(|| {
+            crate::i18n::gettext(self.locale, "A label named “{name}” already exists.")
+                .replace("{name}", name)
+        })
     }
 
     /// Resolves an address-book, push, phone-number, or fallback name.
@@ -1201,15 +1223,16 @@ impl App {
             .iter()
             .filter(|chat| chat.locked == locked)
             .filter(|chat| locked || chat.archived == self.show_archived || !needle.is_empty())
-            .filter(|chat| {
-                !filtering
-                    || self.chat_filter.matches(chat)
-                    || (self.chat_filter == ChatFilter::Unread
-                        && self.unread_kept.contains(&chat.id))
-            })
             .filter(|chat| match &self.label_filter {
+                // A label lists every chat wearing it, channels included,
+                // because someone put each of them there.
+                _ if !filtering => true,
                 Some(label) => self.chat_wears(chat, label),
-                None => true,
+                None => {
+                    self.chat_filter.matches(chat)
+                        || (self.chat_filter == ChatFilter::Unread
+                            && self.unread_kept.contains(&chat.id))
+                }
             })
             .filter(|chat| {
                 // Inside the locked folder the typed text is the secret code,
@@ -3341,6 +3364,7 @@ impl App {
                     self.search_hits.clear();
                 }
                 self.chat_filter = filter;
+                self.label_filter = None;
                 self.show_archived = false;
                 self.unread_kept.clear();
             }
@@ -3385,6 +3409,24 @@ impl App {
                 self.backend.send(Command::SetChatLabels { chat, labels });
             }
             Action::CreateLabel { name, color_hex } => {
+                let name = name.trim().to_owned();
+                if name.is_empty() {
+                    return;
+                }
+                if self.labels.len() >= crate::archive::LABEL_LIMIT {
+                    self.toast_error(
+                        crate::i18n::gettext(
+                            self.locale,
+                            "You have {limit} labels, the most ZapFast keeps.",
+                        )
+                        .replace("{limit}", &crate::archive::LABEL_LIMIT.to_string()),
+                    );
+                    return;
+                }
+                if let Some(refusal) = self.label_name_refusal(&name, None) {
+                    self.toast_error(refusal);
+                    return;
+                }
                 self.backend.send(Command::CreateLabel { name, color_hex });
                 self.label_name.clear();
                 self.label_color = crate::archive::DEFAULT_COLOR.to_owned();
@@ -3394,12 +3436,19 @@ impl App {
                 name,
                 color_hex,
             } => {
+                let name = name.trim().to_owned();
+                if name.is_empty() {
+                    return;
+                }
+                if let Some(refusal) = self.label_name_refusal(&name, Some(&id)) {
+                    self.toast_error(refusal);
+                    return;
+                }
                 self.backend.send(Command::UpdateLabel {
                     id,
                     name,
                     color_hex,
                 });
-                self.label_editing = None;
             }
             Action::DeleteLabel(id) => {
                 self.backend.send(Command::DeleteLabel(id));
@@ -4698,7 +4747,65 @@ mod tests {
     }
 
     #[test]
-    fn a_label_tab_replaces_the_chip_filter() {
+    fn picking_a_chip_lets_go_of_the_label() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        app.apply(Action::SelectLabel(Some("label-1".into())), &ctx);
+        app.apply(Action::SetChatFilter(ChatFilter::Groups), &ctx);
+        assert!(app.label_filter.is_none());
+        assert_eq!(app.chat_filter, ChatFilter::Groups);
+    }
+
+    #[test]
+    fn a_label_lists_its_channels_and_leaves_the_archive_alone() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        let channel = labeled("1@newsletter", 0, &["label-1"]);
+        let mut archived = labeled("2@s.whatsapp.net", 0, &["label-1"]);
+        archived.archived = true;
+        app.chats = vec![channel, archived, labeled("3@s.whatsapp.net", 0, &[])];
+        app.apply(Action::ShowArchived(true), &ctx);
+        app.apply(Action::SelectLabel(Some("label-1".into())), &ctx);
+        assert!(!app.show_archived, "a label chip leaves the archive");
+        let listed: Vec<String> = app
+            .visible_chats()
+            .into_iter()
+            .map(|chat| chat.id.clone())
+            .collect();
+        assert_eq!(listed, ["1@newsletter".to_owned()]);
+        app.apply(Action::ShowArchived(true), &ctx);
+        assert_eq!(
+            app.visible_chats().len(),
+            1,
+            "the archive lists every archived chat, labelled or not"
+        );
+    }
+
+    #[test]
+    fn a_taken_label_name_is_refused_in_the_app() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        app.label_name = "work".into();
+        app.apply(
+            Action::CreateLabel {
+                name: " work ".into(),
+                color_hex: "#3b82f6".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(app.label_name, "work", "the typed name stays to be fixed");
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.kind == ToastKind::Error)
+        );
+    }
+
+    #[test]
+    fn a_label_chip_replaces_the_chip_filter() {
         let ctx = egui::Context::default();
         let mut app = app();
         app.labels = vec![label("label-1", "Work")];
@@ -4713,26 +4820,25 @@ mod tests {
     }
 
     #[test]
-    fn a_label_counts_the_unread_messages_of_the_chats_wearing_it() {
+    fn a_label_counts_its_unread_chats() {
         let mut app = app();
         app.labels = vec![label("label-1", "Work")];
         let mut archived = labeled("3@s.whatsapp.net", 5, &["label-1"]);
         archived.archived = true;
+        let mut locked = labeled("5@s.whatsapp.net", 4, &["label-1"]);
+        locked.locked = true;
         app.chats = vec![
             labeled("1@s.whatsapp.net", 3, &["label-1"]),
             labeled("2@s.whatsapp.net", 2, &["label-1", "label-2"]),
             labeled("4@s.whatsapp.net", 7, &[]),
+            labeled("6@s.whatsapp.net", 0, &["label-1"]),
             archived,
+            locked,
         ];
         assert_eq!(
             app.label_unread("label-1"),
-            5,
-            "archived chats are not listed, so they are not counted"
-        );
-        assert_eq!(
-            app.unread_total(),
-            12,
-            "archived chats stay out of the total"
+            2,
+            "unread chats, as the other chips count; archived and locked ones stay out"
         );
         assert!(app.chat_wears(&app.chats[1], "label-2"));
         assert!(!app.chat_wears(&app.chats[2], "label-1"));
