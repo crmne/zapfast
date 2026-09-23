@@ -29,6 +29,7 @@ use whatsapp_rust::types::presence::{ChatPresence, ReceiptType};
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::wacore::download::{DownloadWriter, Downloadable};
 use whatsapp_rust::wacore::history_sync::{HistorySyncStream, MAX_DECOMPRESSED};
+use whatsapp_rust::wacore::iq::abprops;
 use whatsapp_rust::wacore::store::DevicePropsOverride;
 use whatsapp_rust::wacore_binary::jid::JidExt;
 use whatsapp_rust::waproto::buffa::Message as _;
@@ -44,7 +45,7 @@ use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
     ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
 };
 use crate::paths::AppDirs;
 
@@ -233,6 +234,39 @@ fn discard_attachment_staging(dir: &Path) {
             log::warn!("could not remove incomplete attachment");
         }
     }
+}
+
+/// WhatsApp keeps at most three pinned chats without WhatsApp Plus, and
+/// replaces an existing pin on the phone when a linked device adds a fourth.
+pub const PINNED_CHATS: usize = 3;
+/// WhatsApp Plus raises the limit to twenty.
+pub const PLUS_PINNED_CHATS: usize = 20;
+
+/// Reports how many chats this account may pin. The AB props arrive shortly
+/// after connecting and there is no event for them, so this polls briefly.
+fn spawn_pin_limit_check(
+    client: Arc<Client>,
+    events: std::sync::mpsc::Sender<Event>,
+    waker: Waker,
+) {
+    tokio::spawn(async move {
+        for _ in 0..30 {
+            if let Some(plus) = client
+                .ab_prop_enabled(abprops::web::AURA_PINNED_CHATS_BENEFIT_ACTIVE)
+                .await
+            {
+                let limit = if plus {
+                    PLUS_PINNED_CHATS
+                } else {
+                    PINNED_CHATS
+                };
+                let _ = events.send(Event::PinLimit(limit));
+                waker.wake();
+                return;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    });
 }
 
 fn account_allows_receipts(
@@ -762,6 +796,7 @@ impl Worker {
                     | Event::Incoming { .. }
                     | Event::Contacts(_)
                     | Event::SearchHits { .. }
+                    | Event::Labels(_)
                     | Event::Typing { .. }
             )
         {
@@ -884,9 +919,31 @@ impl Worker {
                     self.polish_chat(chat);
                 }
                 self.emit(Event::Chats(chats));
+                self.emit_labels();
                 self.emit(Event::Drafts(self.archive.drafts().unwrap_or_default()));
             }
             Err(error) => log::warn!("could not list chats: {error}"),
+        }
+    }
+
+    /// Every label in creation order, so the UI can draw tabs and menus.
+    fn emit_labels(&self) {
+        match self.archive.labels() {
+            Ok(labels) => self.emit(Event::Labels(labels)),
+            Err(error) => log::warn!("could not list labels: {error}"),
+        }
+    }
+
+    /// Creates a label. The app refuses a full set or a taken name first,
+    /// in the user's language; the archive checks again and says nothing.
+    fn create_label(&mut self, name: String, color_hex: String) {
+        match self
+            .archive
+            .create_label(&name, &color_hex, crate::util::now())
+        {
+            Ok(Some(_)) => self.emit_labels(),
+            Ok(None) => log::info!("label not created: full, empty, or taken"),
+            Err(error) => log::warn!("could not create label: {error}"),
         }
     }
 
@@ -902,6 +959,7 @@ impl Worker {
         if let Some(last) = chat.last.as_mut() {
             last.summary = self.pn_tokens(&last.summary);
         }
+        chat.labels = self.archive.chat_labels(&chat.id).unwrap_or_default();
     }
 
     fn emit_message(&self, chat: &str, id: &str) {
@@ -1161,7 +1219,9 @@ impl Worker {
             }
         };
         let sender = self.wa_sender.clone();
-        let builder = Bot::builder().with_backend(store);
+        let builder = Bot::builder()
+            .with_backend(store)
+            .with_watched_ab_props([abprops::web::AURA_PINNED_CHATS_BENEFIT_ACTIVE]);
         let builder = match crate::proxy::for_whatsapp() {
             Some(proxy) => {
                 log::info!("connecting through the proxy {}", proxy.redacted());
@@ -1829,6 +1889,25 @@ impl Worker {
                     let commands = self.commands.clone();
                     self.online_sent = None;
                     self.announce_presence(self.online_wanted);
+                    spawn_pin_limit_check(client.clone(), self.events.clone(), self.waker.clone());
+                    let channels = self.commands.clone();
+                    let followed = client.clone();
+                    tokio::spawn(async move {
+                        // A channel's Mute lives on the channel, not in the
+                        // chat's app state, so read it from the server.
+                        match followed.newsletter().list_subscribed().await {
+                            Ok(list) => {
+                                let mutes = list
+                                    .into_iter()
+                                    .filter_map(|channel| {
+                                        Some((channel.jid.to_string(), channel.muted?))
+                                    })
+                                    .collect();
+                                let _ = channels.send(Command::ChannelMutes(mutes));
+                            }
+                            Err(error) => log::debug!("followed channels not listed: {error}"),
+                        }
+                    });
                     tokio::spawn(async move {
                         // whatsapp-rust also enforces the account privacy setting.
                         match client.fetch_privacy_settings().await {
@@ -2219,6 +2298,7 @@ impl Worker {
         let _ = std::fs::remove_dir_all(self.dirs.avatar_cache_dir());
         let _ = std::fs::remove_dir_all(self.dirs.media_cache_dir());
         self.emit(Event::Chats(Vec::new()));
+        self.emit_labels();
         self.emit(Event::Drafts(Vec::new()));
         self.privacy_ready = false;
         self.privacy_confirmed = false;
@@ -2623,6 +2703,9 @@ impl Worker {
             );
             return;
         }
+        if self.update_live_location(&chat, &sender, base, info) {
+            return;
+        }
         let Some(content) = classify(base) else {
             return;
         };
@@ -2677,6 +2760,79 @@ impl Worker {
         if is_poll {
             self.pump_poll_votes();
         }
+    }
+
+    /// Applies a live location position to the share it belongs to, so a
+    /// moving sender keeps one bubble and one archive row. Returns false when
+    /// the message starts a share, which is then stored like any other.
+    fn update_live_location(
+        &mut self,
+        chat: &str,
+        sender: &str,
+        base: &wa::Message,
+        info: &MessageInfo,
+    ) -> bool {
+        let Some((mut content, reference)) = live_location_of(base) else {
+            return false;
+        };
+        let now = info.timestamp.timestamp();
+        if let Content::LiveLocation { updated, .. } = &mut content {
+            *updated = now;
+        }
+        let Some((mut share, named)) = self.live_share(chat, sender, &info.id, reference, now)
+        else {
+            return false;
+        };
+        if !live_location_newer(&share, &content) {
+            // A position the named share already has, or an older one,
+            // changes nothing. One that only looks like it continues the
+            // sender's latest share starts a new share instead.
+            return named;
+        }
+        share.content = content;
+        if let Some(thumbnail) = thumbnail_of(base) {
+            share.thumbnail = Some(thumbnail);
+        }
+        // The row keeps its start time, so a moving share does not reorder
+        // the chat list or the conversation.
+        if let Err(error) = self.archive.insert_message(&share, None) {
+            log::warn!("could not store a live location update: {error}");
+            return true;
+        }
+        self.emit_message(chat, &share.id);
+        true
+    }
+
+    /// The stored live location that a position from `sender` updates: the
+    /// message it names, the same message again, or the sender's share in
+    /// this chat that last moved within [`LIVE_LOCATION_GAP`]. The flag tells
+    /// whether the position named its share.
+    fn live_share(
+        &self,
+        chat: &str,
+        sender: &str,
+        id: &str,
+        reference: Option<String>,
+        now: i64,
+    ) -> Option<(Message, bool)> {
+        let ours = |message: &Message| {
+            message.sender == sender && matches!(message.content, Content::LiveLocation { .. })
+        };
+        for candidate in reference.iter().map(String::as_str).chain([id]) {
+            if let Ok(Some(message)) = self.archive.message(chat, candidate)
+                && ours(&message)
+            {
+                return Some((message, true));
+            }
+        }
+        let latest = self
+            .archive
+            .latest_live_location(chat, sender, now - LIVE_LOCATION_LIMIT)
+            .ok()??;
+        let message = self.archive.message(chat, &latest).ok()??;
+        let moving = !message.content.live_location_over(message.timestamp, now)
+            && now - live_location_time(&message) <= LIVE_LOCATION_GAP;
+        moving.then_some((message, false))
     }
 
     fn store_plain_reaction(
@@ -4305,6 +4461,18 @@ impl Worker {
                     .map_err(|error| error.to_string())
                 });
             }
+            Command::ChannelMutes(mutes) => {
+                for (chat, muted) in mutes {
+                    let Ok(Some(known)) = self.archive.chat(&chat) else {
+                        continue;
+                    };
+                    // Mirror the phone's channel Mute without echoing it back.
+                    if muted != known.muted(crate::util::now()) {
+                        let _ = self.archive.set_muted(&chat, muted.then_some(0));
+                        self.emit_chat(&chat);
+                    }
+                }
+            }
             Command::SetMuted(chat, until) => {
                 let _ = self.archive.set_muted(&chat, until);
                 self.emit_chat(&chat);
@@ -4332,6 +4500,27 @@ impl Worker {
                     }
                     .map_err(|error| error.to_string())
                 });
+            }
+            Command::CreateLabel { name, color_hex } => self.create_label(name, color_hex),
+            Command::UpdateLabel {
+                id,
+                name,
+                color_hex,
+            } => match self.archive.update_label(&id, &name, &color_hex) {
+                Ok(true) => self.emit_labels(),
+                Ok(false) => log::info!("label not updated: gone, empty, or taken"),
+                Err(error) => log::warn!("could not update label: {error}"),
+            },
+            Command::DeleteLabel(id) => match self.archive.delete_label(&id) {
+                Ok(true) => self.emit_labels(),
+                Ok(false) => {}
+                Err(error) => log::warn!("could not delete label: {error}"),
+            },
+            Command::SetChatLabels { chat, labels } => {
+                if let Err(error) = self.archive.set_chat_labels(&chat, &labels) {
+                    log::warn!("could not assign labels: {error}");
+                }
+                self.emit_chat(&chat);
             }
             Command::SetLocked(chat, locked) => {
                 let _ = self.archive.set_locked(&chat, locked);
@@ -6093,12 +6282,109 @@ fn thumbnail_of(base: &wa::Message) -> Option<Vec<u8>> {
         video.jpeg_thumbnail.clone()
     } else if let Some(document) = base.document_message.as_option() {
         document.jpeg_thumbnail.clone()
+    } else if let Some(location) = base.location_message.as_option() {
+        location.jpeg_thumbnail.clone()
+    } else if let Some(live) = base.live_location_message.as_option() {
+        live.jpeg_thumbnail.clone()
     } else if let Some(text) = base.extended_text_message.as_option() {
         text.jpeg_thumbnail.clone()
     } else {
         interactive::image(base).and_then(|image| image.jpeg_thumbnail.clone())
     };
     bytes.filter(|bytes| !bytes.is_empty())
+}
+
+/// Builds the live location content for a message, plus the id of the
+/// message it quotes, which may be the start of the share it continues.
+fn live_location_of(base: &wa::Message) -> Option<(Content, Option<String>)> {
+    if let Some(live) = base.live_location_message.as_option() {
+        let reference = live
+            .context_info
+            .as_option()
+            .and_then(|context| context.stanza_id.clone())
+            .filter(|id| !id.is_empty());
+        return Some((live_location_content(live, false), reference));
+    }
+    if let Some(location) = base.location_message.as_option()
+        && location.is_live == Some(true)
+    {
+        return Some((
+            Content::LiveLocation {
+                latitude: location.degrees_latitude.unwrap_or(0.0),
+                longitude: location.degrees_longitude.unwrap_or(0.0),
+                accuracy_m: location.accuracy_in_meters,
+                speed_mps: location.speed_in_mps,
+                heading_deg: location.degrees_clockwise_from_magnetic_north,
+                sequence: 0,
+                ended: false,
+                updated: 0,
+            },
+            None,
+        ));
+    }
+    None
+}
+
+fn live_location_content(live: &wa::message::LiveLocationMessage, ended: bool) -> Content {
+    Content::LiveLocation {
+        latitude: live.degrees_latitude.unwrap_or(0.0),
+        longitude: live.degrees_longitude.unwrap_or(0.0),
+        accuracy_m: live.accuracy_in_meters,
+        speed_mps: live.speed_in_mps,
+        heading_deg: live.degrees_clockwise_from_magnetic_north,
+        sequence: live.sequence_number.unwrap_or(0),
+        ended,
+        updated: 0,
+    }
+}
+
+/// The last position of a share that history reports as finished.
+fn finished_live_location(last: &wa::message::LiveLocationMessage, sent: i64) -> Content {
+    let mut content = live_location_content(last, true);
+    if let Content::LiveLocation { updated, .. } = &mut content {
+        *updated = sent + i64::from(last.time_offset.unwrap_or(0));
+    }
+    content
+}
+
+/// How long a sender's live location may go without a position before a
+/// position that names no message starts a new share instead of moving it.
+const LIVE_LOCATION_GAP: i64 = 15 * 60;
+
+/// Unix seconds of a stored live location's latest position.
+fn live_location_time(message: &Message) -> i64 {
+    match message.content {
+        Content::LiveLocation { updated, .. } if updated > 0 => updated,
+        _ => message.timestamp,
+    }
+}
+
+/// Whether `incoming` moves the stored live location `share` forward. An
+/// ended share takes no more positions. Sequence numbers order positions
+/// when both carry one, and arrival time orders the rest.
+fn live_location_newer(share: &Message, incoming: &Content) -> bool {
+    let (
+        Content::LiveLocation {
+            sequence: old,
+            ended,
+            ..
+        },
+        Content::LiveLocation {
+            sequence: new,
+            updated,
+            ..
+        },
+    ) = (&share.content, incoming)
+    else {
+        return false;
+    };
+    if *ended {
+        false
+    } else if *old > 0 && *new > 0 {
+        new > old
+    } else {
+        *updated > live_location_time(share)
+    }
 }
 
 /// Converts a protocol message to visible content, or `None` for internal traffic.
@@ -6188,6 +6474,9 @@ fn classify(base: &wa::Message) -> Option<Content> {
         });
     }
     if let Some(location) = base.location_message.as_option() {
+        if location.is_live == Some(true) {
+            return live_location_of(base).map(|(content, _)| content);
+        }
         return Some(Content::Location {
             latitude: location.degrees_latitude.unwrap_or(0.0),
             longitude: location.degrees_longitude.unwrap_or(0.0),
@@ -6195,13 +6484,8 @@ fn classify(base: &wa::Message) -> Option<Content> {
             address: non_empty(&location.address),
         });
     }
-    if let Some(live) = base.live_location_message.as_option() {
-        return Some(Content::Location {
-            latitude: live.degrees_latitude.unwrap_or(0.0),
-            longitude: live.degrees_longitude.unwrap_or(0.0),
-            name: Some("Live location".to_owned()),
-            address: None,
-        });
+    if base.live_location_message.is_set() {
+        return live_location_of(base).map(|(content, _)| content);
     }
     if let Some(contact) = base.contact_message.as_option() {
         return Some(Content::Contact {
@@ -6903,9 +7187,14 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
             });
             continue;
         }
-        let Some(content) = classify(base) else {
+        let Some(mut content) = classify(base) else {
             continue;
         };
+        if matches!(content, Content::LiveLocation { .. })
+            && let Some(last) = info.final_live_location.as_option()
+        {
+            content = finished_live_location(last, timestamp);
+        }
         use wa::web_message_info::Status;
         let mut status = if from_me {
             match info.status {
@@ -7424,6 +7713,218 @@ mod tests {
     }
 
     #[test]
+    fn live_location_is_classified_separately_from_static_location() {
+        let live = wa::Message {
+            live_location_message: MessageField::some(wa::message::LiveLocationMessage {
+                degrees_latitude: Some(51.5074),
+                degrees_longitude: Some(-0.1278),
+                accuracy_in_meters: Some(24),
+                speed_in_mps: Some(1.4),
+                degrees_clockwise_from_magnetic_north: Some(90),
+                sequence_number: Some(7),
+                jpeg_thumbnail: Some(vec![0xff, 0xd8, 0xff]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        match classify(&live) {
+            Some(Content::LiveLocation {
+                latitude,
+                longitude,
+                accuracy_m,
+                speed_mps,
+                heading_deg,
+                sequence,
+                ended,
+                ..
+            }) => {
+                assert_eq!(latitude, 51.5074);
+                assert_eq!(longitude, -0.1278);
+                assert_eq!(accuracy_m, Some(24));
+                assert_eq!(speed_mps, Some(1.4));
+                assert_eq!(heading_deg, Some(90));
+                assert_eq!(sequence, 7);
+                assert!(!ended);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(thumbnail_of(&live), Some(vec![0xff, 0xd8, 0xff]));
+
+        let start = wa::Message {
+            location_message: MessageField::some(wa::message::LocationMessage {
+                degrees_latitude: Some(51.5),
+                degrees_longitude: Some(-0.12),
+                is_live: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(
+            classify(&start),
+            Some(Content::LiveLocation {
+                sequence: 0,
+                ended: false,
+                ..
+            })
+        ));
+
+        let pinned = wa::Message {
+            location_message: MessageField::some(wa::message::LocationMessage {
+                degrees_latitude: Some(51.5),
+                degrees_longitude: Some(-0.12),
+                name: Some("Ada's place".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(classify(&pinned), Some(Content::Location { .. })));
+    }
+
+    fn live_position(
+        id: &str,
+        at: i64,
+        sequence: i64,
+        latitude: f64,
+        quoting: Option<&str>,
+    ) -> (Arc<wa::Message>, MessageInfo) {
+        const PEER: &str = super::receipt_tests::PEER;
+        let message = wa::Message {
+            live_location_message: MessageField::some(wa::message::LiveLocationMessage {
+                degrees_latitude: Some(latitude),
+                degrees_longitude: Some(-0.12),
+                sequence_number: Some(sequence),
+                jpeg_thumbnail: Some(vec![sequence as u8]),
+                context_info: quoting
+                    .map(|id| {
+                        MessageField::some(wa::ContextInfo {
+                            stanza_id: Some(id.into()),
+                            ..Default::default()
+                        })
+                    })
+                    .unwrap_or_default(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let info = MessageInfo {
+            id: id.into(),
+            source: MessageSource {
+                chat: PEER.parse().unwrap(),
+                sender: PEER.parse().unwrap(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(at).unwrap(),
+            ..Default::default()
+        };
+        (Arc::new(message), info)
+    }
+
+    #[test]
+    fn live_location_positions_move_one_row_per_share() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let start = crate::util::now() - 3_600;
+        let ingest = |worker: &mut Worker, position: (Arc<wa::Message>, MessageInfo)| {
+            worker.ingest(&position.0, &position.1);
+        };
+        let rows = |worker: &Worker| worker.archive.messages(PEER, None, 100).unwrap();
+        let share = |worker: &Worker| worker.archive.message(PEER, "start").unwrap().unwrap();
+
+        ingest(&mut worker, live_position("start", start, 1, 51.0, None));
+        // Positions with ids of their own, named or not, move the share.
+        ingest(&mut worker, live_position("p2", start + 60, 2, 51.1, None));
+        ingest(
+            &mut worker,
+            live_position("p3", start + 120, 3, 51.2, Some("start")),
+        );
+        // A late, older position changes nothing.
+        ingest(
+            &mut worker,
+            live_position("p2-late", start + 130, 2, 51.1, Some("start")),
+        );
+        assert_eq!(rows(&worker).len(), 1);
+        let moved = share(&worker);
+        assert_eq!(moved.timestamp, start, "the share keeps its place");
+        assert_eq!(moved.thumbnail, Some(vec![3]));
+        assert!(matches!(
+            moved.content,
+            Content::LiveLocation {
+                latitude: 51.2,
+                sequence: 3,
+                updated,
+                ..
+            } if updated == start + 120
+        ));
+
+        // After a long silence, an unnamed position starts a new share.
+        ingest(
+            &mut worker,
+            live_position("again", start + 120 + LIVE_LOCATION_GAP + 1, 1, 52.0, None),
+        );
+        assert_eq!(rows(&worker).len(), 2);
+        assert!(matches!(
+            share(&worker).content,
+            Content::LiveLocation { latitude: 51.2, .. }
+        ));
+    }
+
+    #[test]
+    fn a_live_location_that_quotes_a_message_does_not_replace_it() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        let text = wa::Message {
+            conversation: Some("where are you?".into()),
+            ..Default::default()
+        };
+        let (_, mut info) = live_position("question", now - 60, 0, 0.0, None);
+        info.timestamp = whatsapp_rust::wacore::time::from_secs(now - 60).unwrap();
+        worker.ingest(&Arc::new(text), &info);
+        let (message, info) = live_position("answer", now, 1, 51.0, Some("question"));
+        worker.ingest(&message, &info);
+        assert!(matches!(
+            worker
+                .archive
+                .message(PEER, "question")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Text { .. }
+        ));
+        assert!(matches!(
+            worker
+                .archive
+                .message(PEER, "answer")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::LiveLocation { .. }
+        ));
+    }
+
+    #[test]
+    fn history_reports_a_finished_live_location_as_ended() {
+        let last = wa::message::LiveLocationMessage {
+            degrees_latitude: Some(48.1),
+            degrees_longitude: Some(11.6),
+            sequence_number: Some(9),
+            time_offset: Some(600),
+            ..Default::default()
+        };
+        let content = finished_live_location(&last, 1_000);
+        assert!(matches!(
+            content,
+            Content::LiveLocation {
+                latitude: 48.1,
+                sequence: 9,
+                ended: true,
+                updated: 1_600,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn round_video_messages_are_marked_as_notes() {
         let clip = wa::message::VideoMessage {
             mimetype: Some("video/mp4".into()),
@@ -7478,6 +7979,27 @@ mod tests {
             })
             .await;
         assert!(matches!(events.try_recv().unwrap(), Event::Error(_)));
+    }
+
+    #[tokio::test]
+    async fn channel_mutes_from_the_server_mirror_into_the_archive() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        const MUTED: &str = "1@newsletter";
+        const UNMUTED: &str = "2@newsletter";
+        worker.archive.ensure_chat(MUTED, "Muted").unwrap();
+        worker.archive.ensure_chat(UNMUTED, "Unmuted").unwrap();
+        worker.archive.set_muted(UNMUTED, Some(0)).unwrap();
+        worker
+            .handle_command(Command::ChannelMutes(vec![
+                (MUTED.into(), true),
+                (UNMUTED.into(), false),
+                ("unknown@newsletter".into(), true),
+            ]))
+            .await;
+        let now = crate::util::now();
+        assert!(worker.archive.chat(MUTED).unwrap().unwrap().muted(now));
+        assert!(!worker.archive.chat(UNMUTED).unwrap().unwrap().muted(now));
+        assert!(worker.archive.chat("unknown@newsletter").unwrap().is_none());
     }
 
     fn unconfirmed(worker: &mut Worker) {

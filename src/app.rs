@@ -12,8 +12,8 @@ use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
 use crate::i18n::Locale;
 use crate::image_preview::PreviewState;
 use crate::model::{
-    Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
-    MediaState, Message, Page, PickerTab, SidebarDisplayMode, StickerPack, Toast, ToastKind,
+    Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Label,
+    Media, MediaState, Message, Page, PickerTab, SidebarDisplayMode, StickerPack, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
@@ -142,10 +142,6 @@ pub struct UnreadDivider {
     pub placed: bool,
 }
 
-/// WhatsApp keeps at most three pinned chats without WhatsApp Plus, and
-/// replaces an existing pin on the phone when a linked device adds a fourth.
-const MAX_PINNED_CHATS: usize = 3;
-
 pub struct App {
     pub dirs: AppDirs,
     pub settings: Settings,
@@ -252,6 +248,11 @@ pub struct App {
     pub reaction_target: Option<(ChatId, String)>,
     /// Control that opened the reaction picker.
     pub reaction_anchor: Option<egui::Rect>,
+    /// Chats this account may pin; WhatsApp Plus raises it once known.
+    pub pin_limit: usize,
+    /// The reaction picker came from a message's context menu, which stays
+    /// open beside it.
+    pub reaction_beside_menu: bool,
     /// Demo/test: keep this message's context menu open.
     pub open_message_menu: Option<String>,
     /// Demo/test: keep this chat row's context menu open.
@@ -333,6 +334,16 @@ pub struct App {
     pub show_archived: bool,
     /// Chat-list filter; applies to the main list, not to search or the archive.
     pub chat_filter: ChatFilter,
+    /// Labels known here, in creation order. Local to this computer.
+    pub labels: Vec<Label>,
+    /// Name typed in the label manager.
+    pub label_name: String,
+    /// Colour the manager will use for the next label.
+    pub label_color: String,
+    /// Label being renamed, with the name being typed.
+    pub label_editing: Option<(String, String)>,
+    /// Label the chat list shows; `None` shows every chat.
+    pub label_filter: Option<String>,
     /// Chats opened from the Unread list, kept there until the filter changes.
     unread_kept: HashSet<ChatId>,
     pub toasts: Vec<Toast>,
@@ -540,6 +551,8 @@ impl App {
             picker_focus: false,
             reaction_target: None,
             reaction_anchor: None,
+            pin_limit: crate::backend::PINNED_CHATS,
+            reaction_beside_menu: false,
             open_message_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_chat_menu: None,
@@ -591,6 +604,11 @@ impl App {
             sidebar_visible: true,
             show_archived: false,
             chat_filter: ChatFilter::All,
+            labels: Vec::new(),
+            label_name: String::new(),
+            label_color: crate::archive::DEFAULT_COLOR.to_owned(),
+            label_editing: None,
+            label_filter: None,
             unread_kept: HashSet::new(),
             toasts: Vec::new(),
             actions: Vec::new(),
@@ -880,6 +898,79 @@ impl App {
             .filter(|chat| !chat.locked || self.locked_folder_open())
     }
 
+    /// The label with this id, when it still exists.
+    pub fn label(&self, id: &str) -> Option<&Label> {
+        self.labels.iter().find(|label| label.id == id)
+    }
+
+    /// Whether a chat wears a label id.
+    pub fn chat_wears(&self, chat: &Chat, label: &str) -> bool {
+        chat.labels.iter().any(|worn| worn == label)
+    }
+
+    /// Unread chats wearing a label, counted the way the other chips count.
+    ///
+    /// Archived and locked chats are left out, because the label's chip does
+    /// not list them.
+    pub fn label_unread(&self, id: &str) -> usize {
+        self.chats
+            .iter()
+            .filter(|chat| {
+                !chat.archived && !chat.locked && chat.unread > 0 && self.chat_wears(chat, id)
+            })
+            .count()
+    }
+
+    /// Drops filters, edits and chat labels that point at labels which are
+    /// gone, so a deleted label leaves the list before the chats reload.
+    fn prune_labels(&mut self) {
+        let known: Vec<String> = self.labels.iter().map(|label| label.id.clone()).collect();
+        for chat in &mut self.chats {
+            chat.labels.retain(|id| known.contains(id));
+        }
+        if self
+            .label_filter
+            .as_ref()
+            .is_some_and(|id| !known.contains(id))
+        {
+            self.label_filter = None;
+        }
+        if self
+            .label_editing
+            .as_ref()
+            .is_some_and(|(id, _)| !known.contains(id))
+        {
+            self.label_editing = None;
+        }
+    }
+
+    /// Picks the label the chat list shows. A label is one more chip in the
+    /// filter row, so it replaces the chip filter, and leaves the archive and
+    /// the locked folder the way the other chips do.
+    fn select_label(&mut self, label: Option<String>) {
+        if self.locked_folder {
+            self.close_locked_folder();
+            self.search.clear();
+            self.search_hits.clear();
+        }
+        self.label_filter = label;
+        self.chat_filter = ChatFilter::All;
+        self.show_archived = false;
+        self.unread_kept.clear();
+    }
+
+    /// Why a label name cannot be used, if it cannot. `except` is the label
+    /// being renamed, which may keep its own name.
+    fn label_name_refusal(&self, name: &str, except: Option<&str>) -> Option<String> {
+        let taken = self.labels.iter().any(|label| {
+            Some(label.id.as_str()) != except && label.name.to_lowercase() == name.to_lowercase()
+        });
+        taken.then(|| {
+            crate::i18n::gettext(self.locale, "A label named “{name}” already exists.")
+                .replace("{name}", name)
+        })
+    }
+
     /// Resolves an address-book, push, phone-number, or fallback name.
     pub fn display_name(&self, id: &str) -> String {
         self.display_name_or(id, None)
@@ -1162,11 +1253,16 @@ impl App {
             .iter()
             .filter(|chat| chat.locked == locked)
             .filter(|chat| locked || chat.archived == self.show_archived || !needle.is_empty())
-            .filter(|chat| {
-                !filtering
-                    || self.chat_filter.matches(chat)
-                    || (self.chat_filter == ChatFilter::Unread
-                        && self.unread_kept.contains(&chat.id))
+            .filter(|chat| match &self.label_filter {
+                // A label lists every chat wearing it, channels included,
+                // because someone put each of them there.
+                _ if !filtering => true,
+                Some(label) => self.chat_wears(chat, label),
+                None => {
+                    self.chat_filter.matches(chat)
+                        || (self.chat_filter == ChatFilter::Unread
+                            && self.unread_kept.contains(&chat.id))
+                }
             })
             .filter(|chat| {
                 // Inside the locked folder the typed text is the secret code,
@@ -1330,6 +1426,10 @@ impl App {
                     self.me = Some(id);
                     self.me_name = name;
                     self.me_about = about;
+                }
+                Event::Labels(labels) => {
+                    self.labels = labels;
+                    self.prune_labels();
                 }
                 Event::Drafts(drafts) => {
                     // Unsent text stored by an earlier session. Text typed in
@@ -1614,6 +1714,7 @@ impl App {
                     conversation.complete = false;
                 }
                 Event::ReceiptsPrivacy { disabled } => self.account_receipts_off = disabled,
+                Event::PinLimit(limit) => self.pin_limit = limit,
                 Event::Receipts(receipts) => {
                     // A late answer for a dialog that has since closed is stale.
                     if self.receipts_watch.as_ref().is_some_and(|(chat, message)| {
@@ -3050,14 +3151,26 @@ impl App {
                     self.refocus_composer(ctx);
                 }
             }
-            Action::OpenReactionPicker { chat, message } => {
+            Action::OpenReactionPicker {
+                chat,
+                message,
+                beside_menu,
+            } => {
                 self.focus_composer = false;
                 self.emoji_start = None;
                 self.mention_start = None;
                 self.picker = None;
                 let id = crate::ui::conversation::bubble_id(&chat, &message);
+                // Anchor to the menu when it stays open, else to the hover
+                // button that opened the picker.
+                let anchor = if beside_menu {
+                    "menu-rect"
+                } else {
+                    "react-rect"
+                };
                 self.reaction_anchor =
-                    ctx.data(|data| data.get_temp::<egui::Rect>(id.with("menu-rect")));
+                    ctx.data(|data| data.get_temp::<egui::Rect>(id.with(anchor)));
+                self.reaction_beside_menu = beside_menu;
                 self.reaction_target = Some((chat, message));
                 self.picker_search.clear();
                 self.picker_focus = true;
@@ -3263,8 +3376,8 @@ impl App {
             // `Event::ChatRemoved`.
             Action::DeleteChat(chat) => self.backend.send(Command::DeleteChat(chat)),
             Action::SetPinned(chat, pinned) => {
-                if pinned && self.pinned_count() >= MAX_PINNED_CHATS {
-                    self.toast(format!("You can only pin {MAX_PINNED_CHATS} chats"));
+                if pinned && self.pinned_count() >= self.pin_limit {
+                    self.toast(format!("You can only pin {} chats", self.pin_limit));
                     return;
                 }
                 if let Some(known) = self.chat_mut(&chat) {
@@ -3351,6 +3464,7 @@ impl App {
                     self.search_hits.clear();
                 }
                 self.chat_filter = filter;
+                self.label_filter = None;
                 self.show_archived = false;
                 self.unread_kept.clear();
             }
@@ -3389,6 +3503,56 @@ impl App {
                 }
                 self.show_archived = show;
                 self.unread_kept.clear();
+            }
+            Action::SelectLabel(label) => self.select_label(label),
+            Action::SetChatLabels { chat, labels } => {
+                self.backend.send(Command::SetChatLabels { chat, labels });
+            }
+            Action::CreateLabel { name, color_hex } => {
+                let name = name.trim().to_owned();
+                if name.is_empty() {
+                    return;
+                }
+                if self.labels.len() >= crate::archive::LABEL_LIMIT {
+                    self.toast_error(
+                        crate::i18n::gettext(
+                            self.locale,
+                            "You have {limit} labels, the most ZapFast keeps.",
+                        )
+                        .replace("{limit}", &crate::archive::LABEL_LIMIT.to_string()),
+                    );
+                    return;
+                }
+                if let Some(refusal) = self.label_name_refusal(&name, None) {
+                    self.toast_error(refusal);
+                    return;
+                }
+                self.backend.send(Command::CreateLabel { name, color_hex });
+                self.label_name.clear();
+                self.label_color = crate::archive::DEFAULT_COLOR.to_owned();
+            }
+            Action::UpdateLabel {
+                id,
+                name,
+                color_hex,
+            } => {
+                let name = name.trim().to_owned();
+                if name.is_empty() {
+                    return;
+                }
+                if let Some(refusal) = self.label_name_refusal(&name, Some(&id)) {
+                    self.toast_error(refusal);
+                    return;
+                }
+                self.backend.send(Command::UpdateLabel {
+                    id,
+                    name,
+                    color_hex,
+                });
+            }
+            Action::DeleteLabel(id) => {
+                self.backend.send(Command::DeleteLabel(id));
+                self.label_editing = None;
             }
             // Reading a chat must not pull its row out from under the pointer.
             // Only the filtered list sends this: search results and
@@ -4779,6 +4943,166 @@ mod tests {
         assert!(app.poll_voting.is_empty());
     }
 
+    fn label(id: &str, name: &str) -> Label {
+        Label {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            color_hex: "#3b82f6".to_owned(),
+            created_at: 1,
+        }
+    }
+
+    fn labeled(id: &str, unread: u32, labels: &[&str]) -> Chat {
+        let mut chat = Chat::new(id.to_owned(), id.to_owned());
+        chat.unread = unread;
+        chat.labels = labels.iter().map(|label| (*label).to_owned()).collect();
+        chat.last_activity = i64::from(unread) + 1;
+        chat
+    }
+
+    #[test]
+    fn picking_a_chip_lets_go_of_the_label() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        app.apply(Action::SelectLabel(Some("label-1".into())), &ctx);
+        app.apply(Action::SetChatFilter(ChatFilter::Groups), &ctx);
+        assert!(app.label_filter.is_none());
+        assert_eq!(app.chat_filter, ChatFilter::Groups);
+    }
+
+    #[test]
+    fn a_label_lists_its_channels_and_leaves_the_archive_alone() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        let channel = labeled("1@newsletter", 0, &["label-1"]);
+        let mut archived = labeled("2@s.whatsapp.net", 0, &["label-1"]);
+        archived.archived = true;
+        app.chats = vec![channel, archived, labeled("3@s.whatsapp.net", 0, &[])];
+        app.apply(Action::ShowArchived(true), &ctx);
+        app.apply(Action::SelectLabel(Some("label-1".into())), &ctx);
+        assert!(!app.show_archived, "a label chip leaves the archive");
+        let listed: Vec<String> = app
+            .visible_chats()
+            .into_iter()
+            .map(|chat| chat.id.clone())
+            .collect();
+        assert_eq!(listed, ["1@newsletter".to_owned()]);
+        app.apply(Action::ShowArchived(true), &ctx);
+        assert_eq!(
+            app.visible_chats().len(),
+            1,
+            "the archive lists every archived chat, labelled or not"
+        );
+    }
+
+    #[test]
+    fn a_taken_label_name_is_refused_in_the_app() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        app.label_name = "work".into();
+        app.apply(
+            Action::CreateLabel {
+                name: " work ".into(),
+                color_hex: "#3b82f6".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(app.label_name, "work", "the typed name stays to be fixed");
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.kind == ToastKind::Error)
+        );
+    }
+
+    #[test]
+    fn a_label_chip_replaces_the_chip_filter() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        app.chat_filter = ChatFilter::Unread;
+        app.apply(Action::SelectLabel(Some("label-1".into())), &ctx);
+        assert_eq!(app.label_filter.as_deref(), Some("label-1"));
+        assert_eq!(
+            app.chat_filter,
+            ChatFilter::All,
+            "a label replaces what the chips were filtering"
+        );
+    }
+
+    #[test]
+    fn a_label_counts_its_unread_chats() {
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        let mut archived = labeled("3@s.whatsapp.net", 5, &["label-1"]);
+        archived.archived = true;
+        let mut locked = labeled("5@s.whatsapp.net", 4, &["label-1"]);
+        locked.locked = true;
+        app.chats = vec![
+            labeled("1@s.whatsapp.net", 3, &["label-1"]),
+            labeled("2@s.whatsapp.net", 2, &["label-1", "label-2"]),
+            labeled("4@s.whatsapp.net", 7, &[]),
+            labeled("6@s.whatsapp.net", 0, &["label-1"]),
+            archived,
+            locked,
+        ];
+        assert_eq!(
+            app.label_unread("label-1"),
+            2,
+            "unread chats, as the other chips count; archived and locked ones stay out"
+        );
+        assert!(app.chat_wears(&app.chats[1], "label-2"));
+        assert!(!app.chat_wears(&app.chats[2], "label-1"));
+    }
+
+    #[test]
+    fn the_list_shows_only_the_chosen_label() {
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        app.chats = vec![
+            labeled("1@s.whatsapp.net", 0, &["label-1"]),
+            labeled("2@s.whatsapp.net", 0, &[]),
+        ];
+        app.label_filter = Some("label-1".into());
+        let listed: Vec<String> = app
+            .visible_chats()
+            .into_iter()
+            .map(|chat| chat.id.clone())
+            .collect();
+        assert_eq!(listed, vec!["1@s.whatsapp.net".to_owned()]);
+        app.label_filter = None;
+        assert_eq!(
+            app.visible_chats().len(),
+            2,
+            "without a label every chat shows"
+        );
+    }
+
+    #[test]
+    fn a_gone_label_leaves_the_list_showing_all_chats() {
+        let root = std::env::temp_dir().join(format!("zapfast-labels-{}", std::process::id()));
+        let (mut app, events) = App::headless(AppDirs::under(&root), Settings::default());
+        let ctx = egui::Context::default();
+        app.labels = vec![label("label-1", "Work"), label("label-2", "Home")];
+        app.label_filter = Some("label-2".into());
+        app.label_editing = Some(("label-2".into(), "Hous".into()));
+        events
+            .send(Event::Labels(vec![label("label-1", "Work")]))
+            .unwrap();
+        app.background_frame(&ctx);
+        assert!(
+            app.label_filter.is_none(),
+            "the list falls back to showing every chat"
+        );
+        assert!(
+            app.label_editing.is_none(),
+            "the editor let go of the label"
+        );
+    }
+
     #[test]
     fn follow_system_retains_the_os_theme_between_platform_events() {
         let mut app = app();
@@ -5167,6 +5491,24 @@ mod tests {
             Action::SetPinned("0@s.whatsapp.net".into(), false),
             &egui::Context::default(),
         );
+        app.apply(
+            Action::SetPinned("3@s.whatsapp.net".into(), true),
+            &egui::Context::default(),
+        );
+        assert!(app.chat("3@s.whatsapp.net").unwrap().pinned);
+    }
+
+    #[test]
+    fn whatsapp_plus_raises_the_pin_limit() {
+        let mut app = app();
+        let (backend, _commands) = Backend::recording();
+        app.backend = backend;
+        for index in 0..4 {
+            let mut chat = Chat::new(format!("{index}@s.whatsapp.net"), format!("Chat {index}"));
+            chat.pinned = index < 3;
+            app.chats.push(chat);
+        }
+        app.pin_limit = crate::backend::PLUS_PINNED_CHATS;
         app.apply(
             Action::SetPinned("3@s.whatsapp.net".into(), true),
             &egui::Context::default(),

@@ -176,6 +176,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         toggle(ui, app, "Send read receipts", receipts_note, |settings| &mut settings.send_read_receipts);
                         toggle(ui, app, "Show when you are typing", "", |settings| &mut settings.send_typing);
                         toggle(ui, app, "Download attachments automatically", "Download non-sticker attachments up to 64 MiB when they enter view. Visible stickers also download automatically up to this limit. When off, click an attachment up to this limit to download it.", |settings| &mut settings.auto_download);
+                        {
+                            let locale = app.locale;
+                            toggle(ui, app, &crate::i18n::gettext(locale, "Show labels as chips"), &crate::i18n::gettext(locale, "Give each label its own chip, in a row under All, Unread and Groups. When off, they share one Labels chip."), |settings| &mut settings.label_chips);
+                        }
                         toggle(ui, app, "Show sender pictures in every chat", "WhatsApp shows them in groups only.", |settings| &mut settings.show_sender_pictures);
                         toggle(ui, app, "Names from your address book", "Prefer saved contact names. When off, prefer public WhatsApp profile names. This applies throughout the app.", |settings| &mut settings.names_from_contacts);
                         toggle(ui, app, "Save contacts to the phone's address book", "Also add contacts saved here to your phone's address book. When off, they remain WhatsApp contacts. Names sync to linked devices either way.", |settings| &mut settings.save_contacts_to_phone);

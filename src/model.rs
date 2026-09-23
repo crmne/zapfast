@@ -30,6 +30,17 @@ impl ChatKind {
     }
 }
 
+/// A local chat label: a name, a colour, and nothing that leaves this computer.
+/// Not a WhatsApp Business label; ZapFast neither reads nor syncs those.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Label {
+    pub id: String,
+    pub name: String,
+    /// `#rrggbb`, lower case.
+    pub color_hex: String,
+    pub created_at: i64,
+}
+
 /// Chat-list filter chosen from the chips under the search field.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChatFilter {
@@ -102,6 +113,8 @@ pub struct Chat {
     pub locked: bool,
     /// Disappearing-message duration in seconds, if enabled.
     pub ephemeral_expiration: Option<u32>,
+    /// Labels worn by this chat, in creation order. Local to this computer.
+    pub labels: Vec<String>,
     /// This chat's own notification sound; `None` follows Settings.
     pub notification_sound: Option<crate::settings::NotificationSound>,
 }
@@ -135,6 +148,7 @@ impl Chat {
             read_only: false,
             locked: false,
             ephemeral_expiration: None,
+            labels: Vec::new(),
             notification_sound: None,
         }
     }
@@ -310,6 +324,32 @@ pub enum Content {
         name: Option<String>,
         address: Option<String>,
     },
+    /// A live location that updates in place as the sender moves. The map
+    /// preview rides in `Message.thumbnail`; the shared `(chat, id)` upsert
+    /// keeps one bubble per session.
+    LiveLocation {
+        latitude: f64,
+        longitude: f64,
+        /// Position accuracy reported by the sender, in metres.
+        #[serde(default)]
+        accuracy_m: Option<u32>,
+        /// Speed in metres per second.
+        #[serde(default)]
+        speed_mps: Option<f32>,
+        /// Heading, degrees clockwise from magnetic north.
+        #[serde(default)]
+        heading_deg: Option<u32>,
+        /// Monotonic ordering guard against out-of-order updates.
+        #[serde(default)]
+        sequence: i64,
+        /// Whether the sender has stopped sharing.
+        #[serde(default)]
+        ended: bool,
+        /// Unix seconds of the latest position, or 0 before any update. The
+        /// message keeps its start time so updates do not reorder the chat.
+        #[serde(default)]
+        updated: i64,
+    },
     Contact {
         display_name: String,
         vcard: String,
@@ -452,7 +492,19 @@ impl PollDraft {
     }
 }
 
+/// WhatsApp's longest live location share, in seconds.
+pub const LIVE_LOCATION_LIMIT: i64 = 8 * 60 * 60;
+
 impl Content {
+    /// Whether a live location sent at `sent` has stopped by `now`: its
+    /// sender ended it, or it has outlived the longest share.
+    pub fn live_location_over(&self, sent: i64, now: i64) -> bool {
+        match self {
+            Self::LiveLocation { ended, .. } => *ended || now - sent > LIVE_LOCATION_LIMIT,
+            _ => false,
+        }
+    }
+
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text {
             text: text.into(),
@@ -499,6 +551,13 @@ impl Content {
                 Some(name) => format!("Location: {name}"),
                 None => "Location".to_owned(),
             },
+            Self::LiveLocation { ended, .. } => {
+                if *ended {
+                    "Live location ended".to_owned()
+                } else {
+                    "Live location".to_owned()
+                }
+            }
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
             Self::Revoked => "This message was deleted".to_owned(),
@@ -717,6 +776,8 @@ pub enum Dialog {
     UnlockLockedChats,
     ConfirmLockChat(ChatId),
     ChatInfo(ChatId),
+    /// Manages the local labels.
+    Labels,
     /// Confirms deleting a chat, which cannot be undone.
     ConfirmDeleteChat(ChatId),
     /// Chooses a destination for an archived message.
@@ -1009,10 +1070,13 @@ pub enum Action {
     /// Toggles a picker tab.
     TogglePicker(PickerTab),
     ClosePicker,
-    /// Opens the full emoji picker to react to a message.
+    /// Opens the full emoji picker to react to a message. `beside_menu` keeps
+    /// the message's context menu open next to it, as when the picker comes
+    /// from the menu's "+"; the hover button opens the picker alone.
     OpenReactionPicker {
         chat: ChatId,
         message: String,
+        beside_menu: bool,
     },
     /// Inserts an emoji at the composer cursor.
     InsertEmoji(String),
@@ -1083,6 +1147,26 @@ pub enum Action {
     CloseDialog,
     ToggleSidebar,
     SetChatFilter(ChatFilter),
+    /// Picks the label the chat list shows; `None` shows every chat.
+    SelectLabel(Option<String>),
+    /// Replaces the labels worn by one chat.
+    SetChatLabels {
+        chat: ChatId,
+        labels: Vec<String>,
+    },
+    /// Creates a label from the name and colour in the manager dialog.
+    CreateLabel {
+        name: String,
+        color_hex: String,
+    },
+    /// Renames and recolours a label.
+    UpdateLabel {
+        id: String,
+        name: String,
+        color_hex: String,
+    },
+    /// Deletes a label and takes it off every chat.
+    DeleteLabel(String),
     /// Shows or leaves the archived chats.
     ShowArchived(bool),
     /// Mutes (`true`) or unmutes every followed channel.
@@ -1380,5 +1464,57 @@ mod tests {
         let json = serde_json::to_string(&content).expect("serializes");
         let back: Content = serde_json::from_str(&json).expect("parses");
         assert_eq!(back, content);
+    }
+
+    #[test]
+    fn live_location_content_survives_json() {
+        let content = Content::LiveLocation {
+            latitude: 51.5,
+            longitude: -0.12,
+            accuracy_m: Some(10),
+            speed_mps: Some(1.1),
+            heading_deg: Some(45),
+            sequence: 7,
+            ended: true,
+            updated: 1_700_000_000,
+        };
+        let json = serde_json::to_string(&content).expect("serializes");
+        let back: Content = serde_json::from_str(&json).expect("parses");
+        assert_eq!(back, content);
+        // Optional fields default when absent, so a sparse payload still parses.
+        let sparse: Content =
+            serde_json::from_str(r#"{"kind":"livelocation","latitude":1.0,"longitude":2.0}"#)
+                .expect("parses sparse");
+        assert_eq!(
+            sparse,
+            Content::LiveLocation {
+                latitude: 1.0,
+                longitude: 2.0,
+                accuracy_m: None,
+                speed_mps: None,
+                heading_deg: None,
+                sequence: 0,
+                ended: false,
+                updated: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn live_location_is_over_when_ended_or_older_than_the_longest_share() {
+        let live = |ended| Content::LiveLocation {
+            latitude: 0.0,
+            longitude: 0.0,
+            accuracy_m: None,
+            speed_mps: None,
+            heading_deg: None,
+            sequence: 1,
+            ended,
+            updated: 0,
+        };
+        assert!(!live(false).live_location_over(1_000, 1_000 + LIVE_LOCATION_LIMIT));
+        assert!(live(false).live_location_over(1_000, 1_001 + LIVE_LOCATION_LIMIT));
+        assert!(live(true).live_location_over(1_000, 1_000));
+        assert!(!Content::text("hi").live_location_over(0, i64::MAX));
     }
 }

@@ -61,6 +61,7 @@ pub fn line(
     let format = egui::TextFormat::simple(font, color);
     let single = text.lines().next().unwrap_or_default();
     emoji::append(
+        ui,
         &mut job,
         &mut placements,
         if max_rows == 1 { single } else { text },
@@ -451,6 +452,15 @@ pub fn search_field(
             .max_rect(field_rect)
             .layout(Layout::left_to_right(Align::Center)),
     );
+    let format = egui::TextFormat::simple(theme::regular(14.0), palette.text);
+    let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap: f32| {
+        bidi::layout_field(ui, buffer.as_str(), &format, wrap)
+    };
+    let align = if bidi::base_rtl(text) {
+        Align::RIGHT
+    } else {
+        Align::LEFT
+    };
     let response = child.add(
         egui::TextEdit::singleline(text)
             .id(id)
@@ -463,7 +473,9 @@ pub fn search_field(
             .text_color(palette.text)
             .frame(egui::Frame::NONE)
             .desired_width(field_rect.width())
-            .vertical_align(Align::Center),
+            .vertical_align(Align::Center)
+            .horizontal_align(align)
+            .layouter(&mut layouter),
     );
     theme::focus_outline(ui, response.id, rect, height / 2.0);
     ui.ctx()
@@ -637,6 +649,19 @@ pub fn filter_chip(
     count: usize,
     selected: bool,
 ) -> egui::Response {
+    dotted_chip(ui, palette, None, label, count, selected)
+}
+
+/// A filter chip led by a coloured dot, for filters the user named and
+/// coloured, such as labels.
+pub fn dotted_chip(
+    ui: &mut Ui,
+    palette: &Palette,
+    dot: Option<Color32>,
+    label: &str,
+    count: usize,
+    selected: bool,
+) -> egui::Response {
     let color = if selected {
         palette.accent
     } else {
@@ -647,7 +672,9 @@ pub fn filter_chip(
     let number =
         (count > 0).then(|| painter.layout_no_wrap(count.to_string(), theme::regular(11.5), color));
     let gap = 5.0;
-    let width = text.size().x + number.as_ref().map_or(0.0, |number| gap + number.size().x);
+    let dot_width = if dot.is_some() { 8.0 + gap } else { 0.0 };
+    let width =
+        dot_width + text.size().x + number.as_ref().map_or(0.0, |number| gap + number.size().x);
     let (rect, response) = ui.allocate_exact_size(vec2(width + 18.0, 28.0), Sense::click());
     theme::reveal_focus(&response);
     theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
@@ -667,7 +694,14 @@ pub fn filter_chip(
                 egui::StrokeKind::Inside,
             );
         }
-        let mut pos = pos2(rect.left() + 9.0, rect.center().y - text.size().y / 2.0);
+        if let Some(dot) = dot {
+            ui.painter()
+                .circle_filled(pos2(rect.left() + 13.0, rect.center().y), 4.0, dot);
+        }
+        let mut pos = pos2(
+            rect.left() + 9.0 + dot_width,
+            rect.center().y - text.size().y / 2.0,
+        );
         let advance = text.size().x + gap;
         ui.painter().galley(pos, text, color);
         if let Some(number) = number {

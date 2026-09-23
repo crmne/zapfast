@@ -63,10 +63,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   everything up to the one you click, then **Forward…** sends them together,
   in their original order, or Escape cancels.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
-  mentions, and link previews are supported. Links are clickable. Hebrew and
-  Arabic RTL paragraphs keep logical word order by reordering font runs,
-  including shaped Arabic ligatures in messages and reply previews. This
-  is not a full Unicode Bidirectional Algorithm. Emoji use the bundled Noto
+  mentions, and link previews are supported. Links are clickable. Hebrew,
+  Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so
+  numbers, punctuation, and embedded words stay in reading order and brackets
+  face the right way. As in WhatsApp, a message whose first strong character is
+  Hebrew or Arabic is aligned to the right, with its time on its own line when
+  the text has more than one. Carets and copied text stay on the logical message.
+  Emoji use the bundled Noto
   Color Emoji on macOS and Windows. On Linux, ZapFast prefers an installed
   Noto Color Emoji and falls back to the bundled copy. Emoji-only messages
   are larger.
@@ -643,6 +646,8 @@ Noto emoji font; demo GIF search uses these local fixtures. The tour makes no
 sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
+Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
+English lines.
 Use `--demo-page chat-menu` to preview the compact chat context menu, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
 `--demo-page video` shows a video and round video messages, and

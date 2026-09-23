@@ -17,6 +17,7 @@ mod read_sync;
 pub(crate) mod sticker_import;
 pub(crate) mod sticker_store;
 mod worker;
+pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS};
 
 /// Phone-link state.
 #[derive(Clone, Debug, PartialEq)]
@@ -274,6 +275,24 @@ pub enum Command {
     SetMuted(ChatId, Option<i64>),
     /// Locks or unlocks a chat (the locked folder).
     SetLocked(ChatId, bool),
+    /// Creates a label; the worker owns the clock for its id.
+    CreateLabel {
+        name: String,
+        color_hex: String,
+    },
+    /// Renames and recolours a label.
+    UpdateLabel {
+        id: String,
+        name: String,
+        color_hex: String,
+    },
+    /// Deletes a label and takes it off every chat.
+    DeleteLabel(String),
+    /// Replaces the labels of one chat.
+    SetChatLabels {
+        chat: ChatId,
+        labels: Vec<String>,
+    },
     /// Normalizes, encodes, and sends mono 48 kHz push-to-talk audio.
     SendVoice {
         chat: ChatId,
@@ -504,6 +523,8 @@ pub enum Command {
     ReceiptsPrivacy {
         disabled: bool,
     },
+    /// Internal: followed channels and whether each is muted on the server.
+    ChannelMutes(Vec<(String, bool)>),
     /// Looks up the group behind an invite code without joining.
     PreviewInvite(String),
     /// Joins the group behind an invite code.
@@ -551,6 +572,8 @@ pub enum Event {
     },
     /// Full chat list, newest first.
     Chats(Vec<Chat>),
+    /// Every label in creation order. Chats carry the labels they wear.
+    Labels(Vec<crate::model::Label>),
     /// Unsent text stored for each chat, sent once at startup.
     Drafts(Vec<(ChatId, String)>),
     /// Message ids in one chat matching a search, oldest first.
@@ -643,6 +666,8 @@ pub enum Event {
     ReceiptsPrivacy {
         disabled: bool,
     },
+    /// How many chats this account may pin: more with WhatsApp Plus.
+    PinLimit(usize),
     /// The followed message's receipts, sent when following starts and
     /// whenever one arrives.
     Receipts(crate::model::MessageReceipts),

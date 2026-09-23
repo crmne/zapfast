@@ -12,6 +12,8 @@ pub struct AppDirs {
     pub config: PathBuf,
     pub state: PathBuf,
     pub cache: PathBuf,
+    /// Per-user directory for the single-instance lock and control socket.
+    pub runtime: PathBuf,
 }
 
 impl AppDirs {
@@ -24,6 +26,7 @@ impl AppDirs {
                     config: fallback.join("zapfast-config"),
                     state: fallback.join("zapfast-state"),
                     cache: fallback.join("zapfast-cache"),
+                    runtime: fallback.join("zapfast-run"),
                 }
             }
         }
@@ -32,12 +35,14 @@ impl AppDirs {
     /// Standard platform directories for the app.
     fn of(name: &str) -> Option<Self> {
         let project = ProjectDirs::from("me", "paolino", name)?;
+        let state = project
+            .state_dir()
+            .map(|path| path.to_path_buf())
+            .unwrap_or_else(|| project.data_local_dir().to_path_buf());
         Some(Self {
             config: project.config_dir().to_path_buf(),
-            state: project
-                .state_dir()
-                .map(|path| path.to_path_buf())
-                .unwrap_or_else(|| project.data_local_dir().to_path_buf()),
+            runtime: runtime_dir(&project, &state),
+            state,
             cache: project.cache_dir().to_path_buf(),
         })
     }
@@ -75,6 +80,7 @@ impl AppDirs {
             config: root.join("config"),
             state: root.join("state"),
             cache: root.join("cache"),
+            runtime: root.join("run"),
         }
     }
 
@@ -160,6 +166,28 @@ fn restrict_directory(path: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn restrict_directory(_path: &Path) -> std::io::Result<()> {
     Ok(())
+}
+
+/// Private directory for the instance lock and control channel. Uses
+/// `$XDG_RUNTIME_DIR` where there is one. Elsewhere the directory sits
+/// beside the state directory rather than inside it, because the state
+/// directory must not exist before an earlier name's data is adopted.
+fn runtime_dir(project: &ProjectDirs, state: &Path) -> PathBuf {
+    // Flatpak gives each sandbox a private runtime directory and shares only
+    // this one between instances of the app.
+    #[cfg(target_os = "linux")]
+    if let (Some(runtime), Some(id)) = (
+        project.runtime_dir().and_then(Path::parent),
+        std::env::var_os("FLATPAK_ID"),
+    ) {
+        return runtime.join("app").join(id);
+    }
+    if let Some(runtime) = project.runtime_dir() {
+        return runtime.to_path_buf();
+    }
+    let mut name = state.file_name().unwrap_or_default().to_os_string();
+    name.push(".run");
+    state.with_file_name(name)
 }
 
 /// Rename whole directories so SQLite databases travel with their WAL files.
@@ -311,11 +339,13 @@ mod tests {
             config: root.join("old/data"),
             state: root.join("old/data"),
             cache: root.join("old/cache"),
+            runtime: root.join("old/run"),
         };
         let new = AppDirs {
             config: root.join("new/data"),
             state: root.join("new/data"),
             cache: root.join("new/cache"),
+            runtime: root.join("new/run"),
         };
         old.ensure().unwrap();
         std::fs::write(old.session_db(), b"session").unwrap();

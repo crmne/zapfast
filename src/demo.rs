@@ -52,6 +52,33 @@ pub fn sample_thumbnail(seed: u32) -> Vec<u8> {
     bytes
 }
 
+/// A small street-map picture standing in for a location's map preview.
+fn sample_map() -> Vec<u8> {
+    let (width, height) = (208u32, 120u32);
+    let image = image::RgbImage::from_fn(width, height, |x, y| {
+        let (x, y) = (x as i32, y as i32);
+        let river = (y - (60 + (x - 104) * (x - 104) / 180)).abs() < 5;
+        let park = (130..185).contains(&x) && (12..44).contains(&y);
+        let road = (x - 70).abs() < 3 || (y - 88).abs() < 3 || (x + y - 190).abs() < 3;
+        let street = x % 34 == 0 || y % 26 == 0;
+        image::Rgb(if road {
+            [250, 214, 120]
+        } else if river {
+            [158, 196, 230]
+        } else if park {
+            [190, 222, 170]
+        } else if street {
+            [255, 255, 255]
+        } else {
+            [236, 232, 222]
+        })
+    });
+    let mut bytes = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 85);
+    let _ = encoder.encode_image(&image);
+    bytes
+}
+
 const SAMPLES: &[Sample] = &[
     Sample {
         id: "393331234567@s.whatsapp.net",
@@ -213,6 +240,17 @@ fn demo_waveform() -> Vec<u8> {
         })
         .collect()
 }
+
+/// Synthetic mixed-direction lines for the `rtl-self` page, one message each.
+///
+/// They cover neutrals, numbers, brackets, embedded Latin, a repeated-letter
+/// word pair, bold, a link, emoji inside Hebrew and Arabic paragraphs, and
+/// Arabic lam ligatures in a line long enough to wrap.
+pub const RTL_SELF_CHAT: [&str; 3] = [
+    "בדיקת RTL בלבד\nסער + מירון = ❤️\nשלום ❤️ עולם\nשלום (test 123) עולם!\nשלום 12:34, מחיר 50₪.\nHello שלום עולם world ❤️\nمرحبا بالعالم ❤️ (123)\nשלום 👨‍👩‍👧‍👦 עולם",
+    "שלום!\nשלום 123\nHello שלום עולם end\nאב גד בא\nשלום (עולם)\nשלום *עולם* !\nשלום https://example.com עולם",
+    "إلى السطر التالي\nالله أكبر، لا بأس 🌙\nهذا نص عربي طويل يختبر ترتيب الأسطر عندما تلتف الكلمات داخل فقاعة رسالة ضيقة إلى السطر التالي",
+];
 
 fn message(chat: &str, id: &str, from_me: bool, timestamp: i64, content: Content) -> Message {
     Message {
@@ -694,6 +732,26 @@ pub fn populate(app: &mut App) {
                 address: Some("12 St James's Square, London".into()),
             },
         ),
+        {
+            let mut row = message(
+                ada,
+                "ada-live",
+                false,
+                older + 60 * 21,
+                Content::LiveLocation {
+                    latitude: 51.5074,
+                    longitude: -0.1278,
+                    accuracy_m: Some(24),
+                    speed_mps: Some(1.4),
+                    heading_deg: Some(90),
+                    sequence: 1,
+                    ended: false,
+                    updated: 0,
+                },
+            );
+            row.thumbnail = Some(sample_map());
+            row
+        },
         message(ada, "ada-deleted", false, older + 60 * 25, Content::Revoked),
     ];
     let conversation = app.conversations.get_mut(ada).expect("sample chat");
@@ -1253,6 +1311,37 @@ fn video_sample(app: &mut App, play: Option<&str>) {
     }
 }
 
+/// Three local labels worn by some of the sample chats.
+fn labels_sample(app: &mut App) {
+    let label = |id: &str, name: &str, color_hex: &str, created_at| crate::model::Label {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        color_hex: color_hex.to_owned(),
+        created_at,
+    };
+    app.labels = vec![
+        label("label-work", "Work", "#3b82f6", 1),
+        label("label-family", "Family", "#22c55e", 2),
+        label("label-follow-up", "Follow up", "#f97316", 3),
+    ];
+    let worn: [(usize, &[&str]); 5] = [
+        (0, &["label-work", "label-follow-up"]),
+        (1, &["label-work"]),
+        (2, &["label-follow-up"]),
+        (4, &["label-family"]),
+        (6, &["label-work"]),
+    ];
+    for (index, labels) in worn {
+        if let Some(chat) = app
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == SAMPLES[index].id)
+        {
+            chat.labels = labels.iter().map(|id| (*id).to_owned()).collect();
+        }
+    }
+}
+
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -1451,6 +1540,42 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 }
                 app.conversations.get_mut(id).expect("demo group").messages = messages;
                 app.open_chat = Some(id.into());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
+            "rtl-self" => {
+                let now = crate::util::now();
+                let count = RTL_SELF_CHAT.len() as i64;
+                let messages: Vec<Message> = RTL_SELF_CHAT
+                    .iter()
+                    .enumerate()
+                    .map(|(index, text)| {
+                        let timestamp = now - (count - index as i64) * 60 * 5;
+                        let id = format!("rtl-self-{index}");
+                        message(ME, &id, true, timestamp, Content::text(*text))
+                    })
+                    .collect();
+                let mut chat = Chat::new(ME.into(), "You".into());
+                chat.last_activity = now;
+                chat.last = messages.last().map(|last| crate::model::LastMessage {
+                    from_me: true,
+                    sender: last.sender.clone(),
+                    sender_name: None,
+                    summary: last.summary(),
+                    status: last.status,
+                });
+                app.chats.insert(0, chat);
+                app.conversations.insert(
+                    ME.into(),
+                    Conversation {
+                        messages,
+                        complete: true,
+                        requested: true,
+                        phone_exhausted: true,
+                        ..Default::default()
+                    },
+                );
+                app.open_chat = Some(ME.into());
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
@@ -1673,6 +1798,33 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 };
             }
             "syncing" => app.syncing = true,
+            // Ada shares where she is now.
+            "live" => {
+                let ada = SAMPLES[0].id;
+                let now = crate::util::now();
+                let mut row = message(
+                    ada,
+                    "ada-live-now",
+                    false,
+                    now - 60 * 12,
+                    Content::LiveLocation {
+                        latitude: 51.5226,
+                        longitude: -0.1571,
+                        accuracy_m: Some(12),
+                        speed_mps: Some(1.4),
+                        heading_deg: Some(90),
+                        sequence: 14,
+                        ended: false,
+                        updated: now - 60,
+                    },
+                );
+                row.thumbnail = Some(sample_map());
+                if let Some(conversation) = app.conversations.get_mut(ada) {
+                    conversation.messages.push(row);
+                }
+                app.open_chat = Some(ada.to_owned());
+                app.scroll_to_bottom = true;
+            }
             "typing" => {
                 app.composer = (1..=9)
                     .map(|line| format!("line {line}"))
@@ -1803,6 +1955,19 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.composer = "Look at these".into();
             }
             "archived" => app.show_archived = true,
+            "labels" => labels_sample(app),
+            "label-chips" => {
+                labels_sample(app);
+                app.settings.label_chips = true;
+            }
+            "label-filter" => {
+                labels_sample(app);
+                app.label_filter = Some("label-work".into());
+            }
+            "labels-dialog" => {
+                labels_sample(app);
+                app.dialog = Some(Dialog::Labels);
+            }
             "unread" => app.chat_filter = crate::model::ChatFilter::Unread,
             "private" => app.chat_filter = crate::model::ChatFilter::Private,
             "groups" => app.chat_filter = crate::model::ChatFilter::Groups,
@@ -1858,6 +2023,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "react-picker" => {
                 let chat = SAMPLES[0].id.to_owned();
                 app.reaction_target = Some((chat, "ada-link".into()));
+                app.reaction_beside_menu = true;
                 app.scroll_to_bottom = false;
                 app.scroll_anchor = Some("ada-link".into());
                 app.picker_focus = true;
@@ -1879,6 +2045,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "react-picker-empty" => {
                 let chat = SAMPLES[0].id.to_owned();
                 app.reaction_target = Some((chat, "ada-link".into()));
+                app.reaction_beside_menu = true;
                 app.scroll_to_bottom = false;
                 app.scroll_anchor = Some("ada-link".into());
                 app.picker_focus = true;
@@ -1981,6 +2148,131 @@ mod tests {
             });
             // Headless tests must apply font-atlas updates themselves.
             output.textures_delta.clear();
+        }
+    }
+
+    /// Paints the self-chat through the real bubble path and checks what reaches
+    /// the screen: every row in bidi order, brackets mirrored, the message
+    /// flush right, and the time on its own row at the bottom right.
+    #[test]
+    fn rtl_self_chat_bubbles_render_like_whatsapp() {
+        fn collect(
+            shape: &egui::Shape,
+            out: &mut Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)>,
+            images: &mut Vec<egui::Rect>,
+        ) {
+            match shape {
+                egui::Shape::Text(text) => out.push((text.pos, text.galley.clone())),
+                egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                    images.push(mesh.calc_bounds());
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, out, images);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut app = app();
+        apply_flags(&mut app, Some("rtl-self"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let mut texts = Vec::new();
+        let mut images = Vec::new();
+        for shape in &shapes {
+            collect(&shape.shape, &mut texts, &mut images);
+        }
+        let atlas = ctx.fonts(|fonts| fonts.image());
+        let clocks: Vec<String> = app.conversations[ME]
+            .messages
+            .iter()
+            .map(|message| crate::util::clock(message.timestamp))
+            .collect();
+        assert_ne!(clocks[0], clocks[1], "each bubble has its own time");
+        for (first_line, clock) in [
+            ("בדיקת RTL בלבד\n", &clocks[0]),
+            ("שלום!\n", &clocks[1]),
+            ("إلى السطر التالي\n", &clocks[2]),
+        ] {
+            let (pos, body) = texts
+                .iter()
+                .find(|(_, galley)| galley.text().starts_with(first_line))
+                .unwrap_or_else(|| panic!("painted body starting {first_line:?}"));
+            crate::bidi::assert_rows_follow_uba(body, &atlas);
+            crate::bidi::assert_right_aligned(body);
+            let body_right = body
+                .rows
+                .iter()
+                .flat_map(|placed| {
+                    placed
+                        .row
+                        .glyphs
+                        .iter()
+                        .map(move |glyph| pos.x + placed.pos.x + glyph.max_x())
+                })
+                .fold(f32::NEG_INFINITY, f32::max);
+            let body_bottom = pos.y + body.rows.last().expect("rows").rect().max.y;
+            let (time_pos, time) = texts
+                .iter()
+                .find(|(_, galley)| galley.text() == clock.as_str())
+                .unwrap_or_else(|| panic!("painted time {clock}"));
+            assert!(
+                time_pos.y >= body_bottom - 0.5,
+                "time at {} overlaps the last row ending at {body_bottom}",
+                time_pos.y
+            );
+            let gap = body_right - (time_pos.x + time.size().x);
+            assert!(
+                (0.0..40.0).contains(&gap),
+                "time should end beside the ticks at the right edge, {gap} short of it"
+            );
+            let body_rect = body
+                .rows
+                .iter()
+                .map(|placed| placed.rect().translate(pos.to_vec2()))
+                .reduce(|a, b| a.union(b))
+                .expect("rows");
+            // Only images inside the text are emoji; a wallpaper tile behind
+            // the bubble can have its centre there too.
+            let emoji: Vec<&egui::Rect> = images
+                .iter()
+                .filter(|image| body_rect.expand(1.0).contains_rect(**image))
+                .collect();
+            let placeholders = body.text().matches(crate::emoji::PLACEHOLDER).count();
+            if crate::emoji::available() {
+                assert_eq!(emoji.len(), placeholders, "one bitmap per emoji");
+            }
+            let row_height = body.rows[0].row.size.y;
+            for image in &emoji {
+                assert!(
+                    image.width().max(image.height()) >= row_height,
+                    "emoji {image:?} shrank below the row height {row_height}"
+                );
+            }
+            for placed in &body.rows {
+                for glyph in &placed.row.glyphs {
+                    if glyph.uv_rect.is_nothing()
+                        || glyph.chr.is_whitespace()
+                        || glyph.chr == crate::emoji::PLACEHOLDER
+                    {
+                        continue;
+                    }
+                    let ink = egui::Rect::from_min_size(
+                        *pos + placed.pos.to_vec2() + egui::vec2(glyph.pos.x, 0.0),
+                        egui::vec2(glyph.advance_width, placed.row.size.y),
+                    );
+                    for image in &emoji {
+                        assert!(
+                            !image.shrink(0.5).intersects(ink),
+                            "emoji at {image:?} overlaps {:?} at {ink:?}",
+                            glyph.chr
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -3818,6 +4110,14 @@ mod tests {
             app.open_message_menu.is_none(),
             "the click opens the picker, not the context menu"
         );
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        assert!(
+            !egui::Popup::is_id_open(&ctx, id.with("popup")),
+            "the context menu stays closed beside a picker opened from hover"
+        );
+        assert!(app.reaction_target.is_some(), "the picker stays open");
         assert!(app.reply_to.is_none(), "the click does not start a reply");
     }
 

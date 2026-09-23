@@ -103,8 +103,9 @@ fn main() -> eframe::Result<()> {
             .map_err(|error| eframe::Error::AppCreation(error.into()));
     }
     let cli = Cli::parse();
+    let discovered = paths::AppDirs::discover();
     if matches!(cli.command, Some(Control::ReloadThemes)) {
-        single_instance::send("reload-themes")
+        single_instance::send(&discovered.runtime, "reload-themes")
             .map_err(|error| eframe::Error::AppCreation(error.into()))?;
         return Ok(());
     }
@@ -119,7 +120,7 @@ fn main() -> eframe::Result<()> {
     } else {
         // A hidden start must not surface a copy that is already running.
         let verb = if cli.start_hidden { "ping" } else { "show" };
-        match single_instance::acquire(&waker, verb) {
+        match single_instance::acquire(&discovered.runtime, &waker, verb) {
             single_instance::Outcome::Only(guard) => Some(guard),
             single_instance::Outcome::Surfaced if cli.start_hidden => {
                 eprintln!("ZapFast is already running");
@@ -127,6 +128,10 @@ fn main() -> eframe::Result<()> {
             }
             single_instance::Outcome::Surfaced => {
                 eprintln!("ZapFast or FastsApp is already running; asked it to show its window");
+                return Ok(());
+            }
+            single_instance::Outcome::Unanswered => {
+                eprintln!("ZapFast is already running but did not answer");
                 return Ok(());
             }
         }
@@ -141,7 +146,7 @@ fn main() -> eframe::Result<()> {
             jiff::Timestamp::now().as_millisecond(),
         )))
     } else {
-        paths::AppDirs::discover()
+        discovered
     };
     if !demo {
         dirs.adopt_previous_names()

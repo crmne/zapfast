@@ -8,6 +8,7 @@ use crate::model::{Action, Chat, ChatFilter, Contact, Dialog, Message, Page};
 use crate::theme::{self, Icon, Palette};
 
 use super::focus::{Stop, TabStop};
+use super::labels;
 use super::widgets;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -304,6 +305,8 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
+                // First, so a chosen label is never scrolled out of sight.
+                labels::menu_chip(app, ui, &palette);
                 for filter in ChatFilter::EVERY {
                     let count = match filter {
                         ChatFilter::All => 0,
@@ -311,6 +314,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                     };
                     let selected = !app.locked_folder_open()
                         && !app.show_archived
+                        && app.label_filter.is_none()
                         && app.chat_filter == filter;
                     let chip = widgets::filter_chip(
                         ui,
@@ -397,6 +401,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(4.0);
             })
         });
+    labels::chip_row(app, ui, &palette);
 }
 
 fn list(app: &mut App, ui: &mut egui::Ui) {
@@ -1261,6 +1266,7 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         }
     }
     sound_menu(app, ui, palette, chat);
+    labels::chat_menu(app, ui, chat, palette);
     if widgets::menu_item(
         ui,
         palette,

@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 19:16+0200\n"
+"POT-Creation-Date: 2026-09-23 20:14+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -19,23 +19,23 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: src/model.rs:59 src/ui/picker.rs:1163
+#: src/model.rs:70 src/ui/picker.rs:1166
 msgid "All"
 msgstr ""
 
-#: src/model.rs:60
+#: src/model.rs:71
 msgid "Unread"
 msgstr ""
 
-#: src/model.rs:61
+#: src/model.rs:72
 msgid "Private"
 msgstr ""
 
-#: src/model.rs:62
+#: src/model.rs:73
 msgid "Groups"
 msgstr ""
 
-#: src/model.rs:63
+#: src/model.rs:74
 msgid "Channels"
 msgstr ""
 
@@ -138,19 +138,19 @@ msgstr ""
 msgid "December"
 msgstr ""
 
-#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:169
+#: src/ui/chats.rs:112 src/ui/chats.rs:227 src/ui/settings.rs:169
 msgid "Chats"
 msgstr ""
 
-#: src/ui/chats.rs:168 src/ui/chats.rs:267
+#: src/ui/chats.rs:169 src/ui/chats.rs:268
 msgid "Search"
 msgstr ""
 
-#: src/ui/chats.rs:365
+#: src/ui/chats.rs:369
 msgid "Archived"
 msgstr ""
 
-#: src/ui/chats.rs:382
+#: src/ui/chats.rs:386
 msgid "Locked"
 msgstr ""
 
@@ -158,65 +158,82 @@ msgstr ""
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr ""
 
-#: src/ui/conversation.rs:998
+#: src/ui/conversation.rs:999
 msgid "Type a message"
 msgstr ""
 
-#: src/ui/conversation.rs:1001
+#: src/ui/conversation.rs:1002
 msgid "Add a caption"
 msgstr ""
 
-#: src/ui/conversation.rs:1155
+#: src/ui/conversation.rs:1158
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
 msgstr ""
 
-#: src/ui/conversation.rs:1157
+#: src/ui/conversation.rs:1160
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 
-#: src/ui/conversation.rs:1168
+#: src/ui/conversation.rs:1171
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr ""
 
-#: src/ui/conversation.rs:1183
+#: src/ui/conversation.rs:1186
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr ""
 
-#: src/ui/conversation.rs:1459
+#: src/ui/conversation.rs:1465
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/conversation.rs:3062
+#: src/ui/conversation.rs:3085
 msgid "Open in system player"
 msgstr ""
 
-#: src/ui/conversation.rs:3130 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3153 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr ""
 
-#: src/ui/conversation.rs:4737
+#: src/ui/conversation.rs:3384 src/ui/conversation.rs:3465
+msgid "Open in a map"
+msgstr ""
+
+#: src/ui/conversation.rs:3417
+msgid "Live location ended"
+msgstr ""
+
+#: src/ui/conversation.rs:3419
+msgid "Live location"
+msgstr ""
+
+#: src/ui/conversation.rs:3430
+#, rust-format
+msgid "Updated {time}"
+msgstr ""
+
+#: src/ui/conversation.rs:4855
 msgid "Pause"
 msgstr ""
 
-#: src/ui/conversation.rs:4739
+#: src/ui/conversation.rs:4857
 msgid "Play"
 msgstr ""
 
-#: src/ui/conversation.rs:4762
+#: src/ui/conversation.rs:4880
 msgid "Unmute"
 msgstr ""
 
-#: src/ui/conversation.rs:4764
+#: src/ui/conversation.rs:4882
 msgid "Mute"
 msgstr ""
 
-#: src/ui/dialogs.rs:1151
+#: src/ui/dialogs.rs:1186
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -239,106 +256,116 @@ msgstr ""
 msgid "Auto"
 msgstr ""
 
-#: src/ui/settings.rs:188
+#: src/ui/settings.rs:181
+msgid "Show labels as chips"
+msgstr ""
+
+#: src/ui/settings.rs:181
+msgid ""
+"Give each label its own chip, in a row under All, Unread and Groups. When "
+"off, they share one Labels chip."
+msgstr ""
+
+#: src/ui/settings.rs:192
 msgid "Pause music while recording"
 msgstr ""
 
-#: src/ui/settings.rs:188
+#: src/ui/settings.rs:192
 msgid ""
 "Pause media players while you record a voice message and resume them "
 "afterwards."
 msgstr ""
 
-#: src/ui/settings.rs:189
+#: src/ui/settings.rs:193
 msgid "Pause music while playing voice messages"
 msgstr ""
 
-#: src/ui/settings.rs:189
+#: src/ui/settings.rs:193
 msgid ""
 "Pause media players while a voice or audio message plays and resume them "
 "when it stops."
 msgstr ""
 
-#: src/ui/settings.rs:228
+#: src/ui/settings.rs:232
 msgid "Window"
 msgstr ""
 
-#: src/ui/settings.rs:273
+#: src/ui/settings.rs:277
 msgid "Network"
 msgstr ""
 
-#: src/ui/settings.rs:305
+#: src/ui/settings.rs:309
 msgid "Account"
 msgstr ""
 
-#: src/ui/settings.rs:309
+#: src/ui/settings.rs:313
 msgid "Files"
 msgstr ""
 
-#: src/ui/settings.rs:355 src/ui/settings.rs:616 src/ui/settings.rs:778
+#: src/ui/settings.rs:359 src/ui/settings.rs:620 src/ui/settings.rs:782
 msgid "About"
 msgstr ""
 
-#: src/ui/settings.rs:436
+#: src/ui/settings.rs:440
 msgid "Add doodles"
 msgstr ""
 
-#: src/ui/settings.rs:440
+#: src/ui/settings.rs:444
 msgid "Show the default doodles over the selected colour."
 msgstr ""
 
-#: src/ui/settings.rs:585
+#: src/ui/settings.rs:589
 msgid "Change profile picture"
 msgstr ""
 
-#: src/ui/settings.rs:608
+#: src/ui/settings.rs:612
 msgid "Your name"
 msgstr ""
 
-#: src/ui/settings.rs:624
+#: src/ui/settings.rs:628
 msgid "Linked device"
 msgstr ""
 
-#: src/ui/settings.rs:635
+#: src/ui/settings.rs:639
 msgid "Edit your name and About"
 msgstr ""
 
-#: src/ui/settings.rs:652
+#: src/ui/settings.rs:656
 msgid "Unlink this computer"
 msgstr ""
 
-#: src/ui/settings.rs:672
+#: src/ui/settings.rs:676
 msgid "Save"
 msgstr ""
 
-#: src/ui/settings.rs:682
+#: src/ui/settings.rs:686
 msgid "Cancel"
 msgstr ""
 
-#: src/ui/settings.rs:746
+#: src/ui/settings.rs:750
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr ""
 
-#: src/ui/settings.rs:757
+#: src/ui/settings.rs:761
 #, rust-format
 msgid "Update to {version}"
 msgstr ""
 
-#: src/ui/settings.rs:767
+#: src/ui/settings.rs:771
 msgid "Keyboard shortcuts"
 msgstr ""
 
-#: src/ui/settings.rs:789
+#: src/ui/settings.rs:793
 msgid "Source code"
 msgstr ""
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:553
+#: src/ui/widgets.rs:565
 #, rust-format
 msgid "Built with love by {name}"
 msgstr ""
 
-#: src/ui/message_info.rs:28
+#: src/ui/message_info.rs:28 src/ui/labels.rs:271
 msgid "Close"
 msgstr ""
 
@@ -401,52 +428,172 @@ msgstr[1] ""
 msgid "No one yet"
 msgstr ""
 
-#: src/app.rs:3834
+#: src/app.rs:969
+#, rust-format
+msgid "A label named “{name}” already exists."
+msgstr ""
+
+#: src/app.rs:3520 src/ui/labels.rs:294
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr ""
+
+#: src/app.rs:3998
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/ui/picker.rs:1179
+#: src/ui/labels.rs:68
+msgctxt "label colour"
+msgid "Blue"
+msgstr ""
+
+#: src/ui/labels.rs:69
+msgctxt "label colour"
+msgid "Green"
+msgstr ""
+
+#: src/ui/labels.rs:70
+msgctxt "label colour"
+msgid "Yellow"
+msgstr ""
+
+#: src/ui/labels.rs:71
+msgctxt "label colour"
+msgid "Orange"
+msgstr ""
+
+#: src/ui/labels.rs:72
+msgctxt "label colour"
+msgid "Red"
+msgstr ""
+
+#: src/ui/labels.rs:73
+msgctxt "label colour"
+msgid "Pink"
+msgstr ""
+
+#: src/ui/labels.rs:74
+msgctxt "label colour"
+msgid "Purple"
+msgstr ""
+
+#: src/ui/labels.rs:75
+msgctxt "label colour"
+msgid "Teal"
+msgstr ""
+
+#: src/ui/labels.rs:76
+msgctxt "label colour"
+msgid "Grey"
+msgstr ""
+
+#: src/ui/labels.rs:77
+msgctxt "label colour"
+msgid "Sky blue"
+msgstr ""
+
+#: src/ui/labels.rs:78
+msgctxt "label colour"
+msgid "Colour"
+msgstr ""
+
+#: src/ui/labels.rs:149
+msgid "Manage labels"
+msgstr ""
+
+#: src/ui/labels.rs:172 src/ui/labels.rs:223 src/ui/labels.rs:260
+msgid "Labels"
+msgstr ""
+
+#: src/ui/labels.rs:192
+msgid "All chats"
+msgstr ""
+
+#: src/ui/labels.rs:207 src/ui/labels.rs:247
+msgid "Manage labels…"
+msgstr ""
+
+#: src/ui/labels.rs:283
+msgid ""
+"Labels stay on this computer. They do not reach your phone or anyone you "
+"chat with."
+msgstr ""
+
+#: src/ui/labels.rs:304
+msgid "New label"
+msgstr ""
+
+#: src/ui/labels.rs:318
+msgid "Create"
+msgstr ""
+
+#: src/ui/labels.rs:348
+msgid ""
+"No labels yet. Create one above, then add chats to it from their right-click "
+"menu."
+msgstr ""
+
+#: src/ui/labels.rs:383
+msgid "Next colour"
+msgstr ""
+
+#: src/ui/labels.rs:432
+#, rust-format
+msgid "{} chat"
+msgid_plural "{} chats"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/labels.rs:453
+msgid "Rename or recolour"
+msgstr ""
+
+#: src/ui/labels.rs:478
+msgid "Delete this label. Its chats keep their messages."
+msgstr ""
+
+#: src/ui/picker.rs:1180
 msgid "My packs"
 msgstr ""
 
-#: src/ui/picker.rs:1191
+#: src/ui/picker.rs:1192
 msgid "Create this pack"
 msgstr ""
 
-#: src/ui/picker.rs:1206
+#: src/ui/picker.rs:1207
 msgid "New pack…"
 msgstr ""
 
-#: src/ui/picker.rs:1269
+#: src/ui/picker.rs:1289
 msgid "Loading your stickers…"
 msgstr ""
 
-#: src/ui/picker.rs:1271
+#: src/ui/picker.rs:1291
 msgid ""
 "Recent stickers appear here. Right-click one to save it. To import a pack, "
 "paste a signal.art link or open a .wastickers file."
 msgstr ""
 
-#: src/ui/picker.rs:1305
+#: src/ui/picker.rs:1325
 msgid "Nothing here yet. Right-click any sticker to add it to this pack."
 msgstr ""
 
-#: src/ui/picker.rs:1318
+#: src/ui/picker.rs:1338
 msgid "Saved"
 msgstr ""
 
-#: src/ui/picker.rs:1335
+#: src/ui/picker.rs:1355
 msgid "Remove this pack"
 msgstr ""
 
-#: src/ui/picker.rs:1349
+#: src/ui/picker.rs:1369
 msgid "Recent"
 msgstr ""
 
-#: src/ui/picker.rs:1465
+#: src/ui/picker.rs:1485
 msgid "Remove from saved"
 msgstr ""
 
-#: src/ui/picker.rs:1466
+#: src/ui/picker.rs:1486
 msgid "Save sticker"
 msgstr ""

@@ -45,6 +45,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 | Dialog::MessageInfo { .. } => {
                     420.0_f32.min((ui.ctx().content_rect().width() - 64.0).max(180.0))
                 }
+                Dialog::Labels => 460.0,
             });
             ui.spacing_mut().item_spacing.y = 8.0;
             match dialog {
@@ -57,6 +58,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     message,
                     button,
                 } => interactive_list(app, ui, &chat, &message, button),
+                Dialog::Labels => super::labels::manager(app, ui, &palette),
                 Dialog::Shortcuts => shortcuts(app, ui),
                 Dialog::About => about(app, ui),
                 Dialog::ConfirmUnlink => confirm_unlink(app, ui),
@@ -977,21 +979,43 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
     let (first_field, last_field) = ui
         .horizontal(|ui| {
             let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0 - 24.0;
+            let format = egui::TextFormat::simple(theme::regular(16.0), palette.text);
+            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                crate::bidi::layout_field(ui, text.as_str(), &format, wrap)
+            };
+            let first_align = if crate::bidi::base_rtl(&app.new_contact_name) {
+                Align::RIGHT
+            } else {
+                Align::LEFT
+            };
+            let last_align = if crate::bidi::base_rtl(&app.new_contact_last) {
+                Align::RIGHT
+            } else {
+                Align::LEFT
+            };
             let first = boxed(ui, false, &mut |ui| {
-                ui.add(edit!(
-                    &mut app.new_contact_name,
-                    "new-contact-first",
-                    "First name",
-                    half
-                ))
+                ui.add(
+                    edit!(
+                        &mut app.new_contact_name,
+                        "new-contact-first",
+                        "First name",
+                        half
+                    )
+                    .horizontal_align(first_align)
+                    .layouter(&mut layouter),
+                )
             });
             let last = boxed(ui, false, &mut |ui| {
-                ui.add(edit!(
-                    &mut app.new_contact_last,
-                    "new-contact-last",
-                    "Surname",
-                    half
-                ))
+                ui.add(
+                    edit!(
+                        &mut app.new_contact_last,
+                        "new-contact-last",
+                        "Surname",
+                        half
+                    )
+                    .horizontal_align(last_align)
+                    .layouter(&mut layouter),
+                )
             });
             (first, last)
         })
@@ -1082,6 +1106,15 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             ui.horizontal(|ui| {
                 ui.add_space((ui.available_width() - 288.0).max(0.0) / 2.0);
                 let name_field = |ui: &mut egui::Ui, buffer: &mut String, salt: &str, hint| {
+                    let format = egui::TextFormat::simple(theme::semibold(15.0), palette.text);
+                    let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                        crate::bidi::layout_field(ui, text.as_str(), &format, wrap)
+                    };
+                    let align = if crate::bidi::base_rtl(buffer) {
+                        Align::RIGHT
+                    } else {
+                        Align::LEFT
+                    };
                     let field = Frame::new()
                         .fill(palette.surface)
                         .corner_radius(CornerRadius::same(theme::RADIUS))
@@ -1098,7 +1131,9 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
                                     .font(theme::semibold(15.0))
                                     .text_color(palette.text)
                                     .frame(Frame::NONE)
-                                    .desired_width(108.0),
+                                    .desired_width(108.0)
+                                    .horizontal_align(align)
+                                    .layouter(&mut layouter),
                             )
                         });
                     theme::focus_outline(
