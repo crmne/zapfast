@@ -29,7 +29,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("Image");
-                ui.label(egui::RichText::new(name).font(theme::semibold(14.0)));
+                crate::ui::widgets::rich_text(ui, name, theme::semibold(14.0), palette.text);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
                         ui,
@@ -89,10 +89,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 ui.available_height().max(0.0),
             );
             let image = egui::Image::new(crate::util::image_uri(preview.path()));
-            match image.load_for_size(
-                ctx,
-                crate::image_preview::texture_size(canvas, preview.is_fit(), preview.zoom()),
-            ) {
+            match image.load_for_size(ctx, canvas) {
                 Ok(egui::load::TexturePoll::Ready { texture }) => {
                     let size = display_size(texture.size, canvas, preview.is_fit(), preview.zoom());
                     egui::ScrollArea::both()
@@ -132,8 +129,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Size the image is drawn at: fitted into the canvas, or scaled by the
-/// preview's zoom factor.
+/// Size the image is drawn at from the texture's intrinsic pixel dimensions:
+/// fitted into the canvas, or scaled by the preview's zoom factor. Zoom is
+/// applied here only; the texture itself is requested at `canvas` size.
 fn display_size(original: Vec2, canvas: Vec2, fit: bool, zoom: f32) -> Vec2 {
     let (width, height) = if fit {
         crate::image_preview::fit_size(original.x, original.y, canvas.x, canvas.y)

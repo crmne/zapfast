@@ -35,12 +35,33 @@ pub fn preview_action(key: Key, modifiers: Modifiers) -> Option<crate::model::Ac
     }
 }
 
-/// The preview swallows input keys while it is open, so a keystroke cannot
-/// reach the chat behind it.
+/// The preview swallows keys that would type into or edit the chat behind
+/// it, while leaving navigation and activation keys (Tab, Enter, Space,
+/// arrows) for the preview modal's own controls.
 pub fn consumes_key(key: &Event) -> bool {
+    match key {
+        Event::Text(_) | Event::Paste(_) | Event::Copy | Event::Cut => true,
+        Event::Key { key, .. } => !is_modal_navigation(*key),
+        _ => false,
+    }
+}
+
+/// Keys the preview modal needs for focus traversal, activation, and
+/// scrolling its own controls.
+fn is_modal_navigation(key: Key) -> bool {
     matches!(
         key,
-        Event::Key { .. } | Event::Text(_) | Event::Paste(_) | Event::Copy | Event::Cut
+        Key::Tab
+            | Key::Enter
+            | Key::Space
+            | Key::ArrowUp
+            | Key::ArrowDown
+            | Key::ArrowLeft
+            | Key::ArrowRight
+            | Key::Home
+            | Key::End
+            | Key::PageUp
+            | Key::PageDown
     )
 }
 
@@ -57,11 +78,6 @@ pub fn fit_size(width: f32, height: f32, canvas_width: f32, canvas_height: f32) 
 /// Image size for the zoom level, relative to the original pixels.
 pub fn zoomed_size(width: f32, height: f32, zoom: f32) -> (f32, f32) {
     (width * zoom, height * zoom)
-}
-
-/// Requests enough source pixels for the preview's current zoom level.
-pub fn texture_size(canvas: egui::Vec2, fit: bool, zoom: f32) -> egui::Vec2 {
-    if fit { canvas } else { canvas * zoom.max(0.0) }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -179,6 +195,24 @@ mod tests {
             modifiers: Modifiers::NONE,
         }));
         assert!(!consumes_key(&Event::PointerMoved(egui::pos2(1.0, 2.0))));
+        for key in [
+            Key::Tab,
+            Key::Enter,
+            Key::Space,
+            Key::ArrowDown,
+            Key::ArrowUp,
+        ] {
+            assert!(
+                !consumes_key(&Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }),
+                "modal navigation key {key:?} must reach the preview"
+            );
+        }
     }
 
     #[test]
@@ -189,14 +223,6 @@ mod tests {
         assert_eq!(fit_size(0.0, 0.0, 800.0, 700.0), (0.0, 0.0));
         assert_eq!(zoomed_size(320.0, 240.0, 2.0), (640.0, 480.0));
         assert_eq!(zoomed_size(320.0, 240.0, 0.25), (80.0, 60.0));
-        assert_eq!(
-            texture_size(egui::vec2(800.0, 600.0), true, 4.0),
-            egui::vec2(800.0, 600.0)
-        );
-        assert_eq!(
-            texture_size(egui::vec2(800.0, 600.0), false, 2.0),
-            egui::vec2(1600.0, 1200.0)
-        );
     }
 
     #[test]
