@@ -272,6 +272,7 @@ impl Archive {
                 ))?;
             }
         }
+        Self::prune_receipts(&connection)?;
         Ok(Self { connection })
     }
 
@@ -1039,6 +1040,16 @@ impl Archive {
         let mut statement = self
             .connection
             .prepare("SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
+    /// Video messages with their raw protobuf.
+    pub fn videos_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
+             AND json_extract(content, '$.kind') = 'video'",
+        )?;
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect()
     }

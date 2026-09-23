@@ -180,6 +180,9 @@ pub enum Command {
         chat: ChatId,
         receipts: bool,
     },
+    /// Follows one of our group messages' receipts while "Message info" is
+    /// open, or stops following with `None`.
+    WatchReceipts(Option<(ChatId, String)>),
     /// Result of a private read-state update to the other linked devices.
     ReadSyncFinished {
         chat: ChatId,
@@ -628,6 +631,9 @@ pub enum Event {
     ReceiptsPrivacy {
         disabled: bool,
     },
+    /// The followed message's receipts, sent when following starts and
+    /// whenever one arrives.
+    Receipts(crate::model::MessageReceipts),
     /// An audio file chosen for one chat's notifications.
     ChatSoundPicked {
         chat: ChatId,

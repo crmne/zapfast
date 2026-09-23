@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 16:17+0200\n"
+"POT-Creation-Date: 2026-09-23 16:56+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -185,14 +185,38 @@ msgstr ""
 msgid "All shortcuts ({})"
 msgstr ""
 
-#: src/ui/conversation.rs:1450
+#: src/ui/conversation.rs:1455
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/dialogs.rs:1146
+#: src/ui/conversation.rs:3058
+msgid "Open in system player"
+msgstr ""
+
+#: src/ui/conversation.rs:3126 src/ui/message_info.rs:17
+msgid "Message info"
+msgstr ""
+
+#: src/ui/conversation.rs:4733
+msgid "Pause"
+msgstr ""
+
+#: src/ui/conversation.rs:4735
+msgid "Play"
+msgstr ""
+
+#: src/ui/conversation.rs:4758
+msgid "Unmute"
+msgstr ""
+
+#: src/ui/conversation.rs:4760
+msgid "Mute"
+msgstr ""
+
+#: src/ui/dialogs.rs:1151
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -215,76 +239,96 @@ msgstr ""
 msgid "Auto"
 msgstr ""
 
-#: src/ui/settings.rs:220
+#: src/ui/settings.rs:186
+msgid "Pause music while recording"
+msgstr ""
+
+#: src/ui/settings.rs:186
+msgid ""
+"Pause media players while you record a voice message and resume them "
+"afterwards."
+msgstr ""
+
+#: src/ui/settings.rs:187
+msgid "Pause music while playing voice messages"
+msgstr ""
+
+#: src/ui/settings.rs:187
+msgid ""
+"Pause media players while a voice or audio message plays and resume them "
+"when it stops."
+msgstr ""
+
+#: src/ui/settings.rs:226
 msgid "Window"
 msgstr ""
 
-#: src/ui/settings.rs:265
+#: src/ui/settings.rs:271
 msgid "Network"
 msgstr ""
 
-#: src/ui/settings.rs:297
+#: src/ui/settings.rs:303
 msgid "Account"
 msgstr ""
 
-#: src/ui/settings.rs:301
+#: src/ui/settings.rs:307
 msgid "Files"
 msgstr ""
 
-#: src/ui/settings.rs:347 src/ui/settings.rs:608 src/ui/settings.rs:770
+#: src/ui/settings.rs:353 src/ui/settings.rs:614 src/ui/settings.rs:776
 msgid "About"
 msgstr ""
 
-#: src/ui/settings.rs:428
+#: src/ui/settings.rs:434
 msgid "Add doodles"
 msgstr ""
 
-#: src/ui/settings.rs:432
+#: src/ui/settings.rs:438
 msgid "Show the default doodles over the selected colour."
 msgstr ""
 
-#: src/ui/settings.rs:577
+#: src/ui/settings.rs:583
 msgid "Change profile picture"
 msgstr ""
 
-#: src/ui/settings.rs:600
+#: src/ui/settings.rs:606
 msgid "Your name"
 msgstr ""
 
-#: src/ui/settings.rs:616
+#: src/ui/settings.rs:622
 msgid "Linked device"
 msgstr ""
 
-#: src/ui/settings.rs:627
+#: src/ui/settings.rs:633
 msgid "Edit your name and About"
 msgstr ""
 
-#: src/ui/settings.rs:644
+#: src/ui/settings.rs:650
 msgid "Unlink this computer"
 msgstr ""
 
-#: src/ui/settings.rs:664
+#: src/ui/settings.rs:670
 msgid "Save"
 msgstr ""
 
-#: src/ui/settings.rs:674
+#: src/ui/settings.rs:680
 msgid "Cancel"
 msgstr ""
 
-#: src/ui/settings.rs:738
+#: src/ui/settings.rs:744
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr ""
 
-#: src/ui/settings.rs:749
+#: src/ui/settings.rs:755
 #, rust-format
 msgid "Update to {version}"
 msgstr ""
 
-#: src/ui/settings.rs:759
+#: src/ui/settings.rs:765
 msgid "Keyboard shortcuts"
 msgstr ""
 
-#: src/ui/settings.rs:781
+#: src/ui/settings.rs:787
 msgid "Source code"
 msgstr ""
 
@@ -292,4 +336,71 @@ msgstr ""
 #: src/ui/widgets.rs:553
 #, rust-format
 msgid "Built with love by {name}"
+msgstr ""
+
+#: src/ui/message_info.rs:28
+msgid "Close"
+msgstr ""
+
+#: src/ui/message_info.rs:44
+msgid "This message is no longer available."
+msgstr ""
+
+#: src/ui/message_info.rs:63
+msgid "Loading…"
+msgstr ""
+
+#: src/ui/message_info.rs:136
+msgid "Played"
+msgstr ""
+
+#: src/ui/message_info.rs:138
+msgid "Read"
+msgstr ""
+
+#: src/ui/message_info.rs:143
+msgid "Delivered"
+msgstr ""
+
+#: src/ui/message_info.rs:159
+msgid "Time not recorded"
+msgstr ""
+
+#: src/ui/message_info.rs:181
+msgid ""
+"No receipts were recorded for this message. Details are available for "
+"messages sent from now on."
+msgstr ""
+
+#: src/ui/message_info.rs:193
+msgid ""
+"Some receipts for this message were not recorded. Details are complete for "
+"messages sent from now on."
+msgstr ""
+
+#: src/ui/message_info.rs:209
+msgid "Played by"
+msgstr ""
+
+#: src/ui/message_info.rs:218
+msgid "Read by"
+msgstr ""
+
+#: src/ui/message_info.rs:226
+msgid "Delivered to"
+msgstr ""
+
+#: src/ui/message_info.rs:236
+#, rust-format
+msgid "{} remaining"
+msgid_plural "{} remaining"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/message_info.rs:264
+msgid "No one yet"
+msgstr ""
+
+#: src/app.rs:3740
+msgid "This video opens in your system player"
 msgstr ""

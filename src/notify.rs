@@ -79,9 +79,7 @@ impl Notifications {
             .name("notification".into())
             .spawn(move || {
                 let system_sound = sound == NotificationSound::System;
-                if let NotificationSound::Custom(path) = &sound {
-                    play_sound(path.clone());
-                }
+                play_sound(sound);
                 deliver(
                     &title,
                     &body,
@@ -99,16 +97,29 @@ impl Notifications {
     }
 }
 
-/// Plays an audio file on its own thread, for custom notification sounds
-/// and their preview in Settings.
-pub fn play_sound(path: PathBuf) {
+/// ZapFast's own sounds, synthesized by `assets/sounds/generate.py`.
+const CHIME: &[u8] = include_bytes!("../assets/sounds/chime.ogg");
+const RIPPLE: &[u8] = include_bytes!("../assets/sounds/ripple.ogg");
+
+/// Plays a notification sound on its own thread, for notifications and
+/// their preview in Settings. System sounds and silence play nothing here.
+pub fn play_sound(sound: NotificationSound) {
+    let source: Box<dyn Fn() -> std::io::Result<Box<dyn ReadSeek>> + Send> = match sound {
+        NotificationSound::Chime => Box::new(|| Ok(Box::new(std::io::Cursor::new(CHIME)))),
+        NotificationSound::Ripple => Box::new(|| Ok(Box::new(std::io::Cursor::new(RIPPLE)))),
+        NotificationSound::Custom(path) => Box::new(move || {
+            Ok(Box::new(std::io::BufReader::new(std::fs::File::open(
+                &path,
+            )?)))
+        }),
+        NotificationSound::System | NotificationSound::None => return,
+    };
     let spawned = std::thread::Builder::new()
         .name("notification-sound".into())
         .spawn(move || {
             let played = (|| -> Result<(), String> {
-                let file = std::fs::File::open(&path).map_err(|error| error.to_string())?;
-                let decoder = rodio::Decoder::new(std::io::BufReader::new(file))
-                    .map_err(|error| error.to_string())?;
+                let reader = source().map_err(|error| error.to_string())?;
+                let decoder = rodio::Decoder::new(reader).map_err(|error| error.to_string())?;
                 let device = rodio::DeviceSinkBuilder::open_default_sink()
                     .map_err(|error| error.to_string())?;
                 let player = rodio::Player::connect_new(device.mixer());
@@ -124,6 +135,9 @@ pub fn play_sound(path: PathBuf) {
         log::debug!("no thread for a notification sound: {error}");
     }
 }
+
+trait ReadSeek: std::io::Read + std::io::Seek + Send + Sync {}
+impl<T: std::io::Read + std::io::Seek + Send + Sync> ReadSeek for T {}
 
 /// Builds the notification title and body, including the group sender.
 pub fn lines(chat_name: &str, is_group: bool, sender: &str, summary: &str) -> (String, String) {

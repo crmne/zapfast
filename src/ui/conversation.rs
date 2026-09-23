@@ -1299,6 +1299,7 @@ struct View<'a> {
     /// Animate media only while this window is active.
     animate: bool,
     player: &'a crate::audio::Player,
+    video: &'a crate::video::Player,
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
 }
 
@@ -1354,6 +1355,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         now: crate::util::now(),
         animate: app.window_focused,
         player: &app.player,
+        video: &app.video,
         copy_rows: app.copy_rows.as_ref(),
     };
     let mut actions = Vec::new();
@@ -1399,8 +1401,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             // releases stick-to-bottom; setting the offset directly does not.
             let viewport = ui.clip_rect();
             *app.selection_view.lock().unwrap_or_else(|p| p.into_inner()) = Some(viewport);
+            // Only a drag that has moved past a click, such as selecting
+            // text, scrolls; a click near an edge does not.
             let held_inside = ui.input(|input| {
                 input.pointer.primary_down()
+                    && input.pointer.is_decidedly_dragging()
                     && input.pointer.press_origin().is_some_and(|origin| {
                         viewport.contains(origin) && origin.x < viewport.right() - 16.0
                     })
@@ -2307,9 +2312,13 @@ fn bubble_frame(
 ) -> egui::Response {
     let palette = view.palette;
     let own = message.from_me;
-    // Draw stickers without a bubble.
     let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
-    let fill = if carousel || matches!(message.content, Content::Sticker { .. }) {
+    // Stickers and round video messages draw without a bubble.
+    let bare = matches!(
+        message.content,
+        Content::Sticker { .. } | Content::Video { note: true, .. }
+    );
+    let fill = if carousel || bare {
         Color32::TRANSPARENT
     } else if own {
         palette.bubble_out
@@ -2557,8 +2566,9 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
             Content::Text { preview, .. } => preview.is_some(),
             Content::Document { .. } | Content::Audio { .. } | Content::Poll { .. } => true,
             Content::Interactive { card, .. } => card.is_some(),
-            // Videos without a poster use the file-row layout.
-            Content::Video { .. } => message.thumbnail.is_none(),
+            // Videos without a poster use the file-row layout, except the
+            // round ones, which always draw as a circle.
+            Content::Video { note, .. } => !note && message.thumbnail.is_none(),
             _ => false,
         };
     card.then(|| {
@@ -3047,7 +3057,12 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     if let Some(media) = message.content.media() {
         match &media.path {
             Some(path) => {
-                if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), "Open file") {
+                let open = if matches!(message.content, Content::Video { gif: false, .. }) {
+                    crate::i18n::gettext(view.locale, "Open in system player")
+                } else {
+                    "Open file".into()
+                };
+                if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), &open) {
                     actions.push(Action::OpenFile(path.clone()));
                 }
                 if widgets::menu_item(ui, &palette, Some(Icon::Download), "Save as…") {
@@ -3100,38 +3115,24 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             crate::util::moment_stamp(view.locale, message.timestamp)
         ),
     );
-    if message.from_me {
-        if message.delivered_at.is_some() || message.status == Delivery::Delivered {
-            widgets::menu_info(
-                ui,
-                &palette,
-                Icon::CheckCheck,
-                &match message.delivered_at {
-                    Some(when) => {
-                        format!("Delivered {}", crate::util::moment_stamp(view.locale, when))
-                    }
-                    None => "Delivered".to_owned(),
-                },
-            );
-        }
-        if matches!(message.status, Delivery::Read | Delivery::Played) {
-            let what = if message.status == Delivery::Played {
-                "Played"
-            } else {
-                "Read"
-            };
-            widgets::menu_info(
-                ui,
-                &palette,
-                Icon::CheckCheck,
-                &match message.read_at {
-                    Some(when) => {
-                        format!("{what} {}", crate::util::moment_stamp(view.locale, when))
-                    }
-                    None => what.to_owned(),
-                },
-            );
-        }
+    // Delivery and read times, per member in a group, live in "Message info".
+    if message.from_me
+        && !matches!(message.content, Content::Revoked)
+        && !matches!(
+            message.status,
+            Delivery::None | Delivery::Pending | Delivery::Failed
+        )
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Info),
+            &crate::i18n::gettext(view.locale, "Message info"),
+        )
+    {
+        actions.push(Action::ShowDialog(Dialog::MessageInfo {
+            chat: chat.clone(),
+            message: message.id.clone(),
+        }));
     }
     // The id helps when looking a message up for a bug report. Clicking
     // "Sent" used to copy it without saying so.
@@ -3261,8 +3262,13 @@ fn content(
             media,
             seconds,
             gif,
+            note,
         } => {
-            let drawn = video(ui, view, message, media, *seconds, *gif, width, actions);
+            let drawn = if *note {
+                video_note(ui, view, message, media, *seconds, actions)
+            } else {
+                video(ui, view, message, media, *seconds, *gif, width, actions)
+            };
             caption.as_ref().and_then(|caption| {
                 let wrap = if message.quoted.is_some() {
                     width.max(drawn)
@@ -4476,7 +4482,8 @@ fn auto_download_allowed(media: &Media, sticker: bool, auto_download: bool) -> b
     media.is_within_download_limit() && (sticker || auto_download)
 }
 
-/// Draws a video poster and opens the downloaded video in the default player.
+/// Draws a video. GIFs play in place; other videos play in the bubble once
+/// clicked, downloading first when needed, with controls along the bottom.
 #[allow(clippy::too_many_arguments)]
 fn video(
     ui: &mut egui::Ui,
@@ -4488,6 +4495,7 @@ fn video(
     width: f32,
     actions: &mut Vec<Action>,
 ) -> f32 {
+    use crate::video::State;
     let palette = view.palette;
     let Some(thumbnail) = message.thumbnail.as_deref() else {
         let title = if gif { "GIF" } else { "Video" };
@@ -4511,7 +4519,6 @@ fn video(
     };
     let limit = width.min(PICTURE_WIDTH);
     let size = frame_size(media, Some((16, 9)), limit, PICTURE_HEIGHT.min(limit * 1.3));
-    // Play downloaded GIFs in place; keep a poster for other videos.
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let playing = match (&media.path, gif) {
         (Some(path), true) => Some(animation::frame(
@@ -4540,47 +4547,389 @@ fn video(
         }
         return size.x;
     }
+    let status = media
+        .path
+        .as_ref()
+        .filter(|_| !gif)
+        .and_then(|_| view.video.status(&message.id));
     if ui.is_rect_visible(rect) {
-        // Registering the poster decodes it, so it waits for the row to show.
-        let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
-        egui::Image::new(uri)
-            .fit_to_exact_size(size)
-            .corner_radius(6.0)
-            .paint_at(ui, rect);
-        ui.painter()
-            .rect_filled(rect, 6.0, Color32::from_black_alpha(40));
-        let disc = Rect::from_center_size(rect.center(), Vec2::splat(48.0));
-        ui.painter()
-            .circle_filled(disc.center(), 24.0, Color32::from_black_alpha(140));
-        match (&media.path, &media.state) {
-            (Some(_), _) if matches!(playing, Some(animation::Frame::Pending)) => {
-                theme::paint_spinner(ui, disc, 24.0, Color32::WHITE)
+        if status.is_some() {
+            view.video.saw(&message.id);
+        }
+        match status.as_ref().and_then(|status| status.frame.as_ref()) {
+            Some(frame) => {
+                ui.painter().rect_filled(rect, 6.0, Color32::BLACK);
+                paint_texture(
+                    ui,
+                    fit_within(frame.size_vec2(), rect),
+                    frame.id(),
+                    Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    6.0,
+                );
             }
-            (Some(_), _) => theme::paint_icon(ui, Icon::ExternalLink, disc, 22.0, Color32::WHITE),
-            (None, MediaState::Downloading) => theme::paint_spinner(ui, disc, 24.0, Color32::WHITE),
-            (None, MediaState::Failed(_)) => {
-                theme::paint_icon(ui, Icon::CircleAlert, disc, 22.0, palette.danger)
+            None => {
+                // Registering the poster decodes it, so it waits for the row to show.
+                let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
+                egui::Image::new(uri)
+                    .fit_to_exact_size(size)
+                    .corner_radius(6.0)
+                    .paint_at(ui, rect);
             }
-            (None, MediaState::Idle) => {
-                theme::paint_icon(ui, Icon::Play, disc, 22.0, Color32::WHITE)
+        }
+        let state = status.as_ref().map(|status| status.state);
+        if state != Some(State::Playing) {
+            ui.painter()
+                .rect_filled(rect, 6.0, Color32::from_black_alpha(40));
+            let disc = Rect::from_center_size(rect.center(), Vec2::splat(48.0));
+            ui.painter()
+                .circle_filled(disc.center(), 24.0, Color32::from_black_alpha(140));
+            match (&media.path, &media.state) {
+                (Some(_), _)
+                    if state == Some(State::Loading)
+                        || matches!(playing, Some(animation::Frame::Pending)) =>
+                {
+                    theme::paint_spinner(ui, disc, 24.0, Color32::WHITE)
+                }
+                (Some(_), _) if gif => {
+                    theme::paint_icon(ui, Icon::ExternalLink, disc, 22.0, Color32::WHITE)
+                }
+                (None, MediaState::Downloading) => {
+                    theme::paint_spinner(ui, disc, 24.0, Color32::WHITE)
+                }
+                (None, MediaState::Failed(_)) => {
+                    theme::paint_icon(ui, Icon::CircleAlert, disc, 22.0, palette.danger)
+                }
+                (Some(_), _) | (None, MediaState::Idle) => {
+                    theme::paint_icon(ui, Icon::Play, disc, 22.0, Color32::WHITE)
+                }
             }
         }
-        let mut label = Vec::new();
-        if gif {
-            label.push("GIF".to_owned());
+        match (&status, &media.path) {
+            (Some(status), Some(path)) => {
+                // Controls show while paused and while the pointer is over
+                // the video, as in other players.
+                if status.state == State::Paused
+                    || (status.state == State::Playing && ui.rect_contains_pointer(rect))
+                {
+                    video_controls(ui, view, message, path, rect, status, actions);
+                }
+            }
+            _ => {
+                let mut label = Vec::new();
+                if gif {
+                    label.push("GIF".to_owned());
+                }
+                if let Some(seconds) = seconds {
+                    label.push(crate::util::duration(seconds));
+                }
+                if media.path.is_none() {
+                    label.push(crate::util::bytes(media.size));
+                }
+                if !label.is_empty() {
+                    let galley = ui.painter().layout_no_wrap(
+                        label.join(" · "),
+                        theme::medium(11.5),
+                        Color32::WHITE,
+                    );
+                    let chip = Rect::from_min_size(
+                        pos2(rect.left() + 8.0, rect.bottom() - galley.size().y - 14.0),
+                        galley.size() + vec2(12.0, 6.0),
+                    );
+                    ui.painter().rect_filled(
+                        chip,
+                        chip.height() / 2.0,
+                        Color32::from_black_alpha(140),
+                    );
+                    ui.painter()
+                        .galley(chip.min + vec2(6.0, 3.0), galley, Color32::WHITE);
+                }
+            }
         }
-        if let Some(seconds) = seconds {
-            label.push(crate::util::duration(seconds));
+    }
+    let auto = ui.is_rect_visible(rect)
+        && media.path.is_none()
+        && matches!(media.state, MediaState::Idle)
+        && view.auto_download
+        && media.is_within_download_limit();
+    if auto {
+        actions.push(Action::Download {
+            card: None,
+            chat: view.chat.id.clone(),
+            message: message.id.clone(),
+        });
+    }
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        video_clicked(view, message, media, gif, auto, actions);
+    }
+    size.x
+}
+
+/// What a click on a video does: a downloaded video plays or pauses, a GIF
+/// that cannot play here opens in the system viewer, and a video still on
+/// WhatsApp's servers downloads and then plays. `downloading` is set when
+/// this frame already asked for the download.
+fn video_clicked(
+    view: &View<'_>,
+    message: &Message,
+    media: &Media,
+    gif: bool,
+    downloading: bool,
+    actions: &mut Vec<Action>,
+) {
+    match &media.path {
+        Some(path) if gif => actions.push(Action::OpenFile(path.clone())),
+        Some(path) => actions.push(Action::PlayVideo {
+            message: message.id.clone(),
+            path: path.clone(),
+        }),
+        None => {
+            if !downloading && !matches!(media.state, MediaState::Downloading) {
+                actions.push(Action::Download {
+                    card: None,
+                    chat: view.chat.id.clone(),
+                    message: message.id.clone(),
+                });
+            }
+            if !gif {
+                actions.push(Action::PlayVideoWhenDownloaded(message.id.clone()));
+            }
         }
-        if media.path.is_none() {
-            label.push(crate::util::bytes(media.size));
+    }
+}
+
+/// Play/pause, the time, a seek bar, and a sound switch along the bottom of
+/// a playing video.
+fn video_controls(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    path: &Path,
+    rect: Rect,
+    status: &crate::video::Status,
+    actions: &mut Vec<Action>,
+) {
+    let bar = Rect::from_min_max(pos2(rect.left(), rect.bottom() - 32.0), rect.max);
+    ui.painter().rect_filled(
+        bar,
+        CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: 6,
+            se: 6,
+        },
+        Color32::from_black_alpha(150),
+    );
+    let id = ui.id().with(("video-controls", &message.id));
+    let toggle = Rect::from_center_size(pos2(bar.left() + 18.0, bar.center().y), Vec2::splat(26.0));
+    let playing = status.state == crate::video::State::Playing;
+    theme::paint_icon(
+        ui,
+        if playing { Icon::Pause } else { Icon::Play },
+        toggle,
+        16.0,
+        Color32::WHITE,
+    );
+    let tooltip = if playing {
+        crate::i18n::gettext(view.locale, "Pause")
+    } else {
+        crate::i18n::gettext(view.locale, "Play")
+    };
+    if ui
+        .interact(toggle, id.with("toggle"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tooltip.as_ref())
+        .clicked()
+    {
+        actions.push(Action::PlayVideo {
+            message: message.id.clone(),
+            path: path.to_owned(),
+        });
+    }
+    let sound = Rect::from_center_size(pos2(bar.right() - 18.0, bar.center().y), Vec2::splat(26.0));
+    let muted = view.video.muted();
+    theme::paint_icon(
+        ui,
+        if muted { Icon::VolumeX } else { Icon::Volume2 },
+        sound,
+        16.0,
+        Color32::WHITE,
+    );
+    let tooltip = if muted {
+        crate::i18n::gettext(view.locale, "Unmute")
+    } else {
+        crate::i18n::gettext(view.locale, "Mute")
+    };
+    if ui
+        .interact(sound, id.with("sound"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tooltip.as_ref())
+        .clicked()
+    {
+        actions.push(Action::ToggleVideoSound);
+    }
+    let time = format!(
+        "{} / {}",
+        crate::util::duration(status.position.as_secs() as u32),
+        crate::util::duration(status.total.as_secs() as u32)
+    );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(time, theme::medium(11.5), Color32::WHITE);
+    let text = pos2(toggle.right() + 4.0, bar.center().y - galley.size().y / 2.0);
+    let track = Rect::from_min_max(
+        pos2(text.x + galley.size().x + 10.0, bar.center().y - 8.0),
+        pos2(sound.left() - 6.0, bar.center().y + 8.0),
+    );
+    ui.painter().galley(text, galley, Color32::WHITE);
+    if track.width() < 12.0 {
+        return;
+    }
+    let response = ui
+        .interact(track, id.with("seek"), Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let pointed = response
+        .interact_pointer_pos()
+        .map(|pointer| ((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0));
+    // Seeking restarts the decoder, so a drag seeks once, where it ends.
+    let fraction = match pointed {
+        Some(fraction) if response.dragged() => fraction,
+        _ => status.fraction(),
+    };
+    let line = Rect::from_center_size(track.center(), vec2(track.width(), 3.0));
+    ui.painter()
+        .rect_filled(line, 1.5, Color32::from_white_alpha(90));
+    let played = pos2(line.left() + fraction * line.width(), line.center().y);
+    ui.painter().rect_filled(
+        Rect::from_min_max(line.min, pos2(played.x, line.bottom())),
+        1.5,
+        view.palette.accent,
+    );
+    ui.painter().circle_filled(played, 5.0, view.palette.accent);
+    if (response.clicked() || response.drag_stopped())
+        && let Some(fraction) = pointed
+    {
+        actions.push(Action::SeekVideo {
+            message: message.id.clone(),
+            fraction,
+        });
+    }
+}
+
+/// Side of a round video message.
+const NOTE_SIDE: f32 = 220.0;
+
+/// Draws a round video message (PTV) as a circle that plays in place when
+/// clicked, with a ring for the progress. Returns its width.
+fn video_note(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    media: &Media,
+    seconds: Option<u32>,
+    actions: &mut Vec<Action>,
+) -> f32 {
+    use crate::video::State;
+    let palette = view.palette;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(NOTE_SIDE), Sense::click());
+    let status = media
+        .path
+        .as_ref()
+        .and_then(|_| view.video.status(&message.id));
+    if ui.is_rect_visible(rect) {
+        if status.is_some() {
+            view.video.saw(&message.id);
         }
-        if !label.is_empty() {
-            let galley =
+        let center = rect.center();
+        // Leave room around the picture for the progress ring.
+        let picture = rect.shrink(5.0);
+        let frame = status
+            .as_ref()
+            .and_then(|status| status.frame.as_ref())
+            .map(|frame| (frame.id(), frame.size_vec2()));
+        let poster = || {
+            let bytes = message.thumbnail.as_deref()?;
+            let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes);
+            match egui::Image::new(uri).load_for_size(ui.ctx(), picture.size()) {
+                Ok(egui::load::TexturePoll::Ready { texture }) => Some((texture.id, texture.size)),
+                _ => None,
+            }
+        };
+        match frame.or_else(poster) {
+            Some((texture, size)) => paint_texture(
+                ui,
+                picture,
+                texture,
+                crate::video::square_uv(size.x, size.y),
+                picture.width() / 2.0,
+            ),
+            None => {
                 ui.painter()
-                    .layout_no_wrap(label.join(" · "), theme::medium(11.5), Color32::WHITE);
-            let chip = Rect::from_min_size(
-                pos2(rect.left() + 8.0, rect.bottom() - galley.size().y - 14.0),
+                    .circle_filled(center, picture.width() / 2.0, palette.surface);
+            }
+        }
+        let state = status.as_ref().map(|status| status.state);
+        let ring = NOTE_SIDE / 2.0 - 2.0;
+        if let Some(status) = &status {
+            ui.painter().circle_stroke(
+                center,
+                ring,
+                Stroke::new(3.0, palette.secondary.gamma_multiply(0.35)),
+            );
+            ui.painter().add(egui::Shape::line(
+                crate::video::arc(center, ring, status.fraction()),
+                Stroke::new(3.0, palette.accent),
+            ));
+        }
+        let hovered = ui.rect_contains_pointer(rect);
+        let disc = Rect::from_center_size(center, Vec2::splat(48.0));
+        let waiting = matches!(
+            (&media.path, &media.state, state),
+            (Some(_), _, Some(State::Loading)) | (None, MediaState::Downloading, _)
+        );
+        let icon = match (&media.path, &media.state, state) {
+            _ if waiting => None,
+            // Only a pause sign under the pointer covers a playing video.
+            (Some(_), _, Some(State::Playing)) => hovered.then_some(Icon::Pause),
+            (None, MediaState::Failed(_), _) => Some(Icon::CircleAlert),
+            _ => Some(Icon::Play),
+        };
+        if state != Some(State::Playing) {
+            ui.painter().circle_filled(
+                center,
+                picture.width() / 2.0,
+                Color32::from_black_alpha(40),
+            );
+        }
+        if waiting || icon.is_some() {
+            ui.painter()
+                .circle_filled(center, 24.0, Color32::from_black_alpha(140));
+        }
+        if waiting {
+            theme::paint_spinner(ui, disc, 24.0, Color32::WHITE);
+        } else if let Some(icon) = icon {
+            let color = if icon == Icon::CircleAlert {
+                palette.danger
+            } else {
+                Color32::WHITE
+            };
+            theme::paint_icon(ui, icon, disc, 22.0, color);
+        }
+        // The time while it plays, otherwise its length.
+        let label = match &status {
+            Some(status) => Some(crate::util::duration(status.position.as_secs() as u32)),
+            None => seconds
+                .map(crate::util::duration)
+                .or_else(|| media.path.is_none().then(|| crate::util::bytes(media.size))),
+        };
+        if let Some(label) = label {
+            let galley = ui
+                .painter()
+                .layout_no_wrap(label, theme::medium(11.5), Color32::WHITE);
+            let chip = Rect::from_center_size(
+                pos2(center.x, picture.bottom() - galley.size().y / 2.0 - 16.0),
                 galley.size() + vec2(12.0, 6.0),
             );
             ui.painter()
@@ -4600,23 +4949,36 @@ fn video(
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
-    } else if response
+    }
+    if response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
-        match &media.path {
-            Some(path) => actions.push(Action::OpenFile(path.clone())),
-            None if !matches!(media.state, MediaState::Downloading) => {
-                actions.push(Action::Download {
-                    card: None,
-                    chat: view.chat.id.clone(),
-                    message: message.id.clone(),
-                })
-            }
-            None => {}
-        }
+        video_clicked(view, message, media, false, auto, actions);
     }
-    size.x
+    NOTE_SIDE
+}
+
+/// Paints a texture into `rect` with rounded corners; a radius of half the
+/// side makes a circle.
+fn paint_texture(ui: &egui::Ui, rect: Rect, texture: egui::TextureId, uv: Rect, radius: f32) {
+    ui.painter().add(
+        egui::epaint::RectShape::filled(
+            rect,
+            CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8),
+            Color32::WHITE,
+        )
+        .with_texture(texture, uv),
+    );
+}
+
+/// The largest rect with the proportions of `size` centred in `rect`.
+fn fit_within(size: Vec2, rect: Rect) -> Rect {
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return rect;
+    }
+    let scale = (rect.width() / size.x).min(rect.height() / size.y);
+    Rect::from_center_size(rect.center(), size * scale)
 }
 
 #[allow(clippy::too_many_arguments)]

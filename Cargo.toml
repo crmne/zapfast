@@ -118,6 +118,9 @@ notify = "8.2"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 # Linux status-notifier tray item over D-Bus.
 ksni = { version = "0.3", features = ["blocking"] }
+# Pauses MPRIS media players while recording or playing voice messages.
+# Already in the tree through notify-rust and ksni.
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 # Reads the time locale's clock format.
 libc = "0.2"
 # Asks the Wayland compositor whether it reports hidden windows as suspended
@@ -142,6 +145,9 @@ windows-native-keyring-store = { version = "1.1", default-features = false }
 winrt-notification = { package = "tauri-winrt-notification", version = "0.7.3" }
 # Windows tray-thread message loop.
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
+# Pauses other apps' media through the system media transport controls while
+# recording or playing voice messages. The same version cpal already uses.
+windows = { version = "0.62", features = ["Media_Control", "Foundation_Collections"] }
 
 # The icon and version information Windows shows for the executable.
 [target.'cfg(windows)'.build-dependencies]

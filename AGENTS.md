@@ -110,6 +110,15 @@ protocol. These notes are for coding agents and new contributors.
   optional and only adds the SIMD paths (the AUR recipes leave it out,
   the build works without it). Frames become textures on the interface
   thread and are dropped when unseen.
+- `src/video.rs` plays other videos inside their message, one at a time,
+  with the same `mp4` and `openh264` pieces: a thread decodes from the
+  keyframe before the start (openh264 must not flush after each packet or
+  B-frames stop it) and streams scaled frames with presentation times; the
+  interface thread shows the due frame in one texture. rodio's symphonia
+  decodes the AAC track and its position steers the clock. Non-H.264 files go
+  to the system player. `Action::PlayVideo/SeekVideo/ToggleVideoSound` drive
+  it; leaving the chat stops it and an unseen video pauses. Round video
+  messages (PTV) are `Content::Video { note: true }` and draw as circles.
 - Message bodies paint through `markup::paint_selectable` and single lines
   through `widgets::selectable_rich_text`: both hand the galley to
   `egui::text_selection::LabelSelectionState` (which paints it) and only

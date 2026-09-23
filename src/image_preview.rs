@@ -85,6 +85,9 @@ pub struct PreviewState {
     path: PathBuf,
     zoom: f32,
     fit: bool,
+    /// Scale the fitted image is drawn at, so zooming starts from what is
+    /// on screen rather than from the original pixels.
+    fit_scale: f32,
 }
 
 impl PreviewState {
@@ -97,6 +100,7 @@ impl PreviewState {
             path,
             zoom: 1.0,
             fit: true,
+            fit_scale: 1.0,
         }
     }
 
@@ -112,18 +116,36 @@ impl PreviewState {
         self.fit
     }
 
+    /// The scale on screen: the fitted scale while fitting, else the zoom.
+    pub fn scale(&self) -> f32 {
+        if self.fit { self.fit_scale } else { self.zoom }
+    }
+
+    /// Records the scale the view fitted the image at.
+    pub fn set_fit_scale(&mut self, scale: f32) {
+        if scale.is_finite() && scale > 0.0 {
+            self.fit_scale = scale;
+        }
+    }
+
     pub fn zoom_in(&mut self) {
+        self.zoom = (self.scale() * Self::ZOOM_STEP).min(Self::MAX_ZOOM);
         self.fit = false;
-        self.zoom = (self.zoom * Self::ZOOM_STEP).min(Self::MAX_ZOOM);
     }
 
     pub fn zoom_out(&mut self) {
+        self.zoom = (self.scale() / Self::ZOOM_STEP).max(Self::MIN_ZOOM);
         self.fit = false;
-        self.zoom = (self.zoom / Self::ZOOM_STEP).max(Self::MIN_ZOOM);
     }
 
     pub fn fit(&mut self) {
         self.fit = true;
+        self.zoom = 1.0;
+    }
+
+    /// Shows the original pixels at 100%.
+    pub fn actual_size(&mut self) {
+        self.fit = false;
         self.zoom = 1.0;
     }
 }
@@ -132,6 +154,20 @@ impl PreviewState {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn zooming_from_fit_starts_at_the_fitted_scale() {
+        let mut preview = PreviewState::new(PathBuf::from("photo.png"));
+        preview.set_fit_scale(0.4);
+        preview.zoom_in();
+        assert!(!preview.is_fit());
+        assert!((preview.zoom() - 0.5).abs() < 1e-6);
+        preview.actual_size();
+        assert_eq!(preview.zoom(), 1.0);
+        preview.fit();
+        preview.zoom_out();
+        assert!((preview.zoom() - 0.32).abs() < 1e-6);
+    }
 
     #[test]
     fn rendered_supported_images_route_to_the_preview() {

@@ -7,6 +7,7 @@ pub(crate) mod focus;
 pub mod image_preview;
 pub mod keys;
 pub mod login;
+pub mod message_info;
 pub mod picker;
 pub mod polls;
 pub mod settings;
