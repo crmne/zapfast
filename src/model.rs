@@ -662,6 +662,18 @@ pub enum PickerTab {
     Stickers,
 }
 
+/// How the chat list is drawn. Hiding it can also just collapse it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SidebarDisplayMode {
+    /// The full list: names, previews, timestamps.
+    #[default]
+    Expanded,
+    /// Avatars and unread badges only, in a narrow column.
+    CollapsedIconsOnly,
+    /// Nothing at all.
+    Hidden,
+}
+
 /// Imported sticker pack stored as a named WebP directory.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StickerPack {
@@ -995,10 +1007,13 @@ pub enum Action {
     /// Toggles a picker tab.
     TogglePicker(PickerTab),
     ClosePicker,
-    /// Opens the full emoji picker to react to a message.
+    /// Opens the full emoji picker to react to a message. `beside_menu` keeps
+    /// the message's context menu open next to it, as when the picker comes
+    /// from the menu's "+"; the hover button opens the picker alone.
     OpenReactionPicker {
         chat: ChatId,
         message: String,
+        beside_menu: bool,
     },
     /// Inserts an emoji at the composer cursor.
     InsertEmoji(String),

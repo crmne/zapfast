@@ -55,8 +55,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # (upstream #1365, #1374 and #1375). Selected features provide Tokio transport, ureq media downloads,
 # and the SQLite device store. The window handles shutdown instead of `signal`.
 # Includes upstream Business pairing (#1440), LockChatUpdate and snapshot replay
-# (#1507). Device-store compatibility retains the legacy created_at column.
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "ae3cefd86065872a577bbd0ad5ee21b60c86c616", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
+# (#1507), the viewer's channel mute state (#1537), favorite and recent sticker
+# sync events (#1538), and boolean AB props (#1539). Device-store
+# compatibility retains the legacy created_at column.
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbf3568167b2ca76c0737543966400785fc9ca1c", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 # Opens the WhatsApp WebSocket through a proxy. Both crates are already
 # included through the Tokio transport at these versions.
@@ -82,6 +84,8 @@ jiff = "0.2"
 unicode-segmentation = "1"
 # Unicode bidi properties; already included through URL/IDNA handling.
 icu_properties = "2.3"
+# Unicode Bidirectional Algorithm for mixed Hebrew, Arabic, and Latin text.
+unicode-bidi = "0.3.18"
 # Canonical decomposition for accent-insensitive chat/contact search.
 icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
 # Opens downloaded attachments in their default desktop apps.
@@ -113,14 +117,35 @@ tr = { version = "0.1.11", default-features = false }
 # Detects the user's system locale across platforms, for the interface language.
 sys-locale = "0.3"
 
+[patch.crates-io]
+# Right-to-left shaping and glyph clusters from crmne/zapfast#144, on top of
+# egui 0.36.1. Every egui crate comes from the same revision so they share one
+# emath and epaint. Drop this once egui releases bidirectional text support.
+ecolor = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+eframe = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui-wgpu = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui-winit = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui_extras = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui_glow = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+emath = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+epaint = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+# winit 0.30.13 plus Wayland `Occluded` events for the xdg-shell suspended
+# state, so a hidden window stops painting instead of blocking on vsync.
+# Shared with Spotifast and proposed upstream as rust-windowing/winit#4709;
+# drop the fork when a winit release includes it.
+winit = { git = "https://github.com/crmne/winit", rev = "c8df61a52b8b563e1bb65e0f1d8630289d1c1bd6" }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 notify = "8.2"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 # Linux status-notifier tray item over D-Bus.
 ksni = { version = "0.3", features = ["blocking"] }
-# Pauses MPRIS media players while recording or playing voice messages.
+# Pauses MPRIS media players while recording or playing voice messages, and
+# emits the Unity Launcher API signal launchers show as a taskbar badge.
 # Already in the tree through notify-rust and ksni.
-zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+zbus = { version = "5.19", default-features = false, features = ["blocking-api", "tokio"] }
 # Reads the time locale's clock format.
 libc = "0.2"
 # Asks the Wayland compositor whether it reports hidden windows as suspended
@@ -178,10 +203,3 @@ opt-level = 2
 # plural expressions to Rust. Ordinary builds do not need gettext tools.
 include-po = "0.2"
 polib = "0.3"
-
-[patch.crates-io]
-# winit 0.30.13 plus Wayland `Occluded` events for the xdg-shell suspended
-# state, so a hidden window stops painting instead of blocking on vsync.
-# Shared with Spotifast and proposed upstream as rust-windowing/winit#4709;
-# drop the fork when a winit release includes it.
-winit = { git = "https://github.com/crmne/winit", rev = "c8df61a52b8b563e1bb65e0f1d8630289d1c1bd6" }

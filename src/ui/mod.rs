@@ -18,7 +18,7 @@ use egui::{Align2, CornerRadius, Frame, Margin, Stroke, vec2};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
-use crate::model::{Action, Page, ToastKind};
+use crate::model::{Action, Page, SidebarDisplayMode, ToastKind};
 use crate::theme::{self, Icon};
 use focus::{Stop, TabStop};
 
@@ -54,8 +54,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if !macos {
         banner(app, ui);
     }
-    if app.sidebar_visible {
-        chats::show(app, ui);
+    match app.sidebar_mode() {
+        SidebarDisplayMode::Expanded => chats::show(app, ui),
+        SidebarDisplayMode::CollapsedIconsOnly => chats::compact_show(app, ui),
+        SidebarDisplayMode::Hidden => {}
     }
     egui::CentralPanel::default()
         .frame(central_frame(app))
@@ -494,7 +496,7 @@ pub fn titlebar_drag(ui: &mut egui::Ui, rect: egui::Rect) {
 
 /// Header for pages without a conversation toolbar and with the sidebar hidden.
 pub fn standalone_header(app: &mut App, ui: &mut egui::Ui) {
-    if !theme::macos_chrome(ui.ctx()) || app.sidebar_visible {
+    if !theme::macos_chrome(ui.ctx()) || app.sidebar_mode() != SidebarDisplayMode::Hidden {
         return;
     }
     let palette = app.palette;

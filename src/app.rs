@@ -13,7 +13,7 @@ use crate::i18n::Locale;
 use crate::image_preview::PreviewState;
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
-    MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
+    MediaState, Message, Page, PickerTab, SidebarDisplayMode, StickerPack, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
@@ -252,6 +252,9 @@ pub struct App {
     pub reaction_target: Option<(ChatId, String)>,
     /// Control that opened the reaction picker.
     pub reaction_anchor: Option<egui::Rect>,
+    /// The reaction picker came from a message's context menu, which stays
+    /// open beside it.
+    pub reaction_beside_menu: bool,
     /// Demo/test: keep this message's context menu open.
     pub open_message_menu: Option<String>,
     /// Demo/test: keep this chat row's context menu open.
@@ -367,6 +370,9 @@ pub struct App {
     /// Chat ids from clicked notifications.
     notification_opens: std::sync::Arc<std::sync::Mutex<Vec<ChatId>>>,
     notifications: crate::notify::Notifications,
+    /// Unread count on the taskbar icon, where the desktop reads it. `None`
+    /// for demo and test runs, which must not touch the real taskbar.
+    badge: Option<crate::notify::Badge>,
 }
 
 /// Attachment pending in the composer.
@@ -415,6 +421,7 @@ impl App {
         let backend = Backend::spawn(dirs.clone(), waker.clone());
         let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
         app.pauses_media = true;
+        app.badge = Some(Default::default());
         app.custom_themes.enable_desktop_themes();
         app.load_custom_themes();
         if options.tray {
@@ -530,6 +537,7 @@ impl App {
             picker_focus: false,
             reaction_target: None,
             reaction_anchor: None,
+            reaction_beside_menu: false,
             open_message_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_chat_menu: None,
@@ -605,6 +613,7 @@ impl App {
             control_commands: None,
             notification_opens: Default::default(),
             notifications: Default::default(),
+            badge: None,
         };
         // A hand-edited speed snaps to a supported one, so a speed control
         // always shows the speed that plays.
@@ -772,6 +781,19 @@ impl App {
 
     pub fn is_connected(&self) -> bool {
         self.link.is_connected()
+    }
+
+    /// How the chat list is drawn right now. Hidden chats either leave the
+    /// window entirely or collapse to an icon column, depending on settings.
+    pub fn sidebar_mode(&self) -> SidebarDisplayMode {
+        if self.sidebar_visible {
+            return SidebarDisplayMode::Expanded;
+        }
+        if self.settings.collapse_chat_list {
+            SidebarDisplayMode::CollapsedIconsOnly
+        } else {
+            SidebarDisplayMode::Hidden
+        }
     }
 
     /// Whether the device has linked data, including while offline.
@@ -2999,14 +3021,26 @@ impl App {
                     self.refocus_composer(ctx);
                 }
             }
-            Action::OpenReactionPicker { chat, message } => {
+            Action::OpenReactionPicker {
+                chat,
+                message,
+                beside_menu,
+            } => {
                 self.focus_composer = false;
                 self.emoji_start = None;
                 self.mention_start = None;
                 self.picker = None;
                 let id = crate::ui::conversation::bubble_id(&chat, &message);
+                // Anchor to the menu when it stays open, else to the hover
+                // button that opened the picker.
+                let anchor = if beside_menu {
+                    "menu-rect"
+                } else {
+                    "react-rect"
+                };
                 self.reaction_anchor =
-                    ctx.data(|data| data.get_temp::<egui::Rect>(id.with("menu-rect")));
+                    ctx.data(|data| data.get_temp::<egui::Rect>(id.with(anchor)));
+                self.reaction_beside_menu = beside_menu;
                 self.reaction_target = Some((chat, message));
                 self.picker_search.clear();
                 self.picker_focus = true;
@@ -3259,7 +3293,14 @@ impl App {
                     to_phone: self.settings.save_contacts_to_phone,
                 });
             }
-            Action::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
+            Action::ToggleSidebar => match self.sidebar_mode() {
+                // Hiding is the only step out of the full list. With the
+                // preference on, it collapses to avatars instead of leaving.
+                SidebarDisplayMode::Expanded => self.sidebar_visible = false,
+                SidebarDisplayMode::CollapsedIconsOnly | SidebarDisplayMode::Hidden => {
+                    self.sidebar_visible = true;
+                }
+            },
             Action::SetChatFilter(filter) => {
                 if self.locked_folder {
                     self.close_locked_folder();
@@ -3682,6 +3723,16 @@ impl App {
         self.apply_actions(ctx);
         self.hold_media();
         self.follow_receipts();
+        self.sync_badge();
+    }
+
+    /// Mirrors the unread total onto the taskbar icon, where the desktop
+    /// reads it. The badge ignores repeats, so calling this each frame is cheap.
+    fn sync_badge(&mut self) {
+        let count = self.unread_total();
+        if let Some(badge) = &mut self.badge {
+            badge.set(count);
+        }
     }
 
     /// Pauses other apps' music while recording or playing audio, as the
@@ -4237,6 +4288,41 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    /// Demo and test runs share the machine with a linked ZapFast, whose real
+    /// taskbar badge they must not overwrite.
+    #[test]
+    fn demo_and_test_runs_do_not_publish_a_taskbar_badge() {
+        assert!(app().badge.is_none());
+    }
+
+    #[test]
+    fn hiding_the_chat_list_collapses_it_only_when_asked() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        assert_eq!(app.sidebar_mode(), SidebarDisplayMode::Expanded);
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(
+            app.sidebar_mode(),
+            SidebarDisplayMode::Hidden,
+            "without the preference, hiding removes the list"
+        );
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(app.sidebar_mode(), SidebarDisplayMode::Expanded);
+        app.settings.collapse_chat_list = true;
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(
+            app.sidebar_mode(),
+            SidebarDisplayMode::CollapsedIconsOnly,
+            "the same button collapses the list instead"
+        );
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(
+            app.sidebar_mode(),
+            SidebarDisplayMode::Expanded,
+            "and brings the full list back"
+        );
     }
 
     #[test]

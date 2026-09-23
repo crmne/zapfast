@@ -63,10 +63,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   everything up to the one you click, then **Forward…** sends them together,
   in their original order, or Escape cancels.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
-  mentions, and link previews are supported. Links are clickable. Hebrew and
-  Arabic RTL paragraphs keep logical word order by reordering font runs,
-  including shaped Arabic ligatures in messages and reply previews. This
-  is not a full Unicode Bidirectional Algorithm. Emoji use the bundled Noto
+  mentions, and link previews are supported. Links are clickable. Hebrew,
+  Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so
+  numbers, punctuation, and embedded words stay in reading order and brackets
+  face the right way. As in WhatsApp, a message whose first strong character is
+  Hebrew or Arabic is aligned to the right, with its time on its own line when
+  the text has more than one. Carets and copied text stay on the logical message.
+  Emoji use the bundled Noto
   Color Emoji on macOS and Windows. On Linux, ZapFast prefers an installed
   Noto Color Emoji and falls back to the bundled copy. Emoji-only messages
   are larger.
@@ -242,6 +245,12 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   groups), the system's notification sound, no sound, or an audio file (WAV,
   MP3, or OGG Vorbis) that ZapFast plays itself. **Notification sound** in a chat's right-click
   menu gives that chat its own sound, stored in the encrypted archive.
+- **Unread count on the taskbar.** On Linux, ZapFast publishes the unread total
+  through the Unity Launcher API, so KDE Plasma shows it as a badge on the
+  taskbar icon, with **Show badges** enabled in the Task Manager settings. Other
+  launchers that implement the same API, such as GNOME's Dash to Dock or Dash to
+  Panel and the Plank dock, show it too. Clearing chats lowers the count, and
+  zero removes it.
 - **Update notices.** ZapFast checks GitHub once a day and shows a download
   link when a newer release is available. You can turn this off in Settings.
 - **Themes.** Light, dark, follow the system, or a local JSON palette. Native
@@ -256,10 +265,16 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   matches), `Alt+↑/↓` switches chats and
   keeps the active chat visible in the list, `↑` in an empty input edits your
   previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
-  message input, `Ctrl+N` opens New chat, and `?` (outside text fields) or
+  message input, `Ctrl+N` opens New chat, `Ctrl+B` hides or shows the chat
+  list, and `?` (outside text fields) or
   `Ctrl+/` opens Keyboard shortcuts (use Command instead of Ctrl on macOS).
   The × at the left of the shortcut hints
   hides the bar; restore it with **Show shortcut hints** in Settings.
+- **Collapsed chat list.** Turn on **Collapse the chat list to icons** in
+  Settings and hiding the chat list leaves a narrow column of avatars instead.
+  It shows the same chats as the full list under the current filter, with
+  unread badges (dimmed for muted chats); hovering names a chat, clicking opens
+  it, and `Ctrl+B` brings the full list back.
 - **Local storage.** Messages, contacts and sticker metadata are stored in a
   SQLCipher-encrypted archive, unlocked automatically through your OS keyring.
   Existing plaintext archives are migrated on first use. Attachments remain
@@ -631,6 +646,8 @@ Noto emoji font; demo GIF search uses these local fixtures. The tour makes no
 sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
+Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
+English lines.
 Use `--demo-page chat-menu` to preview the compact chat context menu, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
 `--demo-page video` shows a video and round video messages, and

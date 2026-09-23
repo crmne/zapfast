@@ -170,6 +170,9 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     let title = app.chat_title(chat);
+    // The collapsed list has its own show button and clears the traffic
+    // lights itself; only a fully hidden list leaves both to the header.
+    let sidebar_hidden = app.sidebar_mode() == crate::model::SidebarDisplayMode::Hidden;
     egui::Panel::top("chat-header")
         .show_separator_line(false)
         .frame(
@@ -180,7 +183,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         .show(ui, |ui| {
             if theme::macos_chrome(ui.ctx()) {
                 let mut drag = ui.max_rect();
-                if !app.sidebar_visible {
+                if sidebar_hidden {
                     drag.min.x += theme::traffic_light_inset(ui.ctx());
                 }
                 super::titlebar_drag(ui, drag);
@@ -188,10 +191,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             ui.horizontal(|ui| {
                 // Give both rows a fixed height so their contents align.
                 ui.set_min_height(HEADER_ROW);
-                if !app.sidebar_visible && theme::macos_chrome(ui.ctx()) {
+                if sidebar_hidden && theme::macos_chrome(ui.ctx()) {
                     ui.add_space((theme::traffic_light_inset(ui.ctx()) - 14.0).max(0.0));
                 }
-                if !app.sidebar_visible
+                if sidebar_hidden
                     && theme::icon_button(
                         ui,
                         Icon::PanelLeft,
@@ -497,6 +500,8 @@ fn emoji_suggestion(emoji: &'static emojis::Emoji) -> EmojiSuggestion {
     }
 }
 
+/// Completions for `:query`. `emojis::iter` yields each emoji once, and a
+/// skin-tone-capable one such as 👍 reports `Some(SkinTone::Default)`.
 fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
     const LIMIT: usize = 6;
     let query = query.to_lowercase();
@@ -507,7 +512,7 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
             .recent_emoji
             .iter()
             .filter_map(|emoji| emojis::get(emoji))
-            .chain(emojis::iter().filter(|emoji| emoji.skin_tone().is_none()))
+            .chain(emojis::iter())
             .filter(|emoji| seen.insert(emoji.as_str()))
             .take(LIMIT)
             .map(emoji_suggestion)
@@ -517,7 +522,6 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
 
     let mut found: Vec<_> = emojis::iter()
         .enumerate()
-        .filter(|(_, emoji)| emoji.skin_tone().is_none())
         .filter_map(|(order, emoji)| {
             emoji_match_score(emoji, &query).map(|score| (score, order, emoji))
         })
@@ -965,24 +969,25 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             .min_scrolled_height(0.0)
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
-                                // Replace emoji with placeholders in the galley, then
-                                // paint their color bitmaps over the field.
+                                // Keep emoji in the buffer so character offsets match, then
+                                // paint their color bitmaps over the transparent glyphs.
                                 let mut clusters: Vec<(usize, usize, String)> = Vec::new();
                                 let format = egui::TextFormat::simple(
                                     theme::regular(BODY_SIZE),
                                     palette.text,
                                 );
+                                let composer_rtl = crate::bidi::base_rtl(&app.composer);
                                 let mut layouter = |ui: &egui::Ui,
                                                     text: &dyn egui::TextBuffer,
                                                     wrap: f32| {
-                                    let (mut job, found) =
-                                        crate::emoji::editor_job(text.as_str(), &format);
-                                    job.wrap.max_width = wrap;
+                                    let (galley, found) = crate::bidi::layout_editor(
+                                        ui,
+                                        text.as_str(),
+                                        &format,
+                                        wrap,
+                                        true,
+                                    );
                                     clusters = found;
-                                    let mut galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-                                    crate::bidi::reorder_rtl_runs(std::sync::Arc::make_mut(
-                                        &mut galley,
-                                    ));
                                     galley
                                 };
                                 let output = egui::TextEdit::multiline(&mut app.composer)
@@ -1004,6 +1009,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .text_color(palette.text)
                                     .desired_rows(1)
                                     .desired_width(f32::INFINITY)
+                                    .horizontal_align(if composer_rtl {
+                                        Align::RIGHT
+                                    } else {
+                                        Align::LEFT
+                                    })
                                     .return_key(if enter_sends {
                                         Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
                                     } else {
@@ -1012,21 +1022,18 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .layouter(&mut layouter)
                                     .show(ui);
                                 for (start, length, cluster) in &clusters {
-                                    let left = output
-                                        .galley
-                                        .pos_from_cursor(egui::text::CCursor::new(*start));
-                                    let right = output.galley.pos_from_cursor(
-                                        egui::text::CCursor::new(start + length),
-                                    );
+                                    let Some(bounds) = crate::bidi::char_bounds(
+                                        &output.galley,
+                                        *start,
+                                        start + length,
+                                    ) else {
+                                        continue;
+                                    };
                                     // Skip emoji clusters split across rows.
-                                    if (left.top() - right.top()).abs() > 1.0 {
+                                    if bounds.height() > line_height * 1.5 {
                                         continue;
                                     }
-                                    let rect = Rect::from_min_max(
-                                        left.left_top(),
-                                        egui::pos2(right.left(), left.bottom()),
-                                    )
-                                    .translate(output.galley_pos.to_vec2());
+                                    let rect = bounds.translate(output.galley_pos.to_vec2());
                                     crate::emoji::paint_cluster(ui, cluster, rect);
                                 }
                                 let response = output.response.response.clone().tab_stop(Stop::Composer);
@@ -1285,6 +1292,8 @@ struct View<'a> {
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
     reaction: Option<&'a str>,
+    /// The reaction picker was opened from the message's context menu.
+    reaction_menu: bool,
     reaction_emoji: &'a [(String, u32)],
     keyboard_navigation: &'a std::cell::Cell<bool>,
     /// Resolves a name with the message's stored name as fallback.
@@ -1344,6 +1353,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             .as_ref()
             .filter(|(id, _)| id == &chat.id)
             .map(|(_, message)| message.as_str()),
+        reaction_menu: app.reaction_beside_menu,
         reaction_emoji: &app.settings.reaction_emoji,
         keyboard_navigation: &keyboard_navigation,
         names_or: &names_or,
@@ -1770,6 +1780,7 @@ fn open_reaction_picker_action(chat: &str, message: &str) -> Action {
     Action::OpenReactionPicker {
         chat: chat.to_owned(),
         message: message.to_owned(),
+        beside_menu: false,
     }
 }
 
@@ -2435,7 +2446,9 @@ fn bubble_frame(
             );
         }
     }
-    let reacting = view.reaction == Some(message.id.as_str());
+    // The context menu stays open beside the picker only when the picker came
+    // from the menu itself.
+    let reacting = view.reaction_menu && view.reaction == Some(message.id.as_str());
     // Inner widgets own their clicks, so this fires only on the bubble's padding
     // and footer. Double-click on the body keeps selecting the word.
     reply_on_double_click(&bubble, message, actions);
@@ -2983,6 +2996,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 actions.push(Action::OpenReactionPicker {
                     chat: chat.clone(),
                     message: message.id.clone(),
+                    beside_menu: true,
                 });
             }
         },
@@ -4052,9 +4066,13 @@ fn rich_body(
         mention: palette.accent,
     };
     let laid = markup::layout(ui, text, &mentions, &style, width);
-    let size = laid.galley.size();
+    let rtl = crate::bidi::message_rtl(text);
     let last_row = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
-    let inline = reserve.filter(|reserve| last_row + 8.0 + reserve <= width);
+    // Right-aligned text ends at the block's edge. Like official WhatsApp,
+    // only a single line keeps the time beside it; otherwise it gets a row.
+    let single = laid.galley.rows.len() == 1 && span.is_none();
+    let inline = reserve.filter(|reserve| last_row + 8.0 + reserve <= width && (!rtl || single));
+    let size = laid.galley.size();
     let mut allocation = match inline {
         Some(reserve) => vec2(size.x.max(last_row + 8.0 + reserve), size.y),
         None => size,
@@ -4089,13 +4107,18 @@ fn rich_body(
             .ctx()
             .plugin_opt::<egui::text_selection::LabelSelectionState>()
             .is_some_and(|plugin| plugin.lock().has_selection());
+    let origin = if rtl && inline.is_none() {
+        pos2(rect.right() - size.x, rect.top())
+    } else {
+        rect.min
+    };
     if visible || selection_alive {
-        markup::paint_selectable(ui, &laid, &response, rect.min, palette.text, visible);
+        markup::paint_selectable(ui, &laid, &response, origin, palette.text, visible);
     }
     if !laid.links.is_empty()
         && let Some(pos) = response.hover_pos()
     {
-        let cursor = laid.galley.cursor_from_pos(pos - rect.min);
+        let cursor = laid.galley.cursor_from_pos(pos - origin);
         if let Some(url) = laid.link_at(cursor.index.0) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             if response.clicked() {
@@ -5503,7 +5526,7 @@ mod tests {
         let action = open_reaction_picker_action("chat@example", "message-42");
         assert!(matches!(
             action,
-            Action::OpenReactionPicker { chat, message }
+            Action::OpenReactionPicker { chat, message, beside_menu: false }
                 if chat == "chat@example" && message == "message-42"
         ));
     }
@@ -5654,6 +5677,22 @@ mod tests {
         assert_eq!(emoji_match_score(grinning, "grin"), Some(1));
         assert_eq!(emoji_match_score(grinning, "face"), Some(3));
         assert_eq!(emoji_match_score(grinning, "rocket"), None);
+    }
+
+    #[test]
+    fn completion_offers_skin_tone_capable_emoji() {
+        let directory = tempfile::tempdir().unwrap();
+        let (app, _events) = App::headless(
+            crate::paths::AppDirs::under(directory.path()),
+            crate::settings::Settings::default(),
+        );
+        let offers = |query: &str, emoji: &str| {
+            emoji_candidates(&app, query)
+                .iter()
+                .any(|suggestion| suggestion.emoji == emoji)
+        };
+        assert!(offers("pregnant", "🤰"));
+        assert!(offers("thumbsup", "👍"));
     }
 }
 

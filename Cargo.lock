@@ -240,7 +240,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -251,7 +251,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1405,7 +1405,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1495,8 +1495,7 @@ dependencies = [
 [[package]]
 name = "ecolor"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc883f505d446814c0226bef4b64564b9adb9966fc00c88c57ce6d827dd152d6"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 dependencies = [
  "bytemuck",
  "emath",
@@ -1506,8 +1505,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2afc0cbcdb6896b7bfb1dbbebaf7b9af9635ff38fd01e89bdd0174c1717b1857"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1542,8 +1540,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c977ac91dfaa651633fd9722e4ce9ccb32cda4c748b89a5cb57e504036e37c13"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 dependencies = [
  "accesskit",
  "ahash",
@@ -1564,8 +1561,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fc362cc6bc8c1d7169c9cb0e7741ff1e03063681373d6e55cc3b25fd21213f3"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1584,8 +1580,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9327fc8edef2c57db9bcbcacc82c8a4b1e8cc64cd41a67db4419dcf643d88c83"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 dependencies = [
  "accesskit_winit",
  "arboard",
@@ -1607,8 +1602,7 @@ dependencies = [
 [[package]]
 name = "egui_extras"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e651e08ddf6bb8bfd964ad70e33bc721c093f2b77ab59580e7140c008dab68c"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 dependencies = [
  "ahash",
  "egui",
@@ -1624,8 +1618,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69b65e45f8d8d7c6d848b3ec41f642b54ad828033f1511d4b4c9adc09040166a"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1644,8 +1637,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 [[package]]
 name = "emath"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dce03cf1604f74515830012c29991beb0b58f69e4e43f5afe22fa7afed65ccd5"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 dependencies = [
  "bytemuck",
  "serde",
@@ -1753,8 +1745,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11863a6b2b7823010c1090ddf4706947bdda46766742def0673195cbf7ff4a73"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1771,6 +1762,7 @@ dependencies = [
  "serde",
  "skrifa",
  "smallvec",
+ "unicode-bidi",
  "unicode-general-category",
  "unicode-segmentation",
  "vello_cpu",
@@ -1779,8 +1771,7 @@ dependencies = [
 [[package]]
 name = "epaint_default_fonts"
 version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18dee69613aac468922cf28a32025eb7d7ed6985b61f73245848e58f37876c98"
+source = "git+https://github.com/crmne/egui?rev=6147de7b09f255190121e8166cbb083d88cabfb2#6147de7b09f255190121e8166cbb083d88cabfb2"
 
 [[package]]
 name = "equivalent"
@@ -1795,7 +1786,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3243,7 +3234,7 @@ dependencies = [
  "once_cell",
  "png 0.18.1",
  "thiserror 2.0.20",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3961,7 +3952,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -4401,7 +4392,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4780,7 +4771,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5214,7 +5205,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5486,10 +5477,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5864,7 +5855,7 @@ dependencies = [
  "once_cell",
  "png 0.18.1",
  "thiserror 2.0.20",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5913,7 +5904,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5921,6 +5912,12 @@ name = "unicase"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
+
+[[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
 
 [[package]]
 name = "unicode-general-category"
@@ -6097,7 +6094,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "wacore"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "aes",
  "anyhow",
@@ -6144,7 +6141,7 @@ dependencies = [
 [[package]]
 name = "wacore-appstate"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "anyhow",
  "buffa",
@@ -6165,7 +6162,7 @@ dependencies = [
 [[package]]
 name = "wacore-binary"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "bytes",
  "compact_str",
@@ -6182,7 +6179,7 @@ dependencies = [
 [[package]]
 name = "wacore-derive"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6192,7 +6189,7 @@ dependencies = [
 [[package]]
 name = "wacore-libsignal"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "aes",
  "async-lock",
@@ -6223,7 +6220,7 @@ dependencies = [
 [[package]]
 name = "wacore-noise"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "anyhow",
  "buffa",
@@ -6260,7 +6257,7 @@ dependencies = [
 [[package]]
 name = "waproto"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "buffa",
  "buffa-build",
@@ -6659,7 +6656,7 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -6674,6 +6671,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hashbrown 0.17.1",
  "hex",
+ "hmac",
  "itoa",
  "log",
  "portable-atomic",
@@ -6698,7 +6696,7 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust-sqlite-storage"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "async-trait",
  "buffa",
@@ -6720,7 +6718,7 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust-tokio-transport"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -6740,7 +6738,7 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust-ureq-http-client"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=ae3cefd86065872a577bbd0ad5ee21b60c86c616#ae3cefd86065872a577bbd0ad5ee21b60c86c616"
+source = "git+https://github.com/oxidezap/whatsapp-rust?rev=cbf3568167b2ca76c0737543966400785fc9ca1c#cbf3568167b2ca76c0737543966400785fc9ca1c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6781,7 +6779,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7513,6 +7511,7 @@ dependencies = [
  "tokio-websockets",
  "tr",
  "tray-icon",
+ "unicode-bidi",
  "unicode-segmentation",
  "ureq",
  "wayland-client",

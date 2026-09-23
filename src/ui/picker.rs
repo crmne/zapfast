@@ -357,11 +357,14 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
     };
     let palette = app.palette;
     let screen = ctx.content_rect();
-    let menu = ctx
-        .data(|data| {
+    let menu = if app.reaction_beside_menu {
+        ctx.data(|data| {
             data.get_temp::<Rect>(conversation::bubble_id(&chat, &message).with("menu-rect"))
         })
-        .or(app.reaction_anchor);
+        .or(app.reaction_anchor)
+    } else {
+        app.reaction_anchor
+    };
     let width = menu.map_or(WIDTH, |menu| {
         (screen.right() - menu.right() - 32.0).clamp(260.0, WIDTH)
     });

@@ -214,6 +214,17 @@ fn demo_waveform() -> Vec<u8> {
         .collect()
 }
 
+/// Synthetic mixed-direction lines for the `rtl-self` page, one message each.
+///
+/// They cover neutrals, numbers, brackets, embedded Latin, a repeated-letter
+/// word pair, bold, a link, emoji inside Hebrew and Arabic paragraphs, and
+/// Arabic lam ligatures in a line long enough to wrap.
+pub const RTL_SELF_CHAT: [&str; 3] = [
+    "בדיקת RTL בלבד\nסער + מירון = ❤️\nשלום ❤️ עולם\nשלום (test 123) עולם!\nשלום 12:34, מחיר 50₪.\nHello שלום עולם world ❤️\nمرحبا بالعالم ❤️ (123)\nשלום 👨‍👩‍👧‍👦 עולם",
+    "שלום!\nשלום 123\nHello שלום עולם end\nאב גד בא\nשלום (עולם)\nשלום *עולם* !\nשלום https://example.com עולם",
+    "إلى السطر التالي\nالله أكبر، لا بأس 🌙\nهذا نص عربي طويل يختبر ترتيب الأسطر عندما تلتف الكلمات داخل فقاعة رسالة ضيقة إلى السطر التالي",
+];
+
 fn message(chat: &str, id: &str, from_me: bool, timestamp: i64, content: Content) -> Message {
     Message {
         id: id.to_owned(),
@@ -1454,6 +1465,42 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
+            "rtl-self" => {
+                let now = crate::util::now();
+                let count = RTL_SELF_CHAT.len() as i64;
+                let messages: Vec<Message> = RTL_SELF_CHAT
+                    .iter()
+                    .enumerate()
+                    .map(|(index, text)| {
+                        let timestamp = now - (count - index as i64) * 60 * 5;
+                        let id = format!("rtl-self-{index}");
+                        message(ME, &id, true, timestamp, Content::text(*text))
+                    })
+                    .collect();
+                let mut chat = Chat::new(ME.into(), "You".into());
+                chat.last_activity = now;
+                chat.last = messages.last().map(|last| crate::model::LastMessage {
+                    from_me: true,
+                    sender: last.sender.clone(),
+                    sender_name: None,
+                    summary: last.summary(),
+                    status: last.status,
+                });
+                app.chats.insert(0, chat);
+                app.conversations.insert(
+                    ME.into(),
+                    Conversation {
+                        messages,
+                        complete: true,
+                        requested: true,
+                        phone_exhausted: true,
+                        ..Default::default()
+                    },
+                );
+                app.open_chat = Some(ME.into());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "settings" => app.page = Page::Settings,
             "wallpaper" => app.page = Page::Wallpaper,
             "omarchy" | "omarchy-light" => {
@@ -1716,6 +1763,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 );
             }
             "nosidebar" => app.sidebar_visible = false,
+            // The chat list collapsed to avatars with unread badges.
+            "rail" => {
+                app.settings.collapse_chat_list = true;
+                app.sidebar_visible = false;
+            }
             "search" => {
                 app.search = "do".into();
                 let mut hits = Vec::new();
@@ -1852,6 +1904,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "react-picker" => {
                 let chat = SAMPLES[0].id.to_owned();
                 app.reaction_target = Some((chat, "ada-link".into()));
+                app.reaction_beside_menu = true;
                 app.scroll_to_bottom = false;
                 app.scroll_anchor = Some("ada-link".into());
                 app.picker_focus = true;
@@ -1873,6 +1926,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "react-picker-empty" => {
                 let chat = SAMPLES[0].id.to_owned();
                 app.reaction_target = Some((chat, "ada-link".into()));
+                app.reaction_beside_menu = true;
                 app.scroll_to_bottom = false;
                 app.scroll_anchor = Some("ada-link".into());
                 app.picker_focus = true;
@@ -1975,6 +2029,131 @@ mod tests {
             });
             // Headless tests must apply font-atlas updates themselves.
             output.textures_delta.clear();
+        }
+    }
+
+    /// Paints the self-chat through the real bubble path and checks what reaches
+    /// the screen: every row in bidi order, brackets mirrored, the message
+    /// flush right, and the time on its own row at the bottom right.
+    #[test]
+    fn rtl_self_chat_bubbles_render_like_whatsapp() {
+        fn collect(
+            shape: &egui::Shape,
+            out: &mut Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)>,
+            images: &mut Vec<egui::Rect>,
+        ) {
+            match shape {
+                egui::Shape::Text(text) => out.push((text.pos, text.galley.clone())),
+                egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                    images.push(mesh.calc_bounds());
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, out, images);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut app = app();
+        apply_flags(&mut app, Some("rtl-self"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let mut texts = Vec::new();
+        let mut images = Vec::new();
+        for shape in &shapes {
+            collect(&shape.shape, &mut texts, &mut images);
+        }
+        let atlas = ctx.fonts(|fonts| fonts.image());
+        let clocks: Vec<String> = app.conversations[ME]
+            .messages
+            .iter()
+            .map(|message| crate::util::clock(message.timestamp))
+            .collect();
+        assert_ne!(clocks[0], clocks[1], "each bubble has its own time");
+        for (first_line, clock) in [
+            ("בדיקת RTL בלבד\n", &clocks[0]),
+            ("שלום!\n", &clocks[1]),
+            ("إلى السطر التالي\n", &clocks[2]),
+        ] {
+            let (pos, body) = texts
+                .iter()
+                .find(|(_, galley)| galley.text().starts_with(first_line))
+                .unwrap_or_else(|| panic!("painted body starting {first_line:?}"));
+            crate::bidi::assert_rows_follow_uba(body, &atlas);
+            crate::bidi::assert_right_aligned(body);
+            let body_right = body
+                .rows
+                .iter()
+                .flat_map(|placed| {
+                    placed
+                        .row
+                        .glyphs
+                        .iter()
+                        .map(move |glyph| pos.x + placed.pos.x + glyph.max_x())
+                })
+                .fold(f32::NEG_INFINITY, f32::max);
+            let body_bottom = pos.y + body.rows.last().expect("rows").rect().max.y;
+            let (time_pos, time) = texts
+                .iter()
+                .find(|(_, galley)| galley.text() == clock.as_str())
+                .unwrap_or_else(|| panic!("painted time {clock}"));
+            assert!(
+                time_pos.y >= body_bottom - 0.5,
+                "time at {} overlaps the last row ending at {body_bottom}",
+                time_pos.y
+            );
+            let gap = body_right - (time_pos.x + time.size().x);
+            assert!(
+                (0.0..40.0).contains(&gap),
+                "time should end beside the ticks at the right edge, {gap} short of it"
+            );
+            let body_rect = body
+                .rows
+                .iter()
+                .map(|placed| placed.rect().translate(pos.to_vec2()))
+                .reduce(|a, b| a.union(b))
+                .expect("rows");
+            // Only images inside the text are emoji; a wallpaper tile behind
+            // the bubble can have its centre there too.
+            let emoji: Vec<&egui::Rect> = images
+                .iter()
+                .filter(|image| body_rect.expand(1.0).contains_rect(**image))
+                .collect();
+            let placeholders = body.text().matches(crate::emoji::PLACEHOLDER).count();
+            if crate::emoji::available() {
+                assert_eq!(emoji.len(), placeholders, "one bitmap per emoji");
+            }
+            let row_height = body.rows[0].row.size.y;
+            for image in &emoji {
+                assert!(
+                    image.width().max(image.height()) >= row_height,
+                    "emoji {image:?} shrank below the row height {row_height}"
+                );
+            }
+            for placed in &body.rows {
+                for glyph in &placed.row.glyphs {
+                    if glyph.uv_rect.is_nothing()
+                        || glyph.chr.is_whitespace()
+                        || glyph.chr == crate::emoji::PLACEHOLDER
+                    {
+                        continue;
+                    }
+                    let ink = egui::Rect::from_min_size(
+                        *pos + placed.pos.to_vec2() + egui::vec2(glyph.pos.x, 0.0),
+                        egui::vec2(glyph.advance_width, placed.row.size.y),
+                    );
+                    for image in &emoji {
+                        assert!(
+                            !image.shrink(0.5).intersects(ink),
+                            "emoji at {image:?} overlaps {:?} at {ink:?}",
+                            glyph.chr
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -3009,6 +3188,7 @@ mod tests {
             "emoji-complete",
             "typers",
             "nosidebar",
+            "rail",
             "search",
             "staged",
             "compose-emoji",
@@ -3045,6 +3225,9 @@ mod tests {
                 "settings",
                 "settings,nosidebar",
                 "empty,nosidebar",
+                "rail",
+                "settings,rail",
+                "empty,rail",
                 "archived",
                 "offline",
                 "login",
@@ -3808,6 +3991,14 @@ mod tests {
             app.open_message_menu.is_none(),
             "the click opens the picker, not the context menu"
         );
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        assert!(
+            !egui::Popup::is_id_open(&ctx, id.with("popup")),
+            "the context menu stays closed beside a picker opened from hover"
+        );
+        assert!(app.reaction_target.is_some(), "the picker stays open");
         assert!(app.reply_to.is_none(), "the click does not start a reply");
     }
 
@@ -5510,7 +5701,7 @@ mod tests {
     #[test]
     fn main_tab_cycle_tracks_hidden_and_read_only_controls() {
         use crate::ui::focus::Stop;
-        for page in ["nosidebar", "empty", "channel", "search", "chat"] {
+        for page in ["nosidebar", "rail", "empty", "channel", "search", "chat"] {
             let mut app = app();
             apply_flags(&mut app, Some(page));
             let ctx = egui::Context::default();
@@ -5521,6 +5712,14 @@ mod tests {
             assert_eq!(
                 controls.iter().any(|(stop, _)| *stop == Stop::Composer),
                 !matches!(page, "empty" | "channel")
+            );
+            assert_eq!(
+                controls
+                    .iter()
+                    .filter(|(stop, _)| *stop == Stop::Sidebar)
+                    .count(),
+                1,
+                "{page}: one button hides or shows the list"
             );
             if page == "nosidebar" {
                 assert_eq!(
@@ -5713,6 +5912,58 @@ mod tests {
                 .any(|id| row(&ctx, id).is_some_and(|rect| rect == focused.rect));
         }
         assert!(reached_hidden, "Tab reached chats that were out of view");
+    }
+
+    #[test]
+    fn tab_scrolls_a_focused_collapsed_avatar_into_view() {
+        let mut app = app();
+        apply_flags(&mut app, Some("settings,rail"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let height = 300.0;
+        for _ in 0..3 {
+            frame_sized(&mut app, &ctx, height, Vec::new());
+        }
+        let avatar = |ctx: &egui::Context, id: &str| {
+            ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::compact_chat_id(id)))
+        };
+        let ids: Vec<String> = app.chats.iter().map(|chat| chat.id.clone()).collect();
+        let hidden: Vec<&String> = ids
+            .iter()
+            .filter(|id| avatar(&ctx, id).is_none_or(|rect| rect.top() >= height))
+            .collect();
+        assert!(
+            !hidden.is_empty(),
+            "the window is short enough to hide avatars"
+        );
+        let mut reached_hidden = false;
+        for _ in 0..40 {
+            frame_sized(&mut app, &ctx, height, tab());
+            for _ in 0..3 {
+                frame_sized(&mut app, &ctx, height, Vec::new());
+            }
+            let Some(focused) = ctx
+                .memory(|memory| memory.focused())
+                .and_then(|id| ctx.read_response(id))
+            else {
+                continue;
+            };
+            // Settings has its own scrolling; only the rail is under test.
+            if !ids
+                .iter()
+                .any(|id| avatar(&ctx, id).is_some_and(|rect| rect == focused.rect))
+            {
+                continue;
+            }
+            assert_eq!(
+                focused.interact_rect, focused.rect,
+                "the focused avatar is fully visible"
+            );
+            reached_hidden |= hidden
+                .iter()
+                .any(|id| avatar(&ctx, id).is_some_and(|rect| rect == focused.rect));
+        }
+        assert!(reached_hidden, "Tab reached avatars that were out of view");
     }
 
     /// Records the images the UI asks for, answering at once so a frame can be
