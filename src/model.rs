@@ -520,6 +520,18 @@ pub enum PickerTab {
     Stickers,
 }
 
+/// How the chat list is drawn. Hiding it can also just collapse it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SidebarDisplayMode {
+    /// The full list: names, previews, timestamps.
+    #[default]
+    Expanded,
+    /// Avatars and unread badges only, in a narrow column.
+    CollapsedIconsOnly,
+    /// Nothing at all.
+    Hidden,
+}
+
 /// Imported sticker pack stored as a named WebP directory.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StickerPack {

@@ -971,6 +971,133 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     response
 }
 
+/// Width of the chat list when it is collapsed to avatars.
+const COMPACT_WIDTH: f32 = 60.0;
+/// Height of one avatar cell in the collapsed list.
+const COMPACT_CELL: f32 = 52.0;
+/// Avatar size inside a collapsed cell.
+const COMPACT_AVATAR: f32 = 36.0;
+
+/// Where one avatar in the collapsed chat list was drawn.
+pub fn compact_chat_id(chat: &str) -> egui::Id {
+    egui::Id::new(("chat-rail", chat))
+}
+
+/// The chat list collapsed to avatars: the list is out of the way, but every
+/// chat is still one click away.
+pub fn compact_show(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let panel = egui::Panel::left("chats")
+        .resizable(false)
+        .exact_size(COMPACT_WIDTH)
+        .show_separator_line(false)
+        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
+    let response = panel.show(ui, |ui| {
+        let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            if theme::icon_button(
+                ui,
+                Icon::PanelLeft,
+                18.0,
+                palette.secondary,
+                palette.text,
+                &super::keys::label("Show the chat list (Ctrl+B)"),
+            )
+            .tab_stop(Stop::Sidebar)
+            .clicked()
+            {
+                app.actions.push(Action::ToggleSidebar);
+            }
+        });
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .id_salt("chat-rail")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for chat in &chats {
+                    compact_row(app, ui, chat);
+                }
+            });
+    });
+    // Separate the rail from the conversation, exactly as the full list does.
+    let rect = response.response.rect;
+    ui.painter().vline(
+        rect.right(),
+        rect.y_range(),
+        egui::Stroke::new(1.0, palette.outline),
+    );
+}
+
+/// One avatar in the collapsed chat list: a click opens the chat, hovering
+/// names it, and unread chats carry the same badge as a full row.
+fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
+    let palette = app.palette;
+    let title = app.chat_title(chat);
+    let selected = app.open_chat.as_deref() == Some(chat.id.as_str());
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), COMPACT_CELL), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            format!("{title}, {} unread messages", chat.unread),
+        )
+    });
+    if ui.is_rect_visible(rect) {
+        if response.hovered() {
+            ui.painter().rect_filled(
+                Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_CELL - 4.0)),
+                egui::CornerRadius::same(theme::RADIUS),
+                palette.surface_hover,
+            );
+        }
+        let avatar_rect = Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_AVATAR));
+        let picture = app.avatar(&chat.id);
+        widgets::paint_avatar(
+            ui,
+            &palette,
+            avatar_rect,
+            &title,
+            &chat.id,
+            picture.as_deref(),
+        );
+        if chat.ephemeral_expiration.is_some() {
+            widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
+        }
+        if selected {
+            // A short accent bar stands in for the selected row's background.
+            ui.painter().rect_filled(
+                Rect::from_min_size(
+                    pos2(rect.left() + 1.0, rect.center().y - 11.0),
+                    vec2(3.0, 22.0),
+                ),
+                1.5,
+                palette.accent,
+            );
+        }
+        if chat.unread > 0 {
+            widgets::badge(
+                ui,
+                &palette,
+                pos2(avatar_rect.right() - 1.0, avatar_rect.bottom() - 1.0),
+                chat.unread,
+                chat.muted(crate::util::now()),
+            );
+        }
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(compact_chat_id(&chat.id), response.rect));
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(title);
+    if response.clicked() {
+        app.actions.push(Action::OpenChat(chat.id.clone()));
+    }
+    response
+}
+
 fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette) {
     if chat.unread > 0 && widgets::menu_item(ui, palette, Some(Icon::CheckCheck), "Mark as read") {
         app.actions.push(Action::MarkRead(chat.id.clone()));
@@ -1164,5 +1291,63 @@ mod tests {
         );
         assert!(app.scroll_chat_into_view.is_none(), "reveal was consumed");
         assert!(offset > 0.0, "the list moved down to reveal the last row");
+    }
+
+    #[test]
+    fn the_collapsed_list_is_narrow_and_opens_a_chat_on_click() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let mut first = Chat::new("491700000001@s.whatsapp.net".into(), "Alice".into());
+        first.unread = 3;
+        first.last_activity = 20;
+        let second = Chat::new("491700000002@s.whatsapp.net".into(), "Bob".into());
+        app.chats.push(first.clone());
+        app.chats.push(second.clone());
+        app.open_chat = Some(second.id.clone());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 400.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| compact_show(&mut app, ui),
+            );
+            output.textures_delta.clear();
+        };
+        frame(vec![]);
+        let rect = ctx
+            .data(|data| data.get_temp::<Rect>(compact_chat_id(&first.id)))
+            .expect("the rail draws every visible chat");
+        assert!(
+            ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(&second.id)))
+                .is_some(),
+            "the rail draws the second chat too"
+        );
+        assert!(
+            (rect.width() - COMPACT_WIDTH).abs() < 1.0,
+            "an avatar cell is one panel wide, not {} points",
+            rect.width()
+        );
+        let position = rect.center();
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        assert!(
+            app.actions.contains(&Action::OpenChat(first.id.clone())),
+            "clicking an avatar opens that chat: {:?}",
+            app.actions
+        );
     }
 }

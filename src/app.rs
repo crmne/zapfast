@@ -11,7 +11,7 @@ use crate::audio::{Player, Recorder};
 use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
-    MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
+    MediaState, Message, Page, PickerTab, SidebarDisplayMode, StickerPack, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
@@ -646,6 +646,19 @@ impl App {
 
     pub fn is_connected(&self) -> bool {
         self.link.is_connected()
+    }
+
+    /// How the chat list is drawn right now. Hidden chats either leave the
+    /// window entirely or collapse to an icon column, depending on settings.
+    pub fn sidebar_mode(&self) -> SidebarDisplayMode {
+        if self.sidebar_visible {
+            return SidebarDisplayMode::Expanded;
+        }
+        if self.settings.collapse_chat_list {
+            SidebarDisplayMode::CollapsedIconsOnly
+        } else {
+            SidebarDisplayMode::Hidden
+        }
     }
 
     /// Whether the device has linked data, including while offline.
@@ -2748,7 +2761,14 @@ impl App {
                     to_phone: self.settings.save_contacts_to_phone,
                 });
             }
-            Action::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
+            Action::ToggleSidebar => match self.sidebar_mode() {
+                // Hiding is the only step out of the full list. With the
+                // preference on, it collapses to avatars instead of leaving.
+                SidebarDisplayMode::Expanded => self.sidebar_visible = false,
+                SidebarDisplayMode::CollapsedIconsOnly | SidebarDisplayMode::Hidden => {
+                    self.sidebar_visible = true;
+                }
+            },
             Action::SetChatFilter(filter) => {
                 if self.locked_folder {
                     self.close_locked_folder();
@@ -3475,6 +3495,34 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn hiding_the_chat_list_collapses_it_only_when_asked() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        assert_eq!(app.sidebar_mode(), SidebarDisplayMode::Expanded);
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(
+            app.sidebar_mode(),
+            SidebarDisplayMode::Hidden,
+            "without the preference, hiding removes the list"
+        );
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(app.sidebar_mode(), SidebarDisplayMode::Expanded);
+        app.settings.collapse_chat_list = true;
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(
+            app.sidebar_mode(),
+            SidebarDisplayMode::CollapsedIconsOnly,
+            "the same button collapses the list instead"
+        );
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(
+            app.sidebar_mode(),
+            SidebarDisplayMode::Expanded,
+            "and brings the full list back"
+        );
     }
 
     fn paste_release() -> egui::Event {
