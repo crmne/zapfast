@@ -28,7 +28,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Filter the list to unread, private (one-to-one), or group chats with the
   chips under the search bar; a chip with unread chats shows how many it has.
   Pinned chats stay in pin order (most recently pinned first), regardless of
-  new messages. Chat and contact name searches ignore accents, so `Angel`
+  new messages. Like on the phone, you can pin up to three chats. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
   The filters stay on one row and scroll horizontally in narrow sidebars.
   Unnamed groups use a shared participant summary for their title and subtitle;
@@ -79,6 +79,22 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Safer desktop opening.** Links open only web pages or email addresses.
   Common documents and media open in their default apps; executable, script,
   and unrecognized attachment formats open their containing folder instead.
+- **Use interactive messages.** Business templates and button messages show their
+  image above the text and their options in separate rows below the timestamp.
+  Reply buttons send the selected option with a quote of the original message.
+  Simple lists open a choice dialog, web links open in your browser, and copy-code
+  buttons copy to the clipboard. Unavailable actions have a phone icon and an
+  explanation. Lists group choices by section, with descriptions and keyboard support.
+  Carousels show separate cards in a horizontal strip, with images, web links,
+  and copy-code actions. Short carousels keep the timestamp beside their last
+  card. When more cards are offscreen, overlaid previous/next arrows move one
+  card at a time. **Shift + mouse wheel** and horizontal touchpad scrolling also
+  work over the cards, without a bottom scrollbar. Their text can be selected, copied, and searched.
+  Images use the same download, retry, and automatic-download setting as photos.
+  Previously unsupported messages are recovered from the local archive when their
+  original message is available and they have not been edited, without relinking.
+  Other embedded attachments and templates containing only a
+  reference to server-side text still need the phone.
 - **Errors stay readable.** Confirmations such as "Copied" fade after a few
   seconds. Error messages stay above the composer until you dismiss them, and
   a button copies their text for a bug report. A repeated error replaces its
@@ -136,10 +152,14 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Polls.** Use the checklist button beside the paperclip to create a poll with
   2–12 answers. Turn off **Allow multiple answers** for a single-choice poll.
   Click an answer in a poll to vote; click a selected answer again to remove
-  it. Results and your selection are retained in the encrypted archive, including
-  votes received through phone history. Visible polls automatically request earlier
-  votes from your phone. If it is offline, results are labelled incomplete and the
-  request retries with backoff; no refresh button or relinking is needed.
+  it. Each option shows a result bar and a checkmark for your selection.
+  **Show votes** lists participants and vote times, updating as votes arrive.
+  Results and your selection are retained in the encrypted archive, including
+  votes received through phone history. New polls received live start at zero votes
+  without asking the phone for earlier results. Polls from history or offline
+  delivery automatically request earlier votes when visible. Until a usable
+  snapshot arrives, results are labelled incomplete and requests retry with backoff;
+  no refresh button or relinking is needed.
   Voting needs the original poll's key;
   if that key is missing, the message explains that voting is available on your
   phone. Creating polls in disappearing-message chats is not yet supported by
@@ -157,7 +177,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Groups.** See members, sender names, and sender pictures. Announcement
   groups are read-only for non-admins.
 - **Presence.** See online, last-seen, and typing status, and send your typing
-  status.
+  status. Like WhatsApp Web, ZapFast shows you as online only while its window
+  is focused, and goes offline ten seconds after you switch away or hide it to
+  the tray, so your phone keeps receiving notifications meanwhile.
 - **Idle rendering.** History-sync progress updates when data arrives. Animated
   stickers and GIFs show a still first frame and play while hovered in the
   focused window, keeping idle conversations from continuously repainting.
@@ -169,6 +191,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Runs in the background.** Closing the window keeps ZapFast linked in the
   system tray. Reopen it from the tray or by launching it again. Quit from the
   tray or with `Ctrl+Q`, or disable this behavior in Settings.
+- **Start at login.** Turn on **Start at login** in Settings to start ZapFast in
+  the tray when you log in, without opening a window. It adds
+  `~/.config/autostart/zapfast.desktop` on Linux, a LaunchAgent in
+  `~/Library/LaunchAgents` on macOS, or a `Run` entry for your user on Windows,
+  and removes it when turned off. `zapfast --start-hidden` does the same by hand;
+  it opens the window anyway when no tray is available. The Flatpak does not
+  offer this setting yet.
 - **Desktop notifications.** Get notifications with the chat picture when you
   are away from the open chat. Muted chats do not notify you, and archived
   chats stay quiet until you unarchive them. Windows notifications
@@ -206,6 +235,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - Play ordinary videos in the app (they open in your player), or reply to
   a message with an attachment.
 - Calls, status posts, communities, newsletters, and group administration.
+- Submit interactive forms, payments, shopping flows, or carousel selections.
+  Use these in WhatsApp Web or on your phone. Embedded videos and documents,
+  and templates without readable text also need another client.
 
 ## Installing
 
@@ -356,9 +388,12 @@ any open locked conversation. Typing the code into ordinary search remains
 an alternative way in. Revealed locked chats are currently read-only:
 sending messages and forwarding into them remain disabled.
 
-On the first start after upgrading, chats wait for WhatsApp's lock-state
-recovery before appearing. Failed recovery retries while keeping chats hidden.
-The recovered state is saved in the encrypted archive for offline use.
+After linking or upgrading, chats wait up to ten seconds for WhatsApp's lock
+state before appearing. Chats already known to be locked stay hidden. If the
+lock state cannot be confirmed in time, the chats appear with a notice that
+chats locked on the phone may show until they sync, and recovery keeps retrying
+in the background. The recovered state is saved in the encrypted archive for
+offline use.
 
 Protocol logs omit private payloads and raw error details, including verbose
 logging. Panic logs record the source location without the panic payload.
@@ -373,6 +408,39 @@ or `react-picker` for the new dialogs, shared group summaries, and reactions.
 The protocol dependency includes the upstream WhatsApp Business pairing fix.
 Device-store migration waits until an updated window is acknowledged, preserving
 startup rollback; an unused legacy column is retained for 0.14 compatibility.
+
+### Interactive messages
+
+Business messages keep their image, formatted text, timestamp, and options
+together in one bubble. Reply buttons immediately send the selected response,
+quoting the original message so the business can recognize your choice. Simple
+list buttons open a centered dialog with sections, descriptions, and a full-row
+selection target; choosing an item sends that response. Hover highlights
+the full action row, following the card edges. Link buttons
+open your browser, and copy-code buttons copy the offered code locally.
+
+Carousels retain separate cards and images in a horizontally scrollable strip.
+Each card can open web links or copy codes; reply, calling, and shopping actions
+that require an unsupported carousel envelope stay unavailable.
+
+Reply buttons require a connection and a writable conversation. They pause while
+sending, and become available again if the send fails. Actions with a phone icon
+are unavailable in ZapFast; use WhatsApp Web or your phone. Hovering explains
+which restriction applies. Replies from other devices retain their quotes too.
+
+| Text and reply options | Image and website link |
+| --- | --- |
+| ![Offline demo of an interactive text message with separate option rows and a quoted reply](docs/screenshot-interactive.png) | ![Offline demo of an interactive image message with working reply options and an active website link](docs/screenshot-interactive-media.png) |
+
+![Offline demo with a reply button, a session list, a copy-code action, and an unavailable form](docs/screenshot-interactive-actions.png)
+
+| Carousel cards | Poll participant details |
+| --- | --- |
+| ![Synthetic carousel with independent images, copy-code and web actions](docs/screenshot-carousel.png) | ![Synthetic poll results listing voters and vote times](docs/screenshot-poll-results.png) |
+
+These screenshots use synthetic offline chats. See the
+[usage guide](https://zapfast.rocks/using-zapfast/#interactive-messages) for
+download behavior and the remaining limitations.
 
 ## Files
 
@@ -419,6 +487,13 @@ in settings, so a missing or damaged theme file does not reset your appearance.
 Linux watches the themes folder for changes without periodic repaints. On other
 platforms, use `zapfast reload-themes` after editing. The command also works while
 the window is closed and never launches a stopped app.
+
+**Settings → Appearance → Wallpaper** offers WhatsApp's light and dark wallpaper
+colours, with a live preview of the selected colour and doodles. **Add WhatsApp
+doodles** controls only the SVG layer, so disabling it leaves the selected
+background colour in place. Light and dark selections are stored independently,
+and the embedded SVG is rendered at its native size and repeated across the
+conversation without stretching.
 
 On Omarchy, **Follow system** and **Omarchy** read the active desktop palette and
 follow its changes in native, portable, and source builds, even without installed
@@ -498,6 +573,21 @@ Use `--demo-page chat-menu` to preview the compact chat context menu.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.
+
+Use `--demo-page interactive` for text and button messages, or
+`--demo-page interactive-media` for messages with an image, and
+`--demo-page interactive-list` for a list message,
+`--demo-page interactive-list-dialog` for its grouped choice dialog, `--demo-page carousel`
+for a scrolling strip or `--demo-page carousel-pair` for two cards, and `--demo-page poll-empty`, `poll-voted`, or `poll-results`
+for voting states. Use `--demo-page interactive-actions` for reply, list, copy-code, and unavailable
+form actions. Add `,light` to
+preview any of these in the light theme. Capture the app's own frame without desktop
+content:
+
+```sh
+./target/debug/zapfast --demo --demo-page interactive-media --demo-shot interactive.png
+./target/debug/zapfast --demo --demo-page interactive-media,light --demo-shot interactive-light.png
+```
 
 On Omarchy, run `omarchy screenrecord`, select the demo window, then press Space
 in ZapFast. Recording has no audio unless you explicitly enable desktop or

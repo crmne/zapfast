@@ -126,6 +126,10 @@ pub struct Presence {
     pub last_seen: Option<i64>,
 }
 
+/// WhatsApp keeps at most three pinned chats without WhatsApp Plus, and
+/// replaces an existing pin on the phone when a linked device adds a fourth.
+const MAX_PINNED_CHATS: usize = 3;
+
 pub struct App {
     pub dirs: AppDirs,
     pub settings: Settings,
@@ -259,6 +263,7 @@ pub struct App {
     pub poll_draft: crate::model::PollDraft,
     pub poll_creating: bool,
     pub poll_voting: HashSet<(ChatId, String)>,
+    pub interactive_sending: HashSet<(ChatId, String)>,
     /// Contact-name editor buffers.
     pub contact_edit: Option<(String, String)>,
     /// New-contact buffers and lookup state.
@@ -294,6 +299,10 @@ pub struct App {
     pub focus_search: bool,
     pub quit_requested: bool,
     pub window_focused: bool,
+    /// Presence last reported to the backend.
+    reported_online: Option<bool>,
+    /// Whether ZapFast starts at login, when this installation supports it.
+    pub start_with_system: Option<bool>,
     /// Cross-thread window repaint handle.
     waker: Waker,
     tray: Option<TrayService>,
@@ -359,6 +368,9 @@ impl App {
         if options.tray {
             let waker = waker.clone();
             app.tray = TrayService::spawn(move || waker.wake());
+        }
+        if crate::autostart::supported() {
+            app.start_with_system = Some(crate::autostart::enabled());
         }
         app
     }
@@ -474,6 +486,7 @@ impl App {
             poll_draft: Default::default(),
             poll_creating: false,
             poll_voting: HashSet::new(),
+            interactive_sending: HashSet::new(),
             contact_edit: None,
             new_contact_phone: String::new(),
             new_contact_name: String::new(),
@@ -500,6 +513,8 @@ impl App {
             focus_search: false,
             quit_requested: false,
             window_focused: false,
+            reported_online: None,
+            start_with_system: None,
             waker,
             tray: None,
             window_hidden: false,
@@ -565,6 +580,7 @@ impl App {
             match command {
                 ControlCommand::Show => self.actions.push(Action::ShowWindow),
                 ControlCommand::ReloadThemes => self.actions.push(Action::ReloadThemes),
+                ControlCommand::Ping => {}
             }
         }
     }
@@ -858,7 +874,9 @@ impl App {
     /// One-line plain-text message summary with resolved mentions.
     pub fn message_text(&self, message: &Message) -> String {
         match &message.content {
-            Content::Text { text, .. } => crate::markup::plain(text, &self.mention_list(message)),
+            Content::Text { text, .. } | Content::Interactive { text, .. } => {
+                crate::markup::plain(text, &self.mention_list(message))
+            }
             _ => self.resolve_mention_tokens(&message.summary()),
         }
     }
@@ -1264,6 +1282,17 @@ impl App {
                         self.stage_files(paths);
                     }
                 }
+                Event::InteractiveReplyState {
+                    chat,
+                    message,
+                    pending,
+                } => {
+                    if pending {
+                        self.interactive_sending.insert((chat, message));
+                    } else {
+                        self.interactive_sending.remove(&(chat, message));
+                    }
+                }
                 Event::PollCreated { chat, error } => {
                     self.poll_creating = false;
                     if let Some(error) = error {
@@ -1289,7 +1318,24 @@ impl App {
                         && let Some(existing) = conversation.message_mut(&message.id)
                     {
                         let state = existing.content.media().map(|media| media.state.clone());
+                        let carousel_states = match &existing.content {
+                            Content::Interactive {
+                                card: Some(card), ..
+                            } => card
+                                .carousel
+                                .iter()
+                                .map(|card| card.image.as_ref().map(|media| media.state.clone()))
+                                .collect::<Vec<_>>(),
+                            _ => Vec::new(),
+                        };
                         *existing = message;
+                        for (index, state) in carousel_states.into_iter().enumerate() {
+                            if let (Some(state), Some(media)) =
+                                (state, existing.content.media_at_mut(Some(index)))
+                            {
+                                media.state = state;
+                            }
+                        }
                         if let (Some(state), Some(media)) = (state, existing.content.media_mut()) {
                             media.state = state;
                         }
@@ -1365,10 +1411,11 @@ impl App {
                 Event::ChatRemoved { chat } => self.forget_chat(&chat),
                 Event::ChatCleared { chat, through } => self.handle_chat_cleared(&chat, through),
                 Event::Media {
+                    card,
                     chat,
                     message,
                     result,
-                } => self.handle_media(&chat, &message, result),
+                } => self.handle_media(&chat, &message, card, result),
                 Event::Syncing(syncing) => {
                     if self.syncing && !syncing {
                         self.toast("History loaded");
@@ -1466,6 +1513,7 @@ impl App {
             }
             LinkStatus::LoggedOut => {
                 self.poll_voting.clear();
+                self.interactive_sending.clear();
                 self.poll_creating = false;
                 self.poll_draft = Default::default();
                 self.notifications.clear_all();
@@ -1602,7 +1650,13 @@ impl App {
         self.leave_chat(id);
     }
 
-    fn handle_media(&mut self, chat: &str, id: &str, result: Result<PathBuf, String>) {
+    fn handle_media(
+        &mut self,
+        chat: &str,
+        id: &str,
+        card: Option<usize>,
+        result: Result<PathBuf, String>,
+    ) {
         let Some(message) = self
             .conversations
             .get_mut(chat)
@@ -1610,7 +1664,7 @@ impl App {
         else {
             return;
         };
-        let Some(media) = message.content.media_mut() else {
+        let Some(media) = message.content.media_at_mut(card) else {
             return;
         };
         match result {
@@ -2244,6 +2298,24 @@ impl App {
                 }
                 self.backend.send(Command::RefreshPoll { chat, message });
             }
+            Action::ReplyInteractive {
+                chat,
+                message,
+                button,
+                choice,
+            } => {
+                if self.link.is_connected() && self.chat(&chat).is_some_and(|chat| chat.can_send())
+                {
+                    self.backend.send(Command::ReplyInteractive {
+                        chat,
+                        message,
+                        button,
+                        choice,
+                    });
+                    self.scroll_to_bottom = true;
+                    self.at_bottom = true;
+                }
+            }
             Action::CreatePoll { chat, draft } => {
                 if !self.poll_creating {
                     match draft.validated() {
@@ -2278,38 +2350,34 @@ impl App {
             Action::MarkRead(chat) => self.mark_read(&chat),
             Action::LoadOlder(chat) => self.load_older(&chat),
             Action::FetchOlder(chat) => self.fetch_older(&chat),
-            Action::Download { chat, message } => {
-                let permitted = self
-                    .conversations
-                    .get(&chat)
-                    .and_then(|conversation| conversation.message(&message))
-                    .and_then(|message| message.content.media())
-                    .is_some_and(|media| media.is_within_download_limit());
-                if !permitted {
-                    if let Some(media) = self
-                        .conversations
-                        .get_mut(&chat)
-                        .and_then(|conversation| conversation.message_mut(&message))
-                        .and_then(|message| message.content.media_mut())
-                    {
-                        media.state = MediaState::Failed(
-                            "This attachment is larger than the 64 MiB download limit".into(),
-                        );
-                    }
-                    return;
-                }
-                if let Some(media) = self
+            Action::Download {
+                card,
+                chat,
+                message,
+            } => {
+                let Some(media) = self
                     .conversations
                     .get_mut(&chat)
                     .and_then(|conversation| conversation.message_mut(&message))
-                    .and_then(|message| message.content.media_mut())
-                {
-                    if matches!(media.state, MediaState::Downloading) {
-                        return;
-                    }
-                    media.state = MediaState::Downloading;
+                    .and_then(|message| message.content.media_at_mut(card))
+                else {
+                    return;
+                };
+                if !media.is_within_download_limit() {
+                    media.state = MediaState::Failed(
+                        "This attachment is larger than the 64 MiB download limit".into(),
+                    );
+                    return;
                 }
-                self.backend.send(Command::Download { chat, message });
+                if matches!(media.state, MediaState::Downloading) {
+                    return;
+                }
+                media.state = MediaState::Downloading;
+                self.backend.send(Command::Download {
+                    card,
+                    chat,
+                    message,
+                });
             }
             Action::OpenFile(path) => {
                 if crate::safety::can_open_attachment(&path) && path.is_file() {
@@ -2698,6 +2766,10 @@ impl App {
             // `Event::ChatRemoved`.
             Action::DeleteChat(chat) => self.backend.send(Command::DeleteChat(chat)),
             Action::SetPinned(chat, pinned) => {
+                if pinned && self.pinned_count() >= MAX_PINNED_CHATS {
+                    self.toast(format!("You can only pin {MAX_PINNED_CHATS} chats"));
+                    return;
+                }
                 if let Some(known) = self.chat_mut(&chat) {
                     known.pinned = pinned;
                     known.pinned_at = if pinned {
@@ -2869,6 +2941,18 @@ impl App {
                     self.apply_theme(ctx);
                 }
             }
+            Action::SetWallpaperColor(color) => {
+                if self.palette.dark {
+                    self.settings.dark_wallpaper_color = color;
+                } else {
+                    self.settings.wallpaper_color = color;
+                }
+                self.mark_settings_dirty();
+            }
+            Action::SetWallpaperDoodles(show) => {
+                self.settings.show_wallpaper = show;
+                self.mark_settings_dirty();
+            }
             Action::ReloadThemes => self.load_custom_themes(),
             Action::OpenThemesFolder => {
                 let directory = self.dirs.config.join("themes");
@@ -2922,6 +3006,10 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::SettingsChanged => self.mark_settings_dirty(),
+            Action::SetStartWithSystem(enabled) => match crate::autostart::set(enabled) {
+                Ok(()) => self.start_with_system = Some(crate::autostart::enabled()),
+                Err(error) => self.toast_error(format!("Could not change the login item: {error}")),
+            },
             Action::ZoomBy(delta) => {
                 self.settings.zoom = (self.settings.zoom + delta).clamp(0.6, 2.0);
                 self.zoom_applied = false;
@@ -3021,6 +3109,24 @@ impl App {
         });
     }
 
+    /// Chats pinned to the top, counted the way WhatsApp limits them.
+    fn pinned_count(&self) -> usize {
+        self.chats
+            .iter()
+            .filter(|chat| chat.pinned && !chat.archived)
+            .count()
+    }
+
+    /// Tells the backend whether the person is looking at the app, so the
+    /// phone keeps its notifications while they are not.
+    fn report_presence(&mut self) {
+        let online = self.window_focused && !self.window_hidden;
+        if self.reported_online != Some(online) {
+            self.reported_online = Some(online);
+            self.backend.send(Command::SetOnline(online));
+        }
+    }
+
     /// Processes app state shared by windowed and headless modes.
     pub fn background_frame(&mut self, ctx: &egui::Context) {
         // Events are drained before frame_ui observes focus. Losing focus in
@@ -3028,6 +3134,7 @@ impl App {
         if self.window_hidden || ctx.input(|input| input.viewport().focused) == Some(false) {
             self.window_focused = false;
         }
+        self.report_presence();
         self.handle_tray();
         #[cfg(target_os = "macos")]
         self.actions.extend(crate::macos::drain(self.window_hidden));
@@ -3138,6 +3245,7 @@ impl App {
             self.refocus_composer(ctx);
         }
         self.window_focused = focused;
+        self.report_presence();
         // Close the window and continue headless when background mode is enabled.
         if ctx.input(|input| input.viewport().close_requested())
             && !self.quit_requested
@@ -3149,6 +3257,8 @@ impl App {
         self.take_drops_and_pastes(ctx);
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
+        // Release the image caches of everything that scrolled away.
+        crate::image_cache::sweep(ctx);
         // Only fading info toasts animate. Errors wait for the reader.
         if self
             .toasts
@@ -3294,7 +3404,13 @@ impl App {
                     ended |= matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel);
                 }
             }
-            (sum, pointish, ended)
+            // Precision wheels can report points too. If egui has remapped
+            // their vertical input to horizontal (Shift, including the rest
+            // of an active gesture), keep that direction and native smoothing.
+            let remapped = sum.y != 0.0
+                && input.smooth_scroll_delta.x != 0.0
+                && input.smooth_scroll_delta.y == 0.0;
+            (sum, pointish && !remapped, ended)
         });
         let now = Instant::now();
         if raw != egui::Vec2::ZERO {
@@ -3340,6 +3456,14 @@ impl App {
                 self.glide = (slower.length() > GLIDE_STOP).then_some(slower);
             }
             ctx.request_repaint_after(Duration::from_millis(8));
+        }
+        // egui already maps Shift + mouse wheel to the horizontal axis. The
+        // raw wheel event still has a vertical delta, so applying the trackpad
+        // axis lock to it would discard the remapped input (including its
+        // smoothing tail). Discrete mouse-wheel input needs no gesture lock.
+        if !self.scroll_from_trackpad {
+            self.scroll_lock = None;
+            return;
         }
         let held = self
             .scroll_lock
@@ -3493,6 +3617,28 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn wallpaper_colors_remain_independent_between_themes() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let light_color = crate::settings::WallpaperColor::Cruise;
+        let dark_color = crate::settings::WallpaperColor::Nordic;
+        let original_dark_color = app.settings.dark_wallpaper_color;
+
+        app.palette.dark = false;
+        app.apply(Action::SetWallpaperColor(light_color), &ctx);
+        assert_eq!(app.settings.wallpaper_color, light_color);
+        assert_eq!(app.settings.dark_wallpaper_color, original_dark_color);
+        assert!(app.settings_dirty);
+
+        app.settings_dirty = false;
+        app.palette.dark = true;
+        app.apply(Action::SetWallpaperColor(dark_color), &ctx);
+        assert_eq!(app.settings.dark_wallpaper_color, dark_color);
+        assert_eq!(app.settings.wallpaper_color, light_color);
+        assert!(app.settings_dirty);
     }
 
     fn paste_release() -> egui::Event {
@@ -3661,6 +3807,44 @@ mod tests {
                 "{state}"
             );
         }
+    }
+
+    #[test]
+    fn interactive_send_events_release_only_the_matching_message() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let ctx = egui::Context::default();
+        for id in ["first", "second"] {
+            events
+                .send(Event::InteractiveReplyState {
+                    chat: "chat".into(),
+                    message: id.into(),
+                    pending: true,
+                })
+                .unwrap();
+        }
+        app.background_frame(&ctx);
+        assert_eq!(app.interactive_sending.len(), 2);
+        events
+            .send(Event::InteractiveReplyState {
+                chat: "chat".into(),
+                message: "first".into(),
+                pending: false,
+            })
+            .unwrap();
+        app.background_frame(&ctx);
+        assert!(
+            !app.interactive_sending
+                .contains(&("chat".into(), "first".into()))
+        );
+        assert!(
+            app.interactive_sending
+                .contains(&("chat".into(), "second".into()))
+        );
+        events.send(Event::Link(LinkStatus::LoggedOut)).unwrap();
+        app.background_frame(&ctx);
+        assert!(app.interactive_sending.is_empty());
     }
 
     #[test]
@@ -3875,6 +4059,60 @@ mod tests {
         let mut output = ctx.run_ui(input, |ui| app.background_frame(ui.ctx()));
         output.textures_delta.clear();
         assert_eq!(app.chat(&chat.id).unwrap().unread, 1);
+    }
+
+    #[test]
+    fn a_fourth_pin_is_refused_like_on_the_phone() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        for index in 0..5 {
+            let mut chat = Chat::new(format!("{index}@s.whatsapp.net"), format!("Chat {index}"));
+            chat.pinned = index < 3;
+            chat.archived = index == 4;
+            app.chats.push(chat);
+        }
+        app.apply(
+            Action::SetPinned("3@s.whatsapp.net".into(), true),
+            &egui::Context::default(),
+        );
+        assert!(!app.chat("3@s.whatsapp.net").unwrap().pinned);
+        assert!(commands.try_recv().is_err());
+        app.apply(
+            Action::SetPinned("0@s.whatsapp.net".into(), false),
+            &egui::Context::default(),
+        );
+        app.apply(
+            Action::SetPinned("3@s.whatsapp.net".into(), true),
+            &egui::Context::default(),
+        );
+        assert!(app.chat("3@s.whatsapp.net").unwrap().pinned);
+    }
+
+    #[test]
+    fn presence_follows_focus_and_the_hidden_window() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let mut reported = || {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::SetOnline(online) => Some(online),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        app.window_focused = true;
+        app.report_presence();
+        app.report_presence();
+        assert_eq!(reported(), [true]);
+        app.window_gone();
+        app.report_presence();
+        assert_eq!(reported(), [false]);
+        // Focus left over from a window callback does not count while hidden.
+        app.window_focused = true;
+        app.report_presence();
+        assert!(reported().is_empty());
     }
 
     #[test]
@@ -4127,6 +4365,7 @@ mod tests {
         for _ in 0..2 {
             app.apply(
                 Action::Download {
+                    card: None,
                     chat: chat.into(),
                     message: "picture".into(),
                 },
@@ -4139,6 +4378,7 @@ mod tests {
         app.backend = backend;
         events
             .send(Event::Media {
+                card: None,
                 chat: chat.into(),
                 message: "picture".into(),
                 result: Err("Download timed out".into()),
@@ -4154,12 +4394,98 @@ mod tests {
         app.backend = backend;
         app.apply(
             Action::Download {
+                card: None,
                 chat: chat.into(),
                 message: "picture".into(),
             },
             &ctx,
         );
         assert!(matches!(commands.try_recv(), Ok(Command::Download { .. })));
+    }
+
+    #[test]
+    fn carousel_downloads_track_each_card_separately() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        let card = || crate::model::InteractiveCard {
+            image: Some(Media {
+                mime: "image/jpeg".into(),
+                size: 100,
+                width: None,
+                height: None,
+                path: None,
+                state: MediaState::Idle,
+            }),
+            ..Default::default()
+        };
+        let mut carousel = message(chat, "carousel", 1);
+        carousel.content = Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                carousel: vec![card(), card()],
+                ..Default::default()
+            })),
+        };
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![carousel.clone()], false);
+        let images = |app: &App| -> Vec<Media> {
+            match &app.conversations[chat].message("carousel").unwrap().content {
+                Content::Interactive {
+                    card: Some(card), ..
+                } => card
+                    .carousel
+                    .iter()
+                    .map(|card| card.image.clone().unwrap())
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::Download {
+                card: Some(1),
+                chat: chat.into(),
+                message: "carousel".into(),
+            },
+            &ctx,
+        );
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Download { card: Some(1), .. })
+        ));
+        let states = |app: &App| {
+            images(app)
+                .into_iter()
+                .map(|media| media.state)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(states(&app), [MediaState::Idle, MediaState::Downloading]);
+        // A worker update carries no download state; the card keeps its own.
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        events
+            .send(Event::MessageUpdated(Box::new(carousel)))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(states(&app), [MediaState::Idle, MediaState::Downloading]);
+        let path = PathBuf::from("/cache/zapfast/media/carousel-card-1.jpg");
+        events
+            .send(Event::Media {
+                card: Some(1),
+                chat: chat.into(),
+                message: "carousel".into(),
+                result: Ok(path.clone()),
+            })
+            .unwrap();
+        app.handle_events();
+        let images = images(&app);
+        assert_eq!(images[0].path, None);
+        assert_eq!(images[1].path, Some(path));
+        assert_eq!(images[1].state, MediaState::Idle);
     }
 
     #[test]
@@ -4211,6 +4537,7 @@ mod tests {
 
         app.apply(
             Action::Download {
+                card: None,
                 chat: chat.into(),
                 message: "picture".into(),
             },
