@@ -1426,7 +1426,7 @@ mod tests {
             "the rail draws the second chat too"
         );
         assert!(
-            (rect.width() - COMPACT_WIDTH).abs() < 1.0,
+            (rect.width() - compact_width(&ctx)).abs() < 1.0,
             "an avatar cell is one panel wide, not {} points",
             rect.width()
         );
