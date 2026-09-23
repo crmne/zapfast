@@ -1089,11 +1089,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             13.0,
                             palette.dim,
                             palette.secondary,
-                            &format!(
-                                "{}",
-                                crate::i18n::gettext(app.locale, "All shortcuts ({})")
-                                    .replace("{}", &super::keys::label("Ctrl+/"))
-                            ),
+                            &crate::i18n::gettext(app.locale, "All shortcuts ({})")
+                                .replace("{}", &super::keys::label("Ctrl+/")),
                         )
                         .clicked()
                         {
