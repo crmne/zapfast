@@ -122,6 +122,7 @@ pub fn layout(fonts: &mut FontsImpl, pixels_per_point: f32, job: Arc<LayoutJob>)
 
     let mut paragraphs = vec![Paragraph::from_section_index(0)];
     {
+        let levels = bidi_levels(&job.text);
         let mut shape_buffer = fonts.take_shape_buffer();
         for (section_index, section) in job.sections.iter().enumerate() {
             let mut font = fonts.font(&section.format.font_id.family);
@@ -132,6 +133,7 @@ pub fn layout(fonts: &mut FontsImpl, pixels_per_point: f32, job: Arc<LayoutJob>)
                 &job,
                 section_index as u32,
                 section,
+                levels.as_deref(),
                 &mut paragraphs,
             );
         }
@@ -222,6 +224,22 @@ struct TextRun {
 
     /// Byte range within the section text.
     byte_range: ByteRange,
+
+    /// Resolved bidi direction, when the job contains right-to-left text.
+    rtl: Option<bool>,
+}
+
+/// Unicode bidi embedding level of every byte of `text`, or `None` when no
+/// character resolves right to left.
+///
+/// Runs are split where the level changes and each is shaped in its own
+/// direction, so the shaper mirrors brackets inside right-to-left runs.
+fn bidi_levels(text: &str) -> Option<Vec<unicode_bidi::Level>> {
+    if text.is_ascii() {
+        return None;
+    }
+    let info = unicode_bidi::BidiInfo::new(text, None);
+    info.has_rtl().then_some(info.levels)
 }
 
 /// Emit shaped glyphs from a [`harfrust::GlyphBuffer`] into a [`Paragraph`].
@@ -480,6 +498,7 @@ fn layout_section(
     job: &LayoutJob,
     section_index: u32,
     section: &LayoutSection,
+    levels: Option<&[unicode_bidi::Level]>,
     out_paragraphs: &mut Vec<Paragraph>,
 ) -> harfrust::UnicodeBuffer {
     let LayoutSection {
@@ -531,7 +550,8 @@ fn layout_section(
             continue;
         }
 
-        segment_into_runs(font, segment, &mut runs);
+        let segment_levels = levels.and_then(|levels| levels.get(segment_offset..));
+        segment_into_runs(font, segment, segment_levels, &mut runs);
 
         let num_runs = runs.len();
         for (run_idx, run) in runs.iter().enumerate() {
@@ -552,8 +572,21 @@ fn layout_section(
                 flags |= harfrust::BufferFlags::END_OF_TEXT;
             }
 
-            let glyph_buffer = shape_text(font_face, run_text, &format.coords, shape_buffer, flags);
-
+            let direction = run.rtl.map(|rtl| {
+                if rtl {
+                    harfrust::Direction::RightToLeft
+                } else {
+                    harfrust::Direction::LeftToRight
+                }
+            });
+            let glyph_buffer = shape_text(
+                font_face,
+                run_text,
+                &format.coords,
+                shape_buffer,
+                flags,
+                direction,
+            );
             layout_shaped_run(
                 font,
                 run,
@@ -1426,12 +1459,19 @@ impl RowBreakCandidates {
 ///
 /// Results are appended to `out` (which is cleared first) to allow
 /// the caller to reuse the allocation across calls.
-fn segment_into_runs(font: &mut Font<'_>, text: &str, out: &mut Vec<TextRun>) {
+/// `levels` holds the bidi level of each byte of `text`, when there is one.
+fn segment_into_runs(
+    font: &mut Font<'_>,
+    text: &str,
+    levels: Option<&[unicode_bidi::Level]>,
+    out: &mut Vec<TextRun>,
+) {
     use unicode_segmentation::UnicodeSegmentation as _;
 
     out.clear();
 
     for (byte_offset, grapheme_str) in text.grapheme_indices(true) {
+        let rtl = levels.map(|levels| levels.get(byte_offset).is_some_and(|level| level.is_rtl()));
         let byte_offset = ByteIndex(byte_offset);
         let byte_end = byte_offset + grapheme_str.len();
 
@@ -1440,6 +1480,7 @@ fn segment_into_runs(font: &mut Font<'_>, text: &str, out: &mut Vec<TextRun>) {
 
         if let Some(last_run) = out.last_mut()
             && last_run.font_key == font_key
+            && last_run.rtl == rtl
         {
             last_run.byte_range.end = byte_end;
             continue;
@@ -1447,6 +1488,7 @@ fn segment_into_runs(font: &mut Font<'_>, text: &str, out: &mut Vec<TextRun>) {
         out.push(TextRun {
             font_key,
             byte_range: byte_offset..byte_end,
+            rtl,
         });
     }
 }
@@ -1462,6 +1504,7 @@ fn shape_text(
     coords: &VariationCoords,
     mut buffer: harfrust::UnicodeBuffer,
     flags: harfrust::BufferFlags,
+    direction: Option<harfrust::Direction>,
 ) -> harfrust::GlyphBuffer {
     let font_ref = font_face.skrifa_font_ref();
     let tweak = font_face.tweak();
@@ -1488,6 +1531,9 @@ fn shape_text(
     buffer.set_flags(flags);
     buffer.push_str(text);
     buffer.guess_segment_properties();
+    if let Some(direction) = direction {
+        buffer.set_direction(direction);
+    }
 
     shaper.shape(buffer, harfrust::ShapeOptions::new())
 }

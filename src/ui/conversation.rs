@@ -1915,7 +1915,7 @@ fn bubble_frame(
                 }
                 None => content(ui, view, message, cap, reserve, actions),
             };
-            footer(ui, &palette, message, slot, footer_on_leading(message));
+            footer(ui, &palette, message, slot);
         });
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
@@ -2217,27 +2217,8 @@ fn not_sent(message: &Message) -> bool {
     message.from_me && message.status == Delivery::Failed
 }
 
-/// Whether the time and ticks belong on the leading (left) side of the bubble.
-fn footer_on_leading(message: &Message) -> bool {
-    match &message.content {
-        Content::Text { text, .. } => crate::bidi::last_base_rtl(text),
-        Content::Image { caption, .. }
-        | Content::Video { caption, .. }
-        | Content::Document { caption, .. } => {
-            caption.as_deref().is_some_and(crate::bidi::last_base_rtl)
-        }
-        _ => false,
-    }
-}
-
-/// Paints the time and ticks. A right-to-left last line keeps them on the left.
-fn footer(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    message: &Message,
-    slot: Option<Rect>,
-    leading: bool,
-) {
+/// Paints the time and ticks at the bubble's right edge without widening it.
+fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<Rect>) {
     let font = theme::regular(11.0);
     let time = ui.painter().layout_no_wrap(
         crate::util::clock(message.timestamp),
@@ -2268,11 +2249,7 @@ fn footer(
             rect
         }
     };
-    let mut x = if leading && slot.is_none() {
-        rect.left() + width
-    } else {
-        rect.right()
-    };
+    let mut x = rect.right();
     if message.from_me {
         let ticks = Rect::from_center_size(pos2(x - 7.5, rect.center().y), Vec2::splat(15.0));
         widgets::ticks(ui, palette, ticks, message.status);
@@ -2901,21 +2878,17 @@ fn rich_body(
         link: palette.link,
         mention: palette.accent,
     };
-    let mut laid = markup::layout(ui, text, &mentions, &style, width);
-    let rtl = crate::bidi::last_base_rtl(text);
+    let laid = markup::layout(ui, text, &mentions, &style, width);
+    let rtl = crate::bidi::message_rtl(text);
     let last_row = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
-    let inline = reserve.filter(|reserve| last_row + 8.0 + reserve <= width);
-    if rtl && let Some(reserve) = inline {
-        crate::bidi::reserve_leading(Arc::make_mut(&mut laid.galley), reserve + 8.0);
-    }
+    // Right-aligned text ends at the block's edge. Like official WhatsApp,
+    // only a single line keeps the time beside it; otherwise it gets a row.
+    let single = laid.galley.rows.len() == 1 && span.is_none();
+    let inline = reserve.filter(|reserve| last_row + 8.0 + reserve <= width && (!rtl || single));
     let size = laid.galley.size();
-    let mut allocation = if rtl {
-        size
-    } else {
-        match inline {
-            Some(reserve) => vec2(size.x.max(last_row + 8.0 + reserve), size.y),
-            None => size,
-        }
+    let mut allocation = match inline {
+        Some(reserve) => vec2(size.x.max(last_row + 8.0 + reserve), size.y),
+        None => size,
     };
     if let Some(span) = span {
         // Span the card width and keep the text left-aligned in own bubbles.
@@ -2947,8 +2920,8 @@ fn rich_body(
             .ctx()
             .plugin_opt::<egui::text_selection::LabelSelectionState>()
             .is_some_and(|plugin| plugin.lock().has_selection());
-    let origin = if rtl {
-        pos2(rect.right() - laid.galley.size().x, rect.top())
+    let origin = if rtl && inline.is_none() {
+        pos2(rect.right() - size.x, rect.top())
     } else {
         rect.min
     };
@@ -2967,17 +2940,10 @@ fn rich_body(
         }
     }
     inline.map(|reserve| {
-        if rtl {
-            Rect::from_min_max(
-                pos2(origin.x, rect.bottom() - 15.0),
-                pos2(origin.x + reserve, rect.bottom()),
-            )
-        } else {
-            Rect::from_min_max(
-                pos2(rect.right() - reserve, rect.bottom() - 15.0),
-                rect.right_bottom(),
-            )
-        }
+        Rect::from_min_max(
+            pos2(rect.right() - reserve, rect.bottom() - 15.0),
+            rect.right_bottom(),
+        )
     })
 }
 

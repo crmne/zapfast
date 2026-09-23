@@ -214,6 +214,15 @@ fn demo_waveform() -> Vec<u8> {
         .collect()
 }
 
+/// Synthetic mixed-direction lines for the `rtl-self` page, one message each.
+///
+/// They cover neutrals, numbers, brackets, embedded Latin, a repeated-letter
+/// word pair, bold, a link, and emoji inside Hebrew and Arabic paragraphs.
+pub const RTL_SELF_CHAT: [&str; 2] = [
+    "בדיקת RTL בלבד\nסער + מירון = ❤️\nשלום ❤️ עולם\nשלום (test 123) עולם!\nשלום 12:34, מחיר 50₪.\nHello שלום עולם world ❤️\nمرحبا بالعالم ❤️ (123)\nשלום 👨‍👩‍👧‍👦 עולם",
+    "שלום!\nשלום 123\nHello שלום עולם end\nאב גד בא\nשלום (עולם)\nשלום *עולם* !\nשלום https://example.com עולם",
+];
+
 fn message(chat: &str, id: &str, from_me: bool, timestamp: i64, content: Content) -> Message {
     Message {
         id: id.to_owned(),
@@ -986,6 +995,42 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
+            "rtl-self" => {
+                let now = crate::util::now();
+                let count = RTL_SELF_CHAT.len() as i64;
+                let messages: Vec<Message> = RTL_SELF_CHAT
+                    .iter()
+                    .enumerate()
+                    .map(|(index, text)| {
+                        let timestamp = now - (count - index as i64) * 60 * 5;
+                        let id = format!("rtl-self-{index}");
+                        message(ME, &id, true, timestamp, Content::text(*text))
+                    })
+                    .collect();
+                let mut chat = Chat::new(ME.into(), "You".into());
+                chat.last_activity = now;
+                chat.last = messages.last().map(|last| crate::model::LastMessage {
+                    from_me: true,
+                    sender: last.sender.clone(),
+                    sender_name: None,
+                    summary: last.summary(),
+                    status: last.status,
+                });
+                app.chats.insert(0, chat);
+                app.conversations.insert(
+                    ME.into(),
+                    Conversation {
+                        messages,
+                        complete: true,
+                        requested: true,
+                        phone_exhausted: true,
+                        ..Default::default()
+                    },
+                );
+                app.open_chat = Some(ME.into());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "settings" => app.page = Page::Settings,
             "omarchy" | "omarchy-light" => {
                 let mut themes: Vec<_> = crate::theme::presets::themes().collect();
@@ -1453,6 +1498,76 @@ mod tests {
             });
             // Headless tests must apply font-atlas updates themselves.
             output.textures_delta.clear();
+        }
+    }
+
+    /// Paints the self-chat through the real bubble path and checks what reaches
+    /// the screen: every row in bidi order, brackets mirrored, the message
+    /// flush right, and the time on its own row at the bottom right.
+    #[test]
+    fn rtl_self_chat_bubbles_render_like_whatsapp() {
+        fn collect(shape: &egui::Shape, out: &mut Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)>) {
+            match shape {
+                egui::Shape::Text(text) => out.push((text.pos, text.galley.clone())),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut app = app();
+        apply_flags(&mut app, Some("rtl-self"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let mut texts = Vec::new();
+        for shape in &shapes {
+            collect(&shape.shape, &mut texts);
+        }
+        let atlas = ctx.fonts(|fonts| fonts.image());
+        let clocks: Vec<String> = app.conversations[ME]
+            .messages
+            .iter()
+            .map(|message| crate::util::clock(message.timestamp))
+            .collect();
+        assert_ne!(clocks[0], clocks[1], "each bubble has its own time");
+        for (first_line, clock) in [("בדיקת RTL בלבד\n", &clocks[0]), ("שלום!\n", &clocks[1])]
+        {
+            let (pos, body) = texts
+                .iter()
+                .find(|(_, galley)| galley.text().starts_with(first_line))
+                .unwrap_or_else(|| panic!("painted body starting {first_line:?}"));
+            crate::bidi::assert_rows_follow_uba(body, &atlas);
+            crate::bidi::assert_right_aligned(body);
+            let body_right = body
+                .rows
+                .iter()
+                .flat_map(|placed| {
+                    placed
+                        .row
+                        .glyphs
+                        .iter()
+                        .map(move |glyph| pos.x + placed.pos.x + glyph.max_x())
+                })
+                .fold(f32::NEG_INFINITY, f32::max);
+            let body_bottom = pos.y + body.rows.last().expect("rows").rect().max.y;
+            let (time_pos, time) = texts
+                .iter()
+                .find(|(_, galley)| galley.text() == clock.as_str())
+                .unwrap_or_else(|| panic!("painted time {clock}"));
+            assert!(
+                time_pos.y >= body_bottom - 0.5,
+                "time at {} overlaps the last row ending at {body_bottom}",
+                time_pos.y
+            );
+            let gap = body_right - (time_pos.x + time.size().x);
+            assert!(
+                (0.0..40.0).contains(&gap),
+                "time should end beside the ticks at the right edge, {gap} short of it"
+            );
         }
     }
 

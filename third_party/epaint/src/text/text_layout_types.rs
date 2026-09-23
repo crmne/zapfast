@@ -1127,6 +1127,9 @@ impl Galley {
             intrinsic_size: Vec2::ZERO,
         };
 
+        // Each paragraph was laid out on its own text, so its glyph clusters
+        // start at zero. Rebase them onto the merged job's text.
+        let mut paragraph_start = 0u32;
         for (i, galley) in galleys.iter().enumerate() {
             let current_y_offset = merged_galley.rect.height();
             let is_last_galley = i + 1 == galleys.len();
@@ -1144,12 +1147,19 @@ impl Galley {
                     let is_last_row_in_galley = row_idx + 1 == galley.rows.len();
                     // Since we remove the `\n` when splitting rows, we need to add it back here
                     ends_with_newline |= !is_last_galley && is_last_row_in_galley;
+                    let mut row = Arc::clone(&placed_row.row);
+                    if paragraph_start > 0 {
+                        for glyph in &mut Arc::make_mut(&mut row).glyphs {
+                            glyph.cluster += paragraph_start;
+                        }
+                    }
                     super::PlacedRow {
                         pos: new_pos,
-                        row: Arc::clone(&placed_row.row),
+                        row,
                         ends_with_newline,
                     }
                 }));
+            paragraph_start += galley.job.text.len() as u32 + 1;
 
             merged_galley.num_vertices += galley.num_vertices;
             merged_galley.num_indices += galley.num_indices;

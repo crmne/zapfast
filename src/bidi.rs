@@ -91,32 +91,6 @@ pub fn char_bounds(galley: &Galley, start: usize, end: usize) -> Option<Rect> {
     rect
 }
 
-/// Grows every row on the left so a footer can sit beside a right-aligned last line.
-pub fn reserve_leading(galley: &mut Galley, reserve: f32) {
-    if reserve <= 0.0 {
-        return;
-    }
-    let Some(last) = galley.rows.last() else {
-        return;
-    };
-    let last_left = content_left(&last.row.glyphs);
-    let gap = if last_left.is_finite() {
-        last_left
-    } else {
-        0.0
-    };
-    if gap + 0.5 >= reserve {
-        return;
-    }
-    let extra = reserve - gap;
-    for placed in &mut galley.rows {
-        let row = Arc::make_mut(&mut placed.row);
-        shift_all(row, extra);
-        row.size.x += extra;
-    }
-    refresh_bounds(galley);
-}
-
 /// Whether the first paragraph's base direction is right to left.
 pub fn base_rtl(text: &str) -> bool {
     let info = BidiInfo::new(text, None);
@@ -125,9 +99,11 @@ pub fn base_rtl(text: &str) -> bool {
         .is_some_and(|paragraph| paragraph.level.is_rtl())
 }
 
-/// Base direction of the last paragraph, for the message footer.
-pub fn last_base_rtl(text: &str) -> bool {
-    text.split('\n').next_back().is_some_and(base_rtl)
+/// Whether the first strong character, in any paragraph, is right to left.
+///
+/// This picks the side a multi-line message is aligned to.
+pub fn message_rtl(text: &str) -> bool {
+    unicode_bidi::get_base_direction_full(text) == unicode_bidi::Direction::Rtl
 }
 
 /// Places each line in visual order and records logical caret direction.
@@ -146,27 +122,34 @@ pub fn reorder_rtl_runs(galley: &mut Galley) {
     }
     let text = galley.job.text.clone();
     let overflow = galley.job.wrap.overflow_character;
+    let mut paragraph = None;
     for placed in &mut galley.rows {
         let row = Arc::make_mut(&mut placed.row);
-        reorder_row(row, &text, overflow);
+        reorder_row(row, &text, &mut paragraph, overflow);
     }
-    align_rtl_paragraphs(galley, &text);
+    if message_rtl(&text) {
+        align_right(galley);
+    }
     refresh_bounds(galley);
 }
 
-fn reorder_row(row: &mut egui::epaint::text::Row, text: &str, overflow: Option<char>) {
+/// The bidi paragraph last used, keyed by its byte offset in the galley text.
+type ParagraphCache<'a> = Option<(usize, BidiInfo<'a>)>;
+
+fn reorder_row<'a>(
+    row: &mut egui::epaint::text::Row,
+    text: &'a str,
+    paragraph: &mut ParagraphCache<'a>,
+    overflow: Option<char>,
+) {
     if row.glyphs.is_empty() || already_visual(&row.glyphs) {
         return;
     }
     let Some((start, end)) = line_span(&row.glyphs, text) else {
         return;
     };
+    let (levels, base_rtl, end) = line_levels(paragraph, text, start, end);
     let line = &text[start..end];
-    let info = BidiInfo::new(line, None);
-    let Some(paragraph) = info.paragraphs.first() else {
-        return;
-    };
-    let levels = info.reordered_levels_per_char(paragraph, 0..line.len());
     let visual_of_logical = visual_indices(&levels);
     let char_at_byte = char_starts(line);
 
@@ -239,7 +222,7 @@ fn reorder_row(row: &mut egui::epaint::text::Row, text: &str, overflow: Option<c
         }
         cursor += atom.width;
     }
-    if paragraph.level.is_rtl() && !replacement.is_empty() {
+    if base_rtl && !replacement.is_empty() {
         let extra: f32 = replacement
             .iter()
             .map(|&index| row.glyphs[index].advance_width)
@@ -339,6 +322,49 @@ fn line_span(glyphs: &[Glyph], text: &str) -> Option<(usize, usize)> {
     Some((start, end))
 }
 
+/// Levels of the characters in `text[start..end]`, whether their paragraph is
+/// right to left, and the end clipped to that paragraph.
+///
+/// Levels come from the whole paragraph, so a wrapped row keeps the
+/// paragraph's base direction instead of guessing one from its own first word.
+fn line_levels<'a>(
+    cache: &mut ParagraphCache<'a>,
+    text: &'a str,
+    start: usize,
+    end: usize,
+) -> (Vec<unicode_bidi::Level>, bool, usize) {
+    let paragraph_start = text[..start].rfind('\n').map_or(0, |at| at + 1);
+    let paragraph_end = text[start..].find('\n').map_or(text.len(), |at| start + at);
+    let end = end.min(paragraph_end);
+    if cache.as_ref().is_none_or(|(at, _)| *at != paragraph_start) {
+        let info = BidiInfo::new(&text[paragraph_start..paragraph_end], None);
+        *cache = Some((paragraph_start, info));
+    }
+    let Some((_, info)) = cache.as_ref() else {
+        return (Vec::new(), false, end);
+    };
+    let line = start - paragraph_start..end - paragraph_start;
+    let mut by_byte = vec![unicode_bidi::Level::ltr(); line.len()];
+    let mut base_rtl = false;
+    for paragraph in &info.paragraphs {
+        let overlap = paragraph.range.start.max(line.start)..paragraph.range.end.min(line.end);
+        if overlap.is_empty() {
+            continue;
+        }
+        if paragraph.range.contains(&line.start) {
+            base_rtl = paragraph.level.is_rtl();
+        }
+        let levels = info.reordered_levels(paragraph, overlap.clone());
+        by_byte[overlap.start - line.start..overlap.end - line.start]
+            .copy_from_slice(&levels[overlap]);
+    }
+    let levels = text[start..end]
+        .char_indices()
+        .map(|(byte, _)| by_byte[byte])
+        .collect();
+    (levels, base_rtl, end)
+}
+
 fn char_starts(text: &str) -> Vec<usize> {
     let mut starts = vec![0; text.len() + 1];
     for (index, (byte, _)) in text.char_indices().enumerate() {
@@ -424,7 +450,12 @@ fn rtl_run_end(glyphs: &[Glyph], start: usize) -> Option<usize> {
     Some(end)
 }
 
-fn align_rtl_paragraphs(galley: &mut Galley, text: &str) {
+/// Right-aligns every row, including left-to-right paragraphs.
+///
+/// Official WhatsApp aligns a message to the side of its first strong
+/// character while each paragraph keeps its own base direction, so an English
+/// line inside a Hebrew message still reads left to right, flush right.
+fn align_right(galley: &mut Galley) {
     // Align the ink, not `row.size.x`. Shaping can leave the row box a fraction
     // of a pixel wider than the last glyph, and that slack depends on the font.
     let width = galley
@@ -435,20 +466,12 @@ fn align_rtl_paragraphs(galley: &mut Galley, text: &str) {
     if width <= 0.0 {
         return;
     }
-    let paragraphs = paragraph_slices(text);
-    let mut paragraph = 0usize;
-    for index in 0..galley.rows.len() {
-        let last = galley.rows[index].ends_with_newline || index + 1 == galley.rows.len();
-        if paragraphs.get(paragraph).is_some_and(|text| base_rtl(text)) {
-            let row = Arc::make_mut(&mut galley.rows[index].row);
-            let delta = width - content_right(&row.glyphs);
-            if delta > 0.01 {
-                shift_all(row, delta);
-                row.size.x = (row.size.x + delta).max(width);
-            }
-        }
-        if last {
-            paragraph += 1;
+    for placed in &mut galley.rows {
+        let row = Arc::make_mut(&mut placed.row);
+        let delta = width - content_right(&row.glyphs);
+        if delta > 0.01 {
+            shift_all(row, delta);
+            row.size.x = (row.size.x + delta).max(width);
         }
     }
 }
@@ -468,14 +491,6 @@ fn shift_all(row: &mut egui::epaint::text::Row, delta: f32) {
             vertex.pos.x += delta;
         }
     }
-}
-
-fn content_left(glyphs: &[Glyph]) -> f32 {
-    glyphs
-        .iter()
-        .filter(|glyph| glyph.advance_width > 0.01)
-        .map(|glyph| glyph.pos.x)
-        .fold(f32::INFINITY, f32::min)
 }
 
 fn refresh_bounds(galley: &mut Galley) {
@@ -501,20 +516,6 @@ fn refresh_bounds(galley: &mut Galley) {
     if let Some(bounds) = mesh_bounds {
         galley.mesh_bounds = bounds;
     }
-}
-
-fn paragraph_slices(text: &str) -> Vec<&str> {
-    if text.is_empty() {
-        return vec![""];
-    }
-    let mut out = Vec::new();
-    let mut start = 0;
-    for (index, _) in text.match_indices('\n') {
-        out.push(&text[start..index]);
-        start = index + 1;
-    }
-    out.push(&text[start..]);
-    out
 }
 
 fn shift_glyph_mesh(mesh: &mut Mesh, glyph: &Glyph, delta: Vec2) {
@@ -612,6 +613,124 @@ fn is_strong_rtl(c: char) -> bool {
 /// Characters with Unicode bidi class R or AL.
 pub fn is_rtl(c: char) -> bool {
     is_strong_rtl(c)
+}
+
+/// Checks every row against `unicode-bidi`'s reordered line for its paragraph.
+///
+/// The drawn glyphs, left to right, must spell the reordered line. ASCII paired
+/// brackets must also face their resolved direction: the glyph's ink in the font
+/// atlas leans the way a mirrored or unmirrored bracket would.
+#[cfg(test)]
+pub(crate) fn assert_rows_follow_uba(galley: &Galley, atlas: &egui::ColorImage) {
+    use unicode_bidi::BidiDataSource as _;
+    let text = galley.text();
+    // Rows hold one glyph per character in logical order, so the row's text
+    // follows from glyph counts alone, independent of the cluster offsets.
+    let byte_at: Vec<usize> = text
+        .char_indices()
+        .map(|(byte, _)| byte)
+        .chain(std::iter::once(text.len()))
+        .collect();
+    let mut first_char = 0usize;
+    for (index, placed) in galley.rows.iter().enumerate() {
+        let glyphs = &placed.row.glyphs;
+        let row_chars = first_char..first_char + glyphs.len();
+        first_char = row_chars.end + usize::from(placed.ends_with_newline);
+        if glyphs.is_empty() {
+            continue;
+        }
+        let (start, end) = (byte_at[row_chars.start], byte_at[row_chars.end]);
+        let paragraph_start = text[..start].rfind('\n').map_or(0, |at| at + 1);
+        let paragraph_end = text[start..].find('\n').map_or(text.len(), |at| start + at);
+        let paragraph = &text[paragraph_start..paragraph_end];
+        let info = BidiInfo::new(paragraph, None);
+        let line = start - paragraph_start..end.min(paragraph_end) - paragraph_start;
+        let resolved = info
+            .paragraphs
+            .iter()
+            .find(|candidate| candidate.range.contains(&line.start))
+            .expect("bidi paragraph for the row");
+        let expected: String = info
+            .reorder_line(resolved, line.clone())
+            .chars()
+            .filter(|&c| {
+                !matches!(
+                    CodePointMapData::<BidiClass>::new().get(c),
+                    BidiClass::NonspacingMark | BidiClass::BoundaryNeutral
+                )
+            })
+            .collect();
+        let mut drawn: Vec<&Glyph> = glyphs
+            .iter()
+            .filter(|glyph| glyph.advance_width > 0.01)
+            .collect();
+        drawn.sort_by(|a, b| a.pos.x.total_cmp(&b.pos.x));
+        let visual: String = drawn.iter().map(|glyph| glyph.chr).collect();
+        assert_eq!(visual, expected, "row {index} of {paragraph:?}");
+        let levels = info.reordered_levels(resolved, line);
+        for (offset, glyph) in glyphs.iter().enumerate() {
+            let Some(bracket) =
+                unicode_bidi::HardcodedBidiData.bidi_matched_opening_bracket(glyph.chr)
+            else {
+                continue;
+            };
+            if !glyph.chr.is_ascii() || glyph.uv_rect.is_nothing() {
+                continue;
+            }
+            let rtl = levels[byte_at[row_chars.start + offset] - paragraph_start].is_rtl();
+            // An opening bracket's ink sits left of centre; mirrored, it sits right.
+            assert_eq!(
+                ink_leans_right(atlas, glyph),
+                bracket.is_open == rtl,
+                "{:?} faces the wrong way in row {index} of {paragraph:?}",
+                glyph.chr
+            );
+        }
+    }
+}
+
+/// Whether the glyph's middle bulges right of its tips, as `)`, `]`, and `}` do.
+#[cfg(test)]
+fn ink_leans_right(atlas: &egui::ColorImage, glyph: &Glyph) -> bool {
+    let [left, top] = glyph.uv_rect.min;
+    let [right, bottom] = glyph.uv_rect.max;
+    let height = bottom - top;
+    assert!(height >= 4, "{:?} is too small to inspect", glyph.chr);
+    let centre_of = |rows: &mut dyn Iterator<Item = u16>| {
+        let mut mass = 0.0f32;
+        let mut moment = 0.0f32;
+        for y in rows {
+            for x in left..right {
+                let alpha = f32::from(atlas.pixels[y as usize * atlas.size[0] + x as usize].a());
+                mass += alpha;
+                moment += alpha * f32::from(x);
+            }
+        }
+        assert!(mass > 0.0, "{:?} has no ink in the atlas", glyph.chr);
+        moment / mass
+    };
+    let quarter = height / 4;
+    let tips = centre_of(&mut (top..top + quarter).chain(bottom - quarter..bottom));
+    let middle = centre_of(&mut (top + quarter..bottom - quarter));
+    middle > tips
+}
+
+/// Every row's ink ends at the same right edge.
+#[cfg(test)]
+pub(crate) fn assert_right_aligned(galley: &Galley) {
+    let edges: Vec<f32> = galley
+        .rows
+        .iter()
+        .filter(|placed| !placed.row.glyphs.is_empty())
+        .map(|placed| content_right(&placed.row.glyphs))
+        .collect();
+    let widest = edges.iter().copied().fold(0.0_f32, f32::max);
+    for (index, edge) in edges.iter().enumerate() {
+        assert!(
+            (widest - edge).abs() < 1.0,
+            "row {index} ends at {edge}, not the right edge {widest}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -880,15 +999,68 @@ mod tests {
         );
     }
 
-    fn layout_fixed(text: &str) -> Galley {
-        let mut galley = layout_raw(text);
-        reorder_rtl_runs(&mut galley);
-        galley
+    #[test]
+    fn message_bubbles_follow_the_bidi_algorithm_on_every_row() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let galleys = std::cell::RefCell::new(Vec::new());
+        // Fonts are installed at the start of the first pass.
+        for _ in 0..2 {
+            galleys.borrow_mut().clear();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let style = crate::markup::Style {
+                        size: 14.5,
+                        color: Color32::WHITE,
+                        secondary: Color32::GRAY,
+                        link: Color32::LIGHT_BLUE,
+                        mention: Color32::GREEN,
+                    };
+                    for text in crate::demo::RTL_SELF_CHAT {
+                        let laid = crate::markup::layout(ui, text, &[], &style, 400.0);
+                        galleys.borrow_mut().push(laid.galley);
+                    }
+                },
+            );
+            output.textures_delta.clear();
+        }
+        let atlas = ctx.fonts(|fonts| fonts.image());
+        for galley in galleys.into_inner() {
+            assert!(galley.rows.len() > 1, "each sample is a multi-line message");
+            assert_rows_follow_uba(&galley, &atlas);
+            assert_right_aligned(&galley);
+        }
     }
 
-    fn layout_raw(text: &str) -> Galley {
+    #[test]
+    fn brackets_face_their_paragraph_direction() {
+        for text in [
+            "שלום (עולם)\n(Hello) [x] עולם",
+            "Hello (שלום) end\nמחיר [50] ₪",
+            "مرحبا (123)\n{שלום}",
+        ] {
+            let (galley, atlas) = layout_with_atlas(text);
+            assert_rows_follow_uba(&galley, &atlas);
+        }
+    }
+
+    fn layout_fixed(text: &str) -> Galley {
+        layout_with_atlas(text).0
+    }
+
+    fn layout_with_atlas(text: &str) -> (Galley, egui::ColorImage) {
         let ctx = egui::Context::default();
-        install_fonts(&ctx);
+        let mut galley = layout_raw(&ctx, text);
+        reorder_rtl_runs(&mut galley);
+        (galley, ctx.fonts(|fonts| fonts.image()))
+    }
+
+    fn layout_raw(ctx: &egui::Context, text: &str) -> Galley {
+        install_fonts(ctx);
         let galley = std::cell::RefCell::new(None);
         let mut output = ctx.run_ui(
             egui::RawInput {
