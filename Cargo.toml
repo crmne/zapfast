@@ -106,10 +106,9 @@ ogg = "0.9"
 webp-animation = "0.10"
 
 [patch.crates-io]
-# Local cursor and cluster fixes for right-to-left text. epaint 0.36 still
-# assumes glyph order is both logical and left-to-right, and its continuation
-# glyphs treat cluster offsets as ascending. No upstream release has both fixes.
-epaint = { path = "third_party/epaint" }
+# Right-to-left shaping and glyph clusters from crmne/zapfast#144, on top of
+# epaint 0.36.1. Drop this once egui releases bidirectional text support.
+epaint = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify = "8.2"
