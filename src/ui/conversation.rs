@@ -1,7 +1,7 @@
 //! The open chat: its header, the messages, and the composer.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use egui::{
@@ -719,6 +719,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .inner_margin(Margin::symmetric(12, 8)),
         )
         .show(ui, |ui| {
+            if let Some((selected_chat, selected)) = app.selection.clone()
+                && selected_chat == chat.id
+            {
+                selection_bar(app, ui, &chat.id, &selected);
+                return;
+            }
             if !chat.can_send() {
                 if chat.kind == crate::model::ChatKind::Broadcast {
                     ui.vertical_centered(|ui| {
@@ -1267,7 +1273,28 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     };
     let mut actions = Vec::new();
     let mut anchored = false;
-    let scroll_to_bottom = app.scroll_to_bottom;
+    // The first unread message is the count-th incoming one from the end.
+    let divider = app
+        .unread_divider
+        .as_ref()
+        .filter(|divider| divider.chat == chat.id)
+        .and_then(|divider| {
+            conversation
+                .messages
+                .iter()
+                .rev()
+                .filter(|message| !message.from_me)
+                .nth(divider.count.saturating_sub(1) as usize)
+                .map(|message| (message.id.clone(), divider.count, divider.placed))
+        });
+    let mut divider_placed = false;
+    let selection: Option<Vec<String>> = app
+        .selection
+        .as_ref()
+        .filter(|(selected_chat, _)| *selected_chat == chat.id)
+        .map(|(_, ids)| ids.clone());
+    let scroll_to_bottom =
+        app.scroll_to_bottom && divider.as_ref().is_none_or(|(.., placed)| *placed);
     let app_pictures = app.settings.show_sender_pictures;
     // Do not animate programmatic scrolling. Pending animations can delay a
     // later request to reach the end.
@@ -1332,14 +1359,48 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             });
                             ui.add_space(4.0);
                         }
+                        if let Some((id, count, placed)) = &divider
+                            && *id == message.id
+                        {
+                            ui.add_space(6.0);
+                            let label = crate::i18n::ngettext(
+                                app.locale,
+                                "{} unread message",
+                                "{} unread messages",
+                                *count,
+                            )
+                            .replace("{}", &count.to_string());
+                            let response = ui
+                                .vertical_centered(|ui| widgets::chip(ui, &palette, &label))
+                                .inner;
+                            if !placed && view.anchor.is_none() {
+                                response.scroll_to_me(Some(Align::Min));
+                                divider_placed = true;
+                            }
+                            ui.add_space(4.0);
+                        }
                         let show_sender = (chat.is_group() || app_pictures)
                             && !message.from_me
                             && (new_day
                                 || previous.is_none_or(|previous| {
                                     previous.sender != message.sender || previous.from_me
                                 }));
-                        if let Some(response) =
-                            bubble(ui, &view, message, show_sender, &mut actions)
+                        let response = bubble(ui, &view, message, show_sender, &mut actions);
+                        if let (Some(selected), Some(response)) = (&selection, &response) {
+                            if selected.contains(&message.id) {
+                                ui.painter().rect(
+                                    response.rect.expand(2.0),
+                                    10.0,
+                                    palette.accent.gamma_multiply(0.18),
+                                    Stroke::new(2.0, palette.accent),
+                                    egui::StrokeKind::Outside,
+                                );
+                            }
+                            if response.clicked() {
+                                actions.push(Action::ToggleSelected(message.id.clone()));
+                            }
+                        }
+                        if let Some(response) = response
                             && view.anchor == Some(message.id.as_str())
                         {
                             response.scroll_to_me(Some(Align::Center));
@@ -1389,6 +1450,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         .insert(chat.id.clone(), std::mem::take(&mut conversation));
     app.at_bottom = at_bottom;
     if app.scroll_to_bottom && (reader_scrolled || keyboard_navigation.get()) {
+        app.scroll_to_bottom = false;
+    }
+    if divider_placed {
+        if let Some(divider) = app.unread_divider.as_mut() {
+            divider.placed = true;
+        }
         app.scroll_to_bottom = false;
     }
     if anchored {
@@ -1844,6 +1911,115 @@ pub fn bubble_id(chat: &str, message: &str) -> egui::Id {
     egui::Id::new(("bubble", chat, message))
 }
 
+/// Where a voice message's speed chip was drawn, for interaction tests.
+pub fn speed_chip_id(chat: &str, message: &str) -> egui::Id {
+    egui::Id::new(("speed-chip", chat, message))
+}
+
+/// Where a speed choice in a voice message's menu was drawn, for
+/// interaction tests.
+pub fn speed_button_id(chat: &str, message: &str, speed: f32) -> egui::Id {
+    egui::Id::new(("speed", chat, message, speed.to_bits()))
+}
+
+/// Draws a playback speed pill labelled with `speed`, highlighted when
+/// `active` and faded while that speed is still `preparing`.
+fn speed_pill(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    size: Vec2,
+    speed: f32,
+    active: bool,
+    preparing: bool,
+) -> egui::Response {
+    let palette = view.palette;
+    let label = crate::audio::speed_label(speed);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            active,
+            format!("Playback speed {label}"),
+        )
+    });
+    theme::reveal_focus(&response);
+    theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
+    if ui.is_rect_visible(rect) {
+        let hovered = response.hovered();
+        // The resting fill uses the hover step because incoming bubbles
+        // share the resting surface colour.
+        let fill = if active {
+            palette
+                .accent
+                .gamma_multiply(if hovered { 0.42 } else { 0.30 })
+        } else if hovered {
+            palette.surface_active
+        } else {
+            palette.surface_hover
+        };
+        ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
+        let colour = if active {
+            palette.accent
+        } else {
+            palette.secondary
+        };
+        let colour = if preparing {
+            colour.gamma_multiply(0.5)
+        } else {
+            colour
+        };
+        let galley = ui
+            .painter()
+            .layout_no_wrap(label, theme::medium(11.0), colour);
+        ui.painter()
+            .galley(rect.center() - galley.size() / 2.0, galley, colour);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The message menu's row of every playback speed for a playable voice
+/// message, so 1.25x and 1.75x are reachable without cycling.
+fn speed_menu_row(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    actions: &mut Vec<Action>,
+) {
+    let speed = view.player.speed();
+    let preparing = view.player.preparing_speed(&message.id);
+    widgets::menu_separator(ui, &view.palette);
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), 28.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(6.0);
+            for option in crate::audio::SPEEDS {
+                let selected = option == speed;
+                let response = speed_pill(
+                    ui,
+                    view,
+                    vec2(44.0, 24.0),
+                    option,
+                    selected,
+                    preparing && selected,
+                );
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        speed_button_id(&view.chat.id, &message.id, option),
+                        response.rect,
+                    );
+                });
+                if response.clicked() {
+                    actions.push(Action::SetVoiceSpeed(option));
+                    ui.close();
+                }
+            }
+        },
+    );
+}
+
 /// Draws a message bubble and its menu.
 fn bubble_frame(
     ui: &mut egui::Ui,
@@ -2003,7 +2179,11 @@ fn bubble_frame(
         &[
             "Delete for everyone",
             "Show in folder",
-            "Delivered Yesterday at 20:45",
+            if crate::util::twelve_hour_clock() {
+                "Delivered Yesterday at 11:59 PM"
+            } else {
+                "Delivered Yesterday at 20:45"
+            },
         ],
         true,
     )
@@ -2532,14 +2712,18 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         message.content,
         Content::Revoked
             | Content::Unsupported { .. }
+            | Content::PhoneOnly { .. }
             | Content::Poll { .. }
             | Content::Interactive { .. }
     ) && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
     {
         actions.push(Action::ShowDialog(Dialog::Forward {
             chat: chat.clone(),
-            message: message.id.clone(),
+            messages: vec![message.id.clone()],
         }));
+    }
+    if widgets::menu_item(ui, &palette, Some(Icon::Check), "Select") {
+        actions.push(Action::SelectMessage(message.id.clone()));
     }
     let text = match &message.content {
         Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
@@ -2588,6 +2772,12 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), "Open file") {
                     actions.push(Action::OpenFile(path.clone()));
                 }
+                if widgets::menu_item(ui, &palette, Some(Icon::Download), "Save as…") {
+                    actions.push(Action::SaveAttachmentAs {
+                        path: path.clone(),
+                        name: attachment_name(&message.content, path),
+                    });
+                }
                 if let Some(folder) = path.parent()
                     && widgets::menu_item(ui, &palette, Some(Icon::FileText), "Show in folder")
                 {
@@ -2615,6 +2805,11 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 }
             }
         }
+    }
+    if let Content::Audio { media, .. } = &message.content
+        && media.path.is_some()
+    {
+        speed_menu_row(ui, view, message, actions);
     }
     widgets::menu_separator(ui, &palette);
     // Sent, delivered, and read times inform only; they are not actions.
@@ -2938,6 +3133,24 @@ fn content(
                         theme::regular(13.5),
                         palette.secondary,
                     );
+                },
+            );
+            None
+        }
+        Content::PhoneOnly { view_once } => {
+            let text = if *view_once {
+                "View once message. For your privacy, it opens only on your phone."
+            } else {
+                "This message can only be seen on your phone."
+            };
+            mirrored_row(
+                ui,
+                own,
+                |ui| {
+                    theme::icon(ui, Icon::Smartphone, 14.0, palette.dim);
+                },
+                |ui| {
+                    theme::text(ui, text, theme::regular(13.5), palette.secondary);
                 },
             );
             None
@@ -4239,12 +4452,12 @@ fn voice_player(
     width: f32,
     actions: &mut Vec<Action>,
 ) {
-    use crate::audio::{State, speed_label};
+    use crate::audio::State;
     let palette = view.palette;
     let status = view.player.status(&message.id);
     let button = 36.0;
     let bar_height = 30.0;
-    let chip = 38.0;
+    let chip = 44.0;
     // The chip appears with the playable clip; the waveform takes its space
     // back while the audio is still downloading.
     let shows_chip = media.path.is_some();
@@ -4398,56 +4611,28 @@ fn voice_player(
                 };
                 theme::text(ui, text, theme::regular(11.5), palette.secondary);
             });
-            // Speed chip, cycling 1x, 1.5x, and 2x like the phone.
+            // Speed chip, cycling 1x, 1.5x, and 2x like the phone. The
+            // message menu lists every speed, including 1.25x and 1.75x.
             if shows_chip {
                 let speed = view.player.speed();
-                let active = speed > 1.0;
                 // The label follows the click at once, faded until this
                 // clip actually plays at that speed.
                 let preparing = view.player.preparing_speed(&message.id);
-                let (rect, response) = ui.allocate_exact_size(vec2(chip, 20.0), Sense::click());
-                if ui.is_rect_visible(rect) {
-                    let hovered = response.hovered();
-                    // The resting fill uses the hover step because incoming
-                    // bubbles share the resting surface colour.
-                    let fill = if active {
-                        palette
-                            .accent
-                            .gamma_multiply(if hovered { 0.42 } else { 0.30 })
-                    } else if hovered {
-                        palette.surface_active
-                    } else {
-                        palette.surface_hover
-                    };
-                    ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
-                    let colour = if active {
-                        palette.accent
-                    } else {
-                        palette.secondary
-                    };
-                    let colour = if preparing {
-                        colour.gamma_multiply(0.5)
-                    } else {
-                        colour
-                    };
-                    let galley = ui.painter().layout_no_wrap(
-                        speed_label(speed),
-                        theme::medium(11.0),
-                        colour,
-                    );
-                    ui.painter()
-                        .galley(rect.center() - galley.size() / 2.0, galley, colour);
-                }
+                let response =
+                    speed_pill(ui, view, vec2(chip, 20.0), speed, speed > 1.0, preparing);
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(speed_chip_id(&view.chat.id, &message.id), response.rect);
+                });
                 if response.clicked() {
-                    actions.push(Action::CycleVoiceSpeed);
+                    actions.push(Action::SetVoiceSpeed(crate::audio::next_cycled_speed(
+                        speed,
+                    )));
                 }
-                response
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text(if preparing {
-                        "Preparing playback speed"
-                    } else {
-                        "Playback speed"
-                    });
+                response.on_hover_text(if preparing {
+                    "Preparing playback speed"
+                } else {
+                    "Playback speed. Right-click for every speed."
+                });
             }
         },
     );
@@ -4533,6 +4718,54 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
     );
 }
 
+/// Replaces the composer while messages are selected.
+fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[String]) {
+    let palette = app.palette;
+    ui.horizontal(|ui| {
+        if theme::icon_button(
+            ui,
+            Icon::X,
+            18.0,
+            palette.secondary,
+            palette.text,
+            "Cancel selection",
+        )
+        .clicked()
+            || ui.input(|input| input.key_pressed(Key::Escape))
+        {
+            app.actions.push(Action::CancelSelection);
+        }
+        let count = if selected.len() == 1 {
+            "1 selected".to_owned()
+        } else {
+            format!("{} selected", selected.len())
+        };
+        theme::text(ui, &count, theme::medium(14.5), palette.text);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::pill_button(ui, &palette, "Forward…", true).clicked() {
+                app.actions.push(Action::ShowDialog(Dialog::Forward {
+                    chat: chat.to_owned(),
+                    messages: selected.to_vec(),
+                }));
+            }
+        });
+    });
+}
+
+/// The file name to suggest when saving an attachment: the sender's name for
+/// documents, the cached file's name otherwise. Path separators are dropped so
+/// a crafted name cannot point the dialog somewhere else.
+fn attachment_name(content: &Content, path: &Path) -> String {
+    let name = match content {
+        Content::Document { file_name, .. } if !file_name.trim().is_empty() => file_name.clone(),
+        _ => path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "attachment".to_owned()),
+    };
+    name.replace(['/', '\\'], "_")
+}
+
 /// Whether a conversation has visible content. Used by tests.
 #[allow(dead_code)]
 pub fn has_messages(conversation: &Conversation) -> bool {
@@ -4560,6 +4793,23 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_attachments_suggest_a_plain_file_name() {
+        let document = |file_name: &str| Content::Document {
+            media: media(None, None),
+            file_name: file_name.into(),
+            caption: None,
+            pages: None,
+        };
+        let cached = Path::new("/cache/media/abc123.pdf");
+        assert_eq!(attachment_name(&document("Notes.pdf"), cached), "Notes.pdf");
+        assert_eq!(
+            attachment_name(&document("../../.bashrc"), cached),
+            ".._.._.bashrc"
+        );
+        assert_eq!(attachment_name(&document("  "), cached), "abc123.pdf");
+    }
 
     fn media(w: Option<u32>, h: Option<u32>) -> Media {
         Media {

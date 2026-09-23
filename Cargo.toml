@@ -114,6 +114,8 @@ notify = "8.2"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 # Linux status-notifier tray item over D-Bus.
 ksni = { version = "0.3", features = ["blocking"] }
+# Reads the time locale's clock format.
+libc = "0.2"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # Windows and macOS tray item.
@@ -126,13 +128,13 @@ apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 objc2 = "0.6"
 raw-window-handle = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication", "NSText", "NSView", "NSWindow"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDate", "NSGeometry", "NSObjCRuntime", "NSRunLoop", "NSString"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDate", "NSDateFormatter", "NSFormatter", "NSGeometry", "NSLocale", "NSObjCRuntime", "NSRunLoop", "NSString"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }
 winrt-notification = { package = "tauri-winrt-notification", version = "0.7.3" }
 # Windows tray-thread message loop.
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
 
 # The icon and version information Windows shows for the executable.
 [target.'cfg(windows)'.build-dependencies]

@@ -39,10 +39,19 @@ pub enum ChatFilter {
     /// One-to-one chats: neither groups nor broadcasts.
     Private,
     Groups,
+    /// Followed channels (newsletters), kept out of the other filters as in
+    /// the official apps.
+    Channels,
 }
 
 impl ChatFilter {
-    pub const EVERY: [Self; 4] = [Self::All, Self::Unread, Self::Private, Self::Groups];
+    pub const EVERY: [Self; 5] = [
+        Self::All,
+        Self::Unread,
+        Self::Private,
+        Self::Groups,
+        Self::Channels,
+    ];
 
     pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
         use crate::i18n::gettext;
@@ -51,15 +60,17 @@ impl ChatFilter {
             Self::Unread => gettext(locale, "Unread"),
             Self::Private => gettext(locale, "Private"),
             Self::Groups => gettext(locale, "Groups"),
+            Self::Channels => gettext(locale, "Channels"),
         }
     }
 
     pub fn matches(self, chat: &Chat) -> bool {
         match self {
-            Self::All => true,
-            Self::Unread => chat.unread > 0,
+            Self::All => !chat.is_channel(),
+            Self::Unread => chat.unread > 0 && !chat.is_channel(),
             Self::Private => chat.kind == ChatKind::Direct,
             Self::Groups => chat.kind == ChatKind::Group,
+            Self::Channels => chat.is_channel(),
         }
     }
 }
@@ -128,6 +139,11 @@ impl Chat {
     /// Newsletter publishing permissions are not supported by this client.
     pub fn can_send(&self) -> bool {
         !self.locked && !self.read_only && self.kind != ChatKind::Broadcast
+    }
+
+    /// A followed WhatsApp channel (newsletter).
+    pub fn is_channel(&self) -> bool {
+        self.id.ends_with("@newsletter")
     }
 
     pub fn is_group(&self) -> bool {
@@ -304,6 +320,11 @@ pub enum Content {
     Unsupported {
         what: String,
     },
+    /// A message WhatsApp only delivers to the phone, such as view-once
+    /// media. Linked devices receive a placeholder that never fills in.
+    PhoneOnly {
+        view_once: bool,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -467,6 +488,8 @@ impl Content {
             Self::Poll { question, .. } => format!("Poll: {question}"),
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
+            Self::PhoneOnly { view_once: true } => "View once message".to_owned(),
+            Self::PhoneOnly { view_once: false } => "Message on your phone".to_owned(),
         }
     }
 
@@ -670,7 +693,8 @@ pub enum Dialog {
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
-        message: String,
+        /// Message ids, in the order they appear in the chat.
+        messages: Vec<String>,
     },
     CreatePoll(ChatId),
     PollResults {
@@ -682,6 +706,36 @@ pub enum Dialog {
         message: String,
         button: usize,
     },
+    /// Previews a group invite link before joining.
+    JoinGroup,
+    /// Confirms setting aside an archive whose key is gone.
+    ConfirmStartOver,
+}
+
+/// A group invite link being previewed or joined.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupInvite {
+    pub code: String,
+    pub state: InviteState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum InviteState {
+    Loading,
+    Ready(InviteInfo),
+    Joining(InviteInfo),
+    Failed(String),
+}
+
+/// What an invite link says about its group, without joining it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InviteInfo {
+    pub id: ChatId,
+    pub subject: String,
+    pub description: Option<String>,
+    pub members: usize,
+    /// Admins approve new members before they join.
+    pub approval: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -765,8 +819,8 @@ pub enum Action {
         path: PathBuf,
         fraction: f32,
     },
-    /// Cycles voice playback speed between 1x, 1.5x, and 2x.
-    CycleVoiceSpeed,
+    /// Sets the voice playback speed to one of the supported speeds.
+    SetVoiceSpeed(f32),
     /// Starts, cancels, or sends a voice recording.
     StartRecording,
     CancelRecording,
@@ -774,6 +828,11 @@ pub enum Action {
     OpenFile(PathBuf),
     OpenFolder(PathBuf),
     OpenMediaDir,
+    /// Saves a copy of a downloaded attachment where the person chooses.
+    SaveAttachmentAs {
+        path: PathBuf,
+        name: String,
+    },
     OpenUrl(String),
     CopyText(String),
     /// Closes the toast at this index. Only errors wait to be dismissed.
@@ -784,9 +843,15 @@ pub enum Action {
     /// Forwards an archived message to another chat.
     Forward {
         from_chat: ChatId,
-        message: String,
+        messages: Vec<String>,
         to_chat: ChatId,
     },
+    /// Starts selecting messages in the open chat, beginning with this one.
+    SelectMessage(String),
+    /// Adds a message to the selection or removes it.
+    ToggleSelected(String),
+    /// Leaves selection mode.
+    CancelSelection,
     /// Loads an outgoing message into the composer for editing.
     Edit(String),
     CancelEdit,
@@ -870,6 +935,10 @@ pub enum Action {
     CloseDialog,
     ToggleSidebar,
     SetChatFilter(ChatFilter),
+    /// Shows or leaves the archived chats.
+    ShowArchived(bool),
+    /// Joins the group of the invite being previewed.
+    JoinGroup,
     /// A chat opened from the main list, kept there under the Unread filter.
     KeepUnread(ChatId),
     FocusSearch,
@@ -905,6 +974,17 @@ pub enum Action {
     SettingsChanged,
     /// Registers or removes the login entry that starts ZapFast in the tray.
     SetStartWithSystem(bool),
+    /// Sets the notification sound for groups (`true`) or other chats.
+    SetNotificationSound {
+        group: bool,
+        sound: crate::settings::NotificationSound,
+    },
+    /// Asks for an audio file to use as a notification sound.
+    PickNotificationSound {
+        group: bool,
+    },
+    /// Plays a notification sound once, as a preview.
+    PreviewSound(PathBuf),
     ZoomBy(f32),
     ResetZoom,
     /// Requests a pairing code for a phone number.
@@ -912,6 +992,8 @@ pub enum Action {
     /// Unlinks the device remotely and locally.
     Unlink,
     Reconnect,
+    /// Sets aside an archive whose key is gone and links again.
+    StartOverArchive,
     Quit,
     /// Shows the window, creating it when running headless.
     ShowWindow,

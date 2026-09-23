@@ -35,7 +35,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::NewChat => 420.0,
                 Dialog::UnlockLockedChats | Dialog::ConfirmLockChat(_) => 380.0,
                 Dialog::ChatInfo(_) => 360.0,
-                Dialog::ConfirmDeleteChat(_) => 380.0,
+                Dialog::ConfirmDeleteChat(_) | Dialog::JoinGroup | Dialog::ConfirmStartOver => {
+                    380.0
+                }
                 Dialog::Forward { .. } => 420.0,
                 Dialog::CreatePoll(_) => 420.0,
                 Dialog::PollResults { .. } | Dialog::InteractiveList { .. } => {
@@ -63,7 +65,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmLockChat(id) => confirm_lock_chat(app, ui, &id),
                 Dialog::ChatInfo(id) => chat_info(app, ui, &id),
                 Dialog::ConfirmDeleteChat(id) => confirm_delete_chat(app, ui, &id),
-                Dialog::Forward { chat, message } => forward(app, ui, &chat, &message),
+                Dialog::Forward { chat, messages } => forward(app, ui, &chat, &messages),
+                Dialog::JoinGroup => join_group(app, ui),
+                Dialog::ConfirmStartOver => confirm_start_over(app, ui),
             }
         });
     if response.should_close() {
@@ -440,9 +444,14 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
-fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {
+fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String]) {
     let palette = app.palette;
-    title(ui, app, "Forward message");
+    let heading = if messages.len() == 1 {
+        "Forward message".to_owned()
+    } else {
+        format!("Forward {} messages", messages.len())
+    };
+    title(ui, app, &heading);
     let width = ui.available_width();
     let search = super::widgets::search_field(
         ui,
@@ -544,7 +553,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {
     if let Some(to_chat) = destination {
         app.actions.push(Action::Forward {
             from_chat: from_chat.to_owned(),
-            message: message.to_owned(),
+            messages: messages.to_vec(),
             to_chat,
         });
     }
@@ -674,6 +683,118 @@ fn confirm_delete_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
             if danger_button(ui, app, "Delete") {
                 app.actions.push(Action::DeleteChat(id.to_owned()));
                 app.actions.push(Action::CloseDialog);
+            }
+            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn join_group(app: &mut App, ui: &mut egui::Ui) {
+    use crate::model::InviteState;
+    let palette = app.palette;
+    let Some(invite) = app.invite.clone() else {
+        app.actions.push(Action::CloseDialog);
+        return;
+    };
+    let (info, joining) = match &invite.state {
+        InviteState::Loading => {
+            title(ui, app, "Group invite");
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(egui::RichText::new("Looking up the group…").color(palette.secondary));
+            });
+            cancel_row(app, ui);
+            return;
+        }
+        InviteState::Failed(error) => {
+            title(ui, app, "Group invite");
+            theme::paragraph(ui, error, theme::regular(13.5), palette.text);
+            cancel_row(app, ui);
+            return;
+        }
+        InviteState::Ready(info) => (info, false),
+        InviteState::Joining(info) => (info, true),
+    };
+    super::widgets::rich_text(ui, &info.subject, theme::semibold(17.0), palette.text);
+    let members = if info.members == 1 {
+        "1 member".to_owned()
+    } else {
+        format!("{} members", info.members)
+    };
+    ui.label(egui::RichText::new(members).color(palette.secondary));
+    if let Some(description) = &info.description {
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .max_height(140.0)
+            .show(ui, |ui| {
+                super::widgets::rich_text(ui, description, theme::regular(13.5), palette.text);
+            });
+    }
+    let member = app.chats.iter().any(|chat| chat.id == info.id);
+    if info.approval && !member {
+        ui.add_space(4.0);
+        theme::paragraph(
+            ui,
+            "An admin must approve your request before you join.",
+            theme::regular(13.0),
+            palette.secondary,
+        );
+    }
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let label = match (member, info.approval) {
+                (true, _) => "Open chat",
+                (false, true) => "Request to join",
+                (false, false) => "Join group",
+            };
+            let join = ui.add_enabled_ui(!joining, |ui| {
+                theme::pill_button(ui, &palette, if joining { "Joining…" } else { label }, true)
+            });
+            if join.inner.clicked() {
+                app.actions.push(Action::JoinGroup);
+            }
+            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn cancel_row(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::pill_button(ui, &palette, "Close", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn confirm_start_over(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    title(ui, app, "Start over?");
+    theme::paragraph(
+        ui,
+        "ZapFast keeps your unreadable archive as a separate file, creates a new one, and asks you to link again. Linking again brings back recent history from your phone. Afterwards, remove the old ZapFast entry under Linked devices on your phone.",
+        theme::regular(13.5),
+        palette.text,
+    );
+    theme::paragraph(
+        ui,
+        "If you can restore the original keyring instead, choose Cancel and Try again: nothing is lost that way.",
+        theme::regular(13.0),
+        palette.secondary,
+    );
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if danger_button(ui, app, "Start over") {
+                app.actions.push(Action::StartOverArchive);
             }
             if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
                 app.actions.push(Action::CloseDialog);

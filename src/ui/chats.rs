@@ -289,10 +289,10 @@ pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
     egui::Id::new(("chat-filter", filter as u8))
 }
 
-/// Filter chips under the search field. Search and the archive list every
-/// match, so the chips hide there.
+/// Filter chips under the search field. Search lists every match, so the
+/// chips hide there.
 fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
-    if app.show_archived || (!app.locked_folder_open() && !app.search.trim().is_empty()) {
+    if !app.locked_folder_open() && !app.search.trim().is_empty() {
         return;
     }
     let palette = app.palette;
@@ -309,7 +309,9 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                         ChatFilter::All => 0,
                         _ => app.unread_chats(filter),
                     };
-                    let selected = !app.locked_folder_open() && app.chat_filter == filter;
+                    let selected = !app.locked_folder_open()
+                        && !app.show_archived
+                        && app.chat_filter == filter;
                     let chip = widgets::filter_chip(
                         ui,
                         &palette,
@@ -322,6 +324,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                         ChatFilter::Unread => Stop::Unread,
                         ChatFilter::Private => Stop::Private,
                         ChatFilter::Groups => Stop::Groups,
+                        ChatFilter::Channels => Stop::Channels,
                     });
                     // Store the chip rect for interaction tests.
                     ui.ctx()
@@ -330,6 +333,23 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                         // A second click on the active chip returns to every chat.
                         let next = if selected { ChatFilter::All } else { filter };
                         app.actions.push(Action::SetChatFilter(next));
+                    }
+                }
+                if app.archived_count() > 0 || app.show_archived {
+                    let selected = app.show_archived;
+                    let chip = widgets::filter_chip(
+                        ui,
+                        &palette,
+                        crate::i18n::gettext(app.locale, "Archived").as_ref(),
+                        app.archived_unread(),
+                        selected,
+                    )
+                    .tab_stop(Stop::Archived);
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new("archived-chip"), chip.rect);
+                    });
+                    if chip.clicked() {
+                        app.actions.push(Action::ShowArchived(!selected));
                     }
                 }
                 if app.locked_count() > 0 || app.locked_folder_open() {
@@ -374,15 +394,14 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
-    let archived = app.archived_count();
-    let show_archive_row = !app.show_archived && archived > 0 && app.chat_filter == ChatFilter::All;
-    if chats.is_empty() && !show_archive_row {
+    if chats.is_empty() {
         let (title, body) = if app.show_archived {
             ("Nothing archived", "Archived chats appear here.")
         } else if app.chat_filter != ChatFilter::All {
             let title = match app.chat_filter {
                 ChatFilter::Unread => "No unread chats",
                 ChatFilter::Private => "No private chats",
+                ChatFilter::Channels => "No channels",
                 _ => "No groups",
             };
             (title, "Choose All to see every chat.")
@@ -398,16 +417,14 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let row_height = theme::ROW_HEIGHT;
-    let total = chats.len() + usize::from(show_archive_row);
+    let total = chats.len();
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-list")
         .auto_shrink([false, false]);
-    let target_row = app.scroll_chat_into_view.as_ref().and_then(|target| {
-        chats
-            .iter()
-            .position(|chat| chat.id == *target)
-            .map(|index| index + usize::from(show_archive_row))
-    });
+    let target_row = app
+        .scroll_chat_into_view
+        .as_ref()
+        .and_then(|target| chats.iter().position(|chat| chat.id == *target));
     if let Some(target_row) = target_row {
         let id = ui.make_persistent_id(egui::IdSalt::new("chat-list"));
         let current = egui::scroll_area::State::load(ui.ctx(), id)
@@ -426,11 +443,7 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     }
     scroll_area.show_rows(ui, row_height, total, |ui, range| {
         for index in range {
-            if show_archive_row && index == 0 {
-                archive_row(app, ui, archived);
-                continue;
-            }
-            let chat = &chats[index - usize::from(show_archive_row)];
+            let chat = &chats[index];
             // Key by chat so an open menu survives list reordering.
             let response = ui
                 .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
@@ -753,57 +766,6 @@ pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
             id: contact.id.clone(),
             name,
         });
-    }
-}
-
-fn archive_row(app: &mut App, ui: &mut egui::Ui, count: usize) {
-    let palette = app.palette;
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), theme::ROW_HEIGHT),
-        Sense::click(),
-    );
-    theme::reveal_focus(&response);
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            ui.is_enabled(),
-            format!("Archived, {count} chats"),
-        )
-    });
-    if ui.is_rect_visible(rect) {
-        if response.hovered() {
-            ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-        }
-        let icon_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(22.0));
-        Icon::Archive
-            .image(palette.accent, 22.0)
-            .paint_at(ui, icon_rect);
-        ui.painter().text(
-            pos2(rect.left() + 76.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            "Archived",
-            theme::medium(14.5),
-            palette.text,
-        );
-        ui.painter().text(
-            pos2(rect.right() - 16.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            count.to_string(),
-            theme::regular(12.5),
-            palette.accent,
-        );
-        ui.painter().hline(
-            (rect.left() + 76.0)..=rect.right(),
-            rect.bottom() - 0.5,
-            egui::Stroke::new(1.0, palette.outline),
-        );
-    }
-    if response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        app.show_archived = true;
     }
 }
 

@@ -421,6 +421,22 @@ pub async fn run(
                 loop {
                     match inbox.recv().await {
                         Some(Command::Reconnect) => break,
+                        Some(Command::StartOverArchive) => {
+                            match set_aside_unreadable_archive(&dirs) {
+                                Ok(kept) => log::warn!(
+                                    "set aside an unreadable archive as {}",
+                                    kept.file_name().unwrap_or_default().to_string_lossy()
+                                ),
+                                Err(error) => {
+                                    let _ = events.send(Event::Link(LinkStatus::Failed(format!(
+                                        "Could not set the old archive aside: {error}"
+                                    ))));
+                                    waker.wake();
+                                    continue;
+                                }
+                            }
+                            break;
+                        }
                         Some(Command::Shutdown) | None => return,
                         _ => {}
                     }
@@ -549,6 +565,57 @@ enum RuntimeEvent {
         locks: bool,
         complete: bool,
     },
+}
+
+/// Renames an archive whose key is gone, with its SQLite side files, and
+/// removes the linked session so the next link replays history into a new
+/// archive. Nothing is deleted from the archive: restoring the original
+/// keyring and renaming the file back recovers it.
+fn set_aside_unreadable_archive(dirs: &AppDirs) -> std::io::Result<PathBuf> {
+    let archive = dirs.archive_db();
+    let stamp = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
+    let kept = archive.with_file_name(format!("archive-unreadable-{stamp}.db"));
+    std::fs::rename(&archive, &kept)?;
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut from = archive.clone().into_os_string();
+        from.push(suffix);
+        let mut to = kept.clone().into_os_string();
+        to.push(suffix);
+        match std::fs::rename(&from, &to) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    let session = dirs.session_db();
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let mut path = session.clone().into_os_string();
+        path.push(suffix);
+        match std::fs::remove_file(path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(kept)
+}
+
+/// A short explanation for a failed invite lookup or join. Protocol errors
+/// can carry identifiers, so only the kind of failure is shown.
+fn invite_error(error: &str) -> String {
+    let error = error.to_ascii_lowercase();
+    if error.contains("401") || error.contains("not-authorized") {
+        "This link was reset or you are not allowed to join.".to_owned()
+    } else if error.contains("404") || error.contains("item-not-found") || error.contains("invalid")
+    {
+        "This invite link is invalid or has been reset.".to_owned()
+    } else if error.contains("410") || error.contains("gone") {
+        "This invite link has expired.".to_owned()
+    } else if error.contains("409") || error.contains("conflict") {
+        "You are already in this group.".to_owned()
+    } else if error.contains("406") || error.contains("full") {
+        "This group is full.".to_owned()
+    } else {
+        "WhatsApp could not open this invite link. Try again later.".to_owned()
+    }
 }
 
 /// How long private content waits for phone lock state before it is shown
@@ -1811,7 +1878,7 @@ impl Worker {
                 }
             }
             E::UndecryptableMessage(undecryptable) => {
-                self.ingest_undecryptable(&undecryptable.info);
+                self.ingest_undecryptable(&undecryptable.info, undecryptable.unavailable_type);
             }
             E::Receipt(receipt) => self.on_receipt(receipt),
             E::ChatPresence(presence) => {
@@ -2576,7 +2643,11 @@ impl Worker {
         }
     }
 
-    fn ingest_undecryptable(&mut self, info: &MessageInfo) {
+    fn ingest_undecryptable(
+        &mut self,
+        info: &MessageInfo,
+        unavailable: wa_events::UnavailableType,
+    ) {
         self.learn_source(&info.source);
         if info.source.chat.is_status_broadcast() || info.source.is_from_me {
             return;
@@ -2599,8 +2670,16 @@ impl Worker {
             sender_name: push_name.as_ref().map(ToString::to_string),
             from_me: false,
             timestamp: info.timestamp.timestamp(),
-            content: Content::Unsupported {
-                what: "Waiting for this message. Open WhatsApp on your phone".to_owned(),
+            content: match unavailable {
+                // The phone never shares these with linked devices, so do not
+                // suggest that the message is still on its way.
+                wa_events::UnavailableType::ViewOnce => Content::PhoneOnly { view_once: true },
+                wa_events::UnavailableType::Hosted | wa_events::UnavailableType::Bot => {
+                    Content::PhoneOnly { view_once: false }
+                }
+                _ => Content::Unsupported {
+                    what: "Waiting for this message. Open WhatsApp on your phone".to_owned(),
+                },
             },
             status: Delivery::None,
             delivered_at: None,
@@ -3419,6 +3498,52 @@ impl Worker {
                     let _ = commands.send(Command::StickerPackImported { result });
                 });
             }
+            Command::PickNotificationSound { group } => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Choose a notification sound")
+                        .add_filter("Audio", &["wav", "mp3", "ogg", "oga"])
+                        .pick_file()
+                    {
+                        let _ = events.send(Event::NotificationSoundPicked { group, path });
+                        waker.wake();
+                    }
+                });
+            }
+            Command::SaveAttachmentAs { source, name } => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Save attachment")
+                        .set_file_name(&name);
+                    if let Some(downloads) = directories::UserDirs::new()
+                        .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
+                    {
+                        dialog = dialog.set_directory(downloads);
+                    }
+                    // Cancelling the dialog saves nothing and says nothing.
+                    let Some(target) = dialog.save_file() else {
+                        return;
+                    };
+                    let event = match std::fs::copy(&source, &target) {
+                        Ok(_) => Event::Info(format!(
+                            "Saved {}",
+                            target.file_name().map_or_else(
+                                || name.clone(),
+                                |name| name.to_string_lossy().into_owned()
+                            )
+                        )),
+                        Err(error) => {
+                            Event::Error(format!("Could not save the attachment: {error}"))
+                        }
+                    };
+                    let _ = events.send(event);
+                    waker.wake();
+                });
+            }
             Command::PickStickerArchive => {
                 let commands = self.commands.clone();
                 let packs = self.packs_dir();
@@ -3598,6 +3723,67 @@ impl Worker {
                 self.emit(Event::ReceiptsPrivacy { disabled });
             }
             Command::SetOnline(online) => self.set_online(online),
+            // Only meaningful while the archive cannot be opened.
+            Command::StartOverArchive => {}
+            Command::PreviewInvite(code) => {
+                let Some(client) = self.client.clone() else {
+                    self.emit(Event::InvitePreview {
+                        code,
+                        result: Err("ZapFast is not connected to WhatsApp".to_owned()),
+                    });
+                    return;
+                };
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .groups()
+                        .get_invite_info(&code)
+                        .await
+                        .map(|group| crate::model::InviteInfo {
+                            id: group.id.to_string(),
+                            subject: group.subject,
+                            description: group.description.filter(|text| !text.trim().is_empty()),
+                            members: group
+                                .size
+                                .map_or(group.participants.len(), |size| size as usize),
+                            approval: group.membership_approval,
+                        })
+                        .map_err(|error| invite_error(&error.to_string()));
+                    let _ = events.send(Event::InvitePreview { code, result });
+                    waker.wake();
+                });
+            }
+            Command::JoinInvite(code) => {
+                let Some(client) = self.client.clone() else {
+                    self.emit(Event::InviteJoined {
+                        code,
+                        result: Err("ZapFast is not connected to WhatsApp".to_owned()),
+                    });
+                    return;
+                };
+                let commands = self.commands.clone();
+                tokio::spawn(async move {
+                    use whatsapp_rust::JoinGroupResult;
+                    let result = match client.groups().join_with_invite_code(&code).await {
+                        Ok(JoinGroupResult::Joined(jid)) => Ok((jid.to_string(), false)),
+                        Ok(JoinGroupResult::PendingApproval(jid)) => Ok((jid.to_string(), true)),
+                        Err(error) => Err(invite_error(&error.to_string())),
+                    };
+                    let _ = commands.send(Command::InviteJoined { code, result });
+                });
+            }
+            Command::InviteJoined { code, result } => {
+                let result = result.map(|(id, pending)| {
+                    if !pending {
+                        self.ensure_chat(&id, None);
+                        self.request_group_info(&id, true);
+                        self.emit_chat(&id);
+                    }
+                    (id, pending)
+                });
+                self.emit(Event::InviteJoined { code, result });
+            }
             Command::InspectUpdate => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
@@ -4048,6 +4234,7 @@ impl Worker {
             source.content,
             Content::Revoked
                 | Content::Unsupported { .. }
+                | Content::PhoneOnly { .. }
                 | Content::Poll { .. }
                 | Content::Interactive { .. }
         ) {
@@ -7229,6 +7416,66 @@ mod tests {
         assert!(!worker.unavailable_due(), "announced once per connection");
         worker.set_online(true);
         assert!(!worker.unavailable_due());
+    }
+
+    #[test]
+    fn view_once_placeholders_say_they_open_only_on_the_phone() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        for (id, unavailable, expected) in [
+            (
+                "once",
+                wa_events::UnavailableType::ViewOnce,
+                Some(Content::PhoneOnly { view_once: true }),
+            ),
+            (
+                "bot",
+                wa_events::UnavailableType::Bot,
+                Some(Content::PhoneOnly { view_once: false }),
+            ),
+            ("later", wa_events::UnavailableType::Unknown, None),
+        ] {
+            let info = MessageInfo {
+                id: id.into(),
+                source: MessageSource {
+                    chat: "200@s.whatsapp.net".parse().unwrap(),
+                    sender: "200@s.whatsapp.net".parse().unwrap(),
+                    ..Default::default()
+                },
+                timestamp: whatsapp_rust::wacore::time::from_secs(100).unwrap(),
+                ..Default::default()
+            };
+            worker.ingest_undecryptable(&info, unavailable);
+            let stored = worker
+                .archive
+                .message("200@s.whatsapp.net", id)
+                .unwrap()
+                .unwrap()
+                .content;
+            match expected {
+                Some(content) => assert_eq!(stored, content),
+                None => assert!(matches!(stored, Content::Unsupported { .. })),
+            }
+        }
+    }
+
+    #[test]
+    fn starting_over_keeps_the_old_archive_and_forgets_the_link() {
+        let root = std::env::temp_dir().join(format!("zapfast-start-over-{}", std::process::id()));
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        std::fs::write(dirs.archive_db(), b"encrypted").unwrap();
+        let mut wal = dirs.archive_db().into_os_string();
+        wal.push("-wal");
+        std::fs::write(&wal, b"log").unwrap();
+        std::fs::write(dirs.session_db(), b"keys").unwrap();
+        let kept = set_aside_unreadable_archive(&dirs).unwrap();
+        assert_eq!(std::fs::read(&kept).unwrap(), b"encrypted");
+        let mut kept_wal = kept.clone().into_os_string();
+        kept_wal.push("-wal");
+        assert_eq!(std::fs::read(kept_wal).unwrap(), b"log");
+        assert!(!dirs.archive_db().exists());
+        assert!(!dirs.session_db().exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

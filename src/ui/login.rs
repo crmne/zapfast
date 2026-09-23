@@ -95,6 +95,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
             busy(ui, palette.accent, "Requesting a new code…");
         }
         LinkStatus::Failed(message) => {
+            let key_lost = archive_key_lost(&message);
             theme::icon(ui, Icon::CircleAlert, 28.0, palette.danger);
             ui.add(
                 egui::Label::new(
@@ -105,9 +106,15 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                 .wrap(),
             );
             ui.add_space(12.0);
-            if theme::pill_button(ui, &palette, "Try again", true).clicked() {
-                app.actions.push(Action::Reconnect);
-            }
+            ui.horizontal(|ui| {
+                if theme::pill_button(ui, &palette, "Try again", true).clicked() {
+                    app.actions.push(Action::Reconnect);
+                }
+                if key_lost && theme::pill_button(ui, &palette, "Start over…", false).clicked() {
+                    app.actions
+                        .push(Action::ShowDialog(crate::model::Dialog::ConfirmStartOver));
+                }
+            });
         }
         LinkStatus::Unlinked {
             qr,
@@ -254,4 +261,32 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
             app.actions.push(Action::CopyText(code.to_owned()));
         }
     });
+}
+
+/// Whether the archive's key is gone for good, rather than the keyring being
+/// locked or unavailable, which "Try again" can fix.
+fn archive_key_lost(message: &str) -> bool {
+    message.contains("OS keyring key is missing")
+        || message.contains("archive key in the OS keyring is invalid")
+        || message.contains("could not be unlocked with its OS keyring key")
+}
+
+#[cfg(test)]
+mod start_over_tests {
+    #[test]
+    fn only_a_lost_key_offers_to_start_over() {
+        for lost in [
+            "The archive is encrypted but its OS keyring key is missing. Restore the original keyring; the archive has not been changed",
+            "The archive key in the OS keyring is invalid",
+            "The archive could not be unlocked with its OS keyring key: file is not a database",
+        ] {
+            assert!(super::archive_key_lost(lost), "{lost}");
+        }
+        for recoverable in [
+            "Unlock your OS keyring and restart ZapFast",
+            "The OS keyring could not open ZapFast's archive key",
+        ] {
+            assert!(!super::archive_key_lost(recoverable), "{recoverable}");
+        }
+    }
 }

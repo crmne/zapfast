@@ -230,6 +230,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         });
                     }
                     toggle(ui, app, "Notify about new messages", "Show desktop notifications when the window is hidden, in the background, or showing another chat. Muted chats do not notify you.", |settings| &mut settings.notifications);
+                    if app.settings.notifications {
+                        sound_row(ui, app, false);
+                        sound_row(ui, app, true);
+                    }
                     toggle(ui, app, "Download updates automatically", "Download and verify new releases in the background. You choose when to restart. Native packages and Flatpak update through their package manager.", |settings| &mut settings.download_updates_automatically);
                     toggle(ui, app, "Check for updates", "Ask GitHub once a day whether a newer ZapFast release exists. The request identifies only ZapFast and its version.", |settings| &mut settings.check_for_updates);
 
@@ -554,6 +558,65 @@ fn toggle(
         *field(&mut app.settings) = value;
         app.actions.push(Action::SettingsChanged);
     }
+}
+
+/// Sound choice for chat or group notifications, like on the phone.
+fn sound_row(ui: &mut egui::Ui, app: &mut App, group: bool) {
+    use crate::settings::NotificationSound;
+    let palette = app.palette;
+    let current = if group {
+        app.settings.group_sound.clone()
+    } else {
+        app.settings.message_sound.clone()
+    };
+    let (label, description) = if group {
+        ("Group sound", "Played for new group messages.")
+    } else {
+        (
+            "Message sound",
+            "Played for new messages in one-to-one chats.",
+        )
+    };
+    let selected = match &current {
+        NotificationSound::System => "System default".to_owned(),
+        NotificationSound::None => "None".to_owned(),
+        NotificationSound::Custom(path) => path.file_name().map_or_else(
+            || "Custom".to_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        ),
+    };
+    widgets::setting_row(ui, &palette, label, description, |ui| {
+        if let NotificationSound::Custom(path) = &current
+            && theme::icon_button(
+                ui,
+                Icon::Play,
+                16.0,
+                palette.secondary,
+                palette.text,
+                "Play",
+            )
+            .clicked()
+        {
+            app.actions.push(Action::PreviewSound(path.clone()));
+        }
+        egui::ComboBox::from_id_salt(("notification-sound", group))
+            .selected_text(selected)
+            .width(170.0_f32.min(ui.available_width()))
+            .show_ui(ui, |ui| {
+                for (sound, name) in [
+                    (NotificationSound::System, "System default"),
+                    (NotificationSound::None, "None"),
+                ] {
+                    if ui.selectable_label(current == sound, name).clicked() {
+                        app.actions
+                            .push(Action::SetNotificationSound { group, sound });
+                    }
+                }
+                if ui.selectable_label(false, "Choose a file…").clicked() {
+                    app.actions.push(Action::PickNotificationSound { group });
+                }
+            });
+    });
 }
 
 /// Theme filenames can contain emoji, so paint them through the shared line renderer.

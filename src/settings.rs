@@ -275,6 +275,19 @@ impl WallpaperColor {
     }
 }
 
+/// The sound a new-message notification makes.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationSound {
+    /// Whatever the operating system plays for notifications.
+    #[default]
+    System,
+    /// No sound.
+    None,
+    /// An audio file ZapFast plays itself.
+    Custom(std::path::PathBuf),
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -328,6 +341,10 @@ pub struct Settings {
     pub keep_running_in_background: bool,
     /// Desktop notifications while away from the chat.
     pub notifications: bool,
+    /// Sound for notifications from one-to-one chats.
+    pub message_sound: NotificationSound,
+    /// Sound for notifications from groups.
+    pub group_sound: NotificationSound,
     /// Ask GitHub once a day whether a newer release exists.
     pub check_for_updates: bool,
     /// Download verified updates in the background; restarting remains explicit.
@@ -375,6 +392,8 @@ impl Default for Settings {
             giphy_key: String::new(),
             keep_running_in_background: true,
             notifications: true,
+            message_sound: NotificationSound::System,
+            group_sound: NotificationSound::System,
             check_for_updates: true,
             download_updates_automatically: false,
             names_from_contacts: true,
@@ -545,6 +564,8 @@ mod tests {
             custom_media_dir: Some(PathBuf::from("/custom/media/path")),
             voice_speed: 1.5,
             interface_language: Some(crate::i18n::Locale::German),
+            message_sound: NotificationSound::None,
+            group_sound: NotificationSound::Custom("/sounds/ding.wav".into()),
             ..Settings::default()
         };
         settings.save(&path).expect("saves");
