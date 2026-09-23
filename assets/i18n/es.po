@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 19:29+0200\n"
+"POT-Creation-Date: 2026-09-23 19:37+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Spanish\n"
@@ -155,15 +155,15 @@ msgstr "Bloqueados"
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K para buscar · ? para atajos de teclado"
 
-#: src/ui/conversation.rs:998
+#: src/ui/conversation.rs:999
 msgid "Type a message"
 msgstr "Escribe un mensaje"
 
-#: src/ui/conversation.rs:1001
+#: src/ui/conversation.rs:1002
 msgid "Add a caption"
 msgstr "Añade un título"
 
-#: src/ui/conversation.rs:1155
+#: src/ui/conversation.rs:1158
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -171,70 +171,70 @@ msgstr ""
 "Enter envía · Shift+Enter para nueva línea · *negrita* _cursiva_ ~tachado~ · "
 "Ctrl+V pega una imagen"
 
-#: src/ui/conversation.rs:1157
+#: src/ui/conversation.rs:1160
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Ctrl+Enter envía · *negrita* _cursiva_ ~tachado~ · Ctrl+V pega una imagen"
 
-#: src/ui/conversation.rs:1168
+#: src/ui/conversation.rs:1171
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Ocultar sugerencias de atajos (restaurar en Ajustes)"
 
-#: src/ui/conversation.rs:1183
+#: src/ui/conversation.rs:1186
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Todos los atajos ({})"
 
-#: src/ui/conversation.rs:1459
+#: src/ui/conversation.rs:1465
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} mensaje no leído"
 msgstr[1] "{} mensajes no leídos"
 
-#: src/ui/conversation.rs:3075
+#: src/ui/conversation.rs:3085
 msgid "Open in system player"
 msgstr "Abrir en el reproductor del sistema"
 
-#: src/ui/conversation.rs:3143 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3153 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Info. del mensaje"
 
-#: src/ui/conversation.rs:3374 src/ui/conversation.rs:3455
+#: src/ui/conversation.rs:3384 src/ui/conversation.rs:3465
 msgid "Open in a map"
 msgstr "Abrir en un mapa"
 
-#: src/ui/conversation.rs:3407
+#: src/ui/conversation.rs:3417
 msgid "Live location ended"
 msgstr "Ubicación en tiempo real finalizada"
 
-#: src/ui/conversation.rs:3409
+#: src/ui/conversation.rs:3419
 msgid "Live location"
 msgstr "Ubicación en tiempo real"
 
-#: src/ui/conversation.rs:3420
+#: src/ui/conversation.rs:3430
 #, rust-format
 msgid "Updated {time}"
 msgstr "Actualizada a las {time}"
 
-#: src/ui/conversation.rs:4836
+#: src/ui/conversation.rs:4855
 msgid "Pause"
 msgstr "Pausa"
 
-#: src/ui/conversation.rs:4838
+#: src/ui/conversation.rs:4857
 #, fuzzy
 msgid "Play"
 msgstr "Reproducido"
 
-#: src/ui/conversation.rs:4861
+#: src/ui/conversation.rs:4880
 msgid "Unmute"
 msgstr "Activar sonido"
 
-#: src/ui/conversation.rs:4863
+#: src/ui/conversation.rs:4882
 msgid "Mute"
 msgstr "Silenciar"
 
-#: src/ui/dialogs.rs:1151
+#: src/ui/dialogs.rs:1184
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -355,7 +355,7 @@ msgid "Source code"
 msgstr "Código fuente"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:553
+#: src/ui/widgets.rs:565
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "Hecho con amor por {name}"
@@ -427,6 +427,6 @@ msgstr[1] "{} pendientes"
 msgid "No one yet"
 msgstr "Nadie todavía"
 
-#: src/app.rs:3775
+#: src/app.rs:3791
 msgid "This video opens in your system player"
 msgstr "Este vídeo se abre en el reproductor del sistema"

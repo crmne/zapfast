@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 19:29+0200\n"
+"POT-Creation-Date: 2026-09-23 19:37+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -158,82 +158,82 @@ msgstr ""
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr ""
 
-#: src/ui/conversation.rs:998
+#: src/ui/conversation.rs:999
 msgid "Type a message"
 msgstr ""
 
-#: src/ui/conversation.rs:1001
+#: src/ui/conversation.rs:1002
 msgid "Add a caption"
 msgstr ""
 
-#: src/ui/conversation.rs:1155
+#: src/ui/conversation.rs:1158
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
 msgstr ""
 
-#: src/ui/conversation.rs:1157
+#: src/ui/conversation.rs:1160
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 
-#: src/ui/conversation.rs:1168
+#: src/ui/conversation.rs:1171
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr ""
 
-#: src/ui/conversation.rs:1183
+#: src/ui/conversation.rs:1186
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr ""
 
-#: src/ui/conversation.rs:1459
+#: src/ui/conversation.rs:1465
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/conversation.rs:3075
+#: src/ui/conversation.rs:3085
 msgid "Open in system player"
 msgstr ""
 
-#: src/ui/conversation.rs:3143 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3153 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr ""
 
-#: src/ui/conversation.rs:3374 src/ui/conversation.rs:3455
+#: src/ui/conversation.rs:3384 src/ui/conversation.rs:3465
 msgid "Open in a map"
 msgstr ""
 
-#: src/ui/conversation.rs:3407
+#: src/ui/conversation.rs:3417
 msgid "Live location ended"
 msgstr ""
 
-#: src/ui/conversation.rs:3409
+#: src/ui/conversation.rs:3419
 msgid "Live location"
 msgstr ""
 
-#: src/ui/conversation.rs:3420
+#: src/ui/conversation.rs:3430
 #, rust-format
 msgid "Updated {time}"
 msgstr ""
 
-#: src/ui/conversation.rs:4836
+#: src/ui/conversation.rs:4855
 msgid "Pause"
 msgstr ""
 
-#: src/ui/conversation.rs:4838
+#: src/ui/conversation.rs:4857
 msgid "Play"
 msgstr ""
 
-#: src/ui/conversation.rs:4861
+#: src/ui/conversation.rs:4880
 msgid "Unmute"
 msgstr ""
 
-#: src/ui/conversation.rs:4863
+#: src/ui/conversation.rs:4882
 msgid "Mute"
 msgstr ""
 
-#: src/ui/dialogs.rs:1151
+#: src/ui/dialogs.rs:1184
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -350,7 +350,7 @@ msgid "Source code"
 msgstr ""
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:553
+#: src/ui/widgets.rs:565
 #, rust-format
 msgid "Built with love by {name}"
 msgstr ""
@@ -418,6 +418,6 @@ msgstr[1] ""
 msgid "No one yet"
 msgstr ""
 
-#: src/app.rs:3775
+#: src/app.rs:3791
 msgid "This video opens in your system player"
 msgstr ""
