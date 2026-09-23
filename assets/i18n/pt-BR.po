@@ -1,0 +1,231 @@
+# Brazilian Portuguese translation of the ZapFast navigation pilot.
+# Distributed under the same MIT license as ZapFast.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-09-23 12:25+0200\n"
+"PO-Revision-Date: 2026-09-22 00:00-0300\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: Brazilian Portuguese\n"
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#: src/model.rs:59
+msgid "All"
+msgstr "Todas"
+
+#: src/model.rs:60
+msgid "Unread"
+msgstr "Não lidas"
+
+#: src/model.rs:61
+msgid "Private"
+msgstr "Privadas"
+
+#: src/model.rs:62
+msgid "Groups"
+msgstr "Grupos"
+
+#: src/model.rs:63
+msgid "Channels"
+msgstr "Canais"
+
+#: src/util.rs:208 src/util.rs:258
+msgid "Yesterday"
+msgstr "Ontem"
+
+#: src/util.rs:235
+#, rust-format
+msgid "Yesterday at {time}"
+msgstr "Ontem às {time}"
+
+#: src/util.rs:236
+#, rust-format
+msgid "{weekday} at {time}"
+msgstr "{weekday} às {time}"
+
+#: src/util.rs:239
+#, rust-format
+msgid "{date} at {time}"
+msgstr "{date} às {time}"
+
+#: src/util.rs:257
+msgid "Today"
+msgstr "Hoje"
+
+#: src/util.rs:273
+msgid "Monday"
+msgstr "Segunda-feira"
+
+#: src/util.rs:274
+msgid "Tuesday"
+msgstr "Terça-feira"
+
+#: src/util.rs:275
+msgid "Wednesday"
+msgstr "Quarta-feira"
+
+#: src/util.rs:276
+msgid "Thursday"
+msgstr "Quinta-feira"
+
+#: src/util.rs:277
+msgid "Friday"
+msgstr "Sexta-feira"
+
+#: src/util.rs:278
+msgid "Saturday"
+msgstr "Sábado"
+
+#: src/util.rs:279
+msgid "Sunday"
+msgstr "Domingo"
+
+#: src/util.rs:287
+msgid "January"
+msgstr "Janeiro"
+
+#: src/util.rs:288
+msgid "February"
+msgstr "Fevereiro"
+
+#: src/util.rs:289
+msgid "March"
+msgstr "Março"
+
+#: src/util.rs:290
+msgid "April"
+msgstr "Abril"
+
+#: src/util.rs:291
+msgid "May"
+msgstr "Maio"
+
+#: src/util.rs:292
+msgid "June"
+msgstr "Junho"
+
+#: src/util.rs:293
+msgid "July"
+msgstr "Julho"
+
+#: src/util.rs:294
+msgid "August"
+msgstr "Agosto"
+
+#: src/util.rs:295
+msgid "September"
+msgstr "Setembro"
+
+#: src/util.rs:296
+msgid "October"
+msgstr "Outubro"
+
+#: src/util.rs:297
+msgid "November"
+msgstr "Novembro"
+
+#: src/util.rs:298
+msgid "December"
+msgstr "Dezembro"
+
+#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:168
+msgid "Chats"
+msgstr "Conversas"
+
+#: src/ui/chats.rs:168 src/ui/chats.rs:267
+msgid "Search"
+msgstr "Buscar"
+
+#: src/ui/chats.rs:343
+msgid "Archived"
+msgstr "Arquivadas"
+
+#: src/ui/chats.rs:360
+msgid "Locked"
+msgstr "Trancadas"
+
+#: src/ui/conversation.rs:87
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Ctrl+K para buscar · ? para atalhos de teclado"
+
+#: src/ui/conversation.rs:908
+msgid "Type a message"
+msgstr "Digite uma mensagem"
+
+#: src/ui/conversation.rs:911
+msgid "Add a caption"
+msgstr "Adicione uma legenda"
+
+#: src/ui/conversation.rs:1063
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
+"pastes a picture"
+msgstr ""
+"Enter envia · Shift+Enter para nova linha · *negrito* _itálico_ ~riscado~ · "
+"Ctrl+V cola uma imagem"
+
+#: src/ui/conversation.rs:1065
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr ""
+"Ctrl+Enter envia · *negrito* _itálico_ ~riscado~ · Ctrl+V cola uma imagem"
+
+#: src/ui/conversation.rs:1076
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr "Ocultar dicas de atalho (restaure em Configurações)"
+
+#: src/ui/conversation.rs:1091
+#, rust-format
+msgid "All shortcuts ({})"
+msgstr "Todos os atalhos ({})"
+
+#: src/ui/conversation.rs:1356
+msgid "{} unread message"
+msgid_plural "{} unread messages"
+msgstr[0] "{} mensagem não lida"
+msgstr[1] "{} mensagens não lidas"
+
+#: src/ui/dialogs.rs:1105
+#, rust-format
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} membro"
+msgstr[1] "{} membros"
+
+#: src/ui/settings.rs:40
+msgid "Settings"
+msgstr "Configurações"
+
+#: src/ui/settings.rs:44
+msgid "Appearance"
+msgstr "Aparência"
+
+#: src/ui/settings.rs:133
+msgid "Language"
+msgstr "Idioma"
+
+#: src/ui/settings.rs:139 src/ui/settings.rs:148
+msgid "Auto"
+msgstr "Automático"
+
+#: src/ui/settings.rs:218
+msgid "Window"
+msgstr "Janela"
+
+#: src/ui/settings.rs:258
+msgid "Account"
+msgstr "Conta"
+
+#: src/ui/settings.rs:285
+msgid "Files"
+msgstr "Arquivos"
+
+#: src/ui/settings.rs:318
+msgid "About"
+msgstr "Sobre"

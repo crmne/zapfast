@@ -20,6 +20,8 @@ pub enum Stop {
     Unread,
     Private,
     Groups,
+    Channels,
+    Archived,
     Locked,
 }
 

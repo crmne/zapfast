@@ -3,6 +3,7 @@
 //! Delivery uses the platform notification service. Each notification runs on
 //! its own thread because delivery and click handling can block.
 
+use crate::settings::NotificationSound;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -62,11 +63,13 @@ impl Notifications {
     }
 
     /// Shows a notification; platform delivery runs outside the interface thread.
+    #[expect(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         title: String,
         body: String,
         picture: Option<PathBuf>,
+        sound: NotificationSound,
         chat: String,
         opened: Arc<Mutex<Vec<String>>>,
         wake: impl Fn() + Send + 'static,
@@ -75,10 +78,15 @@ impl Notifications {
         let spawned = std::thread::Builder::new()
             .name("notification".into())
             .spawn(move || {
+                let system_sound = sound == NotificationSound::System;
+                if let NotificationSound::Custom(path) = &sound {
+                    play_sound(path.clone());
+                }
                 deliver(
                     &title,
                     &body,
                     picture.as_deref(),
+                    system_sound,
                     chat,
                     opened,
                     wake,
@@ -88,6 +96,32 @@ impl Notifications {
         if let Err(error) = spawned {
             log::debug!("no thread for a notification: {error}");
         }
+    }
+}
+
+/// Plays an audio file on its own thread, for custom notification sounds
+/// and their preview in Settings.
+pub fn play_sound(path: PathBuf) {
+    let spawned = std::thread::Builder::new()
+        .name("notification-sound".into())
+        .spawn(move || {
+            let played = (|| -> Result<(), String> {
+                let file = std::fs::File::open(&path).map_err(|error| error.to_string())?;
+                let decoder = rodio::Decoder::new(std::io::BufReader::new(file))
+                    .map_err(|error| error.to_string())?;
+                let device = rodio::DeviceSinkBuilder::open_default_sink()
+                    .map_err(|error| error.to_string())?;
+                let player = rodio::Player::connect_new(device.mixer());
+                player.append(decoder);
+                player.sleep_until_end();
+                Ok(())
+            })();
+            if let Err(error) = played {
+                log::debug!("notification sound not played: {error}");
+            }
+        });
+    if let Err(error) = spawned {
+        log::debug!("no thread for a notification sound: {error}");
     }
 }
 
@@ -102,10 +136,12 @@ pub fn lines(chat_name: &str, is_group: bool, sender: &str, summary: &str) -> (S
 }
 
 #[cfg(target_os = "linux")]
+#[expect(clippy::too_many_arguments)]
 fn deliver(
     title: &str,
     body: &str,
     picture: Option<&std::path::Path>,
+    system_sound: bool,
     chat: String,
     opened: Arc<Mutex<Vec<String>>>,
     wake: impl Fn() + Send + 'static,
@@ -124,6 +160,9 @@ fn deliver(
         .body(body)
         .icon("zapfast")
         .action("default", "Open");
+    if !system_sound {
+        notification.hint(notify_rust::Hint::SuppressSound(true));
+    }
     if let Some(picture) = picture {
         notification.image_path(&picture.to_string_lossy());
     }
@@ -158,10 +197,12 @@ fn deliver(
 }
 
 #[cfg(target_os = "windows")]
+#[expect(clippy::too_many_arguments)]
 fn deliver(
     title: &str,
     body: &str,
     picture: Option<&std::path::Path>,
+    system_sound: bool,
     _chat: String,
     _opened: Arc<Mutex<Vec<String>>>,
     _wake: impl Fn() + Send + 'static,
@@ -170,17 +211,19 @@ fn deliver(
     if matches!(
         cancelled.try_recv(),
         Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ) && let Err(error) = windows::show(title, body, picture)
+    ) && let Err(error) = windows::show(title, body, picture, system_sound)
     {
         log::debug!("no Windows notification: {error}");
     }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[expect(clippy::too_many_arguments)]
 fn deliver(
     title: &str,
     body: &str,
     picture: Option<&std::path::Path>,
+    system_sound: bool,
     _chat: String,
     _opened: Arc<Mutex<Vec<String>>>,
     _wake: impl Fn() + Send + 'static,
@@ -199,6 +242,14 @@ fn deliver(
     }
     let mut notification = notify_rust::Notification::new();
     notification.appname("ZapFast").summary(title).body(body);
+    #[cfg(target_os = "macos")]
+    if system_sound {
+        // The notification system's default sound; custom sounds are played
+        // by ZapFast, and None stays silent.
+        notification.sound_name("NSUserNotificationDefaultSoundName");
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = system_sound;
     // Windows uses the image; macOS always uses the app icon.
     if let Some(picture) = picture {
         notification.image_path(&picture.to_string_lossy());
@@ -267,6 +318,7 @@ mod tests {
             "Ada Lovelace".into(),
             "A test from ZapFast, with a picture".into(),
             picture,
+            NotificationSound::System,
             "test".into(),
             Default::default(),
             || {},

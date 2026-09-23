@@ -1,0 +1,235 @@
+# Russian translation of the ZapFast navigation pilot.
+# Distributed under the same MIT license as ZapFast.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-09-23 12:25+0200\n"
+"PO-Revision-Date: 2026-09-22 00:00-0300\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: Russian\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+#: src/model.rs:59
+msgid "All"
+msgstr "Все"
+
+#: src/model.rs:60
+msgid "Unread"
+msgstr "Непрочитанные"
+
+#: src/model.rs:61
+msgid "Private"
+msgstr "Личные"
+
+#: src/model.rs:62
+msgid "Groups"
+msgstr "Группы"
+
+#: src/model.rs:63
+msgid "Channels"
+msgstr "Каналы"
+
+#: src/util.rs:208 src/util.rs:258
+msgid "Yesterday"
+msgstr "Вчера"
+
+#: src/util.rs:235
+#, rust-format
+msgid "Yesterday at {time}"
+msgstr "Вчера в {time}"
+
+#: src/util.rs:236
+#, rust-format
+msgid "{weekday} at {time}"
+msgstr "{weekday} в {time}"
+
+#: src/util.rs:239
+#, rust-format
+msgid "{date} at {time}"
+msgstr "{date} в {time}"
+
+#: src/util.rs:257
+msgid "Today"
+msgstr "Сегодня"
+
+#: src/util.rs:273
+msgid "Monday"
+msgstr "Понедельник"
+
+#: src/util.rs:274
+msgid "Tuesday"
+msgstr "Вторник"
+
+#: src/util.rs:275
+msgid "Wednesday"
+msgstr "Среда"
+
+#: src/util.rs:276
+msgid "Thursday"
+msgstr "Четверг"
+
+#: src/util.rs:277
+msgid "Friday"
+msgstr "Пятница"
+
+#: src/util.rs:278
+msgid "Saturday"
+msgstr "Суббота"
+
+#: src/util.rs:279
+msgid "Sunday"
+msgstr "Воскресенье"
+
+#: src/util.rs:287
+msgid "January"
+msgstr "Январь"
+
+#: src/util.rs:288
+msgid "February"
+msgstr "Февраль"
+
+#: src/util.rs:289
+msgid "March"
+msgstr "Март"
+
+#: src/util.rs:290
+msgid "April"
+msgstr "Апрель"
+
+#: src/util.rs:291
+msgid "May"
+msgstr "Май"
+
+#: src/util.rs:292
+msgid "June"
+msgstr "Июнь"
+
+#: src/util.rs:293
+msgid "July"
+msgstr "Июль"
+
+#: src/util.rs:294
+msgid "August"
+msgstr "Август"
+
+#: src/util.rs:295
+msgid "September"
+msgstr "Сентябрь"
+
+#: src/util.rs:296
+msgid "October"
+msgstr "Октябрь"
+
+#: src/util.rs:297
+msgid "November"
+msgstr "Ноябрь"
+
+#: src/util.rs:298
+msgid "December"
+msgstr "Декабрь"
+
+#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:168
+msgid "Chats"
+msgstr "Чаты"
+
+#: src/ui/chats.rs:168 src/ui/chats.rs:267
+msgid "Search"
+msgstr "Поиск"
+
+#: src/ui/chats.rs:343
+msgid "Archived"
+msgstr "Архив"
+
+#: src/ui/chats.rs:360
+msgid "Locked"
+msgstr "Заблокированные"
+
+#: src/ui/conversation.rs:87
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Ctrl+K для поиска · ? для сочетаний клавиш"
+
+#: src/ui/conversation.rs:908
+msgid "Type a message"
+msgstr "Введите сообщение"
+
+#: src/ui/conversation.rs:911
+msgid "Add a caption"
+msgstr "Добавить подпись"
+
+#: src/ui/conversation.rs:1063
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
+"pastes a picture"
+msgstr ""
+"Enter отправляет · Shift+Enter для новой строки · *жирный* _курсив_ "
+"~зачёркнутый~ · Ctrl+V вставляет изображение"
+
+#: src/ui/conversation.rs:1065
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr ""
+"Ctrl+Enter отправляет · *жирный* _курсив_ ~зачёркнутый~ · Ctrl+V вставляет "
+"изображение"
+
+#: src/ui/conversation.rs:1076
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr "Скрыть подсказки сочетаний клавиш (восстановить в настройках)"
+
+#: src/ui/conversation.rs:1091
+#, rust-format
+msgid "All shortcuts ({})"
+msgstr "Все сочетания клавиш ({})"
+
+#: src/ui/conversation.rs:1356
+msgid "{} unread message"
+msgid_plural "{} unread messages"
+msgstr[0] "{} непрочитанное сообщение"
+msgstr[1] "{} непрочитанных сообщения"
+msgstr[2] "{} непрочитанных сообщений"
+
+#: src/ui/dialogs.rs:1105
+#, rust-format
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} участник"
+msgstr[1] "{} участника"
+msgstr[2] "{} участников"
+
+#: src/ui/settings.rs:40
+msgid "Settings"
+msgstr "Настройки"
+
+#: src/ui/settings.rs:44
+msgid "Appearance"
+msgstr "Внешний вид"
+
+#: src/ui/settings.rs:133
+msgid "Language"
+msgstr "Язык"
+
+#: src/ui/settings.rs:139 src/ui/settings.rs:148
+msgid "Auto"
+msgstr "Автоматически"
+
+#: src/ui/settings.rs:218
+msgid "Window"
+msgstr "Окно"
+
+#: src/ui/settings.rs:258
+msgid "Account"
+msgstr "Аккаунт"
+
+#: src/ui/settings.rs:285
+msgid "Files"
+msgstr "Файлы"
+
+#: src/ui/settings.rs:318
+msgid "About"
+msgstr "О программе"
