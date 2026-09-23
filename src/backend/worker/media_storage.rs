@@ -434,6 +434,7 @@ mod tests {
             .handle_command(Command::Downloaded {
                 chat: CHAT.into(),
                 id: "image".into(),
+                card: None,
                 result: Ok(old.clone()),
             })
             .await;
@@ -466,6 +467,7 @@ mod tests {
             .handle_command(Command::Downloaded {
                 chat: CHAT.into(),
                 id: "image".into(),
+                card: None,
                 result: Ok(old.clone()),
             })
             .await;

@@ -4,12 +4,15 @@ pub mod animation;
 pub mod app;
 pub mod archive;
 pub mod audio;
+pub mod autostart;
 pub mod backend;
 pub mod bidi;
 #[cfg(any(test, feature = "demo"))]
 pub mod demo;
 pub mod diagnostics;
 pub mod emoji;
+pub mod i18n;
+pub mod image_cache;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod markup;
@@ -33,3 +36,4 @@ pub mod ui;
 pub mod updates;
 pub mod util;
 pub mod voice;
+pub mod wallpaper;
