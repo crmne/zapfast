@@ -37,11 +37,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         {
                             app.actions.push(Action::Open(Page::Chats));
                         }
-                        theme::text(ui, "Settings", theme::bold(24.0), palette.text);
+                        theme::text(ui, crate::i18n::gettext(app.locale, "Settings"), theme::bold(24.0), palette.text);
                     });
                     ui.add_space(18.0);
 
-                    section(ui, app, "Appearance");
+                    section(ui, app, crate::i18n::gettext(app.locale, "Appearance").as_ref());
                     let detail = app.custom_themes.detail(app.settings.custom_theme.as_deref());
                     let detail = if !detail.is_empty() {
                         detail
@@ -127,7 +127,45 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         },
                     );
 
-                    section(ui, app, "Chats");
+                    widgets::setting_row(
+                        ui,
+                        &palette,
+                        crate::i18n::gettext(app.locale, "Language").as_ref(),
+                        "",
+                        |ui| {
+                            let selected = app.settings.interface_language;
+                            let label = match selected {
+                                Some(locale) => locale.label().to_owned(),
+                                None => crate::i18n::gettext(app.locale, "Auto").into_owned(),
+                            };
+                            egui::ComboBox::from_id_salt("interface_language")
+                                .selected_text(label)
+                                .width(200.0_f32.min(ui.available_width()))
+                                .show_ui(ui, |ui| {
+                                    if theme_option(
+                                        ui,
+                                        &palette,
+                                        crate::i18n::gettext(app.locale, "Auto").as_ref(),
+                                        selected.is_none(),
+                                    ) {
+                                        app.actions.push(Action::SetInterfaceLanguage(None));
+                                    }
+                                    for locale in crate::i18n::Locale::ALL {
+                                        if theme_option(
+                                            ui,
+                                            &palette,
+                                            locale.label(),
+                                            selected == Some(locale),
+                                        ) {
+                                            app.actions
+                                                .push(Action::SetInterfaceLanguage(Some(locale)));
+                                        }
+                                    }
+                                });
+                        },
+                    );
+
+                    section(ui, app, crate::i18n::gettext(app.locale, "Chats").as_ref());
                     toggle(ui, app, "Enter sends", "When off, Enter adds a line and Ctrl+Enter sends.", |settings| &mut settings.enter_sends);
                     let receipts_note = if app.account_receipts_off {
                         "Read receipts are disabled for your WhatsApp account. Direct chats will not send them. When this switch is on, groups still do. Read state syncs between your devices either way."
@@ -177,7 +215,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         );
                     }
 
-                    section(ui, app, "Window");
+                    section(ui, app, crate::i18n::gettext(app.locale, "Window").as_ref());
                     toggle(ui, app, "Keep running when the window closes", "Keep ZapFast linked in the system tray. Quit from the tray menu or with Ctrl+Q.", |settings| &mut settings.keep_running_in_background);
                     toggle(ui, app, "Notify about new messages", "Show desktop notifications when the window is hidden, in the background, or showing another chat. Muted chats do not notify you.", |settings| &mut settings.notifications);
                     toggle(ui, app, "Download updates automatically", "Download and verify new releases in the background. You choose when to restart. Native packages and Flatpak update through their package manager.", |settings| &mut settings.download_updates_automatically);
@@ -205,7 +243,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         },
                     );
 
-                    section(ui, app, "Account");
+                    section(ui, app, crate::i18n::gettext(app.locale, "Account").as_ref());
                     let name = app.me_name.clone().unwrap_or_default();
                     let me = app.me.clone().unwrap_or_default();
                     let phone = crate::model::phone_of(&me)
@@ -232,7 +270,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         },
                     );
 
-                    section(ui, app, "Files");
+                    section(ui, app, crate::i18n::gettext(app.locale, "Files").as_ref());
                     let archive = app.dirs.archive_db();
                     widgets::setting_row(
                         ui,
@@ -265,7 +303,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         }
                     });
 
-                    section(ui, app, "About");
+                    section(ui, app, crate::i18n::gettext(app.locale, "About").as_ref());
                     widgets::setting_row(
                         ui,
                         &palette,

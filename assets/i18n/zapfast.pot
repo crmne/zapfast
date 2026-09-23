@@ -1,0 +1,162 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR ZapFast contributors
+# This file is distributed under the same license as the ZapFast package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
+"POT-Creation-Date: 2026-09-22 00:00-0300\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+msgid "Chats"
+msgstr ""
+
+msgid "Search"
+msgstr ""
+
+msgid "All"
+msgstr ""
+
+msgid "Unread"
+msgstr ""
+
+msgid "Private"
+msgstr ""
+
+msgid "Groups"
+msgstr ""
+
+msgid "Locked"
+msgstr ""
+
+msgid "Type a message"
+msgstr ""
+
+msgid "Add a caption"
+msgstr ""
+
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr ""
+
+msgid "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr ""
+
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr ""
+
+msgid "All shortcuts ({})"
+msgstr ""
+
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr ""
+
+msgid "Appearance"
+msgstr ""
+
+msgid "Window"
+msgstr ""
+
+msgid "Account"
+msgstr ""
+
+msgid "Files"
+msgstr ""
+
+msgid "About"
+msgstr ""
+
+msgid "Settings"
+msgstr ""
+
+msgid "Language"
+msgstr ""
+
+msgid "Auto"
+msgstr ""
+
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] ""
+msgstr[1] ""
+
+msgid "Today"
+msgstr ""
+
+msgid "Yesterday"
+msgstr ""
+
+msgid "Yesterday at {time}"
+msgstr ""
+
+msgid "{weekday} at {time}"
+msgstr ""
+
+msgid "{date} at {time}"
+msgstr ""
+
+msgid "Monday"
+msgstr ""
+
+msgid "Tuesday"
+msgstr ""
+
+msgid "Wednesday"
+msgstr ""
+
+msgid "Thursday"
+msgstr ""
+
+msgid "Friday"
+msgstr ""
+
+msgid "Saturday"
+msgstr ""
+
+msgid "Sunday"
+msgstr ""
+
+msgid "January"
+msgstr ""
+
+msgid "February"
+msgstr ""
+
+msgid "March"
+msgstr ""
+
+msgid "April"
+msgstr ""
+
+msgid "May"
+msgstr ""
+
+msgid "June"
+msgstr ""
+
+msgid "July"
+msgstr ""
+
+msgid "August"
+msgstr ""
+
+msgid "September"
+msgstr ""
+
+msgid "October"
+msgstr ""
+
+msgid "November"
+msgstr ""
+
+msgid "December"
+msgstr ""
