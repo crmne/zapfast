@@ -767,7 +767,8 @@ mod tests {
         );
         output.textures_delta.clear();
         // Still decoded, same first frame: not evicted, not re-decoded.
-        let entries = cache(&ctx).0.lock().expect("animation cache");
+        let store = cache(&ctx);
+        let entries = store.0.lock().expect("animation cache");
         let Entry::Ready(playing) = entries.get(&path).expect("still cached") else {
             panic!("the visible animation was evicted");
         };
@@ -830,7 +831,8 @@ mod tests {
             },
         );
         output.textures_delta.clear();
-        let entries = cache(&ctx).0.lock().expect("animation cache");
+        let store = cache(&ctx);
+        let entries = store.0.lock().expect("animation cache");
         assert!(entries.get(&fresh).is_some(), "the drawn animation stays");
         assert!(
             !entries.contains_key(&stale),
