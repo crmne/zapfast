@@ -61,6 +61,7 @@ pub fn line(
     let format = egui::TextFormat::simple(font, color);
     let single = text.lines().next().unwrap_or_default();
     emoji::append(
+        ui,
         &mut job,
         &mut placements,
         if max_rows == 1 { single } else { text },

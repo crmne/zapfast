@@ -1506,12 +1506,19 @@ mod tests {
     /// flush right, and the time on its own row at the bottom right.
     #[test]
     fn rtl_self_chat_bubbles_render_like_whatsapp() {
-        fn collect(shape: &egui::Shape, out: &mut Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)>) {
+        fn collect(
+            shape: &egui::Shape,
+            out: &mut Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)>,
+            images: &mut Vec<egui::Rect>,
+        ) {
             match shape {
                 egui::Shape::Text(text) => out.push((text.pos, text.galley.clone())),
+                egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                    images.push(mesh.calc_bounds());
+                }
                 egui::Shape::Vec(shapes) => {
                     for shape in shapes {
-                        collect(shape, out);
+                        collect(shape, out, images);
                     }
                 }
                 _ => {}
@@ -1524,8 +1531,9 @@ mod tests {
         render(&mut app, &ctx);
         let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
         let mut texts = Vec::new();
+        let mut images = Vec::new();
         for shape in &shapes {
-            collect(&shape.shape, &mut texts);
+            collect(&shape.shape, &mut texts, &mut images);
         }
         let atlas = ctx.fonts(|fonts| fonts.image());
         let clocks: Vec<String> = app.conversations[ME]
@@ -1568,6 +1576,48 @@ mod tests {
                 (0.0..40.0).contains(&gap),
                 "time should end beside the ticks at the right edge, {gap} short of it"
             );
+            let body_rect = body
+                .rows
+                .iter()
+                .map(|placed| placed.rect().translate(pos.to_vec2()))
+                .reduce(|a, b| a.union(b))
+                .expect("rows");
+            let emoji: Vec<&egui::Rect> = images
+                .iter()
+                .filter(|image| body_rect.contains(image.center()))
+                .collect();
+            let placeholders = body.text().matches(crate::emoji::PLACEHOLDER).count();
+            if crate::emoji::available() {
+                assert_eq!(emoji.len(), placeholders, "one bitmap per emoji");
+            }
+            let row_height = body.rows[0].row.size.y;
+            for image in &emoji {
+                assert!(
+                    image.width().max(image.height()) >= row_height,
+                    "emoji {image:?} shrank below the row height {row_height}"
+                );
+            }
+            for placed in &body.rows {
+                for glyph in &placed.row.glyphs {
+                    if glyph.uv_rect.is_nothing()
+                        || glyph.chr.is_whitespace()
+                        || glyph.chr == crate::emoji::PLACEHOLDER
+                    {
+                        continue;
+                    }
+                    let ink = egui::Rect::from_min_size(
+                        *pos + placed.pos.to_vec2() + egui::vec2(glyph.pos.x, 0.0),
+                        egui::vec2(glyph.advance_width, placed.row.size.y),
+                    );
+                    for image in &emoji {
+                        assert!(
+                            !image.shrink(0.5).intersects(ink),
+                            "emoji at {image:?} overlaps {:?} at {ink:?}",
+                            glyph.chr
+                        );
+                    }
+                }
+            }
         }
     }
 

@@ -118,7 +118,7 @@ pub fn layout(
             ..Default::default()
         };
         let before = characters;
-        let after = before + emoji::append(&mut job, &mut placements, &span.text, &format);
+        let after = before + emoji::append(ui, &mut job, &mut placements, &span.text, &format);
         if let Some(url) = span.link {
             links.push((before..after, url));
         }

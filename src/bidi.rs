@@ -1,15 +1,15 @@
 //! Unicode bidirectional layout for egui galleys.
 //!
-//! egui 0.36 shapes each font run on its own. A Hebrew or Arabic run is
-//! shaped right to left, then the runs are placed in logical order. Neutrals
-//! (spaces, numbers, punctuation, emoji) stay where that left-to-right
-//! placement put them, and a paragraph that starts with Latin never repairs
-//! the Hebrew inside it.
+//! The vendored epaint splits font runs where the Unicode bidi level changes
+//! and shapes each in its resolved direction, so brackets in right-to-left
+//! runs are mirrored. It still places the shaped runs in logical order, left
+//! to right.
 //!
-//! After line breaking, this module resolves one Unicode bidi line per row,
-//! moves shaped runs into visual order, and keeps the glyph vector in logical
-//! order so copy, links, and carets use character indices. Glyph positions are
-//! the visual ones. epaint hit-testing reads the `rtl` flag set here.
+//! After line breaking, this module resolves each row with its paragraph's
+//! bidi levels, moves shaped runs into visual order, and keeps the glyph
+//! vector in logical order so copy, links, and carets use character indices.
+//! Glyph positions are the visual ones. epaint hit-testing reads the `rtl`
+//! flag set here.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -122,10 +122,22 @@ pub fn reorder_rtl_runs(galley: &mut Galley) {
     }
     let text = galley.job.text.clone();
     let overflow = galley.job.wrap.overflow_character;
+    let decorated: Vec<Range<usize>> = galley
+        .job
+        .sections
+        .iter()
+        .filter(|section| {
+            let format = &section.format;
+            !format.underline.is_empty()
+                || !format.strikethrough.is_empty()
+                || format.background != egui::Color32::TRANSPARENT
+        })
+        .map(|section| section.byte_range.start.0..section.byte_range.end.0)
+        .collect();
     let mut paragraph = None;
     for placed in &mut galley.rows {
         let row = Arc::make_mut(&mut placed.row);
-        reorder_row(row, &text, &mut paragraph, overflow);
+        reorder_row(row, &text, &decorated, &mut paragraph, overflow);
     }
     if message_rtl(&text) {
         align_right(galley);
@@ -136,9 +148,12 @@ pub fn reorder_rtl_runs(galley: &mut Galley) {
 /// The bidi paragraph last used, keyed by its byte offset in the galley text.
 type ParagraphCache<'a> = Option<(usize, BidiInfo<'a>)>;
 
+/// `decorated` holds the byte ranges of sections that draw an underline,
+/// strikethrough, or background, which has to move with its glyphs.
 fn reorder_row<'a>(
     row: &mut egui::epaint::text::Row,
     text: &'a str,
+    decorated: &[Range<usize>],
     paragraph: &mut ParagraphCache<'a>,
     overflow: Option<char>,
 ) {
@@ -210,7 +225,7 @@ fn reorder_row<'a>(
 
     let glyph_vertices = row.visuals.glyph_vertex_range.clone();
     let mut cursor = 0.0f32;
-    let mut deco: Vec<(f32, f32, f32)> = Vec::new();
+    let mut deco: Vec<Moved> = Vec::new();
     for atom in &placed {
         let delta = cursor - atom.min_x;
         if delta.abs() > 0.01 {
@@ -218,8 +233,17 @@ fn reorder_row<'a>(
                 glyph.pos.x += delta;
                 shift_glyph_mesh(&mut row.visuals.mesh, glyph, egui::vec2(delta, 0.0));
             }
-            deco.push((atom.min_x, atom.min_x + atom.width, delta));
         }
+        deco.push(Moved {
+            min: atom.min_x,
+            max: atom.min_x + atom.width,
+            delta,
+            decorated: row.glyphs[atom.glyphs.clone()].iter().any(|glyph| {
+                decorated
+                    .iter()
+                    .any(|range| range.contains(&(glyph.cluster as usize)))
+            }),
+        });
         cursor += atom.width;
     }
     if base_rtl && !replacement.is_empty() {
@@ -229,7 +253,7 @@ fn reorder_row<'a>(
             .sum();
         if extra > 0.01 {
             for item in &mut deco {
-                item.2 += extra;
+                item.delta += extra;
             }
             for (index, glyph) in row.glyphs.iter_mut().enumerate() {
                 if replacement.contains(&index) {
@@ -529,8 +553,22 @@ fn shift_glyph_mesh(mesh: &mut Mesh, glyph: &Glyph, delta: Vec2) {
     }
 }
 
-fn shift_decorations(mesh: &mut Mesh, glyph_vertices: &Range<usize>, deltas: &[(f32, f32, f32)]) {
-    if deltas.is_empty() {
+/// Where an atom sat before reordering and how far it moved.
+struct Moved {
+    min: f32,
+    max: f32,
+    delta: f32,
+    /// Whether its glyphs belong to a section that draws decorations.
+    decorated: bool,
+}
+
+/// Moves underline, strikethrough, and background vertices with their atom.
+///
+/// A decoration's end vertex sits on the boundary it shares with the next
+/// atom. An atom whose section draws decorations claims it before a plain one,
+/// so a link's underline does not stretch under the space beside it.
+fn shift_decorations(mesh: &mut Mesh, glyph_vertices: &Range<usize>, moved: &[Moved]) {
+    if moved.iter().all(|atom| atom.delta.abs() <= 0.01) {
         return;
     }
     let pad = 1.5;
@@ -538,18 +576,21 @@ fn shift_decorations(mesh: &mut Mesh, glyph_vertices: &Range<usize>, deltas: &[(
         if glyph_vertices.contains(&index) {
             continue;
         }
-        let mut best: Option<(f32, f32)> = None;
-        for &(old_min, old_max, delta_x) in deltas {
-            if vertex.pos.x >= old_min - pad && vertex.pos.x <= old_max + pad {
-                let mid = (old_min + old_max) * 0.5;
-                let distance = (vertex.pos.x - mid).abs();
-                if best.is_none_or(|(best_distance, _)| distance < best_distance) {
-                    best = Some((distance, delta_x));
+        let mut best: Option<(bool, f32, f32)> = None;
+        for atom in moved {
+            if vertex.pos.x >= atom.min - pad && vertex.pos.x <= atom.max + pad {
+                let distance = (vertex.pos.x - (atom.min + atom.max) * 0.5).abs();
+                let better = best.is_none_or(|(decorated, best_distance, _)| {
+                    (atom.decorated && !decorated)
+                        || (atom.decorated == decorated && distance < best_distance)
+                });
+                if better {
+                    best = Some((atom.decorated, distance, atom.delta));
                 }
             }
         }
-        if let Some((_, delta_x)) = best {
-            vertex.pos.x += delta_x;
+        if let Some((_, _, delta)) = best {
+            vertex.pos.x += delta;
         }
     }
 }
@@ -1033,6 +1074,62 @@ mod tests {
             assert!(galley.rows.len() > 1, "each sample is a multi-line message");
             assert_rows_follow_uba(&galley, &atlas);
             assert_right_aligned(&galley);
+        }
+    }
+
+    #[test]
+    fn a_link_underline_stays_under_the_link() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let galley = std::cell::RefCell::new(None);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(480.0, 160.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let plain = TextFormat::simple(FontId::proportional(14.0), Color32::WHITE);
+                let mut link = plain.clone();
+                link.underline = egui::Stroke::new(1.0, Color32::LIGHT_BLUE);
+                let mut job = LayoutJob::default();
+                job.append("שלום ", 0.0, plain.clone());
+                job.append("https://example.com", 0.0, link);
+                job.append(" עולם", 0.0, plain);
+                *galley.borrow_mut() = Some(ui.painter().layout_job(job));
+            },
+        );
+        output.textures_delta.clear();
+        let mut galley = Arc::try_unwrap(galley.into_inner().expect("galley"))
+            .unwrap_or_else(|arc| (*arc).clone());
+        reorder_rtl_runs(&mut galley);
+        let row = &galley.rows[0].row;
+        let url = "שלום ".chars().count().."שלום https://example.com".chars().count();
+        let left = row.glyphs[url.clone()]
+            .iter()
+            .map(|glyph| glyph.pos.x)
+            .fold(f32::INFINITY, f32::min);
+        let right = row.glyphs[url]
+            .iter()
+            .map(Glyph::max_x)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let glyph_range = row.visuals.glyph_vertex_range.clone();
+        let underline: Vec<f32> = row
+            .visuals
+            .mesh
+            .vertices
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !glyph_range.contains(index))
+            .map(|(_, vertex)| vertex.pos.x)
+            .collect();
+        assert!(!underline.is_empty(), "expected underline vertices");
+        // Feathering puts stroke vertices up to a pixel past the glyphs; the
+        // neighbouring space is about four.
+        for x in underline {
+            assert!(
+                (left - 1.5..=right + 1.5).contains(&x),
+                "underline vertex at {x} outside the link {left}..{right}"
+            );
         }
     }
 

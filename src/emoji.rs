@@ -387,8 +387,37 @@ pub fn only_emoji(text: &str) -> Option<usize> {
     (count > 0).then_some(count)
 }
 
+/// Painted emoji side, relative to the row height of the surrounding text.
+const EMOJI_SIDE: f32 = 1.08;
+
+/// Invisible placeholder format for emoji beside text in `format`.
+///
+/// The placeholder is scaled to be exactly as wide as the bitmap painted over
+/// it, so the emoji keeps the spaces on either side, and its line height is
+/// pinned so the row is no taller than plain text.
+fn placeholder(ui: &egui::Ui, format: &TextFormat) -> TextFormat {
+    let (row_height, width) = ui.fonts_mut(|fonts| {
+        let shaped = fonts.layout_no_wrap(
+            PLACEHOLDER.to_string(),
+            format.font_id.clone(),
+            Color32::TRANSPARENT,
+        );
+        (fonts.row_height(&format.font_id), shaped.size().x)
+    });
+    let mut hidden = format.clone();
+    hidden.color = Color32::TRANSPARENT;
+    hidden.underline = Stroke::NONE;
+    hidden.strikethrough = Stroke::NONE;
+    if width > 0.0 {
+        hidden.font_id.size *= row_height * EMOJI_SIDE / width;
+    }
+    hidden.line_height = Some(format.line_height.unwrap_or(row_height));
+    hidden
+}
+
 /// Appends text with placeholders and records their emoji sequences.
 pub fn append(
+    ui: &egui::Ui,
     job: &mut LayoutJob,
     placements: &mut Vec<String>,
     text: &str,
@@ -399,15 +428,13 @@ pub fn append(
         job.append(text, 0.0, format.clone());
         return job.text[start..].chars().count();
     }
+    let mut hidden = None;
     for piece in pieces(text) {
         match piece {
             Piece::Text(run) => job.append(run, 0.0, format.clone()),
             Piece::Emoji(cluster) => {
-                let mut hidden = format.clone();
-                hidden.color = Color32::TRANSPARENT;
-                hidden.underline = Stroke::NONE;
-                hidden.strikethrough = Stroke::NONE;
-                job.append(&PLACEHOLDER.to_string(), 0.0, hidden);
+                let hidden = hidden.get_or_insert_with(|| placeholder(ui, format));
+                job.append(&PLACEHOLDER.to_string(), 0.0, hidden.clone());
                 placements.push(cluster.to_owned());
             }
         }
@@ -421,7 +448,7 @@ pub fn paint_cluster(ui: &egui::Ui, cluster: &str, rect: Rect) {
     let painter = ui.painter();
     match texture(ui.ctx(), cluster) {
         Some(texture) => {
-            let side = rect.height() * 1.08;
+            let side = (rect.height() * EMOJI_SIDE).min(rect.width());
             let size = texture.size_vec2();
             let scale = (side / size.x).min(side / size.y);
             let image_rect = Rect::from_center_size(
@@ -499,9 +526,15 @@ pub(crate) fn placeholder_rects(galley: &egui::Galley) -> impl Iterator<Item = R
             .filter(|glyph| glyph.chr == PLACEHOLDER)
             .collect();
         placeholders.sort_by_key(|glyph| glyph.first_vertex);
-        placeholders
-            .into_iter()
-            .map(move |glyph| glyph.logical_rect().translate(row.pos.to_vec2()))
+        // The placeholder is set larger than the text, so its own glyph box is
+        // taller than the row. Paint over its advance at the row's height.
+        placeholders.into_iter().map(move |glyph| {
+            Rect::from_min_max(
+                Pos2::new(glyph.pos.x, 0.0),
+                Pos2::new(glyph.max_x(), row.size.y),
+            )
+            .translate(row.pos.to_vec2())
+        })
     })
 }
 
@@ -588,7 +621,17 @@ mod tests {
     fn placeholders_line_up_with_placements() {
         let mut job = LayoutJob::default();
         let mut placements = Vec::new();
-        append(&mut job, &mut placements, "a 😀 b", &TextFormat::default());
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            append(
+                ui,
+                &mut job,
+                &mut placements,
+                "a 😀 b",
+                &TextFormat::default(),
+            );
+        });
+        output.textures_delta.clear();
         if available() {
             assert_eq!(placements, vec!["😀".to_owned()]);
             assert_eq!(job.text.matches(PLACEHOLDER).count(), 1);
