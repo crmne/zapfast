@@ -2615,10 +2615,18 @@ fn bubble_frame(
 /// Minimum shared width for cards inside message bubbles.
 const CARD_WIDTH: f32 = 320.0;
 const CAROUSEL_CARD_WIDTH: f32 = 280.0;
+/// Location cards: a map preview across the top, then the details.
+const LOCATION_CARD_WIDTH: f32 = 300.0;
 const CAROUSEL_GAP: f32 = 8.0;
 
 /// Returns the shared card width, bounded by [`CARD_WIDTH`] and `cap`.
 fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
+    if matches!(
+        message.content,
+        Content::Location { .. } | Content::LiveLocation { .. }
+    ) {
+        return Some(LOCATION_CARD_WIDTH.min(cap));
+    }
     if let Content::Interactive {
         card: Some(card), ..
     } = &message.content
@@ -3428,35 +3436,19 @@ fn content(
             name,
             address,
         } => {
-            let icon = |ui: &mut egui::Ui| {
-                theme::icon(ui, Icon::MapPin, 18.0, palette.accent);
-            };
-            mirrored_row(ui, own, icon, |ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    widgets::rich_text(
-                        ui,
-                        name.as_deref().unwrap_or("Location"),
-                        theme::medium(14.0),
-                        palette.text,
-                    );
-                    if let Some(address) = address {
-                        widgets::rich_text(ui, address, theme::regular(12.5), palette.secondary);
-                    }
-                    if theme::link(
-                        ui,
-                        crate::i18n::gettext(view.locale, "Open in a map").as_ref(),
-                        theme::regular(12.5),
-                        palette.link,
-                    )
-                    .clicked()
-                    {
-                        actions.push(Action::OpenUrl(format!(
-                            "https://www.openstreetmap.org/?mlat={latitude}&mlon={longitude}#map=16/{latitude}/{longitude}"
-                        )));
-                    }
-                });
-            });
+            let title = name
+                .clone()
+                .unwrap_or_else(|| crate::i18n::gettext(view.locale, "Location").into_owned());
+            location_card(
+                ui,
+                view,
+                message,
+                &message.id,
+                &title,
+                address.clone(),
+                (*latitude, *longitude),
+                actions,
+            );
             None
         }
         Content::LiveLocation {
@@ -3471,73 +3463,42 @@ fn content(
             let over = message
                 .content
                 .live_location_over(message.timestamp, view.now);
-            let icon = |ui: &mut egui::Ui| {
-                theme::icon(ui, Icon::MapPin, 18.0, palette.accent);
+            let title = if over {
+                crate::i18n::gettext(view.locale, "Live location ended")
+            } else {
+                crate::i18n::gettext(view.locale, "Live location")
             };
-            mirrored_row(ui, own, icon, |ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    let title = if over {
-                        crate::i18n::gettext(view.locale, "Live location ended")
-                    } else {
-                        crate::i18n::gettext(view.locale, "Live location")
-                    };
-                    widgets::rich_text(ui, &title, theme::medium(14.0), palette.text);
-                    if !over {
-                        // An absolute time stays true without repainting.
-                        let at = if *updated > 0 {
-                            *updated
-                        } else {
-                            message.timestamp
-                        };
-                        let mut meta = vec![
-                            crate::i18n::gettext(view.locale, "Updated {time}")
-                                .replace("{time}", &crate::util::clock(at)),
-                        ];
-                        if let Some(speed) = speed_mps.filter(|speed| *speed >= 0.5) {
-                            meta.push(format!("{:.0} km/h", speed * 3.6));
-                        }
-                        if let Some(accuracy) = accuracy_m {
-                            meta.push(format!("±{accuracy} m"));
-                        }
-                        widgets::rich_text(
-                            ui,
-                            &meta.join(" · "),
-                            theme::regular(12.5),
-                            palette.secondary,
-                        );
-                    }
-                    // The map preview WhatsApp sent, with a pin at its centre.
-                    // Each position gets its own image, as a later preview
-                    // replaces the first.
-                    if let Some(bytes) = message.thumbnail.as_deref()
-                        && !bytes.is_empty()
-                    {
-                        let key = format!("{}-{sequence}-{updated}", message.id);
-                        let uri = thumbnail_uri(ui.ctx(), &message.chat, &key, bytes);
-                        ui.add_space(4.0);
-                        let response = ui.add(
-                            egui::Image::new(uri)
-                                .fit_to_exact_size(Vec2::new(260.0, 150.0))
-                                .corner_radius(8.0),
-                        );
-                        theme::paint_icon(ui, Icon::MapPin, response.rect, 30.0, palette.accent);
-                        ui.add_space(2.0);
-                    }
-                    if theme::link(
-                        ui,
-                        crate::i18n::gettext(view.locale, "Open in a map").as_ref(),
-                        theme::regular(12.5),
-                        palette.link,
-                    )
-                    .clicked()
-                    {
-                        actions.push(Action::OpenUrl(format!(
-                            "https://www.openstreetmap.org/?mlat={latitude}&mlon={longitude}#map=16/{latitude}/{longitude}"
-                        )));
-                    }
-                });
+            let detail = (!over).then(|| {
+                // An absolute time stays true without repainting.
+                let at = if *updated > 0 {
+                    *updated
+                } else {
+                    message.timestamp
+                };
+                let mut meta = vec![
+                    crate::i18n::gettext(view.locale, "Updated {time}")
+                        .replace("{time}", &crate::util::clock(at)),
+                ];
+                if let Some(speed) = speed_mps.filter(|speed| *speed >= 0.5) {
+                    meta.push(format!("{:.0} km/h", speed * 3.6));
+                }
+                if let Some(accuracy) = accuracy_m {
+                    meta.push(format!("±{accuracy} m"));
+                }
+                meta.join(" · ")
             });
+            // Each position gets its own preview, as a later one replaces the first.
+            let key = format!("{}-{sequence}-{updated}", message.id);
+            location_card(
+                ui,
+                view,
+                message,
+                &key,
+                &title,
+                detail,
+                (*latitude, *longitude),
+                actions,
+            );
             None
         }
         Content::Contact {
@@ -4455,6 +4416,65 @@ fn preview_card(
     if response.clicked() {
         actions.push(Action::OpenUrl(preview.url.clone()));
     }
+}
+
+/// A location as a card: the map preview WhatsApp sent across the top, then
+/// a pinned title, an optional detail line, and a link to open the spot.
+#[expect(clippy::too_many_arguments)]
+fn location_card(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    preview_key: &str,
+    title: &str,
+    detail: Option<String>,
+    (latitude, longitude): (f64, f64),
+    actions: &mut Vec<Action>,
+) {
+    let palette = view.palette;
+    // A bounded, left-aligned layout: own bubbles inherit right-to-left flow,
+    // which would otherwise stretch the card and make its width oscillate.
+    let card = ui.available_width().min(LOCATION_CARD_WIDTH);
+    ui.allocate_ui_with_layout(vec2(card, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(card);
+        ui.spacing_mut().item_spacing.y = 2.0;
+        // The preview already marks the spot. Crop the square preview to the
+        // card's shape.
+        if let Some(bytes) = message.thumbnail.as_deref()
+            && !bytes.is_empty()
+        {
+            let uri = thumbnail_uri(ui.ctx(), &message.chat, preview_key, bytes);
+            let height = (card * 0.56).round();
+            let crop = (1.0 - height / card) / 2.0;
+            ui.add(
+                egui::Image::new(uri)
+                    .maintain_aspect_ratio(false)
+                    .uv(Rect::from_min_max(pos2(0.0, crop), pos2(1.0, 1.0 - crop)))
+                    .fit_to_exact_size(Vec2::new(card, height))
+                    .corner_radius(8.0),
+            );
+            ui.add_space(4.0);
+        }
+        ui.horizontal(|ui| {
+            theme::icon(ui, Icon::MapPin, 16.0, palette.accent);
+            widgets::rich_text(ui, title, theme::medium(14.0), palette.text);
+        });
+        if let Some(detail) = detail {
+            widgets::rich_text(ui, &detail, theme::regular(12.5), palette.secondary);
+        }
+        if theme::link(
+            ui,
+            crate::i18n::gettext(view.locale, "Open in a map").as_ref(),
+            theme::regular(12.5),
+            palette.link,
+        )
+        .clicked()
+        {
+            actions.push(Action::OpenUrl(format!(
+                "https://www.openstreetmap.org/?mlat={latitude}&mlon={longitude}#map=16/{latitude}/{longitude}"
+            )));
+        }
+    });
 }
 
 fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> String {

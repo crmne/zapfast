@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 23:28+0200\n"
+"POT-Creation-Date: 2026-09-23 23:57+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -208,36 +208,37 @@ msgstr[0] "{} непрочитанное сообщение"
 msgstr[1] "{} непрочитанных сообщения"
 msgstr[2] "{} непрочитанных сообщений"
 
-#: src/ui/conversation.rs:3140 src/ui/dialogs.rs:963 src/ui/picker.rs:1570
+#: src/ui/conversation.rs:3148 src/ui/dialogs.rs:963 src/ui/picker.rs:1570
 msgid "Add to favorites"
 msgstr "Добавить в избранное"
 
-#: src/ui/conversation.rs:3149
+#: src/ui/conversation.rs:3157
 msgid "Open in system player"
 msgstr "Открыть в системном плеере"
 
-#: src/ui/conversation.rs:3217 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3225 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Данные сообщения"
 
-#: src/ui/conversation.rs:3448 src/ui/conversation.rs:3529
-msgid "Open in a map"
-msgstr "Открыть на карте"
+#: src/ui/conversation.rs:3441
+#, fuzzy
+msgid "Location"
+msgstr "Геоданные в реальном времени"
 
-#: src/ui/conversation.rs:3481
+#: src/ui/conversation.rs:3467
 msgid "Live location ended"
 msgstr "Трансляция геоданных завершена"
 
-#: src/ui/conversation.rs:3483 src/ui/conversation.rs:3652
+#: src/ui/conversation.rs:3469 src/ui/conversation.rs:3613
 msgid "Live location"
 msgstr "Геоданные в реальном времени"
 
-#: src/ui/conversation.rs:3494
+#: src/ui/conversation.rs:3479
 #, rust-format
 msgid "Updated {time}"
 msgstr "Обновлено в {time}"
 
-#: src/ui/conversation.rs:3581
+#: src/ui/conversation.rs:3542
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
@@ -245,28 +246,32 @@ msgstr[0] "{} стикер"
 msgstr[1] "{} стикера"
 msgstr[2] "{} стикеров"
 
-#: src/ui/conversation.rs:3594
+#: src/ui/conversation.rs:3555
 msgid "View stickers"
 msgstr "Посмотреть стикеры"
 
-#: src/ui/conversation.rs:3660
+#: src/ui/conversation.rs:3621
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Откройте WhatsApp на телефоне, чтобы следить за ними."
 
-#: src/ui/conversation.rs:4991
+#: src/ui/conversation.rs:4467
+msgid "Open in a map"
+msgstr "Открыть на карте"
+
+#: src/ui/conversation.rs:5011
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/ui/conversation.rs:4993
+#: src/ui/conversation.rs:5013
 #, fuzzy
 msgid "Play"
 msgstr "Прослушано"
 
-#: src/ui/conversation.rs:5016
+#: src/ui/conversation.rs:5036
 msgid "Unmute"
 msgstr "Включить звук"
 
-#: src/ui/conversation.rs:5018
+#: src/ui/conversation.rs:5038
 msgid "Mute"
 msgstr "Выключить звук"
 

@@ -1911,8 +1911,22 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     },
                 );
                 row.thumbnail = Some(sample_map());
+                // Then a plain location of our own, without a preview.
+                let pinned = message(
+                    ada,
+                    "ada-location-now",
+                    true,
+                    now - 60 * 2,
+                    Content::Location {
+                        latitude: 51.5226,
+                        longitude: -0.1571,
+                        name: None,
+                        address: None,
+                    },
+                );
                 if let Some(conversation) = app.conversations.get_mut(ada) {
                     conversation.messages.push(row);
+                    conversation.messages.push(pinned);
                 }
                 app.open_chat = Some(ada.to_owned());
                 app.scroll_to_bottom = true;
@@ -4436,6 +4450,29 @@ mod tests {
             app.reaction_target.is_none(),
             "the context menu does not open the reaction picker"
         );
+    }
+
+    /// A location in our own bubble keeps one width from frame to frame
+    /// instead of flickering, and stays a card rather than spanning the chat.
+    #[test]
+    fn our_location_cards_hold_still() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        apply_flags(&mut app, Some("live"));
+        let id = crate::ui::conversation::bubble_id(sample_ids()[0], "ada-location-now");
+        let rect =
+            |ctx: &egui::Context| ctx.data(|data| data.get_temp::<egui::Rect>(id.with("rect")));
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let first = rect(&ctx).expect("the location bubble was drawn");
+        for _ in 0..4 {
+            render(&mut app, &ctx);
+            assert_eq!(rect(&ctx), Some(first), "the bubble moved between frames");
+        }
+        assert!(first.width() < 360.0, "the card spans {}", first.width());
     }
 
     #[test]

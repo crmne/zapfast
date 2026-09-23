@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 23:28+0200\n"
+"POT-Creation-Date: 2026-09-23 23:57+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Spanish\n"
@@ -205,64 +205,69 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} mensaje no leído"
 msgstr[1] "{} mensajes no leídos"
 
-#: src/ui/conversation.rs:3140 src/ui/dialogs.rs:963 src/ui/picker.rs:1570
+#: src/ui/conversation.rs:3148 src/ui/dialogs.rs:963 src/ui/picker.rs:1570
 msgid "Add to favorites"
 msgstr "Añadir a favoritos"
 
-#: src/ui/conversation.rs:3149
+#: src/ui/conversation.rs:3157
 msgid "Open in system player"
 msgstr "Abrir en el reproductor del sistema"
 
-#: src/ui/conversation.rs:3217 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3225 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Info. del mensaje"
 
-#: src/ui/conversation.rs:3448 src/ui/conversation.rs:3529
-msgid "Open in a map"
-msgstr "Abrir en un mapa"
+#: src/ui/conversation.rs:3441
+#, fuzzy
+msgid "Location"
+msgstr "Ubicación en tiempo real"
 
-#: src/ui/conversation.rs:3481
+#: src/ui/conversation.rs:3467
 msgid "Live location ended"
 msgstr "Ubicación en tiempo real finalizada"
 
-#: src/ui/conversation.rs:3483 src/ui/conversation.rs:3652
+#: src/ui/conversation.rs:3469 src/ui/conversation.rs:3613
 msgid "Live location"
 msgstr "Ubicación en tiempo real"
 
-#: src/ui/conversation.rs:3494
+#: src/ui/conversation.rs:3479
 #, rust-format
 msgid "Updated {time}"
 msgstr "Actualizada a las {time}"
 
-#: src/ui/conversation.rs:3581
+#: src/ui/conversation.rs:3542
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} sticker"
 msgstr[1] "{} stickers"
 
-#: src/ui/conversation.rs:3594
+#: src/ui/conversation.rs:3555
 msgid "View stickers"
 msgstr "Ver stickers"
 
-#: src/ui/conversation.rs:3660
+#: src/ui/conversation.rs:3621
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Abre WhatsApp en tu teléfono para seguirla."
 
-#: src/ui/conversation.rs:4991
+#: src/ui/conversation.rs:4467
+msgid "Open in a map"
+msgstr "Abrir en un mapa"
+
+#: src/ui/conversation.rs:5011
 msgid "Pause"
 msgstr "Pausa"
 
-#: src/ui/conversation.rs:4993
+#: src/ui/conversation.rs:5013
 #, fuzzy
 msgid "Play"
 msgstr "Reproducido"
 
-#: src/ui/conversation.rs:5016
+#: src/ui/conversation.rs:5036
 msgid "Unmute"
 msgstr "Activar sonido"
 
-#: src/ui/conversation.rs:5018
+#: src/ui/conversation.rs:5038
 msgid "Mute"
 msgstr "Silenciar"
 
