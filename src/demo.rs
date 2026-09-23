@@ -217,10 +217,12 @@ fn demo_waveform() -> Vec<u8> {
 /// Synthetic mixed-direction lines for the `rtl-self` page, one message each.
 ///
 /// They cover neutrals, numbers, brackets, embedded Latin, a repeated-letter
-/// word pair, bold, a link, and emoji inside Hebrew and Arabic paragraphs.
-pub const RTL_SELF_CHAT: [&str; 2] = [
+/// word pair, bold, a link, emoji inside Hebrew and Arabic paragraphs, and
+/// Arabic lam ligatures in a line long enough to wrap.
+pub const RTL_SELF_CHAT: [&str; 3] = [
     "בדיקת RTL בלבד\nסער + מירון = ❤️\nשלום ❤️ עולם\nשלום (test 123) עולם!\nשלום 12:34, מחיר 50₪.\nHello שלום עולם world ❤️\nمرحبا بالعالم ❤️ (123)\nשלום 👨‍👩‍👧‍👦 עולם",
     "שלום!\nשלום 123\nHello שלום עולם end\nאב גד בא\nשלום (עולם)\nשלום *עולם* !\nשלום https://example.com עולם",
+    "إلى السطر التالي\nالله أكبر، لا بأس 🌙\nهذا نص عربي طويل يختبر ترتيب الأسطر عندما تلتف الكلمات داخل فقاعة رسالة ضيقة إلى السطر التالي",
 ];
 
 fn message(chat: &str, id: &str, from_me: bool, timestamp: i64, content: Content) -> Message {
@@ -2064,8 +2066,11 @@ mod tests {
             .map(|message| crate::util::clock(message.timestamp))
             .collect();
         assert_ne!(clocks[0], clocks[1], "each bubble has its own time");
-        for (first_line, clock) in [("בדיקת RTL בלבד\n", &clocks[0]), ("שלום!\n", &clocks[1])]
-        {
+        for (first_line, clock) in [
+            ("בדיקת RTL בלבד\n", &clocks[0]),
+            ("שלום!\n", &clocks[1]),
+            ("إلى السطر التالي\n", &clocks[2]),
+        ] {
             let (pos, body) = texts
                 .iter()
                 .find(|(_, galley)| galley.text().starts_with(first_line))
