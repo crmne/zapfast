@@ -116,6 +116,7 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
     let arrived: Vec<Delivery> =
         std::mem::take(&mut *inbox.0.lock().unwrap_or_else(|p| p.into_inner()));
     let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+    let uploaded = !arrived.is_empty();
     for (arrived_path, decoded) in arrived {
         let entry = match decoded {
             Some(decoded) if !decoded.frames.is_empty() => {
@@ -179,40 +180,10 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
             _ => true,
         });
         animations.idle = idle;
-        let mut resident: usize = animations
-            .entries
-            .values()
-            .map(|entry| match entry {
-                Entry::Ready(playing) => playing.frames.len(),
-                _ => 0,
-            })
-            .sum();
-        while resident > MAX_RESIDENT_FRAMES {
-            // Animations this sweep found idle are the safest victims: their
-            // pixels have been off screen for more than `IDLE`.
-            let victim = animations
-                .entries
-                .iter()
-                .filter(|(entry_path, entry)| {
-                    entry_path.as_path() != path && matches!(entry, Entry::Ready(_))
-                })
-                .min_by_key(|(entry_path, entry)| match entry {
-                    Entry::Ready(playing) => (
-                        u8::from(!animations.idle.contains(*entry_path)),
-                        playing.last_drawn,
-                    ),
-                    _ => (1, now),
-                })
-                .map(|(entry_path, entry)| match entry {
-                    Entry::Ready(playing) => (entry_path.clone(), playing.frames.len()),
-                    _ => (entry_path.clone(), 0),
-                });
-            let Some((victim, count)) = victim else {
-                break;
-            };
-            animations.entries.remove(&victim);
-            resident -= count;
-        }
+        enforce_budget(&mut animations, path, now);
+    } else if uploaded {
+        // New frames can exceed the budget between sweeps.
+        enforce_budget(&mut animations, path, now);
     }
     match animations.entries.get_mut(path) {
         Some(Entry::Ready(playing)) => {
@@ -432,6 +403,43 @@ fn decode_mp4(path: &Path) -> Option<Decoded> {
         }
     }
     (!frames.is_empty()).then_some(Decoded { frames })
+}
+
+/// Evicts animations until the resident frames fit the budget, sparing the
+/// one being drawn and preferring what the last sweep found idle.
+fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant) {
+    let mut resident: usize = animations
+        .entries
+        .values()
+        .map(|entry| match entry {
+            Entry::Ready(playing) => playing.frames.len(),
+            _ => 0,
+        })
+        .sum();
+    while resident > MAX_RESIDENT_FRAMES {
+        let victim = animations
+            .entries
+            .iter()
+            .filter(|(entry_path, entry)| {
+                entry_path.as_path() != path && matches!(entry, Entry::Ready(_))
+            })
+            .min_by_key(|(entry_path, entry)| match entry {
+                Entry::Ready(playing) => (
+                    u8::from(!animations.idle.contains(*entry_path)),
+                    playing.last_drawn,
+                ),
+                _ => (1, now),
+            })
+            .map(|(entry_path, entry)| match entry {
+                Entry::Ready(playing) => (entry_path.clone(), playing.frames.len()),
+                _ => (entry_path.clone(), 0),
+            });
+        let Some((victim, count)) = victim else {
+            break;
+        };
+        animations.entries.remove(&victim);
+        resident -= count;
+    }
 }
 
 /// Converts and scales one decoded frame.
@@ -950,6 +958,80 @@ mod tests {
         assert!(
             !animations.entries.contains_key(&stale),
             "an unseen animation must be evicted once it misses a sweep"
+        );
+    }
+
+    #[test]
+    fn frames_arriving_between_sweeps_still_respect_the_budget() {
+        let ctx = egui::Context::default();
+        let old = PathBuf::from("old.gif");
+        let new = PathBuf::from("new.gif");
+        let count = MAX_RESIDENT_FRAMES / 2 + 1;
+        let frames: Vec<_> = (0..count)
+            .map(|index| {
+                (
+                    ctx.load_texture(
+                        format!("old-frame-{index}"),
+                        ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
+                        TextureOptions::LINEAR,
+                    ),
+                    Duration::from_millis(50),
+                )
+            })
+            .collect();
+        {
+            let store = cache(&ctx);
+            let mut animations = store.0.lock().expect("animation cache");
+            animations.entries.insert(
+                old.clone(),
+                Entry::Ready(Playing {
+                    frames,
+                    total: Duration::from_secs(10),
+                    started: Instant::now(),
+                    last_drawn: Instant::now() - Duration::from_secs(1),
+                    animating: false,
+                }),
+            );
+            // No sweep is due during this frame.
+            animations.last_sweep = Some(Instant::now());
+        }
+        inbox(&ctx).0.lock().expect("inbox").push((
+            new.clone(),
+            Some(Decoded {
+                frames: (0..count)
+                    .map(|_| {
+                        (
+                            ColorImage::new([1, 1], vec![egui::Color32::BLACK]),
+                            Duration::from_millis(50),
+                        )
+                    })
+                    .collect(),
+            }),
+        ));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(200.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(50.0, 50.0), egui::Sense::hover());
+                assert!(matches!(frame(ui, &new, rect, false), Frame::Ready(_)));
+            },
+        );
+        output.textures_delta.clear();
+        let store = cache(&ctx);
+        let animations = store.0.lock().expect("animation cache");
+        assert!(
+            animations.entries.contains_key(&new),
+            "the drawn animation stays"
+        );
+        assert!(
+            !animations.entries.contains_key(&old),
+            "the budget holds without waiting for the next sweep"
         );
     }
 

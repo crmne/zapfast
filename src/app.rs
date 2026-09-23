@@ -97,8 +97,11 @@ impl Conversation {
                             .media()
                             .map(|media| (media.state.clone(), media.path.clone()));
                         *existing = message;
+                        // A copy that carries its own path is newer, for
+                        // example after the archive relocated the file.
                         if let (Some((state, path)), Some(media)) =
                             (media, existing.content.media_mut())
+                            && media.path.is_none()
                         {
                             media.state = state;
                             media.path = path;
@@ -4337,6 +4340,18 @@ mod tests {
             .expect("still present");
         assert_eq!(media.path, Some(downloaded));
         assert_eq!(media.state, MediaState::Failed("gone".into()));
+        // A copy with its own path replaces the in-memory one.
+        let relocated = PathBuf::from("/elsewhere/picture.jpg");
+        conversation.merge(
+            vec![image(Some(relocated.clone()), MediaState::Idle)],
+            false,
+        );
+        let media = conversation
+            .message("picture")
+            .and_then(|message| message.content.media().cloned())
+            .expect("still present");
+        assert_eq!(media.path, Some(relocated));
+        assert_eq!(media.state, MediaState::Idle);
     }
 
     #[test]
