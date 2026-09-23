@@ -169,7 +169,9 @@ reply actions remain unavailable.
 Voice messages play in the chat with a seekable waveform. The chip beside the
 waveform cycles the playback speed between 1x, 1.5x, and 2x. Right-click the
 message for every speed, including 1.25x and 1.75x. The choice is remembered
-for later messages. The speaker's pitch stays the same at
+for later messages. When a voice message ends, playback carries on with the
+next voice message in that chat you have not heard yet, as on the phone. The
+speaker's pitch stays the same at
 every speed. The first play sends
 a played receipt. When the composer is empty, the send button becomes a
 microphone. Press Enter or the send button to send the recording, or Escape or

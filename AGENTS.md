@@ -173,7 +173,9 @@ protocol. These notes are for coding agents and new contributors.
   `Microphone` on a thread, keeping a loudness per 50 ms for the live bars.
   Linux needs ALSA headers to build (`libasound2-dev` on Debian,
   `alsa-lib` on Arch). `Action::PlayVoice/SeekVoice` drive the player from
-  the bubble; `StartRecording/CancelRecording/SendRecording` the
+  the bubble, and a clip that ends hands its message back
+  (`Player::take_finished`) so the app plays the next unheard voice message in
+  that chat; `StartRecording/CancelRecording/SendRecording` the
   microphone from the composer (the send button is a microphone when there
   is nothing to send); `Command::SendVoice` normalizes
   (`voice::normalize`, quiet takes up to just under full scale, gain

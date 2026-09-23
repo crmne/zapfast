@@ -129,7 +129,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
   in the chat. The speed chip cycles between 1x, 1.5x, and 2x, and the
   message menu offers 1x, 1.25x, 1.5x, 1.75x, and 2x, keeping the speaker's
-  pitch; the last choice applies to later messages. The app normalizes quiet
+  pitch; the last choice applies to later messages. When one ends, playback
+  carries on with the next voice message in that chat you have not heard yet,
+  as on the phone. The app normalizes quiet
   recordings and handles OGG/Opus without external tools. On Linux and
   Windows, music and other media playing in other apps pause while you record
   or play a voice message, or watch a video with sound, and resume afterwards;

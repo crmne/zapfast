@@ -106,6 +106,8 @@ pub struct Player {
     stretching: Option<Stretching>,
     /// Generated waveforms for clips that did not include one.
     bars: HashMap<String, Vec<u8>>,
+    /// Message whose clip just played to its end, waiting to be taken.
+    finished: Option<String>,
 }
 
 struct Loaded {
@@ -155,6 +157,7 @@ impl Player {
             stretches: Vec::new(),
             stretching: None,
             bars: HashMap::new(),
+            finished: None,
         }
     }
 
@@ -312,6 +315,14 @@ impl Player {
         self.decoding = None;
         self.stretches.clear();
         self.stretching = None;
+        // A clip the reader stopped is not one that played to its end.
+        self.finished = None;
+    }
+
+    /// Takes the message whose clip just played to its end, once. The app uses
+    /// it to carry on with the next unplayed voice message.
+    pub fn take_finished(&mut self) -> Option<String> {
+        self.finished.take()
     }
 
     /// Whether audio is currently playing.
@@ -419,6 +430,7 @@ impl Player {
         if ended {
             // Release the device after playback ends.
             self.output = None;
+            self.finished = self.loaded.as_ref().map(|loaded| loaded.message.clone());
         }
         Ok(())
     }
@@ -655,6 +667,21 @@ pub fn recording_path(dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_clip_that_finished_is_handed_back_once() {
+        let mut player = Player::new(crate::backend::Waker::default());
+        player.finished = Some("clip".into());
+        assert_eq!(player.take_finished().as_deref(), Some("clip"));
+        assert_eq!(player.take_finished(), None, "the app takes it once");
+        player.finished = Some("other".into());
+        player.stop();
+        assert_eq!(
+            player.take_finished(),
+            None,
+            "a clip the reader stopped is not one that played to its end"
+        );
+    }
 
     #[test]
     fn speed_labels_match_the_button() {
