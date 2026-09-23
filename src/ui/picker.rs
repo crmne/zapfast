@@ -1621,7 +1621,7 @@ mod group_tests {
             screen: egui::Rect,
             events: Vec<egui::Event>,
         ) {
-            ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
                     events,
@@ -1629,6 +1629,7 @@ mod group_tests {
                 },
                 |ui| groups_panel(app, ui, palette),
             );
+            output.textures_delta.clear();
         }
 
         frame(&mut app, &ctx, &palette, screen, Vec::new());

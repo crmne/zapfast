@@ -3684,7 +3684,8 @@ mod tests {
             app.sticker_group.is_none(),
             "a group deleted elsewhere cannot keep filtering the grid"
         );
-        assert!(app.selected_group().is_none());    }
+        assert!(app.selected_group().is_none());
+    }
 
     fn paste_release() -> egui::Event {
         egui::Event::Key {
