@@ -1,0 +1,56 @@
+name: Bug report
+description: Something does not work, or the app crashed or vanished.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please include the log from ZapFast's last run:
+
+        - Linux: `~/.local/state/zapfast/zapfast.log`
+        - macOS: `~/Library/Application Support/me.paolino.zapfast/zapfast.log`
+        - Windows: `%LOCALAPPDATA%\paolino\zapfast\data\zapfast.log`
+
+        If the app crashed or vanished, include `panic.log` from the same folder.
+        The log leaves out message contents and phone numbers. Do not attach
+        screenshots of real conversations; crop and redact anything personal.
+  - type: input
+    id: version
+    attributes:
+      label: ZapFast version and how you installed it
+      placeholder: "0.15.0 from the AUR / the DMG / the Windows installer / the Flatpak bundle"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: os_details
+    attributes:
+      label: System details
+      description: Distribution and desktop on Linux, or the OS version.
+      placeholder: "Arch, Hyprland / macOS 15.6 / Windows 11 24H2"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you do, and what happened instead?
+      placeholder: "1. Opened a chat. 2. Clicked a photo. 3. Nothing opened."
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: zapfast.log
+      description: Reproduce the problem, quit the app, then paste the whole file here (and panic.log, if there is one). Paths are above.
+      render: text
+    validations:
+      required: true
