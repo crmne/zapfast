@@ -68,13 +68,13 @@ mod tests {
             InheritGlobal,
             "the cycle returns to the default"
         );
-        assert_eq!(InheritGlobal.override_value(), None);
-        assert_eq!(Explicit(false).override_value(), Some(false));
+        assert_eq!(InheritGlobal.stored(), None);
+        assert_eq!(Explicit(false).stored(), Some(false));
         assert_eq!(
-            ReadReceiptPreference::from_override(Some(true)),
+            ReadReceiptPreference::from_stored(Some(true)),
             Explicit(true)
         );
-        assert_eq!(ReadReceiptPreference::from_override(None), InheritGlobal);
+        assert_eq!(ReadReceiptPreference::from_stored(None), InheritGlobal);
     }
 
     #[test]

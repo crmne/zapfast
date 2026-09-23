@@ -1683,7 +1683,7 @@ impl App {
 
     /// The read-receipt preference stored for one chat, if any.
     pub fn read_receipt_preference(&self, chat: &str) -> ReadReceiptPreference {
-        ReadReceiptPreference::from_override(self.read_receipt_overrides.get(chat).copied())
+        ReadReceiptPreference::from_stored(self.read_receipt_overrides.get(chat).copied())
     }
 
     /// Whether this chat sends read receipts: its own choice, or the global
@@ -2277,7 +2277,7 @@ impl App {
             }
             Action::MarkRead(chat) => self.mark_read(&chat),
             Action::SetReadReceipts { chat, preference } => {
-                let chosen = preference.override_value();
+                let chosen = preference.stored();
                 match chosen {
                     Some(send) => self.read_receipt_overrides.insert(chat.clone(), send),
                     None => self.read_receipt_overrides.remove(&chat),
