@@ -5,7 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,8 +14,28 @@ env:
   ZAPFAST_GIPHY_KEY: ${{ secrets.ZAPFAST_GIPHY_KEY || secrets.FASTSAPP_GIPHY_KEY }}
 
 jobs:
+  release-source:
+    name: tag is on main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require the release commit on main
+        run: |
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "Release tags must point to a commit already on origin/main." >&2
+            exit 1
+          fi
+
   build:
     name: build (${{ matrix.target }})
+    needs: release-source
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -35,6 +55,11 @@ jobs:
             target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v7
+      - name: Check release version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          test "$GITHUB_REF_NAME" = "v$version"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -84,11 +109,19 @@ jobs:
           $arch = "${{ matrix.target }}".Split("-")[0]
           $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
           if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          & $iscc "/DVersion=$version" "/DArch=$arch" `
+          $numericVersion = $version.Split("-")[0]
+          & $iscc "/DVersion=$version" "/DNumericVersion=$numericVersion" "/DArch=$arch" `
             "/DBinary=$PWD\target\${{ matrix.target }}\release\zapfast.exe" `
             "/DOutputDir=$PWD\dist" packaging\windows\zapfast.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Attest release packages
+        uses: crmne/native-packages/.github/actions/attest@dc0cb1586894ca0239c53fd02d4da8064712671c # v0.7.0
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*-setup.exe
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
@@ -100,6 +133,11 @@ jobs:
 
   macos:
     name: macOS universal app
+    needs: release-source
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     runs-on: macos-latest
     env:
       # Complete Apple credentials enable native-packages signing/notarization.
@@ -136,7 +174,7 @@ jobs:
         with:
           ruby-version: '4.0'
       - name: Install native packaging
-        run: gem install native-packages --version 0.6.0 --no-document
+        run: gem install native-packages --version 0.7.0 --no-document
 
       - name: App bundle
         run: |
@@ -155,6 +193,10 @@ jobs:
       - name: Verify the notarized release app
         run: bash packaging/macos/verify.sh "dist/zapfast-${GITHUB_REF_NAME}-macos-universal.dmg"
 
+      - name: Attest macOS package
+        uses: crmne/native-packages/.github/actions/attest@dc0cb1586894ca0239c53fd02d4da8064712671c # v0.7.0
+        with:
+          subject-path: dist/*.dmg
       - uses: actions/upload-artifact@v7
         with:
           name: macos-universal
@@ -166,6 +208,10 @@ jobs:
   # builds from source on its own machines, from the manifest beside it.
   flatpak:
     name: Flatpak bundle
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     needs: build
     runs-on: ubuntu-latest
     container:
@@ -187,6 +233,10 @@ jobs:
           bundle: zapfast-${{ github.ref_name }}-x86_64.flatpak
           cache: false
           upload-artifact: false
+      - name: Attest Flatpak bundle
+        uses: crmne/native-packages/.github/actions/attest@dc0cb1586894ca0239c53fd02d4da8064712671c # v0.7.0
+        with:
+          subject-path: "*.flatpak"
       - uses: actions/upload-artifact@v7
         with:
           name: flatpak
@@ -197,21 +247,39 @@ jobs:
     name: GitHub release
     needs: [build, macos, flatpak]
     runs-on: ubuntu-latest
+    environment: release-signing
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: dist
           merge-multiple: true
-      - name: Checksums
-        run: |
-          cd dist
-          sha256sum * > checksums.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
+        with:
+          ruby-version: '4.0'
+      - name: Sign update manifest
+        uses: crmne/native-packages/.github/actions/sign-release@dc0cb1586894ca0239c53fd02d4da8064712671c # v0.7.0
+        with:
+          directory: dist
+          public-key: assets/update-public-key.hex
+          key-env: ZAPFAST_UPDATE_SIGNING_KEY
+        env:
+          ZAPFAST_UPDATE_SIGNING_KEY: ${{ secrets.ZAPFAST_UPDATE_SIGNING_KEY }}
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/*
           generate_release_notes: true
+          draft: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
 
   packaging:
+    permissions:
+      contents: write
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
     needs: publish
     uses: ./.github/workflows/packaging.yml

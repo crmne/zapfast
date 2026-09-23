@@ -44,8 +44,9 @@ Changes on the Settings page are saved to `settings.json` immediately:
 
 - **Theme**: light, dark, or follow the system.
 - **Enter sends**: swap Enter and Shift+Enter.
-- **Download attachments automatically**: download files up to 64 MB when
-  they enter view, or only when clicked.
+- **Download attachments automatically**: download non-sticker files up to 64
+  MiB when they enter view, or only when clicked. Visible stickers download
+  automatically up to the same limit.
 - **Show sender pictures**: avatars next to group messages.
 - **Names from your address book**: use contact names everywhere. When off,
   prefer public profile names.
@@ -54,6 +55,10 @@ Changes on the Settings page are saved to `settings.json` immediately:
   window closes.
 - **Notifications**: use desktop notifications with the chat picture.
 - **Check for updates**: ask GitHub once a day whether a newer release exists.
+- **Show labels as chips**: give each label its own chip, in a row under the
+  filter chips. With it off, labels share one **Labels** chip. Labels
+  themselves are kept in the message archive, next to your chats, and never
+  leave this computer.
 - **GIPHY API key**: required for GIF search unless the build includes one.
   Set `ZAPFAST_GIPHY_KEY` at compile time to include a default key.
   The earlier `FASTSAPP_GIPHY_KEY` remains a fallback for existing builds.

@@ -71,8 +71,15 @@ pub fn decrypt_blob(payload: &[u8], pack_key: &[u8; 32]) -> Result<Vec<u8>, Stri
         .map_err(|_| "Could not decrypt the sticker pack".to_owned())
 }
 
-/// Reads the pack title and sticker ids from the small manifest protobuf.
-pub fn parse_manifest(bytes: &[u8]) -> Result<(String, Vec<u64>), String> {
+/// One sticker in a Signal manifest: its id and the emoji it expresses.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ManifestSticker {
+    pub id: u64,
+    pub emoji: Option<String>,
+}
+
+/// Reads the pack title and stickers from the small manifest protobuf.
+pub fn parse_manifest(bytes: &[u8]) -> Result<(String, Vec<ManifestSticker>), String> {
     let mut title = String::new();
     let mut ids = Vec::new();
     let mut pos = 0;
@@ -85,12 +92,22 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<(String, Vec<u64>), String> {
             (4, 2) => {
                 let sticker = read_chunk(bytes, &mut pos)?;
                 let mut inner = 0;
+                let mut id = None;
+                let mut emoji = None;
                 while inner < sticker.len() {
                     let (field, wire) = read_tag(sticker, &mut inner)?;
                     match (field, wire) {
-                        (1, 0) => ids.push(read_varint(sticker, &mut inner)?),
+                        (1, 0) => id = Some(read_varint(sticker, &mut inner)?),
+                        (2, 2) => {
+                            let text = read_chunk(sticker, &mut inner)?;
+                            emoji = Some(String::from_utf8_lossy(text).trim().to_owned())
+                                .filter(|emoji| !emoji.is_empty());
+                        }
                         _ => skip_field(sticker, &mut inner, wire)?,
                     }
+                }
+                if let Some(id) = id {
+                    ids.push(ManifestSticker { id, emoji });
                 }
             }
             _ => skip_field(bytes, &mut pos, wire)?,
@@ -192,7 +209,11 @@ fn signal_agent() -> Result<ureq::Agent, String> {
     let tls = TlsConfig::builder()
         .root_certs(RootCerts::new_with_certs(&[ca]))
         .build();
-    Ok(ureq::Agent::config_builder().tls_config(tls).build().into())
+    Ok(ureq::Agent::config_builder()
+        .tls_config(tls)
+        .proxy(crate::proxy::ureq_proxy())
+        .build()
+        .into())
 }
 
 fn fetch(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, String> {
@@ -216,10 +237,11 @@ pub fn import_signal_pack(url: &str, packs: &Path) -> Result<String, String> {
         )?,
         &key,
     )?;
-    let (title, ids) = parse_manifest(&manifest)?;
-    if ids.is_empty() {
+    let (title, stickers) = parse_manifest(&manifest)?;
+    if stickers.is_empty() {
         return Err("This pack contains no stickers".to_owned());
     }
+    let ids: Vec<u64> = stickers.iter().map(|sticker| sticker.id).collect();
     // Download several of the pack's files concurrently.
     let mut blobs: Vec<Option<Vec<u8>>> = vec![None; ids.len()];
     let lane = ids.len().div_ceil(6).max(1);
@@ -241,7 +263,21 @@ pub fn import_signal_pack(url: &str, packs: &Path) -> Result<String, String> {
             });
         }
     });
-    let files: Vec<Vec<u8>> = blobs.into_iter().flatten().filter_map(webp_bytes).collect();
+    // Keep each sticker's emoji in the file, where search and WhatsApp read it.
+    let files: Vec<Vec<u8>> = blobs
+        .into_iter()
+        .zip(&stickers)
+        .filter_map(|(blob, sticker)| {
+            let webp = webp_bytes(blob?)?;
+            let info = crate::sticker_meta::StickerInfo {
+                pack_id: format!("signal.{id}"),
+                pack_name: title.clone(),
+                emojis: sticker.emoji.iter().cloned().collect(),
+                ..Default::default()
+            };
+            Some(crate::sticker_meta::write(&webp, &info).unwrap_or(webp))
+        })
+        .collect();
     write_pack(packs, &title, files)
 }
 
@@ -289,6 +325,118 @@ pub fn import_archive(path: &Path, packs: &Path) -> Result<String, String> {
         .filter_map(|(_, bytes)| webp_bytes(bytes))
         .collect();
     write_pack(packs, &title, files)
+}
+
+/// Unpacks a WhatsApp sticker pack zip into `dir`, in the pack's order and
+/// without its tray icon, writing each sticker's emojis into its metadata.
+/// `stickers` names each file with its emojis, as the pack message lists them.
+pub fn extract_whatsapp_pack(
+    zip: &[u8],
+    stickers: &[(String, Vec<String>)],
+    tray: Option<&str>,
+    name: &str,
+    dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip))
+        .map_err(|error| format!("This is not a sticker pack: {error}"))?;
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    for index in 0..archive.len() {
+        let Ok(mut entry) = archive.by_index(index) else {
+            continue;
+        };
+        let file = entry.name().to_owned();
+        if Some(file.as_str()) == tray || !file.to_lowercase().ends_with(".webp") {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        if entry.read_to_end(&mut bytes).is_ok() {
+            files.push((file, bytes));
+        }
+    }
+    // The message's order first; files it does not list follow.
+    let rank = |file: &str| {
+        stickers
+            .iter()
+            .position(|(listed, _)| listed == file)
+            .unwrap_or(usize::MAX)
+    };
+    files.sort_by_key(|(file, _)| rank(file));
+    if files.is_empty() {
+        return Err("No stickers could be read from this pack".to_owned());
+    }
+    std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    let mut written = Vec::new();
+    for (index, (file, bytes)) in files.into_iter().enumerate() {
+        let emojis = stickers
+            .iter()
+            .find(|(listed, _)| *listed == file)
+            .map(|(_, emojis)| emojis.clone())
+            .unwrap_or_default();
+        let bytes = if emojis.is_empty() {
+            bytes
+        } else {
+            let info = crate::sticker_meta::StickerInfo {
+                pack_name: name.to_owned(),
+                emojis,
+                ..crate::sticker_meta::read(&bytes).unwrap_or_default()
+            };
+            crate::sticker_meta::write(&bytes, &info).unwrap_or(bytes)
+        };
+        let path = dir.join(format!("{index:03}.webp"));
+        std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
+/// Copies a pack's stickers into a new pack folder named after it, and
+/// returns the folder's name.
+pub fn copy_pack(from: &Path, packs: &Path, name: &str) -> Result<String, String> {
+    let mut stickers: Vec<PathBuf> = std::fs::read_dir(from)
+        .map_err(|error| error.to_string())?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "webp")
+        })
+        .collect();
+    stickers.sort();
+    let files = stickers
+        .iter()
+        .map(std::fs::read)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    write_pack(packs, name, files)
+}
+
+/// A pack's tray icon (a 96-pixel WebP) and thumbnail (a 252-pixel JPEG on
+/// white), both drawn from its first sticker.
+pub fn pack_art(first: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    let picture = image::load_from_memory(first).ok()?.to_rgba8();
+    let tray = image::imageops::resize(&picture, 96, 96, image::imageops::FilterType::Lanczos3);
+    let mut cover = Vec::new();
+    image::codecs::webp::WebPEncoder::new_lossless(&mut cover)
+        .encode(&tray, 96, 96, image::ExtendedColorType::Rgba8)
+        .ok()?;
+    let side = 252;
+    let small =
+        image::imageops::resize(&picture, side, side, image::imageops::FilterType::Lanczos3);
+    let mut flat = image::RgbImage::from_pixel(side, side, image::Rgb([255, 255, 255]));
+    for (x, y, pixel) in small.enumerate_pixels() {
+        let alpha = f32::from(pixel[3]) / 255.0;
+        let under = flat.get_pixel(x, y).0;
+        let mixed = std::array::from_fn(|channel| {
+            (f32::from(pixel[channel]) * alpha + f32::from(under[channel]) * (1.0 - alpha)).round()
+                as u8
+        });
+        flat.put_pixel(x, y, image::Rgb(mixed));
+    }
+    let mut thumbnail = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut thumbnail, 85)
+        .encode_image(&flat)
+        .ok()?;
+    Some((cover, thumbnail))
 }
 
 /// Writes pack images to a new directory named after the title.
@@ -396,7 +544,7 @@ fn encode_animated(frames: Vec<(image::RgbaImage, u32)>) -> Option<Vec<u8>> {
 }
 
 /// Creates a unique pack directory from a sanitized title.
-fn unique_pack_dir(root: &Path, title: &str) -> Result<PathBuf, String> {
+pub(super) fn unique_pack_dir(root: &Path, title: &str) -> Result<PathBuf, String> {
     let clean: String = title
         .trim()
         .chars()
@@ -487,9 +635,18 @@ mod tests {
         bytes.extend(b"A");
         bytes.extend([0x22, 2, 0x08, 0]);
         bytes.extend([0x22, 5, 0x08, 1, 0x12, 1, b'x']);
-        let (title, ids) = parse_manifest(&bytes).expect("parses");
+        let (title, stickers) = parse_manifest(&bytes).expect("parses");
         assert_eq!(title, "Ducks");
-        assert_eq!(ids, vec![0, 1]);
+        assert_eq!(
+            stickers,
+            vec![
+                ManifestSticker { id: 0, emoji: None },
+                ManifestSticker {
+                    id: 1,
+                    emoji: Some("x".to_owned())
+                },
+            ]
+        );
     }
 
     #[test]
@@ -570,6 +727,71 @@ mod tests {
         let decoder =
             image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(&webp)).expect("is a webp");
         assert!(decoder.has_animation(), "the motion survives");
+    }
+
+    #[test]
+    fn a_whatsapp_pack_unpacks_in_order_with_its_emojis() {
+        use whatsapp_rust::sticker_pack::{StickerInput, create_sticker_pack_zip};
+        let red = webp_bytes(tiny_png()).expect("encodes");
+        let blue = {
+            let mut bytes = Vec::new();
+            let picture = image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 255, 255]));
+            image::codecs::webp::WebPEncoder::new_lossless(&mut bytes)
+                .encode(&picture, 4, 4, image::ExtendedColorType::Rgba8)
+                .expect("encodes");
+            bytes
+        };
+        let (cover, thumbnail) = pack_art(&red).expect("draws");
+        assert!(image::load_from_memory(&cover).is_ok());
+        assert_eq!(
+            image::guess_format(&thumbnail).expect("known"),
+            image::ImageFormat::Jpeg
+        );
+        let inputs = [
+            StickerInput::new(&blue).with_emojis(vec!["🐸".into()]),
+            StickerInput::new(&red),
+        ];
+        let zip = create_sticker_pack_zip("pack1", &inputs, &cover).expect("zips");
+        let listed: Vec<(String, Vec<String>)> = zip
+            .stickers
+            .iter()
+            .map(|sticker| {
+                (
+                    sticker.file_name.clone().expect("named"),
+                    sticker.emojis.clone(),
+                )
+            })
+            .collect();
+        let root = tempfile::tempdir().expect("temp");
+        let dir = root.path().join("shared").join("pack1");
+        let files = extract_whatsapp_pack(
+            &zip.zip_bytes,
+            &listed,
+            Some(&zip.tray_icon_file_name),
+            "Frogs",
+            &dir,
+        )
+        .expect("unpacks");
+        assert_eq!(files.len(), 2, "the tray icon stays out");
+        let first = std::fs::read(&files[0]).expect("reads");
+        assert_eq!(crate::sticker_meta::emojis(&first), vec!["🐸"]);
+        assert_eq!(
+            image::load_from_memory(&first)
+                .expect("decodes")
+                .to_rgba8()
+                .get_pixel(0, 0)
+                .0,
+            [0, 0, 255, 255],
+            "the pack's order is kept"
+        );
+        let packs = root.path().join("packs");
+        assert_eq!(copy_pack(&dir, &packs, "Frogs").expect("copies"), "Frogs");
+        assert_eq!(
+            std::fs::read_dir(packs.join("Frogs"))
+                .expect("lists")
+                .count(),
+            2
+        );
     }
 
     /// Imports Signal's example pack from the live CDN. `ZAPFAST_TEST_PACK`

@@ -567,7 +567,7 @@ mod custom_theme_tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        assert_eq!(catalog.themes().len(), 5);
+        assert_eq!(catalog.themes().len(), 8);
         let nord = catalog.find("Nord.json").unwrap();
         assert!(!nord.palette.dark);
         assert_eq!(
@@ -575,6 +575,13 @@ mod custom_theme_tests {
             egui::Color32::from_rgb(0x10, 0x20, 0x30)
         );
         assert!(catalog.find("Tokyo Night.json").is_some());
+        for filename in [
+            "Rose Pine.json",
+            "Rose Pine Moon.json",
+            "Rose Pine Dawn.json",
+        ] {
+            assert!(catalog.find(filename).is_some());
+        }
         assert_eq!(
             std::fs::read_dir(directory.path()).unwrap().count(),
             1,

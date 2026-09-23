@@ -32,20 +32,53 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmUnlink => 380.0,
                 Dialog::PairWithPhone => 380.0,
                 Dialog::NewContact => 380.0,
+                Dialog::NewChat => 420.0,
+                Dialog::UnlockLockedChats | Dialog::ConfirmLockChat(_) => 380.0,
                 Dialog::ChatInfo(_) => 360.0,
+                Dialog::ConfirmDeleteChat(_) | Dialog::JoinGroup | Dialog::ConfirmStartOver => {
+                    380.0
+                }
+                Dialog::StickerPack => 420.0,
+                Dialog::StickerMaker => 400.0,
                 Dialog::Forward { .. } => 420.0,
                 Dialog::CreatePoll(_) => 420.0,
+                Dialog::PollResults { .. }
+                | Dialog::InteractiveList { .. }
+                | Dialog::MessageInfo { .. } => {
+                    420.0_f32.min((ui.ctx().content_rect().width() - 64.0).max(180.0))
+                }
+                Dialog::Labels => 460.0,
             });
             ui.spacing_mut().item_spacing.y = 8.0;
             match dialog {
                 Dialog::CreatePoll(chat) => super::polls::create(app, ui, &chat),
+                Dialog::PollResults { chat, message } => {
+                    super::polls::results(app, ui, &chat, &message)
+                }
+                Dialog::InteractiveList {
+                    chat,
+                    message,
+                    button,
+                } => interactive_list(app, ui, &chat, &message, button),
+                Dialog::Labels => super::labels::manager(app, ui, &palette),
                 Dialog::Shortcuts => shortcuts(app, ui),
                 Dialog::About => about(app, ui),
                 Dialog::ConfirmUnlink => confirm_unlink(app, ui),
                 Dialog::PairWithPhone => pair_with_phone(app, ui),
                 Dialog::NewContact => new_contact(app, ui),
+                Dialog::NewChat => new_chat(app, ui),
+                Dialog::UnlockLockedChats => unlock_locked_chats(app, ui),
+                Dialog::ConfirmLockChat(id) => confirm_lock_chat(app, ui, &id),
                 Dialog::ChatInfo(id) => chat_info(app, ui, &id),
-                Dialog::Forward { chat, message } => forward(app, ui, &chat, &message),
+                Dialog::ConfirmDeleteChat(id) => confirm_delete_chat(app, ui, &id),
+                Dialog::Forward { chat, messages } => forward(app, ui, &chat, &messages),
+                Dialog::JoinGroup => join_group(app, ui),
+                Dialog::ConfirmStartOver => confirm_start_over(app, ui),
+                Dialog::StickerPack => sticker_pack(app, ui),
+                Dialog::StickerMaker => sticker_maker(app, ui),
+                Dialog::MessageInfo { chat, message } => {
+                    super::message_info::show(app, ui, &chat, &message)
+                }
             }
         });
     if response.should_close() {
@@ -53,9 +86,383 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {
+fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str, button: usize) {
+    use super::widgets;
+    use crate::model::{Content, InteractiveAction};
+
     let palette = app.palette;
-    title(ui, app, "Forward message");
+    let row = app
+        .conversations
+        .get(chat)
+        .and_then(|c| c.message(message))
+        .cloned();
+    let selected = row.as_ref().and_then(|row| match &row.content {
+        Content::Interactive {
+            card: Some(card), ..
+        } => card.buttons.get(button),
+        _ => None,
+    });
+    ui.horizontal(|ui| {
+        let label = selected.map_or("Choose an option", |button| button.label.as_str());
+        let heading = widgets::line(
+            ui,
+            label,
+            theme::semibold(18.0),
+            palette.text,
+            (ui.available_width() - 36.0).max(1.0),
+            2,
+        );
+        let (rect, _) = ui.allocate_exact_size(heading.size(), Sense::hover());
+        heading.paint(ui, rect.min, palette.text);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::icon_button(ui, Icon::X, 16.0, palette.secondary, palette.text, "Close")
+                .clicked()
+            {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+    let Some(InteractiveAction::Select(options)) = selected.map(|button| &button.action) else {
+        widgets::rich_text(
+            ui,
+            "This list is no longer available.",
+            theme::regular(14.0),
+            palette.secondary,
+        );
+        return;
+    };
+    let available = row.as_ref().is_some_and(|row| !row.from_me && !row.edited)
+        && app.chat(chat).is_some_and(|chat| chat.can_send());
+    let pending = app
+        .interactive_sending
+        .contains(&(chat.to_owned(), message.to_owned()));
+    let enabled = available && app.link.is_connected() && !pending;
+    if !enabled {
+        let reason = if !available {
+            "This list can no longer receive replies."
+        } else if pending {
+            "Sending reply…"
+        } else {
+            "Connect to WhatsApp to reply"
+        };
+        widgets::rich_text(ui, reason, theme::regular(13.0), palette.secondary);
+    }
+    ui.add_space(8.0);
+    let height = (ui.ctx().content_rect().height() - 200.0).clamp(100.0, 420.0);
+    egui::ScrollArea::vertical()
+        .id_salt(("interactive-list", chat, message, button))
+        .max_height(height)
+        .min_scrolled_height(height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                let mut section = "";
+                for (choice, option) in options.iter().enumerate() {
+                    if section != option.section {
+                        section = &option.section;
+                        if !section.is_empty() {
+                            ui.add_space(8.0);
+                            widgets::rich_text(
+                                ui,
+                                section,
+                                theme::semibold(12.5),
+                                palette.secondary,
+                            );
+                            ui.add_space(4.0);
+                        }
+                    }
+                    let id = super::conversation::bubble_id(chat, message).with((
+                        "interactive-option",
+                        button,
+                        choice,
+                    ));
+                    if interactive_option(ui, &palette, option, id).clicked() {
+                        app.actions.push(Action::ReplyInteractive {
+                            chat: chat.to_owned(),
+                            message: message.to_owned(),
+                            button,
+                            choice: Some(choice),
+                        });
+                        app.actions.push(Action::CloseDialog);
+                    }
+                }
+            });
+        });
+}
+
+/// List choices preserve emoji and wrap their descriptions without clipping.
+fn interactive_option(
+    ui: &mut egui::Ui,
+    palette: &crate::theme::Palette,
+    option: &crate::model::InteractiveOption,
+    id: egui::Id,
+) -> egui::Response {
+    let width = ui.available_width().max(1.0);
+    let title = super::widgets::line(
+        ui,
+        &option.title,
+        theme::medium(14.0),
+        palette.text,
+        (width - 52.0).max(1.0),
+        2,
+    );
+    let description = (!option.description.is_empty()).then(|| {
+        super::widgets::line(
+            ui,
+            &option.description,
+            theme::regular(12.5),
+            palette.secondary,
+            (width - 52.0).max(1.0),
+            3,
+        )
+    });
+    let height =
+        (title.size().y + description.as_ref().map_or(0.0, |line| line.size().y + 4.0) + 20.0)
+            .max(60.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let sense = if ui.is_enabled() {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let response = ui.interact(rect, id, sense);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &option.title)
+    });
+    ui.ctx().data_mut(|data| data.insert_temp(id, rect));
+    if ui.is_enabled() && (response.hovered() || response.has_focus()) {
+        ui.painter().rect_filled(
+            rect,
+            8.0,
+            palette
+                .text
+                .gamma_multiply(if response.is_pointer_button_down_on() {
+                    0.10
+                } else {
+                    0.06
+                }),
+        );
+    }
+    ui.painter().circle_stroke(
+        egui::pos2(rect.right() - 18.0, rect.center().y),
+        7.0,
+        Stroke::new(1.5, palette.secondary),
+    );
+    theme::reveal_focus(&response);
+    let pos = rect.min + vec2(10.0, 10.0);
+    title.paint(ui, pos, palette.text);
+    if let Some(description) = description {
+        description.paint(ui, pos + vec2(0.0, title.size().y + 4.0), palette.secondary);
+    }
+    if ui.is_enabled() {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+
+fn unlock_locked_chats(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let setup = app.settings.chat_lock_code_hash.is_none();
+    title(
+        ui,
+        app,
+        if setup {
+            "Set up locked chats"
+        } else {
+            "Locked chats"
+        },
+    );
+    theme::paragraph(
+        ui,
+        if setup {
+            "Choose a local code to open the Locked tab. It is separate from your phone's code. This hides chats in ZapFast, it does not add another encryption layer."
+        } else {
+            "Enter your local ZapFast code. Leaving the Locked tab or closing the window locks it again."
+        },
+        theme::regular(13.0),
+        palette.secondary,
+    );
+    let entry_id = ui.make_persistent_id("locked-code");
+    let confirm_id = ui.make_persistent_id("locked-code-confirm");
+    // TextEdit consumes Enter while surrendering focus. Capture and consume
+    // it before drawing either editor instead of looking for it afterwards.
+    let mut submit = ui
+        .memory(|memory| memory.has_focus(entry_id) || (setup && memory.has_focus(confirm_id)))
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let entry = ui.add(
+        egui::TextEdit::singleline(&mut app.chat_lock_entry)
+            .id(entry_id)
+            .password(true)
+            .hint_text("Local code")
+            .desired_width(f32::INFINITY),
+    );
+    if ui.memory(|memory| memory.focused().is_none()) {
+        entry.request_focus();
+    }
+    if setup {
+        ui.add(
+            egui::TextEdit::singleline(&mut app.chat_lock_confirm)
+                .id(confirm_id)
+                .password(true)
+                .hint_text("Confirm code")
+                .desired_width(f32::INFINITY),
+        );
+    }
+    if app.chat_lock_error {
+        theme::paragraph(
+            ui,
+            "That code did not match. Try again.",
+            theme::regular(13.0),
+            palette.danger,
+        );
+    }
+    let ready = !app.chat_lock_entry.trim().is_empty()
+        && (!setup || app.chat_lock_entry.trim() == app.chat_lock_confirm.trim());
+    ui.horizontal(|ui| {
+        submit |= ui
+            .add_enabled_ui(ready, |ui| {
+                theme::pill_button(
+                    ui,
+                    &palette,
+                    if setup {
+                        "Set code and open"
+                    } else {
+                        "Open locked chats"
+                    },
+                    true,
+                )
+            })
+            .inner
+            .clicked();
+        if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+            app.actions.push(Action::CloseDialog);
+        }
+    });
+    if submit && ready {
+        let code = std::mem::take(&mut app.chat_lock_entry);
+        app.actions.push(if setup {
+            Action::CreateChatLockCode(code)
+        } else {
+            Action::UnlockLockedFolder(code)
+        });
+    }
+}
+
+fn confirm_lock_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
+    let palette = app.palette;
+    title(ui, app, "Lock this chat?");
+    theme::paragraph(
+        ui,
+        "This moves the chat to the Locked tab, hiding it from the normal chat list, search, unread badges, and notifications. The lock status also syncs to your phone. Open Locked with a separate local ZapFast code to read it. Sending from locked chats is not supported yet.",
+        theme::regular(13.0),
+        palette.secondary,
+    );
+    ui.horizontal(|ui| {
+        if theme::pill_button(ui, &palette, "Lock chat", true).clicked() {
+            app.actions.push(Action::SetLocked(id.to_owned(), true));
+            app.actions.push(Action::CloseDialog);
+            if app.settings.chat_lock_code_hash.is_none() {
+                app.actions.push(Action::OpenLockedFolder);
+            }
+        }
+        if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+            app.actions.push(Action::CloseDialog);
+        }
+    });
+}
+
+fn new_chat(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    title(ui, app, "New chat");
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled_ui(app.me.is_some(), |ui| {
+                theme::soft_button(
+                    ui,
+                    &palette,
+                    Some(Icon::MessageCircle),
+                    "Message yourself",
+                    false,
+                )
+            })
+            .inner
+            .clicked()
+        {
+            app.actions.push(Action::MessageYourself);
+        }
+        if theme::soft_button(ui, &palette, Some(Icon::Plus), "Add contact", false).clicked() {
+            app.actions.push(Action::ShowDialog(Dialog::NewContact));
+        }
+    });
+    let width = ui.available_width();
+    let search = super::widgets::search_field(
+        ui,
+        &palette,
+        egui::Id::new("new-chat-search"),
+        &mut app.new_chat_search,
+        "Search contacts",
+        width,
+    );
+    if ui.memory(|memory| memory.focused().is_none()) {
+        search.request_focus();
+    }
+    let needle = crate::util::search_key(app.new_chat_search.trim());
+    let mut contacts = app.contacts.clone();
+    for chat in &app.chats {
+        if chat.kind == crate::model::ChatKind::Direct {
+            contacts
+                .entry(chat.id.clone())
+                .or_insert_with(|| crate::model::Contact {
+                    id: chat.id.clone(),
+                    full_name: Some(app.chat_title(chat)),
+                    ..Default::default()
+                });
+        }
+    }
+    let mut contacts: Vec<_> = contacts
+        .into_values()
+        .filter(|contact| {
+            crate::model::phone_of(&contact.id).is_some()
+                && app.me.as_deref() != Some(contact.id.as_str())
+                && !app.chat(&contact.id).is_some_and(|chat| chat.locked)
+                && (needle.is_empty()
+                    || crate::util::search_key(&app.display_name(&contact.id)).contains(&needle)
+                    || crate::model::phone_of(&contact.id)
+                        .is_some_and(|phone| phone.contains(&needle)))
+        })
+        .collect();
+    contacts.sort_by_key(|contact| crate::util::search_key(&app.display_name(&contact.id)));
+    egui::ScrollArea::vertical()
+        .id_salt("new-chat-contacts")
+        .max_height((ui.ctx().content_rect().height() - 280.0).clamp(100.0, 420.0))
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            if contacts.is_empty() {
+                theme::text(
+                    ui,
+                    "No matching contacts",
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+            }
+            for contact in contacts {
+                ui.push_id(&contact.id, |ui| {
+                    super::chats::contact_row(app, ui, &contact)
+                });
+            }
+        });
+}
+
+fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String]) {
+    let palette = app.palette;
+    let heading = if messages.len() == 1 {
+        "Forward message".to_owned()
+    } else {
+        format!("Forward {} messages", messages.len())
+    };
+    title(ui, app, &heading);
     let width = ui.available_width();
     let search = super::widgets::search_field(
         ui,
@@ -74,7 +481,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {
     let mut chats: Vec<_> = app
         .chats
         .iter()
-        .filter(|chat| chat.kind != crate::model::ChatKind::Broadcast && !chat.read_only)
+        .filter(|chat| forwardable(chat))
         .filter(|chat| {
             needle.is_empty()
                 || app.chat_title(chat).to_lowercase().contains(&needle)
@@ -157,10 +564,14 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, message: &str) {
     if let Some(to_chat) = destination {
         app.actions.push(Action::Forward {
             from_chat: from_chat.to_owned(),
-            message: message.to_owned(),
+            messages: messages.to_vec(),
             to_chat,
         });
     }
+}
+
+fn forwardable(chat: &crate::model::Chat) -> bool {
+    chat.kind != crate::model::ChatKind::Broadcast && !chat.read_only && !chat.locked
 }
 
 fn title(ui: &mut egui::Ui, app: &mut App, label: &str) {
@@ -261,6 +672,346 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             ));
         }
     });
+    ui.add_space(4.0);
+    if super::widgets::credit(ui, &palette, app.locale) {
+        app.actions
+            .push(Action::OpenUrl(super::widgets::AUTHOR_URL.to_owned()));
+    }
+}
+
+fn confirm_delete_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
+    let palette = app.palette;
+    let name = app
+        .chat(id)
+        .map_or_else(|| "this chat".to_owned(), |chat| chat.name.clone());
+    title(ui, app, "Delete chat?");
+    theme::paragraph(
+        ui,
+        format!(
+            "This deletes your chat with {name}, including all messages, on this computer and on your phone. It cannot be undone."
+        ),
+        theme::regular(13.5),
+        palette.text,
+    );
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if danger_button(ui, app, "Delete") {
+                app.actions.push(Action::DeleteChat(id.to_owned()));
+                app.actions.push(Action::CloseDialog);
+            }
+            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn join_group(app: &mut App, ui: &mut egui::Ui) {
+    use crate::model::InviteState;
+    let palette = app.palette;
+    let Some(invite) = app.invite.clone() else {
+        app.actions.push(Action::CloseDialog);
+        return;
+    };
+    let (info, joining) = match &invite.state {
+        InviteState::Loading => {
+            title(ui, app, "Group invite");
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(egui::RichText::new("Looking up the group…").color(palette.secondary));
+            });
+            cancel_row(app, ui);
+            return;
+        }
+        InviteState::Failed(error) => {
+            title(ui, app, "Group invite");
+            theme::paragraph(ui, error, theme::regular(13.5), palette.text);
+            cancel_row(app, ui);
+            return;
+        }
+        InviteState::Ready(info) => (info, false),
+        InviteState::Joining(info) => (info, true),
+    };
+    super::widgets::rich_text(ui, &info.subject, theme::semibold(17.0), palette.text);
+    let members = if info.members == 1 {
+        "1 member".to_owned()
+    } else {
+        format!("{} members", info.members)
+    };
+    ui.label(egui::RichText::new(members).color(palette.secondary));
+    if let Some(description) = &info.description {
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .max_height(140.0)
+            .show(ui, |ui| {
+                super::widgets::rich_text(ui, description, theme::regular(13.5), palette.text);
+            });
+    }
+    let member = app.chats.iter().any(|chat| chat.id == info.id);
+    if info.approval && !member {
+        ui.add_space(4.0);
+        theme::paragraph(
+            ui,
+            "An admin must approve your request before you join.",
+            theme::regular(13.0),
+            palette.secondary,
+        );
+    }
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let label = match (member, info.approval) {
+                (true, _) => "Open chat",
+                (false, true) => "Request to join",
+                (false, false) => "Join group",
+            };
+            let join = ui.add_enabled_ui(!joining, |ui| {
+                theme::pill_button(ui, &palette, if joining { "Joining…" } else { label }, true)
+            });
+            if join.inner.clicked() {
+                app.actions.push(Action::JoinGroup);
+            }
+            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn cancel_row(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::pill_button(ui, &palette, "Close", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+/// A sticker pack shared in a chat: its stickers, and a button to add it.
+fn sticker_pack(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let Some((pack, publisher)) = app.sticker_preview.clone() else {
+        title(ui, app, &crate::i18n::gettext(locale, "Sticker pack"));
+        ui.horizontal(|ui| {
+            theme::spinner(ui, 16.0, palette.accent);
+            theme::text(
+                ui,
+                crate::i18n::gettext(locale, "Downloading the pack…"),
+                theme::regular(13.0),
+                palette.secondary,
+            );
+        });
+        cancel_row(app, ui);
+        return;
+    };
+    title(ui, app, &pack.name);
+    if !publisher.trim().is_empty() {
+        theme::text(ui, &publisher, theme::regular(13.0), palette.secondary);
+    }
+    egui::ScrollArea::vertical()
+        .max_height(320.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            super::picker::sticker_preview_grid(ui, &palette, &pack.stickers, app.window_focused);
+        });
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::pill_button(
+                ui,
+                &palette,
+                &crate::i18n::gettext(locale, "Add to my stickers"),
+                true,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::AddStickerPack);
+            }
+            if theme::pill_button(ui, &palette, &crate::i18n::gettext(locale, "Close"), false)
+                .clicked()
+            {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+/// Height of the sticker maker's picture area.
+const MAKER_VIEW: f32 = 300.0;
+
+/// Crops a chosen picture into a sticker: drag the square to move it, use the
+/// slider to size it, and tag it with emojis before adding or sending it.
+fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let locale = app.locale;
+    title(ui, app, &crate::i18n::gettext(locale, "Make a sticker"));
+    let Some(mut draft) = app.sticker_draft.clone() else {
+        cancel_row(app, ui);
+        return;
+    };
+    let (area, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), MAKER_VIEW), Sense::drag());
+    let scale = (area.width() / draft.width as f32).min(area.height() / draft.height as f32);
+    let picture = egui::Rect::from_center_size(
+        area.center(),
+        vec2(draft.width as f32 * scale, draft.height as f32 * scale),
+    );
+    if response.dragged() && scale > 0.0 {
+        let delta = response.drag_delta() / scale;
+        draft.crop = draft.crop.moved(
+            delta.x.round() as i64,
+            delta.y.round() as i64,
+            draft.width,
+            draft.height,
+        );
+    }
+    if ui.is_rect_visible(area) {
+        ui.painter()
+            .rect_filled(area, CornerRadius::same(theme::RADIUS), palette.surface);
+        super::widgets::file_image(ui, &draft.source)
+            .fit_to_exact_size(picture.size())
+            .paint_at(ui, picture);
+        let crop = egui::Rect::from_min_size(
+            picture.min + vec2(draft.crop.x as f32, draft.crop.y as f32) * scale,
+            egui::Vec2::splat(draft.crop.side as f32 * scale),
+        );
+        // Dim what the sticker leaves out.
+        let shade = palette.shadow.gamma_multiply(1.6);
+        for outside in [
+            egui::Rect::from_min_max(picture.min, pos2(picture.max.x, crop.min.y)),
+            egui::Rect::from_min_max(pos2(picture.min.x, crop.max.y), picture.max),
+            egui::Rect::from_min_max(
+                pos2(picture.min.x, crop.min.y),
+                pos2(crop.min.x, crop.max.y),
+            ),
+            egui::Rect::from_min_max(
+                pos2(crop.max.x, crop.min.y),
+                pos2(picture.max.x, crop.max.y),
+            ),
+        ] {
+            if outside.is_positive() {
+                ui.painter().rect_filled(outside, 0.0, shade);
+            }
+        }
+        ui.painter().rect_stroke(
+            crop,
+            0.0,
+            Stroke::new(2.0, egui::Color32::WHITE),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::Grab);
+    let _ = response;
+    let largest = draft.width.min(draft.height).max(1);
+    let smallest = (largest / 8).max(1);
+    let mut side = draft.crop.side;
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Size"),
+            theme::regular(13.0),
+            palette.secondary,
+        );
+        ui.spacing_mut().slider_width = ui.available_width() - 8.0;
+        ui.add(egui::Slider::new(&mut side, smallest..=largest).show_value(false));
+    });
+    if side != draft.crop.side {
+        draft.crop = draft.crop.resized(side, draft.width, draft.height);
+    }
+    if draft.transparent {
+        ui.horizontal(|ui| {
+            super::widgets::switch(ui, &palette, &mut draft.keep_transparent);
+            theme::text(
+                ui,
+                crate::i18n::gettext(locale, "Keep the transparent background"),
+                theme::regular(13.0),
+                palette.text,
+            );
+        });
+    }
+    Frame::new()
+        .fill(palette.surface)
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.emojis)
+                    .id(egui::Id::new("sticker-maker-emojis"))
+                    .hint_text(
+                        egui::RichText::new(crate::i18n::gettext(
+                            locale,
+                            "Emojis that describe it, like 😂 or ❤️",
+                        ))
+                        .color(palette.dim)
+                        .font(theme::regular(13.0)),
+                    )
+                    .font(theme::regular(13.0))
+                    .text_color(palette.text)
+                    .frame(Frame::NONE)
+                    .desired_width(f32::INFINITY),
+            );
+        });
+    app.sticker_draft = Some(draft);
+    ui.add_space(10.0);
+    let can_send = app.open_chat.is_some();
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if can_send
+                && theme::pill_button(ui, &palette, &crate::i18n::gettext(locale, "Send"), true)
+                    .clicked()
+            {
+                app.actions.push(Action::MakeSticker { send: true });
+            }
+            if theme::pill_button(
+                ui,
+                &palette,
+                &crate::i18n::gettext(locale, "Add to favorites"),
+                !can_send,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::MakeSticker { send: false });
+            }
+            if theme::pill_button(ui, &palette, &crate::i18n::gettext(locale, "Cancel"), false)
+                .clicked()
+            {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn confirm_start_over(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    title(ui, app, "Start over?");
+    theme::paragraph(
+        ui,
+        "ZapFast keeps your unreadable archive as a separate file, creates a new one, and asks you to link again. Linking again brings back recent history from your phone. Afterwards, remove the old ZapFast entry under Linked devices on your phone.",
+        theme::regular(13.5),
+        palette.text,
+    );
+    theme::paragraph(
+        ui,
+        "If you can restore the original keyring instead, choose Cancel and Try again: nothing is lost that way.",
+        theme::regular(13.0),
+        palette.secondary,
+    );
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if danger_button(ui, app, "Start over") {
+                app.actions.push(Action::StartOverArchive);
+            }
+            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
 }
 
 fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
@@ -285,6 +1036,9 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// Why the number dialogs cannot act yet.
+const NUMBER_TOO_SHORT: &str = "Enter the whole number, starting with the country code";
+
 fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     title(ui, app, "Link with a phone number");
@@ -298,7 +1052,7 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
     let id = egui::Id::new("pair-phone");
     let submit = ui.memory(|memory| memory.has_focus(id))
         && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-    Frame::new()
+    let field = Frame::new()
         .fill(palette.surface)
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(12, 8))
@@ -329,12 +1083,20 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
                 }
             });
         });
+    theme::focus_outline(ui, id, field.response.rect, f32::from(theme::RADIUS));
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let ready = app.pair_phone.chars().filter(char::is_ascii_digit).count() >= 7;
-            if (theme::pill_button(ui, &palette, "Get a code", ready).clicked() || submit) && ready
-            {
+            // Stay the main action, but look and read as unavailable until
+            // the number is long enough.
+            let get_code = ui
+                .add_enabled_ui(ready, |ui| {
+                    theme::pill_button(ui, &palette, "Get a code", true)
+                        .on_disabled_hover_text(NUMBER_TOO_SHORT)
+                })
+                .inner;
+            if (get_code.clicked() || submit) && ready {
                 app.actions
                     .push(Action::PairWithPhone(app.pair_phone.clone()));
             }
@@ -357,7 +1119,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(4.0);
     let boxed =
         |ui: &mut egui::Ui, plus: bool, inner: &mut dyn FnMut(&mut egui::Ui) -> egui::Response| {
-            Frame::new()
+            let field = Frame::new()
                 .fill(palette.surface)
                 .corner_radius(CornerRadius::same(theme::RADIUS))
                 .inner_margin(Margin::symmetric(12, 8))
@@ -375,8 +1137,14 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
                         inner(ui)
                     })
                     .inner
-                })
-                .inner
+                });
+            theme::focus_outline(
+                ui,
+                field.inner.id,
+                field.response.rect,
+                f32::from(theme::RADIUS),
+            );
+            field.inner
         };
     macro_rules! edit {
         ($buffer:expr, $salt:literal, $hint:literal, $width:expr) => {
@@ -410,21 +1178,43 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
     let (first_field, last_field) = ui
         .horizontal(|ui| {
             let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0 - 24.0;
+            let format = egui::TextFormat::simple(theme::regular(16.0), palette.text);
+            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                crate::bidi::layout_field(ui, text.as_str(), &format, wrap)
+            };
+            let first_align = if crate::bidi::base_rtl(&app.new_contact_name) {
+                Align::RIGHT
+            } else {
+                Align::LEFT
+            };
+            let last_align = if crate::bidi::base_rtl(&app.new_contact_last) {
+                Align::RIGHT
+            } else {
+                Align::LEFT
+            };
             let first = boxed(ui, false, &mut |ui| {
-                ui.add(edit!(
-                    &mut app.new_contact_name,
-                    "new-contact-first",
-                    "First name",
-                    half
-                ))
+                ui.add(
+                    edit!(
+                        &mut app.new_contact_name,
+                        "new-contact-first",
+                        "First name",
+                        half
+                    )
+                    .horizontal_align(first_align)
+                    .layouter(&mut layouter),
+                )
             });
             let last = boxed(ui, false, &mut |ui| {
-                ui.add(edit!(
-                    &mut app.new_contact_last,
-                    "new-contact-last",
-                    "Surname",
-                    half
-                ))
+                ui.add(
+                    edit!(
+                        &mut app.new_contact_last,
+                        "new-contact-last",
+                        "Surname",
+                        half
+                    )
+                    .horizontal_align(last_align)
+                    .layouter(&mut layouter),
+                )
             });
             (first, last)
         })
@@ -451,8 +1241,22 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
             );
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let save = theme::pill_button(ui, &palette, "Save contact", ready && named).clicked();
-            let message = theme::pill_button(ui, &palette, "Message", ready && !named).clicked();
+            let (save, message) = ui
+                .add_enabled_ui(ready, |ui| {
+                    let hint = if app.new_contact_pending {
+                        "Checking the number…"
+                    } else {
+                        NUMBER_TOO_SHORT
+                    };
+                    let save = theme::pill_button(ui, &palette, "Save contact", named)
+                        .on_disabled_hover_text(hint)
+                        .clicked();
+                    let message = theme::pill_button(ui, &palette, "Message", !named)
+                        .on_disabled_hover_text(hint)
+                        .clicked();
+                    (save, message)
+                })
+                .inner;
             if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
                 app.actions.push(Action::CloseDialog);
             }
@@ -501,7 +1305,16 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             ui.horizontal(|ui| {
                 ui.add_space((ui.available_width() - 288.0).max(0.0) / 2.0);
                 let name_field = |ui: &mut egui::Ui, buffer: &mut String, salt: &str, hint| {
-                    Frame::new()
+                    let format = egui::TextFormat::simple(theme::semibold(15.0), palette.text);
+                    let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                        crate::bidi::layout_field(ui, text.as_str(), &format, wrap)
+                    };
+                    let align = if crate::bidi::base_rtl(buffer) {
+                        Align::RIGHT
+                    } else {
+                        Align::LEFT
+                    };
+                    let field = Frame::new()
                         .fill(palette.surface)
                         .corner_radius(CornerRadius::same(theme::RADIUS))
                         .inner_margin(Margin::symmetric(10, 5))
@@ -517,10 +1330,18 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
                                     .font(theme::semibold(15.0))
                                     .text_color(palette.text)
                                     .frame(Frame::NONE)
-                                    .desired_width(108.0),
+                                    .desired_width(108.0)
+                                    .horizontal_align(align)
+                                    .layouter(&mut layouter),
                             )
-                        })
-                        .inner
+                        });
+                    theme::focus_outline(
+                        ui,
+                        field.inner.id,
+                        field.response.rect,
+                        f32::from(theme::RADIUS),
+                    );
+                    field.inner
                 };
                 let first_field = name_field(ui, first, "contact-first", "First name");
                 let last_field = name_field(ui, last, "contact-last", "Surname");
@@ -559,7 +1380,13 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
         if chat.is_group() && !chat.participants.is_empty() {
             theme::text(
                 ui,
-                format!("{} members", chat.participants.len()),
+                crate::i18n::ngettext(
+                    app.locale,
+                    "{} member",
+                    "{} members",
+                    chat.participants.len() as u32,
+                )
+                .replace("{}", &chat.participants.len().to_string()),
                 theme::regular(13.5),
                 palette.secondary,
             );
@@ -568,7 +1395,10 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             let status = if presence.online {
                 "online".to_owned()
             } else if let Some(seen) = presence.last_seen {
-                format!("last seen {}", crate::util::chat_stamp(seen).to_lowercase())
+                format!(
+                    "last seen {}",
+                    crate::util::chat_stamp(app.locale, seen).to_lowercase()
+                )
             } else {
                 String::new()
             };
@@ -666,7 +1496,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             if until == 0 {
                 "Muted".to_owned()
             } else {
-                format!("Muted until {}", crate::util::chat_stamp(until))
+                format!("Muted until {}", crate::util::chat_stamp(app.locale, until))
             },
             theme::regular(12.5),
             palette.secondary,
@@ -802,4 +1632,23 @@ fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> bool {
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::model::{Chat, ChatKind};
+
+    #[test]
+    fn locked_chats_are_not_forward_destinations() {
+        let mut chat = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        chat.locked = true;
+
+        assert!(!super::forwardable(&chat));
+
+        chat.locked = false;
+        assert!(super::forwardable(&chat));
+
+        chat.kind = ChatKind::Broadcast;
+        assert!(!super::forwardable(&chat));
+    }
 }

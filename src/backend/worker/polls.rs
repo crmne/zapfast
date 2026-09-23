@@ -79,7 +79,11 @@ fn creation_archive(content: &Content, secret: &[u8]) -> wa::Message {
 
 impl Worker {
     pub(super) fn refresh_poll(&mut self, chat: ChatId, id: String) {
-        self.poll_history.request(&chat, &id, Instant::now());
+        if self.archive.has_poll_history(&chat, &id).unwrap_or(false) {
+            self.poll_history.finish(&chat, &id);
+        } else {
+            self.poll_history.request(&chat, &id, Instant::now());
+        }
         self.emit_message(&chat, &id);
         self.pump_poll_history();
     }
@@ -271,12 +275,13 @@ impl Worker {
             .has_poll_history(&row.chat, &row.id)
             .unwrap_or(false);
         let (pending, tried, waiting) = self.poll_history.state(&row.chat, &row.id);
-        state.refreshing = pending;
-        state.refresh_failed = waiting;
-        state.refresh_needed = !tried;
+        state.refreshing = pending && !state.history_complete;
+        state.refresh_failed = waiting && !state.history_complete;
+        state.refresh_needed = !tried && !state.history_complete;
         state.counts = vec![0; options.len()];
         state.selected.clear();
         state.voters = 0;
+        state.votes.clear();
         let mut latest = HashMap::new();
         for vote in self
             .archive
@@ -290,7 +295,7 @@ impl Worker {
             };
             latest.insert(voter, vote);
         }
-        for vote in latest.into_values() {
+        for (voter, vote) in latest {
             let Some(choices) = vote.choices else {
                 continue;
             };
@@ -299,6 +304,19 @@ impl Worker {
             }
             if !choices.is_empty() {
                 state.voters += 1;
+                state.votes.push(crate::model::PollVoter {
+                    name: if vote.from_me || self.is_me(&vote.voter) {
+                        "You".into()
+                    } else {
+                        self.name_for(&voter).unwrap_or_else(|| {
+                            crate::util::phone(voter.split('@').next().unwrap_or(&voter))
+                        })
+                    },
+                    id: voter,
+                    from_me: vote.from_me || self.is_me(&vote.voter),
+                    timestamp: vote.at / 1000,
+                    choices: choices.clone(),
+                });
             }
             for index in choices {
                 if let Some(count) = state.counts.get_mut(index) {
@@ -306,6 +324,9 @@ impl Worker {
                 }
             }
         }
+        state
+            .votes
+            .sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| a.id.cmp(&b.id)));
     }
 
     pub(super) fn create_poll(&mut self, chat: ChatId, draft: PollDraft) {
@@ -347,7 +368,7 @@ impl Worker {
                 let recipients = if jid.is_group() {
                     client
                         .groups()
-                        .query_info(&jid)
+                        .routing_info(&jid)
                         .await
                         .map_err(|_| "Could not load the group recipients")?
                         .participants
@@ -706,6 +727,112 @@ mod tests {
         }
     }
 
+    fn incoming_poll_info() -> MessageInfo {
+        MessageInfo {
+            id: "live-poll".into(),
+            source: MessageSource {
+                chat: "200@s.whatsapp.net".parse().unwrap(),
+                sender: "200@s.whatsapp.net".parse().unwrap(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(100).unwrap(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn live_empty_polls_do_not_request_history_after_unrelated_messages_or_restart() {
+        for from_me in [false, true] {
+            let (mut worker, events, _commands, _wa) = super::super::receipt_tests::worker();
+            let mut info = incoming_poll_info();
+            info.source.is_from_me = from_me;
+            let chat = info.source.chat.to_non_ad_string();
+            let raw = Arc::new(creation_archive(&content(), &[7; 32]));
+            worker.ingest(&raw, &info);
+            // The first UI event already knows that zero is the valid baseline.
+            assert!(events.try_iter().any(|event| matches!(event,
+                Event::Messages { messages, .. } if messages.iter().any(|row|
+                    matches!(&row.content, Content::Poll { state, .. }
+                        if state.history_complete && !state.refresh_needed && state.voters == 0))
+            )));
+            let mut other = info.clone();
+            other.id = "next-message".into();
+            worker.ingest(
+                &Arc::new(wa::Message {
+                    conversation: Some("Hello".into()),
+                    ..Default::default()
+                }),
+                &other,
+            );
+            worker.poll_history = Default::default();
+            let mut row = worker.archive.message(&chat, "live-poll").unwrap().unwrap();
+            worker.polish_poll(&mut row);
+            let Content::Poll { state, .. } = row.content else {
+                panic!("poll")
+            };
+            assert!(state.history_complete);
+            assert_eq!(state.counts, vec![0, 0]);
+            assert!(!state.refresh_needed && !state.refreshing && !state.refresh_failed);
+            // Even a stale UI request must not start a recovery loop.
+            worker.refresh_poll(chat, "live-poll".into());
+            assert!(worker.poll_history.next(Instant::now()).is_none());
+        }
+    }
+
+    #[test]
+    fn unarchived_live_polls_leave_no_baseline_behind() {
+        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
+        let info = incoming_poll_info();
+        let chat = info.source.chat.to_non_ad_string();
+        // A removed chat drops the creation without archiving it.
+        worker
+            .archive
+            .remove_chat_through(&chat, 100, false)
+            .unwrap();
+        worker.ingest(&Arc::new(creation_archive(&content(), &[7; 32])), &info);
+        assert!(
+            worker
+                .archive
+                .message(&chat, "live-poll")
+                .unwrap()
+                .is_none()
+        );
+        assert!(!worker.archive.has_poll_history(&chat, "live-poll").unwrap());
+    }
+
+    #[test]
+    fn offline_recovered_and_replayed_polls_still_need_the_phone_snapshot() {
+        for source in ["offline", "pdo", "archived"] {
+            let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
+            let mut info = incoming_poll_info();
+            let chat = info.source.chat.to_non_ad_string();
+            let raw = Arc::new(creation_archive(&content(), &[7; 32]));
+            match source {
+                "offline" => info.is_offline = true,
+                "pdo" => info.unavailable_request_id = Some("recovery".into()),
+                "archived" => {
+                    let mut row = crate::archive::tests::message(&chat, "live-poll", 100, false);
+                    row.content = content();
+                    worker.store_message(row, Some(raw.encode_to_vec()), None);
+                }
+                _ => unreachable!(),
+            }
+            worker.ingest(&raw, &info);
+            let mut row = worker.archive.message(&chat, "live-poll").unwrap().unwrap();
+            worker.polish_poll(&mut row);
+            let Content::Poll { state, .. } = row.content else {
+                panic!("poll")
+            };
+            assert!(!state.history_complete, "{source}");
+            assert!(state.refresh_needed, "{source}");
+            worker.refresh_poll(chat, "live-poll".into());
+            assert!(
+                worker.poll_history.next(Instant::now()).is_some(),
+                "{source}"
+            );
+        }
+    }
+
     #[test]
     fn empty_or_unusable_phone_snapshots_do_not_stop_automatic_recovery() {
         let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
@@ -900,7 +1027,7 @@ mod tests {
         let session_path = directory.path().join("session.db");
         let bot = Bot::builder()
             .with_backend(
-                SqliteStore::new(session_path.to_str().unwrap())
+                whatsapp_rust::store::SqliteStore::new(session_path.to_str().unwrap())
                     .await
                     .unwrap(),
             )
@@ -1002,5 +1129,61 @@ mod tests {
         };
         assert_eq!(state.counts, vec![0, 1]);
         assert_eq!(state.voters, 1);
+    }
+    #[test]
+    fn result_details_use_latest_decrypted_votes_and_do_not_persist_identities_in_content() {
+        let (mut worker, _, _, _) = super::super::receipt_tests::worker();
+        let chat = "123@g.us";
+        let mut row = crate::archive::tests::message(chat, "poll", 100, false);
+        row.content = content();
+        worker.store_message(
+            row.clone(),
+            Some(creation_archive(&row.content, &[7; 32]).encode_to_vec()),
+            None,
+        );
+        for (id, at, choices, from_me) in [
+            ("member", 2_000, Some(vec![0]), false),
+            ("member", 3_000, Some(vec![1]), false),
+            ("withdrawn", 4_000, Some(vec![]), false),
+            ("encrypted", 5_000, None, false),
+            ("self", 6_000, Some(vec![0]), true),
+        ] {
+            worker
+                .archive
+                .save_poll_vote(&PollVote {
+                    chat: chat.into(),
+                    poll: row.id.clone(),
+                    voter: if from_me {
+                        worker.me()
+                    } else {
+                        format!("{id}@s.whatsapp.net")
+                    },
+                    sender: id.into(),
+                    update_id: format!("update-{at}"),
+                    at,
+                    from_me,
+                    choices,
+                    encrypted: None,
+                })
+                .unwrap();
+        }
+        worker.polish_poll(&mut row);
+        let Content::Poll { state, .. } = &row.content else {
+            panic!("poll")
+        };
+        assert_eq!(state.counts, vec![1, 1]);
+        assert_eq!(state.votes.len(), 2);
+        assert_eq!(state.votes[0].name, "You");
+        assert!(state.votes[0].from_me);
+        assert_eq!(state.votes[0].timestamp, 6);
+        assert_eq!(state.votes[1].choices, vec![1]);
+        assert_eq!(state.votes[1].timestamp, 3);
+        let json = serde_json::to_value(&row.content).unwrap();
+        assert!(json["state"].get("votes").is_none());
+        worker.polish_poll(&mut row);
+        let Content::Poll { state, .. } = &row.content else {
+            panic!("poll")
+        };
+        assert_eq!(state.votes.len(), 2, "refresh cannot duplicate details");
     }
 }

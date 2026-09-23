@@ -30,11 +30,69 @@ impl ChatKind {
     }
 }
 
+/// A local chat label: a name, a colour, and nothing that leaves this computer.
+/// Not a WhatsApp Business label; ZapFast neither reads nor syncs those.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Label {
+    pub id: String,
+    pub name: String,
+    /// `#rrggbb`, lower case.
+    pub color_hex: String,
+    pub created_at: i64,
+}
+
+/// Chat-list filter chosen from the chips under the search field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChatFilter {
+    #[default]
+    All,
+    Unread,
+    /// One-to-one chats: neither groups nor broadcasts.
+    Private,
+    Groups,
+    /// Followed channels (newsletters), kept out of the other filters as in
+    /// the official apps.
+    Channels,
+}
+
+impl ChatFilter {
+    pub const EVERY: [Self; 5] = [
+        Self::All,
+        Self::Unread,
+        Self::Private,
+        Self::Groups,
+        Self::Channels,
+    ];
+
+    pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+        use crate::i18n::gettext;
+        match self {
+            Self::All => gettext(locale, "All"),
+            Self::Unread => gettext(locale, "Unread"),
+            Self::Private => gettext(locale, "Private"),
+            Self::Groups => gettext(locale, "Groups"),
+            Self::Channels => gettext(locale, "Channels"),
+        }
+    }
+
+    pub fn matches(self, chat: &Chat) -> bool {
+        match self {
+            Self::All => !chat.is_channel(),
+            Self::Unread => chat.unread > 0 && !chat.is_channel(),
+            Self::Private => chat.kind == ChatKind::Direct,
+            Self::Groups => chat.kind == ChatKind::Group,
+            Self::Channels => chat.is_channel(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chat {
     pub id: ChatId,
     /// Best known address-book, push, or phone-number name.
     pub name: String,
+    /// Distinguishes an actual subject "Group" from older cached placeholders.
+    pub group_subject_known: bool,
     pub kind: ChatKind,
     /// Latest-message Unix timestamp used for ordering.
     pub last_activity: i64,
@@ -51,8 +109,14 @@ pub struct Chat {
     pub participants: Vec<String>,
     /// Whether this is an announcement group where we cannot post.
     pub read_only: bool,
+    /// Hidden while WhatsApp chat lock is enabled on the phone.
+    pub locked: bool,
     /// Disappearing-message duration in seconds, if enabled.
     pub ephemeral_expiration: Option<u32>,
+    /// Labels worn by this chat, in creation order. Local to this computer.
+    pub labels: Vec<String>,
+    /// This chat's own notification sound; `None` follows Settings.
+    pub notification_sound: Option<crate::settings::NotificationSound>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,6 +135,7 @@ impl Chat {
         Self {
             id,
             name,
+            group_subject_known: false,
             kind,
             last_activity: 0,
             unread: 0,
@@ -81,8 +146,21 @@ impl Chat {
             last: None,
             participants: Vec::new(),
             read_only: false,
+            locked: false,
             ephemeral_expiration: None,
+            labels: Vec::new(),
+            notification_sound: None,
         }
+    }
+
+    /// Newsletter publishing permissions are not supported by this client.
+    pub fn can_send(&self) -> bool {
+        !self.locked && !self.read_only && self.kind != ChatKind::Broadcast
+    }
+
+    /// A followed WhatsApp channel (newsletter).
+    pub fn is_channel(&self) -> bool {
+        self.id.ends_with("@newsletter")
     }
 
     pub fn is_group(&self) -> bool {
@@ -203,6 +281,12 @@ pub enum Content {
         #[serde(default)]
         preview: Option<LinkPreview>,
     },
+    /// Readable text plus presentation metadata. Raw protocol data stays in the worker.
+    Interactive {
+        text: String,
+        #[serde(default)]
+        card: Option<Box<InteractiveCard>>,
+    },
     Image {
         caption: Option<String>,
         media: Media,
@@ -212,6 +296,9 @@ pub enum Content {
         media: Media,
         seconds: Option<u32>,
         gif: bool,
+        /// A round video message, which WhatsApp calls PTV.
+        #[serde(default)]
+        note: bool,
     },
     Audio {
         media: Media,
@@ -231,11 +318,46 @@ pub enum Content {
         media: Media,
         animated: bool,
     },
+    /// A WhatsApp sticker pack shared in a chat. Its stickers download when
+    /// someone opens it.
+    #[serde(rename = "sticker_pack")]
+    StickerPack {
+        name: String,
+        publisher: String,
+        count: u32,
+        caption: Option<String>,
+    },
     Location {
         latitude: f64,
         longitude: f64,
         name: Option<String>,
         address: Option<String>,
+    },
+    /// A live location that updates in place as the sender moves. The map
+    /// preview rides in `Message.thumbnail`; the shared `(chat, id)` upsert
+    /// keeps one bubble per session.
+    LiveLocation {
+        latitude: f64,
+        longitude: f64,
+        /// Position accuracy reported by the sender, in metres.
+        #[serde(default)]
+        accuracy_m: Option<u32>,
+        /// Speed in metres per second.
+        #[serde(default)]
+        speed_mps: Option<f32>,
+        /// Heading, degrees clockwise from magnetic north.
+        #[serde(default)]
+        heading_deg: Option<u32>,
+        /// Monotonic ordering guard against out-of-order updates.
+        #[serde(default)]
+        sequence: i64,
+        /// Whether the sender has stopped sharing.
+        #[serde(default)]
+        ended: bool,
+        /// Unix seconds of the latest position, or 0 before any update. The
+        /// message keeps its start time so updates do not reorder the chat.
+        #[serde(default)]
+        updated: i64,
     },
     Contact {
         display_name: String,
@@ -253,6 +375,52 @@ pub enum Content {
     Unsupported {
         what: String,
     },
+    /// A message WhatsApp only delivers to the phone, such as view-once
+    /// media. Linked devices receive a placeholder that never fills in.
+    PhoneOnly {
+        view_once: bool,
+    },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InteractiveCard {
+    /// Message text without the action labels, which have their own rows.
+    pub body: String,
+    pub buttons: Vec<InteractiveButton>,
+    pub image: Option<Media>,
+    /// Unrenderable attachments, forms, or missing message text.
+    pub needs_phone: bool,
+    /// Independent carousel cards, in wire order. No protocol ids or keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub carousel: Vec<InteractiveCard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InteractiveButton {
+    pub label: String,
+    /// Validated HTTP(S) target, also retained for older archived cards.
+    pub url: Option<String>,
+    /// Non-link action. Protocol option ids stay in the worker.
+    #[serde(default)]
+    pub action: InteractiveAction,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum InteractiveAction {
+    #[default]
+    Unavailable,
+    Reply,
+    Copy(String),
+    Select(Vec<InteractiveOption>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InteractiveOption {
+    pub section: String,
+    pub title: String,
+    pub description: String,
 }
 
 /// Poll information safe to send to the interface; encryption keys stay in the worker.
@@ -268,6 +436,18 @@ pub struct PollState {
     pub refresh_needed: bool,
     pub refreshing: bool,
     pub refresh_failed: bool,
+    /// Latest decrypted votes only. Derived on load, never stored in content JSON.
+    #[serde(skip)]
+    pub votes: Vec<PollVoter>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PollVoter {
+    pub id: String,
+    pub name: String,
+    pub from_me: bool,
+    pub timestamp: i64,
+    pub choices: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -321,7 +501,19 @@ impl PollDraft {
     }
 }
 
+/// WhatsApp's longest live location share, in seconds.
+pub const LIVE_LOCATION_LIMIT: i64 = 8 * 60 * 60;
+
 impl Content {
+    /// Whether a live location sent at `sent` has stopped by `now`: its
+    /// sender ended it, or it has outlived the longest share.
+    pub fn live_location_over(&self, sent: i64, now: i64) -> bool {
+        match self {
+            Self::LiveLocation { ended, .. } => *ended || now - sent > LIVE_LOCATION_LIMIT,
+            _ => false,
+        }
+    }
+
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text {
             text: text.into(),
@@ -331,11 +523,22 @@ impl Content {
 
     pub fn summary(&self) -> String {
         match self {
-            Self::Text { text, .. } => text.lines().next().unwrap_or_default().to_owned(),
-            Self::Image { caption, .. } => with_caption("Photo", caption),
-            Self::Video { caption, gif, .. } => {
-                with_caption(if *gif { "GIF" } else { "Video" }, caption)
+            Self::Text { text, .. } | Self::Interactive { text, .. } => {
+                text.lines().next().unwrap_or_default().to_owned()
             }
+            Self::Image { caption, .. } => with_caption("Photo", caption),
+            Self::Video {
+                caption, gif, note, ..
+            } => with_caption(
+                if *gif {
+                    "GIF"
+                } else if *note {
+                    "Video message"
+                } else {
+                    "Video"
+                },
+                caption,
+            ),
             Self::Audio {
                 voice_note,
                 seconds,
@@ -353,14 +556,24 @@ impl Content {
             }
             Self::Document { file_name, .. } => format!("Document: {file_name}"),
             Self::Sticker { .. } => "Sticker".to_owned(),
+            Self::StickerPack { name, .. } => format!("Sticker pack: {name}"),
             Self::Location { name, .. } => match name {
                 Some(name) => format!("Location: {name}"),
                 None => "Location".to_owned(),
             },
+            Self::LiveLocation { ended, .. } => {
+                if *ended {
+                    "Live location ended".to_owned()
+                } else {
+                    "Live location".to_owned()
+                }
+            }
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
+            Self::PhoneOnly { view_once: true } => "View once message".to_owned(),
+            Self::PhoneOnly { view_once: false } => "Message on your phone".to_owned(),
         }
     }
 
@@ -371,7 +584,45 @@ impl Content {
             | Self::Audio { media, .. }
             | Self::Document { media, .. }
             | Self::Sticker { media, .. } => Some(media),
+            Self::Interactive {
+                card: Some(card), ..
+            } => card.image.as_ref(),
             _ => None,
+        }
+    }
+
+    pub fn media_at_mut(&mut self, card_index: Option<usize>) -> Option<&mut Media> {
+        match card_index {
+            None => self.media_mut(),
+            Some(index) => match self {
+                Self::Interactive {
+                    card: Some(card), ..
+                } => card.carousel.get_mut(index)?.image.as_mut(),
+                _ => None,
+            },
+        }
+    }
+
+    /// Carries downloaded file paths over from `old` when rederiving content
+    /// from the raw protobuf: the main attachment and each carousel card's image.
+    pub fn keep_local_paths(&mut self, old: &Content) {
+        if let (Some(new), Some(old)) = (self.media_mut(), old.media()) {
+            new.path = old.path.clone();
+        }
+        if let (
+            Self::Interactive {
+                card: Some(new), ..
+            },
+            Self::Interactive {
+                card: Some(old), ..
+            },
+        ) = (self, old)
+        {
+            for (new, old) in new.carousel.iter_mut().zip(&old.carousel) {
+                if let (Some(new), Some(old)) = (&mut new.image, &old.image) {
+                    new.path = old.path.clone();
+                }
+            }
         }
     }
 
@@ -382,6 +633,9 @@ impl Content {
             | Self::Audio { media, .. }
             | Self::Document { media, .. }
             | Self::Sticker { media, .. } => Some(media),
+            Self::Interactive {
+                card: Some(card), ..
+            } => card.image.as_mut(),
             _ => None,
         }
     }
@@ -397,6 +651,9 @@ fn with_caption(label: &str, caption: &Option<String>) -> String {
     }
 }
 
+/// Maximum size accepted for a downloaded attachment.
+pub(crate) const ATTACHMENT_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
+
 /// Attachment metadata, download state, and optional local file. Download keys
 /// remain in the archive's raw message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -411,6 +668,16 @@ pub struct Media {
     /// Non-persisted download state.
     #[serde(skip)]
     pub state: MediaState,
+}
+
+impl Media {
+    /// Whether the attachment's declared size can be downloaded locally.
+    ///
+    /// A missing size is represented as zero and is allowed here. The worker
+    /// still enforces the limit while streaming it from WhatsApp.
+    pub fn is_within_download_limit(&self) -> bool {
+        self.size <= ATTACHMENT_DOWNLOAD_LIMIT
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -453,6 +720,7 @@ impl Contact {
 pub enum Page {
     Chats,
     Settings,
+    Wallpaper,
 }
 
 /// The tabs of the picker above the composer.
@@ -463,12 +731,107 @@ pub enum PickerTab {
     Stickers,
 }
 
-/// Imported sticker pack stored as a named WebP directory.
+/// How the chat list is drawn. Hiding it can also just collapse it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SidebarDisplayMode {
+    /// The full list: names, previews, timestamps.
+    #[default]
+    Expanded,
+    /// Avatars and unread badges only, in a narrow column.
+    CollapsedIconsOnly,
+    /// Nothing at all.
+    Hidden,
+}
+
+/// Which list the sticker tab shows.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum StickerShelf {
+    /// Stickers we sent, and the phone's recent list.
+    #[default]
+    Recent,
+    Favorites,
+    /// One pack, by its folder.
+    Pack(PathBuf),
+    /// Importing packs, starting one, or making a sticker.
+    Add,
+}
+
+/// A square region of a picture, in its pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StickerCrop {
+    pub x: u32,
+    pub y: u32,
+    pub side: u32,
+}
+
+impl StickerCrop {
+    /// The largest square in the middle of the picture.
+    pub fn centered(width: u32, height: u32) -> Self {
+        let side = width.min(height).max(1);
+        Self {
+            x: width.saturating_sub(side) / 2,
+            y: height.saturating_sub(side) / 2,
+            side,
+        }
+    }
+
+    /// The same square kept inside a picture of this size.
+    pub fn clamped(self, width: u32, height: u32) -> Self {
+        let side = self.side.clamp(1, width.min(height).max(1));
+        Self {
+            x: self.x.min(width.saturating_sub(side)),
+            y: self.y.min(height.saturating_sub(side)),
+            side,
+        }
+    }
+
+    /// The square moved by whole pixels, staying inside the picture.
+    pub fn moved(self, dx: i64, dy: i64, width: u32, height: u32) -> Self {
+        let shift = |at: u32, by: i64| (i64::from(at) + by).max(0) as u32;
+        Self {
+            x: shift(self.x, dx),
+            y: shift(self.y, dy),
+            ..self
+        }
+        .clamped(width, height)
+    }
+
+    /// The square resized around its center, staying inside the picture.
+    pub fn resized(self, side: u32, width: u32, height: u32) -> Self {
+        let center = |at: u32| i64::from(at) + i64::from(self.side) / 2;
+        let half = i64::from(side) / 2;
+        Self {
+            x: (center(self.x) - half).max(0) as u32,
+            y: (center(self.y) - half).max(0) as u32,
+            side,
+        }
+        .clamped(width, height)
+    }
+}
+
+/// A picture on its way to becoming a sticker.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StickerDraft {
+    pub source: PathBuf,
+    pub width: u32,
+    pub height: u32,
+    /// The picture has see-through pixels.
+    pub transparent: bool,
+    pub crop: StickerCrop,
+    /// Keep see-through pixels instead of filling them with white.
+    pub keep_transparent: bool,
+    /// Emojis typed for search, WhatsApp's suggestions, or both.
+    pub emojis: String,
+}
+
+/// Sticker pack stored as a folder of WebP files, imported or made here.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StickerPack {
     pub name: String,
     pub dir: PathBuf,
     pub stickers: Vec<PathBuf>,
+    /// Put together in ZapFast, so stickers can be filed into it.
+    pub local: bool,
 }
 
 /// GIF search failure.
@@ -497,15 +860,142 @@ pub enum Dialog {
     ConfirmUnlink,
     /// Phone number used for pairing-code linking.
     PairWithPhone,
+    /// Contacts and the self-chat shortcut.
+    NewChat,
     /// Manually entered number for messaging or saving a contact.
     NewContact,
+    UnlockLockedChats,
+    ConfirmLockChat(ChatId),
     ChatInfo(ChatId),
+    /// Manages the local labels.
+    Labels,
+    /// Confirms deleting a chat, which cannot be undone.
+    ConfirmDeleteChat(ChatId),
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
-        message: String,
+        /// Message ids, in the order they appear in the chat.
+        messages: Vec<String>,
     },
     CreatePoll(ChatId),
+    PollResults {
+        chat: ChatId,
+        message: String,
+    },
+    InteractiveList {
+        chat: ChatId,
+        message: String,
+        button: usize,
+    },
+    /// Previews a group invite link before joining.
+    JoinGroup,
+    /// Confirms setting aside an archive whose key is gone.
+    ConfirmStartOver,
+    /// The stickers of a pack shared in a chat, with a button to add it.
+    StickerPack,
+    /// Crops a picture into a sticker.
+    StickerMaker,
+    /// Who has received and read one of our messages.
+    MessageInfo {
+        chat: ChatId,
+        message: String,
+    },
+}
+
+/// One recipient's receipts for one of our group messages.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recipient {
+    pub id: String,
+    /// Named in the audience saved when the message was sent.
+    pub expected: bool,
+    pub delivered_at: Option<i64>,
+    pub read_at: Option<i64>,
+    pub played_at: Option<i64>,
+}
+
+/// Per-recipient receipts for one of our group messages, as far as they are
+/// known. Receipts are only kept from when ZapFast began recording them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MessageReceipts {
+    pub chat: ChatId,
+    pub message: String,
+    pub recipients: Vec<Recipient>,
+}
+
+impl MessageReceipts {
+    /// Whether the message's audience was saved, so that members without a
+    /// receipt are known to be waiting rather than simply unrecorded.
+    pub fn audience_known(&self) -> bool {
+        self.recipients.iter().any(|recipient| recipient.expected)
+    }
+
+    /// Recipients who played a voice or video note, most recent first.
+    pub fn played(&self) -> Vec<&Recipient> {
+        self.newest_first(|recipient| recipient.played_at)
+    }
+
+    /// Recipients who read the message without playing it, most recent first.
+    pub fn read(&self) -> Vec<&Recipient> {
+        self.newest_first(|recipient| recipient.read_at.filter(|_| recipient.played_at.is_none()))
+    }
+
+    /// Recipients whose device has the message but who have not read it yet.
+    pub fn delivered(&self) -> Vec<&Recipient> {
+        self.newest_first(|recipient| {
+            recipient
+                .delivered_at
+                .filter(|_| recipient.read_at.is_none() && recipient.played_at.is_none())
+        })
+    }
+
+    /// Audience members with no receipt at all.
+    pub fn remaining(&self) -> usize {
+        self.recipients
+            .iter()
+            .filter(|recipient| {
+                recipient.expected
+                    && recipient.delivered_at.is_none()
+                    && recipient.read_at.is_none()
+                    && recipient.played_at.is_none()
+            })
+            .count()
+    }
+
+    fn newest_first(&self, at: impl Fn(&Recipient) -> Option<i64>) -> Vec<&Recipient> {
+        let mut rows: Vec<_> = self
+            .recipients
+            .iter()
+            .filter_map(|recipient| Some((at(recipient)?, recipient)))
+            .collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
+        rows.into_iter().map(|(_, recipient)| recipient).collect()
+    }
+}
+
+/// A group invite link being previewed or joined.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupInvite {
+    pub code: String,
+    pub state: InviteState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum InviteState {
+    Loading,
+    Ready(InviteInfo),
+    Joining(InviteInfo),
+    Failed(String),
+}
+
+/// What an invite link says about its group, without joining it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InviteInfo {
+    pub id: ChatId,
+    pub subject: String,
+    pub description: Option<String>,
+    pub members: usize,
+    /// Admins approve new members before they join.
+    pub approval: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -514,6 +1004,8 @@ pub enum ToastKind {
     Error,
 }
 
+/// Info toasts fade after a few seconds; errors stay until dismissed so they
+/// can be read to the end and copied.
 #[derive(Clone, Debug)]
 pub struct Toast {
     pub message: String,
@@ -536,12 +1028,26 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
+    /// Opens the search bar for the open chat.
+    OpenChatSearch,
+    /// Closes it and drops the query.
+    CloseChatSearch,
+    /// Replaces the query of the open chat's search bar.
+    ChatSearch(String),
+    /// Moves to the next (`1`) or previous (`-1`) match in the open chat.
+    StepChatSearch(i32),
     CloseChat,
     SendText {
         chat: ChatId,
         text: String,
         /// Quoted message id.
         quoting: Option<String>,
+    },
+    ReplyInteractive {
+        chat: ChatId,
+        message: String,
+        button: usize,
+        choice: Option<usize>,
     },
     CreatePoll {
         chat: ChatId,
@@ -566,6 +1072,7 @@ pub enum Action {
     /// Requests messages older than the local archive.
     FetchOlder(ChatId),
     Download {
+        card: Option<usize>,
         chat: ChatId,
         message: String,
     },
@@ -580,22 +1087,65 @@ pub enum Action {
         path: PathBuf,
         fraction: f32,
     },
+    /// Sets the voice playback speed to one of the supported speeds.
+    SetVoiceSpeed(f32),
+    /// Plays or pauses a downloaded video inside its message.
+    PlayVideo {
+        message: String,
+        path: PathBuf,
+    },
+    /// Plays a video in the open chat once its download finishes.
+    PlayVideoWhenDownloaded(String),
+    /// Jumps to a fraction from 0 to 1 of the playing video.
+    SeekVideo {
+        message: String,
+        fraction: f32,
+    },
+    /// Mutes or unmutes video playback.
+    ToggleVideoSound,
     /// Starts, cancels, or sends a voice recording.
     StartRecording,
     CancelRecording,
     SendRecording,
+    /// Opens a downloaded image in ZapFast's native preview. Only the file
+    /// extension and existence are checked here, and anything else opens
+    /// externally; an image that then fails to decode shows a message with an
+    /// Open externally button inside the preview.
+    PreviewImage(PathBuf),
+    ZoomImageIn,
+    /// Shows the previewed image at its original size.
+    ImageActualSize,
+    ZoomImageOut,
+    FitImage,
+    CloseImagePreview,
     OpenFile(PathBuf),
+    OpenFolder(PathBuf),
+    /// Saves a copy of a downloaded attachment where the person chooses.
+    SaveAttachmentAs {
+        path: PathBuf,
+        name: String,
+    },
     OpenUrl(String),
     CopyText(String),
+    /// Closes the toast at this index. Only errors wait to be dismissed.
+    DismissToast(usize),
     /// Starts a reply to a message in the open chat.
     Reply(String),
     CancelReply,
     /// Forwards an archived message to another chat.
     Forward {
         from_chat: ChatId,
-        message: String,
+        messages: Vec<String>,
         to_chat: ChatId,
     },
+    /// Starts selecting messages in the open chat, beginning with this one.
+    SelectMessage(String),
+    /// Adds a message to the selection or removes it.
+    ToggleSelected(String),
+    /// Selects every message from the last one clicked to this one.
+    SelectRange(String),
+    /// Leaves selection mode.
+    CancelSelection,
     /// Loads an outgoing message into the composer for editing.
     Edit(String),
     CancelEdit,
@@ -615,6 +1165,14 @@ pub enum Action {
     /// Toggles a picker tab.
     TogglePicker(PickerTab),
     ClosePicker,
+    /// Opens the full emoji picker to react to a message. `beside_menu` keeps
+    /// the message's context menu open next to it, as when the picker comes
+    /// from the menu's "+"; the hover button opens the picker alone.
+    OpenReactionPicker {
+        chat: ChatId,
+        message: String,
+        beside_menu: bool,
+    },
     /// Inserts an emoji at the composer cursor.
     InsertEmoji(String),
     /// Replaces an active `:query` with its selected emoji.
@@ -637,12 +1195,37 @@ pub enum Action {
     SaveSticker(PathBuf),
     /// Removes a saved sticker.
     ForgetSticker(PathBuf),
+    /// Takes a sticker out of Recent.
+    RemoveRecentSticker(PathBuf),
     /// Imports a sticker pack from a signal.art link.
     ImportStickerUrl(String),
     /// Selects and imports a .wastickers or zip file.
     PickStickerArchive,
-    /// Deletes an imported pack directory.
+    /// Deletes a pack directory.
     DeleteStickerPack(PathBuf),
+    /// Creates a local sticker pack.
+    CreateStickerPack(String),
+    /// Shows one list in the sticker tab.
+    SelectStickerShelf(StickerShelf),
+    /// Opens a sticker pack shared in the open chat.
+    ViewStickerPack(String),
+    /// Adds the sticker pack being viewed to the packs here.
+    AddStickerPack,
+    /// Sends a pack to the open chat as a WhatsApp sticker pack.
+    ShareStickerPack(PathBuf),
+    /// Chooses a picture for the sticker maker.
+    PickStickerPicture,
+    /// Makes the drafted sticker, then sends it to the open chat or adds it
+    /// to favorites.
+    MakeSticker {
+        send: bool,
+    },
+    /// Files a sticker into a local pack, or takes it out of it.
+    SetStickerPack {
+        pack: PathBuf,
+        sticker: PathBuf,
+        member: bool,
+    },
     /// Opens the prefilled contact-name editor.
     EditContact(String),
     /// Saves a contact through WhatsApp contact sync. `first` is the short
@@ -667,13 +1250,53 @@ pub enum Action {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Deletes a chat here and on the phone.
+    DeleteChat(ChatId),
     SetPinned(ChatId, bool),
     ShowDialog(Dialog),
     CloseDialog,
     ToggleSidebar,
+    SetChatFilter(ChatFilter),
+    /// Picks the label the chat list shows; `None` shows every chat.
+    SelectLabel(Option<String>),
+    /// Replaces the labels worn by one chat.
+    SetChatLabels {
+        chat: ChatId,
+        labels: Vec<String>,
+    },
+    /// Creates a label from the name and colour in the manager dialog.
+    CreateLabel {
+        name: String,
+        color_hex: String,
+    },
+    /// Renames and recolours a label.
+    UpdateLabel {
+        id: String,
+        name: String,
+        color_hex: String,
+    },
+    /// Deletes a label and takes it off every chat.
+    DeleteLabel(String),
+    /// Shows or leaves the archived chats.
+    ShowArchived(bool),
+    /// Mutes (`true`) or unmutes every followed channel.
+    MuteAllChannels(bool),
+    /// Joins the group of the invite being previewed.
+    JoinGroup,
+    /// A chat opened from the main list, kept there under the Unread filter.
+    KeepUnread(ChatId),
+    /// Focuses the chat-list search and leaves the open chat alone.
+    FocusChatList,
     FocusSearch,
     FocusComposer,
     HideShortcutHints,
+    DismissChatLockHint,
+    OpenLockedFolder,
+    UnlockLockedFolder(String),
+    CreateChatLockCode(String),
+    MessageYourself,
+    CloseLockedFolder,
+    SetChatLockCode(Option<String>),
     ScrollToBottom,
     /// Scrolls the open chat to a message.
     ScrollTo(String),
@@ -684,10 +1307,46 @@ pub enum Action {
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
+    SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
+    SetWallpaperColor(crate::settings::WallpaperColor),
+    SetWallpaperDoodles(bool),
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
+    /// Registers or removes the login entry that starts ZapFast in the tray.
+    SetStartWithSystem(bool),
+    /// Sets the notification sound for groups (`true`) or other chats.
+    SetNotificationSound {
+        group: bool,
+        sound: crate::settings::NotificationSound,
+    },
+    /// Asks for an audio file to use as a notification sound.
+    PickNotificationSound {
+        group: bool,
+    },
+    /// Sets a chat's own notification sound; `None` follows Settings.
+    SetChatSound {
+        chat: ChatId,
+        sound: Option<crate::settings::NotificationSound>,
+    },
+    /// Asks for an audio file for one chat's notifications.
+    PickChatSound(ChatId),
+    /// Asks for a folder for new downloads.
+    PickDownloadFolder,
+    /// Changes our display name and About text; `None` keeps the current one.
+    SetProfile {
+        name: Option<String>,
+        about: Option<String>,
+    },
+    /// Asks for a picture and makes it our profile picture.
+    PickProfilePicture,
+    /// Sets or resets (`None`) the folder for new downloads.
+    SetDownloadFolder(Option<PathBuf>),
+    /// Saves the proxy setting and reconnects. Empty follows the environment.
+    SetProxy(String),
+    /// Plays a notification sound once, as a preview.
+    PreviewSound(crate::settings::NotificationSound),
     ZoomBy(f32),
     ResetZoom,
     /// Requests a pairing code for a phone number.
@@ -695,6 +1354,8 @@ pub enum Action {
     /// Unlinks the device remotely and locally.
     Unlink,
     Reconnect,
+    /// Sets aside an archive whose key is gone and links again.
+    StartOverArchive,
     Quit,
     /// Shows the window, creating it when running headless.
     ShowWindow,
@@ -704,6 +1365,8 @@ pub enum Action {
     CloseWindow,
     /// Mutes until Unix time, indefinitely with `Some(0)`, or unmutes with `None`.
     SetMuted(ChatId, Option<i64>),
+    /// Moves a chat into or out of the locked folder.
+    SetLocked(ChatId, bool),
     /// Sends pending attachments with the composer text as caption.
     SendPending {
         chat: ChatId,
@@ -717,7 +1380,116 @@ pub enum Action {
 
 #[cfg(test)]
 mod tests {
+    use super::StickerCrop;
+
+    #[test]
+    fn a_sticker_crop_stays_square_and_inside_the_picture() {
+        let crop = StickerCrop::centered(800, 600);
+        assert_eq!(
+            crop,
+            StickerCrop {
+                x: 100,
+                y: 0,
+                side: 600
+            }
+        );
+        // Dragging past an edge stops at it.
+        assert_eq!(
+            crop.moved(-500, 40, 800, 600),
+            StickerCrop {
+                x: 0,
+                y: 0,
+                side: 600
+            }
+        );
+        // Shrinking keeps the center; growing past the picture stops at it.
+        let small = crop.resized(200, 800, 600);
+        assert_eq!(
+            small,
+            StickerCrop {
+                x: 300,
+                y: 200,
+                side: 200
+            }
+        );
+        assert_eq!(
+            small.moved(1000, 1000, 800, 600),
+            StickerCrop {
+                x: 600,
+                y: 400,
+                side: 200
+            }
+        );
+        assert_eq!(small.resized(5000, 800, 600).side, 600);
+        assert_eq!(StickerCrop::centered(0, 0).side, 1);
+    }
+
     use super::*;
+
+    #[test]
+    fn message_receipts_sort_each_recipient_into_one_list() {
+        let recipient = |id: &str, expected, delivered, read, played| Recipient {
+            id: id.into(),
+            expected,
+            delivered_at: delivered,
+            read_at: read,
+            played_at: played,
+        };
+        let receipts = MessageReceipts {
+            chat: "g@g.us".into(),
+            message: "m".into(),
+            recipients: vec![
+                recipient("a", true, Some(10), Some(20), None),
+                recipient("b", true, Some(11), Some(30), None),
+                recipient("c", true, Some(12), None, None),
+                recipient("d", true, None, None, None),
+                recipient("e", true, Some(13), Some(14), Some(15)),
+                // Joined after the send, or answered under an unsaved alias.
+                recipient("f", false, Some(16), None, None),
+            ],
+        };
+        let ids = |rows: Vec<&Recipient>| rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+        assert!(receipts.audience_known());
+        assert_eq!(ids(receipts.played()), ["e"]);
+        assert_eq!(ids(receipts.read()), ["b", "a"]);
+        assert_eq!(ids(receipts.delivered()), ["f", "c"]);
+        assert_eq!(receipts.remaining(), 1);
+        let unknown = MessageReceipts {
+            recipients: vec![recipient("a", false, Some(1), None, None)],
+            ..Default::default()
+        };
+        assert!(!unknown.audience_known());
+        assert_eq!(unknown.remaining(), 0);
+    }
+
+    #[test]
+    fn rederived_interactive_content_keeps_every_downloaded_image() {
+        let image = |path: Option<&str>| Media {
+            mime: "image/jpeg".into(),
+            size: 1,
+            width: None,
+            height: None,
+            path: path.map(PathBuf::from),
+            state: MediaState::Idle,
+        };
+        let content = |main: Option<&str>, cards: [Option<&str>; 2]| Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(InteractiveCard {
+                image: Some(image(main)),
+                carousel: cards
+                    .map(|path| InteractiveCard {
+                        image: Some(image(path)),
+                        ..Default::default()
+                    })
+                    .into(),
+                ..Default::default()
+            })),
+        };
+        let old = content(Some("/main.jpg"), [None, Some("/second.jpg")]);
+        let mut new = content(None, [None, None]);
+        new.keep_local_paths(&old);
+        assert_eq!(new, old);
+    }
 
     #[test]
     fn polls_validate_trimmed_questions_and_distinct_bounded_answers() {
@@ -752,6 +1524,15 @@ mod tests {
             path: None,
             state: MediaState::Idle,
         }
+    }
+
+    #[test]
+    fn attachment_download_limit_includes_the_boundary() {
+        let mut item = media();
+        item.size = ATTACHMENT_DOWNLOAD_LIMIT;
+        assert!(item.is_within_download_limit());
+        item.size += 1;
+        assert!(!item.is_within_download_limit());
     }
 
     #[test]
@@ -837,5 +1618,57 @@ mod tests {
         let json = serde_json::to_string(&content).expect("serializes");
         let back: Content = serde_json::from_str(&json).expect("parses");
         assert_eq!(back, content);
+    }
+
+    #[test]
+    fn live_location_content_survives_json() {
+        let content = Content::LiveLocation {
+            latitude: 51.5,
+            longitude: -0.12,
+            accuracy_m: Some(10),
+            speed_mps: Some(1.1),
+            heading_deg: Some(45),
+            sequence: 7,
+            ended: true,
+            updated: 1_700_000_000,
+        };
+        let json = serde_json::to_string(&content).expect("serializes");
+        let back: Content = serde_json::from_str(&json).expect("parses");
+        assert_eq!(back, content);
+        // Optional fields default when absent, so a sparse payload still parses.
+        let sparse: Content =
+            serde_json::from_str(r#"{"kind":"livelocation","latitude":1.0,"longitude":2.0}"#)
+                .expect("parses sparse");
+        assert_eq!(
+            sparse,
+            Content::LiveLocation {
+                latitude: 1.0,
+                longitude: 2.0,
+                accuracy_m: None,
+                speed_mps: None,
+                heading_deg: None,
+                sequence: 0,
+                ended: false,
+                updated: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn live_location_is_over_when_ended_or_older_than_the_longest_share() {
+        let live = |ended| Content::LiveLocation {
+            latitude: 0.0,
+            longitude: 0.0,
+            accuracy_m: None,
+            speed_mps: None,
+            heading_deg: None,
+            sequence: 1,
+            ended,
+            updated: 0,
+        };
+        assert!(!live(false).live_location_over(1_000, 1_000 + LIVE_LOCATION_LIMIT));
+        assert!(live(false).live_location_over(1_000, 1_001 + LIVE_LOCATION_LIMIT));
+        assert!(live(true).live_location_over(1_000, 1_000));
+        assert!(!Content::text("hi").live_location_over(0, i64::MAX));
     }
 }

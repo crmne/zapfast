@@ -1,9 +1,32 @@
 # Copilot instructions
 
-Read and follow `AGENTS.md` before reviewing or changing this repository. It
-is the canonical architecture, product-boundary, privacy, testing, and release
-guide. Keep changes narrowly scoped and preserve existing behavior unless the
-task explicitly changes it.
+Read and follow `AGENTS.md` and `CONTRIBUTING.md` before reviewing or changing
+this repository. `AGENTS.md` is the canonical architecture, product-boundary,
+privacy, testing, and release guide. Keep changes narrowly scoped and preserve
+existing behavior unless the task explicitly changes it.
+
+## Pull request scope and evidence
+
+Check these first, and report each failure as a blocker at the top of the
+review, before any line comments:
+
+- One concern per pull request. When a pull request bundles unrelated fixes or
+  features, name the separate changes and ask for one pull request each. Do
+  not review the rest in depth until it is split.
+- Start every review with `User-visible UI impact: none` or a list of the
+  visible changes. Treat changes to navigation, control placement, menus,
+  panel sizing, spacing, or visual hierarchy as an interface change even when
+  the code is correct.
+- Any visible change needs before-and-after screenshots or a recording in the
+  pull request description, captured with the `demo` feature (synthetic data,
+  never real chats), in light and dark themes when colours or layout change.
+  Ask for them when they are missing.
+- Screenshots, recordings, and other media must not be committed to the
+  repository. Flag any added image or video file that is not an app asset.
+- Do not vendor, fork, or patch upstream crates (egui, epaint, whatsapp-rust)
+  inside this repository. Changes those crates need go upstream.
+- Flag any feature that sends message content, audio, or contacts to a third
+  party. That is outside the product boundaries.
 
 ## Review priorities
 
@@ -34,12 +57,18 @@ task explicitly changes it.
   interface redesign without explicit maintainer approval of its visual scope.
 - Prefer existing dependencies. Flag new crates, changes to network access,
   storage formats, permissions, or release packaging for explicit scrutiny.
+- Follow the trunk-based branch policy in `AGENTS.md`. Maintainer and agent
+  work goes directly to a linear `main`; do not create a branch unless the
+  maintainer explicitly requests one. Every ordinary release tag, including a
+  prerelease, must already be reachable from `origin/main`.
 - Require focused regression tests and the full checks from `AGENTS.md` for
   code changes. Do not weaken a lint or test to make a change pass.
 
 ## Review communication
 
-Lead with concrete, actionable defects introduced by the change. Distinguish
-confirmed bugs from questions, avoid speculative redesigns and adjacent
-refactors, and do not claim a platform was tested when it was only inspected or
-compiled. Never use em dashes in repository-facing prose.
+After the scope and evidence checks, lead with concrete, actionable defects
+introduced by the change. Distinguish confirmed bugs from questions, avoid
+speculative redesigns and adjacent refactors, and do not claim a platform was
+tested when it was only inspected or compiled. CI passing is necessary but not proof that a change is correct. Never
+approve, close, or merge a pull request; the maintainer decides. Never use em
+dashes in repository-facing prose.

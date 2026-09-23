@@ -3,9 +3,12 @@
 use egui::{Align, Frame, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
-use crate::model::{Action, Chat, Contact, Dialog, Message, Page};
+use crate::backend::LinkStatus;
+use crate::model::{Action, Chat, ChatFilter, Contact, Dialog, Message, Page};
 use crate::theme::{self, Icon, Palette};
 
+use super::focus::{Stop, TabStop};
+use super::labels;
 use super::widgets;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -53,7 +56,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if app.show_archived {
+                if app.show_archived || app.locked_folder {
                     if theme::icon_button(
                         ui,
                         Icon::ArrowLeft,
@@ -62,11 +65,24 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                         "Back to chats",
                     )
+                    .tab_stop(Stop::Back)
                     .clicked()
                     {
                         app.show_archived = false;
+                        if app.locked_folder {
+                            app.actions.push(Action::CloseLockedFolder);
+                        }
                     }
-                    theme::text(ui, "Archived", theme::bold(20.0), palette.text);
+                    theme::text(
+                        ui,
+                        if app.locked_folder {
+                            "Locked chats"
+                        } else {
+                            "Archived"
+                        },
+                        theme::bold(20.0),
+                        palette.text,
+                    );
                 } else {
                     let me = app.me.clone().unwrap_or_default();
                     let name = app.me_name.clone().unwrap_or_else(|| "You".to_owned());
@@ -75,16 +91,28 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         Some(about) => format!("{name}\n{about}"),
                         None => name.clone(),
                     };
-                    let response =
-                        widgets::avatar(ui, &palette, &name, &me, 34.0, picture.as_deref())
-                            .interact(Sense::click())
-                            .on_hover_text(tooltip)
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let response = widgets::clickable_avatar(
+                        ui,
+                        &palette,
+                        &name,
+                        &me,
+                        34.0,
+                        picture.as_deref(),
+                        "Your profile and settings",
+                    )
+                    .tab_stop(Stop::Profile)
+                    .on_hover_text(tooltip)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
                     if response.clicked() {
                         app.actions.push(Action::Open(Page::Settings));
                     }
                     ui.add_space(2.0);
-                    theme::text(ui, "Chats", theme::bold(20.0), palette.text);
+                    theme::text(
+                        ui,
+                        crate::i18n::gettext(app.locale, "Chats"),
+                        theme::bold(20.0),
+                        palette.text,
+                    );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -95,6 +123,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                         "Settings (Ctrl+,)",
                     )
+                    .tab_stop(Stop::Settings)
                     .clicked()
                     {
                         app.actions.push(Action::Open(Page::Settings));
@@ -105,12 +134,13 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "New contact",
+                        "New chat",
                     )
+                    .tab_stop(Stop::NewChat)
                     .clicked()
                     {
                         app.actions
-                            .push(Action::ShowDialog(crate::model::Dialog::NewContact));
+                            .push(Action::ShowDialog(crate::model::Dialog::NewChat));
                     }
                     if theme::icon_button(
                         ui,
@@ -120,6 +150,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                         "Hide the chat list (Ctrl+B)",
                     )
+                    .tab_stop(Stop::Sidebar)
                     .clicked()
                     {
                         app.actions.push(Action::ToggleSidebar);
@@ -130,7 +161,15 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             let id = egui::Id::new("chat-search");
             let width = ui.available_width();
             let mut text = app.search.clone();
-            let response = widgets::search_field(ui, &palette, id, &mut text, "Search", width);
+            let response = widgets::search_field(
+                ui,
+                &palette,
+                id,
+                &mut text,
+                crate::i18n::gettext(app.locale, "Search").as_ref(),
+                width,
+            )
+            .tab_stop(Stop::Search);
             if text != app.search {
                 app.actions.push(Action::Search(text));
             }
@@ -138,6 +177,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                 app.focus_search = false;
                 response.request_focus();
             }
+            filter_chips(app, ui);
         });
 }
 
@@ -154,7 +194,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.set_min_height(44.0);
                 ui.add_space((inset - 14.0).max(0.0));
-                if app.show_archived {
+                if app.show_archived || app.locked_folder {
                     if theme::icon_button(
                         ui,
                         Icon::ArrowLeft,
@@ -163,13 +203,31 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                         "Back to chats",
                     )
+                    .tab_stop(Stop::Back)
                     .clicked()
                     {
                         app.show_archived = false;
+                        if app.locked_folder {
+                            app.actions.push(Action::CloseLockedFolder);
+                        }
                     }
-                    theme::text(ui, "Archived", theme::bold(16.0), palette.text);
+                    theme::text(
+                        ui,
+                        if app.locked_folder {
+                            "Locked chats"
+                        } else {
+                            "Archived"
+                        },
+                        theme::bold(16.0),
+                        palette.text,
+                    );
                 } else {
-                    theme::text(ui, "Chats", theme::bold(20.0), palette.text);
+                    theme::text(
+                        ui,
+                        crate::i18n::gettext(app.locale, "Chats"),
+                        theme::bold(20.0),
+                        palette.text,
+                    );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -178,11 +236,12 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "New contact (⌘N)",
+                        "New chat (⌘N)",
                     )
+                    .tab_stop(Stop::NewChat)
                     .clicked()
                     {
-                        app.actions.push(Action::ShowDialog(Dialog::NewContact));
+                        app.actions.push(Action::ShowDialog(Dialog::NewChat));
                     }
                     if theme::icon_button(
                         ui,
@@ -192,6 +251,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                         "Hide the chat list (⌘B)",
                     )
+                    .tab_stop(Stop::Sidebar)
                     .clicked()
                     {
                         app.actions.push(Action::ToggleSidebar);
@@ -205,9 +265,10 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                 &palette,
                 egui::Id::new("chat-search"),
                 &mut text,
-                "Search",
+                crate::i18n::gettext(app.locale, "Search").as_ref(),
                 ui.available_width(),
-            );
+            )
+            .tab_stop(Stop::Search);
             if text != app.search {
                 app.actions.push(Action::Search(text));
             }
@@ -215,43 +276,182 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                 app.focus_search = false;
                 response.request_focus();
             }
+            filter_chips(app, ui);
         });
+}
+
+/// Stable main-list row id used by interaction tests.
+pub fn chat_row_id(chat: &str) -> egui::Id {
+    egui::Id::new(("chat-row", chat))
+}
+
+/// Stable filter-chip id used by interaction tests.
+pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
+    egui::Id::new(("chat-filter", filter as u8))
+}
+
+/// Filter chips under the search field. Search lists every match, so the
+/// chips hide there.
+fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
+    if !app.locked_folder_open() && !app.search.trim().is_empty() {
+        return;
+    }
+    let palette = app.palette;
+    ui.add_space(8.0);
+    egui::ScrollArea::horizontal()
+        .id_salt("chat-filters")
+        .animated(false)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
+                // First, so a chosen label is never scrolled out of sight.
+                labels::menu_chip(app, ui, &palette);
+                for filter in ChatFilter::EVERY {
+                    let count = match filter {
+                        ChatFilter::All => 0,
+                        _ => app.unread_chats(filter),
+                    };
+                    let selected = !app.locked_folder_open()
+                        && !app.show_archived
+                        && app.label_filter.is_none()
+                        && app.chat_filter == filter;
+                    let chip = widgets::filter_chip(
+                        ui,
+                        &palette,
+                        filter.label(app.locale).as_ref(),
+                        count,
+                        selected,
+                    )
+                    .tab_stop(match filter {
+                        ChatFilter::All => Stop::All,
+                        ChatFilter::Unread => Stop::Unread,
+                        ChatFilter::Private => Stop::Private,
+                        ChatFilter::Groups => Stop::Groups,
+                        ChatFilter::Channels => Stop::Channels,
+                    });
+                    // Store the chip rect for interaction tests.
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(filter_chip_id(filter), chip.rect));
+                    let chip = if filter == ChatFilter::Channels {
+                        let now = crate::util::now();
+                        let all_muted = app
+                            .chats
+                            .iter()
+                            .filter(|chat| chat.is_channel())
+                            .all(|chat| chat.muted(now));
+                        chip.context_menu(|ui| {
+                            let (icon, label) = if all_muted {
+                                (Icon::Bell, "Unmute all channels")
+                            } else {
+                                (Icon::BellOff, "Mute all channels")
+                            };
+                            if widgets::menu_item(ui, &palette, Some(icon), label) {
+                                app.actions.push(Action::MuteAllChannels(!all_muted));
+                                ui.close();
+                            }
+                        });
+                        chip
+                    } else {
+                        chip
+                    };
+                    if chip.clicked() {
+                        // A second click on the active chip returns to every chat.
+                        let next = if selected { ChatFilter::All } else { filter };
+                        app.actions.push(Action::SetChatFilter(next));
+                    }
+                }
+                if app.archived_count() > 0 || app.show_archived {
+                    let selected = app.show_archived;
+                    let chip = widgets::filter_chip(
+                        ui,
+                        &palette,
+                        crate::i18n::gettext(app.locale, "Archived").as_ref(),
+                        app.archived_unread(),
+                        selected,
+                    )
+                    .tab_stop(Stop::Archived);
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new("archived-chip"), chip.rect);
+                    });
+                    if chip.clicked() {
+                        app.actions.push(Action::ShowArchived(!selected));
+                    }
+                }
+                if app.locked_count() > 0 || app.locked_folder_open() {
+                    let selected = app.locked_folder_open();
+                    let chip = widgets::filter_chip(
+                        ui,
+                        &palette,
+                        crate::i18n::gettext(app.locale, "Locked").as_ref(),
+                        0,
+                        selected,
+                    )
+                    .tab_stop(Stop::Locked)
+                    .on_hover_text("Open locked chats with your local code");
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::new("locked-chip"), chip.rect));
+                    if chip.clicked() {
+                        app.actions.push(Action::OpenLockedFolder);
+                    }
+                } else {
+                    ui.ctx()
+                        .data_mut(|data| data.remove::<egui::Rect>(egui::Id::new("locked-chip")));
+                }
+                ui.add_space(4.0);
+            })
+        });
+    labels::chip_row(app, ui, &palette);
 }
 
 fn list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    if app.locked_folder_open() {
+        locked_list(app, ui);
+        return;
+    }
+    if app.secret_code_matched() {
+        // Typing the secret code hides every other result: the folder entry
+        // is all the search reveals until it is clicked.
+        locked_entry(app, ui);
+        return;
+    }
     if !app.search.trim().is_empty() {
         results(app, ui);
         return;
     }
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
-    let archived = app.archived_count();
-    let show_archive_row = !app.show_archived && archived > 0;
-    if chats.is_empty() && !show_archive_row {
+    if chats.is_empty() {
         let (title, body) = if app.show_archived {
             ("Nothing archived", "Archived chats appear here.")
+        } else if app.chat_filter != ChatFilter::All {
+            let title = match app.chat_filter {
+                ChatFilter::Unread => "No unread chats",
+                ChatFilter::Private => "No private chats",
+                ChatFilter::Channels => "No channels",
+                _ => "No groups",
+            };
+            (title, "Choose All to see every chat.")
         } else if app.syncing {
             ("Loading your chats", "Receiving history from your phone.")
         } else {
             (
                 "No chats yet",
-                "New chats appear here. You can start one from your phone.",
+                "Use New chat to message a contact or yourself.",
             )
         };
         widgets::empty_state(ui, &palette, Icon::MessageCircle, title, body);
         return;
     }
     let row_height = theme::ROW_HEIGHT;
-    let total = chats.len() + usize::from(show_archive_row);
+    let total = chats.len();
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-list")
         .auto_shrink([false, false]);
-    let target_row = app.scroll_chat_into_view.as_ref().and_then(|target| {
-        chats
-            .iter()
-            .position(|chat| chat.id == *target)
-            .map(|index| index + usize::from(show_archive_row))
-    });
+    let target_row = app
+        .scroll_chat_into_view
+        .as_ref()
+        .and_then(|target| chats.iter().position(|chat| chat.id == *target));
     if let Some(target_row) = target_row {
         let id = ui.make_persistent_id(egui::IdSalt::new("chat-list"));
         let current = egui::scroll_area::State::load(ui.ctx(), id)
@@ -270,15 +470,93 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     }
     scroll_area.show_rows(ui, row_height, total, |ui, range| {
         for index in range {
-            if show_archive_row && index == 0 {
-                archive_row(app, ui, archived);
-                continue;
-            }
-            let chat = &chats[index - usize::from(show_archive_row)];
+            let chat = &chats[index];
             // Key by chat so an open menu survives list reordering.
-            ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+            let response = ui
+                .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
+                .inner;
+            // Store the row rect for interaction tests.
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(chat_row_id(&chat.id), response.rect));
+            #[cfg(test)]
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(chat_row_id(&chat.id).with("widget"), response.id);
+            });
+            if response.clicked() && !app.show_archived {
+                app.actions.push(Action::KeepUnread(chat.id.clone()));
+            }
         }
     });
+}
+
+/// The row the secret code reveals: the only thing the search then shows.
+fn locked_entry(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let count = app.locked_count();
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), theme::ROW_HEIGHT),
+        Sense::click(),
+    );
+    if ui.is_rect_visible(rect) {
+        if response.hovered() {
+            ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
+        }
+        let icon_rect =
+            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(22.0));
+        Icon::LockOpen
+            .image(palette.accent, 22.0)
+            .paint_at(ui, icon_rect);
+        ui.painter().text(
+            pos2(rect.left() + 76.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Locked chats",
+            theme::medium(14.5),
+            palette.text,
+        );
+        ui.painter().text(
+            pos2(rect.right() - 16.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            count.to_string(),
+            theme::regular(12.5),
+            palette.accent,
+        );
+        ui.painter().hline(
+            (rect.left() + 76.0)..=rect.right(),
+            rect.bottom() - 0.5,
+            egui::Stroke::new(1.0, palette.outline),
+        );
+    }
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        app.actions.push(Action::OpenLockedFolder);
+    }
+}
+
+/// The authenticated folder, including archived chats and local title search.
+fn locked_list(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let chats = app.visible_chats();
+    if chats.is_empty() {
+        widgets::empty_state(
+            ui,
+            &palette,
+            Icon::LockOpen,
+            "No locked chats",
+            "Lock a chat from its context menu to hide it here.",
+        );
+        return;
+    }
+    let chats: Vec<Chat> = chats.into_iter().cloned().collect();
+    egui::ScrollArea::vertical()
+        .id_salt("locked-chats")
+        .auto_shrink([false, false])
+        .show_rows(ui, theme::ROW_HEIGHT, chats.len(), |ui, range| {
+            for chat in &chats[range] {
+                ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+            }
+        });
 }
 
 /// Returns the smallest offset that fully reveals a fixed-height row.
@@ -374,6 +652,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
     );
+    theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
@@ -392,7 +671,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;
         let stamp_galley = ui.painter().layout_no_wrap(
-            crate::util::chat_stamp(hit.timestamp),
+            crate::util::chat_stamp(app.locale, hit.timestamp),
             theme::regular(11.5),
             palette.dim,
         );
@@ -458,16 +737,14 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
 }
 
 /// A contact without a chat. Clicking starts one.
-fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
+pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
     let palette = app.palette;
-    let name = contact
-        .display_name()
-        .map(str::to_owned)
-        .unwrap_or_else(|| app.display_name_or(&contact.id, None));
+    let name = app.display_name(&contact.id);
     let (rect, response) = ui.allocate_exact_size(
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
     );
+    theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
@@ -496,7 +773,7 @@ fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
         if let Some(phone) = crate::model::phone_of(&contact.id) {
             let phone_line = widgets::line(
                 ui,
-                &format!("+{phone}"),
+                &crate::util::phone(phone),
                 theme::regular(13.0),
                 palette.dim,
                 rect.right() - 14.0 - left,
@@ -519,49 +796,6 @@ fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
     }
 }
 
-fn archive_row(app: &mut App, ui: &mut egui::Ui, count: usize) {
-    let palette = app.palette;
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), theme::ROW_HEIGHT),
-        Sense::click(),
-    );
-    if ui.is_rect_visible(rect) {
-        if response.hovered() {
-            ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-        }
-        let icon_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(22.0));
-        Icon::Archive
-            .image(palette.accent, 22.0)
-            .paint_at(ui, icon_rect);
-        ui.painter().text(
-            pos2(rect.left() + 76.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            "Archived",
-            theme::medium(14.5),
-            palette.text,
-        );
-        ui.painter().text(
-            pos2(rect.right() - 16.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            count.to_string(),
-            theme::regular(12.5),
-            palette.accent,
-        );
-        ui.painter().hline(
-            (rect.left() + 76.0)..=rect.right(),
-            rect.bottom() - 0.5,
-            egui::Stroke::new(1.0, palette.outline),
-        );
-    }
-    if response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        app.show_archived = true;
-    }
-}
-
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -572,6 +806,15 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
     );
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            format!("{title}, {} unread messages", chat.unread),
+        )
+    });
     if ui.is_rect_visible(rect) {
         if selected {
             ui.painter().rect_filled(rect, 0.0, palette.surface_active);
@@ -596,7 +839,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;
         let stamp = if chat.last_activity > 0 {
-            crate::util::chat_stamp(chat.last_activity)
+            crate::util::chat_stamp(app.locale, chat.last_activity)
         } else {
             String::new()
         };
@@ -716,13 +959,268 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         app.actions.push(Action::OpenChat(chat.id.clone()));
     }
     let menu_palette = palette;
-    egui::Popup::context_menu(&response)
-        .frame(widgets::menu_frame(&menu_palette))
-        .show(|ui| {
-            ui.set_min_width(190.0);
-            context_menu(app, ui, chat, &menu_palette);
-        });
+    let menu_width = widgets::menu_width(
+        ui,
+        &[
+            "Mark as read",
+            "Pin to top",
+            "Unarchive",
+            "Mute for 8 hours",
+            "Mute for a week",
+            "Mute indefinitely",
+            "Unlock chat",
+            "Copy number",
+        ],
+        true,
+    )
+    .max(190.0);
+    let popup = egui::Popup::context_menu(&response)
+        .width(menu_width)
+        .frame(widgets::menu_frame(&menu_palette));
+    #[cfg(any(test, feature = "demo"))]
+    let popup = if app.open_chat_menu.as_deref() == Some(chat.id.as_str()) {
+        popup
+            .open_memory(Some(egui::SetOpenCommand::Bool(true)))
+            .at_position(response.rect.left_top() + vec2(12.0, 8.0))
+    } else {
+        popup
+    };
+    popup.show(|ui| context_menu(app, ui, chat, &menu_palette));
     response
+}
+
+/// Width of the chat list when it is collapsed to avatars.
+const COMPACT_WIDTH: f32 = 60.0;
+/// Height of one avatar cell in the collapsed list.
+const COMPACT_CELL: f32 = 52.0;
+/// Avatar size inside a collapsed cell.
+const COMPACT_AVATAR: f32 = 36.0;
+/// Height of the rail's top row, level with the conversation header.
+const COMPACT_HEADER: f32 = 60.0;
+
+/// Where one avatar in the collapsed chat list was drawn.
+pub fn compact_chat_id(chat: &str) -> egui::Id {
+    egui::Id::new(("chat-rail", chat))
+}
+
+/// Width of the collapsed list. On macOS it also clears the traffic lights,
+/// which sit over its top row as they sit over the full list's header.
+pub fn compact_width(ctx: &egui::Context) -> f32 {
+    COMPACT_WIDTH.max(theme::traffic_light_inset(ctx))
+}
+
+/// The chat list collapsed to avatars: the list is out of the way, but every
+/// chat is still one click away.
+pub fn compact_show(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    // Its own panel id: sharing the full list's would hand that resizable
+    // panel this narrow width, and it would save it as the list's width.
+    let panel = egui::Panel::left("chat-rail")
+        .resizable(false)
+        .exact_size(compact_width(ui.ctx()))
+        .show_separator_line(false)
+        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
+    let response = panel.show(ui, |ui| {
+        let inset = theme::traffic_light_inset(ui.ctx());
+        if inset > 0.0 {
+            // The traffic lights take the top row; the button goes below.
+            let (strip, _) =
+                ui.allocate_exact_size(vec2(ui.available_width(), COMPACT_HEADER), Sense::hover());
+            super::titlebar_drag(ui, strip);
+        }
+        ui.allocate_ui_with_layout(
+            vec2(
+                ui.available_width(),
+                if inset > 0.0 { 44.0 } else { COMPACT_HEADER },
+            ),
+            Layout::centered_and_justified(egui::Direction::TopDown),
+            |ui| {
+                if theme::icon_button(
+                    ui,
+                    Icon::PanelLeft,
+                    18.0,
+                    palette.secondary,
+                    palette.text,
+                    &super::keys::label("Show the chat list (Ctrl+B)"),
+                )
+                .tab_stop(Stop::Sidebar)
+                .clicked()
+                {
+                    app.actions.push(Action::ToggleSidebar);
+                }
+            },
+        );
+        compact_list(app, ui);
+    });
+    // Separate the rail from the conversation, exactly as the full list does.
+    let rect = response.response.rect;
+    ui.painter().vline(
+        rect.right(),
+        rect.y_range(),
+        egui::Stroke::new(1.0, palette.outline),
+    );
+}
+
+/// The avatars: the chats the full list would show right now, under the same
+/// filter, search, archive, and locked-folder state.
+fn compact_list(app: &mut App, ui: &mut egui::Ui) {
+    if !app.locked_folder_open() && app.secret_code_matched() {
+        // As in the full list, the secret code reveals only the way in.
+        compact_locked_entry(app, ui);
+        return;
+    }
+    let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
+    let mut scroll_area = egui::ScrollArea::vertical()
+        .id_salt("chat-rail")
+        .auto_shrink([false, false]);
+    // Alt+Up/Down reveals the chat it opens here too.
+    let target_row = app
+        .scroll_chat_into_view
+        .as_ref()
+        .and_then(|target| chats.iter().position(|chat| chat.id == *target));
+    if let Some(target_row) = target_row {
+        let id = ui.make_persistent_id(egui::IdSalt::new("chat-rail"));
+        let current = egui::scroll_area::State::load(ui.ctx(), id)
+            .unwrap_or_default()
+            .offset
+            .y;
+        let offset = row_scroll_offset(
+            current,
+            ui.available_height(),
+            target_row,
+            COMPACT_CELL,
+            ui.spacing().item_spacing.y,
+        );
+        scroll_area = scroll_area.vertical_scroll_offset(offset);
+        app.scroll_chat_into_view = None;
+    }
+    // Only the avatars on screen are laid out, however many chats there are.
+    scroll_area.show_rows(ui, COMPACT_CELL, chats.len(), |ui, range| {
+        for chat in &chats[range] {
+            let response = ui
+                .push_id(("chat", &chat.id), |ui| compact_row(app, ui, chat))
+                .inner;
+            if response.clicked() && !app.locked_folder_open() && !app.show_archived {
+                app.actions.push(Action::KeepUnread(chat.id.clone()));
+            }
+        }
+    });
+}
+
+/// The collapsed form of the entry the secret code reveals.
+fn compact_locked_entry(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), COMPACT_CELL), Sense::click());
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Locked chats")
+    });
+    if ui.is_rect_visible(rect) {
+        if response.hovered() {
+            ui.painter().rect_filled(
+                Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_CELL - 4.0)),
+                egui::CornerRadius::same(theme::RADIUS),
+                palette.surface_hover,
+            );
+        }
+        Icon::LockOpen
+            .image(palette.accent, 22.0)
+            .paint_at(ui, Rect::from_center_size(rect.center(), Vec2::splat(22.0)));
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(compact_locked_id(), response.rect));
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Locked chats")
+        .clicked()
+    {
+        app.actions.push(Action::OpenLockedFolder);
+    }
+}
+
+/// Where the collapsed locked-chats entry was drawn.
+fn compact_locked_id() -> egui::Id {
+    egui::Id::new("chat-rail-locked")
+}
+
+/// One avatar in the collapsed chat list: a click opens the chat, hovering
+/// names it, and unread chats carry the same badge as a full row.
+fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
+    let palette = app.palette;
+    let title = app.chat_title(chat);
+    let selected = app.open_chat.as_deref() == Some(chat.id.as_str());
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), COMPACT_CELL), Sense::click());
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            format!("{title}, {} unread messages", chat.unread),
+        )
+    });
+    if ui.is_rect_visible(rect) {
+        if response.hovered() {
+            ui.painter().rect_filled(
+                Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_CELL - 4.0)),
+                egui::CornerRadius::same(theme::RADIUS),
+                palette.surface_hover,
+            );
+        }
+        let avatar_rect = Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_AVATAR));
+        let picture = app.avatar(&chat.id);
+        widgets::paint_avatar(
+            ui,
+            &palette,
+            avatar_rect,
+            &title,
+            &chat.id,
+            picture.as_deref(),
+        );
+        if chat.ephemeral_expiration.is_some() {
+            widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
+        }
+        if selected {
+            // A short accent bar stands in for the selected row's background.
+            ui.painter().rect_filled(
+                Rect::from_min_size(
+                    pos2(rect.left() + 1.0, rect.center().y - 11.0),
+                    vec2(3.0, 22.0),
+                ),
+                1.5,
+                palette.accent,
+            );
+        }
+        if chat.unread > 0 {
+            // Top right, clear of the disappearing-messages timer in the
+            // bottom right corner. A muted chat's badge is dimmed, as in the
+            // full row.
+            widgets::badge(
+                ui,
+                &palette,
+                compact_badge_center(avatar_rect),
+                chat.unread,
+                chat.muted(crate::util::now()),
+            );
+        }
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(compact_chat_id(&chat.id), response.rect));
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(title);
+    if response.clicked() {
+        app.actions.push(Action::OpenChat(chat.id.clone()));
+    }
+    response
+}
+
+/// Centre of the unread badge on a collapsed avatar. A "99+" badge, the
+/// widest, still ends inside the rail.
+fn compact_badge_center(avatar: Rect) -> egui::Pos2 {
+    pos2(avatar.right() - 6.0, avatar.top() + 2.0)
 }
 
 fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette) {
@@ -767,6 +1265,28 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
             }
         }
     }
+    sound_menu(app, ui, palette, chat);
+    labels::chat_menu(app, ui, chat, palette);
+    if widgets::menu_item(
+        ui,
+        palette,
+        Some(if chat.locked {
+            Icon::LockOpen
+        } else {
+            Icon::Lock
+        }),
+        if chat.locked {
+            "Unlock chat"
+        } else {
+            "Lock chat"
+        },
+    ) {
+        app.actions.push(if chat.locked {
+            Action::SetLocked(chat.id.clone(), false)
+        } else {
+            Action::ShowDialog(Dialog::ConfirmLockChat(chat.id.clone()))
+        });
+    }
     widgets::menu_separator(ui, palette);
     if let Some(phone) = chat.phone()
         && widgets::menu_item(ui, palette, Some(Icon::Copy), "Copy number")
@@ -777,6 +1297,49 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         app.actions
             .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
     }
+    // Deleting reaches the phone, so it waits for a connection.
+    let connected = matches!(app.link, LinkStatus::Connected);
+    if widgets::menu_item_enabled(ui, palette, Some(Icon::Trash), "Delete chat", connected) {
+        app.actions
+            .push(Action::ShowDialog(Dialog::ConfirmDeleteChat(
+                chat.id.clone(),
+            )));
+    }
+}
+
+/// A chat's own notification sound, overriding Settings for this chat.
+fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) {
+    use crate::settings::NotificationSound;
+    ui.menu_button("Notification sound", |ui| {
+        let current = chat.notification_sound.clone();
+        for (sound, label) in [
+            (None, "Default"),
+            (Some(NotificationSound::Chime), "Chime"),
+            (Some(NotificationSound::Ripple), "Ripple"),
+            (Some(NotificationSound::System), "System sound"),
+            (Some(NotificationSound::None), "No sound"),
+        ] {
+            let checked = current == sound;
+            if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label) {
+                app.actions.push(Action::SetChatSound {
+                    chat: chat.id.clone(),
+                    sound,
+                });
+                ui.close();
+            }
+        }
+        if let Some(NotificationSound::Custom(path)) = &current {
+            let name = path.file_name().map_or_else(
+                || "Custom".to_owned(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            widgets::menu_item(ui, palette, Some(Icon::Check), &name);
+        }
+        if widgets::menu_item(ui, palette, None, "Choose a file…") {
+            app.actions.push(Action::PickChatSound(chat.id.clone()));
+            ui.close();
+        }
+    });
 }
 
 #[cfg(test)]
@@ -784,6 +1347,58 @@ mod tests {
     use super::*;
     use crate::paths::AppDirs;
     use crate::settings::Settings;
+
+    #[test]
+    fn chat_context_menu_stays_compact_in_wide_windows() {
+        for width in [360.0, 1180.0, 2000.0] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _events) =
+                App::headless(AppDirs::under(directory.path()), Settings::default());
+            let chat = Chat::new("fixture@g.us".into(), "Fixture group".into());
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            let mut frame = |events| {
+                let mut response = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(width, 800.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| response = Some(row(&mut app, ui, &chat)),
+                );
+                output.textures_delta.clear();
+                response.unwrap()
+            };
+            let response = frame(vec![]);
+            let position = response.rect.left_center() + vec2(20.0, 0.0);
+            for pressed in [true, false] {
+                frame(vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            for _ in 0..3 {
+                frame(vec![]);
+            }
+            let popup = response.id.with("popup");
+            assert!(egui::Popup::is_id_open(&ctx, popup));
+            let rect = ctx.read_response(popup).expect("chat context menu").rect;
+            assert!(
+                (190.0..=240.0).contains(&rect.width()),
+                "a {width}-point window produced a {}-point menu",
+                rect.width()
+            );
+        }
+    }
 
     #[test]
     fn alt_navigation_scrolls_the_destination_chat_into_view() {
@@ -838,5 +1453,225 @@ mod tests {
         );
         assert!(app.scroll_chat_into_view.is_none(), "reveal was consumed");
         assert!(offset > 0.0, "the list moved down to reveal the last row");
+    }
+
+    #[test]
+    fn the_collapsed_list_is_narrow_and_opens_a_chat_on_click() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let mut first = Chat::new("491700000001@s.whatsapp.net".into(), "Alice".into());
+        first.unread = 3;
+        first.last_activity = 20;
+        let second = Chat::new("491700000002@s.whatsapp.net".into(), "Bob".into());
+        app.chats.push(first.clone());
+        app.chats.push(second.clone());
+        app.open_chat = Some(second.id.clone());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 400.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| compact_show(&mut app, ui),
+            );
+            output.textures_delta.clear();
+        };
+        frame(vec![]);
+        let rect = ctx
+            .data(|data| data.get_temp::<Rect>(compact_chat_id(&first.id)))
+            .expect("the rail draws every visible chat");
+        assert!(
+            ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(&second.id)))
+                .is_some(),
+            "the rail draws the second chat too"
+        );
+        assert!(
+            (rect.width() - compact_width(&ctx)).abs() < 1.0,
+            "an avatar cell is one panel wide, not {} points",
+            rect.width()
+        );
+        let position = rect.center();
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        assert!(
+            app.actions.contains(&Action::OpenChat(first.id.clone())),
+            "clicking an avatar opens that chat: {:?}",
+            app.actions
+        );
+    }
+
+    /// An app with `count` chats, newest first, and a context to draw it in.
+    fn rail_app(count: usize) -> (tempfile::TempDir, App, Vec<String>, egui::Context) {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let mut ids = Vec::new();
+        for index in 0..count {
+            let id = format!("49170000{index:04}@s.whatsapp.net");
+            let mut chat = Chat::new(id.clone(), format!("Chat {index:03}"));
+            chat.last_activity = 10_000 - index as i64;
+            app.chats.push(chat);
+            ids.push(id);
+        }
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        (directory, app, ids, ctx)
+    }
+
+    fn rail_frame(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(900.0, 400.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::super::keys::handle(app, ui.ctx());
+                compact_show(app, ui);
+            },
+        );
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn the_collapsed_list_lays_out_only_the_avatars_on_screen() {
+        let (_directory, mut app, ids, ctx) = rail_app(2_000);
+        rail_frame(&mut app, &ctx, vec![]);
+        let drawn = ids
+            .iter()
+            .filter(|id| ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(id)).is_some()))
+            .count();
+        assert!(drawn > 0, "the first avatars are drawn");
+        assert!(
+            drawn < 20,
+            "a 400-point window has room for a few avatars, yet {drawn} were laid out"
+        );
+    }
+
+    #[test]
+    fn alt_navigation_scrolls_the_collapsed_list_too() {
+        let (_directory, mut app, ids, ctx) = rail_app(40);
+        app.open_chat = Some(ids[0].clone());
+        rail_frame(&mut app, &ctx, vec![]);
+        assert!(
+            ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(&ids[39])))
+                .is_none(),
+            "the last avatar starts off screen"
+        );
+        let alt_up = egui::Event::Key {
+            key: egui::Key::ArrowUp,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::ALT,
+        };
+        rail_frame(&mut app, &ctx, vec![alt_up]);
+        assert!(app.actions.contains(&Action::OpenChat(ids[39].clone())));
+        assert!(app.scroll_chat_into_view.is_none(), "reveal was consumed");
+        rail_frame(&mut app, &ctx, vec![]);
+        let rect = ctx
+            .data(|data| data.get_temp::<Rect>(compact_chat_id(&ids[39])))
+            .expect("the destination avatar is laid out");
+        assert!(
+            rect.bottom() <= 400.0 + 0.5,
+            "the destination avatar is on screen: {rect:?}"
+        );
+    }
+
+    #[test]
+    fn the_secret_code_shows_only_the_way_into_the_locked_folder() {
+        let (_directory, mut app, ids, ctx) = rail_app(3);
+        app.chats[0].locked = true;
+        // A code that also matches an ordinary chat's number.
+        app.settings.set_chat_lock_code(Some("0001"));
+        app.search = "0001".into();
+        rail_frame(&mut app, &ctx, vec![]);
+        for id in &ids {
+            assert!(
+                ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(id)))
+                    .is_none(),
+                "no chat shows while the code is typed"
+            );
+        }
+        let entry = ctx
+            .data(|data| data.get_temp::<Rect>(compact_locked_id()))
+            .expect("the locked entry is drawn");
+        let position = entry.center();
+        for pressed in [true, false] {
+            rail_frame(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert!(app.actions.contains(&Action::OpenLockedFolder));
+    }
+
+    #[test]
+    fn collapsing_and_expanding_keeps_the_saved_list_width() {
+        let (_directory, mut app, _ids, ctx) = rail_app(3);
+        app.settings.sidebar_width = 400.0;
+        let frame = |app: &mut App, collapsed: bool| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    if collapsed {
+                        compact_show(app, ui);
+                    } else {
+                        show(app, ui);
+                    }
+                },
+            );
+            output.textures_delta.clear();
+        };
+        frame(&mut app, false);
+        frame(&mut app, true);
+        frame(&mut app, false);
+        assert!(
+            (app.settings.sidebar_width - 400.0).abs() < 1.0,
+            "the full list came back {} points wide",
+            app.settings.sidebar_width
+        );
+        assert!(!app.actions.contains(&Action::SettingsChanged));
+    }
+
+    #[test]
+    fn the_widest_badge_stays_inside_the_collapsed_list() {
+        let (_directory, _app, _ids, ctx) = rail_app(0);
+        let rail = Rect::from_min_size(egui::Pos2::ZERO, vec2(COMPACT_WIDTH, COMPACT_CELL));
+        let avatar = Rect::from_center_size(rail.center(), Vec2::splat(COMPACT_AVATAR));
+        let mut width = 0.0;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let palette = Palette::dark();
+            width = widgets::badge(ui, &palette, compact_badge_center(avatar), 120, true);
+        });
+        output.textures_delta.clear();
+        let center = compact_badge_center(avatar);
+        assert!(center.x + width / 2.0 <= rail.right(), "{width} too wide");
+        assert!(center.y - 10.0 >= rail.top(), "the badge fits its cell");
     }
 }

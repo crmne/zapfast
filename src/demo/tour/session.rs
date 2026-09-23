@@ -90,12 +90,27 @@ pub fn respond(app: &mut App) {
                     .collect();
                 append(app, row);
             }
-            Command::SendVoice {
+            Command::SendSticker {
                 chat,
-                samples,
+                path,
                 quoting,
             } => {
-                let quoted = quoting.and_then(|id| {
+                let mut media = super::super::media(
+                    "image/webp",
+                    path.metadata().map_or(0, |meta| meta.len()),
+                    Some(192),
+                    Some(192),
+                );
+                media.path = Some(path);
+                let mut row = outgoing(
+                    app,
+                    &chat,
+                    Content::Sticker {
+                        media,
+                        animated: false,
+                    },
+                );
+                row.quoted = quoting.and_then(|id| {
                     app.conversations
                         .get(&chat)?
                         .message(&id)
@@ -107,42 +122,6 @@ pub fn respond(app: &mut App) {
                             mentions: row.mentions.clone(),
                         })
                 });
-                let mut row = outgoing(
-                    app,
-                    &chat,
-                    Content::Audio {
-                        media: super::super::media(
-                            "audio/ogg; codecs=opus",
-                            (samples.len() * 2) as u64,
-                            None,
-                            None,
-                        ),
-                        seconds: Some(
-                            (samples.len() as f32 / crate::voice::RATE as f32).ceil() as u32
-                        ),
-                        voice_note: true,
-                        waveform: crate::voice::waveform(&samples),
-                    },
-                );
-                row.quoted = quoted;
-                append(app, row);
-            }
-            Command::SendSticker { chat, path } => {
-                let mut media = super::super::media(
-                    "image/webp",
-                    path.metadata().map_or(0, |meta| meta.len()),
-                    Some(192),
-                    Some(192),
-                );
-                media.path = Some(path);
-                let row = outgoing(
-                    app,
-                    &chat,
-                    Content::Sticker {
-                        media,
-                        animated: false,
-                    },
-                );
                 append(app, row);
             }
             Command::SearchGifs { .. } => {

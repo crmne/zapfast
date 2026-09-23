@@ -38,6 +38,7 @@ pub struct Text {
     pub links: Vec<(Range<usize>, String)>,
     /// Whether the message is emoji-only and should use a larger size.
     pub big: bool,
+    accessible_text: String,
 }
 
 impl Text {
@@ -117,7 +118,7 @@ pub fn layout(
             ..Default::default()
         };
         let before = characters;
-        let after = before + emoji::append(&mut job, &mut placements, &span.text, &format);
+        let after = before + emoji::append(ui, &mut job, &mut placements, &span.text, &format);
         if let Some(url) = span.link {
             links.push((before..after, url));
         }
@@ -136,6 +137,7 @@ pub fn layout(
         placements,
         links,
         big,
+        accessible_text: plain(text, mentions),
     }
 }
 
@@ -155,6 +157,13 @@ pub fn paint_selectable(
     fallback: Color32,
     visible: bool,
 ) {
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Label,
+            ui.is_enabled(),
+            &text.accessible_text,
+        )
+    });
     // egui treats non-overlapping text bounds as separate columns. Incoming
     // and outgoing bubbles are one transcript even when both contain short
     // text. Give selection a shared column while keeping every glyph in its

@@ -3,8 +3,12 @@
 pub mod chats;
 pub mod conversation;
 pub mod dialogs;
+pub(crate) mod focus;
+pub mod image_preview;
 pub mod keys;
+pub mod labels;
 pub mod login;
+pub mod message_info;
 pub mod picker;
 pub mod polls;
 pub mod settings;
@@ -15,40 +19,172 @@ use egui::{Align2, CornerRadius, Frame, Margin, Stroke, vec2};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
-use crate::model::{Action, Page, ToastKind};
+use crate::model::{Action, Page, SidebarDisplayMode, ToastKind};
 use crate::theme::{self, Icon};
+use focus::{Stop, TabStop};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
+    track_keyboard_focus(ctx);
     keys::handle(app, ctx);
+    let main_navigation = app.is_linked()
+        && app.page == Page::Chats
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && app.recording.is_none()
+        && app.image_preview.is_none()
+        && app.emoji_start.is_none()
+        && app.mention_start.is_none()
+        && !egui::Popup::is_any_open(ctx);
+    focus::begin(ctx, main_navigation);
+    // The open chat's composer records its rect again below, if there is one.
+    ctx.data_mut(|data| data.remove::<egui::Rect>(composer_rect_id()));
     titlebar_strip(app, ui);
     if !app.is_linked() {
         login::show(app, ui);
         dialogs::show(app, ctx);
         update::show(app, ctx);
         toasts(app, ctx);
+        focus_ring(app, ctx);
         return;
     }
     let macos = theme::macos_chrome(ctx);
     if !macos {
         banner(app, ui);
     }
-    if app.sidebar_visible {
-        chats::show(app, ui);
+    match app.sidebar_mode() {
+        SidebarDisplayMode::Expanded => chats::show(app, ui),
+        SidebarDisplayMode::CollapsedIconsOnly => chats::compact_show(app, ui),
+        SidebarDisplayMode::Hidden => {}
     }
-    let palette = app.palette;
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(palette.chat))
+        .frame(central_frame(app))
         .show(ui, |ui| match app.page {
             Page::Settings => settings::show(app, ui),
             Page::Chats => conversation::show(app, ui),
+            Page::Wallpaper => settings::wallpaper_show(app, ui),
         });
+    focus::finish(ctx, main_navigation);
     update::show(app, ctx);
     picker::show(app, ctx);
     dialogs::show(app, ctx);
+    image_preview::show(app, ctx);
     drop_target(app, ctx);
     toasts(app, ctx);
+    focus_ring(app, ctx);
+}
+
+fn central_background(app: &App) -> egui::Color32 {
+    if app.page == Page::Chats {
+        app.settings.wallpaper_color_for(app.palette.dark).color32()
+    } else {
+        app.palette.panel
+    }
+}
+
+fn central_frame(app: &App) -> Frame {
+    let stroke = if app.page == Page::Wallpaper {
+        let color = if app.palette.dark {
+            egui::Color32::from_rgba_unmultiplied(233, 237, 239, 32)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(10, 10, 10, 32)
+        };
+        Stroke::new(1.0, color)
+    } else {
+        Stroke::NONE
+    };
+
+    Frame::new().fill(central_background(app)).stroke(stroke)
+}
+
+/// Where the focus ring was drawn this frame, used by interaction tests.
+pub fn focus_ring_id() -> egui::Id {
+    egui::Id::new("focus-ring")
+}
+
+/// Tab shows where focus is; a pointer press hides it again. Widgets scroll
+/// themselves into view through `theme::reveal_focus`.
+fn track_keyboard_focus(ctx: &egui::Context) {
+    let (tab, pressed) = ctx.input(|input| {
+        let tab = input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key {
+                    key: egui::Key::Tab,
+                    pressed: true,
+                    ..
+                }
+            )
+        });
+        (tab, input.pointer.any_pressed())
+    });
+    let mut keyboard = ctx.data(|data| {
+        data.get_temp::<bool>(theme::keyboard_focus_id())
+            .unwrap_or(false)
+    });
+    if tab {
+        keyboard = true;
+    } else if pressed {
+        keyboard = false;
+    }
+    ctx.data_mut(|data| data.insert_temp(theme::keyboard_focus_id(), keyboard));
+    ctx.data_mut(|data| data.remove::<egui::Rect>(focus_ring_id()));
+}
+
+/// Outlines the focused widget after keyboard navigation. Custom widgets
+/// paint themselves; a shared fallback covers them while shaped controls and
+/// frameless editors register their visible bounds.
+fn focus_ring(app: &App, ctx: &egui::Context) {
+    let keyboard = ctx.data(|data| {
+        data.get_temp::<bool>(theme::keyboard_focus_id())
+            .unwrap_or(false)
+    });
+    let Some(response) = ctx
+        .memory(|memory| memory.focused())
+        .and_then(|id| ctx.read_response(id))
+    else {
+        return;
+    };
+    // Keep text fields visibly active even when reached by clicking or
+    // a shortcut. A caret alone is easy to lose in a large conversation.
+    let custom = ctx
+        .data(|data| data.get_temp::<theme::FocusOutline>(response.id.with("focus-outline")))
+        .filter(|outline| outline.frame == ctx.cumulative_frame_nr());
+    if !keyboard && !ctx.text_edit_focused() {
+        return;
+    }
+    let rect = custom.map_or(response.rect, |outline| outline.rect);
+    if !rect.is_positive() {
+        return;
+    }
+    let ring = rect;
+    let radius = custom.map_or(f32::from(theme::RADIUS_SMALL), |outline| outline.radius);
+    let clip = custom.map_or(response.interact_rect, |outline| outline.clip);
+    // An inset accent border would disappear on a filled primary button.
+    let color = if custom.is_some_and(|outline| outline.fill == app.palette.accent) {
+        app.palette.on_accent
+    } else {
+        app.palette.accent
+    };
+    // Standard egui editors already paint the theme's one-point focus stroke.
+    // Frameless editors register their enclosing field above. Never double up.
+    if custom.is_some() || !ctx.text_edit_focused() {
+        // Paint in the control's own layer. A global Tooltip layer would put
+        // focus above dialogs, menus, and even toast notifications.
+        ctx.layer_painter(response.layer_id)
+            .with_clip_rect(clip)
+            .rect_stroke(
+                ring,
+                radius,
+                Stroke::new(theme::FOCUS_STROKE_WIDTH, color),
+                egui::StrokeKind::Inside,
+            );
+    }
+    ctx.data_mut(|data| data.insert_temp(focus_ring_id(), ring));
+    ctx.data_mut(|data| data.insert_temp(focus_ring_id().with("layer"), response.layer_id));
 }
 
 /// Shows where dragged files will be sent.
@@ -184,25 +320,56 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
+/// Where the open chat's composer was drawn this frame.
+pub fn composer_rect_id() -> egui::Id {
+    egui::Id::new("composer-rect")
+}
+
+/// Stable id of a toast's close button, used by interaction tests.
+pub fn toast_close_id(index: usize) -> egui::Id {
+    egui::Id::new(("toast-close", index))
+}
+
 fn toasts(app: &mut App, ctx: &egui::Context) {
     if app.toasts.is_empty() {
         return;
     }
     let palette = app.palette;
+    let lifetime = crate::app::INFO_TOAST_LIFETIME.as_secs_f32();
+    // Errors carry buttons, so the area must take clicks while one is shown.
+    let has_error = app
+        .toasts
+        .iter()
+        .any(|toast| toast.kind == ToastKind::Error);
+    let mut actions = Vec::new();
+    // Stay clear of the composer: an error waiting to be dismissed must not
+    // cover the send button.
+    let bottom = ctx
+        .data(|data| data.get_temp::<egui::Rect>(composer_rect_id()))
+        .map_or(20.0, |composer| {
+            ctx.content_rect().bottom() - composer.top() + 12.0
+        });
     egui::Area::new(egui::Id::new("toasts"))
-        .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -20.0))
+        .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -bottom))
         .order(egui::Order::Tooltip)
-        .interactable(false)
+        .interactable(has_error)
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
-            for toast in &app.toasts {
-                let age = toast.created.elapsed().as_secs_f32();
-                let alpha = if age < 0.15 {
-                    age / 0.15
-                } else if age > 2.8 {
-                    ((3.2 - age) / 0.4).clamp(0.0, 1.0)
-                } else {
+            for (index, toast) in app.toasts.iter().enumerate() {
+                let error = toast.kind == ToastKind::Error;
+                // Errors appear at once: fading in needs frames that an idle
+                // window does not draw.
+                let alpha = if error {
                     1.0
+                } else {
+                    let age = toast.created.elapsed().as_secs_f32();
+                    if age < 0.15 {
+                        age / 0.15
+                    } else if age > lifetime - 0.4 {
+                        ((lifetime - age) / 0.4).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    }
                 };
                 ui.set_opacity(alpha);
                 Frame::new()
@@ -223,27 +390,72 @@ fn toasts(app: &mut App, ctx: &egui::Context) {
                             toast.message.clone(),
                             font.clone(),
                             palette.text,
-                            360.0,
+                            (ctx.content_rect().width() - 150.0).clamp(80.0, 360.0),
                         );
-                        ui.set_width(laid.size().x + 26.0);
+                        let buttons = if error { 2.0 * 26.0 + 12.0 } else { 0.0 };
+                        let text = widgets::line(
+                            ui,
+                            &toast.message,
+                            font,
+                            palette.text,
+                            laid.size().x + 1.0,
+                            usize::MAX,
+                        );
+                        ui.set_width(laid.size().x + 26.0 + buttons);
                         ui.horizontal(|ui| {
-                            let (icon, color) = match toast.kind {
-                                ToastKind::Info => (Icon::CircleCheck, palette.accent),
-                                ToastKind::Error => (Icon::CircleAlert, palette.danger),
+                            ui.set_min_height(text.size().y.max(26.0));
+                            let (icon, color) = if error {
+                                (Icon::CircleAlert, palette.danger)
+                            } else {
+                                (Icon::CircleCheck, palette.accent)
                             };
                             theme::icon(ui, icon, 16.0, color);
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(&toast.message)
-                                        .font(font)
-                                        .color(palette.text),
-                                )
-                                .wrap(),
-                            );
+                            // Keep the text clear of the buttons beside it.
+                            let (rect, _) =
+                                ui.allocate_exact_size(text.size(), egui::Sense::hover());
+                            text.paint(ui, rect.min, palette.text);
+                            ui.ctx().data_mut(|data| {
+                                data.insert_temp(toast_close_id(index).with("text"), rect);
+                            });
+                            if error {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let close = theme::icon_button(
+                                            ui,
+                                            Icon::X,
+                                            14.0,
+                                            palette.secondary,
+                                            palette.text,
+                                            "Dismiss",
+                                        );
+                                        // Store the rect for interaction tests.
+                                        ui.ctx().data_mut(|data| {
+                                            data.insert_temp(toast_close_id(index), close.rect)
+                                        });
+                                        if close.clicked() {
+                                            actions.push(Action::DismissToast(index));
+                                        }
+                                        if theme::icon_button(
+                                            ui,
+                                            Icon::Copy,
+                                            14.0,
+                                            palette.secondary,
+                                            palette.text,
+                                            "Copy this message",
+                                        )
+                                        .clicked()
+                                        {
+                                            actions.push(Action::CopyText(toast.message.clone()));
+                                        }
+                                    },
+                                );
+                            }
                         });
                     });
             }
         });
+    app.actions.extend(actions);
 }
 
 /// Draggable space for the macOS traffic-light title bar.
@@ -285,7 +497,7 @@ pub fn titlebar_drag(ui: &mut egui::Ui, rect: egui::Rect) {
 
 /// Header for pages without a conversation toolbar and with the sidebar hidden.
 pub fn standalone_header(app: &mut App, ui: &mut egui::Ui) {
-    if !theme::macos_chrome(ui.ctx()) || app.sidebar_visible {
+    if !theme::macos_chrome(ui.ctx()) || app.sidebar_mode() != SidebarDisplayMode::Hidden {
         return;
     }
     let palette = app.palette;
@@ -312,6 +524,7 @@ pub fn standalone_header(app: &mut App, ui: &mut egui::Ui) {
                     palette.text,
                     &keys::label("Show the chat list (Ctrl+B)"),
                 )
+                .tab_stop(Stop::Sidebar)
                 .clicked()
                 {
                     app.actions.push(Action::ToggleSidebar);
@@ -323,6 +536,35 @@ pub fn standalone_header(app: &mut App, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod idle_tests {
     use super::*;
+
+    #[test]
+    fn settings_uses_panel_background_not_wallpaper_color() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Settings;
+        app.palette = crate::theme::Palette::light();
+
+        assert_eq!(central_background(&app), app.palette.panel);
+        assert_eq!(central_frame(&app).stroke, Stroke::NONE);
+
+        app.palette = crate::theme::Palette::dark();
+        assert_eq!(central_background(&app), app.palette.panel);
+        assert_eq!(central_frame(&app).stroke, Stroke::NONE);
+
+        app.page = Page::Wallpaper;
+        assert_eq!(
+            central_frame(&app).stroke,
+            Stroke::new(
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(233, 237, 239, 32)
+            )
+        );
+    }
+
     #[test]
     fn history_sync_banner_does_not_animate_the_idle_window() {
         let root = tempfile::tempdir().unwrap();
@@ -358,5 +600,182 @@ mod idle_tests {
             "sync banner requested {delay:?}: {:?}",
             ctx.repaint_causes()
         );
+    }
+
+    #[test]
+    fn a_waiting_error_does_not_keep_the_window_repainting() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        app.toast_error("Could not record: no microphone");
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut delay = std::time::Duration::ZERO;
+        for index in 0..6 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(index as f64),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| app.frame_ui(ui),
+            );
+            delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.textures_delta.clear();
+        }
+        assert_eq!(app.toasts.len(), 1, "the error is still shown");
+        // Fading info toasts ask for a frame every 120 ms; a waiting error
+        // must not.
+        assert!(
+            delay > std::time::Duration::from_secs(1),
+            "an error toast requested {delay:?}: {:?}",
+            ctx.repaint_causes()
+        );
+    }
+
+    #[test]
+    fn conversation_at_bottom_does_not_request_continuous_repaints() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        app.open_chat = Some(chat.id.clone());
+        app.scroll_to_bottom = true;
+        let mut conversation = crate::app::Conversation::default();
+        conversation.messages.push(crate::model::Message {
+            id: "m1".into(),
+            chat: chat.id.clone(),
+            sender: "123@s.whatsapp.net".into(),
+            sender_name: Some("Alice".into()),
+            from_me: false,
+            timestamp: 1000,
+            content: crate::model::Content::text("Hello world"),
+            status: crate::model::Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        });
+        conversation.complete = true;
+        app.conversations.insert(chat.id.clone(), conversation);
+
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut delay = std::time::Duration::ZERO;
+        for index in 0..6 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(index as f64),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| conversation::show(&mut app, ui),
+            );
+            delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.textures_delta.clear();
+        }
+        assert!(
+            delay > std::time::Duration::from_millis(100),
+            "idle conversation requested {delay:?}: {:?}",
+            ctx.repaint_causes()
+        );
+    }
+
+    #[test]
+    fn reopening_a_scrolled_up_chat_scrolls_to_bottom() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        let mut conversation = crate::app::Conversation::default();
+        for i in 0..20 {
+            conversation.messages.push(crate::model::Message {
+                id: format!("m{i}"),
+                chat: chat.id.clone(),
+                sender: "123@s.whatsapp.net".into(),
+                sender_name: Some("Alice".into()),
+                from_me: false,
+                timestamp: 1000 + i,
+                content: crate::model::Content::text(format!("Message {i}")),
+                status: crate::model::Delivery::None,
+                delivered_at: None,
+                read_at: None,
+                quoted: None,
+                reactions: Vec::new(),
+                edited: false,
+                mentions: Vec::new(),
+                forwarded: false,
+                thumbnail: None,
+            });
+        }
+        conversation.complete = true;
+        app.conversations.insert(chat.id.clone(), conversation);
+
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+
+        // Open chat initially
+        app.open_chat = Some(chat.id.clone());
+        app.scroll_to_bottom = true;
+
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| conversation::show(&mut app, ui),
+            );
+            output.textures_delta.clear();
+        }
+        assert!(app.at_bottom, "at bottom after opening");
+
+        // Simulate user scrolling up
+        app.scroll_to_bottom = false;
+        app.at_bottom = false;
+
+        // Reopening chat requests scroll to bottom
+        app.scroll_to_bottom = true;
+
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| conversation::show(&mut app, ui),
+            );
+            output.textures_delta.clear();
+        }
+        assert!(app.at_bottom, "at bottom after reopening");
     }
 }

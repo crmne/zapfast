@@ -1,0 +1,743 @@
+# German translation of the ZapFast navigation pilot.
+# Distributed under the same MIT license as ZapFast.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-09-23 20:14+0200\n"
+"PO-Revision-Date: 2026-09-22 00:00-0300\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: German\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/model.rs:70
+msgid "All"
+msgstr "Alle"
+
+#: src/model.rs:71
+msgid "Unread"
+msgstr "Ungelesen"
+
+#: src/model.rs:72
+msgid "Private"
+msgstr "Privat"
+
+#: src/model.rs:73
+msgid "Groups"
+msgstr "Gruppen"
+
+#: src/model.rs:74
+msgid "Channels"
+msgstr "Kanäle"
+
+#: src/util.rs:208 src/util.rs:258
+msgid "Yesterday"
+msgstr "Gestern"
+
+#: src/util.rs:235
+#, rust-format
+msgid "Yesterday at {time}"
+msgstr "Gestern um {time}"
+
+#: src/util.rs:236
+#, rust-format
+msgid "{weekday} at {time}"
+msgstr "{weekday} um {time}"
+
+#: src/util.rs:239
+#, rust-format
+msgid "{date} at {time}"
+msgstr "{date} um {time}"
+
+#: src/util.rs:257
+msgid "Today"
+msgstr "Heute"
+
+#: src/util.rs:273
+msgid "Monday"
+msgstr "Montag"
+
+#: src/util.rs:274
+msgid "Tuesday"
+msgstr "Dienstag"
+
+#: src/util.rs:275
+msgid "Wednesday"
+msgstr "Mittwoch"
+
+#: src/util.rs:276
+msgid "Thursday"
+msgstr "Donnerstag"
+
+#: src/util.rs:277
+msgid "Friday"
+msgstr "Freitag"
+
+#: src/util.rs:278
+msgid "Saturday"
+msgstr "Samstag"
+
+#: src/util.rs:279
+msgid "Sunday"
+msgstr "Sonntag"
+
+#: src/util.rs:287
+msgid "January"
+msgstr "Januar"
+
+#: src/util.rs:288
+msgid "February"
+msgstr "Februar"
+
+#: src/util.rs:289
+msgid "March"
+msgstr "März"
+
+#: src/util.rs:290
+msgid "April"
+msgstr "April"
+
+#: src/util.rs:291
+msgid "May"
+msgstr "Mai"
+
+#: src/util.rs:292
+msgid "June"
+msgstr "Juni"
+
+#: src/util.rs:293
+msgid "July"
+msgstr "Juli"
+
+#: src/util.rs:294
+msgid "August"
+msgstr "August"
+
+#: src/util.rs:295
+msgid "September"
+msgstr "September"
+
+#: src/util.rs:296
+msgid "October"
+msgstr "Oktober"
+
+#: src/util.rs:297
+msgid "November"
+msgstr "November"
+
+#: src/util.rs:298
+msgid "December"
+msgstr "Dezember"
+
+#: src/ui/chats.rs:112 src/ui/chats.rs:227 src/ui/settings.rs:169
+msgid "Chats"
+msgstr "Chats"
+
+#: src/ui/chats.rs:169 src/ui/chats.rs:268
+msgid "Search"
+msgstr "Suchen"
+
+#: src/ui/chats.rs:369
+msgid "Archived"
+msgstr "Archiviert"
+
+#: src/ui/chats.rs:386
+msgid "Locked"
+msgstr "Gesperrt"
+
+#: src/ui/conversation.rs:161
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Strg+K zum Suchen · ? für Tastenkürzel"
+
+#: src/ui/conversation.rs:999
+msgid "Type a message"
+msgstr "Nachricht eingeben"
+
+#: src/ui/conversation.rs:1002
+msgid "Add a caption"
+msgstr "Bildunterschrift hinzufügen"
+
+#: src/ui/conversation.rs:1158
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
+"pastes a picture"
+msgstr ""
+"Eingabetaste sendet · Umschalt+Eingabe für neue Zeile · *fett* _kursiv_ "
+"~durchgestrichen~ · Strg+V fügt ein Bild ein"
+
+#: src/ui/conversation.rs:1160
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr ""
+"Strg+Eingabetaste sendet · *fett* _kursiv_ ~durchgestrichen~ · Strg+V fügt "
+"ein Bild ein"
+
+#: src/ui/conversation.rs:1171
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr ""
+"Tastenkürzel-Hinweise ausblenden (in den Einstellungen wiederherstellen)"
+
+#: src/ui/conversation.rs:1186
+#, rust-format
+msgid "All shortcuts ({})"
+msgstr "Alle Tastenkürzel ({})"
+
+#: src/ui/conversation.rs:1465
+#, rust-format
+msgid "{} unread message"
+msgid_plural "{} unread messages"
+msgstr[0] "{} ungelesene Nachricht"
+msgstr[1] "{} ungelesene Nachrichten"
+
+#: src/ui/conversation.rs:3082 src/ui/dialogs.rs:973 src/ui/picker.rs:1570
+msgid "Add to favorites"
+msgstr "Zu Favoriten hinzufügen"
+
+#: src/ui/conversation.rs:3091
+msgid "Open in system player"
+msgstr "Im Systemplayer öffnen"
+
+#: src/ui/conversation.rs:3159 src/ui/message_info.rs:17
+msgid "Message info"
+msgstr "Nachrichteninfo"
+
+#: src/ui/conversation.rs:3390 src/ui/conversation.rs:3471
+msgid "Open in a map"
+msgstr "In einer Karte öffnen"
+
+#: src/ui/conversation.rs:3423
+msgid "Live location ended"
+msgstr "Live-Standort beendet"
+
+#: src/ui/conversation.rs:3425
+msgid "Live location"
+msgstr "Live-Standort"
+
+#: src/ui/conversation.rs:3436
+#, rust-format
+msgid "Updated {time}"
+msgstr "Aktualisiert {time}"
+
+#: src/ui/conversation.rs:3523
+#, rust-format
+msgid "{} sticker"
+msgid_plural "{} stickers"
+msgstr[0] "{} Sticker"
+msgstr[1] "{} Sticker"
+
+#: src/ui/conversation.rs:3536
+msgid "View stickers"
+msgstr "Sticker ansehen"
+
+#: src/ui/conversation.rs:4900
+msgid "Pause"
+msgstr "Pause"
+
+#: src/ui/conversation.rs:4902
+#, fuzzy
+msgid "Play"
+msgstr "Abgespielt"
+
+#: src/ui/conversation.rs:4925
+msgid "Unmute"
+msgstr "Ton an"
+
+#: src/ui/conversation.rs:4927
+msgid "Mute"
+msgstr "Stumm"
+
+#: src/ui/dialogs.rs:799
+msgid "Sticker pack"
+msgstr "Sticker-Pack"
+
+#: src/ui/dialogs.rs:804
+msgid "Downloading the pack…"
+msgstr "Pack wird heruntergeladen…"
+
+#: src/ui/dialogs.rs:828
+msgid "Add to my stickers"
+msgstr "Zu meinen Stickern hinzufügen"
+
+#: src/ui/dialogs.rs:835 src/ui/message_info.rs:28 src/ui/labels.rs:271
+msgid "Close"
+msgstr "Schließen"
+
+#: src/ui/dialogs.rs:852
+msgid "Make a sticker"
+msgstr "Sticker erstellen"
+
+#: src/ui/dialogs.rs:916
+msgid "Size"
+msgstr "Größe"
+
+#: src/ui/dialogs.rs:931
+msgid "Keep the transparent background"
+msgstr "Transparenten Hintergrund behalten"
+
+#: src/ui/dialogs.rs:948
+msgid "Emojis that describe it, like 😂 or ❤️"
+msgstr "Passende Emojis, etwa 😂 oder ❤️"
+
+#: src/ui/dialogs.rs:965
+msgid "Send"
+msgstr "Senden"
+
+#: src/ui/dialogs.rs:980 src/ui/settings.rs:686
+msgid "Cancel"
+msgstr "Abbrechen"
+
+#: src/ui/dialogs.rs:1385
+#, rust-format
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} Mitglied"
+msgstr[1] "{} Mitglieder"
+
+#: src/ui/settings.rs:40
+msgid "Settings"
+msgstr "Einstellungen"
+
+#: src/ui/settings.rs:44
+msgid "Appearance"
+msgstr "Darstellung"
+
+#: src/ui/settings.rs:133
+msgid "Language"
+msgstr "Sprache"
+
+#: src/ui/settings.rs:139 src/ui/settings.rs:148
+msgid "Auto"
+msgstr "Automatisch"
+
+#: src/ui/settings.rs:181
+msgid "Show labels as chips"
+msgstr "Labels als Chips anzeigen"
+
+#: src/ui/settings.rs:181
+msgid ""
+"Give each label its own chip, in a row under All, Unread and Groups. When "
+"off, they share one Labels chip."
+msgstr ""
+"Jedes Label bekommt einen eigenen Chip, in einer Reihe unter Alle, Ungelesen "
+"und Gruppen. Wenn aus, teilen sie sich einen Chip „Labels“."
+
+#: src/ui/settings.rs:192
+msgid "Pause music while recording"
+msgstr "Musik während der Aufnahme pausieren"
+
+#: src/ui/settings.rs:192
+msgid ""
+"Pause media players while you record a voice message and resume them "
+"afterwards."
+msgstr ""
+"Medienplayer während der Aufnahme einer Sprachnachricht pausieren und danach "
+"fortsetzen."
+
+#: src/ui/settings.rs:193
+msgid "Pause music while playing voice messages"
+msgstr "Musik beim Abspielen von Sprachnachrichten pausieren"
+
+#: src/ui/settings.rs:193
+msgid ""
+"Pause media players while a voice or audio message plays and resume them "
+"when it stops."
+msgstr ""
+"Medienplayer pausieren, während eine Sprach- oder Audionachricht läuft, und "
+"danach fortsetzen."
+
+#: src/ui/settings.rs:232
+msgid "Window"
+msgstr "Fenster"
+
+#: src/ui/settings.rs:277
+msgid "Network"
+msgstr "Netzwerk"
+
+#: src/ui/settings.rs:309
+msgid "Account"
+msgstr "Konto"
+
+#: src/ui/settings.rs:313
+msgid "Files"
+msgstr "Dateien"
+
+#: src/ui/settings.rs:359 src/ui/settings.rs:620 src/ui/settings.rs:782
+msgid "About"
+msgstr "Über"
+
+#: src/ui/settings.rs:440
+msgid "Add doodles"
+msgstr "Doodles hinzufügen"
+
+#: src/ui/settings.rs:444
+msgid "Show the default doodles over the selected colour."
+msgstr "Die Standard-Doodles über der gewählten Farbe anzeigen."
+
+#: src/ui/settings.rs:589
+msgid "Change profile picture"
+msgstr "Profilbild ändern"
+
+#: src/ui/settings.rs:612
+msgid "Your name"
+msgstr "Dein Name"
+
+#: src/ui/settings.rs:628
+msgid "Linked device"
+msgstr "Verknüpftes Gerät"
+
+#: src/ui/settings.rs:639
+msgid "Edit your name and About"
+msgstr "Name und Info bearbeiten"
+
+#: src/ui/settings.rs:656
+msgid "Unlink this computer"
+msgstr "Diesen Computer abmelden"
+
+#: src/ui/settings.rs:676
+msgid "Save"
+msgstr "Speichern"
+
+#: src/ui/settings.rs:750
+msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
+msgstr "Ein nativer WhatsApp-Client, gebaut mit Rust, egui und whatsapp-rust."
+
+#: src/ui/settings.rs:761
+#, rust-format
+msgid "Update to {version}"
+msgstr "Auf {version} aktualisieren"
+
+#: src/ui/settings.rs:771
+msgid "Keyboard shortcuts"
+msgstr "Tastenkürzel"
+
+#: src/ui/settings.rs:793
+msgid "Source code"
+msgstr "Quellcode"
+
+#. Translators: {name} is replaced by the author's name, shown as a link.
+#: src/ui/widgets.rs:565
+#, rust-format
+msgid "Built with love by {name}"
+msgstr "Mit Liebe gemacht von {name}"
+
+#: src/ui/message_info.rs:44
+msgid "This message is no longer available."
+msgstr "Diese Nachricht ist nicht mehr verfügbar."
+
+#: src/ui/message_info.rs:63
+msgid "Loading…"
+msgstr "Wird geladen…"
+
+#: src/ui/message_info.rs:136
+msgid "Played"
+msgstr "Abgespielt"
+
+#: src/ui/message_info.rs:138
+msgid "Read"
+msgstr "Gelesen"
+
+#: src/ui/message_info.rs:143
+msgid "Delivered"
+msgstr "Zugestellt"
+
+#: src/ui/message_info.rs:159
+msgid "Time not recorded"
+msgstr "Zeit nicht erfasst"
+
+#: src/ui/message_info.rs:181
+msgid ""
+"No receipts were recorded for this message. Details are available for "
+"messages sent from now on."
+msgstr ""
+"Für diese Nachricht wurden keine Lesebestätigungen erfasst. Details gibt es "
+"für Nachrichten, die ab jetzt gesendet werden."
+
+#: src/ui/message_info.rs:193
+msgid ""
+"Some receipts for this message were not recorded. Details are complete for "
+"messages sent from now on."
+msgstr ""
+"Einige Lesebestätigungen für diese Nachricht wurden nicht erfasst. Für ab "
+"jetzt gesendete Nachrichten sind die Details vollständig."
+
+#: src/ui/message_info.rs:209
+msgid "Played by"
+msgstr "Abgespielt von"
+
+#: src/ui/message_info.rs:218
+msgid "Read by"
+msgstr "Gelesen von"
+
+#: src/ui/message_info.rs:226
+msgid "Delivered to"
+msgstr "Zugestellt an"
+
+#: src/ui/message_info.rs:236
+#, rust-format
+msgid "{} remaining"
+msgid_plural "{} remaining"
+msgstr[0] "{} ausstehend"
+msgstr[1] "{} ausstehend"
+
+#: src/ui/message_info.rs:264
+msgid "No one yet"
+msgstr "Noch niemand"
+
+#: src/app.rs:985
+#, rust-format
+msgid "A label named “{name}” already exists."
+msgstr "Ein Label namens „{name}“ gibt es schon."
+
+#: src/app.rs:3288
+msgid "Added to favorites"
+msgstr "Zu Favoriten hinzugefügt"
+
+#: src/app.rs:3363
+msgid "Sending the sticker pack…"
+msgstr "Sticker-Pack wird gesendet…"
+
+#: src/app.rs:3618 src/ui/labels.rs:294
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "Du hast {limit} Labels, mehr hebt ZapFast nicht auf."
+
+#: src/app.rs:4096
+msgid "This video opens in your system player"
+msgstr "Dieses Video öffnet sich im Systemplayer"
+
+#: src/ui/labels.rs:68
+msgctxt "label colour"
+msgid "Blue"
+msgstr "Blau"
+
+#: src/ui/labels.rs:69
+msgctxt "label colour"
+msgid "Green"
+msgstr "Grün"
+
+#: src/ui/labels.rs:70
+msgctxt "label colour"
+msgid "Yellow"
+msgstr "Gelb"
+
+#: src/ui/labels.rs:71
+msgctxt "label colour"
+msgid "Orange"
+msgstr "Orange"
+
+#: src/ui/labels.rs:72
+msgctxt "label colour"
+msgid "Red"
+msgstr "Rot"
+
+#: src/ui/labels.rs:73
+msgctxt "label colour"
+msgid "Pink"
+msgstr "Rosa"
+
+#: src/ui/labels.rs:74
+msgctxt "label colour"
+msgid "Purple"
+msgstr "Lila"
+
+#: src/ui/labels.rs:75
+msgctxt "label colour"
+msgid "Teal"
+msgstr "Türkis"
+
+#: src/ui/labels.rs:76
+msgctxt "label colour"
+msgid "Grey"
+msgstr "Grau"
+
+#: src/ui/labels.rs:77
+msgctxt "label colour"
+msgid "Sky blue"
+msgstr "Himmelblau"
+
+#: src/ui/labels.rs:78
+msgctxt "label colour"
+msgid "Colour"
+msgstr "Farbe"
+
+#: src/ui/labels.rs:149
+msgid "Manage labels"
+msgstr "Labels verwalten"
+
+#: src/ui/labels.rs:172 src/ui/labels.rs:223 src/ui/labels.rs:260
+msgid "Labels"
+msgstr "Labels"
+
+#: src/ui/labels.rs:192
+msgid "All chats"
+msgstr "Alle Chats"
+
+#: src/ui/labels.rs:207 src/ui/labels.rs:247
+msgid "Manage labels…"
+msgstr "Labels verwalten …"
+
+#: src/ui/labels.rs:283
+msgid ""
+"Labels stay on this computer. They do not reach your phone or anyone you "
+"chat with."
+msgstr ""
+"Labels bleiben auf diesem Computer. Sie erreichen weder dein Telefon noch "
+"deine Chatpartner."
+
+#: src/ui/labels.rs:304
+msgid "New label"
+msgstr "Neues Label"
+
+#: src/ui/labels.rs:318
+msgid "Create"
+msgstr "Erstellen"
+
+#: src/ui/labels.rs:348
+msgid ""
+"No labels yet. Create one above, then add chats to it from their right-click "
+"menu."
+msgstr ""
+"Noch keine Labels. Erstelle oben eins und füge Chats über ihr "
+"Rechtsklickmenü hinzu."
+
+#: src/ui/labels.rs:383
+msgid "Next colour"
+msgstr "Nächste Farbe"
+
+#: src/ui/labels.rs:432
+#, rust-format
+msgid "{} chat"
+msgid_plural "{} chats"
+msgstr[0] "{} Chat"
+msgstr[1] "{} Chats"
+
+#: src/ui/labels.rs:453
+msgid "Rename or recolour"
+msgstr "Umbenennen oder umfärben"
+
+#: src/ui/labels.rs:478
+msgid "Delete this label. Its chats keep their messages."
+msgstr "Dieses Label löschen. Seine Chats behalten ihre Nachrichten."
+
+#: src/ui/picker.rs:1148
+msgid "Recent"
+msgstr "Zuletzt verwendet"
+
+#: src/ui/picker.rs:1149
+msgid "Favorites"
+msgstr "Favoriten"
+
+#: src/ui/picker.rs:1150
+msgid "Add stickers"
+msgstr "Sticker hinzufügen"
+
+#: src/ui/picker.rs:1185
+msgid "Search by emoji, word, or pack"
+msgstr "Nach Emoji, Wort oder Pack suchen"
+
+#: src/ui/picker.rs:1223
+msgid "No stickers match your search."
+msgstr "Keine Sticker passen zu deiner Suche."
+
+#: src/ui/picker.rs:1237
+msgid "Loading your stickers…"
+msgstr "Deine Sticker werden geladen…"
+
+#: src/ui/picker.rs:1239
+msgid "Stickers you send appear here."
+msgstr "Hier erscheinen Sticker, die du sendest."
+
+#: src/ui/picker.rs:1248
+msgid ""
+"Right-click any sticker to add it to your favorites. They stay in sync with "
+"your phone."
+msgstr "Klicke mit der rechten Maustaste auf einen Sticker, um ihn zu deinen Favoriten hinzuzufügen. Sie bleiben mit deinem Telefon synchron."
+
+#: src/ui/picker.rs:1264
+msgid "Remove this pack"
+msgstr "Dieses Pack entfernen"
+
+#: src/ui/picker.rs:1278
+msgid "Send this pack to the chat"
+msgstr "Dieses Pack in den Chat senden"
+
+#: src/ui/picker.rs:1292
+msgid "Nothing here yet. Right-click any sticker to add it to this pack."
+msgstr ""
+"Noch nichts hier. Klicke mit der rechten Maustaste auf einen Sticker, um ihn "
+"diesem Pack hinzuzufügen."
+
+#: src/ui/picker.rs:1365
+msgid "Import a pack"
+msgstr "Pack importieren"
+
+#: src/ui/picker.rs:1373
+msgid ""
+"Paste a signal.art link from signalstickers.org, or open a .wastickers file."
+msgstr "Füge einen signal.art-Link von signalstickers.org ein oder öffne eine .wastickers-Datei."
+
+#: src/ui/picker.rs:1383
+msgid "Make your own"
+msgstr "Selbst gestalten"
+
+#: src/ui/picker.rs:1391
+msgid ""
+"Start a pack, then right-click any sticker to add it. Or turn a picture into "
+"a sticker."
+msgstr "Lege ein Pack an und füge dann mit einem Rechtsklick beliebige Sticker hinzu. Oder mach aus einem Bild einen Sticker."
+
+#: src/ui/picker.rs:1403
+msgid "Make a sticker from a picture…"
+msgstr "Sticker aus einem Bild machen…"
+
+#: src/ui/picker.rs:1418
+msgid "Create pack"
+msgstr "Pack erstellen"
+
+#: src/ui/picker.rs:1429
+msgid "New pack…"
+msgstr "Neues Pack…"
+
+#: src/ui/picker.rs:1462
+msgid "Find packs"
+msgstr "Packs finden"
+
+#: src/ui/picker.rs:1463
+msgid "Open file"
+msgstr "Datei öffnen"
+
+#: src/ui/picker.rs:1478
+msgid "Paste a signal.art link"
+msgstr "signal.art-Link einfügen"
+
+#: src/ui/picker.rs:1506
+msgid "Browse signalstickers.org"
+msgstr "signalstickers.org durchsuchen"
+
+#: src/ui/picker.rs:1522
+msgid "Importing the pack…"
+msgstr "Pack wird importiert…"
+
+#: src/ui/picker.rs:1569
+msgid "Remove from favorites"
+msgstr "Aus Favoriten entfernen"
+
+#: src/ui/picker.rs:1571
+msgid "Remove from recents"
+msgstr "Aus „Zuletzt verwendet“ entfernen"
+
+#~ msgid ""
+#~ "Recent stickers appear here. Right-click one to save it. To import a "
+#~ "pack, paste a signal.art link or open a .wastickers file."
+#~ msgstr ""
+#~ "Hier erscheinen zuletzt verwendete Sticker. Klicke mit der rechten "
+#~ "Maustaste auf einen, um ihn zu speichern. Um ein Pack zu importieren, "
+#~ "füge einen signal.art-Link ein oder öffne eine .wastickers-Datei."
+
+#~ msgid "Saved"
+#~ msgstr "Gespeichert"

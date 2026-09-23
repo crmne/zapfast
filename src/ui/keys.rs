@@ -3,9 +3,14 @@
 use egui::{Key, Modifiers};
 
 use crate::app::App;
-use crate::model::{Action, Dialog, Page};
+use crate::model::{Action, Chat, Dialog, Page};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
+    if app.image_preview.is_some() {
+        preview_keys(app, ctx);
+        return;
+    }
+    let editing_text = ctx.text_edit_focused();
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         let mut key = |modifiers: Modifiers, key: Key, action: Action| {
@@ -13,12 +18,34 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
                 actions.push(action);
             }
         };
+        // Checked first: a plain Ctrl+F binding also matches Ctrl+Shift+F.
+        key(
+            Modifiers::COMMAND | Modifiers::SHIFT,
+            Key::F,
+            Action::OpenChatSearch,
+        );
         key(Modifiers::COMMAND, Key::F, Action::FocusSearch);
         key(Modifiers::COMMAND, Key::K, Action::FocusSearch);
+        if app.is_linked() {
+            key(
+                Modifiers::COMMAND,
+                Key::N,
+                Action::ShowDialog(Dialog::NewChat),
+            );
+        }
+        if !editing_text {
+            key(
+                Modifiers::NONE,
+                Key::Questionmark,
+                Action::ShowDialog(Dialog::Shortcuts),
+            );
+        }
         if app.page == Page::Chats
             && app.open_chat.is_some()
             && app.dialog.is_none()
             && !app.show_update
+            && app.picker.is_none()
+            && app.reaction_target.is_none()
             && app.recording.is_none()
         {
             key(Modifiers::COMMAND, Key::L, Action::FocusComposer);
@@ -41,16 +68,18 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     // Escape cancels the topmost state. Menus handle Escape themselves.
     let menu_open = egui::Popup::is_any_open(ctx);
     let search_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search")));
-    let escape =
-        !menu_open && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+    let escape = (!menu_open || app.reaction_target.is_some())
+        && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     if escape {
-        if app.show_update {
+        if app.chat_search_open {
+            actions.push(Action::CloseChatSearch);
+        } else if app.show_update {
             actions.push(Action::CloseUpdate);
         } else if app.dialog.is_some() {
             actions.push(Action::CloseDialog);
         } else if app.recording.is_some() {
             actions.push(Action::CancelRecording);
-        } else if app.picker.is_some() {
+        } else if app.picker.is_some() || app.reaction_target.is_some() {
             actions.push(Action::ClosePicker);
         } else if app.emoji_start.is_some() {
             actions.push(Action::CloseEmojiSuggestions);
@@ -62,6 +91,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CancelEdit);
         } else if app.reply_to.is_some() {
             actions.push(Action::CancelReply);
+        } else if app.page == Page::Wallpaper {
+            actions.push(Action::Open(Page::Settings));
         } else if app.page == Page::Settings {
             actions.push(Action::Open(Page::Chats));
         } else if search_focused || !app.search.is_empty() {
@@ -73,6 +104,26 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             }
         } else if app.open_chat.is_some() {
             actions.push(Action::CloseChat);
+        } else if app.locked_folder {
+            actions.push(Action::CloseLockedFolder);
+        }
+    }
+    // Enter walks the open chat's matches while its field has focus; with the
+    // composer focused, Enter keeps sending.
+    if app.chat_search_open
+        && ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search-in-chat")))
+    {
+        let step = ctx.input_mut(|input| {
+            if input.consume_key(Modifiers::SHIFT, Key::Enter) {
+                Some(-1)
+            } else if input.consume_key(Modifiers::NONE, Key::Enter) {
+                Some(1)
+            } else {
+                None
+            }
+        });
+        if let Some(step) = step {
+            actions.push(Action::StepChatSearch(step));
         }
     }
     // Enter sends a recording because the text field is hidden.
@@ -103,30 +154,117 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
                 None => 0,
             };
             let next = visible[next].id.clone();
+            // Stepping through the Unread list must not shift it underfoot.
+            if app.search.trim().is_empty() && !app.show_archived {
+                actions.push(Action::KeepUnread(next.clone()));
+            }
             app.scroll_chat_into_view = Some(next.clone());
             actions.push(Action::OpenChat(next));
         }
     }
+    // Arrow Up in an empty, focused composer edits the user's most recent
+    // message, as WhatsApp does. The key keeps its normal meaning everywhere
+    // else: it navigates open overlays and moves the cursor in a non-empty
+    // field.
+    let composer_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text")));
+    let edit_previous = composer_focused
+        && app.page == Page::Chats
+        && app.open_chat.is_some()
+        && app
+            .open_chat
+            .as_deref()
+            .and_then(|id| app.chat(id))
+            .is_some_and(Chat::can_send)
+        && app.composer.is_empty()
+        && app.pending.is_empty()
+        && app.editing.is_none()
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.recording.is_none()
+        && !menu_open
+        && ctx.input_mut(|input| {
+            let mut taken = false;
+            input.events.retain(|event| {
+                if taken {
+                    return true;
+                }
+                let matches = matches!(
+                    event,
+                    egui::Event::Key {
+                        key: found,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if *found == Key::ArrowUp && *modifiers == Modifiers::NONE
+                );
+                taken |= matches;
+                !matches
+            });
+            taken
+        });
+    if let Some(id) = edit_previous.then(|| app.previous_own_editable()).flatten() {
+        actions.push(Action::Edit(id));
+    }
+    app.actions.extend(actions);
+}
+
+/// Handles keys while the image preview is open. No chat shortcut runs, and
+/// typing and clipboard input are swallowed; Tab, Enter, Space and the arrows
+/// stay for the preview's own controls.
+fn preview_keys(app: &mut App, ctx: &egui::Context) {
+    let mut actions = Vec::new();
+    ctx.input_mut(|input| {
+        if input.consume_key(Modifiers::NONE, Key::Escape) {
+            actions.push(Action::CloseImagePreview);
+        }
+        let mut event_actions = Vec::new();
+        for event in &input.events {
+            if let egui::Event::Key {
+                key,
+                modifiers,
+                pressed: true,
+                ..
+            } = event
+            {
+                event_actions.extend(crate::image_preview::preview_action(*key, *modifiers));
+            }
+        }
+        actions.extend(event_actions);
+        input
+            .events
+            .retain(|event| !crate::image_preview::consumes_key(event));
+    });
     app.actions.extend(actions);
 }
 
 /// Shortcuts shown in the help dialog.
 pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+F / Ctrl+K", "Search chats"),
+    (
+        "Ctrl+Shift+F",
+        "Search the open chat (Enter for the next match)",
+    ),
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
+    ("↑", "Edit the previous message (when the input is empty)"),
     ("Enter", "Send (Shift+Enter for a new line)"),
     (
         "Escape",
         "Dismiss the current action, return from search, or close the chat",
     ),
-    ("Ctrl+V", "Paste text, or send a picture from the clipboard"),
+    ("Ctrl+N", "New chat or message yourself"),
+    (
+        "Ctrl+V",
+        "Paste text, or stage a picture from the clipboard",
+    ),
     ("Ctrl+B", "Show or hide the chat list"),
     ("Ctrl+End", "Jump to the newest message"),
     ("Ctrl+,", "Settings"),
     ("Ctrl++ / Ctrl+-", "Zoom in / out"),
     ("Ctrl+0", "Reset zoom"),
-    ("Ctrl+/", "This list"),
+    ("? / Ctrl+/", "Keyboard shortcuts (? when not typing)"),
     ("Ctrl+W", "Close the window (ZapFast remains in the tray)"),
     ("Ctrl+Q", "Quit"),
 ];

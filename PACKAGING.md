@@ -12,7 +12,7 @@ configuration from the matching tag to rebuild an older FastsApp release.
 Existing release files keep their original names.
 
 ```sh
-gem install native-packages --version 0.6.0
+gem install native-packages --version 0.7.0
 native-packages validate
 native-packages doctor --target linux-amd64 --target linux-arm64
 native-packages build --release v1.2.3 --target linux-amd64 --target linux-arm64
@@ -51,7 +51,7 @@ Homebrew automation needs `PUBLISH_HOMEBREW=true` and
 The native macOS configuration, Windows and Flatpak build steps remain responsible
 for their native artifacts. Additional nFPM formats require suitable platform
 inputs and dependencies; adding a format does not port the application.
-See the [shared CLI documentation](https://github.com/crmne/native-packages/tree/v0.6.0)
+See the [shared CLI documentation](https://github.com/crmne/native-packages/tree/v0.7.0)
 for commands and supported formats.
 
 To upgrade the tool, change `tool.version` in `native-packages.yaml`, the matching immutable workflow reference, and any release-job gem installation
@@ -79,7 +79,7 @@ secrets, which the job exposes as environment variables:
 A complete set enables notarization automatically. An incomplete set fails;
 no values retain local builds without Developer ID signing. Application inputs
 and the user's normal keychains remain unchanged. See the shared
-[Apple setup and phase contract](https://github.com/crmne/native-packages/blob/v0.6.0/docs/apple-notarization.md).
+[Apple setup and phase contract](https://github.com/crmne/native-packages/blob/v0.7.0/docs/apple-notarization.md).
 
 After preparing `dist/macos-input` on a Mac, test packaging without publishing:
 

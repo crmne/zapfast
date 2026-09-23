@@ -1,6 +1,6 @@
 //! A repeatable tour driven through the real pointer and keyboard handlers.
 
-mod media;
+pub(super) mod media;
 mod session;
 
 use crate::{
@@ -109,8 +109,6 @@ enum Target {
     Picker,
     Gif,
     Sticker,
-    /// A rect a view stored in egui's temp data, such as the Send button.
-    Stored(&'static str),
 }
 
 enum Gesture {
@@ -118,8 +116,6 @@ enum Gesture {
     Text(char),
     Move(Target),
     Click(PointerButton),
-    /// Applies a demo flag partway through, such as staging a rejected reply.
-    Stage(&'static str),
 }
 
 struct Cue {
@@ -327,7 +323,6 @@ pub struct Tour {
     delay: Option<Duration>,
     start: Option<Instant>,
     cues: Vec<Cue>,
-    duration: Duration,
     next: usize,
     previous: f32,
     pointer: Pos2,
@@ -345,7 +340,6 @@ impl Tour {
             delay,
             start: None,
             cues: script(),
-            duration: DURATION,
             next: 0,
             previous: 0.0,
             pointer: pos2(680.0, 440.0),
@@ -410,26 +404,18 @@ impl Tour {
             Target::Gif => ctx
                 .read_response(egui::Id::new("gif-search"))
                 .map(|r| r.rect.left_bottom() + vec2(60.0, 55.0)),
-            Target::Sticker => self.labels.get("Saved").map(|pos| *pos + vec2(25.0, 52.0)),
-            Target::Stored(key) => ctx
-                .data(|data| data.get_temp::<Rect>(egui::Id::new(key)))
+            Target::Sticker => ctx
+                .data(|d| d.get_temp::<Rect>(crate::ui::picker::first_tile_id()))
                 .map(|rect| rect.center()),
         }
     }
 
-    fn input_at(
-        &mut self,
-        app: &mut App,
-        ctx: &egui::Context,
-        input: &mut egui::RawInput,
-        at: f32,
-    ) {
+    fn input_at(&mut self, app: &App, ctx: &egui::Context, input: &mut egui::RawInput, at: f32) {
         if self.failed {
             return;
         }
         while self.next < self.cues.len() && at >= self.cues[self.next].at {
             match self.cues[self.next].gesture {
-                Gesture::Stage(page) => super::apply_flags(app, Some(page)),
                 Gesture::Move(target) => {
                     let Some(end) = self.target(target, app, ctx) else {
                         self.failed = true;
@@ -526,13 +512,13 @@ impl Tour {
         };
         if now < start {
             ctx.request_repaint_after(start - now);
-        } else if start.elapsed() < self.duration && !self.failed {
+        } else if start.elapsed() < DURATION && !self.failed {
             ctx.request_repaint_after(Duration::from_millis(16));
         } else if !self.saved {
             self.saved = true;
             if let Some(path) = &self.trace_path {
                 let data = serde_json::json!({ "width": ctx.content_rect().width(),
-                    "height": ctx.content_rect().height(), "duration": self.duration.as_secs(),
+                    "height": ctx.content_rect().height(), "duration": DURATION.as_secs(),
                     "complete": !self.failed, "events": self.trace });
                 if let Err(error) = std::fs::write(path, data.to_string()) {
                     log::error!("could not write tour input trace: {error}");
@@ -568,43 +554,6 @@ impl Tour {
     }
 }
 
-/// A short scripted scenario around a rejected voice reply: retry it from the
-/// composer, then start a new recording and press Enter. For screenshots.
-pub fn scenario_reject() -> Tour {
-    use Gesture::*;
-    use Target::*;
-    let left = PointerButton::Primary;
-    let tour = Tour::new(None, None);
-    let mut tour = Tour {
-        cues: vec![
-            Cue {
-                at: 0.0,
-                gesture: Stage("rejected"),
-            },
-            Cue {
-                at: 0.7,
-                gesture: Move(Stored("composer-send")),
-            },
-            Cue {
-                at: 1.1,
-                gesture: Click(left),
-            },
-            Cue {
-                at: 4.2,
-                gesture: Stage("recording"),
-            },
-            Cue {
-                at: 5.8,
-                gesture: Key(egui::Key::Enter, Modifiers::NONE, "Enter · Send recording"),
-            },
-        ],
-        duration: Duration::from_secs(8),
-        ..tour
-    };
-    tour.start = Some(Instant::now());
-    tour
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,16 +577,6 @@ mod tests {
             .labels
             .get(label)
             .unwrap_or_else(|| panic!("missing {label}"));
-        click_at(app, tour, ctx, pos);
-    }
-    /// Clicks a widget whose rect a view stored in egui's temp data.
-    fn click_stored(app: &mut App, tour: &mut Tour, ctx: &egui::Context, key: &str) {
-        let rect = ctx
-            .data(|data| data.get_temp::<Rect>(egui::Id::new(key)))
-            .unwrap_or_else(|| panic!("missing stored rect {key}"));
-        click_at(app, tour, ctx, rect.center());
-    }
-    fn click_at(app: &mut App, tour: &mut Tour, ctx: &egui::Context, pos: Pos2) {
         for pressed in [true, false] {
             frame(
                 app,
@@ -725,6 +664,7 @@ mod tests {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
         click(&mut app, &mut tour, &ctx, "Dark");
+        let menu_pos = tour.labels["Nord.json"];
         for name in [
             "Follow system",
             "Light",
@@ -734,10 +674,53 @@ mod tests {
             "Nord.json",
             "Ristretto.json",
             "Tokyo Night.json",
+            "Rose Pine.json",
+            "Rose Pine Moon.json",
+            "Rose Pine Dawn.json",
         ] {
+            // The bundled choices now exceed the popup's visible height.
+            // Scroll over the menu, as a user would, to reveal later entries.
+            for _ in 0..20 {
+                if tour.labels.contains_key(name) {
+                    break;
+                }
+                frame(
+                    &mut app,
+                    &mut tour,
+                    &ctx,
+                    vec![
+                        Event::PointerMoved(menu_pos),
+                        Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: vec2(0.0, -30.0),
+                            modifiers: Modifiers::NONE,
+                            phase: egui::TouchPhase::Move,
+                        },
+                    ],
+                );
+            }
             assert!(
                 tour.labels.contains_key(name),
                 "missing theme choice {name}"
+            );
+        }
+        for _ in 0..20 {
+            if tour.labels.contains_key("Follow system") {
+                break;
+            }
+            frame(
+                &mut app,
+                &mut tour,
+                &ctx,
+                vec![
+                    Event::PointerMoved(menu_pos),
+                    Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: vec2(0.0, 30.0),
+                        modifiers: Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ],
             );
         }
         click(&mut app, &mut tour, &ctx, "Nord.json");
@@ -769,7 +752,7 @@ mod tests {
             };
             // Give the first screen a frame to establish its hit targets.
             if frame > 0 {
-                tour.input_at(&mut app, &ctx, &mut input, at);
+                tour.input_at(&app, &ctx, &mut input, at);
             }
             let mut output = ctx.run_ui(input, |ui| {
                 app.background_frame(&ctx);
@@ -841,233 +824,6 @@ mod tests {
                 .messages
                 .iter()
                 .all(|row| !row.id.starts_with("tour-"))
-        );
-    }
-
-    fn rejection_events(
-        events: &std::sync::mpsc::Sender<crate::backend::Event>,
-        chat: &str,
-        quoting: Option<&str>,
-    ) {
-        events
-            .send(crate::backend::Event::ReplyRejected {
-                chat: chat.to_owned(),
-                text: None,
-                samples: Some(super::super::demo_tone(6)),
-                quoting: quoting.map(str::to_owned),
-                error: "The phone could not resend the original".into(),
-            })
-            .expect("the app still polls its events");
-    }
-
-    /// Accent-filled round buttons painted in the composer's bottom strip,
-    /// counted while the frame is being drawn.
-    fn accent_send_buttons(app: &App, ctx: &egui::Context) -> usize {
-        let height = ctx.input(|input| {
-            input
-                .raw
-                .screen_rect
-                .map(|rect| rect.height())
-                .unwrap_or_default()
-        });
-        let accent = app.palette.accent;
-        let layers: Vec<_> = ctx.memory(|memory| memory.layer_ids().collect());
-        ctx.graphics(|graphics| {
-            let mut count = 0;
-            for layer in layers {
-                let Some(list) = graphics.get(layer) else {
-                    continue;
-                };
-                for clipped in list.all_entries() {
-                    if let egui::Shape::Circle(circle) = &clipped.shape
-                        && circle.fill == accent
-                        && circle.center.y > height - 120.0
-                    {
-                        count += 1;
-                    }
-                }
-            }
-            count
-        })
-    }
-
-    /// Draws one frame and reports how many accent send buttons it painted.
-    fn frame_with_sends(
-        app: &mut App,
-        tour: &mut Tour,
-        ctx: &egui::Context,
-        events: Vec<Event>,
-    ) -> usize {
-        let mut sends = 0;
-        let input = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 780.0))),
-            events,
-            ..Default::default()
-        };
-        let mut output = ctx.run_ui(input, |ui| {
-            app.background_frame(ctx);
-            app.frame_ui(ui);
-            tour.observe(app, ctx);
-            sends = accent_send_buttons(app, ctx);
-        });
-        output.textures_delta.clear();
-        sends
-    }
-
-    #[test]
-    fn a_retained_clip_lights_send_only_in_its_own_chat() {
-        let (mut app, events) = super::super::tests::app_events();
-        let ctx = egui::Context::default();
-        app.attach(&ctx);
-        let mut tour = Tour::new(None, None);
-        let ada = super::super::SAMPLES[0].id.to_owned();
-        frame(&mut app, &mut tour, &ctx, Vec::new());
-        rejection_events(&events, &ada, None);
-        let sends = frame_with_sends(&mut app, &mut tour, &ctx, Vec::new());
-        assert!(sends == 1, "the retained clip lights Send in its own chat");
-
-        // Another chat keeps the microphone and does not touch the retention.
-        let grace = super::super::SAMPLES[2].id.to_owned();
-        app.actions
-            .push(crate::model::Action::OpenChat(grace.clone()));
-        frame_with_sends(&mut app, &mut tour, &ctx, Vec::new());
-        let sends = frame_with_sends(&mut app, &mut tour, &ctx, Vec::new());
-        assert!(
-            sends == 0,
-            "another chat must not light Send for a clip it cannot retry"
-        );
-        assert!(
-            app.recording_retry.is_some(),
-            "the retention survives switching chats"
-        );
-        assert_eq!(app.open_chat.as_deref(), Some(grace.as_str()));
-
-        // Back in its own chat the retry is still offered.
-        app.actions
-            .push(crate::model::Action::OpenChat(ada.clone()));
-        frame_with_sends(&mut app, &mut tour, &ctx, Vec::new());
-        let sends = frame_with_sends(&mut app, &mut tour, &ctx, Vec::new());
-        assert!(sends == 1, "returning to the chat offers the retry again");
-    }
-
-    #[test]
-    fn a_rejected_voice_reply_sends_from_the_composer_send_button() {
-        let (mut app, events) = super::super::tests::app_events();
-        app.backend.record_demo_commands();
-        let ctx = egui::Context::default();
-        app.attach(&ctx);
-        let mut tour = Tour::new(None, None);
-        let ada = super::super::SAMPLES[0].id.to_owned();
-        frame(&mut app, &mut tour, &ctx, Vec::new());
-        // The worker rejects the voice reply; the clip is retained.
-        rejection_events(&events, &ada, Some("ada-format"));
-        frame(&mut app, &mut tour, &ctx, Vec::new());
-        assert!(app.recording_retry.is_some(), "the clip is retained");
-        assert!(app.composer.is_empty(), "the composer stays empty");
-        assert!(app.reply_to.is_none(), "no reply banner is armed");
-
-        // A real pointer click on the lit Send button sends the retained clip.
-        click_stored(&mut app, &mut tour, &ctx, "composer-send");
-        let last = app.conversations[&ada]
-            .messages
-            .last()
-            .expect("a voice bubble")
-            .clone();
-        assert!(
-            matches!(
-                &last.content,
-                Content::Audio {
-                    seconds: Some(6),
-                    voice_note: true,
-                    ..
-                }
-            ),
-            "the retained clip is sent on click"
-        );
-        assert!(last.quoted.is_some(), "its quote travels with it");
-        assert!(app.recording_retry.is_none(), "the retention is consumed");
-
-        // The keyboard path sends it too.
-        rejection_events(&events, &ada, None);
-        frame(&mut app, &mut tour, &ctx, Vec::new());
-        assert!(app.recording_retry.is_some());
-        let field = ctx
-            .read_response(egui::Id::new("composer-text"))
-            .unwrap_or_else(|| panic!("the composer field exists"));
-        click_at(&mut app, &mut tour, &ctx, field.rect.center());
-        for pressed in [true, false] {
-            frame(
-                &mut app,
-                &mut tour,
-                &ctx,
-                vec![Event::Key {
-                    key: Key::Enter,
-                    physical_key: None,
-                    pressed,
-                    repeat: false,
-                    modifiers: Modifiers::NONE,
-                }],
-            );
-        }
-        frame(&mut app, &mut tour, &ctx, Vec::new());
-        let rows = &app.conversations[&ada].messages;
-        assert!(
-            rows.len() >= 2
-                && rows.iter().rev().take(2).all(|row| {
-                    matches!(
-                        &row.content,
-                        Content::Audio {
-                            voice_note: true,
-                            ..
-                        }
-                    )
-                }),
-            "Enter sends the retained clip"
-        );
-        assert!(app.recording_retry.is_none());
-    }
-
-    #[test]
-    fn an_active_recording_wins_over_a_stale_retry() {
-        let (mut app, events) = super::super::tests::app_events();
-        app.backend.record_demo_commands();
-        let ctx = egui::Context::default();
-        app.attach(&ctx);
-        let mut tour = Tour::new(None, None);
-        let ada = super::super::SAMPLES[0].id.to_owned();
-        frame(&mut app, &mut tour, &ctx, Vec::new());
-        // A rejected voice reply left a retained clip from an earlier chat.
-        rejection_events(&events, &ada, Some("ada-format"));
-        frame(&mut app, &mut tour, &ctx, Vec::new());
-        assert!(app.recording_retry.is_some());
-
-        // The user starts a new recording and presses its Send through the
-        // real strip button.
-        app.recording = Some(crate::audio::Recorder::rehearsal());
-        frame(&mut app, &mut tour, &ctx, Vec::new());
-        click_stored(&mut app, &mut tour, &ctx, "recording-send");
-        frame(&mut app, &mut tour, &ctx, Vec::new());
-
-        let last = app.conversations[&ada]
-            .messages
-            .last()
-            .expect("the active recording is sent")
-            .clone();
-        assert!(
-            matches!(
-                &last.content,
-                Content::Audio {
-                    seconds: Some(4),
-                    voice_note: true,
-                    ..
-                }
-            ),
-            "the active recording's clip is sent, not the stale one"
-        );
-        assert!(app.recording.is_none(), "the active recording finished");
-        assert!(
-            app.recording_retry.is_some(),
-            "the stale retention waits for its own chat"
         );
     }
 }
