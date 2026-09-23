@@ -72,6 +72,20 @@ enum Control {
     ReloadThemes,
 }
 
+/// Default log filter, used when `RUST_LOG` is unset.
+///
+/// `arboard` warns on every clipboard open when a Wayland compositor has no
+/// data-control protocol (GNOME, mutter) and it falls back to X11, which works
+/// there. Quiet that one target so it does not fill the log file, without
+/// hiding real clipboard failures (`arboard=error`) or any other warning.
+fn default_log_filter(verbose: bool) -> &'static str {
+    if verbose {
+        "info,zapfast=debug,whatsapp_rust=debug,wacore=debug"
+    } else {
+        "warn,zapfast=info,arboard=error"
+    }
+}
+
 fn main() -> eframe::Result<()> {
     let arguments: Vec<_> = std::env::args_os().collect();
     if arguments.len() == 3 && arguments[1] == "--apply-update" {
@@ -101,11 +115,7 @@ fn main() -> eframe::Result<()> {
             }
         }
     };
-    let default_filter = if cli.verbose {
-        "info,zapfast=debug,whatsapp_rust=debug,wacore=debug"
-    } else {
-        "warn,zapfast=info"
-    };
+    let default_filter = default_log_filter(cli.verbose);
     // A demo must not create empty ZapFast directories that would prevent a
     // later real launch from adopting the existing FastsApp session.
     let dirs = if demo {
@@ -541,5 +551,53 @@ mod tests {
         assert_eq!(cli.demo_tour_delay, Some(5000));
         assert!(Cli::try_parse_from(["zapfast", "--demo-tour-delay", "5000"]).is_err());
         assert!(Cli::try_parse_from(["zapfast", "--demo-tour", "--demo-page", "login",]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod log_filter_tests {
+    use super::*;
+
+    fn matches(filter: &str, level: log::Level, target: &str) -> bool {
+        let logger = env_logger::Builder::new().parse_filters(filter).build();
+        logger.matches(
+            &log::Record::builder()
+                .level(level)
+                .target(target)
+                .args(format_args!("fixture"))
+                .build(),
+        )
+    }
+
+    /// A compositor without data-control makes arboard fall back to X11 and
+    /// warn. That is expected, so the default log must not record it, while a
+    /// genuine arboard failure still must.
+    #[test]
+    fn the_default_log_drops_arboards_wayland_fallback_warning() {
+        let filter = default_log_filter(false);
+        assert!(!matches(
+            filter,
+            log::Level::Warn,
+            "arboard::platform::linux"
+        ));
+        assert!(matches(
+            filter,
+            log::Level::Error,
+            "arboard::platform::linux"
+        ));
+        assert!(matches(
+            filter,
+            log::Level::Warn,
+            "zapfast::backend::worker"
+        ));
+    }
+
+    #[test]
+    fn verbose_keeps_arboard_warnings() {
+        assert!(matches(
+            default_log_filter(true),
+            log::Level::Warn,
+            "arboard::platform::linux"
+        ));
     }
 }
