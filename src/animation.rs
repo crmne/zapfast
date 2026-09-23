@@ -130,10 +130,21 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
         };
         entries.insert(arrived_path, entry);
     }
-    // Remove idle and least-recently-used animations.
+    // Remove idle and least-recently-used animations. The animation being
+    // drawn right now is kept even when its last drawn frame is older than
+    // `IDLE`: with vsync off and event-driven repaints a visible, paused
+    // animation can sit many seconds without a `frame` call, and evicting it
+    // would re-decode it (and flash the poster) on the next wake. This trades
+    // a little resident memory for a stable poster while the media is visible;
+    // it is only evicted once its rect leaves the screen and stays unseen for
+    // `IDLE`.
     let now = Instant::now();
-    entries.retain(|_, entry| match entry {
-        Entry::Ready(playing) => now.duration_since(playing.last_drawn) < IDLE,
+    let visible_now = ui.is_rect_visible(rect);
+    entries.retain(|entry_path, entry| match entry {
+        Entry::Ready(playing) => {
+            (visible_now && entry_path.as_path() == path)
+                || now.duration_since(playing.last_drawn) < IDLE
+        }
         _ => true,
     });
     let mut resident: usize = entries
@@ -707,6 +718,124 @@ mod tests {
         });
         output.textures_delta.clear();
         assert_eq!(resumed, Some(first));
+    }
+
+    #[test]
+    fn a_visible_animation_is_not_evicted_or_redecoded_while_idle() {
+        let ctx = egui::Context::default();
+        let path = PathBuf::from("idle-visible.gif");
+        let frames = [egui::Color32::WHITE, egui::Color32::BLACK]
+            .into_iter()
+            .enumerate()
+            .map(|(index, color)| {
+                (
+                    ctx.load_texture(
+                        format!("idle-visible-frame-{index}"),
+                        ColorImage::new([1, 1], vec![color]),
+                        TextureOptions::LINEAR,
+                    ),
+                    Duration::from_secs(60),
+                )
+            })
+            .collect::<Vec<_>>();
+        let first = frames[0].0.id();
+        cache(&ctx).0.lock().expect("animation cache").insert(
+            path.clone(),
+            Entry::Ready(Playing {
+                frames,
+                total: Duration::from_secs(120),
+                started: Instant::now(),
+                // A visible animation whose last draw was long ago: with
+                // event-driven repaints it can go this long without a frame.
+                last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
+                animating: false,
+            }),
+        );
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(200.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(50.0, 50.0), egui::Sense::hover());
+                assert!(matches!(frame(ui, &path, rect, false), Frame::Ready(_)));
+            },
+        );
+        output.textures_delta.clear();
+        // Still decoded, same first frame: not evicted, not re-decoded.
+        let entries = cache(&ctx).0.lock().expect("animation cache");
+        let Entry::Ready(playing) = entries.get(&path).expect("still cached") else {
+            panic!("the visible animation was evicted");
+        };
+        assert_eq!(playing.frames[0].0.id(), first);
+    }
+
+    #[test]
+    fn an_unseen_animation_is_evicted_after_idle() {
+        let ctx = egui::Context::default();
+        let stale = PathBuf::from("stale.gif");
+        let fresh = PathBuf::from("fresh.gif");
+        let frames = |name: &str| {
+            [egui::Color32::WHITE, egui::Color32::BLACK]
+                .into_iter()
+                .enumerate()
+                .map(|(index, color)| {
+                    (
+                        ctx.load_texture(
+                            format!("{name}-frame-{index}"),
+                            ColorImage::new([1, 1], vec![color]),
+                            TextureOptions::LINEAR,
+                        ),
+                        Duration::from_secs(60),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        cache(&ctx).0.lock().expect("animation cache").insert(
+            stale.clone(),
+            Entry::Ready(Playing {
+                frames: frames("stale"),
+                total: Duration::from_secs(120),
+                started: Instant::now(),
+                last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
+                animating: false,
+            }),
+        );
+        cache(&ctx).0.lock().expect("animation cache").insert(
+            fresh.clone(),
+            Entry::Ready(Playing {
+                frames: frames("fresh"),
+                total: Duration::from_secs(120),
+                started: Instant::now(),
+                last_drawn: Instant::now(),
+                animating: false,
+            }),
+        );
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(200.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(50.0, 50.0), egui::Sense::hover());
+                assert!(matches!(frame(ui, &fresh, rect, false), Frame::Ready(_)));
+            },
+        );
+        output.textures_delta.clear();
+        let entries = cache(&ctx).0.lock().expect("animation cache");
+        assert!(entries.get(&fresh).is_some(), "the drawn animation stays");
+        assert!(
+            !entries.contains_key(&stale),
+            "an unseen animation must be evicted after IDLE"
+        );
     }
 }
 
