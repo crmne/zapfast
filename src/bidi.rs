@@ -1,6 +1,6 @@
 //! Unicode bidirectional layout for egui galleys.
 //!
-//! The vendored epaint splits font runs where the Unicode bidi level changes
+//! The patched epaint splits font runs where the Unicode bidi level changes
 //! and shapes each in its resolved direction, so brackets in right-to-left
 //! runs are mirrored. It still places the shaped runs in logical order, left
 //! to right.
@@ -1078,6 +1078,41 @@ mod tests {
         let (galley, atlas) = bubble("إلى السطر التالي إلى السطر التالي", 90.0);
         assert!(galley.rows.len() > 1, "the sample wraps");
         assert_rows_follow_uba(&galley, &atlas);
+    }
+
+    #[test]
+    fn wrapped_right_to_left_paragraphs_keep_logical_row_order() {
+        for text in [
+            "הכלב הגדול קפץ מעל החתול והמשיך לרוץ לאורך הרחוב עד שהגיע אל הגינה השקטה",
+            "هذا نص عربي طويل يختبر ترتيب الأسطر عندما تلتف الكلمات داخل فقاعة رسالة ضيقة",
+        ] {
+            let (galley, atlas) = bubble(text, 110.0);
+            assert!(galley.rows.len() >= 3, "{text:?} should wrap narrowly");
+            assert_rows_follow_uba(&galley, &atlas);
+
+            let spans: Vec<(u32, u32)> = galley
+                .rows
+                .iter()
+                .filter(|placed| !placed.row.glyphs.is_empty())
+                .map(|placed| {
+                    let clusters = placed.row.glyphs.iter().map(|glyph| glyph.cluster);
+                    (
+                        clusters.clone().min().expect("row starts"),
+                        clusters.max().expect("row ends"),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                spans[0].0, 0,
+                "the first visual row must contain the logical start of {text:?}: {spans:?}"
+            );
+            for rows in spans.windows(2) {
+                assert!(
+                    rows[0].1 < rows[1].0,
+                    "wrapped rows must stay in logical order for {text:?}: {spans:?}"
+                );
+            }
+        }
     }
 
     /// Lays `text` out as a message body with the app's own fonts.

@@ -56,9 +56,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   mentions, and link previews are supported. Links are clickable. Hebrew,
   Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so
   numbers, punctuation, and embedded words stay in reading order and brackets
-  face the right way. As in WhatsApp, a message whose first letter is Hebrew or
-  Arabic is aligned to the right, with its time on its own line when the text
-  has more than one. Carets and copied text stay on the logical message.
+  face the right way. As in WhatsApp, a message whose first strong character is
+  Hebrew or Arabic is aligned to the right, with its time on its own line when
+  the text has more than one. Carets and copied text stay on the logical message.
   Emoji use the bundled Noto
   Color Emoji on macOS and Windows. On Linux, ZapFast prefers an installed
   Noto Color Emoji and falls back to the bundled copy. Emoji-only messages
