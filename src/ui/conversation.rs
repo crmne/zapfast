@@ -1702,6 +1702,24 @@ fn transcript_row(
         Content::Location { .. } => Some("[location]".to_owned()),
         Content::Contact { display_name, .. } => Some(format!("[contact: {display_name}]")),
         Content::Poll { question, .. } => Some(format!("[poll: {question}]")),
+        Content::Interactive {
+            header,
+            footer,
+            buttons,
+            ..
+        } => {
+            // The header, footer, and button labels are painted but not
+            // selectable, so name them beside the selectable body.
+            let mut parts: Vec<&str> = Vec::new();
+            if let Some(header) = header {
+                parts.push(header.as_str());
+            }
+            if let Some(footer) = footer {
+                parts.push(footer.as_str());
+            }
+            parts.extend(buttons.iter().map(String::as_str));
+            (!parts.is_empty()).then(|| parts.join(" · "))
+        }
         _ => None,
     };
     let reactions = if message.reactions.is_empty() {
@@ -2328,6 +2346,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             ..
         } => Some(format!("{latitude},{longitude}")),
         Content::Contact { vcard, .. } => Some(vcard.clone()),
+        // Only the selectable body is copied, like a photo caption.
+        Content::Interactive { body, .. } => (!body.is_empty()).then(|| body.clone()),
         _ => None,
     };
     if let Some(text) = text
@@ -2460,12 +2480,9 @@ fn content(
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.is_some(),
-        Content::Interactive {
-            header,
-            body,
-            footer,
-            buttons,
-        } => !body.is_empty() || header.is_some() || footer.is_some() || !buttons.is_empty(),
+        // Only the selectable body is a copy body; the header, footer, and
+        // button labels ride along as the row's marker (see `transcript_row`).
+        Content::Interactive { body, .. } => !body.is_empty(),
         _ => false,
     };
     if !has_body {
@@ -2660,11 +2677,11 @@ fn content(
                 if let Some(header) = header {
                     widgets::rich_text(ui, header, theme::bold(14.5), palette.text);
                 }
-                let rect = if body.is_empty() {
-                    None
-                } else {
-                    rich_body(ui, view, message, body, width, None, None, actions)
-                };
+                if !body.is_empty() {
+                    // Painted and registered for copies. The card is multi-row,
+                    // so the timestamp takes its own line instead of a slot.
+                    rich_body(ui, view, message, body, width, None, None, actions);
+                }
                 if let Some(footer) = footer {
                     widgets::rich_text(ui, footer, theme::regular(12.5), palette.secondary);
                 }
@@ -2696,7 +2713,7 @@ fn content(
                         }
                     });
                 }
-                rect
+                None
             })
             .inner
         }

@@ -780,6 +780,31 @@ pub fn populate(app: &mut App) {
                 options: vec!["Yes".into(), "Only if it's Neapolitan".into(), "No".into()],
             },
         ),
+        message(
+            group,
+            "group-card",
+            false,
+            group_base + 240,
+            Content::Interactive {
+                header: Some("Order update".into()),
+                body: "Your order is ready for pickup".into(),
+                footer: Some("Reply is not sent".into()),
+                buttons: vec!["Track order".into(), "Call the shop".into()],
+            },
+        ),
+        // A card may carry buttons without any body text.
+        message(
+            group,
+            "group-card-buttons-only",
+            false,
+            group_base + 300,
+            Content::Interactive {
+                header: None,
+                body: String::new(),
+                footer: None,
+                buttons: vec!["Join the call".into(), "Decline".into()],
+            },
+        ),
     ];
     app.conversations
         .get_mut(group)

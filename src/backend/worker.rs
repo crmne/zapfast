@@ -5848,11 +5848,19 @@ mod tests {
     }
 
     #[test]
-    fn buttons_messages_keep_body_and_footer_for_read_only_rendering() {
+    fn buttons_messages_keep_body_footer_and_button_labels() {
         let message = wa::Message {
             buttons_message: MessageField::some(wa::message::ButtonsMessage {
                 content_text: Some("Choose an option".into()),
                 footer_text: Some("Reply is not sent".into()),
+                buttons: vec![wa::message::buttons_message::Button {
+                    button_text: MessageField::some(
+                        wa::message::buttons_message::button::ButtonText {
+                            display_text: Some("Track order".into()),
+                        },
+                    ),
+                    ..Default::default()
+                }],
                 ..Default::default()
             }),
             ..Default::default()
@@ -5863,18 +5871,31 @@ mod tests {
                 header: None,
                 body: "Choose an option".into(),
                 footer: Some("Reply is not sent".into()),
-                buttons: Vec::new(),
+                buttons: vec!["Track order".into()],
             })
         );
     }
 
     #[test]
-    fn list_messages_convert_title_description_and_footer() {
+    fn list_messages_convert_title_description_and_row_titles() {
         let message = wa::Message {
             list_message: MessageField::some(wa::message::ListMessage {
                 title: Some("Menu".into()),
                 description: Some("Pick one".into()),
                 footer_text: Some("Today only".into()),
+                sections: vec![wa::message::list_message::Section {
+                    rows: vec![
+                        wa::message::list_message::Row {
+                            title: Some("First".into()),
+                            ..Default::default()
+                        },
+                        wa::message::list_message::Row {
+                            title: Some("Second".into()),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }],
                 ..Default::default()
             }),
             ..Default::default()
@@ -5885,13 +5906,13 @@ mod tests {
                 header: Some("Menu".into()),
                 body: "Pick one".into(),
                 footer: Some("Today only".into()),
-                buttons: Vec::new(),
+                buttons: vec!["First".into(), "Second".into()],
             })
         );
     }
 
     #[test]
-    fn hydrated_templates_convert_text_and_title() {
+    fn hydrated_templates_convert_text_and_every_button_kind() {
         let message = wa::Message {
             template_message: MessageField::some(wa::message::TemplateMessage {
                 hydrated_template: MessageField::some(
@@ -5902,6 +5923,41 @@ mod tests {
                         ),
                         hydrated_content_text: Some("Details".into()),
                         hydrated_footer_text: Some("Expires soon".into()),
+                        hydrated_buttons: vec![
+                            wa::HydratedTemplateButton {
+                                hydrated_button: Some(
+                                    wa::hydrated_template_button::HydratedButton::QuickReplyButton(
+                                        wa::hydrated_template_button::HydratedQuickReplyButton {
+                                            display_text: Some("Yes".into()),
+                                            ..Default::default()
+                                        },
+                                    ),
+                                ),
+                                ..Default::default()
+                            },
+                            wa::HydratedTemplateButton {
+                                hydrated_button: Some(
+                                    wa::hydrated_template_button::HydratedButton::UrlButton(
+                                        wa::hydrated_template_button::HydratedURLButton {
+                                            display_text: Some("Details".into()),
+                                            ..Default::default()
+                                        },
+                                    ),
+                                ),
+                                ..Default::default()
+                            },
+                            wa::HydratedTemplateButton {
+                                hydrated_button: Some(
+                                    wa::hydrated_template_button::HydratedButton::CallButton(
+                                        wa::hydrated_template_button::HydratedCallButton {
+                                            display_text: Some("Call us".into()),
+                                            ..Default::default()
+                                        },
+                                    ),
+                                ),
+                                ..Default::default()
+                            },
+                        ],
                         ..Default::default()
                     },
                 ),
@@ -5915,7 +5971,7 @@ mod tests {
                 header: Some("Offer".into()),
                 body: "Details".into(),
                 footer: Some("Expires soon".into()),
-                buttons: Vec::new(),
+                buttons: vec!["Yes".into(), "Details".into(), "Call us".into()],
             })
         );
     }
