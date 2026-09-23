@@ -50,15 +50,42 @@ impl Status {
     };
 }
 
-/// Playback speeds, in the order the speed button cycles them.
-pub const SPEEDS: [f32; 3] = [1.0, 1.5, 2.0];
+/// Playback speeds, in ascending order, matching the phone.
+pub const SPEEDS: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
 
-/// Label for a playback speed, like `1x` or `1.5x`.
+/// Speeds the speed chip cycles through, as on the phone. The others are
+/// chosen from the message menu.
+pub const CYCLED_SPEEDS: [f32; 3] = [1.0, 1.5, 2.0];
+
+/// The speed after `speed` when the chip is clicked: the next faster cycled
+/// speed, wrapping from 2x back to 1x.
+pub fn next_cycled_speed(speed: f32) -> f32 {
+    CYCLED_SPEEDS
+        .into_iter()
+        .find(|&candidate| candidate > speed)
+        .unwrap_or(CYCLED_SPEEDS[0])
+}
+
+/// The supported speed nearest to `speed`; non-finite speeds give 1x.
+pub fn supported_speed(speed: f32) -> f32 {
+    if !speed.is_finite() {
+        return SPEEDS[0];
+    }
+    SPEEDS
+        .into_iter()
+        .min_by(|a, b| (a - speed).abs().total_cmp(&(b - speed).abs()))
+        .unwrap_or(SPEEDS[0])
+}
+
+/// Label for a playback speed, like `1x`, `1.25x`, or `1.5x`.
 pub fn speed_label(speed: f32) -> String {
     if speed.fract() == 0.0 {
         format!("{}x", speed as i32)
     } else {
-        format!("{speed:.1}x")
+        // Keep both decimals for 1.25 and 1.75; drop the trailing zero on 1.5.
+        let text = format!("{speed:.2}");
+        let text = text.trim_end_matches('0').trim_end_matches('.');
+        format!("{text}x")
     }
 }
 
@@ -140,16 +167,14 @@ impl Player {
     ///
     /// Speeds above 1x play a time-compressed copy of the clip, once it has
     /// been built, so the voice keeps its pitch. Until then playback
-    /// continues at the speed already queued. Speeds outside 1x to 2x, such
-    /// as a hand-edited setting, are clamped, and non-finite ones play at 1x.
-    pub fn set_speed(&mut self, speed: f32) {
-        self.speed = if speed.is_finite() {
-            speed.clamp(SPEEDS[0], SPEEDS[SPEEDS.len() - 1])
-        } else {
-            SPEEDS[0]
-        };
+    /// continues at the speed already queued. Any other speed, such as a
+    /// hand-edited setting, snaps to the nearest one in [`SPEEDS`], so a speed
+    /// control always shows it. Returns the speed that applies.
+    pub fn set_speed(&mut self, speed: f32) -> f32 {
+        self.speed = supported_speed(speed);
         self.apply_speed();
         self.ensure_stretch();
+        self.speed
     }
 
     /// Whether `message` is still playing at an earlier speed while the
@@ -158,17 +183,6 @@ impl Player {
         self.loaded.as_ref().is_some_and(|loaded| {
             loaded.message == message && !loaded.done && loaded.factor != self.speed
         })
-    }
-
-    /// Cycles 1x, 1.5x, and 2x, wrapping back to 1x.
-    pub fn cycle_speed(&mut self) -> f32 {
-        let next = SPEEDS
-            .iter()
-            .copied()
-            .find(|&candidate| candidate > self.speed)
-            .unwrap_or(SPEEDS[0]);
-        self.set_speed(next);
-        self.speed
     }
 
     /// The samples that play at `speed` and the speed they represent: the
@@ -645,21 +659,50 @@ mod tests {
     #[test]
     fn speed_labels_match_the_button() {
         assert_eq!(speed_label(SPEEDS[0]), "1x");
-        assert_eq!(speed_label(1.5), "1.5x");
-        assert_eq!(speed_label(SPEEDS[2]), "2x");
+        assert_eq!(speed_label(SPEEDS[1]), "1.25x");
+        assert_eq!(speed_label(SPEEDS[2]), "1.5x");
+        assert_eq!(speed_label(SPEEDS[3]), "1.75x");
+        assert_eq!(speed_label(SPEEDS[4]), "2x");
     }
 
     #[test]
-    fn cycling_wraps_through_every_speed() {
+    fn the_chip_cycles_like_the_phone() {
+        assert_eq!(next_cycled_speed(1.0), 1.5);
+        assert_eq!(next_cycled_speed(1.5), 2.0);
+        assert_eq!(next_cycled_speed(2.0), 1.0);
+        // A speed chosen from the menu moves on to the next faster one.
+        assert_eq!(next_cycled_speed(1.25), 1.5);
+        assert_eq!(next_cycled_speed(1.75), 2.0);
+    }
+
+    #[test]
+    fn unsupported_speeds_snap_to_the_nearest_supported_one() {
+        assert_eq!(supported_speed(1.3), 1.25);
+        assert_eq!(supported_speed(1.4), 1.5);
+        assert_eq!(supported_speed(1.8), 1.75);
+        assert_eq!(supported_speed(0.5), 1.0);
+        assert_eq!(supported_speed(4.0), 2.0);
+        assert_eq!(supported_speed(f32::INFINITY), 1.0);
+        for speed in SPEEDS {
+            assert_eq!(supported_speed(speed), speed);
+        }
+        let mut player = Player::new(Waker::default());
+        assert_eq!(player.set_speed(1.3), 1.25);
+        assert_eq!(player.speed(), 1.25);
+    }
+
+    #[test]
+    fn setting_a_speed_clamps_to_the_supported_range() {
         let mut player = Player::new(Waker::default());
         assert_eq!(player.speed(), SPEEDS[0]);
-        assert_eq!(player.cycle_speed(), 1.5);
-        assert_eq!(player.cycle_speed(), 2.0);
-        assert_eq!(player.cycle_speed(), 1.0);
-        // A speed set by hand still cycles up to the next known one.
         player.set_speed(1.75);
-        assert_eq!(player.cycle_speed(), 2.0);
-        assert_eq!(player.speed(), 2.0);
+        assert_eq!(player.speed(), 1.75);
+        // Beyond the fastest speed clamps to it.
+        player.set_speed(4.0);
+        assert_eq!(player.speed(), SPEEDS[SPEEDS.len() - 1]);
+        // A non-finite speed plays at 1x.
+        player.set_speed(f32::NAN);
+        assert_eq!(player.speed(), SPEEDS[0]);
     }
 
     #[test]

@@ -1,0 +1,42 @@
+name: Translation problem
+description: Report incorrect wording, a missing translation, or text that does not fit.
+labels: [bug]
+body:
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      placeholder: German (de-DE)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ZapFast version
+      description: Include the commit if you are testing a development build.
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: Where does the text appear?
+      description: Name the page or control and how to reach it. A screenshot helps for text that does not fit.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong with the text?
+      description: Include the wording you see, or the English text if its translation is missing.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested wording
+      description: If you have a correction, include it here and explain any relevant context.
+  - type: input
+    id: display
+    attributes:
+      label: Display details, if text does not fit
+      description: Include your operating system, window size, and display scaling.

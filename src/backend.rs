@@ -153,6 +153,12 @@ pub enum Command {
         quoting: Option<String>,
         mentions: Vec<String>,
     },
+    ReplyInteractive {
+        chat: ChatId,
+        message: String,
+        button: usize,
+        choice: Option<usize>,
+    },
     /// Forwards an archived message to another chat.
     Forward {
         from_chat: ChatId,
@@ -183,6 +189,7 @@ pub enum Command {
     /// Requests messages before the archive's earliest message.
     FetchOlder(ChatId),
     Download {
+        card: Option<usize>,
         chat: ChatId,
         message: String,
     },
@@ -291,6 +298,15 @@ pub enum Command {
     },
     /// Selects and imports a .wastickers or zip archive.
     PickStickerArchive,
+    /// Asks for an audio file to use as a notification sound.
+    PickNotificationSound {
+        group: bool,
+    },
+    /// Asks where to save a copy of an attachment, then copies it there.
+    SaveAttachmentAs {
+        source: std::path::PathBuf,
+        name: String,
+    },
     /// Deletes an imported pack directory.
     DeleteStickerPack {
         dir: PathBuf,
@@ -359,6 +375,12 @@ pub enum Command {
     /// Unlinks the device remotely and locally.
     Unlink,
     Reconnect,
+    /// Sets aside an unreadable archive and the linked session, then starts
+    /// over with a new archive and a new link.
+    StartOverArchive,
+    /// Whether the person is looking at ZapFast. While they are not, the
+    /// linked phone keeps receiving push notifications.
+    SetOnline(bool),
     Shutdown,
     /// Internal send result.
     Sent {
@@ -368,6 +390,7 @@ pub enum Command {
     },
     /// Internal attachment-download result.
     Downloaded {
+        card: Option<usize>,
         chat: ChatId,
         id: String,
         result: Result<PathBuf, String>,
@@ -433,6 +456,15 @@ pub enum Command {
     ReceiptsPrivacy {
         disabled: bool,
     },
+    /// Looks up the group behind an invite code without joining.
+    PreviewInvite(String),
+    /// Joins the group behind an invite code.
+    JoinInvite(String),
+    /// Internal result of joining through an invite.
+    InviteJoined {
+        code: String,
+        result: Result<(ChatId, bool), String>,
+    },
     /// Ask GitHub whether a newer release exists.
     CheckForUpdates,
     InspectUpdate,
@@ -448,6 +480,11 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    InteractiveReplyState {
+        chat: ChatId,
+        message: String,
+        pending: bool,
+    },
     PollCreated {
         chat: ChatId,
         error: Option<String>,
@@ -538,6 +575,7 @@ pub enum Event {
         recent: Vec<PathBuf>,
     },
     Media {
+        card: Option<usize>,
         chat: ChatId,
         message: String,
         result: Result<PathBuf, String>,
@@ -554,6 +592,22 @@ pub enum Event {
     /// Whether account privacy disables direct-chat read receipts.
     ReceiptsPrivacy {
         disabled: bool,
+    },
+    /// An audio file chosen as a notification sound.
+    NotificationSoundPicked {
+        group: bool,
+        path: std::path::PathBuf,
+    },
+    /// The group behind an invite link.
+    InvitePreview {
+        code: String,
+        result: Result<crate::model::InviteInfo, String>,
+    },
+    /// Joining through an invite finished; `pending` means admins must
+    /// approve first.
+    InviteJoined {
+        code: String,
+        result: Result<(ChatId, bool), String>,
     },
     /// Number lookup succeeded and its chat can open.
     ContactReady {
