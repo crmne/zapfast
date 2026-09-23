@@ -24,7 +24,7 @@ const FRAME_MARGIN: i8 = 10;
 /// Minimum emoji cell width. Columns expand to fill the grid.
 const CELL: f32 = 40.0;
 /// Width of the local-pack sidebar inside the sticker tab.
-const GROUP_PANEL: f32 = 208.0;
+const GROUP_PANEL: f32 = 150.0;
 /// Height of one row in the local-pack sidebar.
 const GROUP_ROW: f32 = 30.0;
 
@@ -1165,15 +1165,13 @@ fn packs_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let mut pick = None;
     let mut remove = None;
     let mut create = false;
-    egui::Panel::right("sticker-packs")
-        .show_separator_line(false)
-        .frame(
-            Frame::new()
-                .fill(palette.panel)
-                .inner_margin(Margin::symmetric(10, 10)),
-        )
+    Frame::new()
+        .fill(palette.panel)
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(Margin::symmetric(10, 10))
         .show(ui, |ui| {
-            ui.set_width(GROUP_PANEL);
+            ui.set_width(ui.available_width());
+            ui.set_min_height(ui.available_height());
             theme::text(
                 ui,
                 gettext(app.locale, "My packs"),
@@ -1251,10 +1249,29 @@ fn packs_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     }
 }
 
+/// The import row across the top, then the stickers beside the pack list.
 fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
-    packs_panel(app, ui, palette);
     import_row(app, ui, palette);
     ui.add_space(4.0);
+    let gap = 8.0;
+    let (width, height) = (ui.available_width(), ui.available_height());
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        ui.allocate_ui_with_layout(
+            vec2((width - GROUP_PANEL - gap).max(0.0), height),
+            Layout::top_down(Align::Min),
+            |ui| sticker_grids(app, ui, palette),
+        );
+        ui.allocate_ui_with_layout(
+            vec2(GROUP_PANEL, height),
+            Layout::top_down(Align::Min),
+            |ui| packs_panel(app, ui, palette),
+        );
+    });
+}
+
+/// Saved stickers, packs, and Recent; or only the chosen local pack.
+fn sticker_grids(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let selected = app.selected_pack().cloned();
     if selected.is_none()
         && app.stickers.is_empty()
@@ -1867,7 +1884,7 @@ mod pack_tests {
             .data(|data| data.get_temp::<egui::Rect>(group_row_id("Futebol")))
             .expect("the sidebar draws a row per pack");
         assert!(
-            row.width() > 150.0,
+            row.width() > 110.0,
             "a pack row spans the sidebar: {}",
             row.width()
         );
