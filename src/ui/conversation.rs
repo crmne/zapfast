@@ -170,6 +170,9 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     let title = app.chat_title(chat);
+    // The collapsed list has its own show button and clears the traffic
+    // lights itself; only a fully hidden list leaves both to the header.
+    let sidebar_hidden = app.sidebar_mode() == crate::model::SidebarDisplayMode::Hidden;
     egui::Panel::top("chat-header")
         .show_separator_line(false)
         .frame(
@@ -180,7 +183,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         .show(ui, |ui| {
             if theme::macos_chrome(ui.ctx()) {
                 let mut drag = ui.max_rect();
-                if !app.sidebar_visible {
+                if sidebar_hidden {
                     drag.min.x += theme::traffic_light_inset(ui.ctx());
                 }
                 super::titlebar_drag(ui, drag);
@@ -188,10 +191,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             ui.horizontal(|ui| {
                 // Give both rows a fixed height so their contents align.
                 ui.set_min_height(HEADER_ROW);
-                if !app.sidebar_visible && theme::macos_chrome(ui.ctx()) {
+                if sidebar_hidden && theme::macos_chrome(ui.ctx()) {
                     ui.add_space((theme::traffic_light_inset(ui.ctx()) - 14.0).max(0.0));
                 }
-                if !app.sidebar_visible
+                if sidebar_hidden
                     && theme::icon_button(
                         ui,
                         Icon::PanelLeft,

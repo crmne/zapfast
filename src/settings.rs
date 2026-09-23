@@ -543,6 +543,10 @@ mod tests {
         assert!(!parsed.download_updates_automatically);
         assert!(parsed.show_wallpaper);
         assert_eq!(parsed.wallpaper_color, WallpaperColor::Beige);
+        assert!(
+            !parsed.collapse_chat_list,
+            "hiding the list keeps removing it until asked otherwise"
+        );
     }
 
     #[test]
@@ -561,6 +565,7 @@ mod tests {
             zoom: 1.25,
             enter_sends: false,
             voice_speed: 1.5,
+            collapse_chat_list: true,
             interface_language: Some(crate::i18n::Locale::German),
             message_sound: NotificationSound::None,
             group_sound: NotificationSound::Custom("/sounds/ding.wav".into()),

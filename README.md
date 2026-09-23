@@ -240,10 +240,16 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   matches), `Alt+↑/↓` switches chats and
   keeps the active chat visible in the list, `↑` in an empty input edits your
   previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
-  message input, `Ctrl+N` opens New chat, and `?` (outside text fields) or
+  message input, `Ctrl+N` opens New chat, `Ctrl+B` hides or shows the chat
+  list, and `?` (outside text fields) or
   `Ctrl+/` opens Keyboard shortcuts (use Command instead of Ctrl on macOS).
   The × at the left of the shortcut hints
   hides the bar; restore it with **Show shortcut hints** in Settings.
+- **Collapsed chat list.** Turn on **Collapse the chat list to icons** in
+  Settings and hiding the chat list leaves a narrow column of avatars instead.
+  It shows the same chats as the full list under the current filter, with
+  unread badges (dimmed for muted chats); hovering names a chat, clicking opens
+  it, and `Ctrl+B` brings the full list back.
 - **Local storage.** Messages, contacts and sticker metadata are stored in a
   SQLCipher-encrypted archive, unlocked automatically through your OS keyring.
   Existing plaintext archives are migrated on first use. Attachments remain
