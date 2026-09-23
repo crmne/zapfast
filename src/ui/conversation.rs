@@ -497,6 +497,14 @@ fn emoji_suggestion(emoji: &'static emojis::Emoji) -> EmojiSuggestion {
     }
 }
 
+/// Emoji the composer completes from. `emojis::iter` already yields each
+/// sequence once, including the default variant of a skin-tone-capable emoji
+/// such as 👍 or 🤰, which reports `Some(SkinTone::Default)`; do not filter on
+/// `skin_tone` here, or those emoji never appear.
+fn completion_emojis() -> impl Iterator<Item = &'static emojis::Emoji> {
+    emojis::iter()
+}
+
 fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
     const LIMIT: usize = 6;
     let query = query.to_lowercase();
@@ -507,7 +515,7 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
             .recent_emoji
             .iter()
             .filter_map(|emoji| emojis::get(emoji))
-            .chain(emojis::iter().filter(|emoji| emoji.skin_tone().is_none()))
+            .chain(completion_emojis())
             .filter(|emoji| seen.insert(emoji.as_str()))
             .take(LIMIT)
             .map(emoji_suggestion)
@@ -515,9 +523,8 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
         return recent;
     }
 
-    let mut found: Vec<_> = emojis::iter()
+    let mut found: Vec<_> = completion_emojis()
         .enumerate()
-        .filter(|(_, emoji)| emoji.skin_tone().is_none())
         .filter_map(|(order, emoji)| {
             emoji_match_score(emoji, &query).map(|score| (score, order, emoji))
         })
@@ -5292,6 +5299,20 @@ mod tests {
         assert_eq!(emoji_match_score(grinning, "grin"), Some(1));
         assert_eq!(emoji_match_score(grinning, "face"), Some(3));
         assert_eq!(emoji_match_score(grinning, "rocket"), None);
+    }
+
+    #[test]
+    fn completion_offers_skin_tone_capable_base_emoji() {
+        let matches = |query: &str| {
+            let mut found: Vec<_> = completion_emojis()
+                .filter(|emoji| emoji_match_score(emoji, query).is_some())
+                .map(|emoji| emoji.as_str())
+                .collect();
+            found.sort_unstable();
+            found
+        };
+        assert!(matches("preg").contains(&"🤰"), "pregnant woman");
+        assert!(matches("thumbs").contains(&"👍"));
     }
 }
 
