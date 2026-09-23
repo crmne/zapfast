@@ -1805,6 +1805,19 @@ impl App {
         }
     }
 
+    /// The most recent own text message in the open chat, for Arrow-Up
+    /// editing. Non-text and revoked messages cannot be edited and are
+    /// skipped.
+    pub(crate) fn previous_own_editable(&self) -> Option<String> {
+        let conversation = self.conversations.get(self.open_chat.as_deref()?)?;
+        conversation
+            .messages
+            .iter()
+            .rev()
+            .find(|message| self.can_edit(message))
+            .map(|message| message.id.clone())
+    }
+
     /// Updates typing state after composer changes.
     pub fn note_keystroke(&mut self) {
         self.last_keystroke = Some(Instant::now());
@@ -2625,7 +2638,12 @@ impl App {
             }
             Action::SendSticker(path) => {
                 if let Some(chat) = self.open_chat.clone() {
-                    self.backend.send(Command::SendSticker { chat, path });
+                    let quoting = self.reply_to.take();
+                    self.backend.send(Command::SendSticker {
+                        chat,
+                        path,
+                        quoting,
+                    });
                     self.picker = None;
                     self.scroll_to_bottom = true;
                     self.at_bottom = true;
@@ -4277,6 +4295,30 @@ mod tests {
         assert_eq!(images[0].path, None);
         assert_eq!(images[1].path, Some(path));
         assert_eq!(images[1].state, MediaState::Idle);
+    }
+
+    #[test]
+    fn sending_a_sticker_consumes_the_pending_reply() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        app.reply_to = Some("quoted-message".into());
+
+        app.apply(
+            Action::SendSticker(std::path::PathBuf::from("sticker.webp")),
+            &egui::Context::default(),
+        );
+
+        assert!(app.reply_to.is_none());
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::SendSticker {
+                chat,
+                quoting: Some(id),
+                ..
+            }) if chat == "fixture@s.whatsapp.net" && id == "quoted-message"
+        ));
     }
 
     #[test]

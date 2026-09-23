@@ -147,6 +147,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   If an attachment has expired, ZapFast asks your
   phone to upload it again. Downloads stop after two minutes with an inline
   retry error if they cannot finish; the menu disables Download while one is running.
+  Cached attachment filenames use extensions of at most 16 ASCII letters, digits,
+  or hyphens; invalid or empty extensions are saved as `.bin`.
 - **Polls.** Use the checklist button beside the paperclip to create a poll with
   2–12 answers. Turn off **Allow multiple answers** for a single-choice poll.
   Click an answer in a poll to vote; click a selected answer again to remove
@@ -207,10 +209,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
   `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` searches, `Alt+↑/↓` switches chats and
-  keeps the active chat visible in the list, `Esc` cancels the current action,
-  `Ctrl+L` focuses the message input, `Ctrl+N` opens New chat, and `?` (outside
-  text fields) or `Ctrl+/` opens Keyboard shortcuts (use
-  Command instead of Ctrl on macOS). The × at the left of the shortcut hints
+  keeps the active chat visible in the list, `↑` in an empty input edits your
+  previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
+  message input, `Ctrl+N` opens New chat, and `?` (outside text fields) or
+  `Ctrl+/` opens Keyboard shortcuts (use Command instead of Ctrl on macOS).
+  The × at the left of the shortcut hints
   hides the bar; restore it with **Show shortcut hints** in Settings.
 - **Local storage.** Messages, contacts and sticker metadata are stored in a
   SQLCipher-encrypted archive, unlocked automatically through your OS keyring.
