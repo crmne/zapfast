@@ -263,6 +263,8 @@ pub struct App {
     pub emoji_jump: Option<&'static str>,
     /// Attachments pending in the composer.
     pub pending: Vec<Pending>,
+    /// Whether the composer plus menu is open or closing.
+    pub composer_tools_open: bool,
     /// In-chat audio player.
     pub player: Player,
     /// In-chat video player.
@@ -573,6 +575,7 @@ impl App {
             open_chat_menu: None,
             emoji_jump: None,
             pending: Vec::new(),
+            composer_tools_open: false,
             player: Player::new(waker.clone()),
             video: crate::video::Player::new(waker.clone()),
             video_chat: None,
@@ -2390,6 +2393,7 @@ impl App {
         if self.open_chat.as_deref() != Some(id.as_str()) {
             self.reaction_target = None;
             self.reaction_anchor = None;
+            self.composer_tools_open = false;
             self.emoji_jump = None;
             if let Some(previous) = self.open_chat.take() {
                 let draft = std::mem::take(&mut self.composer);
@@ -3253,6 +3257,14 @@ impl App {
                     self.backend.send(Command::PickFiles(chat));
                 }
             }
+            Action::SetComposerTools(open) => {
+                self.composer_tools_open = open;
+                if open {
+                    self.picker = None;
+                    self.reaction_target = None;
+                    self.reaction_anchor = None;
+                }
+            }
             Action::SendFiles(paths) => self.stage_files(paths),
             Action::SendPending { chat, caption } => self.send_pending(chat, caption),
             Action::RemovePending(index) => {
@@ -3283,6 +3295,8 @@ impl App {
             }
             Action::StartRecording => {
                 if self.open_chat.is_some() && self.recording.is_none() {
+                    self.picker = None;
+                    self.composer_tools_open = false;
                     self.recording = Some(Recorder::start(self.waker.clone()));
                 }
             }
@@ -3312,6 +3326,7 @@ impl App {
                 self.backend.send(Command::SetLocked(chat, locked));
             }
             Action::TogglePicker(tab) => {
+                self.composer_tools_open = false;
                 self.emoji_start = None;
                 self.mention_start = None;
                 self.reaction_target = None;

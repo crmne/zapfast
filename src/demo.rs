@@ -1985,6 +1985,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     .join("\n");
                 app.focus_composer = true;
             }
+            "composer-tools" => {
+                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                app.composer_tools_open = true;
+                app.focus_composer = true;
+            }
             "mention" => {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.to_owned());
@@ -3477,6 +3482,7 @@ mod tests {
             "sticker-maker",
             "sticker-pack-view",
             "typing",
+            "composer-tools",
             "mention",
             "emoji-complete",
             "typers",
@@ -5768,22 +5774,24 @@ mod tests {
         let input = egui::Id::new("composer-text");
         ctx.memory_mut(|memory| memory.request_focus(input));
         frame_sized(&mut app, &ctx, 780.0, Vec::new());
-        let field = ctx
-            .data(|data| data.get_temp::<crate::theme::FocusOutline>(input.with("focus-outline")))
+        let composer = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::composer_rect_id()))
             .unwrap();
-        let text = ctx.read_response(input).unwrap();
-        assert!(field.rect.contains_rect(text.rect));
-        assert!(field.rect.width() > text.rect.width());
+        assert!(
+            composer.height() >= 52.0,
+            "composer height: {}",
+            composer.height()
+        );
         assert_eq!(
             ring(&ctx),
-            Some(field.rect),
-            "input focus stays inside the field"
+            None,
+            "the composer keeps keyboard focus without the green ring"
         );
         assert_eq!(
             ctx.data(
                 |data| data.get_temp::<egui::LayerId>(crate::ui::focus_ring_id().with("layer"))
             ),
-            Some(text.layer_id)
+            None
         );
         frame_sized(&mut app, &ctx, 780.0, tab());
         frame_sized(&mut app, &ctx, 780.0, Vec::new());
@@ -5802,11 +5810,18 @@ mod tests {
             }
             if let Some(id) = ctx.memory(|memory| memory.focused()) {
                 let response = ctx.read_response(id).expect("focused target is rendered");
-                assert!(
-                    ring(&ctx).is_some(),
-                    "missing outline for {id:?}: {:?}",
-                    response.rect
-                );
+                if id == input {
+                    assert!(
+                        ring(&ctx).is_none(),
+                        "composer should not show a focus ring"
+                    );
+                } else {
+                    assert!(
+                        ring(&ctx).is_some(),
+                        "missing outline for {id:?}: {:?}",
+                        response.rect
+                    );
+                }
                 assert!(
                     response.interact_rect.is_positive(),
                     "focus is visible: {id:?} {:?} {:?}",
@@ -5887,8 +5902,6 @@ mod tests {
         }
         assert_eq!(focused_stop(&ctx), Some(crate::ui::focus::Stop::Attach));
         assert!(ring(&ctx).is_some());
-        frame_sized(&mut app, &ctx, 780.0, tab());
-        assert_eq!(focused_stop(&ctx), Some(crate::ui::focus::Stop::Poll));
         frame_with(
             &mut app,
             &ctx,
@@ -5900,7 +5913,10 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             }],
         );
-        assert_eq!(app.dialog, Some(crate::model::Dialog::CreatePoll(group)));
+        assert!(
+            app.composer_tools_open,
+            "Enter opens the composer tools menu"
+        );
     }
 
     fn focused_stop(ctx: &egui::Context) -> Option<crate::ui::focus::Stop> {
@@ -6014,7 +6030,6 @@ mod tests {
                 Stop::Composer,
                 Stop::Send,
                 Stop::Attach,
-                Stop::Poll,
                 Stop::Emoji,
                 Stop::Profile,
                 Stop::Sidebar,
@@ -6123,7 +6138,6 @@ mod tests {
                         Stop::Composer,
                         Stop::Send,
                         Stop::Attach,
-                        Stop::Poll,
                         Stop::Emoji,
                         Stop::Sidebar
                     ]

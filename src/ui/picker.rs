@@ -14,6 +14,7 @@ use crate::i18n::gettext;
 use crate::model::{Action, PickerTab, StickerPack, StickerShelf};
 use crate::theme::{self, Icon, Palette};
 
+use super::animation as ui_animation;
 use super::conversation;
 use super::widgets;
 
@@ -85,6 +86,20 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     });
                 });
         });
+    let progress = ui_animation::whatsapp_ease(ui_animation::value(
+        ctx,
+        egui::Id::new("picker-motion"),
+        1.0,
+    ));
+    if progress < 0.999 {
+        ui_animation::settle_repaint(ctx);
+    }
+    let scale = 0.94 + 0.06 * progress;
+    let pivot = area.response.rect.center_bottom();
+    ctx.transform_layer_shapes(
+        area.response.layer_id,
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+    );
     // Close on outside clicks, except on the toggle button or a sticker menu.
     let rect = area.response.rect;
     let clicked_outside = !egui::Popup::is_any_open(ctx)

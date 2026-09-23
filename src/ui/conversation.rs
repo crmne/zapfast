@@ -19,6 +19,7 @@ use crate::model::{
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
+use super::animation as ui_animation;
 use super::focus::{Stop, TabStop};
 use super::widgets;
 
@@ -587,9 +588,17 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
     let submit = take_plain_key(ui, Key::Enter) || take_plain_key(ui, Key::Tab);
     let mut picked = submit.then(|| candidates[app.emoji_selected].clone());
     let palette = app.palette;
+    let motion = ui_animation::whatsapp_ease(ui_animation::value(
+        ui.ctx(),
+        field.with("emoji-suggestions-motion"),
+        1.0,
+    ));
+    if motion < 0.999 {
+        ui_animation::settle_repaint(ui.ctx());
+    }
 
     ui.add_space(4.0);
-    Frame::new()
+    let panel = Frame::new()
         .fill(palette.overlay)
         .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS + 2))
@@ -663,6 +672,12 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
                 }
             }
         });
+    let scale = 0.96 + 0.04 * motion;
+    let pivot = panel.response.rect.center_bottom();
+    ui.ctx().transform_layer_shapes(
+        panel.response.layer_id,
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+    );
     if let Some(candidate) = picked {
         app.actions.push(Action::InsertEmojiCompletion {
             emoji: candidate.emoji.to_owned(),
@@ -699,9 +714,17 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     let submit = take_plain_key(ui, Key::Enter) || take_plain_key(ui, Key::Tab);
     let mut picked = submit.then(|| candidates[app.mention_selected].clone());
     let palette = app.palette;
+    let motion = ui_animation::whatsapp_ease(ui_animation::value(
+        ui.ctx(),
+        field.with("mention-suggestions-motion"),
+        1.0,
+    ));
+    if motion < 0.999 {
+        ui_animation::settle_repaint(ui.ctx());
+    }
 
     ui.add_space(4.0);
-    Frame::new()
+    let panel = Frame::new()
         .fill(palette.overlay)
         .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS + 2))
@@ -783,6 +806,12 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
                     }
                 });
         });
+    let scale = 0.96 + 0.04 * motion;
+    let pivot = panel.response.rect.center_bottom();
+    ui.ctx().transform_layer_shapes(
+        panel.response.layer_id,
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+    );
     if let Some((id, name)) = picked {
         app.actions.push(Action::InsertMention {
             id,
@@ -799,8 +828,13 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         .show_separator_line(false)
         .frame(
             Frame::new()
-                .fill(palette.panel)
-                .inner_margin(Margin::symmetric(12, 8)),
+                .fill(Color32::TRANSPARENT)
+                .inner_margin(Margin {
+                    left: 8,
+                    right: 8,
+                    top: 0,
+                    bottom: 12,
+                }),
         )
         .show(ui, |ui| {
             if let Some((selected_chat, selected)) = app.selection.clone()
@@ -851,8 +885,17 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             {
                 unsent_voice_strip(app, ui, samples);
             }
+            let preview_active = app.editing.is_some() || app.reply_to.is_some();
+            let preview_motion = ui_animation::bool_factor(
+                ui.ctx(),
+                egui::Id::new("composer-preview-motion"),
+                preview_active,
+            );
+            if preview_motion > 0.001 && preview_motion < 0.999 {
+                ui_animation::settle_repaint(ui.ctx());
+            }
             if app.editing.is_some() {
-                edit_strip(app, ui);
+                edit_strip(app, ui, preview_motion);
             } else if let Some(reply_id) = app.reply_to.clone() {
                 let quoted = app
                     .conversations
@@ -860,7 +903,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     .and_then(|conversation| conversation.message(&reply_id))
                     .cloned();
                 match quoted {
-                    Some(quoted) => reply_strip(app, ui, &quoted),
+                    Some(quoted) => reply_strip(app, ui, &quoted, preview_motion),
                     None => app.reply_to = None,
                 }
             }
@@ -880,7 +923,17 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 pending_strip(app, ui);
             }
             if app.recording.is_some() {
-                recording_strip(app, ui);
+                Frame::new()
+                    .fill(palette.surface)
+                    .corner_radius(CornerRadius::same(24))
+                    .shadow(egui::epaint::Shadow {
+                        offset: [0, 1],
+                        blur: 6,
+                        spread: 0,
+                        color: Color32::from_black_alpha(31),
+                    })
+                    .inner_margin(Margin::symmetric(8, 5))
+                    .show(ui, |ui| recording_strip(app, ui));
                 return;
             }
             emoji_suggestions(app, ui, id);
@@ -917,7 +970,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .size()
                 .y;
             // Match the button to a one-line field. The field grows to six
-            // lines while the row stays bottom-aligned.
+            // lines while the controls stay centered against the field.
             let field_padding = 14.0;
             let button_width = line_height + field_padding;
             let text_height = ui
@@ -926,51 +979,67 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .map(|previous| previous.rect.height())
                 .unwrap_or(line_height)
                 .clamp(line_height, line_height * 6.0);
-            let row_height = (text_height + field_padding).max(button_width);
+            // Keep the single-line composer at the desktop WhatsApp height;
+            // multiline drafts can still grow up to the existing six-line cap.
+            let row_height = (text_height + field_padding).max(button_width).max(42.0);
+            Frame::new()
+                .fill(palette.surface)
+                .corner_radius(CornerRadius::same(24))
+                .shadow(egui::epaint::Shadow {
+                    offset: [0, 1],
+                    blur: 6,
+                    spread: 0,
+                    color: Color32::from_black_alpha(31),
+                })
+                .inner_margin(Margin::symmetric(8, 5))
+                .show(ui, |ui| {
             ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), row_height),
-                Layout::left_to_right(Align::Max),
+                Layout::left_to_right(Align::Center),
                 |ui| {
-                if app.editing.is_none()
-                    && theme::icon_button(
-                        ui,
-                        Icon::Paperclip,
-                        20.0,
-                        palette.secondary,
-                        palette.text,
-                        "Send files (or drop them on the window)",
-                    )
-                    .tab_stop(Stop::Attach)
-                    .clicked()
-                {
-                    app.actions.push(Action::Attach);
-                }
-                if app.editing.is_none() && theme::icon_button(ui, Icon::ListChecks, 20.0, palette.secondary, palette.text, "Create poll").tab_stop(Stop::Poll).clicked() {
-                    app.actions.push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
+                let composer_icon = if palette.dark {
+                    Color32::WHITE
+                } else {
+                    Color32::BLACK
+                };
+                let tools = theme::icon_button(
+                    ui,
+                    Icon::Plus,
+                    24.0,
+                    composer_icon,
+                    composer_icon,
+                    "More message options",
+                )
+                .tab_stop(Stop::Attach);
+                if app.editing.is_none() {
+                    composer_tools_menu(app, ui, chat, &tools);
                 }
                 if app.editing.is_none() {
+                    let smiley_color = if app.picker.is_some() {
+                        palette.accent
+                    } else {
+                        composer_icon
+                    };
                     let smile = theme::icon_button(
                         ui,
-                        Icon::Smile,
-                        20.0,
-                        if app.picker.is_some() {
-                            palette.accent
-                        } else {
-                            palette.secondary
-                        },
-                        palette.text,
+                        Icon::Smiley,
+                        24.0,
+                        smiley_color,
+                        smiley_color,
                         "Emoji, GIFs, and stickers",
                     ).tab_stop(Stop::Emoji);
                     app.picker_anchor = Some(smile.rect);
                     if smile.clicked() {
+                        if app.composer_tools_open {
+                            app.actions.push(Action::SetComposerTools(false));
+                        }
                         app.actions.push(Action::TogglePicker(PickerTab::Emoji));
                     }
                 }
                 let field_width = (ui.available_width() - button_width - 10.0).max(0.0);
-                let field = Frame::new()
-                    .fill(palette.surface)
-                    .corner_radius(CornerRadius::same(theme::RADIUS + 4))
-                    .inner_margin(Margin::symmetric(12, 7))
+                Frame::new()
+                    .fill(Color32::TRANSPARENT)
+                    .inner_margin(Margin::symmetric(8, 7))
                     .show(ui, |ui| {
                         ui.set_width((field_width - 24.0).max(0.0));
                         // Grow from one to six lines, then scroll.
@@ -1108,24 +1177,33 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }
                             });
                     });
-                theme::focus_outline(ui, id, field.response.rect, f32::from(theme::RADIUS + 4));
                 let ready = !app.composer.trim().is_empty()
                     || !app.pending.is_empty()
                     || (unsent_voice.is_some() && app.editing.is_none());
-                let (fill, hover, icon) = if ready {
-                    (palette.accent, palette.accent_hover, palette.on_accent)
-                } else {
-                    (palette.surface, palette.surface_hover, palette.dim)
-                };
+                let ready_factor = ui_animation::bool_factor(
+                    ui.ctx(),
+                    id.with("send-ready"),
+                    ready,
+                );
+                let fill = palette.surface.lerp_to_gamma(palette.accent, ready_factor);
+                let hover = palette
+                    .surface_hover
+                    .lerp_to_gamma(palette.accent_hover, ready_factor);
+                let icon = palette
+                    .dim
+                    .lerp_to_gamma(palette.on_accent, ready_factor);
                 if !ready && app.editing.is_none() {
                     // An empty composer changes the send button to record.
-                    if theme::circle_button(
+                    if theme::circle_button_sized(
                         ui,
-                        Icon::Mic,
+                        Icon::MicAlt,
                         button_width,
-                        fill,
-                        hover,
-                        palette.secondary,
+                        24.0,
+                        theme::CircleButtonColors {
+                            fill,
+                            fill_hover: hover,
+                            icon: composer_icon,
+                        },
                         "Record a voice message",
                     )
                     .tab_stop(Stop::Send)
@@ -1147,7 +1225,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     }
                 }
             },
-            );
+                    );
+                });
             if (send_key || send_click)
                 && (!app.composer.trim().is_empty() || !app.pending.is_empty())
             {
@@ -1171,50 +1250,66 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 app.actions.push(Action::SendRecording);
                 app.focus_composer = true;
             }
-            if app.settings.show_shortcut_hints {
-                let hint_text = if enter_sends {
-                    crate::i18n::gettext(app.locale, "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
-                } else {
-                    crate::i18n::gettext(app.locale, "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
-                };
-                let hint = super::keys::label(hint_text.as_ref());
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    if theme::icon_button(
-                        ui,
-                        Icon::X,
-                        13.0,
-                        palette.dim,
-                        palette.secondary,
-                        crate::i18n::gettext(app.locale, "Hide shortcut hints (restore in Settings)").as_ref(),
-                    )
-                    .clicked()
-                    {
-                        app.actions.push(Action::HideShortcutHints);
-                    }
-                    theme::text(ui, &hint, theme::regular(11.0), palette.dim);
-                    // Open the shortcut list without consuming typed `?`.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if theme::icon_button(
-                            ui,
-                            Icon::Keyboard,
-                            13.0,
-                            palette.dim,
-                            palette.secondary,
-                            &crate::i18n::gettext(app.locale, "All shortcuts ({})")
-                                .replace("{}", &super::keys::label("Ctrl+/")),
-                        )
-                        .clicked()
-                        {
-                            app.actions.push(Action::ShowDialog(Dialog::Shortcuts));
-                        }
-                    });
-                });
-            }
         });
     // Toasts sit above the composer so they never cover its buttons.
     ui.ctx()
         .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
+}
+
+/// The compact plus menu beside the composer, with a visual scale transition.
+fn composer_tools_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, plus: &egui::Response) {
+    let ctx = ui.ctx().clone();
+    let id = plus.id.with("composer-tools");
+    // Prime the closed state before handling a click so opening has a real
+    // 0 -> 1 transition instead of appearing fully open on its first frame.
+    let _ = ui_animation::value(&ctx, id, if app.composer_tools_open { 1.0 } else { 0.0 });
+    let mut open = app.composer_tools_open;
+    let picker_open = app.picker.is_some();
+    let keyboard_activate = ui.memory(|memory| memory.has_focus(plus.id))
+        && ui.input(|input| input.key_pressed(Key::Enter) || input.key_pressed(Key::Space));
+    if plus.clicked() || keyboard_activate {
+        open = !open;
+        if open && picker_open {
+            app.actions.push(Action::ClosePicker);
+        }
+    }
+    let progress =
+        ui_animation::whatsapp_ease(ui_animation::value(&ctx, id, if open { 1.0 } else { 0.0 }));
+    if progress > 0.001 && progress < 0.999 {
+        ui_animation::settle_repaint(&ctx);
+    }
+    // Keep the popup interactive only while its target state is open. During
+    // a closing transition, reopening it from the animated progress would
+    // make outside clicks appear ineffective.
+    let mut draw_open = open;
+    if draw_open && !picker_open {
+        let menu = egui::Popup::menu(plus)
+            .id(id)
+            .open_bool(&mut draw_open)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+            .width(190.0)
+            .frame(widgets::menu_frame(&app.palette))
+            .show(|ui| {
+                if widgets::menu_item(ui, &app.palette, Some(Icon::Paperclip), "Send files") {
+                    app.actions.push(Action::Attach);
+                }
+                if widgets::menu_item(ui, &app.palette, Some(Icon::ListChecks), "Create poll") {
+                    app.actions
+                        .push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
+                }
+            });
+        if let Some(menu) = menu {
+            let scale = (0.92 + 0.08 * progress).max(0.01);
+            let pivot = menu.response.rect.center_bottom();
+            ctx.transform_layer_shapes(
+                menu.response.layer_id,
+                egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+            );
+        }
+    }
+    if draw_open != app.composer_tools_open {
+        app.actions.push(Action::SetComposerTools(draw_open));
+    }
 }
 
 /// Offers a refused voice message for another try, or to discard it.
@@ -1257,9 +1352,9 @@ fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
     ui.add_space(6.0);
 }
 
-fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
+fn edit_strip(app: &mut App, ui: &mut egui::Ui, motion: f32) {
     let palette = app.palette;
-    Frame::new()
+    let panel = Frame::new()
         .fill(palette.surface)
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(10, 6))
@@ -1284,10 +1379,16 @@ fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
                 });
             });
         });
+    let scale = 0.97 + 0.03 * motion;
+    let pivot = panel.response.rect.center_bottom();
+    ui.ctx().transform_layer_shapes(
+        panel.response.layer_id,
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+    );
     ui.add_space(6.0);
 }
 
-fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
+fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message, motion: f32) {
     let palette = app.palette;
     let who = if quoted.from_me {
         "You".to_owned()
@@ -1295,7 +1396,7 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
         app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
     };
     let summary = markup::plain(&quoted.summary(), &app.mention_list(quoted));
-    Frame::new()
+    let panel = Frame::new()
         .fill(palette.surface)
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(10, 6))
@@ -1331,6 +1432,12 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
                 });
             });
         });
+    let scale = 0.97 + 0.03 * motion;
+    let pivot = panel.response.rect.center_bottom();
+    ui.ctx().transform_layer_shapes(
+        panel.response.layer_id,
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+    );
     ui.add_space(6.0);
 }
 
@@ -5593,37 +5700,27 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
         None => return,
     };
     let button = 36.0;
+    let row_height = 42.0;
     ui.allocate_ui_with_layout(
-        vec2(ui.available_width().max(0.0), button),
-        egui::Layout::left_to_right(egui::Align::Center),
+        vec2(ui.available_width().max(0.0), row_height),
+        egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             if theme::circle_button(
                 ui,
-                Icon::Trash,
+                Icon::Send,
                 button,
-                palette.surface,
-                palette.surface_hover,
-                palette.secondary,
-                "Discard",
+                palette.accent,
+                palette.accent_hover,
+                palette.on_accent,
+                "Send",
             )
             .clicked()
             {
-                app.actions.push(Action::CancelRecording);
+                app.actions.push(Action::SendRecording);
             }
-            // Pulsing recording light and elapsed time.
-            let (dot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
-            let pulse = 0.55 + 0.45 * (elapsed.as_secs_f32() * 3.0).sin().abs();
-            ui.painter()
-                .circle_filled(dot.center(), 5.0, palette.danger.gamma_multiply(pulse));
-            theme::text(
-                ui,
-                crate::util::duration(elapsed.as_secs() as u32),
-                theme::medium(14.0),
-                palette.text,
-            );
             // Recent audio levels, newest on the right.
-            let wave_width = (ui.available_width() - button - 10.0).max(40.0);
+            let wave_width = ui.available_width().clamp(40.0, 150.0);
             let (rect, _) = ui.allocate_exact_size(vec2(wave_width, 28.0), Sense::hover());
             let pitch = 3.0;
             let count = (rect.width() / pitch).floor() as usize;
@@ -5637,18 +5734,29 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
                     palette.accent,
                 );
             }
+            // Pulsing recording light and elapsed time.
+            theme::text(
+                ui,
+                crate::util::duration(elapsed.as_secs() as u32),
+                theme::medium(14.0),
+                palette.text,
+            );
+            let (dot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+            let pulse = 0.55 + 0.45 * (elapsed.as_secs_f32() * 3.0).sin().abs();
+            ui.painter()
+                .circle_filled(dot.center(), 5.0, palette.danger.gamma_multiply(pulse));
             if theme::circle_button(
                 ui,
-                Icon::Send,
+                Icon::Trash,
                 button,
-                palette.accent,
-                palette.accent_hover,
-                palette.on_accent,
-                "Send",
+                palette.surface,
+                palette.surface_hover,
+                palette.secondary,
+                "Discard",
             )
             .clicked()
             {
-                app.actions.push(Action::SendRecording);
+                app.actions.push(Action::CancelRecording);
             }
         },
     );

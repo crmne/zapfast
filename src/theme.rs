@@ -403,6 +403,7 @@ pub enum Icon {
     Maximize,
     MessageCircle,
     Mic,
+    MicAlt,
     Minimize,
     Minus,
     Monitor,
@@ -424,6 +425,7 @@ pub enum Icon {
     Settings,
     Smartphone,
     Smile,
+    Smiley,
     SquarePen,
     Star,
     StarOff,
@@ -478,6 +480,7 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     Maximize => "maximize-2",
     MessageCircle => "message-circle",
     Mic => "mic",
+    MicAlt => "mic-alt",
     Minimize => "minimize-2",
     Minus => "minus",
     Monitor => "monitor",
@@ -499,6 +502,7 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     Settings => "settings",
     Smartphone => "smartphone",
     Smile => "smile",
+    Smiley => "smiley",
     SquarePen => "square-pen",
     Star => "star",
     StarOff => "star-off",
@@ -616,6 +620,13 @@ pub fn icon_button(
 }
 
 /// Round filled icon button.
+#[derive(Clone, Copy)]
+pub struct CircleButtonColors {
+    pub fill: Color32,
+    pub fill_hover: Color32,
+    pub icon: Color32,
+}
+
 pub fn circle_button(
     ui: &mut egui::Ui,
     icon: Icon,
@@ -625,9 +636,32 @@ pub fn circle_button(
     icon_color: Color32,
     tooltip: &str,
 ) -> Response {
+    circle_button_sized(
+        ui,
+        icon,
+        diameter,
+        diameter * 0.46,
+        CircleButtonColors {
+            fill,
+            fill_hover,
+            icon: icon_color,
+        },
+        tooltip,
+    )
+}
+
+/// Round filled icon button with an explicit icon size.
+pub fn circle_button_sized(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    diameter: f32,
+    icon_size: f32,
+    colors: CircleButtonColors,
+    tooltip: &str,
+) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click());
     reveal_focus(&response);
-    focus_outline_on_fill(ui, response.id, rect, diameter / 2.0, fill);
+    focus_outline_on_fill(ui, response.id, rect, diameter / 2.0, colors.fill);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
@@ -635,11 +669,14 @@ pub fn circle_button(
         let hovered = response.hovered();
         let grow = if hovered { 1.05 } else { 1.0 };
         let radius = diameter / 2.0 * grow;
-        let fill = if hovered { fill_hover } else { fill };
+        let fill = if hovered {
+            colors.fill_hover
+        } else {
+            colors.fill
+        };
         ui.painter().circle_filled(rect.center(), radius, fill);
-        let icon_size = diameter * 0.46;
         let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
-        icon.image(icon_color, icon_size).paint_at(ui, icon_rect);
+        icon.image(colors.icon, icon_size).paint_at(ui, icon_rect);
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if tooltip.is_empty() {

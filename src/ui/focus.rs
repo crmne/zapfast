@@ -8,7 +8,6 @@ pub enum Stop {
     Composer,
     Send,
     Attach,
-    Poll,
     Emoji,
     Back,
     Profile,

@@ -1171,6 +1171,8 @@ pub enum Action {
     DeleteForMe(String),
     /// Opens the attachment picker for the current chat.
     Attach,
+    /// Opens or closes the composer tools menu.
+    SetComposerTools(bool),
     SendFiles(Vec<PathBuf>),
     /// Clipboard image as straight-alpha RGBA.
     PasteImage {
