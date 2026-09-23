@@ -4,8 +4,10 @@ pub mod chats;
 pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
+pub mod image_preview;
 pub mod keys;
 pub mod login;
+pub mod message_info;
 pub mod picker;
 pub mod polls;
 pub mod settings;
@@ -16,7 +18,7 @@ use egui::{Align2, CornerRadius, Frame, Margin, Stroke, vec2};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
-use crate::model::{Action, Page, ToastKind};
+use crate::model::{Action, Page, SidebarDisplayMode, ToastKind};
 use crate::theme::{self, Icon};
 use focus::{Stop, TabStop};
 
@@ -32,6 +34,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.picker.is_none()
         && app.reaction_target.is_none()
         && app.recording.is_none()
+        && app.image_preview.is_none()
         && app.emoji_start.is_none()
         && app.mention_start.is_none()
         && !egui::Popup::is_any_open(ctx);
@@ -51,23 +54,49 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if !macos {
         banner(app, ui);
     }
-    if app.sidebar_visible {
-        chats::show(app, ui);
+    match app.sidebar_mode() {
+        SidebarDisplayMode::Expanded => chats::show(app, ui),
+        SidebarDisplayMode::CollapsedIconsOnly => chats::compact_show(app, ui),
+        SidebarDisplayMode::Hidden => {}
     }
-    let palette = app.palette;
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(palette.chat))
+        .frame(central_frame(app))
         .show(ui, |ui| match app.page {
             Page::Settings => settings::show(app, ui),
             Page::Chats => conversation::show(app, ui),
+            Page::Wallpaper => settings::wallpaper_show(app, ui),
         });
     focus::finish(ctx, main_navigation);
     update::show(app, ctx);
     picker::show(app, ctx);
     dialogs::show(app, ctx);
+    image_preview::show(app, ctx);
     drop_target(app, ctx);
     toasts(app, ctx);
     focus_ring(app, ctx);
+}
+
+fn central_background(app: &App) -> egui::Color32 {
+    if app.page == Page::Chats {
+        app.settings.wallpaper_color_for(app.palette.dark).color32()
+    } else {
+        app.palette.panel
+    }
+}
+
+fn central_frame(app: &App) -> Frame {
+    let stroke = if app.page == Page::Wallpaper {
+        let color = if app.palette.dark {
+            egui::Color32::from_rgba_unmultiplied(233, 237, 239, 32)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(10, 10, 10, 32)
+        };
+        Stroke::new(1.0, color)
+    } else {
+        Stroke::NONE
+    };
+
+    Frame::new().fill(central_background(app)).stroke(stroke)
 }
 
 /// Where the focus ring was drawn this frame, used by interaction tests.
@@ -467,7 +496,7 @@ pub fn titlebar_drag(ui: &mut egui::Ui, rect: egui::Rect) {
 
 /// Header for pages without a conversation toolbar and with the sidebar hidden.
 pub fn standalone_header(app: &mut App, ui: &mut egui::Ui) {
-    if !theme::macos_chrome(ui.ctx()) || app.sidebar_visible {
+    if !theme::macos_chrome(ui.ctx()) || app.sidebar_mode() != SidebarDisplayMode::Hidden {
         return;
     }
     let palette = app.palette;
@@ -506,6 +535,35 @@ pub fn standalone_header(app: &mut App, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod idle_tests {
     use super::*;
+
+    #[test]
+    fn settings_uses_panel_background_not_wallpaper_color() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Settings;
+        app.palette = crate::theme::Palette::light();
+
+        assert_eq!(central_background(&app), app.palette.panel);
+        assert_eq!(central_frame(&app).stroke, Stroke::NONE);
+
+        app.palette = crate::theme::Palette::dark();
+        assert_eq!(central_background(&app), app.palette.panel);
+        assert_eq!(central_frame(&app).stroke, Stroke::NONE);
+
+        app.page = Page::Wallpaper;
+        assert_eq!(
+            central_frame(&app).stroke,
+            Stroke::new(
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(233, 237, 239, 32)
+            )
+        );
+    }
+
     #[test]
     fn history_sync_banner_does_not_animate_the_idle_window() {
         let root = tempfile::tempdir().unwrap();

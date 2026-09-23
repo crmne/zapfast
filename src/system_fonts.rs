@@ -14,6 +14,8 @@ pub struct Fallback {
     pub name: String,
     pub bytes: Vec<u8>,
     pub index: u32,
+    /// Size relative to Inter, so the script reads as large as Latin text.
+    pub scale: f32,
 }
 
 /// Missing scripts represented by a probe character and preferred name hint.
@@ -123,13 +125,66 @@ fn load() -> Vec<Fallback> {
             candidate.index
         );
         taken.push((candidate.path.clone(), candidate.index));
+        let scale = if *script == "arabic" {
+            arabic_scale(&bytes, candidate.index)
+        } else {
+            1.0
+        };
+        if scale != 1.0 {
+            log::debug!("{script} fallback scaled by {scale:.2}");
+        }
         fonts.push(Fallback {
             name: format!("fallback-{script}"),
             bytes,
             index: candidate.index,
+            scale,
         });
     }
     fonts
+}
+
+/// How much to enlarge an Arabic face so it reads as large as Inter.
+///
+/// Arabic letters sit lower than Latin ones, and many system faces draw them
+/// small beside Inter, which makes Arabic chats hard to read. The body of
+/// heh (ه), a letter without ascenders or descenders, plays the part of the
+/// x-height. Faces already designed to match Latin text are left alone.
+fn arabic_scale(bytes: &[u8], index: u32) -> f32 {
+    const INTER: &[u8] = include_bytes!("../assets/fonts/InterVariable.ttf");
+    let height = |bytes: &[u8], index: u32, probe: char| -> Option<f32> {
+        let font = skrifa::FontRef::from_index(bytes, index).ok()?;
+        let glyph = font.charmap().map(probe)?;
+        let bounds = font
+            .glyph_metrics(
+                skrifa::instance::Size::unscaled(),
+                skrifa::instance::LocationRef::default(),
+            )
+            .bounds(glyph)?;
+        let units = f32::from(
+            font.metrics(
+                skrifa::instance::Size::unscaled(),
+                skrifa::instance::LocationRef::default(),
+            )
+            .units_per_em,
+        );
+        Some((bounds.y_max - bounds.y_min.max(0.0)) / units)
+    };
+    match (height(INTER, 0, 'x'), height(bytes, index, '\u{0647}')) {
+        (Some(latin), Some(arabic)) if arabic > 0.0 => scale_for(latin, arabic),
+        _ => 1.0,
+    }
+}
+
+/// Scale that brings `arabic` to `latin`, never shrinking and at most 25%
+/// larger, so Arabic stays in proportion with the text around it.
+fn scale_for(latin: f32, arabic: f32) -> f32 {
+    let scale = (latin / arabic).clamp(1.0, 1.25);
+    // Ignore differences too small to see.
+    if scale < 1.04 {
+        1.0
+    } else {
+        (scale * 100.0).round() / 100.0
+    }
 }
 
 /// Scans font files below `dir` and keeps the best face per script.
@@ -387,6 +442,16 @@ mod tests {
         assert!(is_font_file(Path::new("/x/PingFang.otf")));
         assert!(!is_font_file(Path::new("/x/fonts.dir")));
         assert!(!is_font_file(Path::new("/x/README")));
+    }
+
+    #[test]
+    fn arabic_is_enlarged_to_latin_size_within_limits() {
+        assert_eq!(scale_for(0.55, 0.50), 1.1);
+        // Faces that already match Latin, or draw Arabic larger, stay as is.
+        assert_eq!(scale_for(0.55, 0.54), 1.0);
+        assert_eq!(scale_for(0.55, 0.70), 1.0);
+        // Very small Arabic is enlarged only so far.
+        assert_eq!(scale_for(0.55, 0.30), 1.25);
     }
 
     #[test]

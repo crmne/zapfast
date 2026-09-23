@@ -7,7 +7,10 @@ protocol. These notes are for coding agents and new contributors.
 ## Product boundaries
 
 - Keep it a small native client. No browser engine, no telemetry, no
-  hosted backend, no second account system.
+  hosted backend, no ZapFast-operated account system. Features never send
+  message content to a third party.
+- Do not vendor, fork, or patch upstream crates (egui, epaint, whatsapp-rust)
+  in this repository. Fix them upstream.
 - The protocol comes from whatsapp-rust. Do not reimplement pieces of it
   here, and do not advertise a capability merely because a protobuf field
   for it exists.
@@ -46,15 +49,32 @@ protocol. These notes are for coding agents and new contributors.
   a disposable archive. Tests use fixtures and mock credentials only.
 - `src/model.rs` holds the app's own types. Views never touch a protobuf;
   the worker translates in `classify()` and `parse_conversation()`.
+- Interactive messages are parsed in `backend/worker/interactive.rs`. Views receive
+  labels and local capabilities, never protocol option ids. `ReplyInteractive`
+  carries only the archived message id and visible button/choice indices;
+  `interactive/replies.rs` re-resolves them from raw protobuf and uses the library's
+  quote context and normal send path. Only known quick replies and single-select
+  lists may send responses. Copy-code actions stay local. Do not turn arbitrary
+  flow JSON into replies or fall back to sending its visible label as plain text.
+  The versioned archive backfill must preserve downloaded image paths and edits.
+  Carousel cards retain independent images and local actions. Download commands
+  carry an optional card index, and the archive stores each image path separately.
+  The version-4 backfill preserves those paths when rebuilding derived content.
+  See [compatibility notes](docs/interactive-message-actions.md) for response
+  families, source references, and live-test limits.
 - Poll creation, voting, and decryption use whatsapp-rust's `Client::polls()`.
   `backend/worker/polls.rs` retains the original creator identity and key in the
   encrypted archive; `archive/polls.rs` keeps each voter's latest timestamp and
   message id, including encrypted updates whose parent has not arrived yet.
   History replay must not undo a newer vote or withdrawal. Decryption runs in
-  batches of eight, with failures retried after reconnecting. The interface only
-  receives option counts and its own selection, never keys or protobufs. Visible
-  polls request phone history automatically, anchored after the creation message
-  so the response includes its vote snapshot. `poll_history.rs` serializes these
+  batches of eight, with failures retried after reconnecting. The interface receives
+  option counts, its own selection, and the latest decrypted voter names/times
+  for the results dialog, never keys or protobufs. New, non-offline poll creations
+  received through normal delivery start with a complete zero-vote baseline,
+  persisted in `poll_history`. PDO recovery and
+  duplicate deliveries do not establish that baseline. Visible polls without a
+  complete baseline request phone history automatically, anchored after the
+  creation message so the response includes its vote snapshot. `poll_history.rs` serializes these
   requests and retries from 30 seconds to 15 minutes without an interface timer.
   History request timestamps are Unix seconds: the library argument and wire
   field misleadingly end in `Ms`. Do not multiply archive timestamps by 1,000.
@@ -90,6 +110,15 @@ protocol. These notes are for coding agents and new contributors.
   optional and only adds the SIMD paths (the AUR recipes leave it out,
   the build works without it). Frames become textures on the interface
   thread and are dropped when unseen.
+- `src/video.rs` plays other videos inside their message, one at a time,
+  with the same `mp4` and `openh264` pieces: a thread decodes from the
+  keyframe before the start (openh264 must not flush after each packet or
+  B-frames stop it) and streams scaled frames with presentation times; the
+  interface thread shows the due frame in one texture. rodio's symphonia
+  decodes the AAC track and its position steers the clock. Non-H.264 files go
+  to the system player. `Action::PlayVideo/SeekVideo/ToggleVideoSound` drive
+  it; leaving the chat stops it and an unseen video pauses. Round video
+  messages (PTV) are `Content::Video { note: true }` and draw as circles.
 - Message bodies paint through `markup::paint_selectable` and single lines
   through `widgets::selectable_rich_text`: both hand the galley to
   `egui::text_selection::LabelSelectionState` (which paints it) and only
@@ -252,7 +281,9 @@ a full-changelog link. Credit who did what on the relevant item, with issue
 or PR numbers, and acknowledge reporters separately from implementers.
 Include screenshots or short videos of the main features, especially Omarchy
 theme integration when relevant. Capture only synthetic offline demo content,
-never real chats. Verify every media link and do not leave generated notes
+never real chats. Upload the media as assets of the GitHub release and link
+those URLs from the notes; never commit screenshots or recordings to the
+repository. Verify every media link and do not leave generated notes
 in place. Describe known limitations honestly.
 
 Do not cut a release for every fix. Work accumulates on `main` until
@@ -314,3 +345,19 @@ A release is not finished when the tag is pushed. Do these in order:
   compiled.
 - Never log message contents, phone numbers, keys, or QR payloads at a
   level that ships. The log file is meant to be attached to bug reports.
+
+## Disk use
+
+Build caches save hours of recompiling, so keep them, but keep them small:
+
+- Use one build cache per project: `target/` in the main checkout. Git
+  worktrees and parallel agents set `CARGO_TARGET_DIR` to that directory
+  instead of building their own; a fresh target costs 20 GB or more.
+- Never put build output or large scratch files in `/tmp`. It is a small
+  in-memory filesystem with a per-user quota, and filling it breaks every
+  shell on the machine.
+- Rotate the cache: `cargo sweep --time 14` (from `cargo install cargo-sweep`)
+  removes artifacts unused for two weeks. If `target/` still exceeds about
+  60 GB, run `cargo clean`.
+- Delete one-off QA, packaging, and release-validation directories (under
+  `.cache/` or `~/.cache/`) once their result is recorded.
