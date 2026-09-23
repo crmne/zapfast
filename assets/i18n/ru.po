@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 19:37+0200\n"
+"POT-Creation-Date: 2026-09-23 19:43+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -17,23 +17,23 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
 "n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 
-#: src/model.rs:59
+#: src/model.rs:70
 msgid "All"
 msgstr "Все"
 
-#: src/model.rs:60
+#: src/model.rs:71
 msgid "Unread"
 msgstr "Непрочитанные"
 
-#: src/model.rs:61
+#: src/model.rs:72
 msgid "Private"
 msgstr "Личные"
 
-#: src/model.rs:62
+#: src/model.rs:73
 msgid "Groups"
 msgstr "Группы"
 
-#: src/model.rs:63
+#: src/model.rs:74
 msgid "Channels"
 msgstr "Каналы"
 
@@ -136,19 +136,19 @@ msgstr "Ноябрь"
 msgid "December"
 msgstr "Декабрь"
 
-#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:169
+#: src/ui/chats.rs:112 src/ui/chats.rs:227 src/ui/settings.rs:169
 msgid "Chats"
 msgstr "Чаты"
 
-#: src/ui/chats.rs:168 src/ui/chats.rs:267
+#: src/ui/chats.rs:169 src/ui/chats.rs:268
 msgid "Search"
 msgstr "Поиск"
 
-#: src/ui/chats.rs:365
+#: src/ui/chats.rs:369
 msgid "Archived"
 msgstr "Архив"
 
-#: src/ui/chats.rs:382
+#: src/ui/chats.rs:386
 msgid "Locked"
 msgstr "Заблокированные"
 
@@ -237,7 +237,7 @@ msgstr "Включить звук"
 msgid "Mute"
 msgstr "Выключить звук"
 
-#: src/ui/dialogs.rs:1184
+#: src/ui/dialogs.rs:1186
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -261,11 +261,23 @@ msgstr "Язык"
 msgid "Auto"
 msgstr "Автоматически"
 
-#: src/ui/settings.rs:188
+#: src/ui/settings.rs:181
+msgid "Show labels as chips"
+msgstr "Показывать метки как чипы"
+
+#: src/ui/settings.rs:181
+msgid ""
+"Give each label its own chip, in a row under All, Unread and Groups. When "
+"off, they share one Labels chip."
+msgstr ""
+"У каждой метки свой чип в ряду под «Все», «Непрочитанные» и «Группы». Если "
+"выключено, они собраны в один чип «Метки»."
+
+#: src/ui/settings.rs:192
 msgid "Pause music while recording"
 msgstr "Ставить музыку на паузу во время записи"
 
-#: src/ui/settings.rs:188
+#: src/ui/settings.rs:192
 msgid ""
 "Pause media players while you record a voice message and resume them "
 "afterwards."
@@ -273,11 +285,11 @@ msgstr ""
 "Ставить плееры на паузу во время записи голосового сообщения и продолжать "
 "после."
 
-#: src/ui/settings.rs:189
+#: src/ui/settings.rs:193
 msgid "Pause music while playing voice messages"
 msgstr "Ставить музыку на паузу при прослушивании голосовых"
 
-#: src/ui/settings.rs:189
+#: src/ui/settings.rs:193
 msgid ""
 "Pause media players while a voice or audio message plays and resume them "
 "when it stops."
@@ -285,76 +297,76 @@ msgstr ""
 "Ставить плееры на паузу, пока играет голосовое или аудиосообщение, и "
 "продолжать после."
 
-#: src/ui/settings.rs:228
+#: src/ui/settings.rs:232
 msgid "Window"
 msgstr "Окно"
 
-#: src/ui/settings.rs:273
+#: src/ui/settings.rs:277
 msgid "Network"
 msgstr "Сеть"
 
-#: src/ui/settings.rs:305
+#: src/ui/settings.rs:309
 msgid "Account"
 msgstr "Аккаунт"
 
-#: src/ui/settings.rs:309
+#: src/ui/settings.rs:313
 msgid "Files"
 msgstr "Файлы"
 
-#: src/ui/settings.rs:355 src/ui/settings.rs:616 src/ui/settings.rs:778
+#: src/ui/settings.rs:359 src/ui/settings.rs:620 src/ui/settings.rs:782
 msgid "About"
 msgstr "О программе"
 
-#: src/ui/settings.rs:436
+#: src/ui/settings.rs:440
 msgid "Add doodles"
 msgstr "Добавить рисунки"
 
-#: src/ui/settings.rs:440
+#: src/ui/settings.rs:444
 msgid "Show the default doodles over the selected colour."
 msgstr "Показывать стандартные рисунки поверх выбранного цвета."
 
-#: src/ui/settings.rs:585
+#: src/ui/settings.rs:589
 msgid "Change profile picture"
 msgstr "Изменить фото профиля"
 
-#: src/ui/settings.rs:608
+#: src/ui/settings.rs:612
 msgid "Your name"
 msgstr "Ваше имя"
 
-#: src/ui/settings.rs:624
+#: src/ui/settings.rs:628
 msgid "Linked device"
 msgstr "Связанное устройство"
 
-#: src/ui/settings.rs:635
+#: src/ui/settings.rs:639
 msgid "Edit your name and About"
 msgstr "Изменить имя и сведения"
 
-#: src/ui/settings.rs:652
+#: src/ui/settings.rs:656
 msgid "Unlink this computer"
 msgstr "Отвязать этот компьютер"
 
-#: src/ui/settings.rs:672
+#: src/ui/settings.rs:676
 msgid "Save"
 msgstr "Сохранить"
 
-#: src/ui/settings.rs:682
+#: src/ui/settings.rs:686
 msgid "Cancel"
 msgstr "Отмена"
 
-#: src/ui/settings.rs:746
+#: src/ui/settings.rs:750
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "Нативный клиент WhatsApp на Rust, egui и whatsapp-rust."
 
-#: src/ui/settings.rs:757
+#: src/ui/settings.rs:761
 #, rust-format
 msgid "Update to {version}"
 msgstr "Обновить до {version}"
 
-#: src/ui/settings.rs:767
+#: src/ui/settings.rs:771
 msgid "Keyboard shortcuts"
 msgstr "Сочетания клавиш"
 
-#: src/ui/settings.rs:789
+#: src/ui/settings.rs:793
 msgid "Source code"
 msgstr "Исходный код"
 
@@ -364,7 +376,7 @@ msgstr "Исходный код"
 msgid "Built with love by {name}"
 msgstr "Сделано с любовью: {name}"
 
-#: src/ui/message_info.rs:28
+#: src/ui/message_info.rs:28 src/ui/labels.rs:271
 msgid "Close"
 msgstr "Закрыть"
 
@@ -432,6 +444,131 @@ msgstr[2] "ещё {}"
 msgid "No one yet"
 msgstr "Пока никто"
 
-#: src/app.rs:3791
+#: src/app.rs:961
+#, rust-format
+msgid "A label named “{name}” already exists."
+msgstr "Метка «{name}» уже есть."
+
+#: src/app.rs:3461 src/ui/labels.rs:294
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "У вас {limit} меток — больше ZapFast не хранит."
+
+#: src/app.rs:3939
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
+
+#: src/ui/labels.rs:68
+msgctxt "label colour"
+msgid "Blue"
+msgstr "Синий"
+
+#: src/ui/labels.rs:69
+msgctxt "label colour"
+msgid "Green"
+msgstr "Зелёный"
+
+#: src/ui/labels.rs:70
+msgctxt "label colour"
+msgid "Yellow"
+msgstr "Жёлтый"
+
+#: src/ui/labels.rs:71
+msgctxt "label colour"
+msgid "Orange"
+msgstr "Оранжевый"
+
+#: src/ui/labels.rs:72
+msgctxt "label colour"
+msgid "Red"
+msgstr "Красный"
+
+#: src/ui/labels.rs:73
+msgctxt "label colour"
+msgid "Pink"
+msgstr "Розовый"
+
+#: src/ui/labels.rs:74
+msgctxt "label colour"
+msgid "Purple"
+msgstr "Фиолетовый"
+
+#: src/ui/labels.rs:75
+msgctxt "label colour"
+msgid "Teal"
+msgstr "Бирюзовый"
+
+#: src/ui/labels.rs:76
+msgctxt "label colour"
+msgid "Grey"
+msgstr "Серый"
+
+#: src/ui/labels.rs:77
+msgctxt "label colour"
+msgid "Sky blue"
+msgstr "Голубой"
+
+#: src/ui/labels.rs:78
+msgctxt "label colour"
+msgid "Colour"
+msgstr "Цвет"
+
+#: src/ui/labels.rs:149
+msgid "Manage labels"
+msgstr "Управление метками"
+
+#: src/ui/labels.rs:172 src/ui/labels.rs:223 src/ui/labels.rs:260
+msgid "Labels"
+msgstr "Метки"
+
+#: src/ui/labels.rs:192
+msgid "All chats"
+msgstr "Все чаты"
+
+#: src/ui/labels.rs:207 src/ui/labels.rs:247
+msgid "Manage labels…"
+msgstr "Управление метками…"
+
+#: src/ui/labels.rs:283
+msgid ""
+"Labels stay on this computer. They do not reach your phone or anyone you "
+"chat with."
+msgstr ""
+"Метки остаются на этом компьютере. Они не попадают ни на ваш телефон, ни к "
+"собеседникам."
+
+#: src/ui/labels.rs:304
+msgid "New label"
+msgstr "Новая метка"
+
+#: src/ui/labels.rs:318
+msgid "Create"
+msgstr "Создать"
+
+#: src/ui/labels.rs:348
+msgid ""
+"No labels yet. Create one above, then add chats to it from their right-click "
+"menu."
+msgstr ""
+"Меток пока нет. Создайте метку выше, затем добавляйте чаты через их "
+"контекстное меню."
+
+#: src/ui/labels.rs:383
+msgid "Next colour"
+msgstr "Следующий цвет"
+
+#: src/ui/labels.rs:432
+#, rust-format
+msgid "{} chat"
+msgid_plural "{} chats"
+msgstr[0] "{} чат"
+msgstr[1] "{} чата"
+msgstr[2] "{} чатов"
+
+#: src/ui/labels.rs:453
+msgid "Rename or recolour"
+msgstr "Переименовать или сменить цвет"
+
+#: src/ui/labels.rs:478
+msgid "Delete this label. Its chats keep their messages."
+msgstr "Удалить эту метку. Сообщения в её чатах останутся."

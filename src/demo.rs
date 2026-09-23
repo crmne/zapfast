@@ -1311,6 +1311,37 @@ fn video_sample(app: &mut App, play: Option<&str>) {
     }
 }
 
+/// Three local labels worn by some of the sample chats.
+fn labels_sample(app: &mut App) {
+    let label = |id: &str, name: &str, color_hex: &str, created_at| crate::model::Label {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        color_hex: color_hex.to_owned(),
+        created_at,
+    };
+    app.labels = vec![
+        label("label-work", "Work", "#3b82f6", 1),
+        label("label-family", "Family", "#22c55e", 2),
+        label("label-follow-up", "Follow up", "#f97316", 3),
+    ];
+    let worn: [(usize, &[&str]); 5] = [
+        (0, &["label-work", "label-follow-up"]),
+        (1, &["label-work"]),
+        (2, &["label-follow-up"]),
+        (4, &["label-family"]),
+        (6, &["label-work"]),
+    ];
+    for (index, labels) in worn {
+        if let Some(chat) = app
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == SAMPLES[index].id)
+        {
+            chat.labels = labels.iter().map(|id| (*id).to_owned()).collect();
+        }
+    }
+}
+
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -1924,6 +1955,19 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.composer = "Look at these".into();
             }
             "archived" => app.show_archived = true,
+            "labels" => labels_sample(app),
+            "label-chips" => {
+                labels_sample(app);
+                app.settings.label_chips = true;
+            }
+            "label-filter" => {
+                labels_sample(app);
+                app.label_filter = Some("label-work".into());
+            }
+            "labels-dialog" => {
+                labels_sample(app);
+                app.dialog = Some(Dialog::Labels);
+            }
             "unread" => app.chat_filter = crate::model::ChatFilter::Unread,
             "private" => app.chat_filter = crate::model::ChatFilter::Private,
             "groups" => app.chat_filter = crate::model::ChatFilter::Groups,

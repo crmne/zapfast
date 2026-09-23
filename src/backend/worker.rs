@@ -762,6 +762,7 @@ impl Worker {
                     | Event::Incoming { .. }
                     | Event::Contacts(_)
                     | Event::SearchHits { .. }
+                    | Event::Labels(_)
                     | Event::Typing { .. }
             )
         {
@@ -884,9 +885,31 @@ impl Worker {
                     self.polish_chat(chat);
                 }
                 self.emit(Event::Chats(chats));
+                self.emit_labels();
                 self.emit(Event::Drafts(self.archive.drafts().unwrap_or_default()));
             }
             Err(error) => log::warn!("could not list chats: {error}"),
+        }
+    }
+
+    /// Every label in creation order, so the UI can draw tabs and menus.
+    fn emit_labels(&self) {
+        match self.archive.labels() {
+            Ok(labels) => self.emit(Event::Labels(labels)),
+            Err(error) => log::warn!("could not list labels: {error}"),
+        }
+    }
+
+    /// Creates a label. The app refuses a full set or a taken name first,
+    /// in the user's language; the archive checks again and says nothing.
+    fn create_label(&mut self, name: String, color_hex: String) {
+        match self
+            .archive
+            .create_label(&name, &color_hex, crate::util::now())
+        {
+            Ok(Some(_)) => self.emit_labels(),
+            Ok(None) => log::info!("label not created: full, empty, or taken"),
+            Err(error) => log::warn!("could not create label: {error}"),
         }
     }
 
@@ -902,6 +925,7 @@ impl Worker {
         if let Some(last) = chat.last.as_mut() {
             last.summary = self.pn_tokens(&last.summary);
         }
+        chat.labels = self.archive.chat_labels(&chat.id).unwrap_or_default();
     }
 
     fn emit_message(&self, chat: &str, id: &str) {
@@ -2219,6 +2243,7 @@ impl Worker {
         let _ = std::fs::remove_dir_all(self.dirs.avatar_cache_dir());
         let _ = std::fs::remove_dir_all(self.dirs.media_cache_dir());
         self.emit(Event::Chats(Vec::new()));
+        self.emit_labels();
         self.emit(Event::Drafts(Vec::new()));
         self.privacy_ready = false;
         self.privacy_confirmed = false;
@@ -4382,6 +4407,27 @@ impl Worker {
                     }
                     .map_err(|error| error.to_string())
                 });
+            }
+            Command::CreateLabel { name, color_hex } => self.create_label(name, color_hex),
+            Command::UpdateLabel {
+                id,
+                name,
+                color_hex,
+            } => match self.archive.update_label(&id, &name, &color_hex) {
+                Ok(true) => self.emit_labels(),
+                Ok(false) => log::info!("label not updated: gone, empty, or taken"),
+                Err(error) => log::warn!("could not update label: {error}"),
+            },
+            Command::DeleteLabel(id) => match self.archive.delete_label(&id) {
+                Ok(true) => self.emit_labels(),
+                Ok(false) => {}
+                Err(error) => log::warn!("could not delete label: {error}"),
+            },
+            Command::SetChatLabels { chat, labels } => {
+                if let Err(error) = self.archive.set_chat_labels(&chat, &labels) {
+                    log::warn!("could not assign labels: {error}");
+                }
+                self.emit_chat(&chat);
             }
             Command::SetLocked(chat, locked) => {
                 let _ = self.archive.set_locked(&chat, locked);

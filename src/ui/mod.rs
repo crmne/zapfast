@@ -6,6 +6,7 @@ pub mod dialogs;
 pub(crate) mod focus;
 pub mod image_preview;
 pub mod keys;
+pub mod labels;
 pub mod login;
 pub mod message_info;
 pub mod picker;

@@ -649,6 +649,19 @@ pub fn filter_chip(
     count: usize,
     selected: bool,
 ) -> egui::Response {
+    dotted_chip(ui, palette, None, label, count, selected)
+}
+
+/// A filter chip led by a coloured dot, for filters the user named and
+/// coloured, such as labels.
+pub fn dotted_chip(
+    ui: &mut Ui,
+    palette: &Palette,
+    dot: Option<Color32>,
+    label: &str,
+    count: usize,
+    selected: bool,
+) -> egui::Response {
     let color = if selected {
         palette.accent
     } else {
@@ -659,7 +672,9 @@ pub fn filter_chip(
     let number =
         (count > 0).then(|| painter.layout_no_wrap(count.to_string(), theme::regular(11.5), color));
     let gap = 5.0;
-    let width = text.size().x + number.as_ref().map_or(0.0, |number| gap + number.size().x);
+    let dot_width = if dot.is_some() { 8.0 + gap } else { 0.0 };
+    let width =
+        dot_width + text.size().x + number.as_ref().map_or(0.0, |number| gap + number.size().x);
     let (rect, response) = ui.allocate_exact_size(vec2(width + 18.0, 28.0), Sense::click());
     theme::reveal_focus(&response);
     theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
@@ -679,7 +694,14 @@ pub fn filter_chip(
                 egui::StrokeKind::Inside,
             );
         }
-        let mut pos = pos2(rect.left() + 9.0, rect.center().y - text.size().y / 2.0);
+        if let Some(dot) = dot {
+            ui.painter()
+                .circle_filled(pos2(rect.left() + 13.0, rect.center().y), 4.0, dot);
+        }
+        let mut pos = pos2(
+            rect.left() + 9.0 + dot_width,
+            rect.center().y - text.size().y / 2.0,
+        );
         let advance = text.size().x + gap;
         ui.painter().galley(pos, text, color);
         if let Some(number) = number {

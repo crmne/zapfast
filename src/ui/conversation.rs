@@ -1727,7 +1727,7 @@ fn typing_dots(ui: &mut egui::Ui, palette: &Palette) {
         return;
     }
     ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(33));
+        .request_repaint_after(std::time::Duration::from_millis(100));
     let time = ui.input(|input| input.time);
     for index in 0..3 {
         let wave = ((time * std::f64::consts::TAU / 1.2) - f64::from(index) * 0.9).sin() as f32;

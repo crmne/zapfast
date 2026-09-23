@@ -321,6 +321,8 @@ pub struct Settings {
     pub enter_sends: bool,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
+    /// Show each label as its own filter chip instead of one Labels menu chip.
+    pub label_chips: bool,
     /// Send typing state while composing.
     pub send_typing: bool,
     /// Download attachments when they enter view instead of on click.
@@ -393,6 +395,7 @@ impl Default for Settings {
             collapse_chat_list: false,
             enter_sends: true,
             send_read_receipts: true,
+            label_chips: false,
             send_typing: true,
             auto_download: true,
             show_sender_pictures: false,

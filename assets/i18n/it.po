@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 19:37+0200\n"
+"POT-Creation-Date: 2026-09-23 19:43+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -16,23 +16,23 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/model.rs:59
+#: src/model.rs:70
 msgid "All"
 msgstr "Tutti"
 
-#: src/model.rs:60
+#: src/model.rs:71
 msgid "Unread"
 msgstr "Non letti"
 
-#: src/model.rs:61
+#: src/model.rs:72
 msgid "Private"
 msgstr "Privati"
 
-#: src/model.rs:62
+#: src/model.rs:73
 msgid "Groups"
 msgstr "Gruppi"
 
-#: src/model.rs:63
+#: src/model.rs:74
 msgid "Channels"
 msgstr "Canali"
 
@@ -135,19 +135,19 @@ msgstr "Novembre"
 msgid "December"
 msgstr "Dicembre"
 
-#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:169
+#: src/ui/chats.rs:112 src/ui/chats.rs:227 src/ui/settings.rs:169
 msgid "Chats"
 msgstr "Chat"
 
-#: src/ui/chats.rs:168 src/ui/chats.rs:267
+#: src/ui/chats.rs:169 src/ui/chats.rs:268
 msgid "Search"
 msgstr "Cerca"
 
-#: src/ui/chats.rs:365
+#: src/ui/chats.rs:369
 msgid "Archived"
 msgstr "Archiviate"
 
-#: src/ui/chats.rs:382
+#: src/ui/chats.rs:386
 msgid "Locked"
 msgstr "Bloccati"
 
@@ -236,7 +236,7 @@ msgstr "Riattiva audio"
 msgid "Mute"
 msgstr "Disattiva audio"
 
-#: src/ui/dialogs.rs:1184
+#: src/ui/dialogs.rs:1186
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -259,11 +259,23 @@ msgstr "Lingua"
 msgid "Auto"
 msgstr "Automatico"
 
-#: src/ui/settings.rs:188
+#: src/ui/settings.rs:181
+msgid "Show labels as chips"
+msgstr "Mostra le etichette come chip"
+
+#: src/ui/settings.rs:181
+msgid ""
+"Give each label its own chip, in a row under All, Unread and Groups. When "
+"off, they share one Labels chip."
+msgstr ""
+"Ogni etichetta ha il suo chip, in una riga sotto Tutti, Non letti e Gruppi. "
+"Se disattivato, condividono un unico chip Etichette."
+
+#: src/ui/settings.rs:192
 msgid "Pause music while recording"
 msgstr "Metti in pausa la musica durante la registrazione"
 
-#: src/ui/settings.rs:188
+#: src/ui/settings.rs:192
 msgid ""
 "Pause media players while you record a voice message and resume them "
 "afterwards."
@@ -271,11 +283,11 @@ msgstr ""
 "Mette in pausa i lettori multimediali mentre registri un vocale e li "
 "riprende dopo."
 
-#: src/ui/settings.rs:189
+#: src/ui/settings.rs:193
 msgid "Pause music while playing voice messages"
 msgstr "Metti in pausa la musica durante i messaggi vocali"
 
-#: src/ui/settings.rs:189
+#: src/ui/settings.rs:193
 msgid ""
 "Pause media players while a voice or audio message plays and resume them "
 "when it stops."
@@ -283,76 +295,76 @@ msgstr ""
 "Mette in pausa i lettori multimediali mentre suona un vocale o un audio e li "
 "riprende alla fine."
 
-#: src/ui/settings.rs:228
+#: src/ui/settings.rs:232
 msgid "Window"
 msgstr "Finestra"
 
-#: src/ui/settings.rs:273
+#: src/ui/settings.rs:277
 msgid "Network"
 msgstr "Rete"
 
-#: src/ui/settings.rs:305
+#: src/ui/settings.rs:309
 msgid "Account"
 msgstr "Account"
 
-#: src/ui/settings.rs:309
+#: src/ui/settings.rs:313
 msgid "Files"
 msgstr "File"
 
-#: src/ui/settings.rs:355 src/ui/settings.rs:616 src/ui/settings.rs:778
+#: src/ui/settings.rs:359 src/ui/settings.rs:620 src/ui/settings.rs:782
 msgid "About"
 msgstr "Informazioni"
 
-#: src/ui/settings.rs:436
+#: src/ui/settings.rs:440
 msgid "Add doodles"
 msgstr "Aggiungi disegni"
 
-#: src/ui/settings.rs:440
+#: src/ui/settings.rs:444
 msgid "Show the default doodles over the selected colour."
 msgstr "Mostra i disegni predefiniti sopra il colore selezionato."
 
-#: src/ui/settings.rs:585
+#: src/ui/settings.rs:589
 msgid "Change profile picture"
 msgstr "Cambia immagine del profilo"
 
-#: src/ui/settings.rs:608
+#: src/ui/settings.rs:612
 msgid "Your name"
 msgstr "Il tuo nome"
 
-#: src/ui/settings.rs:624
+#: src/ui/settings.rs:628
 msgid "Linked device"
 msgstr "Dispositivo collegato"
 
-#: src/ui/settings.rs:635
+#: src/ui/settings.rs:639
 msgid "Edit your name and About"
 msgstr "Modifica nome e info"
 
-#: src/ui/settings.rs:652
+#: src/ui/settings.rs:656
 msgid "Unlink this computer"
 msgstr "Scollega questo computer"
 
-#: src/ui/settings.rs:672
+#: src/ui/settings.rs:676
 msgid "Save"
 msgstr "Salva"
 
-#: src/ui/settings.rs:682
+#: src/ui/settings.rs:686
 msgid "Cancel"
 msgstr "Annulla"
 
-#: src/ui/settings.rs:746
+#: src/ui/settings.rs:750
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "Un client WhatsApp nativo scritto in Rust con egui e whatsapp-rust."
 
-#: src/ui/settings.rs:757
+#: src/ui/settings.rs:761
 #, rust-format
 msgid "Update to {version}"
 msgstr "Aggiorna a {version}"
 
-#: src/ui/settings.rs:767
+#: src/ui/settings.rs:771
 msgid "Keyboard shortcuts"
 msgstr "Scorciatoie da tastiera"
 
-#: src/ui/settings.rs:789
+#: src/ui/settings.rs:793
 msgid "Source code"
 msgstr "Codice sorgente"
 
@@ -362,7 +374,7 @@ msgstr "Codice sorgente"
 msgid "Built with love by {name}"
 msgstr "Fatto con amore da {name}"
 
-#: src/ui/message_info.rs:28
+#: src/ui/message_info.rs:28 src/ui/labels.rs:271
 msgid "Close"
 msgstr "Chiudi"
 
@@ -429,6 +441,130 @@ msgstr[1] "{} in attesa"
 msgid "No one yet"
 msgstr "Ancora nessuno"
 
-#: src/app.rs:3791
+#: src/app.rs:961
+#, rust-format
+msgid "A label named “{name}” already exists."
+msgstr "Esiste già un’etichetta chiamata «{name}»."
+
+#: src/app.rs:3461 src/ui/labels.rs:294
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "Hai {limit} etichette, il massimo che ZapFast conserva."
+
+#: src/app.rs:3939
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"
+
+#: src/ui/labels.rs:68
+msgctxt "label colour"
+msgid "Blue"
+msgstr "Blu"
+
+#: src/ui/labels.rs:69
+msgctxt "label colour"
+msgid "Green"
+msgstr "Verde"
+
+#: src/ui/labels.rs:70
+msgctxt "label colour"
+msgid "Yellow"
+msgstr "Giallo"
+
+#: src/ui/labels.rs:71
+msgctxt "label colour"
+msgid "Orange"
+msgstr "Arancione"
+
+#: src/ui/labels.rs:72
+msgctxt "label colour"
+msgid "Red"
+msgstr "Rosso"
+
+#: src/ui/labels.rs:73
+msgctxt "label colour"
+msgid "Pink"
+msgstr "Rosa"
+
+#: src/ui/labels.rs:74
+msgctxt "label colour"
+msgid "Purple"
+msgstr "Viola"
+
+#: src/ui/labels.rs:75
+msgctxt "label colour"
+msgid "Teal"
+msgstr "Verde acqua"
+
+#: src/ui/labels.rs:76
+msgctxt "label colour"
+msgid "Grey"
+msgstr "Grigio"
+
+#: src/ui/labels.rs:77
+msgctxt "label colour"
+msgid "Sky blue"
+msgstr "Azzurro"
+
+#: src/ui/labels.rs:78
+msgctxt "label colour"
+msgid "Colour"
+msgstr "Colore"
+
+#: src/ui/labels.rs:149
+msgid "Manage labels"
+msgstr "Gestisci etichette"
+
+#: src/ui/labels.rs:172 src/ui/labels.rs:223 src/ui/labels.rs:260
+msgid "Labels"
+msgstr "Etichette"
+
+#: src/ui/labels.rs:192
+msgid "All chats"
+msgstr "Tutte le chat"
+
+#: src/ui/labels.rs:207 src/ui/labels.rs:247
+msgid "Manage labels…"
+msgstr "Gestisci etichette…"
+
+#: src/ui/labels.rs:283
+msgid ""
+"Labels stay on this computer. They do not reach your phone or anyone you "
+"chat with."
+msgstr ""
+"Le etichette restano su questo computer. Non arrivano al telefono né a chi "
+"ti scrive."
+
+#: src/ui/labels.rs:304
+msgid "New label"
+msgstr "Nuova etichetta"
+
+#: src/ui/labels.rs:318
+msgid "Create"
+msgstr "Crea"
+
+#: src/ui/labels.rs:348
+msgid ""
+"No labels yet. Create one above, then add chats to it from their right-click "
+"menu."
+msgstr ""
+"Ancora nessuna etichetta. Creane una qui sopra, poi aggiungi le chat dal "
+"loro menu del tasto destro."
+
+#: src/ui/labels.rs:383
+msgid "Next colour"
+msgstr "Colore successivo"
+
+#: src/ui/labels.rs:432
+#, rust-format
+msgid "{} chat"
+msgid_plural "{} chats"
+msgstr[0] "{} chat"
+msgstr[1] "{} chat"
+
+#: src/ui/labels.rs:453
+msgid "Rename or recolour"
+msgstr "Rinomina o cambia colore"
+
+#: src/ui/labels.rs:478
+msgid "Delete this label. Its chats keep their messages."
+msgstr "Elimina questa etichetta. Le sue chat conservano i messaggi."

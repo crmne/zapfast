@@ -167,6 +167,30 @@ Right-click a chat to pin, archive, or mute it for eight hours, one week, or
 indefinitely. These changes also apply on your phone. Click the chat header to
 see its picture, number, and group members.
 
+## Labels
+
+Labels are yours alone. They stay on this computer, they never reach your phone,
+and nobody else sees them. They are not WhatsApp Business labels, and ZapFast
+does not read or change those. Open **Labels** in any chat's right-click menu
+and choose **Manage labels…** to make one, with a name and one of the offered
+colours. ZapFast keeps up to twenty.
+
+A chat can wear several labels at once. The **Labels** submenu of a chat's
+right-click menu lists them, with a checkmark beside the ones the chat wears;
+click one to add or remove it. Deleting a label takes it off every chat and
+nothing else; the chats keep their messages.
+
+Once a label exists, a **Labels** chip leads the chips under the search bar.
+Pick a label from it to list only the chats wearing that label, channels
+included. A label is one more chip: picking it lets go of **Unread** or
+**Groups**, and picking one of those lets go of the label. Like the other
+chips, it does not narrow search or the archive.
+
+Turn on **Show labels as chips** in the settings to give each label its own
+chip instead, in a row under the others, with its colour and the number of
+unread chats wearing it, followed by a **+** that opens the label manager.
+Click the active label chip again, or **All**, to see every chat.
+
 The button beside **New chat** hides the list (`Ctrl+B`). Turn on **Collapse the
 chat list to icons** in Settings to keep a narrow column of avatars instead:
 unread chats show their badge, hovering names a chat, clicking opens it, and

@@ -30,6 +30,17 @@ impl ChatKind {
     }
 }
 
+/// A local chat label: a name, a colour, and nothing that leaves this computer.
+/// Not a WhatsApp Business label; ZapFast neither reads nor syncs those.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Label {
+    pub id: String,
+    pub name: String,
+    /// `#rrggbb`, lower case.
+    pub color_hex: String,
+    pub created_at: i64,
+}
+
 /// Chat-list filter chosen from the chips under the search field.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChatFilter {
@@ -102,6 +113,8 @@ pub struct Chat {
     pub locked: bool,
     /// Disappearing-message duration in seconds, if enabled.
     pub ephemeral_expiration: Option<u32>,
+    /// Labels worn by this chat, in creation order. Local to this computer.
+    pub labels: Vec<String>,
     /// This chat's own notification sound; `None` follows Settings.
     pub notification_sound: Option<crate::settings::NotificationSound>,
 }
@@ -135,6 +148,7 @@ impl Chat {
             read_only: false,
             locked: false,
             ephemeral_expiration: None,
+            labels: Vec::new(),
             notification_sound: None,
         }
     }
@@ -760,6 +774,8 @@ pub enum Dialog {
     UnlockLockedChats,
     ConfirmLockChat(ChatId),
     ChatInfo(ChatId),
+    /// Manages the local labels.
+    Labels,
     /// Confirms deleting a chat, which cannot be undone.
     ConfirmDeleteChat(ChatId),
     /// Chooses a destination for an archived message.
@@ -1119,6 +1135,26 @@ pub enum Action {
     CloseDialog,
     ToggleSidebar,
     SetChatFilter(ChatFilter),
+    /// Picks the label the chat list shows; `None` shows every chat.
+    SelectLabel(Option<String>),
+    /// Replaces the labels worn by one chat.
+    SetChatLabels {
+        chat: ChatId,
+        labels: Vec<String>,
+    },
+    /// Creates a label from the name and colour in the manager dialog.
+    CreateLabel {
+        name: String,
+        color_hex: String,
+    },
+    /// Renames and recolours a label.
+    UpdateLabel {
+        id: String,
+        name: String,
+        color_hex: String,
+    },
+    /// Deletes a label and takes it off every chat.
+    DeleteLabel(String),
     /// Shows or leaves the archived chats.
     ShowArchived(bool),
     /// Mutes (`true`) or unmutes every followed channel.
