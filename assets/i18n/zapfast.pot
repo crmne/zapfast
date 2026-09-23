@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 12:25+0200\n"
+"POT-Creation-Date: 2026-09-23 16:17+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -138,7 +138,7 @@ msgstr ""
 msgid "December"
 msgstr ""
 
-#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:168
+#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:169
 msgid "Chats"
 msgstr ""
 
@@ -146,53 +146,53 @@ msgstr ""
 msgid "Search"
 msgstr ""
 
-#: src/ui/chats.rs:343
+#: src/ui/chats.rs:365
 msgid "Archived"
 msgstr ""
 
-#: src/ui/chats.rs:360
+#: src/ui/chats.rs:382
 msgid "Locked"
 msgstr ""
 
-#: src/ui/conversation.rs:87
+#: src/ui/conversation.rs:161
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr ""
 
-#: src/ui/conversation.rs:908
+#: src/ui/conversation.rs:994
 msgid "Type a message"
 msgstr ""
 
-#: src/ui/conversation.rs:911
+#: src/ui/conversation.rs:997
 msgid "Add a caption"
 msgstr ""
 
-#: src/ui/conversation.rs:1063
+#: src/ui/conversation.rs:1151
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
 msgstr ""
 
-#: src/ui/conversation.rs:1065
+#: src/ui/conversation.rs:1153
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 
-#: src/ui/conversation.rs:1076
+#: src/ui/conversation.rs:1164
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr ""
 
-#: src/ui/conversation.rs:1091
+#: src/ui/conversation.rs:1179
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr ""
 
-#: src/ui/conversation.rs:1356
+#: src/ui/conversation.rs:1450
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/dialogs.rs:1105
+#: src/ui/dialogs.rs:1146
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -215,18 +215,81 @@ msgstr ""
 msgid "Auto"
 msgstr ""
 
-#: src/ui/settings.rs:218
+#: src/ui/settings.rs:220
 msgid "Window"
 msgstr ""
 
-#: src/ui/settings.rs:258
+#: src/ui/settings.rs:265
+msgid "Network"
+msgstr ""
+
+#: src/ui/settings.rs:297
 msgid "Account"
 msgstr ""
 
-#: src/ui/settings.rs:285
+#: src/ui/settings.rs:301
 msgid "Files"
 msgstr ""
 
-#: src/ui/settings.rs:318
+#: src/ui/settings.rs:347 src/ui/settings.rs:608 src/ui/settings.rs:770
 msgid "About"
+msgstr ""
+
+#: src/ui/settings.rs:428
+msgid "Add doodles"
+msgstr ""
+
+#: src/ui/settings.rs:432
+msgid "Show the default doodles over the selected colour."
+msgstr ""
+
+#: src/ui/settings.rs:577
+msgid "Change profile picture"
+msgstr ""
+
+#: src/ui/settings.rs:600
+msgid "Your name"
+msgstr ""
+
+#: src/ui/settings.rs:616
+msgid "Linked device"
+msgstr ""
+
+#: src/ui/settings.rs:627
+msgid "Edit your name and About"
+msgstr ""
+
+#: src/ui/settings.rs:644
+msgid "Unlink this computer"
+msgstr ""
+
+#: src/ui/settings.rs:664
+msgid "Save"
+msgstr ""
+
+#: src/ui/settings.rs:674
+msgid "Cancel"
+msgstr ""
+
+#: src/ui/settings.rs:738
+msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
+msgstr ""
+
+#: src/ui/settings.rs:749
+#, rust-format
+msgid "Update to {version}"
+msgstr ""
+
+#: src/ui/settings.rs:759
+msgid "Keyboard shortcuts"
+msgstr ""
+
+#: src/ui/settings.rs:781
+msgid "Source code"
+msgstr ""
+
+#. Translators: {name} is replaced by the author's name, shown as a link.
+#: src/ui/widgets.rs:553
+#, rust-format
+msgid "Built with love by {name}"
 msgstr ""

@@ -20,6 +20,7 @@ pub mod markup;
 pub mod model;
 pub mod notify;
 pub mod paths;
+pub mod proxy;
 pub mod qr;
 pub mod safety;
 pub mod settings;

@@ -397,6 +397,7 @@ impl Default for AppOptions {
 
 impl App {
     pub fn new(waker: &Waker, dirs: AppDirs, settings: Settings, options: AppOptions) -> Self {
+        crate::proxy::configure(&settings.proxy);
         let backend = Backend::spawn(dirs.clone(), waker.clone());
         let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
         app.custom_themes.enable_desktop_themes();
@@ -413,6 +414,9 @@ impl App {
                 crate::util::twelve_hour_clock();
             })
             .ok();
+        app.backend.send(Command::SetDownloadFolder(
+            app.settings.download_folder.clone(),
+        ));
         if crate::autostart::supported() {
             app.start_with_system = Some(crate::autostart::enabled());
         }
@@ -588,6 +592,7 @@ impl App {
 
     /// Updates the linked app while no window exists.
     pub fn window_gone(&mut self) {
+        self.flush_open_draft();
         self.clear_chat_lock_entry();
         if self.dialog == Some(Dialog::UnlockLockedChats) {
             self.dialog = None;
@@ -677,6 +682,7 @@ impl App {
             return;
         }
         let (name, is_group) = (self.chat_title(chat), chat.is_group());
+        let chat_sound = chat.notification_sound.clone();
         let sender = self.display_name_or(&message.sender, message.sender_name.as_deref());
         let (title, body) =
             crate::notify::lines(&name, is_group, &sender, &self.message_text(message));
@@ -689,10 +695,10 @@ impl App {
             .or_else(|| self.avatar(&sender))
             .or_else(|| self.cached_avatar(&sender));
         let waker = self.waker.clone();
-        let sound = if is_group {
-            self.settings.group_sound.clone()
-        } else {
-            self.settings.message_sound.clone()
+        let sound = match chat_sound {
+            Some(sound) => sound,
+            None if is_group => self.settings.group_sound.clone(),
+            None => self.settings.message_sound.clone(),
         };
         self.notifications.show(
             title,
@@ -1057,7 +1063,7 @@ impl App {
             counted.push(if count == 1 {
                 name
             } else {
-                format!("{name} ×{count}")
+                format!("{name} x{count}")
             });
         }
         numbers.sort();
@@ -1288,6 +1294,21 @@ impl App {
                     self.me = Some(id);
                     self.me_name = name;
                     self.me_about = about;
+                }
+                Event::Drafts(drafts) => {
+                    // Unsent text stored by an earlier session. Text typed in
+                    // this session wins over the stored copy.
+                    for (chat, text) in drafts {
+                        // The chat reopened at startup shows its draft at once.
+                        if self.open_chat.as_deref() == Some(chat.as_str())
+                            && self.editing.is_none()
+                            && self.composer.is_empty()
+                        {
+                            self.composer = text;
+                        } else {
+                            self.drafts.entry(chat).or_insert(text);
+                        }
+                    }
                 }
                 Event::Chats(chats) => {
                     for chat in &chats {
@@ -1541,6 +1562,16 @@ impl App {
                     conversation.complete = false;
                 }
                 Event::ReceiptsPrivacy { disabled } => self.account_receipts_off = disabled,
+                Event::ChatSoundPicked { chat, path } => {
+                    crate::notify::play_sound(path.clone());
+                    self.actions.push(Action::SetChatSound {
+                        chat,
+                        sound: Some(crate::settings::NotificationSound::Custom(path)),
+                    });
+                }
+                Event::DownloadFolderPicked(path) => {
+                    self.actions.push(Action::SetDownloadFolder(Some(path)));
+                }
                 Event::NotificationSoundPicked { group, path } => {
                     crate::notify::play_sound(path.clone());
                     self.actions.push(Action::SetNotificationSound {
@@ -1667,6 +1698,11 @@ impl App {
                 self.contacts.clear();
                 self.avatars.clear();
                 self.open_chat = None;
+                // Unsent text belongs to the account that was unlinked.
+                self.drafts.clear();
+                self.draft_mentions.clear();
+                self.composer.clear();
+                self.composer_mentions.clear();
                 self.toast_error("This device was unlinked from your phone");
             }
             LinkStatus::Failed(message) => self.toast_error(message.clone()),
@@ -1741,6 +1777,9 @@ impl App {
     /// pending edit would send `EditText` for a message that no longer exists.
     fn handle_chat_cleared(&mut self, id: &str, through: i64) {
         self.notifications.clear(id);
+        // Clearing a chat also removes its stored draft.
+        self.drafts.remove(id);
+        self.draft_mentions.remove(id);
         self.search_hits
             .retain(|message| message.chat != id || message.timestamp > through);
         // Nothing earlier is left here, and the phone no longer has it either.
@@ -1824,6 +1863,13 @@ impl App {
 
     fn hide_locked_chat(&mut self, id: &str) {
         // A locked chat still exists, so its unsent text waits as a draft.
+        // Text emptied in the composer clears the stored copy too.
+        if self.open_chat.as_deref() == Some(id)
+            && self.editing.is_none()
+            && self.composer.is_empty()
+        {
+            self.store_draft(id, "");
+        }
         if self.open_chat.as_deref() == Some(id)
             && self.editing.is_none()
             && !self.composer.is_empty()
@@ -1832,8 +1878,21 @@ impl App {
                 .insert(id.to_owned(), std::mem::take(&mut self.composer));
             self.draft_mentions
                 .insert(id.to_owned(), std::mem::take(&mut self.composer_mentions));
+            self.store_draft(
+                id,
+                self.drafts.get(id).map(String::as_str).unwrap_or_default(),
+            );
         }
         self.leave_chat(id);
+    }
+
+    /// Mirrors a chat's draft into the encrypted archive, so unsent text
+    /// survives a restart. An empty text clears the stored row.
+    fn store_draft(&self, chat: &str, text: &str) {
+        self.backend.send(Command::SaveDraft {
+            chat: chat.to_owned(),
+            text: text.to_owned(),
+        });
     }
 
     fn handle_media(
@@ -1975,6 +2034,8 @@ impl App {
                     );
                 }
                 self.stop_composing(&previous);
+                let draft = self.drafts.get(&previous).cloned().unwrap_or_default();
+                self.store_draft(&previous, &draft);
             }
             self.selection = None;
             self.unread_divider =
@@ -2104,6 +2165,8 @@ impl App {
             });
             return;
         }
+        // The text is on its way, so there is nothing left to restore.
+        self.store_draft(&chat, "");
         self.backend.send(Command::SendText {
             chat,
             text,
@@ -3187,6 +3250,17 @@ impl App {
                     }
                 }
             }
+            Action::MuteAllChannels(mute) => {
+                let channels: Vec<ChatId> = self
+                    .chats
+                    .iter()
+                    .filter(|chat| chat.is_channel())
+                    .map(|chat| chat.id.clone())
+                    .collect();
+                for chat in channels {
+                    self.actions.push(Action::SetMuted(chat, mute.then_some(0)));
+                }
+            }
             Action::ShowArchived(show) => {
                 if self.locked_folder {
                     self.close_locked_folder();
@@ -3393,6 +3467,39 @@ impl App {
                 self.backend.send(Command::PickNotificationSound { group });
             }
             Action::PreviewSound(path) => crate::notify::play_sound(path),
+            Action::PickDownloadFolder => self.backend.send(Command::PickDownloadFolder),
+            Action::SetProfile { name, about } => {
+                self.backend.send(Command::SetProfile { name, about });
+            }
+            Action::PickProfilePicture => self.backend.send(Command::PickProfilePicture),
+            Action::SetChatSound { chat, sound } => {
+                if let Some(known) = self.chat_mut(&chat) {
+                    known.notification_sound = sound.clone();
+                }
+                self.backend.send(Command::SetChatSound { chat, sound });
+            }
+            Action::PickChatSound(chat) => self.backend.send(Command::PickChatSound(chat)),
+            Action::SetDownloadFolder(folder) => {
+                self.settings.download_folder = folder.clone();
+                self.mark_settings_dirty();
+                self.backend.send(Command::SetDownloadFolder(folder));
+            }
+            Action::SetProxy(value) => {
+                let value = value.trim().to_owned();
+                if value == self.settings.proxy {
+                    return;
+                }
+                if !value.is_empty()
+                    && let Err(error) = crate::proxy::Proxy::parse(&value)
+                {
+                    self.toast_error(error);
+                    return;
+                }
+                self.settings.proxy = value.clone();
+                self.mark_settings_dirty();
+                crate::proxy::configure(&value);
+                self.backend.send(Command::SetProxy(value));
+            }
             Action::SetStartWithSystem(enabled) => match crate::autostart::set(enabled) {
                 Ok(()) => self.start_with_system = Some(crate::autostart::enabled()),
                 Err(error) => self.toast_error(format!("Could not change the login item: {error}")),
@@ -3887,7 +3994,18 @@ impl App {
 
     pub fn shutdown(&mut self) {
         self.save_state();
+        self.flush_open_draft();
         self.backend.shutdown();
+    }
+
+    /// Stores the open chat's unsent text, which otherwise only moves into
+    /// the archive when another chat opens.
+    fn flush_open_draft(&self) {
+        if let Some(chat) = self.open_chat.as_deref()
+            && self.editing.is_none()
+        {
+            self.store_draft(chat, &self.composer);
+        }
     }
 
     /// Returns attachment state for a loaded message.
@@ -4522,6 +4640,42 @@ mod tests {
         let mut output = ctx.run_ui(input, |ui| app.background_frame(ui.ctx()));
         output.textures_delta.clear();
         assert_eq!(app.chat(&chat.id).unwrap().unread, 1);
+    }
+
+    #[test]
+    fn drafts_come_back_after_a_restart_and_leave_with_the_account() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let (open, other) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        app.open_chat = Some(open.into());
+        events
+            .send(Event::Drafts(vec![
+                (open.into(), "half a reply".into()),
+                (other.into(), "later".into()),
+            ]))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.composer, "half a reply", "the reopened chat shows it");
+        assert_eq!(app.drafts.get(other).map(String::as_str), Some("later"));
+        // Quitting stores what is in the composer.
+        app.composer = "half a reply, finished".into();
+        app.shutdown();
+        let saved: Vec<(String, String)> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::SaveDraft { chat, text } => Some((chat, text)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            saved,
+            [(open.to_owned(), "half a reply, finished".to_owned())]
+        );
+        // Unlinking forgets every draft.
+        events.send(Event::Link(LinkStatus::LoggedOut)).unwrap();
+        app.handle_events();
+        assert!(app.drafts.is_empty());
+        assert!(app.composer.is_empty());
     }
 
     #[test]
@@ -5291,6 +5445,28 @@ mod tests {
     }
 
     #[test]
+    fn muting_all_channels_leaves_other_chats_alone() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.chats = vec![
+            Chat::new("1@newsletter".into(), "News".into()),
+            Chat::new("2@newsletter".into(), "More news".into()),
+            Chat::new("3@s.whatsapp.net".into(), "Ada".into()),
+        ];
+        app.apply(Action::MuteAllChannels(true), &ctx);
+        app.apply_actions(&ctx);
+        let muted: Vec<String> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::SetMuted(chat, Some(0)) => Some(chat),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(muted, ["1@newsletter", "2@newsletter"]);
+    }
+
+    #[test]
     fn channels_have_their_own_chip_and_archived_chats_theirs() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -6035,7 +6211,7 @@ mod name_tests {
         chat.participants.push(app.me.clone().unwrap());
         for saved_names in [false, true] {
             app.settings.names_from_contacts = saved_names;
-            assert_eq!(app.participant_names(&chat), "Andrea ×3, Giacomo, You");
+            assert_eq!(app.participant_names(&chat), "Andrea x3, Giacomo, You");
             assert_eq!(app.chat_title(&chat), app.participant_names(&chat));
             chat.name.clear();
             assert_eq!(app.chat_title(&chat), app.participant_names(&chat));

@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message};
 
+mod drafts;
 mod encryption;
 mod polls;
 mod receipts;
@@ -117,7 +118,8 @@ END;
 const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
-                    c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known";
+                    c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known,
+                    c.notification_sound";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -138,6 +140,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "locked", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "lock_updated_at", "INTEGER"),
     ("chats", "archive_updated_at", "INTEGER"),
+    ("chats", "notification_sound", "TEXT"),
     ("chats", "group_subject_known", "INTEGER NOT NULL DEFAULT 0"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
@@ -182,6 +185,9 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         ephemeral_expiration: row
             .get::<_, Option<u32>>(16)?
             .filter(|expiration| *expiration != 0),
+        notification_sound: row
+            .get::<_, Option<String>>(19)?
+            .and_then(|sound| serde_json::from_str(&sound).ok()),
     })
 }
 
@@ -254,6 +260,7 @@ impl Archive {
         connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         connection.execute_batch(SCHEMA)?;
         connection.execute_batch(polls::SCHEMA)?;
+        connection.execute_batch(drafts::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -350,6 +357,20 @@ impl Archive {
             "UPDATE chats SET archived = ?2, archive_updated_at = ?3 WHERE id = ?1
                 AND (archive_updated_at IS NULL OR archive_updated_at <= ?3)",
             params![id, archived, timestamp],
+        )?;
+        Ok(())
+    }
+
+    /// A chat's own notification sound; `None` follows Settings.
+    pub fn set_notification_sound(
+        &self,
+        id: &str,
+        sound: Option<&crate::settings::NotificationSound>,
+    ) -> Result<()> {
+        let sound = sound.map(|sound| serde_json::to_string(sound).unwrap_or_default());
+        self.connection.execute(
+            "UPDATE chats SET notification_sound = ?2 WHERE id = ?1",
+            params![id, sound],
         )?;
         Ok(())
     }
@@ -1153,7 +1174,13 @@ impl Archive {
 
     /// Drops every chat-scoped row outside the `chats` table itself.
     fn purge_chat_rows(&self, chat: &str) -> Result<()> {
-        for table in ["messages", "group_receipts", "polls", "poll_history"] {
+        for table in [
+            "messages",
+            "group_receipts",
+            "polls",
+            "poll_history",
+            "drafts",
+        ] {
             self.connection.execute(
                 &format!("DELETE FROM {table} WHERE chat = ?1"),
                 params![chat],
@@ -1458,7 +1485,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts;",
         )
     }
 }
@@ -1806,7 +1833,8 @@ pub(crate) mod tests {
                  INSERT INTO poll_history (chat, id) VALUES ('{chat}', 'p1');
                  INSERT INTO poll_votes (chat, poll, voter, sender, update_id, at, from_me)
                      VALUES ('{chat}', 'p1', '{chat}', '{chat}', 'u1', 150, 0);
-                 INSERT INTO group_receipts (chat, id, recipient) VALUES ('{chat}', 'm1', '{chat}');"
+                 INSERT INTO group_receipts (chat, id, recipient) VALUES ('{chat}', 'm1', '{chat}');
+                 INSERT INTO drafts (chat, text, updated_at) VALUES ('{chat}', 'unsent', 150);"
             ))
             .expect("poll and receipt rows");
         for table in CHAT_TABLES {
@@ -1819,12 +1847,13 @@ pub(crate) mod tests {
     }
 
     /// Every table keyed by chat besides `chats` itself.
-    const CHAT_TABLES: [&str; 5] = [
+    const CHAT_TABLES: [&str; 6] = [
         "messages",
         "group_receipts",
         "polls",
         "poll_history",
         "poll_votes",
+        "drafts",
     ];
 
     fn rows(archive: &Archive, table: &str, chat: &str) -> i64 {
@@ -2081,6 +2110,23 @@ pub(crate) mod tests {
             archive.put_lid("2", "1").unwrap();
             assert!(!archive.chat(phone).unwrap().unwrap().locked);
         }
+    }
+
+    #[test]
+    fn a_chat_keeps_its_own_notification_sound() {
+        use crate::settings::NotificationSound;
+        let archive = Archive::in_memory().unwrap();
+        let id = "1@s.whatsapp.net";
+        archive.ensure_chat(id, "Ada").unwrap();
+        assert_eq!(archive.chat(id).unwrap().unwrap().notification_sound, None);
+        let sound = NotificationSound::Custom("/sounds/ada.ogg".into());
+        archive.set_notification_sound(id, Some(&sound)).unwrap();
+        assert_eq!(
+            archive.chat(id).unwrap().unwrap().notification_sound,
+            Some(sound)
+        );
+        archive.set_notification_sound(id, None).unwrap();
+        assert_eq!(archive.chat(id).unwrap().unwrap().notification_sound, None);
     }
 
     #[test]

@@ -543,6 +543,30 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// The author's website, linked from the credit line.
+pub const AUTHOR_URL: &str = "https://paolino.me";
+
+/// "Built with love by Carmine Paolino", with the name linking to
+/// [`AUTHOR_URL`]. Returns whether the name was clicked.
+pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> bool {
+    // Translators: {name} is replaced by the author's name, shown as a link.
+    let sentence = crate::i18n::gettext(locale, "Built with love by {name}");
+    let (before, after) = sentence.split_once("{name}").unwrap_or((&sentence, ""));
+    let mut clicked = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        theme::text(ui, "\u{2665}  ", theme::regular(13.0), palette.danger);
+        theme::text(ui, before, theme::regular(13.0), palette.secondary);
+        clicked = theme::link(ui, "Carmine Paolino", theme::medium(13.0), palette.link)
+            .on_hover_text(AUTHOR_URL)
+            .clicked();
+        if !after.is_empty() {
+            theme::text(ui, after, theme::regular(13.0), palette.secondary);
+        }
+    });
+    clicked
+}
+
 /// Labeled settings row.
 pub fn setting_row(
     ui: &mut Ui,

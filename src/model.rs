@@ -102,6 +102,8 @@ pub struct Chat {
     pub locked: bool,
     /// Disappearing-message duration in seconds, if enabled.
     pub ephemeral_expiration: Option<u32>,
+    /// This chat's own notification sound; `None` follows Settings.
+    pub notification_sound: Option<crate::settings::NotificationSound>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -133,6 +135,7 @@ impl Chat {
             read_only: false,
             locked: false,
             ephemeral_expiration: None,
+            notification_sound: None,
         }
     }
 
@@ -967,6 +970,8 @@ pub enum Action {
     SetChatFilter(ChatFilter),
     /// Shows or leaves the archived chats.
     ShowArchived(bool),
+    /// Mutes (`true`) or unmutes every followed channel.
+    MuteAllChannels(bool),
     /// Joins the group of the invite being previewed.
     JoinGroup,
     /// A chat opened from the main list, kept there under the Unread filter.
@@ -1011,6 +1016,26 @@ pub enum Action {
     PickNotificationSound {
         group: bool,
     },
+    /// Sets a chat's own notification sound; `None` follows Settings.
+    SetChatSound {
+        chat: ChatId,
+        sound: Option<crate::settings::NotificationSound>,
+    },
+    /// Asks for an audio file for one chat's notifications.
+    PickChatSound(ChatId),
+    /// Asks for a folder for new downloads.
+    PickDownloadFolder,
+    /// Changes our display name and About text; `None` keeps the current one.
+    SetProfile {
+        name: Option<String>,
+        about: Option<String>,
+    },
+    /// Asks for a picture and makes it our profile picture.
+    PickProfilePicture,
+    /// Sets or resets (`None`) the folder for new downloads.
+    SetDownloadFolder(Option<PathBuf>),
+    /// Saves the proxy setting and reconnects. Empty follows the environment.
+    SetProxy(String),
     /// Plays a notification sound once, as a preview.
     PreviewSound(PathBuf),
     ZoomBy(f32),

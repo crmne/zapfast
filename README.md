@@ -28,7 +28,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Filter the list to unread, private (one-to-one), or group chats with the
   chips under the search bar; a chip with unread chats shows how many it has.
   Followed channels have their own **Channels** chip and stay out of the other
-  filters, and **Archived** opens the archived chats. Opening a chat with
+  filters; right-click it to mute or unmute every channel at once. **Archived**
+  opens the archived chats. Opening a chat with
   unread messages scrolls to an "unread messages" divider above the first one.
   Pinned chats stay in pin order (most recently pinned first), regardless of
   new messages. Like on the phone, you can pin up to three chats. Chat and contact name searches ignore accents, so `Angel`
@@ -131,7 +132,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation; invoking search keeps focus in search, and
   Escape clears search and returns to the composer; another Escape closes the
-  chat and saves your text draft. Open menus, dialogs, and unfinished actions
+  chat and saves your text draft. Drafts are kept in the encrypted archive, so
+  unsent text survives closing ZapFast and restarting. Open menus, dialogs, and unfinished actions
   are dismissed first. Type `:name` to autocomplete
   an emoji without leaving the composer, or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
@@ -142,6 +144,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   The conversation stays still while you choose; the emoji
   grid can scroll. Quick reactions learn from usage on this computer, independently
   of inserted emoji. These preferences do not sync from the phone.
+  Hovering a message also shows a small smiley control beside it; clicking it
+  opens the full reaction picker for that message, so right-click is never required.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
   timer, including replies, attachments, edits, and forwards. Forwarded copies
   use the destination chat's timer. Received messages remain in the local archive
@@ -225,7 +229,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   unregistered development builds skip notifications if that identity is unavailable.
   **Message sound** and **Group sound** in Settings choose the system's
   notification sound, no sound, or an audio file (WAV, MP3, or OGG Vorbis)
-  that ZapFast plays itself.
+  that ZapFast plays itself. **Notification sound** in a chat's right-click
+  menu gives that chat its own sound, stored in the encrypted archive.
 - **Update notices.** ZapFast checks GitHub once a day and shows a download
   link when a newer release is available. You can turn this off in Settings.
 - **Themes.** Light, dark, follow the system, or a local JSON palette. Native
@@ -483,6 +488,16 @@ files at build time, with no runtime parsing or network access. Message
 contents, contact names, logs, and protocol errors are never translated, and
 copied messages keep WhatsApp's `[time, date] Name:` format.
 
+### Proxy
+
+**Settings > Network > Proxy** sends the WhatsApp connection, media, profile
+pictures, GIF search, Signal sticker imports, and update checks through a proxy. It accepts
+`socks5h://host:port` (the proxy resolves names, as Tor expects),
+`socks5://host:port`, and `http://host:port`, each with an optional
+`user:password@`. A bare `host:port` is an HTTP proxy. Changing it reconnects
+at once. When the field is empty, ZapFast uses `ALL_PROXY` or `HTTPS_PROXY`
+from the environment and honors `NO_PROXY`.
+
 ## Files
 
 | What | Linux | Notes |
@@ -490,7 +505,7 @@ copied messages keep WhatsApp's `[time, date] Name:` format.
 | Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit |
 | Device keys | `~/.local/state/zapfast/session.db` | Owned by whatsapp-rust; deleting it unlinks |
 | Messages | `~/.local/state/zapfast/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
-| Attachments, avatars | `~/.cache/zapfast/` | Safe to delete |
+| Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Saved stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
 | Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
 
@@ -530,7 +545,7 @@ platforms, use `zapfast reload-themes` after editing. The command also works whi
 the window is closed and never launches a stopped app.
 
 **Settings → Appearance → Wallpaper** offers WhatsApp's light and dark wallpaper
-colours, with a live preview of the selected colour and doodles. **Add WhatsApp
+colours, with a live preview of the selected colour and doodles. **Add
 doodles** controls only the SVG layer, so disabling it leaves the selected
 background colour in place. Light and dark selections are stored independently,
 and the embedded SVG is rendered at its native size and repeated across the
@@ -665,4 +680,4 @@ Release packaging uses the [native-packages](https://rubygems.org/gems/native-pa
 ## License
 
 MIT. Inter and Noto Color Emoji are under the SIL Open Font License; the icons
-are from [Lucide](https://lucide.dev) (ISC).
+and the chat wallpaper doodles are from [Lucide](https://lucide.dev) (ISC).

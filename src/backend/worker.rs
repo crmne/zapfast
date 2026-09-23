@@ -60,6 +60,8 @@ const PHONE_BATCH: i32 = 50;
 const ON_DEMAND: i32 = 6;
 /// Maximum attachment-preview dimension.
 const THUMBNAIL_SIDE: u32 = 96;
+/// WhatsApp's profile pictures are 640 pixels square.
+const PROFILE_PICTURE_SIDE: u32 = 640;
 /// Sticker download batch size for the picker.
 const STICKER_FETCH_LIMIT: usize = 40;
 const ATTACHMENT_LIMIT_ERROR: &str = "This attachment is larger than the 64 MiB download limit";
@@ -413,6 +415,7 @@ pub async fn run(
         group_info_tries: HashMap::new(),
         group_info_retry: Vec::new(),
         presence_subscribed: HashSet::new(),
+        download_folder: None,
         online_wanted: false,
         online_changed: Instant::now(),
         online_sent: None,
@@ -614,6 +617,8 @@ struct Worker {
     /// Next retry time for failed group metadata requests.
     group_info_retry: Vec<(Instant, String)>,
     presence_subscribed: HashSet<String>,
+    /// Chosen folder for new downloads, when not the cache.
+    download_folder: Option<PathBuf>,
     /// Whether the window is focused and visible.
     online_wanted: bool,
     /// When `online_wanted` last changed.
@@ -738,6 +743,7 @@ impl Worker {
             && matches!(
                 event,
                 Event::Chats(_)
+                    | Event::Drafts(_)
                     | Event::ChatHits { .. }
                     | Event::ChatUpdated(_)
                     | Event::Messages { .. }
@@ -867,6 +873,7 @@ impl Worker {
                     self.polish_chat(chat);
                 }
                 self.emit(Event::Chats(chats));
+                self.emit(Event::Drafts(self.archive.drafts().unwrap_or_default()));
             }
             Err(error) => log::warn!("could not list chats: {error}"),
         }
@@ -932,7 +939,13 @@ impl Worker {
         self.me_pn = self.archive.meta("me_pn").ok().flatten();
         self.me_lid = self.archive.meta("me_lid").ok().flatten();
         self.me_name = self.archive.meta("me_name").ok().flatten();
-        self.me_about = self.archive.meta("me_about").ok().flatten();
+        // An empty value records that the account has no About text.
+        self.me_about = self
+            .archive
+            .meta("me_about")
+            .ok()
+            .flatten()
+            .filter(|about| !about.is_empty());
         if let Ok(lids) = self.archive.lids() {
             self.lid_to_pn = lids.into_iter().collect();
         }
@@ -1087,8 +1100,19 @@ impl Worker {
             }
         };
         let sender = self.wa_sender.clone();
-        let bot = Bot::builder()
-            .with_backend(store)
+        let builder = Bot::builder().with_backend(store);
+        let builder = match crate::proxy::for_whatsapp() {
+            Some(proxy) => {
+                log::info!("connecting through the proxy {}", proxy.redacted());
+                builder
+                    .with_transport_factory(crate::proxy::ProxyTransportFactory::new(proxy))
+                    .with_http_client(whatsapp_rust::http::UreqHttpClient::with_agent(
+                        crate::proxy::agent(),
+                    ))
+            }
+            None => builder,
+        };
+        let bot = builder
             // WhatsApp reads the linked-device name, version, and icon at pairing.
             .with_device_props(
                 DevicePropsOverride::new()
@@ -1109,6 +1133,22 @@ impl Worker {
             Err(error) => self.set_status(LinkStatus::Failed(format!(
                 "Could not start WhatsApp: {error}"
             ))),
+        }
+    }
+
+    /// Where a new download goes: the chosen folder while it can be
+    /// created, otherwise the cache, so an unplugged drive does not stop
+    /// downloads.
+    fn download_dir(&self) -> PathBuf {
+        match &self.download_folder {
+            Some(folder) if std::fs::create_dir_all(folder).is_ok() && folder.is_dir() => {
+                folder.clone()
+            }
+            Some(_) => {
+                log::warn!("the download folder is unavailable; using the cache");
+                self.dirs.media_cache_dir()
+            }
+            None => self.dirs.media_cache_dir(),
         }
     }
 
@@ -1978,6 +2018,15 @@ impl Worker {
                     self.fetch_avatar(id, true);
                 }
             }
+            E::UserAboutUpdate(update) if self.is_me(&self.canonical(&update.jid)) => {
+                let _ = self.archive.set_meta("me_about", &update.status);
+                self.me_about = Some(update.status.clone()).filter(|about| !about.is_empty());
+                self.emit(Event::Me {
+                    id: self.me(),
+                    name: self.me_name.clone(),
+                    about: self.me_about.clone(),
+                });
+            }
             E::SelfPushNameUpdated(update) => {
                 self.me_name = Some(update.new_name.clone());
                 let _ = self.archive.set_meta("me_name", &update.new_name);
@@ -1990,6 +2039,51 @@ impl Worker {
             E::OfflineSyncCompleted(_) => self.emit_chats(),
             _ => {}
         }
+    }
+
+    /// Sends a new display name and About text; each `None` stays as it is.
+    fn set_profile(&mut self, name: Option<String>, about: Option<String>) {
+        let Some(client) = self.client.clone() else {
+            self.emit(Event::Error(
+                "Connect to WhatsApp to change your profile.".to_owned(),
+            ));
+            return;
+        };
+        let commands = self.commands.clone();
+        let events = self.events.clone();
+        let waker = self.waker.clone();
+        tokio::spawn(async move {
+            let profile = client.profile();
+            let mut saved_name = None;
+            if let Some(name) = name {
+                match profile.set_push_name(&name).await {
+                    Ok(()) => saved_name = Some(name),
+                    Err(error) => {
+                        let _ = events
+                            .send(Event::Error(format!("Could not change your name: {error}")));
+                    }
+                }
+            }
+            let mut saved_about = None;
+            if let Some(about) = about {
+                match profile.set_status_text(&about).await {
+                    Ok(()) => saved_about = Some(about),
+                    Err(error) => {
+                        let _ = events.send(Event::Error(format!(
+                            "Could not change your About: {error}"
+                        )));
+                    }
+                }
+            }
+            if saved_name.is_some() || saved_about.is_some() {
+                let _ = commands.send(Command::ProfileSaved {
+                    name: saved_name,
+                    about: saved_about,
+                    picture: false,
+                });
+            }
+            waker.wake();
+        });
     }
 
     fn remember_identity(&mut self, pn: Option<Jid>, lid: Option<Jid>, name: Option<String>) {
@@ -2055,6 +2149,7 @@ impl Worker {
         let _ = std::fs::remove_dir_all(self.dirs.avatar_cache_dir());
         let _ = std::fs::remove_dir_all(self.dirs.media_cache_dir());
         self.emit(Event::Chats(Vec::new()));
+        self.emit(Event::Drafts(Vec::new()));
         self.privacy_ready = false;
         self.privacy_confirmed = false;
         self.privacy_snapshot = false;
@@ -3249,6 +3344,16 @@ impl Worker {
                 message,
                 to_chat,
             } => self.forward_message(from_chat, message, to_chat),
+            // Stores the open chat's unsent text, or clears it when empty.
+            Command::SaveDraft { chat, text } => {
+                let at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_secs() as i64)
+                    .unwrap_or_default();
+                if let Err(error) = self.archive.set_draft(&chat, &text, at) {
+                    eprintln!("draft not stored: {error}");
+                }
+            }
             Command::Composing { chat, composing } => {
                 let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
                     return;
@@ -3377,6 +3482,131 @@ impl Worker {
                 tokio::task::spawn_blocking(move || {
                     let result = super::sticker_import::import_signal_pack(&url, &packs);
                     let _ = commands.send(Command::StickerPackImported { result });
+                });
+            }
+            Command::SetProxy(setting) => {
+                crate::proxy::configure(&setting);
+                // Reconnect so the WhatsApp connection uses the new route.
+                if self.handle.is_some() {
+                    self.stop_bot().await;
+                    self.start_bot().await;
+                }
+            }
+            Command::SetDownloadFolder(folder) => {
+                // Interrupted downloads leave hidden staging files behind.
+                if let Some(folder) = &folder {
+                    discard_attachment_staging(folder);
+                }
+                self.download_folder = folder;
+            }
+            Command::SetChatSound { chat, sound } => {
+                let _ = self.archive.set_notification_sound(&chat, sound.as_ref());
+                self.emit_chat(&chat);
+            }
+            Command::PickChatSound(chat) => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Choose a notification sound")
+                        .add_filter("Audio", &["wav", "mp3", "ogg", "oga"])
+                        .pick_file()
+                    {
+                        let _ = events.send(Event::ChatSoundPicked { chat, path });
+                        waker.wake();
+                    }
+                });
+            }
+            Command::PickDownloadFolder => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Choose a folder for downloads")
+                        .pick_folder()
+                    {
+                        let _ = events.send(Event::DownloadFolderPicked(path));
+                        waker.wake();
+                    }
+                });
+            }
+            Command::SetProfile { name, about } => self.set_profile(name, about),
+            Command::PickProfilePicture => {
+                let commands = self.commands.clone();
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let Some(path) = rfd::FileDialog::new()
+                        .set_title("Choose a profile picture")
+                        .add_filter("Images", &["jpg", "jpeg", "png", "webp", "gif"])
+                        .pick_file()
+                    else {
+                        return;
+                    };
+                    match profile_picture_jpeg(&path) {
+                        Ok(bytes) => {
+                            let _ = commands.send(Command::SetProfilePicture(bytes));
+                        }
+                        Err(error) => {
+                            let _ = events
+                                .send(Event::Error(format!("Could not use this picture: {error}")));
+                        }
+                    }
+                    waker.wake();
+                });
+            }
+            Command::SetProfilePicture(bytes) => {
+                let Some(client) = self.client.clone() else {
+                    self.emit(Event::Error(
+                        "Connect to WhatsApp to change your profile picture.".to_owned(),
+                    ));
+                    return;
+                };
+                let commands = self.commands.clone();
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::spawn(async move {
+                    match client.profile().set_profile_picture(bytes).await {
+                        Ok(_) => {
+                            let _ = commands.send(Command::ProfileSaved {
+                                name: None,
+                                about: None,
+                                picture: true,
+                            });
+                        }
+                        Err(error) => {
+                            let _ = events.send(Event::Error(format!(
+                                "Could not change your profile picture: {error}"
+                            )));
+                        }
+                    }
+                    waker.wake();
+                });
+            }
+            Command::ProfileSaved {
+                name,
+                about,
+                picture,
+            } => {
+                if let Some(name) = name {
+                    let _ = self.archive.set_meta("me_name", &name);
+                    self.me_name = Some(name);
+                }
+                if let Some(about) = about {
+                    let _ = self.archive.set_meta("me_about", &about);
+                    self.me_about = Some(about).filter(|about| !about.is_empty());
+                }
+                if picture {
+                    let me = self.me();
+                    let _ = std::fs::remove_file(self.avatar_file(&me, false));
+                    let _ = std::fs::remove_file(self.avatar_file(&me, true));
+                    self.fetch_avatar(me.clone(), false);
+                    self.fetch_avatar(me, true);
+                }
+                self.emit(Event::Me {
+                    id: self.me(),
+                    name: self.me_name.clone(),
+                    about: self.me_about.clone(),
                 });
             }
             Command::PickNotificationSound { group } => {
@@ -3817,7 +4047,18 @@ impl Worker {
             Command::SetMuted(chat, until) => {
                 let _ = self.archive.set_muted(&chat, until);
                 self.emit_chat(&chat);
+                let channel = chat.ends_with("@newsletter");
                 self.tell_phone(&chat, move |client, jid| async move {
+                    // A channel also keeps its own mute on the server, which
+                    // WhatsApp Web toggles as the channel's Mute.
+                    if channel
+                        && let Err(error) = client
+                            .newsletter()
+                            .set_admin_mute(&jid, until.is_some())
+                            .await
+                    {
+                        log::debug!("channel mute not sent: {error}");
+                    }
                     match until {
                         None => client.chat_actions().unmute_chat(&jid).await,
                         Some(0) => client.chat_actions().mute_chat(&jid).await,
@@ -4457,7 +4698,7 @@ impl Worker {
             }
             None
         };
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.download_dir();
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let cache_id = card.map_or_else(|| id.clone(), |index| format!("{id}-card-{index}"));
@@ -4795,7 +5036,8 @@ impl Worker {
                 };
                 let url = picture.url;
                 let bytes = tokio::task::spawn_blocking(move || {
-                    ureq::get(&url)
+                    crate::proxy::agent()
+                        .get(&url)
                         .call()
                         .and_then(|mut response| response.body_mut().read_to_vec())
                         .map_err(|error| error.to_string())
@@ -5253,7 +5495,8 @@ impl Worker {
             let outcome = async {
                 let url = gif.mp4.clone();
                 let bytes = tokio::task::spawn_blocking(move || {
-                    ureq::get(&url)
+                    crate::proxy::agent()
+                        .get(&url)
                         .call()
                         .and_then(|mut response| response.body_mut().read_to_vec())
                         .map_err(|error| error.to_string())
@@ -5887,6 +6130,22 @@ fn encode_jpeg(image: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, Stri
     Ok(bytes)
 }
 
+/// Crops a picture to a centred square and encodes it at the size WhatsApp
+/// uses for profile pictures.
+fn profile_picture_jpeg(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    let image = image::open(path).map_err(|error| error.to_string())?;
+    let side = image.width().min(image.height());
+    let square = image.crop_imm(
+        (image.width() - side) / 2,
+        (image.height() - side) / 2,
+        side,
+        side,
+    );
+    let size = side.min(PROFILE_PICTURE_SIDE);
+    let resized = square.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
+    encode_jpeg(&resized, 85)
+}
+
 /// Builds the pre-download attachment thumbnail.
 fn thumbnail_jpeg(image: &image::DynamicImage) -> Option<Vec<u8>> {
     let small = image.thumbnail(THUMBNAIL_SIDE, THUMBNAIL_SIDE);
@@ -6164,7 +6423,7 @@ fn search_gifs(query: &str, key: &str, dir: &Path) -> Result<Vec<Gif>, GifError>
             percent_encode(query.trim())
         )
     };
-    let body = match ureq::get(&url).call() {
+    let body = match crate::proxy::agent().get(&url).call() {
         Ok(mut response) => response
             .body_mut()
             .read_to_string()
@@ -7129,6 +7388,69 @@ mod tests {
     }
 
     #[test]
+    fn an_account_without_about_text_loads_none() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker.archive.set_meta("me_about", "").unwrap();
+        worker.load_state();
+        assert_eq!(worker.me_about, None);
+        worker.archive.set_meta("me_about", "Busy").unwrap();
+        worker.load_state();
+        assert_eq!(worker.me_about.as_deref(), Some("Busy"));
+    }
+
+    #[tokio::test]
+    async fn a_saved_profile_updates_our_name_and_about() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker
+            .handle_command(Command::ProfileSaved {
+                name: Some("Carmine".into()),
+                about: Some("Busy".into()),
+                picture: false,
+            })
+            .await;
+        assert_eq!(worker.me_name.as_deref(), Some("Carmine"));
+        assert_eq!(worker.me_about.as_deref(), Some("Busy"));
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::Me { name: Some(name), about: Some(about), .. }
+                if name == "Carmine" && about == "Busy"
+        )));
+        // Clearing the About keeps the name.
+        worker
+            .handle_command(Command::ProfileSaved {
+                name: None,
+                about: Some(String::new()),
+                picture: false,
+            })
+            .await;
+        assert_eq!(worker.me_name.as_deref(), Some("Carmine"));
+        assert_eq!(worker.me_about, None);
+        assert_eq!(
+            worker.archive.meta("me_about").unwrap().as_deref(),
+            Some("")
+        );
+    }
+
+    #[tokio::test]
+    async fn downloads_use_the_chosen_folder_and_fall_back_to_the_cache() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let root = std::env::temp_dir().join(format!("zapfast-downloads-{}", std::process::id()));
+        let chosen = root.join("Downloads/WhatsApp");
+        worker
+            .handle_command(Command::SetDownloadFolder(Some(chosen.clone())))
+            .await;
+        assert_eq!(worker.download_dir(), chosen);
+        assert!(chosen.is_dir(), "the folder is created when needed");
+        // A folder that cannot exist, such as one below a file, falls back.
+        std::fs::write(root.join("file"), b"").unwrap();
+        worker.download_folder = Some(root.join("file/inside"));
+        assert_eq!(worker.download_dir(), worker.dirs.media_cache_dir());
+        worker.download_folder = None;
+        assert_eq!(worker.download_dir(), worker.dirs.media_cache_dir());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn view_once_placeholders_say_they_open_only_on_the_phone() {
         let (mut worker, _events, _, _) = receipt_tests::worker();
         for (id, unavailable, expected) in [
@@ -7620,6 +7942,7 @@ mod receipt_tests {
             group_info_tries: HashMap::new(),
             group_info_retry: Vec::new(),
             presence_subscribed: HashSet::new(),
+            download_folder: None,
             online_wanted: false,
             online_changed: Instant::now(),
             online_sent: None,

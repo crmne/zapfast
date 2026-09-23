@@ -661,6 +661,11 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             ));
         }
     });
+    ui.add_space(4.0);
+    if super::widgets::credit(ui, &palette, app.locale) {
+        app.actions
+            .push(Action::OpenUrl(super::widgets::AUTHOR_URL.to_owned()));
+    }
 }
 
 fn confirm_delete_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {

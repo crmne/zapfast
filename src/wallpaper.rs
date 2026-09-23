@@ -1,4 +1,4 @@
-//! The default WhatsApp-style chat wallpaper.
+//! The default doodle chat wallpaper.
 
 use std::sync::{Arc, Mutex};
 
@@ -6,8 +6,9 @@ use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions, pos2};
 
 use crate::settings::WallpaperColor;
 
-/// The official default doodle tile. It is embedded so the wallpaper works
-/// offline and does not depend on a third-party request at runtime.
+/// The default doodle tile, drawn from Lucide icons (ISC, see
+/// `assets/icons/LICENSE.txt`). It is embedded so the wallpaper works offline
+/// and does not depend on a third-party request at runtime.
 const DEFAULT_SVG: &[u8] = include_bytes!("../assets/wallpaper.svg");
 
 #[derive(Clone, Default)]
@@ -118,8 +119,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn official_tile_keeps_its_intrinsic_dimensions() {
-        let image = rasterize().expect("official wallpaper SVG renders");
+    fn default_tile_keeps_its_intrinsic_dimensions() {
+        let image = rasterize().expect("default wallpaper SVG renders");
         assert_eq!(image.size, [374, 666]);
         assert!(image.pixels.iter().any(|pixel| pixel.a() != 0));
     }

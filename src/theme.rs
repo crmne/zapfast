@@ -1003,6 +1003,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn inter_figures_are_tabular() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let width = |text: &str| {
+                ui.painter()
+                    .layout_no_wrap(text.to_owned(), regular(13.0), Color32::WHITE)
+                    .rect
+                    .width()
+            };
+            // With proportional figures "1:11" is far narrower than "8:88",
+            // so timers and durations jitter as they count.
+            assert!(
+                (width("1:11") - width("8:88")).abs() < 0.01,
+                "bundled Inter should draw tabular figures"
+            );
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
     fn every_icon_has_a_file() {
         for (icon, uri, bytes) in ICONS {
             assert!(!bytes.is_empty(), "{icon:?} is empty");

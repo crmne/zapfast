@@ -347,6 +347,12 @@ pub struct Settings {
     pub message_sound: NotificationSound,
     /// Sound for notifications from groups.
     pub group_sound: NotificationSound,
+    /// Folder for new downloads. `None` keeps them in the cache. Files
+    /// already downloaded stay where they are when this changes.
+    pub download_folder: Option<std::path::PathBuf>,
+    /// Proxy for WhatsApp, media, and updates, such as
+    /// `socks5h://127.0.0.1:9050`. Empty follows `ALL_PROXY` / `HTTPS_PROXY`.
+    pub proxy: String,
     /// Ask GitHub once a day whether a newer release exists.
     pub check_for_updates: bool,
     /// Download verified updates in the background; restarting remains explicit.
@@ -394,6 +400,8 @@ impl Default for Settings {
             notifications: true,
             message_sound: NotificationSound::System,
             group_sound: NotificationSound::System,
+            download_folder: None,
+            proxy: String::new(),
             check_for_updates: true,
             download_updates_automatically: false,
             names_from_contacts: true,

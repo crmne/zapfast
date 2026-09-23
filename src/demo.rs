@@ -3598,6 +3598,149 @@ mod tests {
         )));
     }
 
+    /// Clicks the published hover control and checks it opens the picker for
+    /// exactly that message without leaking into reply or the context menu.
+    #[test]
+    fn clicking_the_hover_reaction_control_opens_the_picker_for_that_message() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let chat = sample_ids()[0].to_owned();
+        let message = "ada-link";
+        assert!(app.reaction_target.is_none());
+
+        let id = crate::ui::conversation::bubble_id(&chat, message);
+        let affordance = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("react-rect")))
+            .expect("the hover control publishes its rect");
+        let bubble = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+            .expect("the bubble publishes its rect");
+
+        // The control sits beside the bubble, never over its text or link, so
+        // it cannot swallow link clicks or text selection.
+        assert!(
+            !affordance.intersects(bubble),
+            "the control {affordance:?} overlaps the bubble {bubble:?}"
+        );
+        let body = ctx.data(|data| data.get_temp::<egui::Rect>(id.with("body")));
+        assert!(
+            body.is_none_or(|body| !affordance.intersects(body)),
+            "the control {affordance:?} covers the message body"
+        );
+
+        // Hover the message, then click the published control.
+        let pos = affordance.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(bubble.center())],
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), press(true)],
+        );
+        frame_with(&mut app, &ctx, vec![press(false)]);
+        assert_eq!(
+            app.reaction_target,
+            Some((chat.clone(), message.to_owned())),
+            "the hover control opens the picker for this exact message"
+        );
+        assert!(
+            app.open_message_menu.is_none(),
+            "the click opens the picker, not the context menu"
+        );
+        assert!(app.reply_to.is_none(), "the click does not start a reply");
+    }
+
+    /// The hover control is beside the bubble, so double-click reply and the
+    /// right-click context menu keep working while it is registered.
+    #[test]
+    fn the_hover_reaction_control_leaves_reply_and_the_menu_alone() {
+        let mut app = app();
+        let chat = sample_ids()[0].to_owned();
+        app.conversations.get_mut(&chat).unwrap().messages = vec![message(
+            &chat,
+            "text",
+            false,
+            100,
+            Content::text("Double-click me"),
+        )];
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+
+        let id = crate::ui::conversation::bubble_id(&chat, "text");
+        let affordance = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("react-rect")))
+            .expect("the hover control publishes its rect");
+        let bubble = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+            .expect("the bubble publishes its rect");
+        assert!(
+            !affordance.intersects(bubble),
+            "the control {affordance:?} overlaps the bubble {bubble:?}"
+        );
+
+        // A double-click on the bubble padding still replies, not reacts.
+        let pad = bubble.left_center() + egui::vec2(4.0, 0.0);
+        let press = |pressed| egui::Event::PointerButton {
+            pos: pad,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(pad), press(true)],
+            vec![press(false)],
+            vec![press(true)],
+            vec![press(false)],
+            vec![],
+        ] {
+            frame_with(&mut app, &ctx, events);
+        }
+        assert_eq!(
+            app.reply_to.as_deref(),
+            Some("text"),
+            "double-click reply keeps working beside the control"
+        );
+        assert!(app.reaction_target.is_none(), "a double-click never reacts");
+
+        // A right-click on the bubble still opens the context menu, not the picker.
+        let press = |pressed| egui::Event::PointerButton {
+            pos: bubble.center(),
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(bubble.center()), press(true)],
+        );
+        frame_with(&mut app, &ctx, vec![press(false)]);
+        assert!(
+            egui::Popup::is_id_open(&ctx, id.with("popup")),
+            "a right-click on the bubble still opens the context menu"
+        );
+        assert!(
+            app.reaction_target.is_none(),
+            "the context menu does not open the reaction picker"
+        );
+    }
+
     #[test]
     fn switching_chats_closes_the_reaction_picker() {
         let mut app = app();

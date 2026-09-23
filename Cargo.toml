@@ -57,7 +57,13 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # Includes upstream Business pairing (#1440), LockChatUpdate and snapshot replay
 # (#1507). Device-store compatibility retains the legacy created_at column.
 whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "ae3cefd86065872a577bbd0ad5ee21b60c86c616", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
+# Opens the WhatsApp WebSocket through a proxy. Both crates are already
+# included through the Tokio transport at these versions.
+tokio-websockets = { version = "0.13.3", default-features = false, features = ["client"] }
+http = "1"
+# Encodes HTTP proxy credentials. Already included through several crates.
+base64 = "0.22"
 # SQLCipher encrypts the archive; the device store shares the same library.
 # Bundle OpenSSL so all release platforms use the same encryption provider.
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
@@ -66,11 +72,11 @@ getrandom = "0.4"
 zeroize = "1"
 rand = "0.10"
 # Streaming release downloads, with restricted redirect hosts.
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "socks"] }
 qrcode = { version = "0.14", default-features = false }
 # Downloads profile pictures. The protocol library already includes this crate
 # and TLS stack.
-ureq = { version = "3", default-features = false, features = ["rustls"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "socks-proxy"] }
 jiff = "0.2"
 # Treats joined emoji as one grapheme. Already included through egui.
 unicode-segmentation = "1"
