@@ -156,32 +156,65 @@ impl AppDirs {
     /// Resolves a path as far as it currently exists, following symlinks in
     /// existing ancestors and collapsing `.` and `..` in the missing tail, so
     /// a not-yet-created path is compared by where it will actually live once
-    /// the missing components appear.
+    /// the missing components appear. Dangling symlinks resolve to their
+    /// target too: a link whose target is missing still tells where the path
+    /// lands once the target appears, which is exactly when a boundary check
+    /// must already have rejected it.
     fn resolved_for_compare(path: &Path) -> PathBuf {
-        if let Ok(resolved) = path.canonicalize() {
-            return simplify_verbatim(resolved);
-        }
-        let components: Vec<_> = path.components().collect();
-        let mut existing = 0;
-        for len in (1..=components.len()).rev() {
-            let prefix = PathBuf::from_iter(&components[..len]);
-            if prefix.try_exists().unwrap_or(false) {
-                existing = len;
+        let mut current = path.to_path_buf();
+        // Each pass substitutes the earliest symlink component, including
+        // dangling ones, and retries the canonical lookup. The bound keeps a
+        // symlink loop from spinning; an unresolved path only makes the
+        // comparison more conservative.
+        for _ in 0..40 {
+            if let Ok(resolved) = current.canonicalize() {
+                return simplify_verbatim(resolved);
+            }
+            let components: Vec<_> = current.components().collect();
+            let mut substitution = None;
+            for len in 1..=components.len() {
+                let prefix = PathBuf::from_iter(&components[..len]);
+                let Ok(metadata) = std::fs::symlink_metadata(&prefix) else {
+                    continue;
+                };
+                if !metadata.file_type().is_symlink() {
+                    continue;
+                }
+                let Ok(target) = std::fs::read_link(&prefix) else {
+                    break;
+                };
+                let target = if target.is_absolute() {
+                    target
+                } else {
+                    prefix
+                        .parent()
+                        .map_or_else(|| target.clone(), |parent| parent.join(&target))
+                };
+                let mut expanded = Self::lexical_normalize(&target);
+                for component in &components[len..] {
+                    expanded.push(component.as_os_str());
+                }
+                substitution = Some(expanded);
                 break;
             }
+            match substitution {
+                Some(expanded) => current = expanded,
+                None => break,
+            }
         }
-        let base = PathBuf::from_iter(&components[..existing])
-            .canonicalize()
-            .map(simplify_verbatim)
-            .unwrap_or_else(|_| PathBuf::from_iter(&components[..existing]));
-        let mut out = base;
-        for component in &components[existing..] {
+        Self::lexical_normalize(&current)
+    }
+
+    /// Collapses `.` and `..` textually without touching the file system.
+    fn lexical_normalize(path: &Path) -> PathBuf {
+        let mut out = PathBuf::new();
+        for component in path.components() {
             use std::path::Component;
             match component {
+                Component::CurDir => {}
                 Component::ParentDir => {
                     out.pop();
                 }
-                Component::CurDir => {}
                 _ => out.push(component.as_os_str()),
             }
         }
@@ -637,6 +670,38 @@ mod tests {
         assert_eq!(
             dirs.validated_custom_media(Some(PathBuf::from("state/attachments"))),
             None
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validated_custom_media_rejects_dangling_symlinks_into_app_data() {
+        let root = root("validated-dangling");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        // The link target does not exist yet: the folder must still be judged
+        // by where the link points once the target appears.
+        let target = dirs.state.join("future-attachments");
+        std::os::unix::fs::symlink(&target, root.join("dangling")).unwrap();
+        assert_eq!(
+            dirs.validated_custom_media(Some(root.join("dangling"))),
+            None
+        );
+        assert!(AppDirs::is_subpath(&root.join("dangling"), &dirs.state));
+        // A relative link target resolves against the link's own folder.
+        std::os::unix::fs::symlink("state/future-2", root.join("dangling-relative")).unwrap();
+        assert_eq!(
+            dirs.validated_custom_media(Some(root.join("dangling-relative"))),
+            None
+        );
+        // A dangling link whose target stays outside app data is kept, so
+        // disconnected external storage reached through a link survives.
+        let outside = root.join("downloads/future");
+        std::os::unix::fs::symlink(&outside, root.join("dangling-outside")).unwrap();
+        assert_eq!(
+            dirs.validated_custom_media(Some(root.join("dangling-outside"))),
+            Some(root.join("dangling-outside"))
         );
         std::fs::remove_dir_all(root).unwrap();
     }
