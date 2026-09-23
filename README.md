@@ -145,7 +145,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   are dismissed first. Type `:name` to autocomplete
   an emoji without leaving the composer, or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
-  delivered, or read. The same right-click menu copies a message's ID, which
+  delivered, or read. Replies can be text, attachments, voice messages,
+  stickers, or GIFs. A reply never goes out without its quote: if the
+  original is no longer available on this computer, nothing is sent, the text
+  or attachments return to the composer, and a voice message waits above it
+  to be sent again or discarded. Cancel the reply to send without a quote. The same right-click menu copies a message's ID, which
   helps when looking one up for a bug report.
   Opening a message's context menu outlines that message until the menu closes.
   The full reaction picker stays beside the menu and adds a target preview.
@@ -290,8 +294,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 ## What it does not do yet
 
-- Reply to a message with an attachment, or play videos in codecs other than
-  H.264 in the app (they open in your system player).
+- Play videos in codecs other than H.264 in the app (they open in your system
+  player).
 - Calls, status posts, communities, newsletters, and group administration.
 - Submit interactive forms, payments, shopping flows, or carousel selections.
   Use these in WhatsApp Web or on your phone. Embedded videos and documents,

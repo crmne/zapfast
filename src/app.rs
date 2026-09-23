@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::audio::{Player, Recorder};
-use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
+use crate::backend::{Backend, Command, Event, LinkStatus, Refusal, Unsent, Waker};
 use crate::i18n::Locale;
 use crate::image_preview::PreviewState;
 use crate::model::{
@@ -273,6 +273,9 @@ pub struct App {
     video_wanted: Option<(ChatId, String)>,
     /// Active voice recorder.
     pub recording: Option<Recorder>,
+    /// A voice message the worker refused, kept with its chat so it can be
+    /// sent again from that chat or discarded.
+    pub(crate) unsent_voice: Option<(ChatId, Vec<f32>)>,
     /// Keeps other apps' music paused while recording or playing audio.
     media_hold: Option<crate::media_pause::Hold>,
     /// Only the real app pauses other apps' media, never tests or demos.
@@ -525,6 +528,7 @@ impl App {
             mention_selected: 0,
             reply_to: None,
             editing: None,
+            unsent_voice: None,
             composing: false,
             last_keystroke: None,
             search: String::new(),
@@ -1871,6 +1875,12 @@ impl App {
                         self.update_download = crate::updates::DownloadState::Failed(error)
                     }
                 },
+                Event::SendRefused {
+                    chat,
+                    quoting,
+                    unsent,
+                    reason,
+                } => self.send_refused(chat, quoting, unsent, reason),
                 Event::Error(message) => {
                     self.sticker_import_pending = false;
                     self.new_contact_pending = false;
@@ -2107,6 +2117,91 @@ impl App {
             );
         }
         self.leave_chat(id);
+    }
+
+    /// Takes back a send the worker refused. Nothing typed or recorded is
+    /// lost, and a refused reply is never sent again without its quote unless
+    /// the user cancels the reply first.
+    fn send_refused(
+        &mut self,
+        chat: ChatId,
+        quoting: Option<String>,
+        unsent: Unsent,
+        reason: Refusal,
+    ) {
+        let open = self.open_chat.as_deref() == Some(chat.as_str());
+        // Re-arm the reply banner, unless the user has moved on to another
+        // reply or an edit since.
+        if open && quoting.is_some() && self.reply_to.is_none() && self.editing.is_none() {
+            self.reply_to = quoting;
+            self.focus_composer = true;
+        }
+        match unsent {
+            Unsent::Text(text) => self.restore_text(&chat, text),
+            Unsent::Voice(samples) => {
+                self.unsent_voice = Some((chat, samples));
+                self.focus_composer = open;
+            }
+            Unsent::Files { paths, caption } => {
+                if open {
+                    self.pending.extend(paths.into_iter().map(Pending::File));
+                }
+                self.restore_text(&chat, caption.unwrap_or_default());
+            }
+            Unsent::Image {
+                width,
+                height,
+                rgba,
+                caption,
+            } => {
+                if open {
+                    self.pending.push(Pending::Picture {
+                        width: width as usize,
+                        height: height as usize,
+                        rgba: std::sync::Arc::new(rgba),
+                        texture: None,
+                    });
+                }
+                self.restore_text(&chat, caption.unwrap_or_default());
+            }
+            Unsent::Sticker | Unsent::Gif => {}
+        }
+        let message = match reason {
+            Refusal::Offline => crate::i18n::gettext(
+                self.locale,
+                "Not sent: ZapFast is not connected to WhatsApp.",
+            ),
+            Refusal::QuoteUnavailable => crate::i18n::gettext(
+                self.locale,
+                "Not sent: the message you’re replying to isn’t available on this computer. Cancel the reply to send without a quote.",
+            ),
+        };
+        self.toast_error(message.into_owned());
+    }
+
+    /// Returns refused text to its chat's composer, or to its stored draft
+    /// when another chat is open. Text typed since the send is kept.
+    fn restore_text(&mut self, chat: &str, text: String) {
+        if text.trim().is_empty() {
+            return;
+        }
+        if self.open_chat.as_deref() == Some(chat) {
+            if self.composer.trim().is_empty() && self.editing.is_none() {
+                self.composer = text;
+                self.composer_mentions.clear();
+                self.emoji_start = None;
+                self.mention_start = None;
+                self.focus_composer = true;
+                self.store_draft(chat, &self.composer);
+            }
+        } else if self
+            .drafts
+            .get(chat)
+            .is_none_or(|draft| draft.trim().is_empty())
+        {
+            self.store_draft(chat, &text);
+            self.drafts.insert(chat.to_owned(), text);
+        }
     }
 
     /// Mirrors a chat's draft into the encrypted archive, so unsent text
@@ -2462,6 +2557,8 @@ impl App {
 
     /// Sends pending files, attaching the caption to the first.
     fn send_pending(&mut self, chat: ChatId, caption: String) {
+        // The reply travels with the first attachment, like the caption.
+        let mut quoting = self.reply_to.take();
         let caption = caption.trim().to_owned();
         let (caption, mentions) = self.encode_composer_mentions(&chat, caption);
         let caption = Some(caption).filter(|text| !text.is_empty());
@@ -2485,6 +2582,7 @@ impl App {
                         rgba: std::sync::Arc::try_unwrap(rgba).unwrap_or_else(|arc| (*arc).clone()),
                         caption: caption.take(),
                         mentions: std::mem::take(&mut mentions),
+                        quoting: quoting.take(),
                     });
                 }
                 Pending::File(path) => files.push(path),
@@ -2496,9 +2594,9 @@ impl App {
                 paths: files,
                 caption: caption.take(),
                 mentions,
+                quoting: quoting.take(),
             });
         }
-        self.reply_to = None;
         self.scroll_to_bottom = true;
         self.at_bottom = true;
     }
@@ -2522,6 +2620,7 @@ impl App {
             paths,
             caption: None,
             mentions: Vec::new(),
+            quoting: None,
         });
         self.scroll_to_bottom = true;
         self.at_bottom = true;
@@ -2967,6 +3066,14 @@ impl App {
                 }
             }
             Action::Reply(id) => {
+                // Replying while editing starts a new message: the edited
+                // text must not go out as the reply.
+                if self.editing.take().is_some() {
+                    self.composer.clear();
+                    self.composer_mentions.clear();
+                    self.emoji_start = None;
+                    self.mention_start = None;
+                }
                 self.reply_to = Some(id);
                 self.focus_composer = true;
             }
@@ -3144,6 +3251,7 @@ impl App {
                 self.send_recording();
                 self.refocus_composer(ctx);
             }
+            Action::DiscardUnsentVoice => self.unsent_voice = None,
             Action::SetMuted(chat, until) => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.muted_until = until;
@@ -3402,7 +3510,8 @@ impl App {
             Action::SendGif(gif) => {
                 if let Some(chat) = self.open_chat.clone() {
                     self.toast("Sending GIF…");
-                    self.backend.send(Command::SendGif { chat, gif });
+                    let quoting = self.reply_to.take();
+                    self.backend.send(Command::SendGif { chat, gif, quoting });
                     self.picker = None;
                     self.scroll_to_bottom = true;
                     self.at_bottom = true;
@@ -4157,9 +4266,29 @@ impl App {
         });
     }
 
-    /// Stops and sends a recording unless it is under one second.
+    /// Stops and sends a recording unless it is under one second. With no
+    /// recorder running, sends the open chat's refused voice message again;
+    /// it quotes whatever the reply banner shows now, so a reply the worker
+    /// refused for its missing original is only sent unquoted after the
+    /// user cancels the reply.
     fn send_recording(&mut self) {
         let Some(recorder) = self.recording.take() else {
+            if let Some(chat) = self.open_chat.clone()
+                && self
+                    .unsent_voice
+                    .as_ref()
+                    .is_some_and(|(unsent, _)| *unsent == chat)
+                && let Some((_, samples)) = self.unsent_voice.take()
+            {
+                let quoting = self.reply_to.take();
+                self.backend.send(Command::SendVoice {
+                    chat,
+                    samples,
+                    quoting,
+                });
+                self.scroll_to_bottom = true;
+                self.at_bottom = true;
+            }
             return;
         };
         let Some(chat) = self.open_chat.clone() else {
@@ -6082,6 +6211,302 @@ mod tests {
         assert_eq!(images[0].path, None);
         assert_eq!(images[1].path, Some(path));
         assert_eq!(images[1].state, MediaState::Idle);
+    }
+
+    fn refused(chat: &str, quoting: Option<&str>, unsent: Unsent, reason: Refusal) -> Event {
+        Event::SendRefused {
+            chat: chat.into(),
+            quoting: quoting.map(str::to_owned),
+            unsent,
+            reason,
+        }
+    }
+
+    fn error_toasts(app: &App) -> Vec<String> {
+        app.toasts
+            .iter()
+            .filter(|toast| toast.kind == ToastKind::Error)
+            .map(|toast| toast.message.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_refused_text_reply_returns_to_the_composer_with_its_reply() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.reply_to = Some("original".into());
+        app.apply(
+            Action::SendText {
+                chat: chat.into(),
+                text: "Reply fixture".into(),
+                quoting: app.reply_to.clone(),
+            },
+            &egui::Context::default(),
+        );
+        assert!(app.reply_to.is_none());
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(sent.iter().any(|command| matches!(command,
+            Command::SendText { quoting: Some(id), .. } if id == "original")));
+        events
+            .send(refused(
+                chat,
+                Some("original"),
+                Unsent::Text("Reply fixture".into()),
+                Refusal::QuoteUnavailable,
+            ))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.composer, "Reply fixture");
+        assert_eq!(
+            app.reply_to.as_deref(),
+            Some("original"),
+            "the reply is re-armed"
+        );
+        assert!(app.focus_composer);
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+                Command::SaveDraft { chat: saved, text } if saved == chat && text == "Reply fixture")),
+            "the returned text is a draft again"
+        );
+        assert!(error_toasts(&app)[0].contains("replying to"));
+        // Text typed since is not overwritten by a later refusal.
+        app.composer = "Newer draft".into();
+        events
+            .send(refused(
+                chat,
+                None,
+                Unsent::Text("Older text".into()),
+                Refusal::Offline,
+            ))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.composer, "Newer draft");
+        assert!(error_toasts(&app)[1].contains("not connected"));
+    }
+
+    #[test]
+    fn a_refused_text_for_another_chat_becomes_its_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.open_chat = Some("other@s.whatsapp.net".into());
+        app.composer = "Other chat's text".into();
+        let chat = "fixture@s.whatsapp.net";
+        events
+            .send(refused(
+                chat,
+                Some("original"),
+                Unsent::Text("Reply fixture".into()),
+                Refusal::QuoteUnavailable,
+            ))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.composer, "Other chat's text");
+        assert!(
+            app.reply_to.is_none(),
+            "no reply is armed in the wrong chat"
+        );
+        assert_eq!(
+            app.drafts.get(chat).map(String::as_str),
+            Some("Reply fixture")
+        );
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+                Command::SaveDraft { chat: saved, text } if saved == chat && text == "Reply fixture"))
+        );
+        // A draft the chat already has is kept.
+        events
+            .send(refused(
+                chat,
+                None,
+                Unsent::Text("Later text".into()),
+                Refusal::Offline,
+            ))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(
+            app.drafts.get(chat).map(String::as_str),
+            Some("Reply fixture")
+        );
+    }
+
+    #[test]
+    fn attachments_and_gifs_carry_the_reply_and_come_back_when_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.reply_to = Some("original".into());
+        app.pending.push(Pending::Picture {
+            width: 1,
+            height: 1,
+            rgba: std::sync::Arc::new(vec![1, 2, 3, 4]),
+            texture: None,
+        });
+        app.pending.push(Pending::File("/fixture/a.pdf".into()));
+        app.apply(
+            Action::SendPending {
+                chat: chat.into(),
+                caption: "Caption fixture".into(),
+            },
+            &ctx,
+        );
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        // Only the first attachment, which carries the caption, is the reply.
+        assert!(matches!(
+            sent.as_slice(),
+            [
+                Command::SendImage { quoting: Some(id), caption: Some(_), .. },
+                Command::SendFiles { quoting: None, caption: None, .. },
+            ] if id == "original"
+        ));
+        assert!(app.reply_to.is_none());
+        assert!(app.pending.is_empty());
+        app.reply_to = Some("original".into());
+        app.apply(
+            Action::SendGif(Gif {
+                id: "fixture".into(),
+                still: None,
+                mp4: "https://example.invalid/fixture.mp4".into(),
+                width: 2,
+                height: 2,
+            }),
+            &ctx,
+        );
+        assert!(app.reply_to.is_none());
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+                Command::SendGif { quoting: Some(id), .. } if id == "original"))
+        );
+        // Refused attachments return to the composer with their caption.
+        for unsent in [
+            Unsent::Image {
+                width: 1,
+                height: 1,
+                rgba: vec![1, 2, 3, 4],
+                caption: Some("Caption fixture".into()),
+            },
+            Unsent::Files {
+                paths: vec!["/fixture/a.pdf".into()],
+                caption: None,
+            },
+            Unsent::Gif,
+        ] {
+            events
+                .send(refused(
+                    chat,
+                    Some("original"),
+                    unsent,
+                    Refusal::QuoteUnavailable,
+                ))
+                .unwrap();
+        }
+        app.handle_events();
+        assert!(matches!(
+            app.pending.as_slice(),
+            [Pending::Picture { width: 1, height: 1, .. }, Pending::File(path)]
+                if path == std::path::Path::new("/fixture/a.pdf")
+        ));
+        assert_eq!(app.composer, "Caption fixture");
+        assert_eq!(app.reply_to.as_deref(), Some("original"));
+        // Repeats of one error share a toast.
+        assert_eq!(error_toasts(&app).len(), 1);
+    }
+
+    #[test]
+    fn a_refused_voice_message_is_sent_again_only_from_its_chat_or_discarded() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        let other = "other@s.whatsapp.net";
+        let clip = vec![0.25; crate::voice::RATE as usize * 2];
+        app.open_chat = Some(chat.into());
+        events
+            .send(refused(
+                chat,
+                Some("original"),
+                Unsent::Voice(clip.clone()),
+                Refusal::QuoteUnavailable,
+            ))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.unsent_voice, Some((chat.to_owned(), clip.clone())));
+        assert_eq!(app.reply_to.as_deref(), Some("original"));
+        assert!(app.composer.is_empty(), "the composer stays empty");
+        // Another chat's Send neither sends nor drops the clip.
+        app.open_chat = Some(other.into());
+        app.reply_to = None;
+        app.apply(Action::SendRecording, &ctx);
+        assert!(commands.try_recv().is_err());
+        assert!(app.unsent_voice.is_some());
+        // Back in its chat, with the reply cancelled, it goes out unquoted
+        // because the user chose so.
+        app.open_chat = Some(chat.into());
+        app.apply(Action::SendRecording, &ctx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::SendVoice { chat: sent, samples, quoting: None })
+                if sent == chat && samples == clip
+        ));
+        assert!(app.unsent_voice.is_none());
+        // Refused again: sending with the reply armed quotes it, and an active
+        // recording is never preempted by the retained clip.
+        events
+            .send(refused(
+                chat,
+                Some("original"),
+                Unsent::Voice(clip.clone()),
+                Refusal::Offline,
+            ))
+            .unwrap();
+        app.handle_events();
+        app.recording = Some(crate::audio::Recorder::rehearsal());
+        app.apply(Action::SendRecording, &ctx);
+        assert!(app.recording.is_none());
+        assert!(app.unsent_voice.is_some(), "the retained clip still waits");
+        let _ = std::iter::from_fn(|| commands.try_recv().ok()).count();
+        app.reply_to = Some("original".into());
+        app.apply(Action::SendRecording, &ctx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::SendVoice { quoting: Some(id), .. }) if id == "original"
+        ));
+        // Discarding drops it for good.
+        events
+            .send(refused(chat, None, Unsent::Voice(clip), Refusal::Offline))
+            .unwrap();
+        app.handle_events();
+        app.apply(Action::DiscardUnsentVoice, &ctx);
+        assert!(app.unsent_voice.is_none());
+        app.apply(Action::SendRecording, &ctx);
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn replying_while_editing_starts_a_new_message() {
+        let mut app = app();
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        app.editing = Some("edited".into());
+        app.composer = "Text being edited".into();
+        app.apply(Action::Reply("original".into()), &egui::Context::default());
+        assert!(app.editing.is_none());
+        assert!(
+            app.composer.is_empty(),
+            "the edit's text is not sent as a reply"
+        );
+        assert_eq!(app.reply_to.as_deref(), Some("original"));
+        assert!(app.focus_composer);
     }
 
     #[test]

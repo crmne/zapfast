@@ -41,7 +41,7 @@ mod poll_history;
 mod polls;
 mod stickers;
 
-use super::{Command, Event, LinkStatus, Waker, read_sync::ReadSync};
+use super::{Command, Event, LinkStatus, Refusal, Unsent, Waker, read_sync::ReadSync};
 use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
@@ -3860,8 +3860,9 @@ impl Worker {
                 paths,
                 caption,
                 mentions,
+                quoting,
             } => {
-                self.send_files(chat, paths, caption, mentions);
+                self.send_files(chat, paths, caption, mentions, quoting);
             }
             Command::SendImage {
                 chat,
@@ -3870,7 +3871,8 @@ impl Worker {
                 rgba,
                 caption,
                 mentions,
-            } => self.send_pasted_image(chat, width, height, rgba, caption, mentions),
+                quoting,
+            } => self.send_pasted_image(chat, width, height, rgba, caption, mentions, quoting),
             Command::Outbound { chat, row, raw } => self.outbound(chat, *row, raw),
             Command::SendSticker {
                 chat,
@@ -4278,7 +4280,7 @@ impl Worker {
                     self.mark_played(chat, message, sender);
                 }
             }
-            Command::SendGif { chat, gif } => self.send_gif(chat, gif),
+            Command::SendGif { chat, gif, quoting } => self.send_gif(chat, gif, quoting),
             Command::SearchGifs { query, key } => {
                 let commands = self.commands.clone();
                 let dir = self.dirs.cache.join("gifs");
@@ -4790,6 +4792,68 @@ impl Worker {
         }
     }
 
+    /// Resolves the message a send replies to. A reply whose original cannot
+    /// be quoted is refused rather than sent as an unrelated message: the
+    /// quote needs the original's archived row and its raw protobuf.
+    fn quote(
+        &self,
+        chat: &str,
+        id: Option<&str>,
+    ) -> Result<Option<(wa::ContextInfo, Quoted)>, Refusal> {
+        let Some(id) = id else { return Ok(None) };
+        let unavailable = Refusal::QuoteUnavailable;
+        if id.is_empty() {
+            return Err(unavailable);
+        }
+        let row = self
+            .archive
+            .message(chat, id)
+            .map_err(|_| unavailable)?
+            .ok_or(unavailable)?;
+        if matches!(row.content, Content::Revoked) {
+            return Err(unavailable);
+        }
+        let raw = self
+            .archive
+            .raw(chat, id)
+            .map_err(|_| unavailable)?
+            .ok_or(unavailable)?;
+        let original = wa::Message::decode_from_slice(&raw).map_err(|_| unavailable)?;
+        let jid = Self::jid_of(chat).ok_or(unavailable)?;
+        let sender = Self::jid_of(&row.sender).ok_or(unavailable)?;
+        let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
+            row.id.clone(),
+            &sender,
+            &jid,
+            &jid,
+            &original,
+        );
+        let shown = Quoted {
+            mentions: row.mentions.clone(),
+            id: row.id,
+            sender_name: if row.from_me {
+                Some("You".to_owned())
+            } else {
+                row.sender_name
+                    .clone()
+                    .or_else(|| self.name_for(&row.sender))
+            },
+            sender: row.sender,
+            summary: row.content.summary(),
+        };
+        Ok(Some((context, shown)))
+    }
+
+    /// Hands a send that cannot go out back to the app.
+    fn refuse(&self, chat: ChatId, quoting: Option<String>, unsent: Unsent, reason: Refusal) {
+        self.emit(Event::SendRefused {
+            chat,
+            quoting,
+            unsent,
+            reason,
+        });
+    }
+
     fn send_text(
         &mut self,
         chat: ChatId,
@@ -4797,26 +4861,18 @@ impl Worker {
         quoting: Option<String>,
         mentions: Vec<String>,
     ) {
+        let (context, shown) = match self.quote(&chat, quoting.as_deref()) {
+            Ok(Some((context, shown))) => (Some(context), Some(shown)),
+            Ok(None) => (None, None),
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Text(text), reason);
+                return;
+            }
+        };
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+            self.refuse(chat, quoting, Unsent::Text(text), Refusal::Offline);
             return;
         };
-        let mut quoted_row = None;
-        let context = quoting.as_deref().and_then(|id| {
-            let raw = self.archive.raw(&chat, id).ok().flatten()?;
-            let quoted = wa::Message::decode_from_slice(&raw).ok()?;
-            let row = self.archive.message(&chat, id).ok().flatten()?;
-            let sender = Self::jid_of(&row.sender).unwrap_or_else(|| jid.clone());
-            let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
-                row.id.clone(),
-                &sender,
-                &jid,
-                &jid,
-                &quoted,
-            );
-            quoted_row = Some(row);
-            Some(context)
-        });
         let mut message = outgoing_text(text.clone(), context, &mentions);
         let expiration = self.apply_ephemeral(&chat, &mut message);
         let mentions = self.mentions_of(&mentions);
@@ -4832,19 +4888,7 @@ impl Worker {
             status: Delivery::Pending,
             delivered_at: None,
             read_at: None,
-            quoted: quoted_row.map(|row| Quoted {
-                mentions: row.mentions.clone(),
-                id: row.id,
-                sender_name: if row.from_me {
-                    Some("You".to_owned())
-                } else {
-                    row.sender_name
-                        .clone()
-                        .or_else(|| self.name_for(&row.sender))
-                },
-                sender: row.sender,
-                summary: row.content.summary(),
-            }),
+            quoted: shown,
             reactions: Vec::new(),
             edited: false,
             mentions,
@@ -5627,12 +5671,28 @@ impl Worker {
         paths: Vec<PathBuf>,
         caption: Option<String>,
         mentions: Vec<String>,
+        quoting: Option<String>,
     ) {
-        for (index, path) in paths.into_iter().enumerate() {
-            let Some(client) = self.client.clone() else {
-                self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+        let mut quote = match self.quote(&chat, quoting.as_deref()) {
+            Ok(quote) => quote,
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Files { paths, caption }, reason);
                 return;
-            };
+            }
+        };
+        let Some(client) = self.client.clone() else {
+            self.refuse(
+                chat,
+                quoting,
+                Unsent::Files { paths, caption },
+                Refusal::Offline,
+            );
+            return;
+        };
+        for (index, path) in paths.into_iter().enumerate() {
+            let client = client.clone();
+            // Like the caption, the reply belongs to the first file.
+            let quote = quote.take();
             let commands = self.commands.clone();
             let chat = chat.clone();
             let dir = self.dirs.media_cache_dir();
@@ -5657,7 +5717,10 @@ impl Worker {
                         .map(|name| name.to_string_lossy().into_owned());
                     let prepared =
                         prepare_media(&client, bytes, &mime, file_name.as_deref(), false).await?;
-                    file_outbound(&client, &chat, &me, &dir, prepared, caption, mentions).await
+                    quoted_outbound(
+                        &client, &chat, &me, &dir, prepared, caption, mentions, quote,
+                    )
+                    .await
                 }
                 .await;
                 match outcome {
@@ -5680,6 +5743,7 @@ impl Worker {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn send_pasted_image(
         &mut self,
         chat: ChatId,
@@ -5688,9 +5752,23 @@ impl Worker {
         rgba: Vec<u8>,
         caption: Option<String>,
         mentions: Vec<String>,
+        quoting: Option<String>,
     ) {
+        let unsent = |rgba, caption| Unsent::Image {
+            width,
+            height,
+            rgba,
+            caption,
+        };
+        let quote = match self.quote(&chat, quoting.as_deref()) {
+            Ok(quote) => quote,
+            Err(reason) => {
+                self.refuse(chat, quoting, unsent(rgba, caption), reason);
+                return;
+            }
+        };
         let Some(client) = self.client.clone() else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+            self.refuse(chat, quoting, unsent(rgba, caption), Refusal::Offline);
             return;
         };
         let commands = self.commands.clone();
@@ -5706,7 +5784,10 @@ impl Worker {
                 .await
                 .map_err(|error| error.to_string())??;
                 let prepared = prepare_media(&client, encoded, "image/jpeg", None, false).await?;
-                file_outbound(&client, &chat, &me, &dir, prepared, caption, mentions).await
+                quoted_outbound(
+                    &client, &chat, &me, &dir, prepared, caption, mentions, quote,
+                )
+                .await
             }
             .await;
             match outcome {
@@ -5730,41 +5811,17 @@ impl Worker {
 
     /// Encodes and sends an OGG/Opus voice message with optional quote.
     fn send_voice(&mut self, chat: ChatId, samples: Vec<f32>, quoting: Option<String>) {
-        let Some(client) = self.client.clone() else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
-            return;
+        let (context, shown) = match self.quote(&chat, quoting.as_deref()) {
+            Ok(Some((context, shown))) => (Some(Box::new(context)), Some(shown)),
+            Ok(None) => (None, None),
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Voice(samples), reason);
+                return;
+            }
         };
-        let quote = quoting.as_deref().and_then(|id| {
-            let raw = self.archive.raw(&chat, id).ok().flatten()?;
-            let quoted = wa::Message::decode_from_slice(&raw).ok()?;
-            let row = self.archive.message(&chat, id).ok().flatten()?;
-            let jid = Self::jid_of(&chat)?;
-            let sender = Self::jid_of(&row.sender).unwrap_or_else(|| jid.clone());
-            let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
-                row.id.clone(),
-                &sender,
-                &jid,
-                &jid,
-                &quoted,
-            );
-            let shown = Quoted {
-                mentions: row.mentions.clone(),
-                id: row.id,
-                sender_name: if row.from_me {
-                    Some("You".to_owned())
-                } else {
-                    row.sender_name
-                        .clone()
-                        .or_else(|| self.name_for(&row.sender))
-                },
-                sender: row.sender,
-                summary: row.content.summary(),
-            };
-            Some((context, shown))
-        });
-        let (context, shown) = match quote {
-            Some((context, shown)) => (Some(Box::new(context)), Some(shown)),
-            None => (None, None),
+        let Some(client) = self.client.clone() else {
+            self.refuse(chat, quoting, Unsent::Voice(samples), Refusal::Offline);
+            return;
         };
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
@@ -5831,40 +5888,16 @@ impl Worker {
     }
 
     fn send_sticker(&mut self, chat: ChatId, path: PathBuf, quoting: Option<String>) {
-        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
-            return;
+        let quote = match self.quote(&chat, quoting.as_deref()) {
+            Ok(quote) => quote,
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Sticker, reason);
+                return;
+            }
         };
-        let quote = quoting.as_deref().and_then(|id| {
-            let raw = self.archive.raw(&chat, id).ok().flatten()?;
-            let quoted = wa::Message::decode_from_slice(&raw).ok()?;
-            let row = self.archive.message(&chat, id).ok().flatten()?;
-            let sender = Self::jid_of(&row.sender).unwrap_or_else(|| jid.clone());
-            let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
-                row.id.clone(),
-                &sender,
-                &jid,
-                &jid,
-                &quoted,
-            );
-            let shown = Quoted {
-                mentions: row.mentions.clone(),
-                id: row.id,
-                sender_name: if row.from_me {
-                    Some("You".to_owned())
-                } else {
-                    row.sender_name
-                        .clone()
-                        .or_else(|| self.name_for(&row.sender))
-                },
-                sender: row.sender,
-                summary: row.content.summary(),
-            };
-            Some((context, shown))
-        });
-        let (context, shown) = match quote {
-            Some((context, shown)) => (Some(context), Some(shown)),
-            None => (None, None),
+        let Some(client) = self.client.clone() else {
+            self.refuse(chat, quoting, Unsent::Sticker, Refusal::Offline);
+            return;
         };
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
@@ -5874,18 +5907,12 @@ impl Worker {
                 let bytes = tokio::fs::read(&path)
                     .await
                     .map_err(|error| error.to_string())?;
-                let mut prepared = prepare_sticker(&client, bytes).await?;
-                if let Some(context) = context
-                    && !prepared.message.set_context_info(context)
-                {
-                    return Err("Could not attach the reply context".to_owned());
-                }
-                file_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new()).await
+                let prepared = prepare_sticker(&client, bytes).await?;
+                quoted_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new(), quote).await
             }
             .await;
             match outcome {
-                Ok((mut row, raw)) => {
-                    row.quoted = shown;
+                Ok((row, raw)) => {
                     let _ = commands.send(Command::Outbound {
                         chat,
                         row: Box::new(row),
@@ -5903,9 +5930,16 @@ impl Worker {
         });
     }
 
-    fn send_gif(&mut self, chat: ChatId, gif: Gif) {
+    fn send_gif(&mut self, chat: ChatId, gif: Gif, quoting: Option<String>) {
+        let quote = match self.quote(&chat, quoting.as_deref()) {
+            Ok(quote) => quote,
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Gif, reason);
+                return;
+            }
+        };
         let Some(client) = self.client.clone() else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+            self.refuse(chat, quoting, Unsent::Gif, Refusal::Offline);
             return;
         };
         let commands = self.commands.clone();
@@ -5932,7 +5966,7 @@ impl Worker {
                     video.width = Some(gif.width);
                     video.height = Some(gif.height);
                 }
-                file_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new()).await
+                quoted_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new(), quote).await
             }
             .await;
             match outcome {
@@ -7034,6 +7068,51 @@ fn search_gifs(query: &str, key: &str, dir: &Path) -> Result<Vec<Gif>, GifError>
 }
 
 /// Copies a sent attachment to media storage and builds its archive row.
+/// Attaches a reply's quote to a prepared attachment, then builds its
+/// outgoing row like [`file_outbound`]. An attachment that cannot carry the
+/// quote is not sent at all.
+#[allow(clippy::too_many_arguments)]
+async fn quoted_outbound(
+    client: &Client,
+    chat: &str,
+    me: &str,
+    dir: &Path,
+    mut prepared: Prepared,
+    caption: Option<String>,
+    mentions: Vec<String>,
+    quote: Option<(wa::ContextInfo, Quoted)>,
+) -> Result<(Message, Vec<u8>), String> {
+    let shown = attach_quote(&mut prepared.message, quote)?;
+    let (mut row, raw) = file_outbound(client, chat, me, dir, prepared, caption, mentions).await?;
+    row.quoted = shown;
+    Ok((row, raw))
+}
+
+/// Puts a reply's quote on an outgoing message, returning what the reply's
+/// row shows. A message kind that cannot carry a quote is an error.
+fn attach_quote(
+    message: &mut wa::Message,
+    quote: Option<(wa::ContextInfo, Quoted)>,
+) -> Result<Option<Quoted>, String> {
+    let Some((context, shown)) = quote else {
+        return Ok(None);
+    };
+    if !message.set_context_info(context) {
+        return Err("Could not attach the reply context".to_owned());
+    }
+    Ok(Some(shown))
+}
+
+/// Mentions people in an attachment, keeping a reply context it carries.
+fn add_mentions(message: &mut wa::Message, mentions: &[String]) {
+    if mentions.is_empty() {
+        return;
+    }
+    let mut context = context_of(message).cloned().unwrap_or_default();
+    context.mentioned_jid = mentions.to_vec();
+    message.set_context_info(context);
+}
+
 pub(super) async fn file_outbound(
     client: &Client,
     chat: &str,
@@ -7060,12 +7139,7 @@ pub(super) async fn file_outbound(
             document.caption = Some(caption);
         }
     }
-    if !mentions.is_empty() {
-        prepared.message.set_context_info(wa::ContextInfo {
-            mentioned_jid: mentions.clone(),
-            ..Default::default()
-        });
-    }
+    add_mentions(&mut prepared.message, &mentions);
     let id = client.generate_message_id();
     let path = media_path(
         dir,
@@ -10107,6 +10181,281 @@ mod receipt_tests {
         };
         assert_eq!(status("B2"), Delivery::Delivered);
         assert_eq!(status("B1"), Delivery::Sent);
+    }
+    #[test]
+    fn replies_keep_the_original_reference_on_the_wire_and_in_the_archive() {
+        for chat in [PEER, "123-456@g.us"] {
+            for sender in [ME, PEER, "987654321@lid"] {
+                let (worker, _, _, _) = worker();
+                worker.archive.ensure_chat(chat, "Fixture").unwrap();
+                let source = Message {
+                    chat: chat.into(),
+                    sender: sender.into(),
+                    from_me: sender == ME,
+                    content: Content::text("Original fixture"),
+                    ..own_message("original", 100)
+                };
+                let original = wa::Message::text("Original fixture");
+                worker
+                    .archive
+                    .insert_message(&source, Some(&original.encode_to_vec()))
+                    .unwrap();
+                let (context, shown) = worker.quote(chat, Some("original")).unwrap().unwrap();
+                let mut reply = outgoing_text("Reply fixture".into(), Some(context), &[]);
+                apply_ephemeral_expiration(&mut reply, Some(86400));
+                let raw = reply.encode_to_vec();
+                let decoded = wa::Message::decode_from_slice(&raw).unwrap();
+                let context = context_of(&decoded).unwrap();
+                assert_eq!(context.stanza_id.as_deref(), Some("original"));
+                assert_eq!(context.participant.as_deref(), Some(sender));
+                assert_eq!(context.remote_jid, None);
+                assert_eq!(
+                    context.quoted_message.as_option().unwrap().text_content(),
+                    Some("Original fixture")
+                );
+                assert_eq!(decoded.text_content(), Some("Reply fixture"));
+                assert_eq!(worker.quoted_of(&decoded).unwrap().id, "original");
+                let row = Message {
+                    chat: chat.into(),
+                    quoted: Some(shown),
+                    content: Content::text("Reply fixture"),
+                    ..own_message("reply", 101)
+                };
+                worker.archive.insert_message(&row, Some(&raw)).unwrap();
+                let stored = worker.archive.message(chat, "reply").unwrap().unwrap();
+                assert_eq!(stored.quoted.unwrap().id, "original");
+                let restored = wa::Message::decode_from_slice(
+                    &worker.archive.raw(chat, "reply").unwrap().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    context_of(&restored).unwrap().stanza_id.as_deref(),
+                    Some("original")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_replies_require_a_valid_original() {
+        let (worker, _, _, _) = worker();
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        let unavailable = Err(Refusal::QuoteUnavailable);
+        assert!(worker.quote(PEER, None).unwrap().is_none());
+        assert_eq!(worker.quote(PEER, Some("")).map(|_| ()), unavailable);
+        assert_eq!(worker.quote(PEER, Some("missing")).map(|_| ()), unavailable);
+        // A row without its raw protobuf cannot be quoted.
+        let mut row = own_message("original", 100);
+        worker.archive.insert_message(&row, None).unwrap();
+        assert_eq!(
+            worker.quote(PEER, Some("original")).map(|_| ()),
+            unavailable
+        );
+        // Nor can an unreadable protobuf.
+        worker.archive.insert_message(&row, Some(&[0xff])).unwrap();
+        assert_eq!(
+            worker.quote(PEER, Some("original")).map(|_| ()),
+            unavailable
+        );
+        // A readable original is quoted.
+        let original = wa::Message::text("old").encode_to_vec();
+        worker
+            .archive
+            .insert_message(&row, Some(&original))
+            .unwrap();
+        assert!(worker.quote(PEER, Some("original")).unwrap().is_some());
+        // A deleted original is not.
+        row.content = Content::Revoked;
+        worker
+            .archive
+            .insert_message(&row, Some(&original))
+            .unwrap();
+        assert_eq!(
+            worker.quote(PEER, Some("original")).map(|_| ()),
+            unavailable
+        );
+    }
+
+    /// Every command that can send a reply, quoting `quoting` in `PEER`.
+    fn reply_sends(quoting: Option<&str>) -> Vec<(Command, Unsent)> {
+        let quoting = quoting.map(str::to_owned);
+        let gif = Gif {
+            id: "fixture-gif".into(),
+            still: None,
+            mp4: "https://example.invalid/fixture.mp4".into(),
+            width: 2,
+            height: 2,
+        };
+        vec![
+            (
+                Command::SendText {
+                    chat: PEER.into(),
+                    text: "Reply fixture".into(),
+                    quoting: quoting.clone(),
+                    mentions: Vec::new(),
+                },
+                Unsent::Text("Reply fixture".into()),
+            ),
+            (
+                Command::SendVoice {
+                    chat: PEER.into(),
+                    samples: vec![0.25; 8],
+                    quoting: quoting.clone(),
+                },
+                Unsent::Voice(vec![0.25; 8]),
+            ),
+            (
+                Command::SendFiles {
+                    chat: PEER.into(),
+                    paths: vec!["/fixture/a.pdf".into(), "/fixture/b.png".into()],
+                    caption: Some("Caption fixture".into()),
+                    mentions: Vec::new(),
+                    quoting: quoting.clone(),
+                },
+                Unsent::Files {
+                    paths: vec!["/fixture/a.pdf".into(), "/fixture/b.png".into()],
+                    caption: Some("Caption fixture".into()),
+                },
+            ),
+            (
+                Command::SendImage {
+                    chat: PEER.into(),
+                    width: 1,
+                    height: 1,
+                    rgba: vec![1, 2, 3, 4],
+                    caption: Some("Picture fixture".into()),
+                    mentions: Vec::new(),
+                    quoting: quoting.clone(),
+                },
+                Unsent::Image {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![1, 2, 3, 4],
+                    caption: Some("Picture fixture".into()),
+                },
+            ),
+            (
+                Command::SendSticker {
+                    chat: PEER.into(),
+                    path: "/fixture/sticker.webp".into(),
+                    quoting: quoting.clone(),
+                },
+                Unsent::Sticker,
+            ),
+            (
+                Command::SendGif {
+                    chat: PEER.into(),
+                    gif,
+                    quoting,
+                },
+                Unsent::Gif,
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn every_send_path_refuses_a_reply_it_cannot_quote() {
+        let (mut worker, events, _commands, _wa) = worker();
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        // Stored without its raw protobuf, so it cannot be quoted.
+        worker
+            .archive
+            .insert_message(&own_message("bare", 100), None)
+            .unwrap();
+        let original = wa::Message::text("hi").encode_to_vec();
+        worker
+            .archive
+            .insert_message(&own_message("original", 101), Some(&original))
+            .unwrap();
+        let before = worker.archive.messages(PEER, None, 100).unwrap().len();
+        for (quoting, reason) in [
+            (Some("missing"), Refusal::QuoteUnavailable),
+            (Some("bare"), Refusal::QuoteUnavailable),
+            // A quotable reply gets past the check and then meets the missing
+            // connection: the worker has no client.
+            (Some("original"), Refusal::Offline),
+            (None, Refusal::Offline),
+        ] {
+            for (command, unsent) in reply_sends(quoting) {
+                let label = format!("{command:?}");
+                worker.handle_command(command).await;
+                let refused: Vec<_> = events
+                    .try_iter()
+                    .filter(|event| matches!(event, Event::SendRefused { .. }))
+                    .collect();
+                assert!(
+                    matches!(
+                        refused.as_slice(),
+                        [Event::SendRefused { chat, quoting: q, unsent: u, reason: r }]
+                            if chat == PEER && q.as_deref() == quoting && *u == unsent && *r == reason
+                    ),
+                    "{label} with {quoting:?}: {refused:?}"
+                );
+            }
+        }
+        // Nothing reached the archive, so nothing went out unquoted.
+        assert_eq!(
+            worker.archive.messages(PEER, None, 100).unwrap().len(),
+            before
+        );
+    }
+
+    #[test]
+    fn attachments_carry_the_quote_alongside_their_mentions() {
+        let (worker, _, _, _) = worker();
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        let original = wa::Message::text("Original fixture").encode_to_vec();
+        worker
+            .archive
+            .insert_message(&own_message("original", 100), Some(&original))
+            .unwrap();
+        let attachments = [
+            wa::Message {
+                image_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                video_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                document_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                audio_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                sticker_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+        ];
+        for mut message in attachments {
+            let quote = worker.quote(PEER, Some("original")).unwrap();
+            let shown = attach_quote(&mut message, quote).unwrap().unwrap();
+            assert_eq!(shown.id, "original");
+            add_mentions(&mut message, &[PEER.to_owned()]);
+            let decoded = wa::Message::decode_from_slice(&message.encode_to_vec()).unwrap();
+            let context = context_of(&decoded).unwrap();
+            assert_eq!(
+                context.stanza_id.as_deref(),
+                Some("original"),
+                "{decoded:?}"
+            );
+            assert_eq!(context.mentioned_jid, vec![PEER.to_owned()]);
+            assert_eq!(worker.quoted_of(&decoded).unwrap().id, "original");
+        }
+        // Without a reply, mentions alone still attach, and nothing is quoted.
+        let mut plain = wa::Message {
+            image_message: MessageField::some(Default::default()),
+            ..Default::default()
+        };
+        assert!(attach_quote(&mut plain, None).unwrap().is_none());
+        add_mentions(&mut plain, &[PEER.to_owned()]);
+        let context = context_of(&plain).unwrap();
+        assert_eq!(context.stanza_id, None);
+        assert_eq!(context.mentioned_jid, vec![PEER.to_owned()]);
     }
 }
 

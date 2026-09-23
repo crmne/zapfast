@@ -1107,6 +1107,8 @@ pub enum Action {
     StartRecording,
     CancelRecording,
     SendRecording,
+    /// Drops a voice message the worker refused to send.
+    DiscardUnsentVoice,
     /// Opens a downloaded image in ZapFast's native preview. Only the file
     /// extension and existence are checked here, and anything else opens
     /// externally; an image that then fails to decode shows a message with an

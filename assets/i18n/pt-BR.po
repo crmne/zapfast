@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 20:14+0200\n"
+"POT-Creation-Date: 2026-09-23 23:03+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -155,15 +155,15 @@ msgstr "Trancadas"
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K para buscar · ? para atalhos de teclado"
 
-#: src/ui/conversation.rs:999
+#: src/ui/conversation.rs:1010
 msgid "Type a message"
 msgstr "Digite uma mensagem"
 
-#: src/ui/conversation.rs:1002
+#: src/ui/conversation.rs:1013
 msgid "Add a caption"
 msgstr "Adicione uma legenda"
 
-#: src/ui/conversation.rs:1158
+#: src/ui/conversation.rs:1176
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -171,81 +171,90 @@ msgstr ""
 "Enter envia · Shift+Enter para nova linha · *negrito* _itálico_ ~riscado~ · "
 "Ctrl+V cola uma imagem"
 
-#: src/ui/conversation.rs:1160
+#: src/ui/conversation.rs:1178
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Ctrl+Enter envia · *negrito* _itálico_ ~riscado~ · Ctrl+V cola uma imagem"
 
-#: src/ui/conversation.rs:1171
+#: src/ui/conversation.rs:1189
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Ocultar dicas de atalho (restaure em Configurações)"
 
-#: src/ui/conversation.rs:1186
+#: src/ui/conversation.rs:1204
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Todos os atalhos ({})"
 
-#: src/ui/conversation.rs:1465
+#: src/ui/conversation.rs:1226
+#, rust-format
+msgid "Voice message ({duration}) not sent"
+msgstr "Mensagem de voz ({duration}) não enviada"
+
+#: src/ui/conversation.rs:1228
+msgid "Discard voice message"
+msgstr "Descartar mensagem de voz"
+
+#: src/ui/conversation.rs:1523
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} mensagem não lida"
 msgstr[1] "{} mensagens não lidas"
 
-#: src/ui/conversation.rs:3082 src/ui/dialogs.rs:973 src/ui/picker.rs:1570
+#: src/ui/conversation.rs:3140 src/ui/dialogs.rs:973 src/ui/picker.rs:1570
 msgid "Add to favorites"
 msgstr "Adicionar aos favoritos"
 
-#: src/ui/conversation.rs:3091
+#: src/ui/conversation.rs:3149
 msgid "Open in system player"
 msgstr "Abrir no player do sistema"
 
-#: src/ui/conversation.rs:3159 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3217 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Dados da mensagem"
 
-#: src/ui/conversation.rs:3390 src/ui/conversation.rs:3471
+#: src/ui/conversation.rs:3448 src/ui/conversation.rs:3529
 msgid "Open in a map"
 msgstr "Abrir em um mapa"
 
-#: src/ui/conversation.rs:3423
+#: src/ui/conversation.rs:3481
 msgid "Live location ended"
 msgstr "Localização em tempo real encerrada"
 
-#: src/ui/conversation.rs:3425
+#: src/ui/conversation.rs:3483
 msgid "Live location"
 msgstr "Localização em tempo real"
 
-#: src/ui/conversation.rs:3436
+#: src/ui/conversation.rs:3494
 #, rust-format
 msgid "Updated {time}"
 msgstr "Atualizada às {time}"
 
-#: src/ui/conversation.rs:3523
+#: src/ui/conversation.rs:3581
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} figurinha"
 msgstr[1] "{} figurinhas"
 
-#: src/ui/conversation.rs:3536
+#: src/ui/conversation.rs:3594
 msgid "View stickers"
 msgstr "Ver figurinhas"
 
-#: src/ui/conversation.rs:4900
+#: src/ui/conversation.rs:4958
 msgid "Pause"
 msgstr "Pausar"
 
-#: src/ui/conversation.rs:4902
+#: src/ui/conversation.rs:4960
 #, fuzzy
 msgid "Play"
 msgstr "Reproduzida"
 
-#: src/ui/conversation.rs:4925
+#: src/ui/conversation.rs:4983
 msgid "Unmute"
 msgstr "Ativar som"
 
-#: src/ui/conversation.rs:4927
+#: src/ui/conversation.rs:4985
 msgid "Mute"
 msgstr "Silenciar"
 
@@ -485,25 +494,35 @@ msgstr[1] "{} restantes"
 msgid "No one yet"
 msgstr "Ninguém ainda"
 
-#: src/app.rs:985
+#: src/app.rs:989
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Já existe uma etiqueta chamada “{name}”."
 
-#: src/app.rs:3288
+#: src/app.rs:2171
+msgid "Not sent: ZapFast is not connected to WhatsApp."
+msgstr "Não enviado: o ZapFast não está conectado ao WhatsApp."
+
+#: src/app.rs:2175
+msgid ""
+"Not sent: the message you’re replying to isn’t available on this computer. "
+"Cancel the reply to send without a quote."
+msgstr "Não enviado: a mensagem que você está respondendo não está disponível neste computador. Cancele a resposta para enviar sem citação."
+
+#: src/app.rs:3395
 msgid "Added to favorites"
 msgstr "Adicionada aos favoritos"
 
-#: src/app.rs:3363
+#: src/app.rs:3470
 msgid "Sending the sticker pack…"
 msgstr "Enviando o pacote de figurinhas…"
 
-#: src/app.rs:3618 src/ui/labels.rs:294
+#: src/app.rs:3726 src/ui/labels.rs:294
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Você tem {limit} etiquetas, o máximo que o ZapFast guarda."
 
-#: src/app.rs:4096
+#: src/app.rs:4204
 msgid "This video opens in your system player"
 msgstr "Este vídeo abre no player do sistema"
 
@@ -653,7 +672,9 @@ msgstr "As figurinhas que você envia aparecem aqui."
 msgid ""
 "Right-click any sticker to add it to your favorites. They stay in sync with "
 "your phone."
-msgstr "Clique com o botão direito em qualquer figurinha para adicioná-la às favoritas. Elas ficam sincronizadas com seu celular."
+msgstr ""
+"Clique com o botão direito em qualquer figurinha para adicioná-la às "
+"favoritas. Elas ficam sincronizadas com seu celular."
 
 #: src/ui/picker.rs:1264
 msgid "Remove this pack"
@@ -676,7 +697,9 @@ msgstr "Importar um pacote"
 #: src/ui/picker.rs:1373
 msgid ""
 "Paste a signal.art link from signalstickers.org, or open a .wastickers file."
-msgstr "Cole um link do signal.art do signalstickers.org ou abra um arquivo .wastickers."
+msgstr ""
+"Cole um link do signal.art do signalstickers.org ou abra um "
+"arquivo .wastickers."
 
 #: src/ui/picker.rs:1383
 msgid "Make your own"
@@ -686,7 +709,9 @@ msgstr "Crie as suas"
 msgid ""
 "Start a pack, then right-click any sticker to add it. Or turn a picture into "
 "a sticker."
-msgstr "Crie um pacote e depois clique com o botão direito em qualquer figurinha para adicioná-la. Ou transforme uma imagem em figurinha."
+msgstr ""
+"Crie um pacote e depois clique com o botão direito em qualquer figurinha "
+"para adicioná-la. Ou transforme uma imagem em figurinha."
 
 #: src/ui/picker.rs:1403
 msgid "Make a sticker from a picture…"

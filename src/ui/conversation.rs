@@ -840,6 +840,17 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 });
                 return;
             }
+            // A refused voice message waits in its own chat only.
+            let unsent_voice = app
+                .unsent_voice
+                .as_ref()
+                .filter(|(unsent, _)| *unsent == chat.id)
+                .map(|(_, samples)| samples.len());
+            if let Some(samples) = unsent_voice
+                && app.editing.is_none()
+            {
+                unsent_voice_strip(app, ui, samples);
+            }
             if app.editing.is_some() {
                 edit_strip(app, ui);
             } else if let Some(reply_id) = app.reply_to.clone() {
@@ -1098,7 +1109,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             });
                     });
                 theme::focus_outline(ui, id, field.response.rect, f32::from(theme::RADIUS + 4));
-                let ready = !app.composer.trim().is_empty() || !app.pending.is_empty();
+                let ready = !app.composer.trim().is_empty()
+                    || !app.pending.is_empty()
+                    || (unsent_voice.is_some() && app.editing.is_none());
                 let (fill, hover, icon) = if ready {
                     (palette.accent, palette.accent_hover, palette.on_accent)
                 } else {
@@ -1152,6 +1165,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     });
                 }
                 app.focus_composer = true;
+            } else if (send_key || send_click) && unsent_voice.is_some() && app.editing.is_none() {
+                // An empty composer with a refused voice message: Send tries
+                // that message again.
+                app.actions.push(Action::SendRecording);
+                app.focus_composer = true;
             }
             if app.settings.show_shortcut_hints {
                 let hint_text = if enter_sends {
@@ -1197,6 +1215,46 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // Toasts sit above the composer so they never cover its buttons.
     ui.ctx()
         .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
+}
+
+/// Offers a refused voice message for another try, or to discard it.
+fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
+    let palette = app.palette;
+    let seconds = (samples as f64 / f64::from(crate::voice::RATE))
+        .round()
+        .max(1.0) as u32;
+    let label = crate::i18n::gettext(app.locale, "Voice message ({duration}) not sent")
+        .replace("{duration}", &crate::util::duration(seconds));
+    let discard = crate::i18n::gettext(app.locale, "Discard voice message");
+    Frame::new()
+        .fill(palette.surface)
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                theme::icon(ui, Icon::Mic, 16.0, palette.danger);
+                theme::text(ui, &label, theme::semibold(12.5), palette.danger);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let button = theme::icon_button(
+                        ui,
+                        Icon::X,
+                        16.0,
+                        palette.secondary,
+                        palette.text,
+                        discard.as_ref(),
+                    );
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new("unsent-voice-discard"), button.rect)
+                    });
+                    if button.clicked() {
+                        app.actions.push(Action::DiscardUnsentVoice);
+                    }
+                });
+            });
+        });
+    ui.add_space(6.0);
 }
 
 fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
