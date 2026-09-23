@@ -588,6 +588,21 @@ mod tests {
     }
 
     #[test]
+    fn startup_still_repairs_missing_cache_files_while_the_custom_mount_is_away() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut worker, _events, _commands, _wa) = worker_in(root.path());
+        let missing = worker.dirs.ensure_media_dir().unwrap().join("photo.jpg");
+        std::fs::write(&missing, b"fixture").unwrap();
+        attachment(&worker, "image", &missing);
+        std::fs::remove_file(&missing).unwrap();
+        // A disconnected custom mount must not stop recovery of disposable
+        // cache paths that can simply be fetched again.
+        worker.dirs.custom_media = Some(root.path().join("offline"));
+        worker.relocate_media();
+        assert_eq!(archived_path(&worker, "image"), None);
+    }
+
+    #[test]
     fn startup_does_not_replace_an_external_path_with_a_same_named_cache_file() {
         let root = tempfile::tempdir().unwrap();
         let (mut worker, _events, _commands, _wa) = worker_in(root.path());

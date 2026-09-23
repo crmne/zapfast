@@ -150,7 +150,9 @@ impl AppDirs {
 
     /// Checks whether `child` is equal to or located within `parent`.
     pub fn is_subpath(child: &Path, parent: &Path) -> bool {
-        Self::resolved_for_compare(child).starts_with(Self::resolved_for_compare(parent))
+        let child = Self::resolved_for_compare(child);
+        let parent = Self::resolved_for_compare(parent);
+        path_starts_with(&child, &parent)
     }
 
     /// Resolves a path as far as it currently exists, following symlinks in
@@ -353,6 +355,23 @@ fn adopt_directory(from: &Path, to: &Path) -> std::io::Result<()> {
         std::fs::rename(from, to)?;
     }
     Ok(())
+}
+
+/// The Windows filesystem is case-insensitive, so a path comparison there
+/// must fold case too: a differently-cased missing path would land in the
+/// same directory once created and slip past a case-sensitive check. On
+/// other platforms the file system is case-sensitive and the spelling is
+/// part of the path's identity.
+#[cfg(windows)]
+fn path_starts_with(child: &Path, parent: &Path) -> bool {
+    let child = child.as_os_str().to_string_lossy().to_lowercase();
+    let parent = parent.as_os_str().to_string_lossy().to_lowercase();
+    Path::new(&child).starts_with(Path::new(&parent))
+}
+
+#[cfg(not(windows))]
+fn path_starts_with(child: &Path, parent: &Path) -> bool {
+    child.starts_with(parent)
 }
 
 /// Canonical paths on Windows carry the `\\?\` verbatim prefix, which never
@@ -704,6 +723,19 @@ mod tests {
             Some(root.join("dangling-outside"))
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validated_custom_media_rejects_differently_cased_paths_into_app_data() {
+        let root = root("validated-case");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        // The Windows filesystem is case-insensitive: this missing path
+        // would land inside `state` once created, so the spelling must not
+        // be what decides the boundary check.
+        let upper = root.join("STATE/future-attachments");
+        assert_eq!(dirs.validated_custom_media(Some(upper)), None);
     }
 
     #[test]

@@ -891,10 +891,10 @@ impl Worker {
 
     /// Repairs disposable cache paths without forgetting unavailable external files.
     fn relocate_media(&mut self) {
-        let dir = self.dirs.media_dir();
-        if self.dirs.custom_media.is_some() && std::fs::read_dir(&dir).is_err() {
-            log::warn!("attachment folder unavailable; keeping archived paths");
-            return;
+        if self.dirs.custom_media.is_some() && std::fs::read_dir(self.dirs.media_dir()).is_err() {
+            // The row loop below already keeps every path it cannot inspect;
+            // an unrelated unavailable mount must not stop cache recovery.
+            log::warn!("attachment folder unavailable; keeping its archived paths");
         }
         // A same-named file is evidence of identity only inside the cache the
         // app itself manages. A custom folder is user-controlled, so a file
