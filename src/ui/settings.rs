@@ -296,10 +296,13 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
         Layout::left_to_right(Align::Min).with_main_align(Align::Min),
         |ui| {
             const HEADER_HEIGHT: f32 = 52.0;
+            const MIN_PREVIEW_WIDTH: f32 = 180.0;
             let total_width = ui.available_width();
-            let left_width = (total_width * 0.42).clamp(360.0, 520.0);
+            let left_width = (total_width * 0.42)
+                .clamp(220.0, 520.0)
+                .min((total_width - MIN_PREVIEW_WIDTH).max(0.0));
             let palette_width = (left_width - 40.0).max(0.0);
-            let preview_width = (total_width - left_width).max(180.0);
+            let preview_width = (total_width - left_width).max(0.0);
             ui.allocate_ui_with_layout(
                 vec2(left_width, body_height),
                 Layout::top_down(Align::Min).with_main_align(Align::Min),
@@ -448,7 +451,12 @@ fn wallpaper_color_button(
         .corner_radius(CornerRadius::ZERO);
     let response = ui.add(button).on_hover_text(color.label());
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), color.label())
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            color == selected,
+            color.label(),
+        )
     });
     response.clicked()
 }
