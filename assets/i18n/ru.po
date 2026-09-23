@@ -4,8 +4,9 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
-"POT-Creation-Date: 2026-09-22 00:00-0300\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-09-23 10:35+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -13,148 +14,209 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 
-msgid "Chats"
-msgstr "Чаты"
-
-msgid "Search"
-msgstr "Поиск"
-
+#: src/model.rs:50
 msgid "All"
 msgstr "Все"
 
+#: src/model.rs:51
 msgid "Unread"
 msgstr "Непрочитанные"
 
+#: src/model.rs:52
 msgid "Private"
 msgstr "Личные"
 
+#: src/model.rs:53
 msgid "Groups"
 msgstr "Группы"
 
+#: src/util.rs:67 src/util.rs:117
+msgid "Yesterday"
+msgstr "Вчера"
+
+#: src/util.rs:94
+#, rust-format
+msgid "Yesterday at {time}"
+msgstr "Вчера в {time}"
+
+#: src/util.rs:95
+#, rust-format
+msgid "{weekday} at {time}"
+msgstr "{weekday} в {time}"
+
+#: src/util.rs:98
+#, rust-format
+msgid "{date} at {time}"
+msgstr "{date} в {time}"
+
+#: src/util.rs:116
+msgid "Today"
+msgstr "Сегодня"
+
+#: src/util.rs:132
+msgid "Monday"
+msgstr "Понедельник"
+
+#: src/util.rs:133
+msgid "Tuesday"
+msgstr "Вторник"
+
+#: src/util.rs:134
+msgid "Wednesday"
+msgstr "Среда"
+
+#: src/util.rs:135
+msgid "Thursday"
+msgstr "Четверг"
+
+#: src/util.rs:136
+msgid "Friday"
+msgstr "Пятница"
+
+#: src/util.rs:137
+msgid "Saturday"
+msgstr "Суббота"
+
+#: src/util.rs:138
+msgid "Sunday"
+msgstr "Воскресенье"
+
+#: src/util.rs:146
+msgid "January"
+msgstr "Январь"
+
+#: src/util.rs:147
+msgid "February"
+msgstr "Февраль"
+
+#: src/util.rs:148
+msgid "March"
+msgstr "Март"
+
+#: src/util.rs:149
+msgid "April"
+msgstr "Апрель"
+
+#: src/util.rs:150
+msgid "May"
+msgstr "Май"
+
+#: src/util.rs:151
+msgid "June"
+msgstr "Июнь"
+
+#: src/util.rs:152
+msgid "July"
+msgstr "Июль"
+
+#: src/util.rs:153
+msgid "August"
+msgstr "Август"
+
+#: src/util.rs:154
+msgid "September"
+msgstr "Сентябрь"
+
+#: src/util.rs:155
+msgid "October"
+msgstr "Октябрь"
+
+#: src/util.rs:156
+msgid "November"
+msgstr "Ноябрь"
+
+#: src/util.rs:157
+msgid "December"
+msgstr "Декабрь"
+
+#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:168
+msgid "Chats"
+msgstr "Чаты"
+
+#: src/ui/chats.rs:168 src/ui/chats.rs:267
+msgid "Search"
+msgstr "Поиск"
+
+#: src/ui/chats.rs:340
 msgid "Locked"
 msgstr "Заблокированные"
 
-msgid "Type a message"
-msgstr "Введите сообщение"
-
-msgid "Add a caption"
-msgstr "Добавить подпись"
-
+#: src/ui/conversation.rs:88
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K для поиска · ? для сочетаний клавиш"
 
-msgid "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-msgstr "Enter отправляет · Shift+Enter для новой строки · *жирный* _курсив_ ~зачёркнутый~ · Ctrl+V вставляет изображение"
+#: src/ui/conversation.rs:909
+msgid "Type a message"
+msgstr "Введите сообщение"
 
+#: src/ui/conversation.rs:912
+msgid "Add a caption"
+msgstr "Добавить подпись"
+
+#: src/ui/conversation.rs:1064
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
+"pastes a picture"
+msgstr ""
+"Enter отправляет · Shift+Enter для новой строки · *жирный* _курсив_ "
+"~зачёркнутый~ · Ctrl+V вставляет изображение"
+
+#: src/ui/conversation.rs:1066
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-msgstr "Ctrl+Enter отправляет · *жирный* _курсив_ ~зачёркнутый~ · Ctrl+V вставляет изображение"
+msgstr ""
+"Ctrl+Enter отправляет · *жирный* _курсив_ ~зачёркнутый~ · Ctrl+V вставляет "
+"изображение"
 
-msgid "All shortcuts ({})"
-msgstr "Все сочетания клавиш ({})"
-
+#: src/ui/conversation.rs:1077
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Скрыть подсказки сочетаний клавиш (восстановить в настройках)"
 
-msgid "Appearance"
-msgstr "Внешний вид"
+#: src/ui/conversation.rs:1092
+#, rust-format
+msgid "All shortcuts ({})"
+msgstr "Все сочетания клавиш ({})"
 
-msgid "Window"
-msgstr "Окно"
-
-msgid "Account"
-msgstr "Аккаунт"
-
-msgid "Files"
-msgstr "Файлы"
-
-msgid "About"
-msgstr "О программе"
-
-msgid "Settings"
-msgstr "Настройки"
-
-msgid "Language"
-msgstr "Язык"
-
-msgid "Auto"
-msgstr "Автоматически"
-
+#: src/ui/dialogs.rs:1020
+#, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} участник"
 msgstr[1] "{} участника"
 msgstr[2] "{} участников"
 
-msgid "Today"
-msgstr "Сегодня"
+#: src/ui/settings.rs:40
+msgid "Settings"
+msgstr "Настройки"
 
-msgid "Yesterday"
-msgstr "Вчера"
+#: src/ui/settings.rs:44
+msgid "Appearance"
+msgstr "Внешний вид"
 
-msgid "Yesterday at {time}"
-msgstr "Вчера в {time}"
+#: src/ui/settings.rs:133
+msgid "Language"
+msgstr "Язык"
 
-msgid "{weekday} at {time}"
-msgstr "{weekday} в {time}"
+#: src/ui/settings.rs:139 src/ui/settings.rs:148
+msgid "Auto"
+msgstr "Автоматически"
 
-msgid "{date} at {time}"
-msgstr "{date} в {time}"
+#: src/ui/settings.rs:218
+msgid "Window"
+msgstr "Окно"
 
-msgid "Monday"
-msgstr "Понедельник"
+#: src/ui/settings.rs:246
+msgid "Account"
+msgstr "Аккаунт"
 
-msgid "Tuesday"
-msgstr "Вторник"
+#: src/ui/settings.rs:273
+msgid "Files"
+msgstr "Файлы"
 
-msgid "Wednesday"
-msgstr "Среда"
+#: src/ui/settings.rs:306
+msgid "About"
+msgstr "О программе"
 
-msgid "Thursday"
-msgstr "Четверг"
-
-msgid "Friday"
-msgstr "Пятница"
-
-msgid "Saturday"
-msgstr "Суббота"
-
-msgid "Sunday"
-msgstr "Воскресенье"
-
-msgid "January"
-msgstr "Январь"
-
-msgid "February"
-msgstr "Февраль"
-
-msgid "March"
-msgstr "Март"
-
-msgid "April"
-msgstr "Апрель"
-
-msgid "May"
-msgstr "Май"
-
-msgid "June"
-msgstr "Июнь"
-
-msgid "July"
-msgstr "Июль"
-
-msgid "August"
-msgstr "Август"
-
-msgid "September"
-msgstr "Сентябрь"
-
-msgid "October"
-msgstr "Октябрь"
-
-msgid "November"
-msgstr "Ноябрь"
-
-msgid "December"
-msgstr "Декабрь"
+#, fuzzy

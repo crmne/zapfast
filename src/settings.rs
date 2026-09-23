@@ -539,10 +539,17 @@ mod tests {
             zoom: 1.25,
             enter_sends: false,
             voice_speed: 1.5,
+            interface_language: Some(crate::i18n::Locale::German),
             ..Settings::default()
         };
         settings.save(&path).expect("saves");
         assert_eq!(Settings::load(&path), settings);
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("reads")
+                .contains(r#""interface_language": "de""#),
+            "the language keeps its stable serde name"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

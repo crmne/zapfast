@@ -431,18 +431,15 @@ These screenshots use synthetic offline chats. See the
 download behavior and the remaining limitations.
 ### Interface language
 
-**Settings -> Appearance -> Language** chooses the interface language, or
-**Auto** to follow the operating system's locale, so a reader whose system is in
-Portuguese or German gets an app in that language without hunting for a setting.
-It is also a product reach question: English-only leaves out most of the people
-who use WhatsApp. Brazilian Portuguese, German, Spanish, Italian, French,
-Russian, and Chinese are registered, with English as the source and fallback
-language. Brazilian Portuguese, German, Spanish, French, Italian and Russian
-are translated so far, covering the chat list, search, composer, shortcut hints,
-Settings section titles, and interface dates and times; Chinese is registered and
-shows English until its catalog lands. Translations are compiled from gettext PO files into Rust at build
-time, so there is no runtime parsing and no network access, and message content,
-contact names and protocol errors are never translated.
+**Settings > Appearance > Language** chooses the interface language. **Auto**
+follows the operating system's language and falls back to English when ZapFast
+has no translation for it. Brazilian Portuguese, German, Spanish, Italian,
+French, and Russian cover the chat list, search, composer, shortcut hints,
+Settings section titles, and dates. Translations are compiled from gettext PO
+files at build time, with no runtime parsing or network access. Message
+contents, contact names, logs, and protocol errors are never translated, and
+copied messages keep WhatsApp's `[time, date] Name:` format.
+
 ## Files
 
 | What | Linux | Notes |

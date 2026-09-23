@@ -3,8 +3,7 @@
 //! Catalogs are compiled from `assets/i18n/*.po` into Rust modules at build
 //! time, so there is no libintl, no runtime PO parsing, and no network access.
 //! English is both the source language and the fallback for any untranslated
-//! message. The pilot ships pt-BR, de, es, fr, it, and ru catalogs today;
-//! Chinese is registered but falls back to English until its catalog arrives.
+//! message. Only languages with a catalog are offered.
 
 use std::borrow::Cow;
 
@@ -31,13 +30,11 @@ pub enum Locale {
     French,
     #[serde(rename = "ru")]
     Russian,
-    #[serde(rename = "zh")]
-    Chinese,
 }
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 8] = [
+    pub const ALL: [Locale; 7] = [
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -45,7 +42,6 @@ impl Locale {
         Self::Italian,
         Self::French,
         Self::Russian,
-        Self::Chinese,
     ];
 
     /// The language's own name, for the picker.
@@ -58,7 +54,6 @@ impl Locale {
             Self::Italian => "Italiano",
             Self::French => "Français",
             Self::Russian => "Русский",
-            Self::Chinese => "中文",
         }
     }
 
@@ -78,7 +73,6 @@ impl Locale {
             "it" => Self::Italian,
             "fr" => Self::French,
             "ru" => Self::Russian,
-            "zh" => Self::Chinese,
             _ => return None,
         })
     }
@@ -91,9 +85,7 @@ impl Locale {
             Self::French => Some(&fr::Translator),
             Self::Italian => Some(&it::Translator),
             Self::Russian => Some(&ru::Translator),
-            // English and Chinese have no catalog yet and fall back to the
-            // English source strings.
-            _ => None,
+            Self::English => None,
         }
     }
 }
@@ -155,7 +147,7 @@ mod tests {
         assert_eq!(Locale::from_system("it-IT"), Some(Locale::Italian));
         assert_eq!(Locale::from_system("fr-FR"), Some(Locale::French));
         assert_eq!(Locale::from_system("ru-RU"), Some(Locale::Russian));
-        assert_eq!(Locale::from_system("zh-Hans"), Some(Locale::Chinese));
+        assert_eq!(Locale::from_system("zh-Hans"), None);
         assert_eq!(Locale::from_system("en-US"), Some(Locale::English));
         assert_eq!(Locale::from_system("ja-JP"), None);
         assert_eq!(Locale::default(), Locale::English);

@@ -4,8 +4,9 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
-"POT-Creation-Date: 2026-09-22 00:00-0300\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-09-23 10:35+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -15,145 +16,206 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-msgid "Chats"
-msgstr "Chat"
-
-msgid "Search"
-msgstr "Cerca"
-
+#: src/model.rs:50
 msgid "All"
 msgstr "Tutti"
 
+#: src/model.rs:51
 msgid "Unread"
 msgstr "Non letti"
 
+#: src/model.rs:52
 msgid "Private"
 msgstr "Privati"
 
+#: src/model.rs:53
 msgid "Groups"
 msgstr "Gruppi"
 
+#: src/util.rs:67 src/util.rs:117
+msgid "Yesterday"
+msgstr "Ieri"
+
+#: src/util.rs:94
+#, rust-format
+msgid "Yesterday at {time}"
+msgstr "Ieri alle {time}"
+
+#: src/util.rs:95
+#, rust-format
+msgid "{weekday} at {time}"
+msgstr "{weekday} alle {time}"
+
+#: src/util.rs:98
+#, rust-format
+msgid "{date} at {time}"
+msgstr "{date} alle {time}"
+
+#: src/util.rs:116
+msgid "Today"
+msgstr "Oggi"
+
+#: src/util.rs:132
+msgid "Monday"
+msgstr "Lunedì"
+
+#: src/util.rs:133
+msgid "Tuesday"
+msgstr "Martedì"
+
+#: src/util.rs:134
+msgid "Wednesday"
+msgstr "Mercoledì"
+
+#: src/util.rs:135
+msgid "Thursday"
+msgstr "Giovedì"
+
+#: src/util.rs:136
+msgid "Friday"
+msgstr "Venerdì"
+
+#: src/util.rs:137
+msgid "Saturday"
+msgstr "Sabato"
+
+#: src/util.rs:138
+msgid "Sunday"
+msgstr "Domenica"
+
+#: src/util.rs:146
+msgid "January"
+msgstr "Gennaio"
+
+#: src/util.rs:147
+msgid "February"
+msgstr "Febbraio"
+
+#: src/util.rs:148
+msgid "March"
+msgstr "Marzo"
+
+#: src/util.rs:149
+msgid "April"
+msgstr "Aprile"
+
+#: src/util.rs:150
+msgid "May"
+msgstr "Maggio"
+
+#: src/util.rs:151
+msgid "June"
+msgstr "Giugno"
+
+#: src/util.rs:152
+msgid "July"
+msgstr "Luglio"
+
+#: src/util.rs:153
+msgid "August"
+msgstr "Agosto"
+
+#: src/util.rs:154
+msgid "September"
+msgstr "Settembre"
+
+#: src/util.rs:155
+msgid "October"
+msgstr "Ottobre"
+
+#: src/util.rs:156
+msgid "November"
+msgstr "Novembre"
+
+#: src/util.rs:157
+msgid "December"
+msgstr "Dicembre"
+
+#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:168
+msgid "Chats"
+msgstr "Chat"
+
+#: src/ui/chats.rs:168 src/ui/chats.rs:267
+msgid "Search"
+msgstr "Cerca"
+
+#: src/ui/chats.rs:340
 msgid "Locked"
 msgstr "Bloccati"
 
-msgid "Type a message"
-msgstr "Scrivi un messaggio"
-
-msgid "Add a caption"
-msgstr "Aggiungi una didascalia"
-
+#: src/ui/conversation.rs:88
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K per cercare · ? per le scorciatoie da tastiera"
 
-msgid "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-msgstr "Enter invia · Shift+Enter per una nuova riga · *grassetto* _corsivo_ ~barrato~ · Ctrl+V incolla un'immagine"
+#: src/ui/conversation.rs:909
+msgid "Type a message"
+msgstr "Scrivi un messaggio"
 
+#: src/ui/conversation.rs:912
+msgid "Add a caption"
+msgstr "Aggiungi una didascalia"
+
+#: src/ui/conversation.rs:1064
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
+"pastes a picture"
+msgstr ""
+"Enter invia · Shift+Enter per una nuova riga · *grassetto* _corsivo_ "
+"~barrato~ · Ctrl+V incolla un'immagine"
+
+#: src/ui/conversation.rs:1066
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-msgstr "Ctrl+Enter invia · *grassetto* _corsivo_ ~barrato~ · Ctrl+V incolla un'immagine"
+msgstr ""
+"Ctrl+Enter invia · *grassetto* _corsivo_ ~barrato~ · Ctrl+V incolla "
+"un'immagine"
 
+#: src/ui/conversation.rs:1077
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr ""
+"Nascondi i suggerimenti delle scorciatoie (ripristina nelle Impostazioni)"
+
+#: src/ui/conversation.rs:1092
+#, rust-format
 msgid "All shortcuts ({})"
 msgstr "Tutte le scorciatoie ({})"
 
-msgid "Hide shortcut hints (restore in Settings)"
-msgstr "Nascondi i suggerimenti delle scorciatoie (ripristina nelle Impostazioni)"
-
-msgid "Appearance"
-msgstr "Aspetto"
-
-msgid "Window"
-msgstr "Finestra"
-
-msgid "Account"
-msgstr "Account"
-
-msgid "Files"
-msgstr "File"
-
-msgid "About"
-msgstr "Informazioni"
-
-msgid "Settings"
-msgstr "Impostazioni"
-
-msgid "Language"
-msgstr "Lingua"
-
-msgid "Auto"
-msgstr "Automatico"
-
+#: src/ui/dialogs.rs:1020
+#, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} membro"
 msgstr[1] "{} membri"
 
-msgid "Today"
-msgstr "Oggi"
+#: src/ui/settings.rs:40
+msgid "Settings"
+msgstr "Impostazioni"
 
-msgid "Yesterday"
-msgstr "Ieri"
+#: src/ui/settings.rs:44
+msgid "Appearance"
+msgstr "Aspetto"
 
-msgid "Yesterday at {time}"
-msgstr "Ieri alle {time}"
+#: src/ui/settings.rs:133
+msgid "Language"
+msgstr "Lingua"
 
-msgid "{weekday} at {time}"
-msgstr "{weekday} alle {time}"
+#: src/ui/settings.rs:139 src/ui/settings.rs:148
+msgid "Auto"
+msgstr "Automatico"
 
-msgid "{date} at {time}"
-msgstr "{date} alle {time}"
+#: src/ui/settings.rs:218
+msgid "Window"
+msgstr "Finestra"
 
-msgid "Monday"
-msgstr "Lunedì"
+#: src/ui/settings.rs:246
+msgid "Account"
+msgstr "Account"
 
-msgid "Tuesday"
-msgstr "Martedì"
+#: src/ui/settings.rs:273
+msgid "Files"
+msgstr "File"
 
-msgid "Wednesday"
-msgstr "Mercoledì"
+#: src/ui/settings.rs:306
+msgid "About"
+msgstr "Informazioni"
 
-msgid "Thursday"
-msgstr "Giovedì"
-
-msgid "Friday"
-msgstr "Venerdì"
-
-msgid "Saturday"
-msgstr "Sabato"
-
-msgid "Sunday"
-msgstr "Domenica"
-
-msgid "January"
-msgstr "Gennaio"
-
-msgid "February"
-msgstr "Febbraio"
-
-msgid "March"
-msgstr "Marzo"
-
-msgid "April"
-msgstr "Aprile"
-
-msgid "May"
-msgstr "Maggio"
-
-msgid "June"
-msgstr "Giugno"
-
-msgid "July"
-msgstr "Luglio"
-
-msgid "August"
-msgstr "Agosto"
-
-msgid "September"
-msgstr "Settembre"
-
-msgid "October"
-msgstr "Ottobre"
-
-msgid "November"
-msgstr "Novembre"
-
-msgid "December"
-msgstr "Dicembre"
+#, fuzzy

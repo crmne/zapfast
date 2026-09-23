@@ -286,7 +286,7 @@ pub fn chat_row_id(chat: &str) -> egui::Id {
 
 /// Stable filter-chip id used by interaction tests.
 pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
-    egui::Id::new(("chat-filter", filter.label()))
+    egui::Id::new(("chat-filter", filter as u8))
 }
 
 /// Filter chips under the search field. Search and the archive list every
@@ -313,7 +313,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                     let chip = widgets::filter_chip(
                         ui,
                         &palette,
-                        crate::i18n::gettext(app.locale, filter.label()).as_ref(),
+                        filter.label(app.locale).as_ref(),
                         count,
                         selected,
                     )

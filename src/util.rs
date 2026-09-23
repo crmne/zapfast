@@ -126,45 +126,42 @@ pub fn day_key(unix_seconds: i64) -> Option<Date> {
 }
 
 fn weekday_name(locale: Locale, weekday: jiff::civil::Weekday) -> String {
-    crate::i18n::gettext(
-        locale,
-        match weekday {
-            jiff::civil::Weekday::Monday => "Monday",
-            jiff::civil::Weekday::Tuesday => "Tuesday",
-            jiff::civil::Weekday::Wednesday => "Wednesday",
-            jiff::civil::Weekday::Thursday => "Thursday",
-            jiff::civil::Weekday::Friday => "Friday",
-            jiff::civil::Weekday::Saturday => "Saturday",
-            jiff::civil::Weekday::Sunday => "Sunday",
-        },
-    )
+    use crate::i18n::gettext;
+    // Each literal sits in its own call so xgettext can extract it.
+    match weekday {
+        jiff::civil::Weekday::Monday => gettext(locale, "Monday"),
+        jiff::civil::Weekday::Tuesday => gettext(locale, "Tuesday"),
+        jiff::civil::Weekday::Wednesday => gettext(locale, "Wednesday"),
+        jiff::civil::Weekday::Thursday => gettext(locale, "Thursday"),
+        jiff::civil::Weekday::Friday => gettext(locale, "Friday"),
+        jiff::civil::Weekday::Saturday => gettext(locale, "Saturday"),
+        jiff::civil::Weekday::Sunday => gettext(locale, "Sunday"),
+    }
     .into_owned()
 }
 
 fn month_name(locale: Locale, month: i8) -> String {
-    crate::i18n::gettext(
-        locale,
-        match month {
-            1 => "January",
-            2 => "February",
-            3 => "March",
-            4 => "April",
-            5 => "May",
-            6 => "June",
-            7 => "July",
-            8 => "August",
-            9 => "September",
-            10 => "October",
-            11 => "November",
-            _ => "December",
-        },
-    )
+    use crate::i18n::gettext;
+    match month {
+        1 => gettext(locale, "January"),
+        2 => gettext(locale, "February"),
+        3 => gettext(locale, "March"),
+        4 => gettext(locale, "April"),
+        5 => gettext(locale, "May"),
+        6 => gettext(locale, "June"),
+        7 => gettext(locale, "July"),
+        8 => gettext(locale, "August"),
+        9 => gettext(locale, "September"),
+        10 => gettext(locale, "October"),
+        11 => gettext(locale, "November"),
+        _ => gettext(locale, "December"),
+    }
     .into_owned()
 }
 
 fn short_date(locale: Locale, date: Date) -> String {
-    let month = month_name(locale, date.month());
-    format!("{} {} {}", date.day(), &month[..3], date.year())
+    let month: String = month_name(locale, date.month()).chars().take(3).collect();
+    format!("{} {month} {}", date.day(), date.year())
 }
 
 fn long_date(locale: Locale, date: Date) -> String {
@@ -456,6 +453,24 @@ mod tests {
                 &when
             ),
             "14 Nov 2023"
+        );
+    }
+
+    #[test]
+    fn short_dates_take_whole_characters_in_every_locale() {
+        for locale in Locale::ALL {
+            for month in 1..=12 {
+                let date = jiff::civil::date(2024, month, 5);
+                let short = short_date(locale, date);
+                assert!(
+                    short.starts_with("5 ") && short.ends_with(" 2024"),
+                    "{short}"
+                );
+            }
+        }
+        assert_eq!(
+            short_date(Locale::German, jiff::civil::date(2024, 3, 5)),
+            "5 Mär 2024"
         );
     }
 

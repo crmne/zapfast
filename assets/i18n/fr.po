@@ -4,8 +4,9 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
-"POT-Creation-Date: 2026-09-22 00:00-0300\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-09-23 10:35+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -15,145 +16,203 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
-msgid "Chats"
-msgstr "Discussions"
-
-msgid "Search"
-msgstr "Rechercher"
-
+#: src/model.rs:50
 msgid "All"
 msgstr "Tous"
 
+#: src/model.rs:51
 msgid "Unread"
 msgstr "Non lus"
 
+#: src/model.rs:52
 msgid "Private"
 msgstr "Privés"
 
+#: src/model.rs:53
 msgid "Groups"
 msgstr "Groupes"
 
+#: src/util.rs:67 src/util.rs:117
+msgid "Yesterday"
+msgstr "Hier"
+
+#: src/util.rs:94
+#, rust-format
+msgid "Yesterday at {time}"
+msgstr "Hier à {time}"
+
+#: src/util.rs:95
+#, rust-format
+msgid "{weekday} at {time}"
+msgstr "{weekday} à {time}"
+
+#: src/util.rs:98
+#, rust-format
+msgid "{date} at {time}"
+msgstr "{date} à {time}"
+
+#: src/util.rs:116
+msgid "Today"
+msgstr "Aujourd'hui"
+
+#: src/util.rs:132
+msgid "Monday"
+msgstr "Lundi"
+
+#: src/util.rs:133
+msgid "Tuesday"
+msgstr "Mardi"
+
+#: src/util.rs:134
+msgid "Wednesday"
+msgstr "Mercredi"
+
+#: src/util.rs:135
+msgid "Thursday"
+msgstr "Jeudi"
+
+#: src/util.rs:136
+msgid "Friday"
+msgstr "Vendredi"
+
+#: src/util.rs:137
+msgid "Saturday"
+msgstr "Samedi"
+
+#: src/util.rs:138
+msgid "Sunday"
+msgstr "Dimanche"
+
+#: src/util.rs:146
+msgid "January"
+msgstr "Janvier"
+
+#: src/util.rs:147
+msgid "February"
+msgstr "Février"
+
+#: src/util.rs:148
+msgid "March"
+msgstr "Mars"
+
+#: src/util.rs:149
+msgid "April"
+msgstr "Avril"
+
+#: src/util.rs:150
+msgid "May"
+msgstr "Mai"
+
+#: src/util.rs:151
+msgid "June"
+msgstr "Juin"
+
+#: src/util.rs:152
+msgid "July"
+msgstr "Juillet"
+
+#: src/util.rs:153
+msgid "August"
+msgstr "Août"
+
+#: src/util.rs:154
+msgid "September"
+msgstr "Septembre"
+
+#: src/util.rs:155
+msgid "October"
+msgstr "Octobre"
+
+#: src/util.rs:156
+msgid "November"
+msgstr "Novembre"
+
+#: src/util.rs:157
+msgid "December"
+msgstr "Décembre"
+
+#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:168
+msgid "Chats"
+msgstr "Discussions"
+
+#: src/ui/chats.rs:168 src/ui/chats.rs:267
+msgid "Search"
+msgstr "Rechercher"
+
+#: src/ui/chats.rs:340
 msgid "Locked"
 msgstr "Verrouillés"
 
-msgid "Type a message"
-msgstr "Saisissez un message"
-
-msgid "Add a caption"
-msgstr "Ajouter une légende"
-
+#: src/ui/conversation.rs:88
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K pour rechercher · ? pour les raccourcis clavier"
 
-msgid "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-msgstr "Enter envoie · Shift+Enter pour une nouvelle ligne · *gras* _italique_ ~barré~ · Ctrl+V colle une image"
+#: src/ui/conversation.rs:909
+msgid "Type a message"
+msgstr "Saisissez un message"
 
+#: src/ui/conversation.rs:912
+msgid "Add a caption"
+msgstr "Ajouter une légende"
+
+#: src/ui/conversation.rs:1064
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
+"pastes a picture"
+msgstr ""
+"Enter envoie · Shift+Enter pour une nouvelle ligne · *gras* _italique_ "
+"~barré~ · Ctrl+V colle une image"
+
+#: src/ui/conversation.rs:1066
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr "Ctrl+Enter envoie · *gras* _italique_ ~barré~ · Ctrl+V colle une image"
 
-msgid "All shortcuts ({})"
-msgstr "Tous les raccourcis ({})"
-
+#: src/ui/conversation.rs:1077
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Masquer les astuces de raccourcis (restaurer dans Paramètres)"
 
-msgid "Appearance"
-msgstr "Apparence"
+#: src/ui/conversation.rs:1092
+#, rust-format
+msgid "All shortcuts ({})"
+msgstr "Tous les raccourcis ({})"
 
-msgid "Window"
-msgstr "Fenêtre"
-
-msgid "Account"
-msgstr "Compte"
-
-msgid "Files"
-msgstr "Fichiers"
-
-msgid "About"
-msgstr "À propos"
-
-msgid "Settings"
-msgstr "Paramètres"
-
-msgid "Language"
-msgstr "Langue"
-
-msgid "Auto"
-msgstr "Automatique"
-
+#: src/ui/dialogs.rs:1020
+#, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} membre"
 msgstr[1] "{} membres"
 
-msgid "Today"
-msgstr "Aujourd'hui"
+#: src/ui/settings.rs:40
+msgid "Settings"
+msgstr "Paramètres"
 
-msgid "Yesterday"
-msgstr "Hier"
+#: src/ui/settings.rs:44
+msgid "Appearance"
+msgstr "Apparence"
 
-msgid "Yesterday at {time}"
-msgstr "Hier à {time}"
+#: src/ui/settings.rs:133
+msgid "Language"
+msgstr "Langue"
 
-msgid "{weekday} at {time}"
-msgstr "{weekday} à {time}"
+#: src/ui/settings.rs:139 src/ui/settings.rs:148
+msgid "Auto"
+msgstr "Automatique"
 
-msgid "{date} at {time}"
-msgstr "{date} à {time}"
+#: src/ui/settings.rs:218
+msgid "Window"
+msgstr "Fenêtre"
 
-msgid "Monday"
-msgstr "Lundi"
+#: src/ui/settings.rs:246
+msgid "Account"
+msgstr "Compte"
 
-msgid "Tuesday"
-msgstr "Mardi"
+#: src/ui/settings.rs:273
+msgid "Files"
+msgstr "Fichiers"
 
-msgid "Wednesday"
-msgstr "Mercredi"
+#: src/ui/settings.rs:306
+msgid "About"
+msgstr "À propos"
 
-msgid "Thursday"
-msgstr "Jeudi"
-
-msgid "Friday"
-msgstr "Vendredi"
-
-msgid "Saturday"
-msgstr "Samedi"
-
-msgid "Sunday"
-msgstr "Dimanche"
-
-msgid "January"
-msgstr "Janvier"
-
-msgid "February"
-msgstr "Février"
-
-msgid "March"
-msgstr "Mars"
-
-msgid "April"
-msgstr "Avril"
-
-msgid "May"
-msgstr "Mai"
-
-msgid "June"
-msgstr "Juin"
-
-msgid "July"
-msgstr "Juillet"
-
-msgid "August"
-msgstr "Août"
-
-msgid "September"
-msgstr "Septembre"
-
-msgid "October"
-msgstr "Octobre"
-
-msgid "November"
-msgstr "Novembre"
-
-msgid "December"
-msgstr "Décembre"
+#, fuzzy
