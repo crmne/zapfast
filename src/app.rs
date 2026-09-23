@@ -3724,7 +3724,7 @@ impl App {
             self.toast_error(format!("Could not record: {error}"));
         }
         if self.player.is_playing() || self.recording.is_some() {
-            self.waker.wake_after(Duration::from_millis(100));
+            self.waker.wake_after(Duration::from_millis(40));
         }
     }
 
@@ -4030,7 +4030,7 @@ impl App {
             self.scroll_history
                 .add(ctx.input(|input| input.time), self.scroll_accum);
             self.scroll_last_event = Some(now);
-            ctx.request_repaint_after(Duration::from_millis(100));
+            ctx.request_repaint_after(Duration::from_millis(60));
         } else if raw != egui::Vec2::ZERO || ctx.input(|input| input.pointer.any_down()) {
             self.glide = None;
             self.scroll_history.clear();
@@ -4059,7 +4059,7 @@ impl App {
                 let slower = velocity * (-dt / GLIDE_DECAY).exp();
                 self.glide = (slower.length() > GLIDE_STOP).then_some(slower);
             }
-            ctx.request_repaint_after(Duration::from_millis(100));
+            ctx.request_repaint_after(Duration::from_millis(8));
         }
         // egui already maps Shift + mouse wheel to the horizontal axis. The
         // raw wheel event still has a vertical delta, so applying the trackpad

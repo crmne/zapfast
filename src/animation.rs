@@ -209,7 +209,7 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
                 position -= *delay;
             }
             if playing.frames.len() > 1 {
-                ctx.request_repaint_after(until_next.max(Duration::from_millis(100)));
+                ctx.request_repaint_after(until_next.max(Duration::from_millis(10)));
             }
             Frame::Ready(playing.frames[chosen].0.clone())
         }

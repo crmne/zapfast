@@ -841,7 +841,7 @@ pub fn paint_spinner(ui: &egui::Ui, rect: egui::Rect, size: f32, color: Color32)
         return;
     }
     ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(200));
+        .request_repaint_after(std::time::Duration::from_millis(33));
     let radius = size / 2.0 - 2.0;
     let start = ui.input(|input| input.time) * std::f64::consts::TAU * 1.2;
     let sweep = 250_f64.to_radians();
