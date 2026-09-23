@@ -455,20 +455,35 @@ fn split_atoms(glyphs: &[Glyph], visual_keys: &[usize], skip: &[usize]) -> Vec<R
     atoms
 }
 
+/// End of the shaped cluster starting at `start`.
+///
+/// A ligature such as لا or لى is one glyph followed by zero-width continuation
+/// glyphs for the letters it absorbed. Those carry their own letters' byte
+/// offsets, which are higher than the ligature's, so they belong to the
+/// cluster before them rather than breaking a descending right-to-left run.
 fn same_cluster_end(glyphs: &[Glyph], start: usize) -> usize {
     let mut end = start + 1;
-    while end < glyphs.len() && glyphs[end].cluster == glyphs[start].cluster {
+    while end < glyphs.len()
+        && (glyphs[end].cluster == glyphs[start].cluster || is_continuation(&glyphs[end]))
+    {
         end += 1;
     }
     end
 }
 
+/// A zero-width stand-in epaint emits for a character its shaped cluster covers.
+fn is_continuation(glyph: &Glyph) -> bool {
+    glyph.advance_width == 0.0 && glyph.uv_rect.is_nothing()
+}
+
 fn rtl_run_end(glyphs: &[Glyph], start: usize) -> Option<usize> {
+    let mut previous = start;
     let mut end = same_cluster_end(glyphs, start);
-    if end >= glyphs.len() || glyphs[end].cluster >= glyphs[end - 1].cluster {
+    if end >= glyphs.len() || glyphs[end].cluster >= glyphs[previous].cluster {
         return None;
     }
-    while end < glyphs.len() && glyphs[end].cluster < glyphs[end - 1].cluster {
+    while end < glyphs.len() && glyphs[end].cluster < glyphs[previous].cluster {
+        previous = end;
         end = same_cluster_end(glyphs, end);
     }
     Some(end)
@@ -658,7 +673,8 @@ pub fn is_rtl(c: char) -> bool {
 
 /// Checks every row against `unicode-bidi`'s reordered line for its paragraph.
 ///
-/// The drawn glyphs, left to right, must spell the reordered line. ASCII paired
+/// The drawn glyphs, left to right, must spell the reordered line, less the
+/// characters that draw nothing of their own. ASCII paired
 /// brackets must also face their resolved direction: the glyph's ink in the font
 /// atlas leans the way a mirrored or unmirrored bracket would.
 #[cfg(test)]
@@ -691,15 +707,17 @@ pub(crate) fn assert_rows_follow_uba(galley: &Galley, atlas: &egui::ColorImage) 
             .iter()
             .find(|candidate| candidate.range.contains(&line.start))
             .expect("bidi paragraph for the row");
-        let expected: String = info
-            .reorder_line(resolved, line.clone())
-            .chars()
-            .filter(|&c| {
-                !matches!(
-                    CodePointMapData::<BidiClass>::new().get(c),
-                    BidiClass::NonspacingMark | BidiClass::BoundaryNeutral
-                )
-            })
+        let levels = info.reordered_levels(resolved, line);
+        let row_text: Vec<char> = text[start..end].chars().collect();
+        let row_levels: Vec<unicode_bidi::Level> = (0..row_text.len())
+            .map(|offset| levels[byte_at[row_chars.start + offset] - paragraph_start])
+            .collect();
+        // Marks, joiners, and the letters a ligature absorbs draw no glyph of
+        // their own, so only characters whose glyph advances are compared.
+        let expected: String = BidiInfo::reorder_visual(&row_levels)
+            .into_iter()
+            .filter(|&offset| glyphs[offset].advance_width > 0.01)
+            .map(|offset| row_text[offset])
             .collect();
         let mut drawn: Vec<&Glyph> = glyphs
             .iter()
@@ -708,7 +726,6 @@ pub(crate) fn assert_rows_follow_uba(galley: &Galley, atlas: &egui::ColorImage) 
         drawn.sort_by(|a, b| a.pos.x.total_cmp(&b.pos.x));
         let visual: String = drawn.iter().map(|glyph| glyph.chr).collect();
         assert_eq!(visual, expected, "row {index} of {paragraph:?}");
-        let levels = info.reordered_levels(resolved, line);
         for (offset, glyph) in glyphs.iter().enumerate() {
             let Some(bracket) =
                 unicode_bidi::HardcodedBidiData.bidi_matched_opening_bracket(glyph.chr)
@@ -1038,6 +1055,59 @@ mod tests {
             (deco_mid - dog_right).abs() < 40.0,
             "decorations should sit on the struck word, deco {deco_mid} word {dog_right}"
         );
+    }
+
+    #[test]
+    fn arabic_lam_ligatures_keep_their_place() {
+        let (galley, atlas) = bubble("إلى السطر التالي", 2000.0);
+        assert_rows_follow_uba(&galley, &atlas);
+    }
+
+    #[test]
+    fn ligatures_inside_right_to_left_words_keep_their_place() {
+        for text in [
+            "لا بأس",
+            "سلام عليكم",
+            "الاسم والعلامة",
+            "إلى التالي\nفي الليل",
+            "שלום עולם אב גד",
+        ] {
+            let (galley, atlas) = bubble(text, 2000.0);
+            assert_rows_follow_uba(&galley, &atlas);
+        }
+        let (galley, atlas) = bubble("إلى السطر التالي إلى السطر التالي", 90.0);
+        assert!(galley.rows.len() > 1, "the sample wraps");
+        assert_rows_follow_uba(&galley, &atlas);
+    }
+
+    /// Lays `text` out as a message body with the app's own fonts.
+    fn bubble(text: &str, width: f32) -> (Arc<Galley>, egui::ColorImage) {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let galley = std::cell::RefCell::new(None);
+        // Fonts are installed at the start of the first pass.
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let style = crate::markup::Style {
+                        size: 14.5,
+                        color: Color32::WHITE,
+                        secondary: Color32::GRAY,
+                        link: Color32::LIGHT_BLUE,
+                        mention: Color32::GREEN,
+                    };
+                    let laid = crate::markup::layout(ui, text, &[], &style, width);
+                    *galley.borrow_mut() = Some(laid.galley);
+                },
+            );
+            output.textures_delta.clear();
+        }
+        let atlas = ctx.fonts(|fonts| fonts.image());
+        (galley.into_inner().expect("galley"), atlas)
     }
 
     #[test]
