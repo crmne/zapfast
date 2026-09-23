@@ -3195,16 +3195,24 @@ fn carousel_picture(
     let visible = ui.is_rect_visible(rect);
     if visible {
         ui.painter().rect_filled(rect, 6.0, view.palette.surface);
-        let uri = media.path.as_ref().map(|path| file_uri(path)).or_else(|| {
-            card.thumbnail.as_deref().map(|bytes| {
-                thumbnail_uri(
-                    ui.ctx(),
-                    &message.chat,
-                    &format!("{}-card-{index}", message.id),
-                    bytes,
-                )
+        let uri = media
+            .path
+            .as_ref()
+            .map(|path| {
+                let uri = crate::util::image_uri(path);
+                crate::image_cache::touch(ui.ctx(), &uri);
+                uri
             })
-        });
+            .or_else(|| {
+                card.thumbnail.as_deref().map(|bytes| {
+                    thumbnail_uri(
+                        ui.ctx(),
+                        &message.chat,
+                        &format!("{}-card-{index}", message.id),
+                        bytes,
+                    )
+                })
+            });
         if let Some(uri) = uri {
             let image = egui::Image::new(uri);
             let dimensions = match image.load_for_size(ui.ctx(), size) {
