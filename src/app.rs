@@ -3131,6 +3131,8 @@ impl App {
         self.take_drops_and_pastes(ctx);
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
+        // Release the image caches of everything that scrolled away.
+        crate::image_cache::sweep(ctx);
         // Only fading info toasts animate. Errors wait for the reader.
         if self
             .toasts

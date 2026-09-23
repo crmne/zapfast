@@ -193,6 +193,10 @@ pub fn install(ctx: &egui::Context) {
     install_fonts(ctx);
     register_icons(ctx);
     egui_extras::install_image_loaders(ctx);
+    // Drop the raw bytes and the decoded pixels once a texture is on the GPU.
+    // egui keeps all three copies of every image otherwise, and only ever
+    // evicts the textures of SVGs.
+    ctx.options_mut(|options| options.reduce_texture_memory = true);
 }
 
 /// Applies the palette to egui widgets.
