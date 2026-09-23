@@ -135,7 +135,7 @@ pub fn transcribe(
         .build()
         .map_err(|error| format!("Could not prepare the transcription request: {error}"))?;
     let response = client
-        .post(&request.endpoint())
+        .post(request.endpoint())
         .bearer_auth(api_key)
         .multipart(form)
         .send()
@@ -208,11 +208,13 @@ pub fn validate_base_url(url: &str) -> std::result::Result<(), String> {
 }
 
 fn is_loopback(host: &str) -> bool {
-    // Strip a trailing port and IPv6 brackets before matching.
     let host = host.trim();
-    let host = host.strip_prefix('[').unwrap_or(host);
-    let host = host.strip_suffix(']').unwrap_or(host);
-    let host = host.split(':').next().unwrap_or(host);
+    // A bracketed IPv6 literal carries its port after the closing bracket;
+    // anything else carries it after the first colon.
+    let host = match host.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or(rest),
+        None => host.split(':').next().unwrap_or(host),
+    };
     host == "localhost" || host == "::1" || host.starts_with("127.")
 }
 
@@ -382,12 +384,14 @@ mod tests {
             ))
             .is_err()
         );
+        // `resolve` fills the provider defaults, so an unusable model is built
+        // directly to exercise the validation in `build`.
         assert!(
-            Request::build(&TranscriptionConfig::resolve(
-                TranscriptionProvider::OpenAiCompatible,
-                "",
-                "   "
-            ))
+            Request::build(&TranscriptionConfig {
+                provider: TranscriptionProvider::OpenAiCompatible,
+                base_url: "https://api.openai.com/v1".to_owned(),
+                model: "   ".to_owned(),
+            })
             .is_err()
         );
     }
@@ -408,7 +412,7 @@ mod tests {
     fn source_hashes_are_deterministic() {
         assert_eq!(
             sha256_hex(b"fixture"),
-            "6a948b2a316908dbbbc0ff9b682a5f7eb7b82bb3e648f3c3ce028d10896ff967"
+            "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
         );
     }
 }

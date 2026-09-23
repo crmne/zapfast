@@ -1635,6 +1635,7 @@ fn bubble(
                             message,
                             show_sender,
                             max_width,
+                            transcript,
                             actions,
                         ));
                     });
@@ -1646,6 +1647,7 @@ fn bubble(
                     message,
                     show_sender,
                     max_width,
+                    transcript,
                     actions,
                 ));
             }
@@ -1864,6 +1866,7 @@ fn bubble_frame(
     message: &Message,
     show_sender: bool,
     max_width: f32,
+    transcript: Option<&str>,
     actions: &mut Vec<Action>,
 ) -> egui::Response {
     let palette = view.palette;
@@ -1945,9 +1948,9 @@ fn bubble_frame(
                     if let Some(quoted) = &message.quoted {
                         quote_block(ui, view, message, quoted, width, actions);
                     }
-                    content(ui, view, message, width, reserve, actions)
+                    content(ui, view, message, width, reserve, transcript, actions)
                 }
-                None => content(ui, view, message, cap, reserve, actions),
+                None => content(ui, view, message, cap, reserve, transcript, actions),
             };
             footer(ui, &palette, message, slot);
         });
@@ -2668,6 +2671,7 @@ fn content(
     message: &Message,
     width: f32,
     reserve: f32,
+    transcript: Option<&str>,
     actions: &mut Vec<Action>,
 ) -> Option<Rect> {
     let palette = view.palette;
@@ -2681,10 +2685,13 @@ fn content(
         _ => false,
     };
     if !has_body {
+        // A transcribed voice message copies its transcript as the row body, so
+        // a selection crossing it still gets the per-message headers.
+        let body = transcript.unwrap_or_default().to_owned();
         view.copy_rows
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .push(transcript_row(view, message, String::new(), Vec::new()));
+            .push(transcript_row(view, message, body, Vec::new()));
     }
     match &message.content {
         Content::Text { text, preview } => {
