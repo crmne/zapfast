@@ -7,8 +7,23 @@ use crate::settings::NotificationSound;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+#[cfg(target_os = "linux")]
+mod badge;
 #[cfg(target_os = "windows")]
 mod windows;
+#[cfg(target_os = "linux")]
+pub use badge::Badge;
+
+/// A no-op taskbar badge where the desktop has no Unity Launcher API.
+#[cfg(not(target_os = "linux"))]
+#[derive(Default)]
+pub struct Badge;
+
+#[cfg(not(target_os = "linux"))]
+impl Badge {
+    /// Does nothing; no desktop here reads a taskbar badge.
+    pub fn set(&mut self, _count: u32) {}
+}
 
 #[cfg(any(target_os = "macos", test))]
 const MACOS_APPLICATION_ID: &str = "me.paolino.fastsapp";

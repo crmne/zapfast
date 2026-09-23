@@ -353,6 +353,9 @@ pub struct App {
     /// Chat ids from clicked notifications.
     notification_opens: std::sync::Arc<std::sync::Mutex<Vec<ChatId>>>,
     notifications: crate::notify::Notifications,
+    /// Unread count on the taskbar icon, where the desktop reads it. `None`
+    /// for demo and test runs, which must not touch the real taskbar.
+    badge: Option<crate::notify::Badge>,
 }
 
 /// Attachment pending in the composer.
@@ -430,10 +433,10 @@ impl App {
     /// Creates a disconnected app and event sender for demos and tests.
     pub fn headless(dirs: AppDirs, settings: Settings) -> (Self, std::sync::mpsc::Sender<Event>) {
         let (backend, events) = Backend::detached();
-        (
-            Self::with_backend(dirs, settings, backend, Waker::default()),
-            events,
-        )
+        let mut app = Self::with_backend(dirs, settings, backend, Waker::default());
+        // Demo and test runs must not put a badge on the real taskbar.
+        app.badge = None;
+        (app, events)
     }
 
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
@@ -582,6 +585,7 @@ impl App {
             control_commands: None,
             notification_opens: Default::default(),
             notifications: Default::default(),
+            badge: Some(Default::default()),
         };
         // A hand-edited speed snaps to a supported one, so a speed control
         // always shows the speed that plays.
@@ -3543,6 +3547,16 @@ impl App {
         self.tick(ctx);
         self.tick_audio();
         self.apply_actions(ctx);
+        self.sync_badge();
+    }
+
+    /// Mirrors the unread total onto the taskbar icon, where the desktop
+    /// reads it. The badge ignores repeats, so calling this each frame is free.
+    fn sync_badge(&mut self) {
+        let count = self.unread_total();
+        if let Some(badge) = &mut self.badge {
+            badge.set(count);
+        }
     }
 
     /// Polls audio state and schedules repaints while it changes.
@@ -4015,6 +4029,13 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    /// Demo and test runs share the machine with a linked ZapFast, whose real
+    /// taskbar badge they must not overwrite.
+    #[test]
+    fn demo_and_test_runs_do_not_publish_a_taskbar_badge() {
+        assert!(app().badge.is_none());
     }
 
     #[test]

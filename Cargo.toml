@@ -112,6 +112,8 @@ notify = "8.2"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 # Linux status-notifier tray item over D-Bus.
 ksni = { version = "0.3", features = ["blocking"] }
+# Emits the Unity Launcher API signal KDE Plasma shows as a taskbar badge.
+zbus = "5"
 # Reads the time locale's clock format.
 libc = "0.2"
 # Asks the Wayland compositor whether it reports hidden windows as suspended
