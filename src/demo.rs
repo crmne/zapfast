@@ -2994,6 +2994,45 @@ mod tests {
         assert_eq!(app.composer, "draft");
     }
 
+    /// Ctrl++ zooms the picture, not the whole interface, including when the
+    /// layout needs Shift to type the plus.
+    #[test]
+    fn zoom_shortcuts_zoom_the_previewed_image_only() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let interface_zoom = ctx.zoom_factor();
+        let (photo, _) = sample_files(&app);
+        app.actions.push(crate::model::Action::PreviewImage(photo));
+        render(&mut app, &ctx);
+
+        let ctrl_shift = egui::Modifiers {
+            ctrl: true,
+            shift: true,
+            command: !cfg!(target_os = "macos"),
+            ..Default::default()
+        };
+        frame_with(&mut app, &ctx, vec![key(egui::Key::Equals, ctrl_shift)]);
+        render(&mut app, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().zoom(), 1.25);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Plus, egui::Modifiers::COMMAND)],
+        );
+        render(&mut app, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().zoom(), 1.5625);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Num0, egui::Modifiers::COMMAND)],
+        );
+        render(&mut app, &ctx);
+        assert!(app.image_preview.as_ref().unwrap().is_fit());
+        assert_eq!(ctx.zoom_factor(), interface_zoom);
+    }
+
     #[test]
     fn colon_starts_emoji_autocomplete_in_the_composer() {
         let mut app = app();
