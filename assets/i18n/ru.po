@@ -1,0 +1,160 @@
+# Russian translation of the ZapFast navigation pilot.
+# Distributed under the same MIT license as ZapFast.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
+"POT-Creation-Date: 2026-09-22 00:00-0300\n"
+"PO-Revision-Date: 2026-09-22 00:00-0300\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: Russian\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+msgid "Chats"
+msgstr "Чаты"
+
+msgid "Search"
+msgstr "Поиск"
+
+msgid "All"
+msgstr "Все"
+
+msgid "Unread"
+msgstr "Непрочитанные"
+
+msgid "Private"
+msgstr "Личные"
+
+msgid "Groups"
+msgstr "Группы"
+
+msgid "Locked"
+msgstr "Заблокированные"
+
+msgid "Type a message"
+msgstr "Введите сообщение"
+
+msgid "Add a caption"
+msgstr "Добавить подпись"
+
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Ctrl+K для поиска · ? для сочетаний клавиш"
+
+msgid "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Enter отправляет · Shift+Enter для новой строки · *жирный* _курсив_ ~зачёркнутый~ · Ctrl+V вставляет изображение"
+
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Ctrl+Enter отправляет · *жирный* _курсив_ ~зачёркнутый~ · Ctrl+V вставляет изображение"
+
+msgid "All shortcuts ({})"
+msgstr "Все сочетания клавиш ({})"
+
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr "Скрыть подсказки сочетаний клавиш (восстановить в настройках)"
+
+msgid "Appearance"
+msgstr "Внешний вид"
+
+msgid "Window"
+msgstr "Окно"
+
+msgid "Account"
+msgstr "Аккаунт"
+
+msgid "Files"
+msgstr "Файлы"
+
+msgid "About"
+msgstr "О программе"
+
+msgid "Settings"
+msgstr "Настройки"
+
+msgid "Language"
+msgstr "Язык"
+
+msgid "Auto"
+msgstr "Автоматически"
+
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} участник"
+msgstr[1] "{} участника"
+msgstr[2] "{} участников"
+
+msgid "Today"
+msgstr "Сегодня"
+
+msgid "Yesterday"
+msgstr "Вчера"
+
+msgid "Yesterday at {time}"
+msgstr "Вчера в {time}"
+
+msgid "{weekday} at {time}"
+msgstr "{weekday} в {time}"
+
+msgid "{date} at {time}"
+msgstr "{date} в {time}"
+
+msgid "Monday"
+msgstr "Понедельник"
+
+msgid "Tuesday"
+msgstr "Вторник"
+
+msgid "Wednesday"
+msgstr "Среда"
+
+msgid "Thursday"
+msgstr "Четверг"
+
+msgid "Friday"
+msgstr "Пятница"
+
+msgid "Saturday"
+msgstr "Суббота"
+
+msgid "Sunday"
+msgstr "Воскресенье"
+
+msgid "January"
+msgstr "Январь"
+
+msgid "February"
+msgstr "Февраль"
+
+msgid "March"
+msgstr "Март"
+
+msgid "April"
+msgstr "Апрель"
+
+msgid "May"
+msgstr "Май"
+
+msgid "June"
+msgstr "Июнь"
+
+msgid "July"
+msgstr "Июль"
+
+msgid "August"
+msgstr "Август"
+
+msgid "September"
+msgstr "Сентябрь"
+
+msgid "October"
+msgstr "Октябрь"
+
+msgid "November"
+msgstr "Ноябрь"
+
+msgid "December"
+msgstr "Декабрь"

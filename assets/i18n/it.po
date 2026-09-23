@@ -1,0 +1,159 @@
+# Italian translation of the ZapFast navigation pilot.
+# Distributed under the same MIT license as ZapFast.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
+"POT-Creation-Date: 2026-09-22 00:00-0300\n"
+"PO-Revision-Date: 2026-09-22 00:00-0300\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: Italian\n"
+"Language: it\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Chats"
+msgstr "Chat"
+
+msgid "Search"
+msgstr "Cerca"
+
+msgid "All"
+msgstr "Tutti"
+
+msgid "Unread"
+msgstr "Non letti"
+
+msgid "Private"
+msgstr "Privati"
+
+msgid "Groups"
+msgstr "Gruppi"
+
+msgid "Locked"
+msgstr "Bloccati"
+
+msgid "Type a message"
+msgstr "Scrivi un messaggio"
+
+msgid "Add a caption"
+msgstr "Aggiungi una didascalia"
+
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Ctrl+K per cercare · ? per le scorciatoie da tastiera"
+
+msgid "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Enter invia · Shift+Enter per una nuova riga · *grassetto* _corsivo_ ~barrato~ · Ctrl+V incolla un'immagine"
+
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Ctrl+Enter invia · *grassetto* _corsivo_ ~barrato~ · Ctrl+V incolla un'immagine"
+
+msgid "All shortcuts ({})"
+msgstr "Tutte le scorciatoie ({})"
+
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr "Nascondi i suggerimenti delle scorciatoie (ripristina nelle Impostazioni)"
+
+msgid "Appearance"
+msgstr "Aspetto"
+
+msgid "Window"
+msgstr "Finestra"
+
+msgid "Account"
+msgstr "Account"
+
+msgid "Files"
+msgstr "File"
+
+msgid "About"
+msgstr "Informazioni"
+
+msgid "Settings"
+msgstr "Impostazioni"
+
+msgid "Language"
+msgstr "Lingua"
+
+msgid "Auto"
+msgstr "Automatico"
+
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} membro"
+msgstr[1] "{} membri"
+
+msgid "Today"
+msgstr "Oggi"
+
+msgid "Yesterday"
+msgstr "Ieri"
+
+msgid "Yesterday at {time}"
+msgstr "Ieri alle {time}"
+
+msgid "{weekday} at {time}"
+msgstr "{weekday} alle {time}"
+
+msgid "{date} at {time}"
+msgstr "{date} alle {time}"
+
+msgid "Monday"
+msgstr "Lunedì"
+
+msgid "Tuesday"
+msgstr "Martedì"
+
+msgid "Wednesday"
+msgstr "Mercoledì"
+
+msgid "Thursday"
+msgstr "Giovedì"
+
+msgid "Friday"
+msgstr "Venerdì"
+
+msgid "Saturday"
+msgstr "Sabato"
+
+msgid "Sunday"
+msgstr "Domenica"
+
+msgid "January"
+msgstr "Gennaio"
+
+msgid "February"
+msgstr "Febbraio"
+
+msgid "March"
+msgstr "Marzo"
+
+msgid "April"
+msgstr "Aprile"
+
+msgid "May"
+msgstr "Maggio"
+
+msgid "June"
+msgstr "Giugno"
+
+msgid "July"
+msgstr "Luglio"
+
+msgid "August"
+msgstr "Agosto"
+
+msgid "September"
+msgstr "Settembre"
+
+msgid "October"
+msgstr "Ottobre"
+
+msgid "November"
+msgstr "Novembre"
+
+msgid "December"
+msgstr "Dicembre"

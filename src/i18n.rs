@@ -3,8 +3,8 @@
 //! Catalogs are compiled from `assets/i18n/*.po` into Rust modules at build
 //! time, so there is no libintl, no runtime PO parsing, and no network access.
 //! English is both the source language and the fallback for any untranslated
-//! message. Brazilian Portuguese and German ship catalogs today; the other
-//! locales are registered but fall back to English until their catalogs arrive.
+//! message. The pilot ships pt-BR, de, es, fr, it, and ru catalogs today;
+//! Chinese is registered but falls back to English until its catalog arrives.
 
 use std::borrow::Cow;
 
@@ -87,8 +87,12 @@ impl Locale {
         match self {
             Self::PortugueseBrazil => Some(&pt_br::Translator),
             Self::German => Some(&de::Translator),
-            // English and the other registered locales have no catalog yet and
-            // fall back to the English source strings.
+            Self::Spanish => Some(&es::Translator),
+            Self::French => Some(&fr::Translator),
+            Self::Italian => Some(&it::Translator),
+            Self::Russian => Some(&ru::Translator),
+            // English and Chinese have no catalog yet and fall back to the
+            // English source strings.
             _ => None,
         }
     }
@@ -193,6 +197,41 @@ mod tests {
         assert_eq!(
             ngettext(Locale::German, "{} member", "{} members", 0),
             "{} Mitglieder"
+        );
+    }
+
+    #[test]
+    fn remaining_pilot_catalogs_translate() {
+        assert_eq!(gettext(Locale::Spanish, "Search"), "Buscar");
+        assert_eq!(gettext(Locale::French, "Search"), "Rechercher");
+        assert_eq!(gettext(Locale::Italian, "Search"), "Cerca");
+        assert_eq!(gettext(Locale::Russian, "Search"), "Поиск");
+        assert_eq!(gettext(Locale::Spanish, "Unread"), "No leídos");
+        assert_eq!(gettext(Locale::French, "Settings"), "Paramètres");
+        assert_eq!(
+            gettext(Locale::Italian, "Type a message"),
+            "Scrivi un messaggio"
+        );
+        assert_eq!(gettext(Locale::Russian, "Today"), "Сегодня");
+    }
+
+    #[test]
+    fn russian_plural_rules_select_three_forms() {
+        assert_eq!(
+            ngettext(Locale::Russian, "{} member", "{} members", 1),
+            "{} участник"
+        );
+        assert_eq!(
+            ngettext(Locale::Russian, "{} member", "{} members", 3),
+            "{} участника"
+        );
+        assert_eq!(
+            ngettext(Locale::Russian, "{} member", "{} members", 5),
+            "{} участников"
+        );
+        assert_eq!(
+            ngettext(Locale::Russian, "{} member", "{} members", 21),
+            "{} участник"
         );
     }
 

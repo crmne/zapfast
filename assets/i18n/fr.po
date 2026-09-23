@@ -1,0 +1,159 @@
+# French translation of the ZapFast navigation pilot.
+# Distributed under the same MIT license as ZapFast.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
+"POT-Creation-Date: 2026-09-22 00:00-0300\n"
+"PO-Revision-Date: 2026-09-22 00:00-0300\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: French\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Chats"
+msgstr "Discussions"
+
+msgid "Search"
+msgstr "Rechercher"
+
+msgid "All"
+msgstr "Tous"
+
+msgid "Unread"
+msgstr "Non lus"
+
+msgid "Private"
+msgstr "Privés"
+
+msgid "Groups"
+msgstr "Groupes"
+
+msgid "Locked"
+msgstr "Verrouillés"
+
+msgid "Type a message"
+msgstr "Saisissez un message"
+
+msgid "Add a caption"
+msgstr "Ajouter une légende"
+
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Ctrl+K pour rechercher · ? pour les raccourcis clavier"
+
+msgid "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Enter envoie · Shift+Enter pour une nouvelle ligne · *gras* _italique_ ~barré~ · Ctrl+V colle une image"
+
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Ctrl+Enter envoie · *gras* _italique_ ~barré~ · Ctrl+V colle une image"
+
+msgid "All shortcuts ({})"
+msgstr "Tous les raccourcis ({})"
+
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr "Masquer les astuces de raccourcis (restaurer dans Paramètres)"
+
+msgid "Appearance"
+msgstr "Apparence"
+
+msgid "Window"
+msgstr "Fenêtre"
+
+msgid "Account"
+msgstr "Compte"
+
+msgid "Files"
+msgstr "Fichiers"
+
+msgid "About"
+msgstr "À propos"
+
+msgid "Settings"
+msgstr "Paramètres"
+
+msgid "Language"
+msgstr "Langue"
+
+msgid "Auto"
+msgstr "Automatique"
+
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} membre"
+msgstr[1] "{} membres"
+
+msgid "Today"
+msgstr "Aujourd'hui"
+
+msgid "Yesterday"
+msgstr "Hier"
+
+msgid "Yesterday at {time}"
+msgstr "Hier à {time}"
+
+msgid "{weekday} at {time}"
+msgstr "{weekday} à {time}"
+
+msgid "{date} at {time}"
+msgstr "{date} à {time}"
+
+msgid "Monday"
+msgstr "Lundi"
+
+msgid "Tuesday"
+msgstr "Mardi"
+
+msgid "Wednesday"
+msgstr "Mercredi"
+
+msgid "Thursday"
+msgstr "Jeudi"
+
+msgid "Friday"
+msgstr "Vendredi"
+
+msgid "Saturday"
+msgstr "Samedi"
+
+msgid "Sunday"
+msgstr "Dimanche"
+
+msgid "January"
+msgstr "Janvier"
+
+msgid "February"
+msgstr "Février"
+
+msgid "March"
+msgstr "Mars"
+
+msgid "April"
+msgstr "Avril"
+
+msgid "May"
+msgstr "Mai"
+
+msgid "June"
+msgstr "Juin"
+
+msgid "July"
+msgstr "Juillet"
+
+msgid "August"
+msgstr "Août"
+
+msgid "September"
+msgstr "Septembre"
+
+msgid "October"
+msgstr "Octobre"
+
+msgid "November"
+msgstr "Novembre"
+
+msgid "December"
+msgstr "Décembre"

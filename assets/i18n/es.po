@@ -1,0 +1,159 @@
+# Spanish translation of the ZapFast navigation pilot.
+# Distributed under the same MIT license as ZapFast.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
+"POT-Creation-Date: 2026-09-22 00:00-0300\n"
+"PO-Revision-Date: 2026-09-22 00:00-0300\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: Spanish\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Chats"
+msgstr "Chats"
+
+msgid "Search"
+msgstr "Buscar"
+
+msgid "All"
+msgstr "Todos"
+
+msgid "Unread"
+msgstr "No leídos"
+
+msgid "Private"
+msgstr "Privados"
+
+msgid "Groups"
+msgstr "Grupos"
+
+msgid "Locked"
+msgstr "Bloqueados"
+
+msgid "Type a message"
+msgstr "Escribe un mensaje"
+
+msgid "Add a caption"
+msgstr "Añade un título"
+
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Ctrl+K para buscar · ? para atajos de teclado"
+
+msgid "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Enter envía · Shift+Enter para nueva línea · *negrita* _cursiva_ ~tachado~ · Ctrl+V pega una imagen"
+
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Ctrl+Enter envía · *negrita* _cursiva_ ~tachado~ · Ctrl+V pega una imagen"
+
+msgid "All shortcuts ({})"
+msgstr "Todos los atajos ({})"
+
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr "Ocultar sugerencias de atajos (restaurar en Ajustes)"
+
+msgid "Appearance"
+msgstr "Apariencia"
+
+msgid "Window"
+msgstr "Ventana"
+
+msgid "Account"
+msgstr "Cuenta"
+
+msgid "Files"
+msgstr "Archivos"
+
+msgid "About"
+msgstr "Acerca de"
+
+msgid "Settings"
+msgstr "Ajustes"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "Auto"
+msgstr "Automático"
+
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} miembro"
+msgstr[1] "{} miembros"
+
+msgid "Today"
+msgstr "Hoy"
+
+msgid "Yesterday"
+msgstr "Ayer"
+
+msgid "Yesterday at {time}"
+msgstr "Ayer a las {time}"
+
+msgid "{weekday} at {time}"
+msgstr "{weekday} a las {time}"
+
+msgid "{date} at {time}"
+msgstr "{date} a las {time}"
+
+msgid "Monday"
+msgstr "Lunes"
+
+msgid "Tuesday"
+msgstr "Martes"
+
+msgid "Wednesday"
+msgstr "Miércoles"
+
+msgid "Thursday"
+msgstr "Jueves"
+
+msgid "Friday"
+msgstr "Viernes"
+
+msgid "Saturday"
+msgstr "Sábado"
+
+msgid "Sunday"
+msgstr "Domingo"
+
+msgid "January"
+msgstr "Enero"
+
+msgid "February"
+msgstr "Febrero"
+
+msgid "March"
+msgstr "Marzo"
+
+msgid "April"
+msgstr "Abril"
+
+msgid "May"
+msgstr "Mayo"
+
+msgid "June"
+msgstr "Junio"
+
+msgid "July"
+msgstr "Julio"
+
+msgid "August"
+msgstr "Agosto"
+
+msgid "September"
+msgstr "Septiembre"
+
+msgid "October"
+msgstr "Octubre"
+
+msgid "November"
+msgstr "Noviembre"
+
+msgid "December"
+msgstr "Diciembre"
