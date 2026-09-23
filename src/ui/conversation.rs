@@ -2830,7 +2830,7 @@ fn content(
                         meta.push(format!("Updated {age}s ago"));
                         widgets::rich_text(
                             ui,
-                            meta.join(" · "),
+                            &meta.join(" · "),
                             theme::regular(12.5),
                             palette.secondary,
                         );
