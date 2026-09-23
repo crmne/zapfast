@@ -53,6 +53,17 @@ impl Status {
 /// Playback speeds, in ascending order, matching the phone.
 pub const SPEEDS: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
 
+/// The supported speed nearest to `speed`; non-finite speeds give 1x.
+pub fn supported_speed(speed: f32) -> f32 {
+    if !speed.is_finite() {
+        return SPEEDS[0];
+    }
+    SPEEDS
+        .into_iter()
+        .min_by(|a, b| (a - speed).abs().total_cmp(&(b - speed).abs()))
+        .unwrap_or(SPEEDS[0])
+}
+
 /// Label for a playback speed, like `1x`, `1.25x`, or `1.5x`.
 pub fn speed_label(speed: f32) -> String {
     if speed.fract() == 0.0 {
@@ -143,14 +154,11 @@ impl Player {
     ///
     /// Speeds above 1x play a time-compressed copy of the clip, once it has
     /// been built, so the voice keeps its pitch. Until then playback
-    /// continues at the speed already queued. Speeds outside 1x to 2x, such
-    /// as a hand-edited setting, are clamped, and non-finite ones play at 1x.
+    /// continues at the speed already queued. Any other speed, such as a
+    /// hand-edited setting, snaps to the nearest one in [`SPEEDS`], so a speed
+    /// control always shows it. Returns the speed that applies.
     pub fn set_speed(&mut self, speed: f32) -> f32 {
-        self.speed = if speed.is_finite() {
-            speed.clamp(SPEEDS[0], SPEEDS[SPEEDS.len() - 1])
-        } else {
-            SPEEDS[0]
-        };
+        self.speed = supported_speed(speed);
         self.apply_speed();
         self.ensure_stretch();
         self.speed
@@ -642,6 +650,22 @@ mod tests {
         assert_eq!(speed_label(SPEEDS[2]), "1.5x");
         assert_eq!(speed_label(SPEEDS[3]), "1.75x");
         assert_eq!(speed_label(SPEEDS[4]), "2x");
+    }
+
+    #[test]
+    fn unsupported_speeds_snap_to_the_nearest_supported_one() {
+        assert_eq!(supported_speed(1.3), 1.25);
+        assert_eq!(supported_speed(1.4), 1.5);
+        assert_eq!(supported_speed(1.8), 1.75);
+        assert_eq!(supported_speed(0.5), 1.0);
+        assert_eq!(supported_speed(4.0), 2.0);
+        assert_eq!(supported_speed(f32::INFINITY), 1.0);
+        for speed in SPEEDS {
+            assert_eq!(supported_speed(speed), speed);
+        }
+        let mut player = Player::new(Waker::default());
+        assert_eq!(player.set_speed(1.3), 1.25);
+        assert_eq!(player.speed(), 1.25);
     }
 
     #[test]
