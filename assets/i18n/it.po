@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 16:56+0200\n"
+"POT-Creation-Date: 2026-09-23 12:42-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -202,20 +202,30 @@ msgstr "Apri nel lettore di sistema"
 msgid "Message info"
 msgstr "Info messaggio"
 
-#: src/ui/conversation.rs:4733
+#: src/ui/conversation.rs:3206
+msgctxt "contact card"
+msgid "Add"
+msgstr ""
+
+#: src/ui/conversation.rs:3223
+msgctxt "contact card"
+msgid "Message"
+msgstr ""
+
+#: src/ui/conversation.rs:4792
 msgid "Pause"
 msgstr "Pausa"
 
-#: src/ui/conversation.rs:4735
+#: src/ui/conversation.rs:4794
 #, fuzzy
 msgid "Play"
 msgstr "Riprodotto"
 
-#: src/ui/conversation.rs:4758
+#: src/ui/conversation.rs:4817
 msgid "Unmute"
 msgstr "Riattiva audio"
 
-#: src/ui/conversation.rs:4760
+#: src/ui/conversation.rs:4819
 msgid "Mute"
 msgstr "Disattiva audio"
 
@@ -412,6 +422,6 @@ msgstr[1] "{} in attesa"
 msgid "No one yet"
 msgstr "Ancora nessuno"
 
-#: src/app.rs:3740
+#: src/app.rs:3750
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"

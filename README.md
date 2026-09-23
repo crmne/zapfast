@@ -159,7 +159,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   the phone. Changing the default timer for new chats leaves existing chats alone.
 - **View attachments.** ZapFast downloads files up to 64 MiB automatically or
   on click. Photos, stickers, GIFs, voice messages, audio, locations, contacts,
-  polls, and link previews appear in the chat. Click a downloaded JPEG, PNG,
+  polls, and link previews appear in the chat. Shared contacts render as cards
+  listing every number, with **Add** prefilling the new-contact dialog and
+  **Message** opening the chat. Click a downloaded JPEG, PNG,
   WebP, or GIF photo to preview it in ZapFast with fit and zoom controls, or
   choose **Open externally**. Click a video to play it in its message, with
   sound, a seek bar, and a mute switch; round video messages play inside their

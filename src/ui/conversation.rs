@@ -3160,6 +3160,82 @@ fn quote_mentions(view: &View<'_>, quoted: &crate::model::Quoted) -> Vec<markup:
         .collect()
 }
 
+/// Shared contact card with "Add" and "Message" actions, like WhatsApp Web.
+fn contact_card(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    display_name: &str,
+    vcard: &str,
+    own: bool,
+    actions: &mut Vec<Action>,
+) {
+    let palette = view.palette;
+    let locale = view.locale;
+    let contacts = crate::model::parse_shared_contacts(display_name, vcard);
+    let icon = |ui: &mut egui::Ui| {
+        theme::icon(ui, Icon::Contact, 18.0, palette.accent);
+    };
+    mirrored_row(ui, own, icon, |ui| {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            for contact in &contacts {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    widgets::rich_text(ui, &contact.name, theme::medium(14.0), palette.text);
+                    for phone in &contact.phones {
+                        theme::text(
+                            ui,
+                            crate::util::phone(phone),
+                            theme::regular(12.5),
+                            palette.secondary,
+                        );
+                    }
+                });
+                if contact.phones.is_empty() {
+                    continue;
+                }
+                ui.horizontal(|ui| {
+                    // "Add" prefills the new-contact dialog; "Message" opens
+                    // the chat, creating it when needed. The first listed
+                    // number wins, as on WhatsApp.
+                    if let Some(phone) = contact.phones.first()
+                        && theme::soft_button(
+                            ui,
+                            &palette,
+                            Some(Icon::User),
+                            &crate::i18n::pgettext(locale, "contact card", "Add"),
+                            false,
+                        )
+                        .clicked()
+                    {
+                        let (first, last) = crate::util::split_name(&contact.name);
+                        actions.push(Action::PrefillNewContact {
+                            phone: phone.clone(),
+                            first,
+                            last,
+                        });
+                    }
+                    if let Some(phone) = contact.phones.first()
+                        && theme::soft_button(
+                            ui,
+                            &palette,
+                            Some(Icon::MessageCircle),
+                            &crate::i18n::pgettext(locale, "contact card", "Message"),
+                            false,
+                        )
+                        .clicked()
+                    {
+                        actions.push(Action::StartChat {
+                            id: format!("{phone}@s.whatsapp.net"),
+                            name: contact.name.clone(),
+                        });
+                    }
+                });
+            }
+        });
+    });
+}
+
 /// Draws a message body and returns optional footer space on its last line.
 fn content(
     ui: &mut egui::Ui,
@@ -3367,24 +3443,7 @@ fn content(
             display_name,
             vcard,
         } => {
-            let icon = |ui: &mut egui::Ui| {
-                theme::icon(ui, Icon::Contact, 18.0, palette.accent);
-            };
-            mirrored_row(ui, own, icon, |ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    widgets::rich_text(ui, display_name, theme::medium(14.0), palette.text);
-                    let phone = vcard
-                        .lines()
-                        .find(|line| line.starts_with("TEL"))
-                        .and_then(|line| line.rsplit(':').next())
-                        .map(str::trim)
-                        .unwrap_or("");
-                    if !phone.is_empty() {
-                        theme::text(ui, phone, theme::regular(12.5), palette.secondary);
-                    }
-                });
-            });
+            contact_card(ui, view, display_name, vcard, own, actions);
             None
         }
         Content::Poll { .. } => {

@@ -647,6 +647,118 @@ impl Contact {
     }
 }
 
+/// A contact parsed from a shared vCard.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SharedContact {
+    pub name: String,
+    /// Phone numbers as digits.
+    pub phones: Vec<String>,
+}
+
+/// Splits a shared-contact payload into individual vCards. WhatsApp joins
+/// multi-contact shares into one blob, so cards split on `BEGIN:VCARD`;
+/// a payload without markers counts as one card.
+pub fn parse_shared_contacts(display_name: &str, vcard: &str) -> Vec<SharedContact> {
+    let mut cards: Vec<String> = Vec::new();
+    let mut current: Option<String> = None;
+    for line in vcard.lines() {
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("BEGIN:VCARD") {
+            current = Some(String::new());
+            continue;
+        }
+        if trimmed.eq_ignore_ascii_case("END:VCARD") {
+            if let Some(card) = current.take() {
+                cards.push(card);
+            }
+            continue;
+        }
+        if let Some(card) = current.as_mut() {
+            card.push_str(trimmed);
+            card.push('\n');
+        }
+    }
+    if cards.is_empty() && !vcard.trim().is_empty() {
+        cards.push(vcard.to_owned());
+    }
+    if cards.is_empty() {
+        return vec![SharedContact {
+            name: display_name.to_owned(),
+            phones: Vec::new(),
+        }];
+    }
+    cards
+        .iter()
+        .map(|card| parse_vcard(display_name, card))
+        .collect()
+}
+
+fn parse_vcard(display_name: &str, card: &str) -> SharedContact {
+    // Unfold continuation lines (a leading space or tab means "glue").
+    let mut lines: Vec<String> = Vec::new();
+    for line in card.lines() {
+        if (line.starts_with(' ') || line.starts_with('\t'))
+            && let Some(last) = lines.last_mut()
+        {
+            last.push_str(line.trim_start());
+        } else {
+            lines.push(line.trim().to_owned());
+        }
+    }
+    let mut name: Option<String> = None;
+    let mut structured: Option<String> = None;
+    let mut phones: Vec<String> = Vec::new();
+    for line in &lines {
+        let Some((field, value)) = line.split_once(':') else {
+            continue;
+        };
+        // iOS numbers arrive as `item1.TEL;TYPE=...:`, Android as
+        // `TEL;TYPE=CELL:`. Match the property name before any `;`.
+        let property = field
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .rsplit('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        if property == "FN" {
+            let value = value.trim().replace("\\,", ",");
+            if !value.is_empty() && name.is_none() {
+                name = Some(value);
+            }
+        } else if property == "N" {
+            if structured.is_none() {
+                structured = Some(value.to_owned());
+            }
+        } else if property == "TEL" {
+            let digits: String = value.chars().filter(char::is_ascii_digit).collect();
+            if digits.len() >= 7 && !phones.contains(&digits) {
+                phones.push(digits);
+            }
+        }
+    }
+    let name = name
+        .filter(|name| !name.is_empty())
+        .or_else(|| structured_name(structured.as_deref()))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            phones
+                .first()
+                .map(|phone| crate::util::phone(phone))
+                .unwrap_or_else(|| display_name.to_owned())
+        });
+    SharedContact { name, phones }
+}
+
+fn structured_name(n: Option<&str>) -> Option<String> {
+    let parts: Vec<&str> = n?.split(';').collect();
+    let family = parts.first().copied().unwrap_or_default().trim();
+    let given = parts.get(1).copied().unwrap_or_default().trim();
+    let full = format!("{given} {family}").trim().to_owned();
+    if full.is_empty() { None } else { Some(full) }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Page {
     Chats,
@@ -1043,6 +1155,12 @@ pub enum Action {
         first: String,
         last: String,
     },
+    /// Opens the new-contact dialog prefilled from a shared contact card.
+    PrefillNewContact {
+        phone: String,
+        first: String,
+        last: String,
+    },
     /// Searches GIFs or lists trending results for an empty query.
     SearchGifs(String),
     SendGif(Gif),
@@ -1337,6 +1455,41 @@ mod tests {
         };
         assert_eq!(stranger.label().as_deref(), Some("~Bob"));
         assert_eq!(Contact::default().label(), None);
+    }
+
+    #[test]
+    fn shared_contacts_parse_android_and_ios_vcards() {
+        let android = "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nN:Lovelace;Ada;;;\nTEL;TYPE=CELL:+55 11 91234-5678\nEND:VCARD";
+        let parsed = parse_shared_contacts("Ada", android);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "Ada Lovelace");
+        assert_eq!(parsed[0].phones, vec!["5511912345678"]);
+        let ios = "BEGIN:VCARD\nVERSION:3.0\nN:Doe;John;;;\nitem1.TEL;TYPE=CELL:+1 555-123-4567\nitem1.X-ABLabel:Mobile\nEND:VCARD";
+        let parsed = parse_shared_contacts("John", ios);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "John Doe");
+        assert_eq!(parsed[0].phones, vec!["15551234567"]);
+    }
+
+    #[test]
+    fn shared_contacts_split_multi_card_blobs_and_dedupe() {
+        let blob = "BEGIN:VCARD\nVERSION:3.0\nFN:Ada\nTEL:+5511912345678\nTEL:+5511912345678\nEND:VCARD\nBEGIN:VCARD\nVERSION:3.0\nFN:Bob\nTEL;TYPE=WORK:+551133334444\nEND:VCARD";
+        let parsed = parse_shared_contacts("2 contacts", blob);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].phones, vec!["5511912345678"]);
+        assert_eq!(parsed[1].name, "Bob");
+        assert_eq!(parsed[1].phones, vec!["551133334444"]);
+    }
+
+    #[test]
+    fn shared_contacts_fall_back_without_markers_or_phones() {
+        let parsed = parse_shared_contacts("Mystery", "FN:No Signal\nNOTE:no phone here");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "No Signal");
+        assert!(parsed[0].phones.is_empty());
+        let parsed = parse_shared_contacts("Mystery", "");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "Mystery");
     }
 
     #[test]

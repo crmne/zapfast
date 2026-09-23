@@ -3259,6 +3259,16 @@ impl App {
                     to_phone: self.settings.save_contacts_to_phone,
                 });
             }
+            Action::PrefillNewContact { phone, first, last } => {
+                self.emoji_start = None;
+                self.mention_start = None;
+                self.new_contact_phone = phone;
+                self.new_contact_name = first;
+                self.new_contact_last = last;
+                self.new_contact_pending = false;
+                self.contact_edit = None;
+                self.dialog = Some(Dialog::NewContact);
+            }
             Action::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
             Action::SetChatFilter(filter) => {
                 if self.locked_folder {
