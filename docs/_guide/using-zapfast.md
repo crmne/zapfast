@@ -130,9 +130,10 @@ reply actions remain unavailable.
 
 ## Voice messages
 
-Voice messages play in the chat with a seekable waveform. Choose 1x, 1.25x,
-1.5x, 1.75x, or 2x directly from the speed buttons beside the waveform; the
-choice is remembered for later messages. The speaker's pitch stays the same at
+Voice messages play in the chat with a seekable waveform. The chip beside the
+waveform cycles the playback speed between 1x, 1.5x, and 2x. Right-click the
+message for every speed, including 1.25x and 1.75x. The choice is remembered
+for later messages. The speaker's pitch stays the same at
 every speed. The first play sends
 a played receipt. When the composer is empty, the send button becomes a
 microphone. Press Enter or the send button to send the recording, or Escape or

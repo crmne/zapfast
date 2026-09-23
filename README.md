@@ -114,10 +114,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   you delete or clear on the phone disappear here as well, and history that
   was already on its way does not bring them back.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
-  in the chat. Select 1x, 1.25x, 1.5x, 1.75x, or 2x directly from the
-  bubble, keeping the speaker's pitch, and the last choice applies to later
-  messages. The app normalizes quiet recordings and handles OGG/Opus
-  without external tools.
+  in the chat. The speed chip cycles between 1x, 1.5x, and 2x, and the
+  message menu offers 1x, 1.25x, 1.5x, 1.75x, and 2x, keeping the speaker's
+  pitch; the last choice applies to later messages. The app normalizes quiet
+  recordings and handles OGG/Opus without external tools.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation; invoking search keeps focus in search, and
@@ -579,7 +579,8 @@ Noto emoji font; demo GIF search uses these local fixtures. The tour makes no
 sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
-Use `--demo-page chat-menu` to preview the compact chat context menu.
+Use `--demo-page chat-menu` to preview the compact chat context menu, and
+`--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.

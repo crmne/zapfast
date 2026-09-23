@@ -53,6 +53,19 @@ impl Status {
 /// Playback speeds, in ascending order, matching the phone.
 pub const SPEEDS: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
 
+/// Speeds the speed chip cycles through, as on the phone. The others are
+/// chosen from the message menu.
+pub const CYCLED_SPEEDS: [f32; 3] = [1.0, 1.5, 2.0];
+
+/// The speed after `speed` when the chip is clicked: the next faster cycled
+/// speed, wrapping from 2x back to 1x.
+pub fn next_cycled_speed(speed: f32) -> f32 {
+    CYCLED_SPEEDS
+        .into_iter()
+        .find(|&candidate| candidate > speed)
+        .unwrap_or(CYCLED_SPEEDS[0])
+}
+
 /// The supported speed nearest to `speed`; non-finite speeds give 1x.
 pub fn supported_speed(speed: f32) -> f32 {
     if !speed.is_finite() {
@@ -650,6 +663,16 @@ mod tests {
         assert_eq!(speed_label(SPEEDS[2]), "1.5x");
         assert_eq!(speed_label(SPEEDS[3]), "1.75x");
         assert_eq!(speed_label(SPEEDS[4]), "2x");
+    }
+
+    #[test]
+    fn the_chip_cycles_like_the_phone() {
+        assert_eq!(next_cycled_speed(1.0), 1.5);
+        assert_eq!(next_cycled_speed(1.5), 2.0);
+        assert_eq!(next_cycled_speed(2.0), 1.0);
+        // A speed chosen from the menu moves on to the next faster one.
+        assert_eq!(next_cycled_speed(1.25), 1.5);
+        assert_eq!(next_cycled_speed(1.75), 2.0);
     }
 
     #[test]
