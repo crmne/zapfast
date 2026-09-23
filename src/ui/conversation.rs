@@ -1619,13 +1619,26 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         app.scroll_to_bottom = false;
     }
     if divider_placed {
-        if let Some(divider) = app.unread_divider.as_mut() {
+        if let Some(divider) = app
+            .unread_divider
+            .as_mut()
+            .filter(|divider| divider.chat == chat.id)
+        {
             divider.placed = true;
         }
         app.scroll_to_bottom = false;
     }
     if anchored {
         app.scroll_anchor = None;
+        // The message the reader jumped to wins over the unread divider,
+        // which would otherwise scroll away from it on the next frame.
+        if let Some(divider) = app
+            .unread_divider
+            .as_mut()
+            .filter(|divider| divider.chat == chat.id)
+        {
+            divider.placed = true;
+        }
     } else if let Some(anchor) = app.scroll_anchor.clone()
         && !loading
         && !fetching

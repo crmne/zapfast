@@ -2890,6 +2890,11 @@ impl App {
             }
             Action::OpenMessage { chat, message } => {
                 self.open_chat(chat.clone());
+                // A locked chat stays shut outside its folder, even for a
+                // notification clicked before the chat was locked.
+                if self.open_chat.as_deref() != Some(chat.as_str()) {
+                    return;
+                }
                 // Keep the search result, not the chat end, in view.
                 self.scroll_to_bottom = false;
                 self.at_bottom = false;
@@ -5986,6 +5991,33 @@ mod tests {
             commands.try_recv().unwrap(),
             Command::MarkPlayed { receipts: true, .. }
         ));
+    }
+
+    #[test]
+    fn a_clicked_notification_leaves_a_locked_chat_shut() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        let mut locked = Chat::new(chat.into(), "Ada".into());
+        locked.locked = true;
+        app.chats = vec![locked];
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![message(chat, "secret", 1)], false);
+        app.notification_opens
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(crate::notify::NotificationTarget {
+                chat: chat.into(),
+                message: "secret".into(),
+            });
+
+        app.handle_notification_opens();
+        app.apply_actions(&ctx);
+
+        assert_eq!(app.open_chat, None);
+        assert_eq!(app.scroll_anchor, None);
     }
 
     #[test]

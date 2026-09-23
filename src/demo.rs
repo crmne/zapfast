@@ -2318,6 +2318,51 @@ mod tests {
         }
     }
 
+    /// A clicked notification lands on the message it announced and keeps it
+    /// in view, even with the unread divider far above it.
+    #[test]
+    fn an_opened_message_stays_in_view_below_a_distant_unread_divider() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = SAMPLES[0].id;
+        let conversation = app.conversations.get_mut(chat).unwrap();
+        let mut template = conversation.messages.last().unwrap().clone();
+        template.from_me = false;
+        for n in 0..40 {
+            let mut row = template.clone();
+            row.id = format!("unread-{n}");
+            row.timestamp = template.timestamp + 1 + n;
+            row.content = crate::model::Content::text(format!("Unread line {n}"));
+            conversation.messages.push(row);
+        }
+        let mut announced = template.clone();
+        announced.id = "announced".into();
+        announced.timestamp = template.timestamp + 100;
+        announced.content = crate::model::Content::text("The announced message");
+        conversation.messages.push(announced);
+        app.chats
+            .iter_mut()
+            .find(|row| row.id == chat)
+            .unwrap()
+            .unread = 41;
+        app.open_chat = None;
+
+        app.actions.push(crate::model::Action::OpenMessage {
+            chat: chat.into(),
+            message: "announced".into(),
+        });
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let visible = shapes.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Text(text)
+                if text.galley.text().contains("The announced message")
+                    && clipped.clip_rect.contains(text.pos + egui::vec2(1.0, 1.0)))
+        });
+        assert!(visible, "the announced message is on screen");
+    }
+
     /// Paints the self-chat through the real bubble path and checks what reaches
     /// the screen: every row in bidi order, brackets mirrored, the message
     /// flush right, and the time on its own row at the bottom right.
