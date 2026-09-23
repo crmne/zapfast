@@ -923,9 +923,7 @@ impl Worker {
             if existing.edited && matches!(content, Content::Interactive { .. }) {
                 continue;
             }
-            if let (Some(new), Some(old)) = (content.media_mut(), existing.content.media()) {
-                new.path = old.path.clone();
-            }
+            content.keep_local_paths(&existing.content);
             let mentions = self.mentions_of(&mentioned_of(base));
             let thumbnail = thumbnail_of(base);
             if self
@@ -2027,11 +2025,8 @@ impl Worker {
                         && let Some(mut content) = classify(edited.get_base_message())
                     {
                         // Preserve downloaded media when updating a caption.
-                        if let Ok(Some(existing)) = self.archive.message(&chat, &target)
-                            && let (Some(new), Some(old)) =
-                                (content.media_mut(), existing.content.media())
-                        {
-                            new.path = old.path.clone();
+                        if let Ok(Some(existing)) = self.archive.message(&chat, &target) {
+                            content.keep_local_paths(&existing.content);
                         }
                         if let Ok(true) = self.archive.set_content(&chat, &target, &content, true) {
                             self.emit_message(&chat, &target);

@@ -519,26 +519,7 @@ impl Worker {
                     continue;
                 };
                 if let Some(old) = self.archive.message(&chat, &id)? {
-                    if let (Some(old_media), Some(new_media)) =
-                        (old.content.media(), content.media_mut())
-                    {
-                        new_media.path = old_media.path.clone();
-                    }
-                    if let (
-                        Content::Interactive {
-                            card: Some(old), ..
-                        },
-                        Content::Interactive {
-                            card: Some(new), ..
-                        },
-                    ) = (&old.content, &mut content)
-                    {
-                        for (old, new) in old.carousel.iter().zip(&mut new.carousel) {
-                            if let (Some(old), Some(new)) = (&old.image, &mut new.image) {
-                                new.path = old.path.clone();
-                            }
-                        }
-                    }
+                    content.keep_local_paths(&old.content);
                 }
                 self.archive.set_derived(
                     &chat,

@@ -495,6 +495,29 @@ impl Content {
         }
     }
 
+    /// Carries downloaded file paths over from `old` when rederiving content
+    /// from the raw protobuf: the main attachment and each carousel card's image.
+    pub fn keep_local_paths(&mut self, old: &Content) {
+        if let (Some(new), Some(old)) = (self.media_mut(), old.media()) {
+            new.path = old.path.clone();
+        }
+        if let (
+            Self::Interactive {
+                card: Some(new), ..
+            },
+            Self::Interactive {
+                card: Some(old), ..
+            },
+        ) = (self, old)
+        {
+            for (new, old) in new.carousel.iter_mut().zip(&old.carousel) {
+                if let (Some(new), Some(old)) = (&mut new.image, &old.image) {
+                    new.path = old.path.clone();
+                }
+            }
+        }
+    }
+
     pub fn media_mut(&mut self) -> Option<&mut Media> {
         match self {
             Self::Image { media, .. }
@@ -902,6 +925,35 @@ pub enum Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rederived_interactive_content_keeps_every_downloaded_image() {
+        let image = |path: Option<&str>| Media {
+            mime: "image/jpeg".into(),
+            size: 1,
+            width: None,
+            height: None,
+            path: path.map(PathBuf::from),
+            state: MediaState::Idle,
+        };
+        let content = |main: Option<&str>, cards: [Option<&str>; 2]| Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(InteractiveCard {
+                image: Some(image(main)),
+                carousel: cards
+                    .map(|path| InteractiveCard {
+                        image: Some(image(path)),
+                        ..Default::default()
+                    })
+                    .into(),
+                ..Default::default()
+            })),
+        };
+        let old = content(Some("/main.jpg"), [None, Some("/second.jpg")]);
+        let mut new = content(None, [None, None]);
+        new.keep_local_paths(&old);
+        assert_eq!(new, old);
+    }
 
     #[test]
     fn polls_validate_trimmed_questions_and_distinct_bounded_answers() {
