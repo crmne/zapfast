@@ -126,6 +126,14 @@ pub fn selectable_rich_text(
     response
 }
 
+/// An image for a local file, registered so egui's caches for it can be
+/// released once it leaves the screen.
+pub fn file_image(ui: &Ui, path: &Path) -> egui::Image<'static> {
+    let uri = crate::util::image_uri(path);
+    crate::image_cache::touch(ui.ctx(), &uri);
+    egui::Image::new(uri)
+}
+
 /// Round profile picture, or id-colored initials when no picture is available.
 pub fn avatar(
     ui: &mut Ui,
@@ -178,8 +186,7 @@ pub fn paint_avatar(
     let size = rect.width();
     let mut painted = false;
     if let Some(picture) = picture {
-        let uri = crate::util::image_uri(picture);
-        let image = egui::Image::new(uri)
+        let image = file_image(ui, picture)
             .fit_to_exact_size(Vec2::splat(size))
             .corner_radius(size / 2.0);
         if let Ok(egui::load::TexturePoll::Ready { .. }) =
@@ -534,6 +541,30 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
         }
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The author's website, linked from the credit line.
+pub const AUTHOR_URL: &str = "https://paolino.me";
+
+/// "Built with love by Carmine Paolino", with the name linking to
+/// [`AUTHOR_URL`]. Returns whether the name was clicked.
+pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> bool {
+    // Translators: {name} is replaced by the author's name, shown as a link.
+    let sentence = crate::i18n::gettext(locale, "Built with love by {name}");
+    let (before, after) = sentence.split_once("{name}").unwrap_or((&sentence, ""));
+    let mut clicked = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        theme::text(ui, "\u{2665}  ", theme::regular(13.0), palette.danger);
+        theme::text(ui, before, theme::regular(13.0), palette.secondary);
+        clicked = theme::link(ui, "Carmine Paolino", theme::medium(13.0), palette.link)
+            .on_hover_text(AUTHOR_URL)
+            .clicked();
+        if !after.is_empty() {
+            theme::text(ui, after, theme::regular(13.0), palette.secondary);
+        }
+    });
+    clicked
 }
 
 /// Labeled settings row.

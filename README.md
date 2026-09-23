@@ -27,8 +27,12 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   and message status. Search chats, saved messages, and contacts.
   Filter the list to unread, private (one-to-one), or group chats with the
   chips under the search bar; a chip with unread chats shows how many it has.
+  Followed channels have their own **Channels** chip and stay out of the other
+  filters; right-click it to mute or unmute every channel at once. **Archived**
+  opens the archived chats. Opening a chat with
+  unread messages scrolls to an "unread messages" divider above the first one.
   Pinned chats stay in pin order (most recently pinned first), regardless of
-  new messages. Chat and contact name searches ignore accents, so `Angel`
+  new messages. Like on the phone, you can pin up to three chats. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
   The filters stay on one row and scroll horizontally in narrow sidebars.
   Unnamed groups use a shared participant summary for their title and subtitle;
@@ -51,7 +55,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   do not change that list. If the original recipients are unknown, ZapFast
   waits for the phone's aggregate status instead of guessing from one reader.
   A message that could not be sent says "Not sent" beside its time. ZapFast
-  does not retry it; send it again yourself.
+  does not retry it; send it again yourself. Timestamps follow the system's
+  12-hour or 24-hour clock: the time format on Windows and macOS, and GNOME's
+  clock format or the time locale (`LC_TIME`) on Linux. **Select** in a
+  message's menu, or Ctrl-click (Command-click on macOS) on a message, starts
+  a selection: click more messages to add or remove them, Shift-click to add
+  everything up to the one you click, then **Forward…** sends them together,
+  in their original order, or Escape cancels.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs,
@@ -114,15 +124,21 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   you delete or clear on the phone disappear here as well, and history that
   was already on its way does not bring them back.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
-  in the chat. The playback speed cycles between 1x, 1.5x, and 2x from the
-  bubble, keeping the speaker's pitch, and the last choice applies to later
-  messages. The app normalizes quiet recordings and handles OGG/Opus
-  without external tools.
+  in the chat. The speed chip cycles between 1x, 1.5x, and 2x, and the
+  message menu offers 1x, 1.25x, 1.5x, 1.75x, and 2x, keeping the speaker's
+  pitch; the last choice applies to later messages. The app normalizes quiet
+  recordings and handles OGG/Opus without external tools. On Linux and
+  Windows, music and other media playing in other apps pause while you record
+  or play a voice message and resume afterwards; only players that were
+  playing are resumed. Two switches in Settings turn this off for recording
+  and for playback. Linux uses MPRIS, so any player that implements it works;
+  macOS has no public API for this, so the switches are hidden there.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation; invoking search keeps focus in search, and
   Escape clears search and returns to the composer; another Escape closes the
-  chat and saves your text draft. Open menus, dialogs, and unfinished actions
+  chat and saves your text draft. Drafts are kept in the encrypted archive, so
+  unsent text survives closing ZapFast and restarting. Open menus, dialogs, and unfinished actions
   are dismissed first. Type `:name` to autocomplete
   an emoji without leaving the composer, or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
@@ -133,6 +149,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   The conversation stays still while you choose; the emoji
   grid can scroll. Quick reactions learn from usage on this computer, independently
   of inserted emoji. These preferences do not sync from the phone.
+  Hovering a message also shows a small smiley control beside it; clicking it
+  opens the full reaction picker for that message, so right-click is never required.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
   timer, including replies, attachments, edits, and forwards. Forwarded copies
   use the destination chat's timer. Received messages remain in the local archive
@@ -141,8 +159,17 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   the phone. Changing the default timer for new chats leaves existing chats alone.
 - **View attachments.** ZapFast downloads files up to 64 MiB automatically or
   on click. Photos, stickers, GIFs, voice messages, audio, locations, contacts,
-  polls, and link previews appear in the chat. Videos and documents open in
-  their default desktop apps. Profile pictures and downloaded images support
+  polls, and link previews appear in the chat. Click a downloaded JPEG, PNG,
+  WebP, or GIF photo to preview it in ZapFast with fit and zoom controls, or
+  choose **Open externally**. Click a video to play it in its message, with
+  sound, a seek bar, and a mute switch; round video messages play inside their
+  circle with a progress ring, like on the phone. A video that is not
+  downloaded yet downloads first and then plays. Videos in codecs other than
+  H.264, such as HEVC, open in your system player, and so does **Open in system
+  player** in a video's right-click menu. Unsupported pictures and documents
+  keep opening in their default desktop apps. **Save as…** in a downloaded
+  attachment's right-click menu keeps a copy wherever you choose, starting in
+  your Downloads folder. Profile pictures and downloaded images support
   Windows drive paths and filenames with spaces or non-ASCII characters.
   If an attachment has expired, ZapFast asks your
   phone to upload it again. Downloads stop after two minutes with an inline
@@ -175,9 +202,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Consistent names.** Use names from your address book or public WhatsApp
   profile names across chats, replies, mentions, and notifications.
 - **Groups.** See members, sender names, and sender pictures. Announcement
-  groups are read-only for non-admins.
+  groups are read-only for non-admins. Clicking a `chat.whatsapp.com` invite
+  link shows the group's name, size, and description, and joins it (or sends a
+  join request when admins approve members) without leaving ZapFast.
 - **Presence.** See online, last-seen, and typing status, and send your typing
-  status.
+  status. Like WhatsApp Web, ZapFast shows you as online only while its window
+  is focused, and goes offline ten seconds after you switch away or hide it to
+  the tray, so your phone keeps receiving notifications meanwhile.
 - **Idle rendering.** History-sync progress updates when data arrives. Animated
   stickers and GIFs show a still first frame and play while hovered in the
   focused window, keeping idle conversations from continuously repainting.
@@ -189,6 +220,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Runs in the background.** Closing the window keeps ZapFast linked in the
   system tray. Reopen it from the tray or by launching it again. Quit from the
   tray or with `Ctrl+Q`, or disable this behavior in Settings.
+- **Start at login.** Turn on **Start at login** in Settings to start ZapFast in
+  the tray when you log in, without opening a window. It adds
+  `~/.config/autostart/zapfast.desktop` on Linux, a LaunchAgent in
+  `~/Library/LaunchAgents` on macOS, or a `Run` entry for your user on Windows,
+  and removes it when turned off. `zapfast --start-hidden` does the same by hand;
+  it opens the window anyway when no tray is available. The Flatpak does not
+  offer this setting yet.
 - **Desktop notifications.** Get notifications with the chat picture when you
   are away from the open chat. Muted chats do not notify you, and archived
   chats stay quiet until you unarchive them. Windows notifications
@@ -199,6 +237,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   device dismisses its outstanding notifications. On macOS, notifications use
   the installed ZapFast application's identity without an application chooser;
   unregistered development builds skip notifications if that identity is unavailable.
+  **Message sound** and **Group sound** in Settings choose ZapFast's own
+  **Chime** (the default for one-to-one chats) or **Ripple** (the default for
+  groups), the system's notification sound, no sound, or an audio file (WAV,
+  MP3, or OGG Vorbis) that ZapFast plays itself. **Notification sound** in a chat's right-click
+  menu gives that chat its own sound, stored in the encrypted archive.
 - **Update notices.** ZapFast checks GitHub once a day and shows a download
   link when a newer release is available. You can turn this off in Settings.
 - **Themes.** Light, dark, follow the system, or a local JSON palette. Native
@@ -208,7 +251,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   WhatsApp's `[time, date] Name:` format. Contact names and numbers are also
   selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
   `(DDD) XXXXX-XXXX`.
-- **Keyboard shortcuts.** `Ctrl+K` searches, `Alt+↑/↓` switches chats and
+- **Keyboard shortcuts.** `Ctrl+F` or `Ctrl+K` searches your chats,
+  `Ctrl+Shift+F` searches the open chat (Enter and Shift+Enter move between
+  matches), `Alt+↑/↓` switches chats and
   keeps the active chat visible in the list, `↑` in an empty input edits your
   previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
   message input, `Ctrl+N` opens New chat, and `?` (outside text fields) or
@@ -223,8 +268,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 ## What it does not do yet
 
-- Play ordinary videos in the app (they open in your player), or reply to
-  a message with an attachment.
+- Reply to a message with an attachment, or play videos in codecs other than
+  H.264 in the app (they open in your system player).
 - Calls, status posts, communities, newsletters, and group administration.
 - Submit interactive forms, payments, shopping flows, or carousel selections.
   Use these in WhatsApp Web or on your phone. Embedded videos and documents,
@@ -298,7 +343,12 @@ plaintext archive. Back up both the archive and its OS keyring key: copying only
 A missing key is different from a locked keyring. If ZapFast says the key is
 missing, restore the original OS credential store or use the original profile
 location. Do not delete the archive or create replacement credentials: neither
-can decrypt the existing archive. For help, report the OS, app version, whether
+can decrypt the existing archive. If the original key cannot come back,
+**Start over…** on that screen renames the unreadable archive to
+`archive-unreadable-<date>.db` beside it, forgets the linked session, and
+shows the linking screen: linking again brings recent history back from your
+phone. Remove the old ZapFast entry under Linked devices on the phone
+afterwards. For help, report the OS, app version, whether
 the profile was moved/restored, and the error text with personal paths removed.
 Never attach the archive, keys, or full logs from older releases.
 
@@ -379,9 +429,12 @@ any open locked conversation. Typing the code into ordinary search remains
 an alternative way in. Revealed locked chats are currently read-only:
 sending messages and forwarding into them remain disabled.
 
-On the first start after upgrading, chats wait for WhatsApp's lock-state
-recovery before appearing. Failed recovery retries while keeping chats hidden.
-The recovered state is saved in the encrypted archive for offline use.
+After linking or upgrading, chats wait up to ten seconds for WhatsApp's lock
+state before appearing. Chats already known to be locked stay hidden. If the
+lock state cannot be confirmed in time, the chats appear with a notice that
+chats locked on the phone may show until they sync, and recovery keeps retrying
+in the background. The recovered state is saved in the encrypted archive for
+offline use.
 
 Protocol logs omit private payloads and raw error details, including verbose
 logging. Panic logs record the source location without the panic payload.
@@ -429,6 +482,26 @@ which restriction applies. Replies from other devices retain their quotes too.
 These screenshots use synthetic offline chats. See the
 [usage guide](https://zapfast.rocks/using-zapfast/#interactive-messages) for
 download behavior and the remaining limitations.
+### Interface language
+
+**Settings > Appearance > Language** chooses the interface language. **Auto**
+follows the operating system's language and falls back to English when ZapFast
+has no translation for it. Brazilian Portuguese, German, Spanish, Italian,
+French, and Russian cover the chat list, search, composer, shortcut hints,
+Settings section titles, and dates. Translations are compiled from gettext PO
+files at build time, with no runtime parsing or network access. Message
+contents, contact names, logs, and protocol errors are never translated, and
+copied messages keep WhatsApp's `[time, date] Name:` format.
+
+### Proxy
+
+**Settings > Network > Proxy** sends the WhatsApp connection, media, profile
+pictures, GIF search, Signal sticker imports, and update checks through a proxy. It accepts
+`socks5h://host:port` (the proxy resolves names, as Tor expects),
+`socks5://host:port`, and `http://host:port`, each with an optional
+`user:password@`. A bare `host:port` is an HTTP proxy. Changing it reconnects
+at once. When the field is empty, ZapFast uses `ALL_PROXY` or `HTTPS_PROXY`
+from the environment and honors `NO_PROXY`.
 
 ## Files
 
@@ -437,7 +510,7 @@ download behavior and the remaining limitations.
 | Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit |
 | Device keys | `~/.local/state/zapfast/session.db` | Owned by whatsapp-rust; deleting it unlinks |
 | Messages | `~/.local/state/zapfast/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
-| Attachments, avatars | `~/.cache/zapfast/` | Safe to delete |
+| Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Saved stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
 | Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
 
@@ -477,7 +550,7 @@ platforms, use `zapfast reload-themes` after editing. The command also works whi
 the window is closed and never launches a stopped app.
 
 **Settings → Appearance → Wallpaper** offers WhatsApp's light and dark wallpaper
-colours, with a live preview of the selected colour and doodles. **Add WhatsApp
+colours, with a live preview of the selected colour and doodles. **Add
 doodles** controls only the SVG layer, so disabling it leaves the selected
 background colour in place. Light and dark selections are stored independently,
 and the embedded SVG is rendered at its native size and repeated across the
@@ -518,6 +591,7 @@ cargo run --features demo -- --demo            # sample chats, no connection
 cargo run --features demo -- --demo-page login # or settings, pair, info, light, …
 cargo run --features demo -- --demo-shot shot.png --demo-page chat,light
 cargo run --features demo -- --demo-tour      # Space starts/replays a 41-second tour
+cargo run --features demo -- --demo-hover 900,400 # holds a fake pointer there
 cargo test --all-features                      # includes a headless layout of every screen
 cargo clippy --all-targets --all-features -- -D warnings
 ```
@@ -557,7 +631,10 @@ Noto emoji font; demo GIF search uses these local fixtures. The tour makes no
 sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
-Use `--demo-page chat-menu` to preview the compact chat context menu.
+Use `--demo-page chat-menu` to preview the compact chat context menu, and
+`--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
+`--demo-page video` shows a video and round video messages, and
+`video-playing` or `note-playing` starts one of them, silently.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.
@@ -610,4 +687,4 @@ Release packaging uses the [native-packages](https://rubygems.org/gems/native-pa
 ## License
 
 MIT. Inter and Noto Color Emoji are under the SIL Open Font License; the icons
-are from [Lucide](https://lucide.dev) (ISC).
+and the chat wallpaper doodles are from [Lucide](https://lucide.dev) (ISC).

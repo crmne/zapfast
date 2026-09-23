@@ -193,6 +193,10 @@ pub fn install(ctx: &egui::Context) {
     install_fonts(ctx);
     register_icons(ctx);
     egui_extras::install_image_loaders(ctx);
+    // Drop the raw bytes and the decoded pixels once a texture is on the GPU.
+    // egui keeps all three copies of every image otherwise, and only ever
+    // evicts the textures of SVGs.
+    ctx.options_mut(|options| options.reduce_texture_memory = true);
 }
 
 /// Applies the palette to egui widgets.
@@ -339,6 +343,7 @@ fn install_fonts(ctx: &egui::Context) {
     for font in crate::system_fonts::fallbacks() {
         let mut data = FontData::from_static(&font.bytes);
         data.index = font.index;
+        data.tweak.scale = font.scale;
         fonts.font_data.insert(font.name.clone(), Arc::new(data));
         for family in fonts.families.values_mut() {
             family.push(font.name.clone());
@@ -426,6 +431,7 @@ pub enum Icon {
     User,
     Users,
     Video,
+    Volume2,
     VolumeX,
     WifiOff,
     X,
@@ -498,6 +504,7 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     User => "user",
     Users => "users",
     Video => "video",
+    Volume2 => "volume-2",
     VolumeX => "volume-x",
     WifiOff => "wifi-off",
     X => "x",
@@ -518,10 +525,43 @@ impl Icon {
     }
 }
 
-fn register_icons(ctx: &egui::Context) {
-    for (_, uri, bytes) in ICONS {
-        ctx.include_bytes(*uri, *bytes);
+/// Serves the embedded icon SVGs for the life of the context.
+///
+/// `reduce_texture_memory` makes egui drop an image's bytes once its texture
+/// is uploaded. An icon drawn at more than one size loses that texture when
+/// egui prunes the extra size variants, and with the bytes gone the next draw
+/// finds neither and paints egui's red "failed" placeholder. A loader whose
+/// `forget` does nothing keeps them: the icons are 69 small SVGs, so holding
+/// them costs nothing next to a single photo.
+struct IconBytes;
+
+impl egui::load::BytesLoader for IconBytes {
+    fn id(&self) -> &str {
+        egui::generate_loader_id!(IconBytes)
     }
+
+    fn load(&self, _: &egui::Context, uri: &str) -> egui::load::BytesLoadResult {
+        match ICONS.iter().find(|(_, icon, _)| *icon == uri) {
+            Some((_, _, bytes)) => Ok(egui::load::BytesPoll::Ready {
+                size: None,
+                bytes: (*bytes).into(),
+                mime: Some("image/svg+xml".to_owned()),
+            }),
+            None => Err(egui::load::LoadError::NotSupported),
+        }
+    }
+
+    fn forget(&self, _uri: &str) {}
+
+    fn forget_all(&self) {}
+
+    fn byte_size(&self) -> usize {
+        ICONS.iter().map(|(_, _, bytes)| bytes.len()).sum()
+    }
+}
+
+fn register_icons(ctx: &egui::Context) {
+    ctx.add_bytes_loader(std::sync::Arc::new(IconBytes));
 }
 
 /// A static icon.
@@ -965,12 +1005,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn inter_figures_are_tabular() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let width = |text: &str| {
+                ui.painter()
+                    .layout_no_wrap(text.to_owned(), regular(13.0), Color32::WHITE)
+                    .rect
+                    .width()
+            };
+            // With proportional figures "1:11" is far narrower than "8:88",
+            // so timers and durations jitter as they count.
+            assert!(
+                (width("1:11") - width("8:88")).abs() < 0.01,
+                "bundled Inter should draw tabular figures"
+            );
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
     fn every_icon_has_a_file() {
         for (icon, uri, bytes) in ICONS {
             assert!(!bytes.is_empty(), "{icon:?} is empty");
             assert!(uri.ends_with(".svg"));
             assert_eq!(icon.uri(), *uri);
         }
+    }
+
+    /// egui drops an image's bytes after the texture upload when
+    /// `reduce_texture_memory` is on, and then prunes the SVG's extra size
+    /// variants. A loader that survives both is what keeps an icon that is
+    /// drawn at two sizes from falling back to egui's red placeholder.
+    #[test]
+    fn icon_bytes_outlive_forgetting() {
+        use egui::load::{BytesLoader as _, BytesPoll};
+        let loader = IconBytes;
+        let (icon, uri, bytes) = ICONS[0];
+        let served =
+            |loader: &IconBytes, uri: &str| match loader.load(&egui::Context::default(), uri) {
+                Ok(BytesPoll::Ready { bytes, .. }) => Some(bytes),
+                _ => None,
+            };
+        let loaded = served(&loader, uri).expect("the icon loader serves every icon");
+        assert_eq!(&*loaded, bytes, "{icon:?} bytes differ");
+        loader.forget(uri);
+        loader.forget_all();
+        assert!(
+            served(&loader, uri).is_some(),
+            "{icon:?} must survive a forget"
+        );
+        assert!(
+            matches!(
+                loader.load(&egui::Context::default(), "bytes://zapfast-icon-nope.svg"),
+                Err(egui::load::LoadError::NotSupported)
+            ),
+            "other URIs must fall through to the default loader"
+        );
     }
 
     fn assert_readable(name: &str, pairs: &[(&str, Color32, Color32)], target: f32) {

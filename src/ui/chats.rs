@@ -107,7 +107,12 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         app.actions.push(Action::Open(Page::Settings));
                     }
                     ui.add_space(2.0);
-                    theme::text(ui, "Chats", theme::bold(20.0), palette.text);
+                    theme::text(
+                        ui,
+                        crate::i18n::gettext(app.locale, "Chats"),
+                        theme::bold(20.0),
+                        palette.text,
+                    );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -157,8 +162,15 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             let id = egui::Id::new("chat-search");
             let width = ui.available_width();
             let mut text = app.search.clone();
-            let response = widgets::search_field(ui, &palette, id, &mut text, "Search", width)
-                .tab_stop(Stop::Search);
+            let response = widgets::search_field(
+                ui,
+                &palette,
+                id,
+                &mut text,
+                crate::i18n::gettext(app.locale, "Search").as_ref(),
+                width,
+            )
+            .tab_stop(Stop::Search);
             if text != app.search {
                 app.actions.push(Action::Search(text));
             }
@@ -211,7 +223,12 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                     );
                 } else {
-                    theme::text(ui, "Chats", theme::bold(20.0), palette.text);
+                    theme::text(
+                        ui,
+                        crate::i18n::gettext(app.locale, "Chats"),
+                        theme::bold(20.0),
+                        palette.text,
+                    );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -250,7 +267,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                 &palette,
                 egui::Id::new("chat-search"),
                 &mut text,
-                "Search",
+                crate::i18n::gettext(app.locale, "Search").as_ref(),
                 ui.available_width(),
             )
             .tab_stop(Stop::Search);
@@ -272,13 +289,13 @@ pub fn chat_row_id(chat: &str) -> egui::Id {
 
 /// Stable filter-chip id used by interaction tests.
 pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
-    egui::Id::new(("chat-filter", filter.label()))
+    egui::Id::new(("chat-filter", filter as u8))
 }
 
-/// Filter chips under the search field. Search and the archive list every
-/// match, so the chips hide there.
+/// Filter chips under the search field. Search lists every match, so the
+/// chips hide there.
 fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
-    if app.show_archived || (!app.locked_folder_open() && !app.search.trim().is_empty()) {
+    if !app.locked_folder_open() && !app.search.trim().is_empty() {
         return;
     }
     let palette = app.palette;
@@ -296,28 +313,82 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                         ChatFilter::All => 0,
                         _ => app.unread_chats(filter),
                     };
-                    let selected = !app.locked_folder_open() && app.chat_filter == filter;
-                    let chip = widgets::filter_chip(ui, &palette, filter.label(), count, selected)
-                        .tab_stop(match filter {
-                            ChatFilter::All => Stop::All,
-                            ChatFilter::Unread => Stop::Unread,
-                            ChatFilter::Private => Stop::Private,
-                            ChatFilter::Groups => Stop::Groups,
-                        });
+                    let selected = !app.locked_folder_open()
+                        && !app.show_archived
+                        && app.chat_filter == filter;
+                    let chip = widgets::filter_chip(
+                        ui,
+                        &palette,
+                        filter.label(app.locale).as_ref(),
+                        count,
+                        selected,
+                    )
+                    .tab_stop(match filter {
+                        ChatFilter::All => Stop::All,
+                        ChatFilter::Unread => Stop::Unread,
+                        ChatFilter::Private => Stop::Private,
+                        ChatFilter::Groups => Stop::Groups,
+                        ChatFilter::Channels => Stop::Channels,
+                    });
                     // Store the chip rect for interaction tests.
                     ui.ctx()
                         .data_mut(|data| data.insert_temp(filter_chip_id(filter), chip.rect));
+                    let chip = if filter == ChatFilter::Channels {
+                        let now = crate::util::now();
+                        let all_muted = app
+                            .chats
+                            .iter()
+                            .filter(|chat| chat.is_channel())
+                            .all(|chat| chat.muted(now));
+                        chip.context_menu(|ui| {
+                            let (icon, label) = if all_muted {
+                                (Icon::Bell, "Unmute all channels")
+                            } else {
+                                (Icon::BellOff, "Mute all channels")
+                            };
+                            if widgets::menu_item(ui, &palette, Some(icon), label) {
+                                app.actions.push(Action::MuteAllChannels(!all_muted));
+                                ui.close();
+                            }
+                        });
+                        chip
+                    } else {
+                        chip
+                    };
                     if chip.clicked() {
                         // A second click on the active chip returns to every chat.
                         let next = if selected { ChatFilter::All } else { filter };
                         app.actions.push(Action::SetChatFilter(next));
                     }
                 }
+                if app.archived_count() > 0 || app.show_archived {
+                    let selected = app.show_archived;
+                    let chip = widgets::filter_chip(
+                        ui,
+                        &palette,
+                        crate::i18n::gettext(app.locale, "Archived").as_ref(),
+                        app.archived_unread(),
+                        selected,
+                    )
+                    .tab_stop(Stop::Archived);
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new("archived-chip"), chip.rect);
+                    });
+                    if chip.clicked() {
+                        app.actions.push(Action::ShowArchived(!selected));
+                    }
+                }
                 if app.locked_count() > 0 || app.locked_folder_open() {
                     let selected = app.locked_folder_open();
-                    let chip = widgets::filter_chip(ui, &palette, "Locked", 0, selected)
-                        .tab_stop(Stop::Locked)
-                        .on_hover_text("Open locked chats with your local code");
+                    let chip = widgets::filter_chip(
+                        ui,
+                        &palette,
+                        crate::i18n::gettext(app.locale, "Locked").as_ref(),
+                        0,
+                        selected,
+                    )
+                    .tab_stop(Stop::Locked)
+                    .on_hover_text("Open locked chats with your local code");
                     ui.ctx()
                         .data_mut(|data| data.insert_temp(egui::Id::new("locked-chip"), chip.rect));
                     if chip.clicked() {
@@ -349,15 +420,14 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
-    let archived = app.archived_count();
-    let show_archive_row = !app.show_archived && archived > 0 && app.chat_filter == ChatFilter::All;
-    if chats.is_empty() && !show_archive_row {
+    if chats.is_empty() {
         let (title, body) = if app.show_archived {
             ("Nothing archived", "Archived chats appear here.")
         } else if app.chat_filter != ChatFilter::All {
             let title = match app.chat_filter {
                 ChatFilter::Unread => "No unread chats",
                 ChatFilter::Private => "No private chats",
+                ChatFilter::Channels => "No channels",
                 _ => "No groups",
             };
             (title, "Choose All to see every chat.")
@@ -373,16 +443,14 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let row_height = theme::ROW_HEIGHT;
-    let total = chats.len() + usize::from(show_archive_row);
+    let total = chats.len();
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-list")
         .auto_shrink([false, false]);
-    let target_row = app.scroll_chat_into_view.as_ref().and_then(|target| {
-        chats
-            .iter()
-            .position(|chat| chat.id == *target)
-            .map(|index| index + usize::from(show_archive_row))
-    });
+    let target_row = app
+        .scroll_chat_into_view
+        .as_ref()
+        .and_then(|target| chats.iter().position(|chat| chat.id == *target));
     if let Some(target_row) = target_row {
         let id = ui.make_persistent_id(egui::IdSalt::new("chat-list"));
         let current = egui::scroll_area::State::load(ui.ctx(), id)
@@ -401,11 +469,7 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     }
     scroll_area.show_rows(ui, row_height, total, |ui, range| {
         for index in range {
-            if show_archive_row && index == 0 {
-                archive_row(app, ui, archived);
-                continue;
-            }
-            let chat = &chats[index - usize::from(show_archive_row)];
+            let chat = &chats[index];
             // Key by chat so an open menu survives list reordering.
             let response = ui
                 .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
@@ -606,7 +670,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;
         let stamp_galley = ui.painter().layout_no_wrap(
-            crate::util::chat_stamp(hit.timestamp),
+            crate::util::chat_stamp(app.locale, hit.timestamp),
             theme::regular(11.5),
             palette.dim,
         );
@@ -731,57 +795,6 @@ pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
     }
 }
 
-fn archive_row(app: &mut App, ui: &mut egui::Ui, count: usize) {
-    let palette = app.palette;
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), theme::ROW_HEIGHT),
-        Sense::click(),
-    );
-    theme::reveal_focus(&response);
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            ui.is_enabled(),
-            format!("Archived, {count} chats"),
-        )
-    });
-    if ui.is_rect_visible(rect) {
-        if response.hovered() {
-            ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-        }
-        let icon_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(22.0));
-        Icon::Archive
-            .image(palette.accent, 22.0)
-            .paint_at(ui, icon_rect);
-        ui.painter().text(
-            pos2(rect.left() + 76.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            "Archived",
-            theme::medium(14.5),
-            palette.text,
-        );
-        ui.painter().text(
-            pos2(rect.right() - 16.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            count.to_string(),
-            theme::regular(12.5),
-            palette.accent,
-        );
-        ui.painter().hline(
-            (rect.left() + 76.0)..=rect.right(),
-            rect.bottom() - 0.5,
-            egui::Stroke::new(1.0, palette.outline),
-        );
-    }
-    if response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        app.show_archived = true;
-    }
-}
-
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -825,7 +838,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;
         let stamp = if chat.last_activity > 0 {
-            crate::util::chat_stamp(chat.last_activity)
+            crate::util::chat_stamp(app.locale, chat.last_activity)
         } else {
             String::new()
         };
@@ -1017,6 +1030,7 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
             }
         }
     }
+    sound_menu(app, ui, palette, chat);
     if widgets::menu_item(
         ui,
         palette,
@@ -1057,6 +1071,41 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
                 chat.id.clone(),
             )));
     }
+}
+
+/// A chat's own notification sound, overriding Settings for this chat.
+fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) {
+    use crate::settings::NotificationSound;
+    ui.menu_button("Notification sound", |ui| {
+        let current = chat.notification_sound.clone();
+        for (sound, label) in [
+            (None, "Default"),
+            (Some(NotificationSound::Chime), "Chime"),
+            (Some(NotificationSound::Ripple), "Ripple"),
+            (Some(NotificationSound::System), "System sound"),
+            (Some(NotificationSound::None), "No sound"),
+        ] {
+            let checked = current == sound;
+            if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label) {
+                app.actions.push(Action::SetChatSound {
+                    chat: chat.id.clone(),
+                    sound,
+                });
+                ui.close();
+            }
+        }
+        if let Some(NotificationSound::Custom(path)) = &current {
+            let name = path.file_name().map_or_else(
+                || "Custom".to_owned(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            widgets::menu_item(ui, palette, Some(Icon::Check), &name);
+        }
+        if widgets::menu_item(ui, palette, None, "Choose a file…") {
+            app.actions.push(Action::PickChatSound(chat.id.clone()));
+            ui.close();
+        }
+    });
 }
 
 #[cfg(test)]

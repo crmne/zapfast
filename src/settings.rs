@@ -275,10 +275,29 @@ impl WallpaperColor {
     }
 }
 
+/// The sound a new-message notification makes.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationSound {
+    /// ZapFast's two-note chime, the default for one-to-one chats.
+    #[default]
+    Chime,
+    /// ZapFast's three-note ripple, the default for groups.
+    Ripple,
+    /// Whatever the operating system plays for notifications.
+    System,
+    /// No sound.
+    None,
+    /// An audio file ZapFast plays itself.
+    Custom(std::path::PathBuf),
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeChoice,
+    /// Interface language. `None` follows the operating system's locale.
+    pub interface_language: Option<crate::i18n::Locale>,
     /// Filename of the selected local JSON palette.
     pub custom_theme: Option<String>,
     #[serde(
@@ -328,6 +347,16 @@ pub struct Settings {
     pub keep_running_in_background: bool,
     /// Desktop notifications while away from the chat.
     pub notifications: bool,
+    /// Sound for notifications from one-to-one chats.
+    pub message_sound: NotificationSound,
+    /// Sound for notifications from groups.
+    pub group_sound: NotificationSound,
+    /// Folder for new downloads. `None` keeps them in the cache. Files
+    /// already downloaded stay where they are when this changes.
+    pub download_folder: Option<std::path::PathBuf>,
+    /// Proxy for WhatsApp, media, and updates, such as
+    /// `socks5h://127.0.0.1:9050`. Empty follows `ALL_PROXY` / `HTTPS_PROXY`.
+    pub proxy: String,
     /// Ask GitHub once a day whether a newer release exists.
     pub check_for_updates: bool,
     /// Download verified updates in the background; restarting remains explicit.
@@ -336,6 +365,10 @@ pub struct Settings {
     pub names_from_contacts: bool,
     /// Voice and audio playback speed multiplier.
     pub voice_speed: f32,
+    /// Pause other apps' media while recording a voice message.
+    pub pause_media_while_recording: bool,
+    /// Pause other apps' media while a voice or audio message plays.
+    pub pause_media_while_playing: bool,
     /// Also add saved contacts to the phone's address book.
     pub save_contacts_to_phone: bool,
     /// Legacy plaintext code, accepted once and rewritten as a verifier.
@@ -351,6 +384,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::Dark,
+            interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,
             system_theme_cache: None,
@@ -372,11 +406,17 @@ impl Default for Settings {
             giphy_key: String::new(),
             keep_running_in_background: true,
             notifications: true,
+            message_sound: NotificationSound::Chime,
+            group_sound: NotificationSound::Ripple,
+            download_folder: None,
+            proxy: String::new(),
             check_for_updates: true,
             download_updates_automatically: false,
             names_from_contacts: true,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
+            pause_media_while_recording: true,
+            pause_media_while_playing: true,
             chat_lock_code: None,
             chat_lock_code_hash: None,
             chat_lock_hint_dismissed: false,
@@ -539,10 +579,19 @@ mod tests {
             zoom: 1.25,
             enter_sends: false,
             voice_speed: 1.5,
+            interface_language: Some(crate::i18n::Locale::German),
+            message_sound: NotificationSound::None,
+            group_sound: NotificationSound::Custom("/sounds/ding.wav".into()),
             ..Settings::default()
         };
         settings.save(&path).expect("saves");
         assert_eq!(Settings::load(&path), settings);
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("reads")
+                .contains(r#""interface_language": "de""#),
+            "the language keeps its stable serde name"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
