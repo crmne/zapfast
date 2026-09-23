@@ -102,6 +102,14 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   bubble, keeping the speaker's pitch, and the last choice applies to later
   messages. The app normalizes quiet recordings and handles OGG/Opus
   without external tools.
+- **Transcription.** Optionally transcribe a voice message with a remote
+  provider (OpenAI-compatible, Grok, or Gemini). Right-click the message and
+  choose **Transcribe**, or click the caption button on a downloaded clip. The
+  transcription appears under the bubble and can be selected and copied. It is
+  always manual: nothing is transcribed automatically. The provider, endpoint,
+  and model are configured in Settings; the API key is stored in your OS
+  keyring, never in settings or logs, and is sent only to the endpoint you
+  configure over HTTPS (plain HTTP is accepted only for localhost).
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation; invoking search keeps focus in search, and

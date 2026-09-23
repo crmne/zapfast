@@ -4,7 +4,7 @@ use egui::{CornerRadius, Frame, Margin};
 
 use crate::app::App;
 use crate::model::{Action, Dialog, Page};
-use crate::settings::ThemeChoice;
+use crate::settings::{ThemeChoice, TranscriptionProvider};
 use crate::theme::{self, Icon};
 
 use super::widgets;
@@ -184,6 +184,128 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             }
                         },
                     );
+
+                    section(ui, app, "Transcription");
+                    widgets::setting_row(
+                        ui,
+                        &palette,
+                        "Provider",
+                        "Remote speech-to-text for voice messages. The audio is sent to the provider you choose; your API key stays in your OS keyring and is never saved with settings. Transcription is manual: right-click a voice message and choose Transcribe.",
+                        |ui| {
+                            let selected = app.settings.transcription_provider.label();
+                            let response = egui::ComboBox::from_id_salt("transcription_provider")
+                                .selected_text(selected)
+                                .width(200.0_f32.min(ui.available_width()))
+                                .show_ui(ui, |ui| {
+                                    for choice in TranscriptionProvider::ALL {
+                                        if theme_option(
+                                            ui,
+                                            &palette,
+                                            choice.label(),
+                                            app.settings.transcription_provider == choice,
+                                        ) {
+                                            app.settings.transcription_provider = choice;
+                                            app.actions.push(Action::SettingsChanged);
+                                        }
+                                    }
+                                });
+                            response.response.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::ComboBox,
+                                    ui.is_enabled(),
+                                    "Transcription provider",
+                                )
+                            });
+                        },
+                    );
+                    if app.settings.transcription_provider != TranscriptionProvider::None {
+                        widgets::setting_row(
+                            ui,
+                            &palette,
+                            "Endpoint",
+                            "HTTPS only; HTTP is accepted only for localhost. Leave empty for the provider's default. Credentials, queries, and fragments are rejected.",
+                            |ui| {
+                                let default = app
+                                    .settings
+                                    .transcription_provider
+                                    .default_base_url()
+                                    .unwrap_or_default();
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut app.settings.transcription_base_url,
+                                    )
+                                    .font(theme::regular(13.0))
+                                    .text_color(palette.text)
+                                    .desired_width(260.0)
+                                    .hint_text(default),
+                                );
+                                if response.changed() {
+                                    app.actions.push(Action::SettingsChanged);
+                                }
+                            },
+                        );
+                        widgets::setting_row(
+                            ui,
+                            &palette,
+                            "Model",
+                            "The provider's transcription model. Leave empty for the provider's default.",
+                            |ui| {
+                                let default = app.settings.transcription_provider.default_model();
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut app.settings.transcription_model)
+                                        .font(theme::regular(13.0))
+                                        .text_color(palette.text)
+                                        .desired_width(220.0)
+                                        .hint_text(default),
+                                );
+                                if response.changed() {
+                                    app.actions.push(Action::SettingsChanged);
+                                }
+                            },
+                        );
+                    }
+                    {
+                        // The key buffer lives in egui memory: the keyring holds
+                        // the only stored copy, so there is nothing to read back.
+                        let key_id = ui.id().with("transcription_api_key");
+                        let mut key: String =
+                            ui.data_mut(|data| data.get_temp(key_id).unwrap_or_default());
+                        widgets::setting_row(
+                            ui,
+                            &palette,
+                            "API key",
+                            "Stored in your OS keyring, never in settings or logs.",
+                            |ui| {
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut key)
+                                        .font(theme::regular(13.0))
+                                        .text_color(palette.text)
+                                        .desired_width(220.0)
+                                        .hint_text(if app.transcription_key_set {
+                                            "Saved in keyring"
+                                        } else {
+                                            "API key"
+                                        })
+                                        .password(true),
+                                );
+                                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                    let trimmed = key.trim().to_owned();
+                                    app.actions.push(Action::SetTranscriptionKey(trimmed));
+                                    key.clear();
+                                }
+                                if ui.small_button("Save").clicked() {
+                                    let trimmed = key.trim().to_owned();
+                                    app.actions.push(Action::SetTranscriptionKey(trimmed));
+                                    key.clear();
+                                }
+                                if app.transcription_key_set && ui.small_button("Clear").clicked() {
+                                    key.clear();
+                                    app.actions.push(Action::ClearTranscriptionKey);
+                                }
+                                ui.data_mut(|data| data.insert_temp(key_id, key));
+                            },
+                        );
+                    }
 
                     section(ui, app, "Account");
                     let name = app.me_name.clone().unwrap_or_default();

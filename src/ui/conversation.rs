@@ -1174,6 +1174,8 @@ struct View<'a> {
     chat: &'a Chat,
     me: Option<&'a str>,
     auto_download: bool,
+    /// Whether a remote transcription provider is configured.
+    transcription_enabled: bool,
     connected: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
     /// Show avatars for all incoming messages, not only groups.
@@ -1224,6 +1226,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         chat,
         me: app.me.as_deref(),
         auto_download: app.settings.auto_download,
+        transcription_enabled: app.settings.transcription_provider
+            != crate::settings::TranscriptionProvider::None,
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         pictures: app.settings.show_sender_pictures,
@@ -1321,8 +1325,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 || previous.is_none_or(|previous| {
                                     previous.sender != message.sender || previous.from_me
                                 }));
+                        let transcript = conversation
+                            .transcripts
+                            .get(&message.id)
+                            .map(String::as_str);
                         if let Some(response) =
-                            bubble(ui, &view, message, show_sender, &mut actions)
+                            bubble(ui, &view, message, show_sender, transcript, &mut actions)
                             && view.anchor == Some(message.id.as_str())
                         {
                             response.scroll_to_me(Some(Align::Center));
@@ -1558,6 +1566,7 @@ fn bubble(
     view: &View<'_>,
     message: &Message,
     show_sender: bool,
+    transcript: Option<&str>,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let own = message.from_me;
@@ -1640,6 +1649,16 @@ fn bubble(
                     actions,
                 ));
             }
+            if let Some(transcript) = transcript {
+                ui.add_space(-5.0);
+                ui.horizontal(|ui| {
+                    if with_avatar {
+                        ui.add_space(SENDER_AVATAR + 8.0);
+                    }
+                    transcript_text(ui, view, transcript, max_width);
+                });
+                ui.add_space(2.0);
+            }
             if !message.reactions.is_empty() {
                 ui.add_space(-7.0);
                 ui.horizontal(|ui| {
@@ -1653,6 +1672,24 @@ fn bubble(
         },
     );
     response
+}
+
+/// Renders a selectable, copyable transcription under an audio bubble. The
+/// text is plain content: it is never interpreted as a command.
+fn transcript_text(ui: &mut egui::Ui, view: &View<'_>, text: &str, width: f32) {
+    let palette = view.palette;
+    let style = markup::Style {
+        size: BODY_SIZE - 1.0,
+        color: palette.secondary,
+        secondary: palette.secondary,
+        link: palette.link,
+        mention: palette.accent,
+    };
+    let laid = markup::layout(ui, text, &[], &style, width);
+    let (rect, response) = ui.allocate_exact_size(laid.galley.size(), Sense::CLICK | Sense::DRAG);
+    if ui.is_rect_visible(rect) {
+        markup::paint_selectable(ui, &laid, &response, rect.min, palette.secondary, true);
+    }
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -2548,6 +2585,15 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 }
             }
         }
+    }
+    if view.transcription_enabled
+        && matches!(message.content, Content::Audio { .. })
+        && widgets::menu_item(ui, &palette, Some(Icon::Captions), "Transcribe")
+    {
+        actions.push(Action::Transcribe {
+            chat: chat.clone(),
+            message: message.id.clone(),
+        });
     }
     widgets::menu_separator(ui, &palette);
     // Sent, delivered, and read times inform only; they are not actions.
@@ -3763,6 +3809,29 @@ fn voice_player(
                     } else {
                         "Playback speed"
                     });
+            }
+            if view.transcription_enabled {
+                let (rect, response) = ui.allocate_exact_size(vec2(chip, 20.0), Sense::click());
+                if ui.is_rect_visible(rect) {
+                    let hovered = response.hovered();
+                    let fill = if hovered {
+                        palette.surface_active
+                    } else {
+                        palette.surface_hover
+                    };
+                    ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
+                    theme::paint_icon(ui, Icon::Captions, rect, 13.0, palette.secondary);
+                }
+                if response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Transcribe")
+                    .clicked()
+                {
+                    actions.push(Action::Transcribe {
+                        chat: view.chat.id.clone(),
+                        message: message.id.clone(),
+                    });
+                }
             }
         },
     );

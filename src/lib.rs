@@ -23,6 +23,7 @@ pub mod single_instance;
 pub mod system_fonts;
 pub mod theme;
 pub mod timestretch;
+pub mod transcribe;
 pub mod transcript;
 #[cfg(target_os = "linux")]
 pub mod tray;

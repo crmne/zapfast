@@ -698,6 +698,12 @@ pub fn populate(app: &mut App) {
     let conversation = app.conversations.get_mut(ada).expect("sample chat");
     conversation.messages.splice(0..0, extra);
     conversation.messages.extend(latest);
+    // Sample a cached transcription so the caption under the voice bubble is
+    // exercised in demos and screenshots. Synthetic content only.
+    conversation.transcripts.insert(
+        "ada-voice".to_owned(),
+        "The analytical engine weaves algebraic patterns, just as the loom weaves flowers and leaves.".to_owned(),
+    );
 
     // Cover a group image, mentioned reply, and poll.
     let group = SAMPLES[1].id;

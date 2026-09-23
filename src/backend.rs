@@ -186,6 +186,18 @@ pub enum Command {
         chat: ChatId,
         message: String,
     },
+    /// Transcribes an audio message with the configured remote provider.
+    Transcribe {
+        chat: ChatId,
+        message: String,
+        config: crate::transcribe::TranscriptionConfig,
+    },
+    /// Internal transcription result.
+    TranscriptionResult {
+        chat: ChatId,
+        message: String,
+        result: Result<crate::transcribe::Completed, String>,
+    },
     /// Requests a profile picture; `full` selects the info-dialog size.
     FetchAvatar {
         id: String,
@@ -530,6 +542,17 @@ pub enum Event {
         chat: ChatId,
         message: String,
         result: Result<PathBuf, String>,
+    },
+    /// A manual transcription finished or failed.
+    Transcribed {
+        chat: ChatId,
+        message: String,
+        text: Result<String, String>,
+    },
+    /// Cached transcriptions for a chat, `(message, text)`.
+    Transcripts {
+        chat: ChatId,
+        transcripts: Vec<(String, String)>,
     },
     /// Link-time history sync state.
     Syncing(bool),

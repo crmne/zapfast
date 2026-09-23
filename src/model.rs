@@ -634,6 +634,16 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
+    /// Transcribes an audio message with the configured remote provider.
+    Transcribe {
+        chat: ChatId,
+        message: String,
+    },
+    /// Stores the transcription API key in the OS keyring. The key never
+    /// leaves the interface side and is never logged.
+    SetTranscriptionKey(String),
+    /// Removes the transcription API key from the OS keyring.
+    ClearTranscriptionKey,
     /// Plays or pauses a downloaded voice or audio message.
     PlayVoice {
         message: String,
