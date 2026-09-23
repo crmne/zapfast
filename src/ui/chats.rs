@@ -11,39 +11,22 @@ use super::focus::{Stop, TabStop};
 use super::labels;
 use super::widgets;
 
-/// Draws the chat list. `pane` is which half of a split workspace it belongs
-/// to, which keeps its panel ids apart from the other pane's.
-pub fn show(app: &mut App, ui: &mut egui::Ui, pane: usize) {
+pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    let split = app.split_open();
-    let mut panel = egui::Panel::left(egui::Id::new(("chats", pane)))
+    let panel = egui::Panel::left("chats")
+        .resizable(true)
+        .default_size(app.settings.sidebar_width)
+        .size_range(if theme::macos_chrome(ui.ctx()) {
+            (theme::traffic_light_inset(ui.ctx()) + 210.0).max(280.0)..=520.0
+        } else {
+            260.0..=520.0
+        })
         .show_separator_line(false)
         .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
-    if split {
-        // Inside a split each list shares the width with its conversation, and
-        // its width belongs to the pane rather than to the window.
-        let available = ui.available_width();
-        panel = panel
-            .resizable(false)
-            .default_size((available * 0.42).clamp(200.0, 320.0))
-            .size_range(180.0..=(available * 0.75).max(200.0));
-    } else {
-        panel = panel
-            .resizable(true)
-            .default_size(app.settings.sidebar_width)
-            .size_range(if theme::macos_chrome(ui.ctx()) {
-                (theme::traffic_light_inset(ui.ctx()) + 210.0).max(280.0)..=520.0
-            } else {
-                260.0..=520.0
-            });
-    }
     let response = panel.show(ui, |ui| {
-        header(app, ui, pane);
+        header(app, ui);
         list(app, ui);
     });
-    if split {
-        return;
-    }
     let width = response.response.rect.width();
     if (width - app.settings.sidebar_width).abs() > 1.0 {
         app.settings.sidebar_width = width;
@@ -58,9 +41,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, pane: usize) {
     );
 }
 
-fn header(app: &mut App, ui: &mut egui::Ui, pane: usize) {
-    if theme::macos_chrome(ui.ctx()) && !app.split_open() {
-        macos_header(app, ui, pane);
+fn header(app: &mut App, ui: &mut egui::Ui) {
+    if theme::macos_chrome(ui.ctx()) {
+        macos_header(app, ui);
         return;
     }
     let palette = app.palette;
@@ -169,7 +152,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, pane: usize) {
                     }
                 });
             });
-            labels::tab_bar(app, ui, pane, &palette);
+            labels::tab_bar(app, ui, &palette);
             ui.add_space(6.0);
             let id = egui::Id::new("chat-search");
             let width = ui.available_width();
@@ -187,7 +170,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, pane: usize) {
         });
 }
 
-fn macos_header(app: &mut App, ui: &mut egui::Ui, pane: usize) {
+fn macos_header(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let inset = theme::traffic_light_inset(ui.ctx());
     let mut drag = ui.max_rect();
@@ -259,7 +242,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui, pane: usize) {
                     }
                 });
             });
-            labels::tab_bar(app, ui, pane, &palette);
+            labels::tab_bar(app, ui, &palette);
             ui.add_space(6.0);
             let mut text = app.search.clone();
             let response = widgets::search_field(

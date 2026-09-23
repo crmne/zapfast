@@ -135,7 +135,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         "Let people see when you read messages or play voice messages. Your WhatsApp privacy setting still applies. Read state syncs between your devices either way."
                     };
                     toggle(ui, app, "Send read receipts", receipts_note, |settings| &mut settings.send_read_receipts);
-                    toggle(ui, app, "Show labels as tabs", "Put your labels in a bar above the chat list. Ctrl-click a tab to open it beside the current one.", |settings| &mut settings.labels_as_tabs);
+                    toggle(ui, app, "Show labels as tabs", "Put your labels in a bar above the chat list.", |settings| &mut settings.labels_as_tabs);
                     toggle(ui, app, "Show when you are typing", "", |settings| &mut settings.send_typing);
                     toggle(ui, app, "Download attachments automatically", "Download non-sticker attachments up to 64 MiB when they enter view. Visible stickers also download automatically up to this limit. When off, click an attachment up to this limit to download it.", |settings| &mut settings.auto_download);
                     toggle(ui, app, "Show sender pictures in every chat", "WhatsApp shows them in groups only.", |settings| &mut settings.show_sender_pictures);

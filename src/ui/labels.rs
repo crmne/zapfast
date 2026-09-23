@@ -22,8 +22,8 @@ const TAB_HEIGHT: f32 = 26.0;
 const ROW_HEIGHT: f32 = 34.0;
 
 /// Stable tab id used by interaction tests.
-pub fn tab_id(pane: usize, label: Option<&str>) -> egui::Id {
-    egui::Id::new(("label-tab", pane, label))
+pub fn tab_id(label: Option<&str>) -> egui::Id {
+    egui::Id::new(("label-tab", label))
 }
 
 /// Stable id for the manager's name field.
@@ -55,25 +55,21 @@ pub fn color_of(palette: &Palette, hex: &str) -> Color32 {
 }
 
 /// One tab per label, plus All, above the chat list.
-///
-/// A plain click shows one label in this pane. Ctrl-click opens the label
-/// beside the current one, which is how the workspace splits in two.
-pub fn tab_bar(app: &mut App, ui: &mut egui::Ui, pane: usize, palette: &Palette) {
+pub fn tab_bar(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if !app.settings.labels_as_tabs || app.show_archived || app.locked_folder_open() {
         return;
     }
     let mut pick: Option<Option<String>> = None;
-    let mut split: Option<Option<String>> = None;
     let mut manage = false;
     ui.add_space(6.0);
     egui::ScrollArea::horizontal()
-        .id_salt(("label-tabs", pane))
+        .id_salt("label-tabs")
         .animated(false)
         .auto_shrink([false, true])
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
-                let active = app.panes.get(pane).and_then(|state| state.label.clone());
+                let active = app.label_filter.clone();
                 let rows: Vec<(Option<String>, String, u32, Color32)> =
                     std::iter::once((None, "All".to_owned(), app.unread_total(), palette.accent))
                         .chain(app.labels.iter().map(|label| {
@@ -89,11 +85,9 @@ pub fn tab_bar(app: &mut App, ui: &mut egui::Ui, pane: usize, palette: &Palette)
                     let selected = active == id;
                     let (response, rect) = tab(ui, palette, &name, count, color, selected);
                     ui.ctx()
-                        .data_mut(|data| data.insert_temp(tab_id(pane, id.as_deref()), rect));
+                        .data_mut(|data| data.insert_temp(tab_id(id.as_deref()), rect));
                     if response.clicked() {
-                        if ui.input(|input| input.modifiers.command) && !selected {
-                            split = Some(id.clone());
-                        } else if selected && id.is_some() {
+                        if selected && id.is_some() {
                             // A second click on the active tab shows them all,
                             // the way the filter chips behave.
                             pick = Some(None);
@@ -119,11 +113,8 @@ pub fn tab_bar(app: &mut App, ui: &mut egui::Ui, pane: usize, palette: &Palette)
     if manage {
         app.actions.push(Action::ShowDialog(Dialog::Labels));
     }
-    if let Some(id) = split {
-        app.actions.push(Action::OpenLabelSplit(id));
-    }
     if let Some(id) = pick {
-        app.actions.push(Action::SelectLabel { pane, label: id });
+        app.actions.push(Action::SelectLabel(id));
     }
 }
 
@@ -136,7 +127,7 @@ pub fn filter_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if app.labels.is_empty() {
         return;
     }
-    let active = app.panes.first().and_then(|state| state.label.clone());
+    let active = app.label_filter.clone();
     let name = active
         .as_ref()
         .and_then(|id| app.label(id))
@@ -167,7 +158,7 @@ pub fn filter_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         app.actions.push(Action::ShowDialog(Dialog::Labels));
     }
     if let Some(id) = pick {
-        app.actions.push(Action::SelectLabel { pane: 0, label: id });
+        app.actions.push(Action::SelectLabel(id));
     }
 }
 
@@ -525,12 +516,7 @@ fn tab(
             palette.dim,
         );
     }
-    let hint = if selected {
-        "Showing this label".to_owned()
-    } else {
-        format!("Show {name}. Ctrl-click to open it beside this one")
-    };
-    (response.on_hover_text(hint), rect)
+    (response, rect)
 }
 
 #[cfg(test)]
@@ -557,7 +543,7 @@ mod tests {
             ..Default::default()
         };
         let palette = app.palette;
-        let mut output = ctx.run_ui(input, |ui| tab_bar(app, ui, 0, &palette));
+        let mut output = ctx.run_ui(input, |ui| tab_bar(app, ui, &palette));
         output.textures_delta.clear();
     }
 
@@ -581,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_click_picks_its_label_and_ctrl_click_opens_it_beside() {
+    fn a_tab_click_picks_its_label_and_a_second_click_shows_all() {
         let root = std::env::temp_dir().join(format!("zapfast-tabs-{}", std::process::id()));
         let (mut app, _events) = App::headless(AppDirs::under(&root), Settings::default());
         app.settings.labels_as_tabs = true;
@@ -590,24 +576,22 @@ mod tests {
         app.attach(&ctx);
         tabs(&mut app, &ctx, Vec::new());
         let rect = ctx
-            .data(|data| data.get_temp::<Rect>(tab_id(0, Some("label-1"))))
+            .data(|data| data.get_temp::<Rect>(tab_id(Some("label-1"))))
             .expect("the label tab is drawn");
         let pos = rect.center();
         tabs(&mut app, &ctx, click(pos, egui::Modifiers::NONE));
         assert!(
-            app.actions.contains(&Action::SelectLabel {
-                pane: 0,
-                label: Some("label-1".into())
-            }),
-            "a plain click picks the label for this pane"
+            app.actions
+                .contains(&Action::SelectLabel(Some("label-1".into()))),
+            "a click picks the label"
         );
         app.actions.clear();
+        app.label_filter = Some("label-1".into());
         tabs(&mut app, &ctx, Vec::new());
-        tabs(&mut app, &ctx, click(pos, egui::Modifiers::COMMAND));
+        tabs(&mut app, &ctx, click(pos, egui::Modifiers::NONE));
         assert!(
-            app.actions
-                .contains(&Action::OpenLabelSplit(Some("label-1".into()))),
-            "Ctrl-click opens the label beside the current one"
+            app.actions.contains(&Action::SelectLabel(None)),
+            "a second click on the active tab shows every chat"
         );
     }
 
@@ -620,7 +604,7 @@ mod tests {
         app.attach(&ctx);
         tabs(&mut app, &ctx, Vec::new());
         assert!(
-            ctx.data(|data| data.get_temp::<Rect>(tab_id(0, Some("label-1"))))
+            ctx.data(|data| data.get_temp::<Rect>(tab_id(Some("label-1"))))
                 .is_none(),
             "no tab bar without the setting"
         );

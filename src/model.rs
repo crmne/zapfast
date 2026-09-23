@@ -40,41 +40,6 @@ pub struct Label {
     pub created_at: i64,
 }
 
-/// Which label, and which chat, one pane of the workspace shows.
-///
-/// The draft and the scroll position of the requested model are deliberately not
-/// fields here: drafts are keyed by chat and egui keeps scroll per message list,
-/// so both already survive switching panes, tabs and chats.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChatPaneState {
-    /// Label shown by this pane; `None` shows every chat.
-    pub label: Option<String>,
-    /// Chat open in this pane.
-    pub chat: Option<ChatId>,
-}
-
-/// The workspace seen as the two-tab model: one tab, or one plus a split.
-///
-/// `None` is the "All" tab, matching how a pane with no label behaves.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ViewLayoutMode {
-    SingleTab {
-        primary_label_id: Option<String>,
-    },
-    SplitTab {
-        primary_label_id: Option<String>,
-        secondary_label_id: Option<String>,
-    },
-}
-
-impl Default for ViewLayoutMode {
-    fn default() -> Self {
-        Self::SingleTab {
-            primary_label_id: None,
-        }
-    }
-}
-
 /// Chat-list filter chosen from the chips under the search field.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChatFilter {
@@ -918,20 +883,8 @@ pub enum Action {
     CloseDialog,
     ToggleSidebar,
     SetChatFilter(ChatFilter),
-    /// Picks the label one pane shows; `None` shows every chat.
-    SelectLabel {
-        pane: usize,
-        label: Option<String>,
-    },
-    /// Opens a label in the second pane, splitting the workspace in two.
-    /// `None` opens every chat there, matching the All tab.
-    OpenLabelSplit(Option<String>),
-    /// Closes the second pane.
-    CloseSplit,
-    /// Focuses one of the two panes.
-    FocusPane(usize),
-    /// Drags the divider; the value is the first pane's share of the width.
-    SetSplitRatio(f32),
+    /// Picks the label the chat list shows; `None` shows every chat.
+    SelectLabel(Option<String>),
     /// Replaces the labels worn by one chat.
     SetChatLabels {
         chat: ChatId,

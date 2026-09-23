@@ -31,15 +31,11 @@ const NOT_SENT: &str = "Not sent";
 const NOT_SENT_HINT: &str =
     "This message could not be sent, and ZapFast will not retry it. Send it again yourself.";
 
-/// Draws one conversation. `pane` is which half of a split workspace it
-/// belongs to, which keeps its panel ids apart from the other pane's.
-pub fn show(app: &mut App, ui: &mut egui::Ui, pane: usize) {
+pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let Some(chat) = app.current_chat().cloned() else {
-        if pane == 0 {
-            super::standalone_header(app, ui);
-            if theme::macos_chrome(ui.ctx()) {
-                super::banner(app, ui);
-            }
+        super::standalone_header(app, ui);
+        if theme::macos_chrome(ui.ctx()) {
+            super::banner(app, ui);
         }
         empty(app, ui);
         return;
@@ -47,11 +43,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, pane: usize) {
     if app.settings.show_wallpaper {
         wallpaper::paint(ui, app.settings.wallpaper_color_for(app.palette.dark));
     }
-    header(app, ui, &chat, pane);
-    if pane == 0 && theme::macos_chrome(ui.ctx()) {
+    header(app, ui, &chat);
+    if theme::macos_chrome(ui.ctx()) {
         super::banner(app, ui);
     }
-    composer(app, ui, &chat, pane);
+    composer(app, ui, &chat);
     messages(app, ui, &chat);
 }
 
@@ -95,10 +91,10 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: usize) {
+fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     let title = app.chat_title(chat);
-    egui::Panel::top(egui::Id::new(("chat-header", pane)))
+    egui::Panel::top("chat-header")
         .show_separator_line(false)
         .frame(
             Frame::new()
@@ -708,9 +704,9 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     }
 }
 
-fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: usize) {
+fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
-    let shown = egui::Panel::bottom(egui::Id::new(("composer", pane)))
+    let shown = egui::Panel::bottom("composer")
         .show_separator_line(false)
         .frame(
             Frame::new()

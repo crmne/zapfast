@@ -182,12 +182,6 @@ chat list. **All** comes first, then one tab per label showing its colour, its
 name, and the number of unread messages in the chats wearing it. Click a tab to
 show only those chats; click the active tab again to go back to **All**.
 
-`Ctrl`-click a tab (`⌘`-click on macOS) to open it beside the current one. The
-window splits into two lists, and each half has its own tab, its own open chat,
-and its own scroll position. The half you last clicked takes the keyboard, which
-its edge shows. Drag the divider to move the split, click the **×** on it to fold
-back to one pane, or click a tab in either half.
-
 With the setting off, the same filter sits in a **Labels** menu beside the filter
 chips.
 
