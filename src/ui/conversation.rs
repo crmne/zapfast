@@ -1759,9 +1759,7 @@ fn transcript_row(
         Content::Poll { question, .. } => Some(format!("[poll: {question}]")),
         Content::Interactive {
             card: Some(card), ..
-        } if card.body.is_empty()
-            && (card.image.is_some() || card.carousel.iter().any(|card| card.image.is_some())) =>
-        {
+        } if card.image.is_some() || card.carousel.iter().any(|card| card.image.is_some()) => {
             Some("[photo]".to_owned())
         }
         _ => None,
@@ -2985,13 +2983,7 @@ fn carousel(
                 .with_layout(Layout::left_to_right(Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = CAROUSEL_GAP;
                     for (index, child) in card.carousel.iter().enumerate() {
-                        let mut row = message.clone();
-                        row.id = format!("{}-card-{index}", message.id);
-                        row.thumbnail = child.thumbnail.clone();
-                        row.content = Content::Interactive {
-                            text: child.body.clone(),
-                            card: None,
-                        };
+                        let row = carousel_row(message, index, child);
                         ui.push_id(("carousel-card", index), |ui| {
                             let response = Frame::new()
                                 .fill(if message.from_me {
@@ -3089,6 +3081,34 @@ fn carousel(
         .data_mut(|data| data.insert_temp(id.with("carousel-viewport"), output.inner));
 }
 
+/// Stands in for one carousel card when drawing its text and actions. Only the
+/// parent's identity is kept: cloning the whole message would copy every
+/// card's thumbnail per card each frame, and the parent's quote and reactions
+/// would repeat on each card in copied transcripts.
+fn carousel_row(message: &Message, index: usize, card: &crate::model::InteractiveCard) -> Message {
+    Message {
+        id: format!("{}-card-{index}", message.id),
+        chat: message.chat.clone(),
+        sender: message.sender.clone(),
+        sender_name: message.sender_name.clone(),
+        from_me: message.from_me,
+        timestamp: message.timestamp,
+        content: Content::Interactive {
+            text: card.body.clone(),
+            card: None,
+        },
+        status: message.status,
+        delivered_at: None,
+        read_at: None,
+        quoted: None,
+        reactions: Vec::new(),
+        edited: message.edited,
+        mentions: message.mentions.clone(),
+        forwarded: false,
+        thumbnail: None,
+    }
+}
+
 fn carousel_arrow(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -3160,6 +3180,15 @@ fn carousel_picture(
     let Some(media) = &card.image else { return };
     let size = vec2(width, width * 0.56);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let label = match (&media.path, &media.state) {
+        (Some(_), _) => "Open card image",
+        (None, MediaState::Failed(_)) => "Retry card image download",
+        (None, MediaState::Downloading) => "Downloading card image",
+        (None, MediaState::Idle) => "Download card image",
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    // Tab can land on a card scrolled out of the carousel's viewport.
+    theme::reveal_focus(&response);
     let visible = ui.is_rect_visible(rect);
     if visible {
         ui.painter().rect_filled(rect, 6.0, view.palette.surface);
@@ -3176,24 +3205,36 @@ fn carousel_picture(
         if let Some(uri) = uri {
             let image = egui::Image::new(uri);
             let dimensions = match image.load_for_size(ui.ctx(), size) {
-                Ok(egui::load::TexturePoll::Ready { texture }) => texture.size,
-                _ => vec2(
+                Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture.size),
+                Ok(egui::load::TexturePoll::Pending { .. }) => Some(vec2(
                     media.width.unwrap_or(16) as f32,
                     media.height.unwrap_or(9) as f32,
-                ),
+                )),
+                Err(_) => None,
             };
-            let ratio = dimensions.x / dimensions.y.max(1.0);
-            let target = size.x / size.y.max(1.0);
-            let uv_size = if ratio > target {
-                vec2(target / ratio, 1.0)
-            } else {
-                vec2(1.0, ratio / target)
-            };
-            image
-                .uv(Rect::from_center_size(pos2(0.5, 0.5), uv_size))
-                .fit_to_exact_size(size)
-                .corner_radius(6.0)
-                .paint_at(ui, rect);
+            if let Some(dimensions) = dimensions {
+                let ratio = dimensions.x / dimensions.y.max(1.0);
+                let target = size.x / size.y.max(1.0);
+                let uv_size = if ratio > target {
+                    vec2(target / ratio, 1.0)
+                } else {
+                    vec2(1.0, ratio / target)
+                };
+                image
+                    .uv(Rect::from_center_size(pos2(0.5, 0.5), uv_size))
+                    .fit_to_exact_size(size)
+                    .corner_radius(6.0)
+                    .paint_at(ui, rect);
+            } else if media.path.is_some() {
+                theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, view.palette.danger);
+                ui.painter().text(
+                    rect.center() + vec2(0.0, 24.0),
+                    Align2::CENTER_CENTER,
+                    "Could not display this picture. Click to open it.",
+                    theme::regular(11.5),
+                    view.palette.secondary,
+                );
+            }
         }
         if media.path.is_none() {
             let disc = Rect::from_center_size(rect.center(), Vec2::splat(42.0));
@@ -3202,12 +3243,27 @@ fn carousel_picture(
             match &media.state {
                 MediaState::Downloading => theme::paint_spinner(ui, disc, 20.0, Color32::WHITE),
                 MediaState::Failed(_) => {
-                    theme::paint_icon(ui, Icon::CircleAlert, disc, 20.0, Color32::WHITE)
+                    theme::paint_icon(ui, Icon::CircleAlert, disc, 20.0, Color32::WHITE);
+                    ui.painter().text(
+                        rect.center() + vec2(0.0, 34.0),
+                        Align2::CENTER_CENTER,
+                        "Download failed. Click to retry.",
+                        theme::regular(11.5),
+                        Color32::WHITE,
+                    );
                 }
                 MediaState::Idle => {
                     theme::paint_icon(ui, Icon::Download, disc, 20.0, Color32::WHITE)
                 }
             }
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect.shrink(1.0),
+                6.0,
+                Stroke::new(theme::FOCUS_STROKE_WIDTH, view.palette.link),
+                egui::StrokeKind::Inside,
+            );
         }
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);

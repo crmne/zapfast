@@ -1822,18 +1822,25 @@ mod tests {
     }
 
     #[test]
-    fn image_only_interactive_cards_join_transcripts() {
-        for single in [true, false] {
+    fn interactive_card_images_join_transcripts_once() {
+        for (single, body) in [(true, false), (false, false), (true, true), (false, true)] {
             let mut app = app();
             carousel_sample(&mut app, 2);
             let message = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+            message.reactions = vec![crate::model::Reaction {
+                sender: SAMPLES[0].id.into(),
+                from_me: false,
+                emoji: "👍".into(),
+            }];
             let Content::Interactive {
                 card: Some(card), ..
             } = &mut message.content
             else {
                 panic!("interactive sample");
             };
-            card.body.clear();
+            if !body {
+                card.body.clear();
+            }
             if single {
                 card.image = card.carousel[0].image.clone();
                 card.carousel.clear();
@@ -1842,12 +1849,19 @@ mod tests {
             app.attach(&ctx);
             render(&mut app, &ctx);
             let rows = app.copy_rows.lock().unwrap();
+            let case = format!("single card: {single}, body: {body}");
             assert_eq!(
                 rows.iter()
                     .filter(|row| row.marker.as_deref() == Some("[photo]"))
                     .count(),
                 1,
-                "single card: {single}"
+                "{case}"
+            );
+            // Carousel cards are parts of one message, not replies or reactions.
+            assert_eq!(
+                rows.iter().filter(|row| !row.reactions.is_empty()).count(),
+                1,
+                "{case}"
             );
         }
     }
