@@ -1015,7 +1015,13 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
         if chat.is_group() && !chat.participants.is_empty() {
             theme::text(
                 ui,
-                format!("{} members", chat.participants.len()),
+                crate::i18n::ngettext(
+                    app.locale,
+                    "{} member",
+                    "{} members",
+                    chat.participants.len() as u32,
+                )
+                .replace("{}", &chat.participants.len().to_string()),
                 theme::regular(13.5),
                 palette.secondary,
             );
@@ -1026,7 +1032,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             } else if let Some(seen) = presence.last_seen {
                 format!(
                     "last seen {}",
-                    crate::util::chat_stamp(seen, crate::util::twelve_hour_clock()).to_lowercase()
+                    crate::util::chat_stamp(app.locale, seen).to_lowercase()
                 )
             } else {
                 String::new()
@@ -1125,10 +1131,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             if until == 0 {
                 "Muted".to_owned()
             } else {
-                format!(
-                    "Muted until {}",
-                    crate::util::chat_stamp(until, crate::util::twelve_hour_clock())
-                )
+                format!("Muted until {}", crate::util::chat_stamp(app.locale, until))
             },
             theme::regular(12.5),
             palette.secondary,

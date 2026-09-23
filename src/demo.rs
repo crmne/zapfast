@@ -2360,10 +2360,8 @@ mod tests {
                     })
                     .unwrap();
                 let output = run(&mut app, vec![]);
-                let stamp = crate::util::clock(
-                    app.conversations[SAMPLES[0].id].messages[0].timestamp,
-                    crate::util::twelve_hour_clock(),
-                );
+                let stamp =
+                    crate::util::clock(app.conversations[SAMPLES[0].id].messages[0].timestamp);
                 let time = output
                     .shapes
                     .iter()

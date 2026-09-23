@@ -89,6 +89,13 @@ cargo test --locked --all-targets --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc --locked --all-features --no-deps
 ```
 
+Translation changes also need `.github/scripts/update-translations.sh --check`,
+using GNU gettext tools with Rust support. Run the script without `--check` when
+translatable source strings change, and review any fuzzy or missing entries in
+the updated PO files. Keep each translatable literal inside its own `gettext`
+call so extraction can find it. Normal Cargo builds compile the catalogs without
+gettext tools.
+
 Linux needs the development packages listed in the README; `nix develop`
 provides the complete development environment. When changing `Cargo.lock` or
 `flake.nix`, also verify `nix build` on a Nix host or wait for the Nix CI job.

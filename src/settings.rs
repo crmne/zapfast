@@ -279,6 +279,8 @@ impl WallpaperColor {
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeChoice,
+    /// Interface language. `None` follows the operating system's locale.
+    pub interface_language: Option<crate::i18n::Locale>,
     /// Filename of the selected local JSON palette.
     pub custom_theme: Option<String>,
     #[serde(
@@ -349,6 +351,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::Dark,
+            interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,
             system_theme_cache: None,
@@ -536,10 +539,17 @@ mod tests {
             zoom: 1.25,
             enter_sends: false,
             voice_speed: 1.5,
+            interface_language: Some(crate::i18n::Locale::German),
             ..Settings::default()
         };
         settings.save(&path).expect("saves");
         assert_eq!(Settings::load(&path), settings);
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("reads")
+                .contains(r#""interface_language": "de""#),
+            "the language keeps its stable serde name"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

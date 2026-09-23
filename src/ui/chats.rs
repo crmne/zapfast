@@ -106,7 +106,12 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         app.actions.push(Action::Open(Page::Settings));
                     }
                     ui.add_space(2.0);
-                    theme::text(ui, "Chats", theme::bold(20.0), palette.text);
+                    theme::text(
+                        ui,
+                        crate::i18n::gettext(app.locale, "Chats"),
+                        theme::bold(20.0),
+                        palette.text,
+                    );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -155,8 +160,15 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             let id = egui::Id::new("chat-search");
             let width = ui.available_width();
             let mut text = app.search.clone();
-            let response = widgets::search_field(ui, &palette, id, &mut text, "Search", width)
-                .tab_stop(Stop::Search);
+            let response = widgets::search_field(
+                ui,
+                &palette,
+                id,
+                &mut text,
+                crate::i18n::gettext(app.locale, "Search").as_ref(),
+                width,
+            )
+            .tab_stop(Stop::Search);
             if text != app.search {
                 app.actions.push(Action::Search(text));
             }
@@ -209,7 +221,12 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                     );
                 } else {
-                    theme::text(ui, "Chats", theme::bold(20.0), palette.text);
+                    theme::text(
+                        ui,
+                        crate::i18n::gettext(app.locale, "Chats"),
+                        theme::bold(20.0),
+                        palette.text,
+                    );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -247,7 +264,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                 &palette,
                 egui::Id::new("chat-search"),
                 &mut text,
-                "Search",
+                crate::i18n::gettext(app.locale, "Search").as_ref(),
                 ui.available_width(),
             )
             .tab_stop(Stop::Search);
@@ -269,7 +286,7 @@ pub fn chat_row_id(chat: &str) -> egui::Id {
 
 /// Stable filter-chip id used by interaction tests.
 pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
-    egui::Id::new(("chat-filter", filter.label()))
+    egui::Id::new(("chat-filter", filter as u8))
 }
 
 /// Filter chips under the search field. Search and the archive list every
@@ -293,13 +310,19 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                         _ => app.unread_chats(filter),
                     };
                     let selected = !app.locked_folder_open() && app.chat_filter == filter;
-                    let chip = widgets::filter_chip(ui, &palette, filter.label(), count, selected)
-                        .tab_stop(match filter {
-                            ChatFilter::All => Stop::All,
-                            ChatFilter::Unread => Stop::Unread,
-                            ChatFilter::Private => Stop::Private,
-                            ChatFilter::Groups => Stop::Groups,
-                        });
+                    let chip = widgets::filter_chip(
+                        ui,
+                        &palette,
+                        filter.label(app.locale).as_ref(),
+                        count,
+                        selected,
+                    )
+                    .tab_stop(match filter {
+                        ChatFilter::All => Stop::All,
+                        ChatFilter::Unread => Stop::Unread,
+                        ChatFilter::Private => Stop::Private,
+                        ChatFilter::Groups => Stop::Groups,
+                    });
                     // Store the chip rect for interaction tests.
                     ui.ctx()
                         .data_mut(|data| data.insert_temp(filter_chip_id(filter), chip.rect));
@@ -311,9 +334,15 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                 }
                 if app.locked_count() > 0 || app.locked_folder_open() {
                     let selected = app.locked_folder_open();
-                    let chip = widgets::filter_chip(ui, &palette, "Locked", 0, selected)
-                        .tab_stop(Stop::Locked)
-                        .on_hover_text("Open locked chats with your local code");
+                    let chip = widgets::filter_chip(
+                        ui,
+                        &palette,
+                        crate::i18n::gettext(app.locale, "Locked").as_ref(),
+                        0,
+                        selected,
+                    )
+                    .tab_stop(Stop::Locked)
+                    .on_hover_text("Open locked chats with your local code");
                     ui.ctx()
                         .data_mut(|data| data.insert_temp(egui::Id::new("locked-chip"), chip.rect));
                     if chip.clicked() {
@@ -602,7 +631,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;
         let stamp_galley = ui.painter().layout_no_wrap(
-            crate::util::chat_stamp(hit.timestamp, crate::util::twelve_hour_clock()),
+            crate::util::chat_stamp(app.locale, hit.timestamp),
             theme::regular(11.5),
             palette.dim,
         );
@@ -821,7 +850,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;
         let stamp = if chat.last_activity > 0 {
-            crate::util::chat_stamp(chat.last_activity, crate::util::twelve_hour_clock())
+            crate::util::chat_stamp(app.locale, chat.last_activity)
         } else {
             String::new()
         };

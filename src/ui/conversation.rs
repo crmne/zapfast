@@ -83,7 +83,10 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
         ui.painter().text(
             center + vec2(0.0, 56.0),
             Align2::CENTER_CENTER,
-            super::keys::label("Ctrl+K to search · ? for keyboard shortcuts"),
+            super::keys::label(
+                crate::i18n::gettext(app.locale, "Ctrl+K to search · ? for keyboard shortcuts")
+                    .as_ref(),
+            ),
             theme::regular(12.5),
             palette.dim,
         );
@@ -308,7 +311,7 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
             return (
                 format!(
                     "last seen {}",
-                    crate::util::chat_stamp(seen, crate::util::twelve_hour_clock()).to_lowercase()
+                    crate::util::chat_stamp(app.locale, seen).to_lowercase()
                 ),
                 palette.secondary,
             );
@@ -902,9 +905,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .margin(Margin::ZERO)
                                     .hint_text(
                                         egui::RichText::new(if app.pending.is_empty() {
-                                            "Type a message"
+                                            crate::i18n::gettext(app.locale, "Type a message")
+                                                .into_owned()
                                         } else {
-                                            "Add a caption"
+                                            crate::i18n::gettext(app.locale, "Add a caption")
+                                                .into_owned()
                                         })
                                         .color(palette.dim)
                                         .font(theme::regular(BODY_SIZE)),
@@ -1054,11 +1059,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 app.focus_composer = true;
             }
             if app.settings.show_shortcut_hints {
-                let hint = super::keys::label(if enter_sends {
-                    "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+                let hint_text = if enter_sends {
+                    crate::i18n::gettext(app.locale, "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
                 } else {
-                    "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-                });
+                    crate::i18n::gettext(app.locale, "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
+                };
+                let hint = super::keys::label(hint_text.as_ref());
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if theme::icon_button(
@@ -1067,7 +1073,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         13.0,
                         palette.dim,
                         palette.secondary,
-                        "Hide shortcut hints (restore in Settings)",
+                        crate::i18n::gettext(app.locale, "Hide shortcut hints (restore in Settings)").as_ref(),
                     )
                     .clicked()
                     {
@@ -1082,7 +1088,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             13.0,
                             palette.dim,
                             palette.secondary,
-                            &format!("All shortcuts ({})", super::keys::label("Ctrl+/")),
+                            &crate::i18n::gettext(app.locale, "All shortcuts ({})")
+                                .replace("{}", &super::keys::label("Ctrl+/")),
                         )
                         .clicked()
                         {
@@ -1177,6 +1184,7 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
 /// App data needed while drawing a checked-out conversation.
 struct View<'a> {
     palette: Palette,
+    locale: crate::i18n::Locale,
     chat: &'a Chat,
     me: Option<&'a str>,
     auto_download: bool,
@@ -1185,8 +1193,6 @@ struct View<'a> {
     interactive_pending: &'a HashSet<(ChatId, String)>,
     /// Show avatars for all incoming messages, not only groups.
     pictures: bool,
-    /// Show message times in 12-hour (AM/PM) format.
-    use_12h: bool,
     anchor: Option<&'a str>,
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
@@ -1230,6 +1236,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let keyboard_navigation = std::cell::Cell::new(false);
     let view = View {
         palette,
+        locale: app.locale,
         chat,
         me: app.me.as_deref(),
         auto_download: app.settings.auto_download,
@@ -1237,7 +1244,6 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         poll_voting: &app.poll_voting,
         interactive_pending: &app.interactive_sending,
         pictures: app.settings.show_sender_pictures,
-        use_12h: crate::util::twelve_hour_clock(),
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
         } else {
@@ -1321,7 +1327,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 widgets::chip(
                                     ui,
                                     &palette,
-                                    &crate::util::day_label(message.timestamp),
+                                    &crate::util::day_label(app.locale, message.timestamp),
                                 );
                             });
                             ui.add_space(4.0);
@@ -1921,7 +1927,7 @@ fn bubble_frame(
             // no more than the cap. Text spans that width and stays left-aligned.
             // Bubbles without cards use the natural text width.
             let cap = ((max_width - 20.0).min(ui.available_width())).max(0.0);
-            let reserve = footer_width(ui, message, view.use_12h);
+            let reserve = footer_width(ui, message);
             let settled = settled_width(ui, view, message, cap);
             let slot = match settled {
                 Some(width) => {
@@ -1932,7 +1938,7 @@ fn bubble_frame(
                 }
                 None => content(ui, view, message, cap, reserve, actions),
             };
-            footer(ui, &palette, message, slot, view.use_12h);
+            footer(ui, &palette, message, slot);
             if matches!(message.content, Content::Poll { .. }) {
                 super::polls::results_button(
                     ui,
@@ -1997,7 +2003,7 @@ fn bubble_frame(
         &[
             "Delete for everyone",
             "Show in folder",
-            if view.use_12h {
+            if crate::util::twelve_hour_clock() {
                 "Delivered Yesterday at 11:59 PM"
             } else {
                 "Delivered Yesterday at 20:45"
@@ -2141,7 +2147,7 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
         .map(|row| row.row.size.x)
         .fold(0.0, f32::max);
     let last = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
-    let reserve = footer_width(ui, message, view.use_12h);
+    let reserve = footer_width(ui, message);
     Some(if last + 8.0 + reserve <= cap {
         widest.max(last + 8.0 + reserve)
     } else {
@@ -2239,12 +2245,12 @@ fn mirrored_row(
 }
 
 /// Width of the message footer.
-fn footer_width(ui: &egui::Ui, message: &Message, use_12h: bool) -> f32 {
+fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
     let font = theme::regular(11.0);
     let time = ui
         .painter()
         .layout_no_wrap(
-            crate::util::clock(message.timestamp, use_12h),
+            crate::util::clock(message.timestamp),
             font.clone(),
             Color32::WHITE,
         )
@@ -2276,16 +2282,10 @@ fn not_sent(message: &Message) -> bool {
 }
 
 /// Paints the time and ticks at the bubble's right edge without widening it.
-fn footer(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    message: &Message,
-    slot: Option<Rect>,
-    use_12h: bool,
-) {
+fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<Rect>) {
     let font = theme::regular(11.0);
     let time = ui.painter().layout_no_wrap(
-        crate::util::clock(message.timestamp, use_12h),
+        crate::util::clock(message.timestamp),
         font.clone(),
         palette.secondary,
     );
@@ -2628,7 +2628,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         Icon::Check,
         &format!(
             "Sent {}",
-            crate::util::moment_stamp(message.timestamp, view.use_12h)
+            crate::util::moment_stamp(view.locale, message.timestamp)
         ),
     );
     if message.from_me {
@@ -2638,10 +2638,9 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 &palette,
                 Icon::CheckCheck,
                 &match message.delivered_at {
-                    Some(when) => format!(
-                        "Delivered {}",
-                        crate::util::moment_stamp(when, view.use_12h)
-                    ),
+                    Some(when) => {
+                        format!("Delivered {}", crate::util::moment_stamp(view.locale, when))
+                    }
                     None => "Delivered".to_owned(),
                 },
             );
@@ -2658,7 +2657,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 Icon::CheckCheck,
                 &match message.read_at {
                     Some(when) => {
-                        format!("{what} {}", crate::util::moment_stamp(when, view.use_12h))
+                        format!("{what} {}", crate::util::moment_stamp(view.locale, when))
                     }
                     None => what.to_owned(),
                 },
@@ -4635,12 +4634,12 @@ mod tests {
         };
         let mut widths = Vec::new();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            widths.push(footer_width(ui, &message, false));
+            widths.push(footer_width(ui, &message));
             message.status = Delivery::Failed;
-            widths.push(footer_width(ui, &message, false));
+            widths.push(footer_width(ui, &message));
             // Only our own messages can fail to send.
             message.from_me = false;
-            widths.push(footer_width(ui, &message, false) + 19.0);
+            widths.push(footer_width(ui, &message) + 19.0);
         });
         output.textures_delta.clear();
         assert!(widths[1] > widths[0] + 30.0, "{widths:?}");

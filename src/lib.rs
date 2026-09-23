@@ -11,6 +11,7 @@ pub mod bidi;
 pub mod demo;
 pub mod diagnostics;
 pub mod emoji;
+pub mod i18n;
 pub mod image_cache;
 #[cfg(target_os = "macos")]
 pub mod macos;

@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::audio::{Player, Recorder};
 use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
+use crate::i18n::Locale;
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
     MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
@@ -115,6 +116,8 @@ const MAX_PINNED_CHATS: usize = 3;
 pub struct App {
     pub dirs: AppDirs,
     pub settings: Settings,
+    /// Resolved interface language, from the setting or the system locale.
+    pub locale: Locale,
     settings_dirty: bool,
     last_settings_save: Instant,
     pub backend: Backend,
@@ -387,9 +390,11 @@ impl App {
                 _ => Palette::dark(),
             });
         let open_chat = settings.last_chat.clone();
+        let locale = crate::i18n::resolve(settings.interface_language);
         let mut app = Self {
             dirs,
             settings,
+            locale,
             settings_dirty: false,
             last_settings_save: Instant::now(),
             backend,
@@ -2922,6 +2927,11 @@ impl App {
                 self.settings.custom_theme_cache = None;
                 self.mark_settings_dirty();
                 self.apply_theme(ctx);
+            }
+            Action::SetInterfaceLanguage(choice) => {
+                self.settings.interface_language = choice;
+                self.locale = crate::i18n::resolve(choice);
+                self.mark_settings_dirty();
             }
             Action::SetCustomTheme(filename) => {
                 if let Some(theme) = self.custom_themes.find(&filename) {

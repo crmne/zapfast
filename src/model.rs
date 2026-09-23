@@ -44,12 +44,13 @@ pub enum ChatFilter {
 impl ChatFilter {
     pub const EVERY: [Self; 4] = [Self::All, Self::Unread, Self::Private, Self::Groups];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+        use crate::i18n::gettext;
         match self {
-            Self::All => "All",
-            Self::Unread => "Unread",
-            Self::Private => "Private",
-            Self::Groups => "Groups",
+            Self::All => gettext(locale, "All"),
+            Self::Unread => gettext(locale, "Unread"),
+            Self::Private => gettext(locale, "Private"),
+            Self::Groups => gettext(locale, "Groups"),
         }
     }
 
@@ -890,6 +891,7 @@ pub enum Action {
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
+    SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),
     SetWallpaperDoodles(bool),

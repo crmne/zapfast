@@ -443,6 +443,16 @@ which restriction applies. Replies from other devices retain their quotes too.
 These screenshots use synthetic offline chats. See the
 [usage guide](https://zapfast.rocks/using-zapfast/#interactive-messages) for
 download behavior and the remaining limitations.
+### Interface language
+
+**Settings > Appearance > Language** chooses the interface language. **Auto**
+follows the operating system's language and falls back to English when ZapFast
+has no translation for it. Brazilian Portuguese, German, Spanish, Italian,
+French, and Russian cover the chat list, search, composer, shortcut hints,
+Settings section titles, and dates. Translations are compiled from gettext PO
+files at build time, with no runtime parsing or network access. Message
+contents, contact names, logs, and protocol errors are never translated, and
+copied messages keep WhatsApp's `[time, date] Name:` format.
 
 ## Files
 

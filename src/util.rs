@@ -3,6 +3,8 @@
 use jiff::civil::Date;
 use jiff::{Timestamp, Zoned};
 
+use crate::i18n::Locale;
+
 /// File-loader identifier for a native path. egui requires a slash after
 /// `file://` on Windows or it interprets a drive path as a UNC hostname.
 /// Keep native characters: egui's loader does not percent-decode URLs.
@@ -145,9 +147,14 @@ mod clock_preference {
     }
 }
 
+/// Time of day on the system's clock, such as "14:05" or "2:05 PM".
+fn hour_minute(when: &Zoned) -> String {
+    time_of_day(when.hour(), when.minute(), twelve_hour_clock())
+}
+
 /// Formats an hour and minute of day as 24-hour "14:05" or 12-hour "2:05 PM".
-fn time_of_day(hour: i8, minute: i8, use_12h: bool) -> String {
-    if use_12h {
+fn time_of_day(hour: i8, minute: i8, twelve_hour: bool) -> String {
+    if twelve_hour {
         let (hour, meridiem) = match hour {
             0 => (12, "AM"),
             1..=11 => (hour, "AM"),
@@ -160,10 +167,10 @@ fn time_of_day(hour: i8, minute: i8, use_12h: bool) -> String {
     }
 }
 
-/// Local message time such as "14:05" or "2:05 PM".
-pub fn clock(unix_seconds: i64, use_12h: bool) -> String {
+/// Local message time such as "14:05".
+pub fn clock(unix_seconds: i64) -> String {
     zoned(unix_seconds)
-        .map(|when| time_of_day(when.hour(), when.minute(), use_12h))
+        .map(|when| hour_minute(&when))
         .unwrap_or_default()
 }
 
@@ -184,23 +191,23 @@ pub fn copy_stamp(unix_seconds: i64) -> String {
 }
 
 /// Chat-row timestamp: time today, weekday this week, or date.
-pub fn chat_stamp(unix_seconds: i64, use_12h: bool) -> String {
+pub fn chat_stamp(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
-    stamp_relative_to(when.date(), today(), &when, use_12h)
+    stamp_relative_to(locale, when.date(), today(), &when)
 }
 
-fn stamp_relative_to(date: Date, today: Date, when: &Zoned, use_12h: bool) -> String {
+fn stamp_relative_to(locale: Locale, date: Date, today: Date, when: &Zoned) -> String {
     let days = today
         .since(date)
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
-        0 => time_of_day(when.hour(), when.minute(), use_12h),
-        1 => "Yesterday".to_owned(),
-        2..=6 => weekday_name(date.weekday()).to_owned(),
-        _ => short_date(date),
+        0 => hour_minute(when),
+        1 => crate::i18n::gettext(locale, "Yesterday").into_owned(),
+        2..=6 => weekday_name(locale, date.weekday()),
+        _ => short_date(locale, date),
     }
 }
 
@@ -214,25 +221,29 @@ pub fn split_name(name: &str) -> (String, String) {
 }
 
 /// Message-info timestamp with date and minute.
-pub fn moment_stamp(unix_seconds: i64, use_12h: bool) -> String {
+pub fn moment_stamp(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
-    let time = time_of_day(when.hour(), when.minute(), use_12h);
+    let time = hour_minute(&when);
     let days = today()
         .since(when.date())
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
         0 => time,
-        1 => format!("Yesterday at {time}"),
-        2..=6 => format!("{} at {time}", weekday_name(when.date().weekday())),
-        _ => format!("{} at {time}", short_date(when.date())),
+        1 => crate::i18n::gettext(locale, "Yesterday at {time}").replace("{time}", &time),
+        2..=6 => crate::i18n::gettext(locale, "{weekday} at {time}")
+            .replace("{weekday}", &weekday_name(locale, when.date().weekday()))
+            .replace("{time}", &time),
+        _ => crate::i18n::gettext(locale, "{date} at {time}")
+            .replace("{date}", &short_date(locale, when.date()))
+            .replace("{time}", &time),
     }
 }
 
 /// Conversation day-separator label.
-pub fn day_label(unix_seconds: i64) -> String {
+pub fn day_label(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
@@ -243,10 +254,10 @@ pub fn day_label(unix_seconds: i64) -> String {
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
-        0 => "Today".to_owned(),
-        1 => "Yesterday".to_owned(),
-        2..=6 => weekday_name(date.weekday()).to_owned(),
-        _ => long_date(date),
+        0 => crate::i18n::gettext(locale, "Today").into_owned(),
+        1 => crate::i18n::gettext(locale, "Yesterday").into_owned(),
+        2..=6 => weekday_name(locale, date.weekday()),
+        _ => long_date(locale, date),
     }
 }
 
@@ -255,50 +266,51 @@ pub fn day_key(unix_seconds: i64) -> Option<Date> {
     zoned(unix_seconds).map(|when| when.date())
 }
 
-fn weekday_name(weekday: jiff::civil::Weekday) -> &'static str {
+fn weekday_name(locale: Locale, weekday: jiff::civil::Weekday) -> String {
+    use crate::i18n::gettext;
+    // Each literal sits in its own call so xgettext can extract it.
     match weekday {
-        jiff::civil::Weekday::Monday => "Monday",
-        jiff::civil::Weekday::Tuesday => "Tuesday",
-        jiff::civil::Weekday::Wednesday => "Wednesday",
-        jiff::civil::Weekday::Thursday => "Thursday",
-        jiff::civil::Weekday::Friday => "Friday",
-        jiff::civil::Weekday::Saturday => "Saturday",
-        jiff::civil::Weekday::Sunday => "Sunday",
+        jiff::civil::Weekday::Monday => gettext(locale, "Monday"),
+        jiff::civil::Weekday::Tuesday => gettext(locale, "Tuesday"),
+        jiff::civil::Weekday::Wednesday => gettext(locale, "Wednesday"),
+        jiff::civil::Weekday::Thursday => gettext(locale, "Thursday"),
+        jiff::civil::Weekday::Friday => gettext(locale, "Friday"),
+        jiff::civil::Weekday::Saturday => gettext(locale, "Saturday"),
+        jiff::civil::Weekday::Sunday => gettext(locale, "Sunday"),
     }
+    .into_owned()
 }
 
-fn month_name(month: i8) -> &'static str {
+fn month_name(locale: Locale, month: i8) -> String {
+    use crate::i18n::gettext;
     match month {
-        1 => "January",
-        2 => "February",
-        3 => "March",
-        4 => "April",
-        5 => "May",
-        6 => "June",
-        7 => "July",
-        8 => "August",
-        9 => "September",
-        10 => "October",
-        11 => "November",
-        _ => "December",
+        1 => gettext(locale, "January"),
+        2 => gettext(locale, "February"),
+        3 => gettext(locale, "March"),
+        4 => gettext(locale, "April"),
+        5 => gettext(locale, "May"),
+        6 => gettext(locale, "June"),
+        7 => gettext(locale, "July"),
+        8 => gettext(locale, "August"),
+        9 => gettext(locale, "September"),
+        10 => gettext(locale, "October"),
+        11 => gettext(locale, "November"),
+        _ => gettext(locale, "December"),
     }
+    .into_owned()
 }
 
-fn short_date(date: Date) -> String {
-    format!(
-        "{} {} {}",
-        date.day(),
-        &month_name(date.month())[..3],
-        date.year()
-    )
+fn short_date(locale: Locale, date: Date) -> String {
+    let month: String = month_name(locale, date.month()).chars().take(3).collect();
+    format!("{} {month} {}", date.day(), date.year())
 }
 
-fn long_date(date: Date) -> String {
+fn long_date(locale: Locale, date: Date) -> String {
     format!(
         "{}, {} {} {}",
-        weekday_name(date.weekday()),
+        weekday_name(locale, date.weekday()),
         date.day(),
-        month_name(date.month()),
+        month_name(locale, date.month()),
         date.year()
     )
 }
@@ -486,6 +498,34 @@ pub fn tray_template_rgba(size: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn clock_patterns_from_every_platform_are_recognized() {
+        for pattern in [
+            "h:mm:ss tt",
+            "h a",
+            "K:mm a",
+            "%r",
+            "%I:%M:%S %p",
+            "%l:%M %p",
+        ] {
+            assert!(super::pattern_is_twelve_hour(pattern), "{pattern}");
+        }
+        for pattern in ["HH:mm:ss", "H:mm", "%T", "%H:%M:%S", "HH 'h' mm", "HH"] {
+            assert!(!super::pattern_is_twelve_hour(pattern), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn time_of_day_switches_between_24_and_12_hour() {
+        assert_eq!(time_of_day(0, 5, false), "00:05");
+        assert_eq!(time_of_day(14, 5, false), "14:05");
+        assert_eq!(time_of_day(0, 5, true), "12:05 AM");
+        assert_eq!(time_of_day(9, 5, true), "9:05 AM");
+        assert_eq!(time_of_day(12, 0, true), "12:00 PM");
+        assert_eq!(time_of_day(14, 5, true), "2:05 PM");
+        assert_eq!(time_of_day(23, 59, true), "11:59 PM");
+    }
+
+    #[test]
     fn image_paths_keep_the_native_path_after_loader_conversion() {
         for path in [
             r"C:\Users\Ada\photo.jpg",
@@ -557,57 +597,76 @@ mod tests {
             .expect("valid")
             .to_zoned(jiff::tz::TimeZone::UTC);
         let date = when.date();
-        assert_eq!(stamp_relative_to(date, date, &when, false), "22:13");
         assert_eq!(
-            stamp_relative_to(date, date.tomorrow().expect("date"), &when, false),
+            stamp_relative_to(Locale::English, date, date, &when),
+            time_of_day(22, 13, twelve_hour_clock())
+        );
+        assert_eq!(
+            stamp_relative_to(Locale::English, date, date.tomorrow().expect("date"), &when),
             "Yesterday"
         );
         assert_eq!(
             stamp_relative_to(
+                Locale::English,
                 date,
                 date.checked_add(jiff::Span::new().days(3)).expect("date"),
-                &when,
-                false
+                &when
             ),
             "Tuesday"
         );
         assert_eq!(
             stamp_relative_to(
+                Locale::English,
                 date,
                 date.checked_add(jiff::Span::new().days(30)).expect("date"),
-                &when,
-                false
+                &when
             ),
             "14 Nov 2023"
         );
     }
 
     #[test]
-    fn clock_patterns_from_every_platform_are_recognized() {
-        for pattern in [
-            "h:mm:ss tt",
-            "h a",
-            "K:mm a",
-            "%r",
-            "%I:%M:%S %p",
-            "%l:%M %p",
-        ] {
-            assert!(super::pattern_is_twelve_hour(pattern), "{pattern}");
+    fn short_dates_take_whole_characters_in_every_locale() {
+        for locale in Locale::ALL {
+            for month in 1..=12 {
+                let date = jiff::civil::date(2024, month, 5);
+                let short = short_date(locale, date);
+                assert!(
+                    short.starts_with("5 ") && short.ends_with(" 2024"),
+                    "{short}"
+                );
+            }
         }
-        for pattern in ["HH:mm:ss", "H:mm", "%T", "%H:%M:%S", "HH 'h' mm", "HH"] {
-            assert!(!super::pattern_is_twelve_hour(pattern), "{pattern}");
-        }
+        assert_eq!(
+            short_date(Locale::German, jiff::civil::date(2024, 3, 5)),
+            "5 Mär 2024"
+        );
     }
 
     #[test]
-    fn time_of_day_switches_between_24_and_12_hour() {
-        assert_eq!(time_of_day(0, 5, false), "00:05");
-        assert_eq!(time_of_day(14, 5, false), "14:05");
-        assert_eq!(time_of_day(0, 5, true), "12:05 AM");
-        assert_eq!(time_of_day(9, 5, true), "9:05 AM");
-        assert_eq!(time_of_day(12, 0, true), "12:00 PM");
-        assert_eq!(time_of_day(14, 5, true), "2:05 PM");
-        assert_eq!(time_of_day(23, 59, true), "11:59 PM");
+    fn brazilian_portuguese_stamps_are_translated() {
+        let when = Timestamp::from_second(1_700_000_000)
+            .expect("valid")
+            .to_zoned(jiff::tz::TimeZone::UTC);
+        let date = when.date();
+        assert_eq!(
+            stamp_relative_to(
+                Locale::PortugueseBrazil,
+                date,
+                date.tomorrow().expect("date"),
+                &when
+            ),
+            "Ontem"
+        );
+        assert_eq!(
+            stamp_relative_to(
+                Locale::PortugueseBrazil,
+                date,
+                date.checked_add(jiff::Span::new().days(3)).expect("date"),
+                &when
+            ),
+            "Terça-feira"
+        );
     }
 
     #[test]
