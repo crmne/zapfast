@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contribution and project scope
+    url: https://github.com/crmne/zapfast/blob/main/CONTRIBUTING.md
+    about: Check product boundaries and contribution requirements before opening an issue or pull request.
+  - name: Documentation
+    url: https://zapfast.rocks
+    about: Install steps, settings, and where ZapFast keeps its files and logs.

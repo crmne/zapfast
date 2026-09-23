@@ -17,6 +17,7 @@ use crate::model::{
     PickerTab,
 };
 use crate::theme::{self, Icon, Palette};
+use crate::wallpaper;
 
 use super::focus::{Stop, TabStop};
 use super::widgets;
@@ -38,6 +39,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         empty(app, ui);
         return;
     };
+    if app.settings.show_wallpaper {
+        wallpaper::paint(ui, app.settings.wallpaper_color_for(app.palette.dark));
+    }
     header(app, ui, &chat);
     if theme::macos_chrome(ui.ctx()) {
         super::banner(app, ui);
@@ -1175,6 +1179,7 @@ struct View<'a> {
     auto_download: bool,
     connected: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
+    interactive_pending: &'a HashSet<(ChatId, String)>,
     /// Show avatars for all incoming messages, not only groups.
     pictures: bool,
     anchor: Option<&'a str>,
@@ -1225,6 +1230,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         auto_download: app.settings.auto_download,
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
+        interactive_pending: &app.interactive_sending,
         pictures: app.settings.show_sender_pictures,
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
@@ -1566,7 +1572,9 @@ fn bubble(
         ..*view
     };
     let with_avatar = !own && (view.chat.is_group() || view.pictures);
-    let max_width = ((ui.available_width() * 0.72).min(560.0)
+    let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
+    let max_width = ((ui.available_width() * if carousel { 0.95 } else { 0.72 })
+        .min(if carousel { 920.0 } else { 560.0 })
         - if with_avatar {
             SENDER_AVATAR + 8.0
         } else {
@@ -1752,6 +1760,11 @@ fn transcript_row(
         Content::Location { .. } => Some("[location]".to_owned()),
         Content::Contact { display_name, .. } => Some(format!("[contact: {display_name}]")),
         Content::Poll { question, .. } => Some(format!("[poll: {question}]")),
+        Content::Interactive {
+            card: Some(card), ..
+        } if card.image.is_some() || card.carousel.iter().any(|card| card.image.is_some()) => {
+            Some("[photo]".to_owned())
+        }
         _ => None,
     };
     let reactions = if message.reactions.is_empty() {
@@ -1831,7 +1844,8 @@ fn bubble_frame(
     let palette = view.palette;
     let own = message.from_me;
     // Draw stickers without a bubble.
-    let fill = if matches!(message.content, Content::Sticker { .. }) {
+    let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
+    let fill = if carousel || matches!(message.content, Content::Sticker { .. }) {
         Color32::TRANSPARENT
     } else if own {
         palette.bubble_out
@@ -1902,7 +1916,8 @@ fn bubble_frame(
             // Bubbles without cards use the natural text width.
             let cap = ((max_width - 20.0).min(ui.available_width())).max(0.0);
             let reserve = footer_width(ui, message);
-            let slot = match settled_width(ui, view, message, cap) {
+            let settled = settled_width(ui, view, message, cap);
+            let slot = match settled {
                 Some(width) => {
                     if let Some(quoted) = &message.quoted {
                         quote_block(ui, view, message, quoted, width, actions);
@@ -1912,6 +1927,21 @@ fn bubble_frame(
                 None => content(ui, view, message, cap, reserve, actions),
             };
             footer(ui, &palette, message, slot);
+            if matches!(message.content, Content::Poll { .. }) {
+                super::polls::results_button(
+                    ui,
+                    &palette,
+                    message,
+                    settled.unwrap_or(cap),
+                    actions,
+                );
+            }
+            if let Content::Interactive {
+                card: Some(card), ..
+            } = &message.content
+            {
+                interactive_buttons(ui, view, message, card, settled.unwrap_or(cap), actions);
+            }
         });
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
@@ -2028,13 +2058,35 @@ fn bubble_frame(
 
 /// Minimum shared width for cards inside message bubbles.
 const CARD_WIDTH: f32 = 320.0;
+const CAROUSEL_CARD_WIDTH: f32 = 280.0;
+const CAROUSEL_GAP: f32 = 8.0;
 
 /// Returns the shared card width, bounded by [`CARD_WIDTH`] and `cap`.
 fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
+    if let Content::Interactive {
+        card: Some(card), ..
+    } = &message.content
+        && !card.carousel.is_empty()
+    {
+        // Keep short carousels, their heading and their timestamp together.
+        // Wider strips still occupy the cap and scroll horizontally.
+        let count = card.carousel.len();
+        let cards = count as f32 * (CAROUSEL_CARD_WIDTH + 20.0);
+        let gaps = count.saturating_sub(1) as f32 * CAROUSEL_GAP;
+        return Some((cards + gaps).min(cap));
+    }
+    if let Content::Interactive {
+        card: Some(card), ..
+    } = &message.content
+        && card.image.is_some()
+    {
+        return Some(CARD_WIDTH.min(cap));
+    }
     let card = message.quoted.is_some()
         || match &message.content {
             Content::Text { preview, .. } => preview.is_some(),
             Content::Document { .. } | Content::Audio { .. } | Content::Poll { .. } => true,
+            Content::Interactive { card, .. } => card.is_some(),
             // Videos without a poster use the file-row layout.
             Content::Video { .. } => message.thumbnail.is_none(),
             _ => false,
@@ -2049,7 +2101,7 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
 fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
     let palette = view.palette;
     let text = match &message.content {
-        Content::Text { text, .. } => text,
+        Content::Text { text, .. } | Content::Interactive { text, .. } => text,
         Content::Image {
             caption: Some(caption),
             ..
@@ -2466,7 +2518,10 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     }
     if !matches!(
         message.content,
-        Content::Revoked | Content::Unsupported { .. } | Content::Poll { .. }
+        Content::Revoked
+            | Content::Unsupported { .. }
+            | Content::Poll { .. }
+            | Content::Interactive { .. }
     ) && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
     {
         actions.push(Action::ShowDialog(Dialog::Forward {
@@ -2475,7 +2530,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         }));
     }
     let text = match &message.content {
-        Content::Text { text, .. } => Some(text.clone()),
+        Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.clone(),
@@ -2541,6 +2596,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                     !downloading,
                 ) {
                     actions.push(Action::Download {
+                        card: None,
                         chat: chat.clone(),
                         message: message.id.clone(),
                     });
@@ -2628,6 +2684,10 @@ fn content(
     // Add non-text messages to cross-message transcript copies.
     let has_body = match &message.content {
         Content::Text { .. } => true,
+        // Image-only cards and carousels without a body draw no text.
+        Content::Interactive { card, .. } => card.as_ref().is_none_or(|card| {
+            !card.body.is_empty() || (card.image.is_none() && card.carousel.is_empty())
+        }),
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.is_some(),
@@ -2640,6 +2700,38 @@ fn content(
             .push(transcript_row(view, message, String::new(), Vec::new()));
     }
     match &message.content {
+        Content::Interactive { text, card } => {
+            let Some(card) = card else {
+                let span = message.quoted.is_some().then_some(width);
+                return rich_body(ui, view, message, text, width, Some(reserve), span, actions);
+            };
+            if !card.carousel.is_empty() {
+                carousel(ui, view, message, card, width, actions);
+                return None;
+            }
+            if let Some(image) = &card.image {
+                picture(ui, view, message, image, width, None, actions);
+                ui.add_space(4.0);
+                if card.body.is_empty() {
+                    return None;
+                }
+            }
+            let body = if card.body.is_empty() {
+                "Interactive message"
+            } else {
+                &card.body
+            };
+            rich_body(
+                ui,
+                view,
+                message,
+                body,
+                width,
+                Some(reserve),
+                Some(width),
+                actions,
+            )
+        }
         Content::Text { text, preview } => {
             if let Some(preview) = preview {
                 preview_card(ui, view, message, preview, width, actions);
@@ -2850,6 +2942,570 @@ fn content(
             None
         }
     }
+}
+
+/// Horizontal, independently cached cards with overlaid previous/next controls.
+/// Keep a partial next card visible and preserve native wheel/touchpad scrolling.
+fn carousel(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    card: &crate::model::InteractiveCard,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    if !card.body.is_empty() {
+        rich_body(
+            ui,
+            view,
+            message,
+            &card.body,
+            width,
+            None,
+            Some(width),
+            actions,
+        );
+        ui.add_space(4.0);
+    }
+    // Reserve a glimpse of the next card only when there is another card.
+    let inset = if card.carousel.len() > 1 { 36.0 } else { 20.0 };
+    let card_width = CAROUSEL_CARD_WIDTH.min((width - inset).max(140.0));
+    let id = bubble_id(&message.chat, &message.id);
+    for direction in [-1, 1] {
+        ui.ctx().data_mut(|data| {
+            data.remove::<Rect>(id.with(("carousel-arrow", direction)));
+        });
+    }
+    let output = egui::ScrollArea::horizontal()
+        .id_salt(("carousel", &message.chat, &message.id))
+        .max_width(width)
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .auto_shrink([false, true])
+        .show_viewport(ui, |ui, viewport| {
+            let strip = ui
+                .with_layout(Layout::left_to_right(Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.x = CAROUSEL_GAP;
+                    for (index, child) in card.carousel.iter().enumerate() {
+                        let row = carousel_row(message, index, child);
+                        ui.push_id(("carousel-card", index), |ui| {
+                            let response = Frame::new()
+                                .fill(if message.from_me {
+                                    view.palette.bubble_out
+                                } else {
+                                    view.palette.bubble_in
+                                })
+                                .corner_radius(10)
+                                .inner_margin(Margin {
+                                    left: 10,
+                                    right: 10,
+                                    top: 6,
+                                    bottom: 5,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_width(card_width);
+                                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                        ui.set_width(card_width);
+                                        if child.image.is_some() {
+                                            carousel_picture(
+                                                ui, view, message, index, child, card_width,
+                                                actions,
+                                            );
+                                        }
+                                        if !child.body.is_empty() {
+                                            rich_body(
+                                                ui,
+                                                view,
+                                                &row,
+                                                &child.body,
+                                                card_width,
+                                                None,
+                                                Some(card_width),
+                                                actions,
+                                            );
+                                        }
+                                        interactive_buttons(
+                                            ui, view, &row, child, card_width, actions,
+                                        );
+                                    });
+                                });
+                            ui.ctx().data_mut(|data| {
+                                data.insert_temp(
+                                    bubble_id(&message.chat, &message.id)
+                                        .with(("carousel-card", index)),
+                                    response.response.rect,
+                                )
+                            });
+                        });
+                    }
+                })
+                .response
+                .rect;
+            let limit = (strip.width() - viewport.width()).max(0.0);
+            let visible = Rect::from_min_size(
+                pos2(strip.left() + viewport.left(), strip.top()),
+                vec2(viewport.width(), strip.height()),
+            );
+            if limit > 1.0 {
+                for direction in [-1, 1] {
+                    let available = if direction < 0 {
+                        viewport.left() > 1.0
+                    } else {
+                        viewport.left() < limit - 1.0
+                    };
+                    if !available {
+                        continue;
+                    }
+                    let x = if direction < 0 {
+                        visible.left() + 26.0
+                    } else {
+                        visible.right() - 26.0
+                    };
+                    let rect =
+                        Rect::from_center_size(pos2(x, visible.center().y), Vec2::splat(40.0));
+                    let arrow = carousel_arrow(
+                        ui,
+                        &view.palette,
+                        rect,
+                        id.with(("carousel-arrow", direction)),
+                        direction < 0,
+                    );
+                    if arrow.clicked() {
+                        let step = card_width + 20.0 + CAROUSEL_GAP;
+                        let target = (viewport.left() + direction as f32 * step).clamp(0.0, limit);
+                        // Issue this inside the horizontal ScrollArea so the
+                        // conversation's vertical scroll cannot consume it.
+                        ui.scroll_with_delta(vec2(viewport.left() - target, 0.0));
+                    }
+                }
+            }
+            visible
+        });
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id.with("carousel-viewport"), output.inner));
+}
+
+/// Stands in for one carousel card when drawing its text and actions. Only the
+/// parent's identity is kept: cloning the whole message would copy every
+/// card's thumbnail per card each frame, and the parent's quote and reactions
+/// would repeat on each card in copied transcripts.
+fn carousel_row(message: &Message, index: usize, card: &crate::model::InteractiveCard) -> Message {
+    Message {
+        id: format!("{}-card-{index}", message.id),
+        chat: message.chat.clone(),
+        sender: message.sender.clone(),
+        sender_name: message.sender_name.clone(),
+        from_me: message.from_me,
+        timestamp: message.timestamp,
+        content: Content::Interactive {
+            text: card.body.clone(),
+            card: None,
+        },
+        status: message.status,
+        delivered_at: None,
+        read_at: None,
+        quoted: None,
+        reactions: Vec::new(),
+        edited: message.edited,
+        mentions: message.mentions.clone(),
+        forwarded: false,
+        thumbnail: None,
+    }
+}
+
+fn carousel_arrow(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    rect: Rect,
+    id: egui::Id,
+    previous: bool,
+) -> egui::Response {
+    let label = if previous {
+        "Previous card"
+    } else {
+        "Next card"
+    };
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    ui.ctx().data_mut(|data| data.insert_temp(id, rect));
+    theme::reveal_focus(&response);
+    if ui.is_rect_visible(rect) {
+        let fill = if response.hovered() || response.has_focus() {
+            palette.surface_hover
+        } else {
+            palette.overlay
+        };
+        ui.painter()
+            .circle_filled(rect.center() + vec2(0.0, 2.0), 21.0, palette.shadow);
+        ui.painter().circle_filled(rect.center(), 20.0, fill);
+        ui.painter().circle_stroke(
+            rect.center(),
+            19.5,
+            Stroke::new(
+                1.0,
+                if response.has_focus() {
+                    palette.link
+                } else {
+                    palette.outline
+                },
+            ),
+        );
+        theme::paint_icon(
+            ui,
+            if previous {
+                Icon::ChevronLeft
+            } else {
+                Icon::ChevronRight
+            },
+            rect,
+            if response.is_pointer_button_down_on() {
+                21.0
+            } else {
+                23.0
+            },
+            palette.text,
+        );
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(label)
+}
+
+/// A carousel uses a short image preview; opening it shows the full picture.
+fn carousel_picture(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    index: usize,
+    card: &crate::model::InteractiveCard,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    let Some(media) = &card.image else { return };
+    let size = vec2(width, width * 0.56);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let label = match (&media.path, &media.state) {
+        (Some(_), _) => "Open card image",
+        (None, MediaState::Failed(_)) => "Retry card image download",
+        (None, MediaState::Downloading) => "Downloading card image",
+        (None, MediaState::Idle) => "Download card image",
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    // Tab can land on a card scrolled out of the carousel's viewport.
+    theme::reveal_focus(&response);
+    let visible = ui.is_rect_visible(rect);
+    if visible {
+        ui.painter().rect_filled(rect, 6.0, view.palette.surface);
+        let uri = media.path.as_ref().map(|path| file_uri(path)).or_else(|| {
+            card.thumbnail.as_deref().map(|bytes| {
+                thumbnail_uri(
+                    ui.ctx(),
+                    &message.chat,
+                    &format!("{}-card-{index}", message.id),
+                    bytes,
+                )
+            })
+        });
+        if let Some(uri) = uri {
+            let image = egui::Image::new(uri);
+            let dimensions = match image.load_for_size(ui.ctx(), size) {
+                Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture.size),
+                Ok(egui::load::TexturePoll::Pending { .. }) => Some(vec2(
+                    media.width.unwrap_or(16) as f32,
+                    media.height.unwrap_or(9) as f32,
+                )),
+                Err(_) => None,
+            };
+            if let Some(dimensions) = dimensions {
+                let ratio = dimensions.x / dimensions.y.max(1.0);
+                let target = size.x / size.y.max(1.0);
+                let uv_size = if ratio > target {
+                    vec2(target / ratio, 1.0)
+                } else {
+                    vec2(1.0, ratio / target)
+                };
+                image
+                    .uv(Rect::from_center_size(pos2(0.5, 0.5), uv_size))
+                    .fit_to_exact_size(size)
+                    .corner_radius(6.0)
+                    .paint_at(ui, rect);
+            } else if media.path.is_some() {
+                theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, view.palette.danger);
+                ui.painter().text(
+                    rect.center() + vec2(0.0, 24.0),
+                    Align2::CENTER_CENTER,
+                    "Could not display this picture. Click to open it.",
+                    theme::regular(11.5),
+                    view.palette.secondary,
+                );
+            }
+        }
+        if media.path.is_none() {
+            let disc = Rect::from_center_size(rect.center(), Vec2::splat(42.0));
+            ui.painter()
+                .circle_filled(disc.center(), 21.0, Color32::from_black_alpha(130));
+            match &media.state {
+                MediaState::Downloading => theme::paint_spinner(ui, disc, 20.0, Color32::WHITE),
+                MediaState::Failed(_) => {
+                    theme::paint_icon(ui, Icon::CircleAlert, disc, 20.0, Color32::WHITE);
+                    ui.painter().text(
+                        rect.center() + vec2(0.0, 34.0),
+                        Align2::CENTER_CENTER,
+                        "Download failed. Click to retry.",
+                        theme::regular(11.5),
+                        Color32::WHITE,
+                    );
+                }
+                MediaState::Idle => {
+                    theme::paint_icon(ui, Icon::Download, disc, 20.0, Color32::WHITE)
+                }
+            }
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect.shrink(1.0),
+                6.0,
+                Stroke::new(theme::FOCUS_STROKE_WIDTH, view.palette.link),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let clicked = response.clicked();
+    if let MediaState::Failed(error) = &media.state {
+        response.on_hover_text(format!("{error} · Click to retry"));
+    }
+    if let Some(path) = &media.path {
+        if clicked {
+            actions.push(Action::OpenFile(path.clone()));
+        }
+    } else if !matches!(media.state, MediaState::Downloading)
+        && (clicked
+            || (visible
+                && auto_download_allowed(media, false, view.auto_download)
+                && matches!(media.state, MediaState::Idle)))
+    {
+        actions.push(Action::Download {
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+            card: Some(index),
+        });
+    }
+}
+
+/// Full-width action rows below the message timestamp, matching business cards.
+/// Show only executable actions as active, with the same keyboard path as clicks.
+fn interactive_buttons(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    card: &crate::model::InteractiveCard,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    use crate::model::InteractiveAction;
+    let palette = &view.palette;
+    let spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    for (index, button) in card.buttons.iter().enumerate() {
+        let sends = matches!(
+            button.action,
+            InteractiveAction::Reply | InteractiveAction::Select(_)
+        );
+        let enabled = button.url.is_some()
+            || match &button.action {
+                InteractiveAction::Copy(_) => true,
+                InteractiveAction::Reply | InteractiveAction::Select(_) => {
+                    view.connected
+                        && view.chat.can_send()
+                        && !message.from_me
+                        && !message.edited
+                        && !view
+                            .interactive_pending
+                            .contains(&(message.chat.clone(), message.id.clone()))
+                }
+                InteractiveAction::Unavailable => false,
+            };
+        // Muted/link colours target incoming surfaces; outgoing tinted bubbles
+        // need the main foreground to keep small labels readable in both themes.
+        let color = if message.from_me {
+            palette.text
+        } else if enabled {
+            palette.link
+        } else {
+            palette.secondary
+        };
+        let icon = if button.url.is_some() {
+            Some(Icon::ExternalLink)
+        } else {
+            match button.action {
+                InteractiveAction::Reply => None,
+                InteractiveAction::Select(_) => Some(Icon::ListChecks),
+                InteractiveAction::Copy(_) => Some(Icon::Copy),
+                InteractiveAction::Unavailable => Some(Icon::Smartphone),
+            }
+        };
+        let line = widgets::line(
+            ui,
+            &button.label,
+            theme::medium(14.0),
+            color,
+            (width - 48.0).max(1.0),
+            2,
+        );
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, _) = ui.allocate_exact_size(
+            vec2(width, (line.size().y + 22.0).max(44.0)),
+            Sense::hover(),
+        );
+        // Action rows belong to the card itself, including its side padding.
+        // The final row follows the bubble's bottom corners and margin.
+        let last = index + 1 == card.buttons.len() && !card.needs_phone;
+        let row_rect = Rect::from_min_max(
+            rect.min - vec2(10.0, 0.0),
+            rect.max + vec2(10.0, if last { 5.0 } else { 0.0 }),
+        );
+        let corners = CornerRadius {
+            sw: if last { 10 } else { 0 },
+            se: if last { 10 } else { 0 },
+            ..CornerRadius::ZERO
+        };
+        let response = ui.interact(
+            row_rect,
+            bubble_id(&message.chat, &message.id).with(("interactive-action", index)),
+            sense,
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &button.label)
+        });
+        theme::reveal_focus(&response);
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                bubble_id(&message.chat, &message.id).with(("interactive-button", index)),
+                row_rect,
+            )
+        });
+        if ui.is_rect_visible(rect) {
+            if enabled && (response.hovered() || response.has_focus()) {
+                ui.painter().rect_filled(
+                    row_rect,
+                    corners,
+                    palette
+                        .text
+                        .gamma_multiply(if response.is_pointer_button_down_on() {
+                            0.08
+                        } else {
+                            0.04
+                        }),
+                );
+            }
+            ui.painter().hline(
+                row_rect.x_range(),
+                rect.top(),
+                Stroke::new(1.0, palette.secondary.gamma_multiply(0.2)),
+            );
+            if response.has_focus() {
+                ui.painter().rect_stroke(
+                    rect.shrink(2.0),
+                    4.0,
+                    Stroke::new(1.0, palette.link),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            let inset = if icon.is_some() { 22.0 } else { 0.0 };
+            let content_width = line.size().x + inset;
+            let left = rect.center().x - content_width / 2.0;
+            if let Some(icon) = icon {
+                theme::paint_icon(
+                    ui,
+                    icon,
+                    Rect::from_center_size(
+                        egui::pos2(left + 7.0, rect.center().y),
+                        Vec2::splat(14.0),
+                    ),
+                    14.0,
+                    color,
+                );
+            }
+            line.paint(
+                ui,
+                egui::pos2(left + inset, rect.center().y - line.size().y / 2.0),
+                color,
+            );
+        }
+        let reply = |choice| Action::ReplyInteractive {
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+            button: index,
+            choice,
+        };
+        if !enabled {
+            let reason = if sends
+                && view
+                    .interactive_pending
+                    .contains(&(message.chat.clone(), message.id.clone()))
+            {
+                "Sending reply…"
+            } else if sends && !view.connected {
+                "Connect to WhatsApp to reply"
+            } else if sends && !view.chat.can_send() {
+                "This conversation is read-only"
+            } else if sends && message.from_me {
+                "Reply options are for the recipient"
+            } else {
+                "Open this option in WhatsApp Web or on your phone"
+            };
+            response.on_hover_text(format!("{}\n{reason}", button.label));
+        } else if let Some(url) = &button.url {
+            if response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(format!("{}\n{url}", button.label))
+                .clicked()
+            {
+                actions.push(Action::OpenUrl(url.clone()));
+            }
+        } else {
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            match &button.action {
+                InteractiveAction::Reply => {
+                    if response
+                        .on_hover_text(format!("Send reply: {}", button.label))
+                        .clicked()
+                    {
+                        actions.push(reply(None));
+                    }
+                }
+                InteractiveAction::Copy(code) => {
+                    if response.on_hover_text("Copy code").clicked() {
+                        actions.push(Action::CopyText(code.clone()));
+                    }
+                }
+                InteractiveAction::Select(_) => {
+                    if response.clicked() {
+                        actions.push(Action::ShowDialog(crate::model::Dialog::InteractiveList {
+                            chat: message.chat.clone(),
+                            message: message.id.clone(),
+                            button: index,
+                        }));
+                    }
+                }
+                InteractiveAction::Unavailable => {}
+            }
+        }
+    }
+    if card.needs_phone {
+        ui.add_space(6.0);
+        widgets::rich_text(
+            ui,
+            "More content in WhatsApp Web or on your phone",
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    ui.spacing_mut().item_spacing.y = spacing;
 }
 
 /// Draws formatted message text. `reserve` leaves footer space on the last
@@ -3280,6 +3936,7 @@ fn picture(
         && auto_download_allowed(media, sticker.is_some(), view.auto_download);
     if wants || auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
@@ -3413,6 +4070,7 @@ fn video(
         && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
@@ -3424,6 +4082,7 @@ fn video(
             Some(path) => actions.push(Action::OpenFile(path.clone())),
             None if !matches!(media.state, MediaState::Downloading) => {
                 actions.push(Action::Download {
+                    card: None,
                     chat: view.chat.id.clone(),
                     message: message.id.clone(),
                 })
@@ -3508,6 +4167,7 @@ fn attachment(
         && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
@@ -3530,6 +4190,7 @@ fn attachment(
             Some(path) => actions.push(Action::OpenFile(path.clone())),
             None if !matches!(media.state, MediaState::Downloading) => {
                 actions.push(Action::Download {
+                    card: None,
                     chat: view.chat.id.clone(),
                     message: message.id.clone(),
                 })
@@ -3601,6 +4262,7 @@ fn voice_player(
                     .clicked()
                     {
                         actions.push(Action::Download {
+                            card: None,
                             chat: view.chat.id.clone(),
                             message: message.id.clone(),
                         });
@@ -3768,6 +4430,7 @@ fn voice_player(
         && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });

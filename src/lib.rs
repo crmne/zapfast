@@ -34,3 +34,4 @@ pub mod ui;
 pub mod updates;
 pub mod util;
 pub mod voice;
+pub mod wallpaper;

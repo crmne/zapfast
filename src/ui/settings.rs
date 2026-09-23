@@ -1,11 +1,12 @@
 //! The settings page.
 
-use egui::{CornerRadius, Frame, Margin};
+use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Stroke, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::model::{Action, Dialog, Page};
-use crate::settings::ThemeChoice;
+use crate::settings::{ThemeChoice, WallpaperColor};
 use crate::theme::{self, Icon};
+use crate::wallpaper;
 
 use super::widgets;
 
@@ -86,6 +87,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             }
                         });
                     });
+                    widgets::setting_row(
+                        ui,
+                        &palette,
+                        "Wallpaper",
+                        app.settings.wallpaper_color_for(palette.dark).label(),
+                        |ui| {
+                            if theme::soft_button(
+                                ui,
+                                &palette,
+                                Some(Icon::ChevronRight),
+                                app.settings.wallpaper_color_for(palette.dark).label(),
+                                false,
+                            )
+                            .clicked()
+                            {
+                                app.actions.push(Action::Open(Page::Wallpaper));
+                            }
+                        },
+                    );
                     widgets::setting_row(
                         ui,
                         &palette,
@@ -262,6 +282,183 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     );
                 });
         });
+}
+
+/// Wallpaper colour picker and live preview.
+pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
+    super::standalone_header(app, ui);
+    if theme::macos_chrome(ui.ctx()) {
+        super::banner(app, ui);
+    }
+    let palette = app.palette;
+    let body_height = ui.available_height().max(0.0);
+    ui.with_layout(
+        Layout::left_to_right(Align::Min).with_main_align(Align::Min),
+        |ui| {
+            const HEADER_HEIGHT: f32 = 52.0;
+            const MIN_PREVIEW_WIDTH: f32 = 180.0;
+            let total_width = ui.available_width();
+            let left_width = (total_width * 0.42)
+                .clamp(220.0, 520.0)
+                .min((total_width - MIN_PREVIEW_WIDTH).max(0.0));
+            let palette_width = (left_width - 40.0).max(0.0);
+            let preview_width = (total_width - left_width).max(0.0);
+            ui.allocate_ui_with_layout(
+                vec2(left_width, body_height),
+                Layout::top_down(Align::Min).with_main_align(Align::Min),
+                |ui| {
+                    let section = ui.max_rect();
+                    let header = Rect::from_min_size(
+                        section.left_top(),
+                        vec2(left_width, HEADER_HEIGHT),
+                    );
+                    ui.painter().rect_filled(header, 0.0, palette.panel);
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(header)
+                            .layout(
+                                Layout::left_to_right(Align::Center)
+                                    .with_main_align(Align::Min),
+                            ),
+                        |ui| {
+                            ui.add_space(24.0);
+                            if theme::icon_button(
+                                ui,
+                                Icon::ArrowLeft,
+                                20.0,
+                                palette.secondary,
+                                palette.text,
+                                "Back to settings",
+                            )
+                            .clicked()
+                            {
+                                app.actions.push(Action::Open(Page::Settings));
+                            }
+                            theme::text(ui, "Set chat wallpaper", theme::bold(18.0), palette.text);
+                        },
+                    );
+
+                    let palette_rect = Rect::from_min_size(
+                        pos2(section.left() + 20.0, header.bottom() + 20.0),
+                        vec2(palette_width, (body_height - HEADER_HEIGHT - 20.0).max(0.0)),
+                    );
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(palette_rect)
+                            .layout(Layout::top_down(Align::Min).with_main_align(Align::Min)),
+                        |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("wallpaper-palette")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.allocate_ui_with_layout(
+                                        vec2(palette_width, 28.0),
+                                        Layout::top_down(Align::Center),
+                                        |ui| {
+                                            let mut doodles = app.settings.show_wallpaper;
+                                            let checkbox =
+                                                ui.checkbox(&mut doodles, "Add WhatsApp doodles");
+                                            checkbox.on_hover_text(
+                                                "Show the default WhatsApp doodles over the selected colour.",
+                                            );
+                                            if doodles != app.settings.show_wallpaper {
+                                                app.actions.push(Action::SetWallpaperDoodles(doodles));
+                                            }
+                                        },
+                                    );
+                                    ui.add_space(18.0);
+                                    let button_width = 80.0;
+                                    let item_spacing = ui.spacing().item_spacing.x;
+                                    let columns = ((palette_width + item_spacing)
+                                        / (button_width + item_spacing))
+                                        .floor()
+                                        .max(1.0)
+                                        as usize;
+                                    let grid_width = button_width * columns as f32
+                                        + item_spacing * columns.saturating_sub(1) as f32;
+                                    ui.horizontal(|ui| {
+                                        ui.add_space((palette_width - grid_width).max(0.0) / 2.0);
+                                        ui.horizontal_wrapped(|ui| {
+                                            let selected =
+                                                app.settings.wallpaper_color_for(palette.dark);
+                                            for color in WallpaperColor::choices(palette.dark) {
+                                                if wallpaper_color_button(ui, *color, selected) {
+                                                    app.actions.push(Action::SetWallpaperColor(*color));
+                                                }
+                                            }
+                                        });
+                                    });
+                                });
+                        },
+                    );
+                },
+            );
+            let divider_x = ui.cursor().left();
+            let divider_top = ui.cursor().top();
+            ui.allocate_ui_with_layout(
+                vec2(preview_width, body_height),
+                Layout::top_down(Align::Min).with_main_align(Align::Min),
+                |ui| {
+                    let section = ui.max_rect();
+                    let header = Rect::from_min_size(
+                        section.left_top(),
+                        vec2(preview_width, HEADER_HEIGHT),
+                    );
+                    ui.painter().rect_filled(header, 0.0, palette.panel);
+                    ui.painter().text(
+                        header.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "Wallpaper preview",
+                        theme::bold(18.0),
+                        palette.text,
+                    );
+                    let preview = Rect::from_min_size(
+                        header.left_bottom(),
+                        vec2(preview_width, (body_height - HEADER_HEIGHT).max(0.0)),
+                    );
+                    wallpaper::paint_rect(
+                        ui,
+                        preview,
+                        app.settings.wallpaper_color_for(palette.dark),
+                        app.settings.show_wallpaper,
+                    );
+                },
+            );
+            ui.painter().line_segment(
+                [
+                    pos2(divider_x, divider_top),
+                    pos2(divider_x, divider_top + body_height),
+                ],
+                Stroke::new(1.0, palette.outline),
+            );
+        },
+    );
+}
+
+fn wallpaper_color_button(
+    ui: &mut egui::Ui,
+    color: WallpaperColor,
+    selected: WallpaperColor,
+) -> bool {
+    let button = egui::Button::new(egui::RichText::new(" "))
+        .min_size(Vec2::splat(80.0))
+        .fill(color.color32())
+        .stroke(if color == selected {
+            Stroke::new(4.0, color.color32().gamma_multiply(0.5))
+        } else {
+            Stroke::NONE
+        })
+        .corner_radius(CornerRadius::ZERO);
+    let response = ui.add(button).on_hover_text(color.label());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            color == selected,
+            color.label(),
+        )
+    });
+    response.clicked()
 }
 
 fn section(ui: &mut egui::Ui, app: &App, label: &str) {

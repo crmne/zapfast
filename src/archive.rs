@@ -564,10 +564,20 @@ impl Archive {
     }
 
     fn put_media_path(&self, chat: &str, id: &str, path: Option<&Path>) -> Result<Option<Message>> {
+        self.put_media_path_at(chat, id, None, path)
+    }
+
+    pub fn put_media_path_at(
+        &self,
+        chat: &str,
+        id: &str,
+        card: Option<usize>,
+        path: Option<&Path>,
+    ) -> Result<Option<Message>> {
         let Some(mut message) = self.message(chat, id)? else {
             return Ok(None);
         };
-        let Some(media) = message.content.media_mut() else {
+        let Some(media) = message.content.media_at_mut(card) else {
             return Ok(None);
         };
         media.path = path.map(Path::to_path_buf);
@@ -578,7 +588,8 @@ impl Archive {
     /// Returns all recorded attachment paths.
     pub fn media_paths(&self) -> Result<Vec<(String, String, std::path::PathBuf)>> {
         let mut statement = self.connection.prepare(
-            "SELECT chat, id, json_extract(content, '$.media.path') AS path
+            "SELECT chat, id, coalesce(json_extract(content, '$.media.path'),
+                 json_extract(content, '$.card.image.path')) AS path
              FROM messages WHERE path IS NOT NULL",
         )?;
         let rows = statement.query_map([], |row| {
@@ -586,6 +597,24 @@ impl Archive {
                 row.get(0)?,
                 row.get(1)?,
                 std::path::PathBuf::from(row.get::<_, String>(2)?),
+            ))
+        })?;
+        rows.collect()
+    }
+
+    /// Includes each carousel attachment separately so moves and cache cleanup
+    /// never reuse one card's image for another.
+    pub fn carousel_media_paths(&self) -> Result<Vec<(String, String, usize, std::path::PathBuf)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT m.chat, m.id, c.key, json_extract(c.value, '$.image.path') AS image_path
+             FROM messages m, json_each(m.content, '$.card.carousel') c WHERE image_path IS NOT NULL",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get::<_, u32>(2)? as usize,
+                std::path::PathBuf::from(row.get::<_, String>(3)?),
             ))
         })?;
         rows.collect()
@@ -637,33 +666,28 @@ impl Archive {
 
     /// Upserts a message, preserves the furthest delivery state, and updates
     /// chat activity. `raw` contains attachment metadata.
+    ///
+    /// Both preservation rules run inside the UPSERT: the stored delivery state
+    /// only moves forward, and a history row that arrives without reactions
+    /// keeps the reactions already stored. Inserting a message is therefore one
+    /// write instead of a read followed by a write.
     pub fn insert_message(&self, message: &Message, raw: Option<&[u8]>) -> Result<()> {
-        let existing: Option<i64> = self
-            .connection
-            .query_row(
-                "SELECT status FROM messages WHERE chat = ?1 AND id = ?2",
-                params![message.chat, message.id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let status = match existing {
-            Some(rank)
-                if message.status != Delivery::Failed && rank > status_rank(message.status) =>
-            {
-                rank
-            }
-            _ => status_rank(message.status),
-        };
-        let reactions = self.merged_reactions(message)?;
         self.connection.execute(
             "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(chat, id) DO UPDATE SET
                 sender_name = COALESCE(excluded.sender_name, sender_name),
                 content = excluded.content,
-                status = excluded.status,
+                status = CASE
+                    WHEN messages.status > excluded.status AND excluded.status <> ?18
+                    THEN messages.status
+                    ELSE excluded.status
+                END,
                 quoted = COALESCE(excluded.quoted, quoted),
-                reactions = excluded.reactions,
+                reactions = CASE
+                    WHEN excluded.reactions = '[]' THEN messages.reactions
+                    ELSE excluded.reactions
+                END,
                 edited = excluded.edited,
                 raw = COALESCE(excluded.raw, raw),
                 thumbnail = COALESCE(excluded.thumbnail, thumbnail),
@@ -679,12 +703,12 @@ impl Archive {
                 message.from_me,
                 message.timestamp,
                 serde_json::to_string(&message.content).unwrap_or_default(),
-                status,
+                status_rank(message.status),
                 message
                     .quoted
                     .as_ref()
                     .map(|quoted| serde_json::to_string(quoted).unwrap_or_default()),
-                serde_json::to_string(&reactions).unwrap_or_default(),
+                serde_json::to_string(&message.reactions).unwrap_or_default(),
                 message.edited,
                 raw,
                 message.thumbnail.as_deref(),
@@ -692,6 +716,8 @@ impl Archive {
                 message.forwarded,
                 message.delivered_at,
                 message.read_at,
+                // An explicit failure still writes over a further state.
+                status_rank(Delivery::Failed),
             ],
         )?;
         self.connection.execute(
@@ -699,19 +725,6 @@ impl Archive {
             params![message.chat, message.timestamp],
         )?;
         Ok(())
-    }
-
-    /// History rows often omit reactions. Keep any already stored when the
-    /// incoming list is empty (wipe protection). A non-empty list is the
-    /// current snapshot, so write it unchanged.
-    fn merged_reactions(&self, message: &Message) -> Result<Vec<crate::model::Reaction>> {
-        let incoming = &message.reactions;
-        if incoming.is_empty()
-            && let Some(existing) = self.message(&message.chat, &message.id)?
-        {
-            return Ok(existing.reactions);
-        }
-        Ok(incoming.clone())
     }
 
     /// Returns up to `limit` messages before an optional timestamp/id boundary,
@@ -962,7 +975,20 @@ impl Archive {
         rows.collect()
     }
 
-    /// Replaces protobuf-derived fields while preserving local file state.
+    /// Interactive messages eligible for a derived presentation upgrade.
+    /// Deleted and edited rows are left intact; callers preserve local media paths.
+    pub fn interactive_placeholders(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND edited = 0 AND json_valid(content)
+             AND ((json_extract(content, '$.kind') = 'unsupported'
+                   AND json_extract(content, '$.what') = 'interactive message')
+                  OR json_extract(content, '$.kind') = 'interactive')",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
+    /// Replaces protobuf-derived fields. Callers must retain local media paths.
     pub fn set_derived(
         &self,
         chat: &str,
@@ -1024,17 +1050,8 @@ impl Archive {
             |row| row.get(0),
         )?;
         let removed = if newer {
-            let media = {
-                let mut statement = self.connection.prepare(
-                    "SELECT json_extract(content, '$.media.path') AS path FROM messages
-                     WHERE chat = ?1 AND timestamp <= ?2 AND path IS NOT NULL",
-                )?;
-                statement
-                    .query_map(params![chat, through], |row| {
-                        row.get::<_, String>(0).map(PathBuf::from)
-                    })?
-                    .collect::<Result<Vec<_>>>()?
-            };
+            let media =
+                self.cached_media("m.chat = ?1 AND m.timestamp <= ?2", params![chat, through])?;
             self.connection.execute(
                 "DELETE FROM messages WHERE chat = ?1 AND timestamp <= ?2",
                 params![chat, through],
@@ -1102,13 +1119,24 @@ impl Archive {
 
     /// Attachment paths recorded for one chat.
     fn chat_media(&self, chat: &str) -> Result<Vec<PathBuf>> {
-        let mut statement = self.connection.prepare(
-            "SELECT json_extract(content, '$.media.path') AS path
-             FROM messages WHERE chat = ?1 AND path IS NOT NULL",
-        )?;
-        let rows = statement.query_map(params![chat], |row| {
-            Ok(PathBuf::from(row.get::<_, String>(0)?))
-        })?;
+        self.cached_media("m.chat = ?1", params![chat])
+    }
+
+    /// Attachment paths of the messages matching `filter` (over `messages m`),
+    /// including an interactive card's image and each carousel card's image.
+    fn cached_media(&self, filter: &str, params: impl rusqlite::Params) -> Result<Vec<PathBuf>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT file FROM (
+                 SELECT json_extract(m.content, '$.media.path') AS file FROM messages m WHERE {filter}
+                 UNION ALL
+                 SELECT json_extract(m.content, '$.card.image.path') FROM messages m WHERE {filter}
+                 UNION ALL
+                 SELECT json_extract(c.value, '$.image.path')
+                 FROM messages m, json_each(m.content, '$.card.carousel') c WHERE {filter}
+             ) WHERE file IS NOT NULL"
+        ))?;
+        let rows =
+            statement.query_map(params, |row| Ok(PathBuf::from(row.get::<_, String>(0)?)))?;
         rows.collect()
     }
 
@@ -1817,6 +1845,64 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn removing_a_chat_reports_interactive_card_images() {
+        let image = |name: &str| crate::model::Media {
+            mime: "image/jpeg".into(),
+            size: 1,
+            width: None,
+            height: None,
+            path: Some(PathBuf::from(format!("/cache/zapfast/media/{name}.jpg"))),
+            state: Default::default(),
+        };
+        let card = |image: crate::model::Media| crate::model::InteractiveCard {
+            image: Some(image),
+            ..Default::default()
+        };
+        let insert = |archive: &Archive, chat: &str| {
+            archive.ensure_chat(chat, "Shop").unwrap();
+            let mut single = message(chat, "card", 100, false);
+            single.content = Content::Interactive {
+                text: String::new(),
+                card: Some(Box::new(card(image("card")))),
+            };
+            let mut carousel = message(chat, "carousel", 100, false);
+            carousel.content = Content::Interactive {
+                text: String::new(),
+                card: Some(Box::new(crate::model::InteractiveCard {
+                    carousel: vec![card(image("first")), card(image("second"))],
+                    ..Default::default()
+                })),
+            };
+            archive.insert_message(&single, None).unwrap();
+            archive.insert_message(&carousel, None).unwrap();
+        };
+        let mut expected: Vec<_> = ["card", "first", "second"]
+            .map(|name| image(name).path.unwrap())
+            .into();
+        expected.sort();
+        let chat = "1@s.whatsapp.net";
+        for removal in ["clear", "delete", "through"] {
+            let archive = Archive::in_memory().expect("opens");
+            insert(&archive, chat);
+            let mut removed = match removal {
+                "clear" => archive.clear_chat(chat),
+                "delete" => archive.delete_chat(chat),
+                _ => {
+                    // A newer message makes the removal keep the chat's tail.
+                    archive
+                        .insert_message(&message(chat, "newer", 200, false), None)
+                        .unwrap();
+                    archive.remove_chat_through(chat, 100, false)
+                }
+            }
+            .expect("removes")
+            .media;
+            removed.sort();
+            assert_eq!(removed, expected, "{removal}");
+        }
+    }
+
+    #[test]
     fn clearing_a_chat_keeps_it_but_empties_its_messages_and_unread_count() {
         let archive = Archive::in_memory().expect("opens");
         let media = PathBuf::from("/cache/zapfast/media/m2.jpg");
@@ -2000,6 +2086,68 @@ pub(crate) mod tests {
                 .set_status(chat, "m1", Delivery::Failed, 700)
                 .expect("status")
         );
+    }
+
+    #[test]
+    fn one_insert_keeps_the_furthest_status_and_the_stored_reactions() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "A").expect("chat");
+        let reaction = |sender: &str, emoji: &str| crate::model::Reaction {
+            sender: sender.into(),
+            from_me: false,
+            emoji: emoji.into(),
+        };
+
+        let mut sent = message(chat, "m1", 100, true);
+        sent.status = Delivery::Sent;
+        sent.reactions = vec![reaction("2@s.whatsapp.net", "🎉")];
+        archive.insert_message(&sent, None).expect("insert");
+        let stored = archive.message(chat, "m1").expect("read").expect("exists");
+        assert_eq!(stored.status, Delivery::Sent);
+        assert_eq!(stored.reactions.len(), 1);
+
+        // A receipt moves the state forward, and the history row that arrives
+        // without reactions must not wipe the stored list.
+        let mut receipt = message(chat, "m1", 100, true);
+        receipt.status = Delivery::Delivered;
+        archive.insert_message(&receipt, None).expect("receipt");
+        let stored = archive.message(chat, "m1").expect("read").expect("exists");
+        assert_eq!(stored.status, Delivery::Delivered);
+        assert_eq!(stored.reactions.len(), 1, "an empty list must not wipe");
+        assert_eq!(stored.reactions[0].emoji, "🎉");
+
+        // A replay cannot lower the state, but an explicit failure must show.
+        let mut replay = message(chat, "m1", 100, true);
+        replay.status = Delivery::Pending;
+        archive.insert_message(&replay, None).expect("replay");
+        assert_eq!(
+            archive
+                .message(chat, "m1")
+                .expect("read")
+                .expect("exists")
+                .status,
+            Delivery::Delivered
+        );
+        let mut failure = message(chat, "m1", 100, true);
+        failure.status = Delivery::Failed;
+        archive.insert_message(&failure, None).expect("failure");
+        assert_eq!(
+            archive
+                .message(chat, "m1")
+                .expect("read")
+                .expect("exists")
+                .status,
+            Delivery::Failed
+        );
+
+        // A history snapshot with reactions replaces the list.
+        let mut snapshot = message(chat, "m1", 100, true);
+        snapshot.reactions = vec![reaction("3@s.whatsapp.net", "👍")];
+        archive.insert_message(&snapshot, None).expect("snapshot");
+        let stored = archive.message(chat, "m1").expect("read").expect("exists");
+        assert_eq!(stored.reactions.len(), 1);
+        assert_eq!(stored.reactions[0].sender, "3@s.whatsapp.net");
     }
 
     #[test]
