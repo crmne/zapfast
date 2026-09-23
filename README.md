@@ -51,8 +51,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   do not change that list. If the original recipients are unknown, ZapFast
   waits for the phone's aggregate status instead of guessing from one reader.
   A message that could not be sent says "Not sent" beside its time. ZapFast
-  does not retry it; send it again yourself. Timestamps use 24-hour time by
-  default; turn on 12-hour time in Settings to show `2:05 PM` instead of `14:05`.
+  does not retry it; send it again yourself. Timestamps follow the system's
+  12-hour or 24-hour clock: the time format on Windows and macOS, and GNOME's
+  clock format or the time locale (`LC_TIME`) on Linux.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs,

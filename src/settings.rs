@@ -99,8 +99,6 @@ pub struct Settings {
     pub names_from_contacts: bool,
     /// Voice and audio playback speed multiplier.
     pub voice_speed: f32,
-    /// Show message times in 12-hour (AM/PM) format instead of 24-hour.
-    pub use_12h: bool,
     /// Also add saved contacts to the phone's address book.
     pub save_contacts_to_phone: bool,
     /// Legacy plaintext code, accepted once and rewritten as a verifier.
@@ -138,7 +136,6 @@ impl Default for Settings {
             names_from_contacts: true,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
-            use_12h: false,
             chat_lock_code: None,
             chat_lock_code_hash: None,
             chat_lock_hint_dismissed: false,
@@ -273,7 +270,6 @@ mod tests {
         assert!(parsed.enter_sends);
         assert!(parsed.check_for_updates);
         assert!(!parsed.download_updates_automatically);
-        assert!(!parsed.use_12h);
     }
 
     #[test]
@@ -292,16 +288,10 @@ mod tests {
             zoom: 1.25,
             enter_sends: false,
             voice_speed: 1.5,
-            use_12h: true,
             ..Settings::default()
         };
         settings.save(&path).expect("saves");
         assert_eq!(Settings::load(&path), settings);
-        assert!(
-            serde_json::from_str::<Settings>(&std::fs::read_to_string(&path).expect("reads"))
-                .expect("parses")
-                .use_12h
-        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

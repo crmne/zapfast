@@ -839,7 +839,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             } else if let Some(seen) = presence.last_seen {
                 format!(
                     "last seen {}",
-                    crate::util::chat_stamp(seen, app.settings.use_12h).to_lowercase()
+                    crate::util::chat_stamp(seen, crate::util::twelve_hour_clock()).to_lowercase()
                 )
             } else {
                 String::new()
@@ -940,7 +940,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             } else {
                 format!(
                     "Muted until {}",
-                    crate::util::chat_stamp(until, app.settings.use_12h)
+                    crate::util::chat_stamp(until, crate::util::twelve_hour_clock())
                 )
             },
             theme::regular(12.5),

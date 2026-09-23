@@ -305,7 +305,7 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
             return (
                 format!(
                     "last seen {}",
-                    crate::util::chat_stamp(seen, app.settings.use_12h).to_lowercase()
+                    crate::util::chat_stamp(seen, crate::util::twelve_hour_clock()).to_lowercase()
                 ),
                 palette.secondary,
             );
@@ -1232,7 +1232,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         pictures: app.settings.show_sender_pictures,
-        use_12h: app.settings.use_12h,
+        use_12h: crate::util::twelve_hour_clock(),
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
         } else {
