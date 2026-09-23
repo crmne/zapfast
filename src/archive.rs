@@ -1066,17 +1066,8 @@ impl Archive {
             |row| row.get(0),
         )?;
         let removed = if newer {
-            let media = {
-                let mut statement = self.connection.prepare(
-                    "SELECT json_extract(content, '$.media.path') AS path FROM messages
-                     WHERE chat = ?1 AND timestamp <= ?2 AND path IS NOT NULL",
-                )?;
-                statement
-                    .query_map(params![chat, through], |row| {
-                        row.get::<_, String>(0).map(PathBuf::from)
-                    })?
-                    .collect::<Result<Vec<_>>>()?
-            };
+            let media =
+                self.cached_media("m.chat = ?1 AND m.timestamp <= ?2", params![chat, through])?;
             self.connection.execute(
                 "DELETE FROM messages WHERE chat = ?1 AND timestamp <= ?2",
                 params![chat, through],
@@ -1144,13 +1135,24 @@ impl Archive {
 
     /// Attachment paths recorded for one chat.
     fn chat_media(&self, chat: &str) -> Result<Vec<PathBuf>> {
-        let mut statement = self.connection.prepare(
-            "SELECT json_extract(content, '$.media.path') AS path
-             FROM messages WHERE chat = ?1 AND path IS NOT NULL",
-        )?;
-        let rows = statement.query_map(params![chat], |row| {
-            Ok(PathBuf::from(row.get::<_, String>(0)?))
-        })?;
+        self.cached_media("m.chat = ?1", params![chat])
+    }
+
+    /// Attachment paths of the messages matching `filter` (over `messages m`),
+    /// including an interactive card's image and each carousel card's image.
+    fn cached_media(&self, filter: &str, params: impl rusqlite::Params) -> Result<Vec<PathBuf>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT file FROM (
+                 SELECT json_extract(m.content, '$.media.path') AS file FROM messages m WHERE {filter}
+                 UNION ALL
+                 SELECT json_extract(m.content, '$.card.image.path') FROM messages m WHERE {filter}
+                 UNION ALL
+                 SELECT json_extract(c.value, '$.image.path')
+                 FROM messages m, json_each(m.content, '$.card.carousel') c WHERE {filter}
+             ) WHERE file IS NOT NULL"
+        ))?;
+        let rows =
+            statement.query_map(params, |row| Ok(PathBuf::from(row.get::<_, String>(0)?)))?;
         rows.collect()
     }
 
@@ -1856,6 +1858,64 @@ pub(crate) mod tests {
         assert!(archive.chat(chat).unwrap().is_some());
         assert!(archive.message(chat, "m1").unwrap().is_some());
         assert_eq!(archive.removal_point(chat).unwrap(), None);
+    }
+
+    #[test]
+    fn removing_a_chat_reports_interactive_card_images() {
+        let image = |name: &str| crate::model::Media {
+            mime: "image/jpeg".into(),
+            size: 1,
+            width: None,
+            height: None,
+            path: Some(PathBuf::from(format!("/cache/zapfast/media/{name}.jpg"))),
+            state: Default::default(),
+        };
+        let card = |image: crate::model::Media| crate::model::InteractiveCard {
+            image: Some(image),
+            ..Default::default()
+        };
+        let insert = |archive: &Archive, chat: &str| {
+            archive.ensure_chat(chat, "Shop").unwrap();
+            let mut single = message(chat, "card", 100, false);
+            single.content = Content::Interactive {
+                text: String::new(),
+                card: Some(Box::new(card(image("card")))),
+            };
+            let mut carousel = message(chat, "carousel", 100, false);
+            carousel.content = Content::Interactive {
+                text: String::new(),
+                card: Some(Box::new(crate::model::InteractiveCard {
+                    carousel: vec![card(image("first")), card(image("second"))],
+                    ..Default::default()
+                })),
+            };
+            archive.insert_message(&single, None).unwrap();
+            archive.insert_message(&carousel, None).unwrap();
+        };
+        let mut expected: Vec<_> = ["card", "first", "second"]
+            .map(|name| image(name).path.unwrap())
+            .into();
+        expected.sort();
+        let chat = "1@s.whatsapp.net";
+        for removal in ["clear", "delete", "through"] {
+            let archive = Archive::in_memory().expect("opens");
+            insert(&archive, chat);
+            let mut removed = match removal {
+                "clear" => archive.clear_chat(chat),
+                "delete" => archive.delete_chat(chat),
+                _ => {
+                    // A newer message makes the removal keep the chat's tail.
+                    archive
+                        .insert_message(&message(chat, "newer", 200, false), None)
+                        .unwrap();
+                    archive.remove_chat_through(chat, 100, false)
+                }
+            }
+            .expect("removes")
+            .media;
+            removed.sort();
+            assert_eq!(removed, expected, "{removal}");
+        }
     }
 
     #[test]
