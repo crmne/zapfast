@@ -157,6 +157,14 @@ pub struct App {
     pub search: String,
     /// Message search results, newest first.
     pub search_hits: Vec<Message>,
+    /// In-conversation search: the query, its matches in the open chat
+    /// (oldest first, so Enter walks forward in time) and the match in view.
+    pub chat_search: String,
+    pub chat_search_open: bool,
+    pub chat_search_hits: Vec<String>,
+    pub chat_search_index: usize,
+    /// Whether the freshly opened bar should take focus.
+    pub chat_search_focus: bool,
     /// Whether the locked-chats folder is open.
     pub locked_folder: bool,
     /// The verifier authenticated for this window session, never the code.
@@ -402,6 +410,11 @@ impl App {
             last_keystroke: None,
             search: String::new(),
             search_hits: Vec::new(),
+            chat_search: String::new(),
+            chat_search_open: false,
+            chat_search_hits: Vec::new(),
+            chat_search_index: 0,
+            chat_search_focus: false,
             locked_folder: false,
             chat_lock_session: None,
             chat_lock_entry: String::new(),
@@ -1229,6 +1242,21 @@ impl App {
                         }
                     }
                 }
+                Event::ChatHits { chat, query, ids } => {
+                    // Hits for another chat, or for a query the user has
+                    // already replaced, arrive too late to matter.
+                    if self.open_chat.as_deref() == Some(chat.as_str())
+                        && query == self.chat_search.trim()
+                    {
+                        self.chat_search_hits = ids;
+                        self.chat_search_index = self.chat_search_hits.len().saturating_sub(1);
+                        if !self.chat_search_hits.is_empty() {
+                            // Show the newest match while the query is typed.
+                            let message = self.chat_search_hits[self.chat_search_index].clone();
+                            self.actions.push(Action::OpenMessage { chat, message });
+                        }
+                    }
+                }
                 Event::SearchHits { query, messages } => {
                     if query == self.search.trim() {
                         // Locked chats' messages stay out of plain search.
@@ -1570,6 +1598,39 @@ impl App {
         }
     }
 
+    /// Answers a new query for the open chat's search bar.
+    fn search_in_chat(&mut self, query: String) {
+        self.chat_search = query;
+        let needle = self.chat_search.trim().to_owned();
+        self.chat_search_hits.clear();
+        self.chat_search_index = 0;
+        let Some(chat) = self.open_chat.clone() else {
+            return;
+        };
+        if needle.is_empty() {
+            return;
+        }
+        self.backend.send(Command::SearchChatMessages {
+            chat,
+            query: needle,
+        });
+    }
+
+    /// Moves to the next (`step` 1) or previous (`step` -1) match, wrapping
+    /// around, and brings it into view like any other search result.
+    fn step_chat_search(&mut self, step: i32) {
+        let Some(chat) = self.open_chat.clone() else {
+            return;
+        };
+        if self.chat_search_hits.is_empty() {
+            return;
+        }
+        let count = self.chat_search_hits.len() as i32;
+        self.chat_search_index = (self.chat_search_index as i32 + step).rem_euclid(count) as usize;
+        let message = self.chat_search_hits[self.chat_search_index].clone();
+        self.actions.push(Action::OpenMessage { chat, message });
+    }
+
     fn hide_locked_chat(&mut self, id: &str) {
         // A locked chat still exists, so its unsent text waits as a draft.
         if self.open_chat.as_deref() == Some(id)
@@ -1720,6 +1781,12 @@ impl App {
             }
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
+            // A search belongs to the chat it was typed in.
+            self.chat_search_open = false;
+            self.chat_search_focus = false;
+            self.chat_search.clear();
+            self.chat_search_hits.clear();
+            self.chat_search_index = 0;
             self.reply_to = None;
             self.editing = None;
         }
@@ -2767,6 +2834,15 @@ impl App {
                 }
             }
             Action::FocusSearch => {
+                // Ctrl+F searches the open chat, like the other messengers.
+                // Without one in front it searches the chat list instead.
+                if self.open_chat.is_some() && self.page == Page::Chats {
+                    self.actions.push(Action::OpenChatSearch);
+                } else {
+                    self.actions.push(Action::FocusChatList);
+                }
+            }
+            Action::FocusChatList => {
                 self.sidebar_visible = true;
                 self.page = Page::Chats;
                 self.focus_composer = false;
@@ -2813,6 +2889,23 @@ impl App {
                     self.backend.send(Command::SearchMessages { query });
                 }
             }
+            Action::OpenChatSearch => {
+                self.chat_search_open = true;
+                self.chat_search_focus = true;
+                self.chat_search.clear();
+                self.chat_search_hits.clear();
+                self.chat_search_index = 0;
+                self.focus_search = false;
+            }
+            Action::CloseChatSearch => {
+                self.chat_search_open = false;
+                self.chat_search_focus = false;
+                self.chat_search.clear();
+                self.chat_search_hits.clear();
+                self.chat_search_index = 0;
+            }
+            Action::ChatSearch(query) => self.search_in_chat(query),
+            Action::StepChatSearch(step) => self.step_chat_search(step),
             Action::ShowUpdate => {
                 self.show_update = self.update.is_some();
                 self.inspect_update();
@@ -4203,6 +4296,46 @@ mod tests {
         assert_eq!(app.open_chat.as_deref(), Some(chat));
         assert_eq!(app.scroll_anchor.as_deref(), Some("old"));
         assert!(!app.scroll_to_bottom, "aims at the hit, not the end");
+    }
+
+    #[test]
+    fn ctrl_f_searches_the_open_chat_and_the_list_without_one() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        // Nothing open: Ctrl+F still reaches the chat list search.
+        app.apply(Action::FocusSearch, &ctx);
+        assert!(app.focus_search);
+        assert!(!app.chat_search_open);
+        // With a chat in front it opens the in-chat bar instead.
+        app.open_chat = Some("1@s.whatsapp.net".into());
+        app.focus_search = false;
+        app.apply(Action::FocusSearch, &ctx);
+        app.apply_actions(&ctx);
+        assert!(app.chat_search_open);
+        assert!(app.chat_search_focus);
+        assert!(!app.focus_search);
+    }
+
+    #[test]
+    fn the_chat_search_steps_and_wraps_and_escape_resets_it() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.open_chat = Some("1@s.whatsapp.net".into());
+        app.chat_search = "engine".into();
+        app.chat_search_open = true;
+        app.chat_search_hits = vec!["m1".into(), "m2".into(), "m3".into()];
+        app.chat_search_index = 2;
+        // Past the last match: back to the first.
+        app.apply(Action::StepChatSearch(1), &ctx);
+        assert_eq!(app.chat_search_index, 0);
+        // Before the first one: to the last.
+        app.apply(Action::StepChatSearch(-1), &ctx);
+        assert_eq!(app.chat_search_index, 2);
+        app.apply(Action::CloseChatSearch, &ctx);
+        assert!(!app.chat_search_open);
+        assert!(app.chat_search.is_empty());
+        assert!(app.chat_search_hits.is_empty());
+        assert_eq!(app.chat_search_index, 0);
     }
 
     #[test]

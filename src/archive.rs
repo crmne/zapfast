@@ -763,6 +763,41 @@ impl Archive {
         Ok(messages)
     }
 
+    /// Message ids in one chat whose visible text matches, oldest first so
+    /// next and previous walk forward in time. Same fields as the global
+    /// search, scoped to a single chat.
+    pub fn search_chat_messages(
+        &self,
+        chat: &str,
+        needle: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let pattern = format!(
+            "%{}%",
+            needle
+                .to_lowercase()
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        let mut statement = self.connection.prepare(
+            "SELECT id
+             FROM messages
+             WHERE chat = ?1 AND json_valid(content) AND lower(
+                     coalesce(json_extract(content, '$.text'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.caption'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.file_name'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.question'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.display_name'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.name'), '')
+                 ) LIKE ?2 ESCAPE '\\'
+             ORDER BY timestamp ASC, rowid ASC
+             LIMIT ?3",
+        )?;
+        let rows = statement.query_map(params![chat, pattern, limit as i64], |row| row.get(0))?;
+        rows.collect()
+    }
+
     /// Searches visible message text, filenames, polls, contacts, and places.
     /// ASCII matching is case-insensitive; other text follows SQLite behavior.
     pub fn search_messages(&self, needle: &str, limit: usize) -> Result<Vec<Message>> {
@@ -1416,6 +1451,58 @@ pub(crate) mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn a_chat_search_is_scoped_ordered_and_escaped() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        let other = "2@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        archive.ensure_chat(other, "Grace").expect("chat");
+        let text = |id: &str, at: i64, body: &str| {
+            let mut message = message(chat, id, at, false);
+            message.content = Content::text(body);
+            message
+        };
+        let mut elsewhere = message(other, "x1", 15, false);
+        elsewhere.content = Content::text("engine notes");
+        for message in [
+            text("m1", 10, "The Difference Engine"),
+            text("m2", 20, "Nothing here"),
+            text("m3", 30, "the engine again"),
+            elsewhere,
+        ] {
+            archive.insert_message(&message, None).expect("insert");
+        }
+        // Only this chat, oldest first, so Enter walks forward in time.
+        assert_eq!(
+            archive
+                .search_chat_messages(chat, "engine", 50)
+                .expect("search"),
+            vec!["m1".to_owned(), "m3".to_owned()]
+        );
+        // The limit keeps the oldest matches.
+        assert_eq!(
+            archive
+                .search_chat_messages(chat, "engine", 1)
+                .expect("search"),
+            vec!["m1".to_owned()]
+        );
+        // A chat whose messages do not match has no hits.
+        assert!(
+            archive
+                .search_chat_messages(other, "nothing", 50)
+                .expect("search")
+                .is_empty()
+        );
+        // Wildcards are text, like the cross-chat search.
+        assert!(
+            archive
+                .search_chat_messages(chat, "%", 50)
+                .expect("search")
+                .is_empty()
+        );
     }
 
     #[test]

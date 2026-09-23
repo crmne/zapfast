@@ -601,6 +601,14 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
+    /// Opens the search bar for the open chat.
+    OpenChatSearch,
+    /// Closes it and drops the query.
+    CloseChatSearch,
+    /// Replaces the query of the open chat's search bar.
+    ChatSearch(String),
+    /// Moves to the next (`1`) or previous (`-1`) match in the open chat.
+    StepChatSearch(i32),
     CloseChat,
     SendText {
         chat: ChatId,
@@ -751,6 +759,8 @@ pub enum Action {
     SetChatFilter(ChatFilter),
     /// A chat opened from the main list, kept there under the Unread filter.
     KeepUnread(ChatId),
+    /// Focuses the chat-list search and leaves the open chat alone.
+    FocusChatList,
     FocusSearch,
     FocusComposer,
     HideShortcutHints,

@@ -15,7 +15,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             }
         };
         key(Modifiers::COMMAND, Key::F, Action::FocusSearch);
-        key(Modifiers::COMMAND, Key::K, Action::FocusSearch);
+        key(Modifiers::COMMAND, Key::K, Action::FocusChatList);
         if app.is_linked() {
             key(
                 Modifiers::COMMAND,
@@ -61,7 +61,9 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     let escape = (!menu_open || app.reaction_target.is_some())
         && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     if escape {
-        if app.show_update {
+        if app.chat_search_open {
+            actions.push(Action::CloseChatSearch);
+        } else if app.show_update {
             actions.push(Action::CloseUpdate);
         } else if app.dialog.is_some() {
             actions.push(Action::CloseDialog);
@@ -92,6 +94,21 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CloseChat);
         } else if app.locked_folder {
             actions.push(Action::CloseLockedFolder);
+        }
+    }
+    // Enter walks the open chat's matches while its bar is in front.
+    if app.chat_search_open {
+        let step = ctx.input_mut(|input| {
+            if input.consume_key(Modifiers::SHIFT, Key::Enter) {
+                Some(-1)
+            } else if input.consume_key(Modifiers::NONE, Key::Enter) {
+                Some(1)
+            } else {
+                None
+            }
+        });
+        if let Some(step) = step {
+            actions.push(Action::StepChatSearch(step));
         }
     }
     // Enter sends a recording because the text field is hidden.
@@ -180,7 +197,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
 
 /// Shortcuts shown in the help dialog.
 pub const SHORTCUTS: &[(&str, &str)] = &[
-    ("Ctrl+F / Ctrl+K", "Search chats"),
+    ("Ctrl+K", "Search chats"),
+    ("Ctrl+F", "Search the open chat (Enter for the next match)"),
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
     ("↑", "Edit the previous message (when the input is empty)"),

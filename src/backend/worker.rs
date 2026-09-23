@@ -614,6 +614,7 @@ impl Worker {
             && matches!(
                 event,
                 Event::Chats(_)
+                    | Event::ChatHits { .. }
                     | Event::ChatUpdated(_)
                     | Event::Messages { .. }
                     | Event::MessageUpdated(_)
@@ -2951,6 +2952,7 @@ impl Worker {
             Command::FetchOlder(chat) => self.fetch_older(chat),
             Command::LoadUntil { chat, id, before } => self.load_until(chat, id, before),
             Command::SearchMessages { query } => self.search_messages(query),
+            Command::SearchChatMessages { chat, query } => self.search_chat_messages(chat, query),
             Command::EnsureChat { chat, name } => {
                 let is_new = self.archive.chat(&chat).ok().flatten().is_none();
                 if let Err(error) = self.archive.ensure_chat(&chat, &name) {
@@ -4344,6 +4346,14 @@ impl Worker {
                 continue;
             }
             self.fetch_avatar(id, full);
+        }
+    }
+
+    /// Answers the open chat's search bar with the ids of its matches.
+    fn search_chat_messages(&mut self, chat: ChatId, query: String) {
+        match self.archive.search_chat_messages(&chat, &query, 200) {
+            Ok(ids) => self.emit(Event::ChatHits { chat, query, ids }),
+            Err(error) => self.emit(Event::Error(format!("Could not search: {error}"))),
         }
     }
 
