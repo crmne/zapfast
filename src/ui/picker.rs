@@ -1613,18 +1613,25 @@ mod group_tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 420.0));
-        let mut frame = |events: Vec<egui::Event>| {
+        // Draw one frame of the group sidebar.
+        fn frame(
+            app: &mut App,
+            ctx: &egui::Context,
+            palette: &Palette,
+            screen: egui::Rect,
+            events: Vec<egui::Event>,
+        ) {
             ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
                     events,
                     ..Default::default()
                 },
-                |ui| groups_panel(&mut app, ui, &palette),
+                |ui| groups_panel(app, ui, palette),
             );
-        };
+        }
 
-        frame(Vec::new());
+        frame(&mut app, &ctx, &palette, screen, Vec::new());
         let row = ctx
             .data(|data| data.get_temp::<egui::Rect>(group_row_id("Futebol")))
             .expect("the sidebar draws a row per group");
@@ -1635,7 +1642,13 @@ mod group_tests {
         );
 
         // The cross removes the group without also picking it.
-        frame(click(egui::pos2(row.right() - 13.0, row.center().y)));
+        frame(
+            &mut app,
+            &ctx,
+            &palette,
+            screen,
+            click(egui::pos2(row.right() - 13.0, row.center().y)),
+        );
         assert!(
             app.actions
                 .contains(&Action::DeleteStickerGroup("Futebol".to_owned())),
@@ -1649,7 +1662,13 @@ mod group_tests {
         );
 
         app.actions.clear();
-        frame(click(egui::pos2(row.left() + 20.0, row.center().y)));
+        frame(
+            &mut app,
+            &ctx,
+            &palette,
+            screen,
+            click(egui::pos2(row.left() + 20.0, row.center().y)),
+        );
         assert!(
             app.actions
                 .contains(&Action::SelectStickerGroup(Some("Futebol".to_owned()))),
