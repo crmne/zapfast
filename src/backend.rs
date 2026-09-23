@@ -439,6 +439,15 @@ pub enum Command {
     ReceiptsPrivacy {
         disabled: bool,
     },
+    /// Looks up the group behind an invite code without joining.
+    PreviewInvite(String),
+    /// Joins the group behind an invite code.
+    JoinInvite(String),
+    /// Internal result of joining through an invite.
+    InviteJoined {
+        code: String,
+        result: Result<(ChatId, bool), String>,
+    },
     /// Ask GitHub whether a newer release exists.
     CheckForUpdates,
     InspectUpdate,
@@ -560,6 +569,17 @@ pub enum Event {
     /// Whether account privacy disables direct-chat read receipts.
     ReceiptsPrivacy {
         disabled: bool,
+    },
+    /// The group behind an invite link.
+    InvitePreview {
+        code: String,
+        result: Result<crate::model::InviteInfo, String>,
+    },
+    /// Joining through an invite finished; `pending` means admins must
+    /// approve first.
+    InviteJoined {
+        code: String,
+        result: Result<(ChatId, bool), String>,
     },
     /// Number lookup succeeded and its chat can open.
     ContactReady {

@@ -475,6 +475,26 @@ enum RuntimeEvent {
     },
 }
 
+/// A short explanation for a failed invite lookup or join. Protocol errors
+/// can carry identifiers, so only the kind of failure is shown.
+fn invite_error(error: &str) -> String {
+    let error = error.to_ascii_lowercase();
+    if error.contains("401") || error.contains("not-authorized") {
+        "This link was reset or you are not allowed to join.".to_owned()
+    } else if error.contains("404") || error.contains("item-not-found") || error.contains("invalid")
+    {
+        "This invite link is invalid or has been reset.".to_owned()
+    } else if error.contains("410") || error.contains("gone") {
+        "This invite link has expired.".to_owned()
+    } else if error.contains("409") || error.contains("conflict") {
+        "You are already in this group.".to_owned()
+    } else if error.contains("406") || error.contains("full") {
+        "This group is full.".to_owned()
+    } else {
+        "WhatsApp could not open this invite link. Try again later.".to_owned()
+    }
+}
+
 /// How long private content waits for phone lock state before it is shown
 /// unconfirmed. A healthy sync answers well within this.
 const PRIVACY_GRACE: Duration = Duration::from_secs(10);
@@ -3460,6 +3480,65 @@ impl Worker {
                 self.emit(Event::ReceiptsPrivacy { disabled });
             }
             Command::SetOnline(online) => self.set_online(online),
+            Command::PreviewInvite(code) => {
+                let Some(client) = self.client.clone() else {
+                    self.emit(Event::InvitePreview {
+                        code,
+                        result: Err("ZapFast is not connected to WhatsApp".to_owned()),
+                    });
+                    return;
+                };
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .groups()
+                        .get_invite_info(&code)
+                        .await
+                        .map(|group| crate::model::InviteInfo {
+                            id: group.id.to_string(),
+                            subject: group.subject,
+                            description: group.description.filter(|text| !text.trim().is_empty()),
+                            members: group
+                                .size
+                                .map_or(group.participants.len(), |size| size as usize),
+                            approval: group.membership_approval,
+                        })
+                        .map_err(|error| invite_error(&error.to_string()));
+                    let _ = events.send(Event::InvitePreview { code, result });
+                    waker.wake();
+                });
+            }
+            Command::JoinInvite(code) => {
+                let Some(client) = self.client.clone() else {
+                    self.emit(Event::InviteJoined {
+                        code,
+                        result: Err("ZapFast is not connected to WhatsApp".to_owned()),
+                    });
+                    return;
+                };
+                let commands = self.commands.clone();
+                tokio::spawn(async move {
+                    use whatsapp_rust::JoinGroupResult;
+                    let result = match client.groups().join_with_invite_code(&code).await {
+                        Ok(JoinGroupResult::Joined(jid)) => Ok((jid.to_string(), false)),
+                        Ok(JoinGroupResult::PendingApproval(jid)) => Ok((jid.to_string(), true)),
+                        Err(error) => Err(invite_error(&error.to_string())),
+                    };
+                    let _ = commands.send(Command::InviteJoined { code, result });
+                });
+            }
+            Command::InviteJoined { code, result } => {
+                let result = result.map(|(id, pending)| {
+                    if !pending {
+                        self.ensure_chat(&id, None);
+                        self.request_group_info(&id, true);
+                        self.emit_chat(&id);
+                    }
+                    (id, pending)
+                });
+                self.emit(Event::InviteJoined { code, result });
+            }
             Command::InspectUpdate => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();

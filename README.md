@@ -27,6 +27,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   and message status. Search chats, saved messages, and contacts.
   Filter the list to unread, private (one-to-one), or group chats with the
   chips under the search bar; a chip with unread chats shows how many it has.
+  Followed channels have their own **Channels** chip and stay out of the other
+  filters, and **Archived** opens the archived chats. Opening a chat with
+  unread messages scrolls to an "unread messages" divider above the first one.
   Pinned chats stay in pin order (most recently pinned first), regardless of
   new messages. Like on the phone, you can pin up to three chats. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
@@ -51,7 +54,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   do not change that list. If the original recipients are unknown, ZapFast
   waits for the phone's aggregate status instead of guessing from one reader.
   A message that could not be sent says "Not sent" beside its time. ZapFast
-  does not retry it; send it again yourself.
+  does not retry it; send it again yourself. Timestamps follow the system's
+  12-hour or 24-hour clock: the time format on Windows and macOS, and GNOME's
+  clock format or the time locale (`LC_TIME`) on Linux.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs,
@@ -114,10 +119,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   you delete or clear on the phone disappear here as well, and history that
   was already on its way does not bring them back.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
-  in the chat. The playback speed cycles between 1x, 1.5x, and 2x from the
-  bubble, keeping the speaker's pitch, and the last choice applies to later
-  messages. The app normalizes quiet recordings and handles OGG/Opus
-  without external tools.
+  in the chat. The speed chip cycles between 1x, 1.5x, and 2x, and the
+  message menu offers 1x, 1.25x, 1.5x, 1.75x, and 2x, keeping the speaker's
+  pitch; the last choice applies to later messages. The app normalizes quiet
+  recordings and handles OGG/Opus without external tools.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation; invoking search keeps focus in search, and
@@ -177,7 +182,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Consistent names.** Use names from your address book or public WhatsApp
   profile names across chats, replies, mentions, and notifications.
 - **Groups.** See members, sender names, and sender pictures. Announcement
-  groups are read-only for non-admins.
+  groups are read-only for non-admins. Clicking a `chat.whatsapp.com` invite
+  link shows the group's name, size, and description, and joins it (or sends a
+  join request when admins approve members) without leaving ZapFast.
 - **Presence.** See online, last-seen, and typing status, and send your typing
   status. Like WhatsApp Web, ZapFast shows you as online only while its window
   is focused, and goes offline ten seconds after you switch away or hide it to
@@ -581,7 +588,8 @@ Noto emoji font; demo GIF search uses these local fixtures. The tour makes no
 sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
-Use `--demo-page chat-menu` to preview the compact chat context menu.
+Use `--demo-page chat-menu` to preview the compact chat context menu, and
+`--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.

@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 10:38+0200\n"
+"POT-Creation-Date: 2026-09-23 12:25+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -16,118 +16,122 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
-#: src/model.rs:50
+#: src/model.rs:59
 msgid "All"
 msgstr "Todas"
 
-#: src/model.rs:51
+#: src/model.rs:60
 msgid "Unread"
 msgstr "Não lidas"
 
-#: src/model.rs:52
+#: src/model.rs:61
 msgid "Private"
 msgstr "Privadas"
 
-#: src/model.rs:53
+#: src/model.rs:62
 msgid "Groups"
 msgstr "Grupos"
 
-#: src/util.rs:67 src/util.rs:117
+#: src/model.rs:63
+msgid "Channels"
+msgstr "Canais"
+
+#: src/util.rs:208 src/util.rs:258
 msgid "Yesterday"
 msgstr "Ontem"
 
-#: src/util.rs:94
+#: src/util.rs:235
 #, rust-format
 msgid "Yesterday at {time}"
 msgstr "Ontem às {time}"
 
-#: src/util.rs:95
+#: src/util.rs:236
 #, rust-format
 msgid "{weekday} at {time}"
 msgstr "{weekday} às {time}"
 
-#: src/util.rs:98
+#: src/util.rs:239
 #, rust-format
 msgid "{date} at {time}"
 msgstr "{date} às {time}"
 
-#: src/util.rs:116
+#: src/util.rs:257
 msgid "Today"
 msgstr "Hoje"
 
-#: src/util.rs:132
+#: src/util.rs:273
 msgid "Monday"
 msgstr "Segunda-feira"
 
-#: src/util.rs:133
+#: src/util.rs:274
 msgid "Tuesday"
 msgstr "Terça-feira"
 
-#: src/util.rs:134
+#: src/util.rs:275
 msgid "Wednesday"
 msgstr "Quarta-feira"
 
-#: src/util.rs:135
+#: src/util.rs:276
 msgid "Thursday"
 msgstr "Quinta-feira"
 
-#: src/util.rs:136
+#: src/util.rs:277
 msgid "Friday"
 msgstr "Sexta-feira"
 
-#: src/util.rs:137
+#: src/util.rs:278
 msgid "Saturday"
 msgstr "Sábado"
 
-#: src/util.rs:138
+#: src/util.rs:279
 msgid "Sunday"
 msgstr "Domingo"
 
-#: src/util.rs:146
+#: src/util.rs:287
 msgid "January"
 msgstr "Janeiro"
 
-#: src/util.rs:147
+#: src/util.rs:288
 msgid "February"
 msgstr "Fevereiro"
 
-#: src/util.rs:148
+#: src/util.rs:289
 msgid "March"
 msgstr "Março"
 
-#: src/util.rs:149
+#: src/util.rs:290
 msgid "April"
 msgstr "Abril"
 
-#: src/util.rs:150
+#: src/util.rs:291
 msgid "May"
 msgstr "Maio"
 
-#: src/util.rs:151
+#: src/util.rs:292
 msgid "June"
 msgstr "Junho"
 
-#: src/util.rs:152
+#: src/util.rs:293
 msgid "July"
 msgstr "Julho"
 
-#: src/util.rs:153
+#: src/util.rs:294
 msgid "August"
 msgstr "Agosto"
 
-#: src/util.rs:154
+#: src/util.rs:295
 msgid "September"
 msgstr "Setembro"
 
-#: src/util.rs:155
+#: src/util.rs:296
 msgid "October"
 msgstr "Outubro"
 
-#: src/util.rs:156
+#: src/util.rs:297
 msgid "November"
 msgstr "Novembro"
 
-#: src/util.rs:157
+#: src/util.rs:298
 msgid "December"
 msgstr "Dezembro"
 
@@ -139,7 +143,11 @@ msgstr "Conversas"
 msgid "Search"
 msgstr "Buscar"
 
-#: src/ui/chats.rs:340
+#: src/ui/chats.rs:343
+msgid "Archived"
+msgstr "Arquivadas"
+
+#: src/ui/chats.rs:360
 msgid "Locked"
 msgstr "Trancadas"
 
@@ -177,7 +185,13 @@ msgstr "Ocultar dicas de atalho (restaure em Configurações)"
 msgid "All shortcuts ({})"
 msgstr "Todos os atalhos ({})"
 
-#: src/ui/dialogs.rs:1020
+#: src/ui/conversation.rs:1356
+msgid "{} unread message"
+msgid_plural "{} unread messages"
+msgstr[0] "{} mensagem não lida"
+msgstr[1] "{} mensagens não lidas"
+
+#: src/ui/dialogs.rs:1105
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"

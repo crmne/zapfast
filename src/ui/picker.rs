@@ -2,7 +2,7 @@
 //! Also the full emoji picker used to react to a message.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use egui::{
     Align, Align2, CornerRadius, Frame, Key, Layout, Margin, Modifiers, Rect, Sense, Stroke, Vec2,
@@ -1245,38 +1245,93 @@ fn sticker_grid(
     }
 }
 
-/// Returns whether a sticker moves, probing each path at most once.
-fn moves(ctx: &egui::Context, path: &Path) -> bool {
-    let cache = egui::Id::new("animated-sticker-paths");
-    if let Some(animated) = ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<HashMap<std::path::PathBuf, bool>>(cache)
-            .get(path)
-            .copied()
-    }) {
-        return animated;
+/// A file's size and modification time, used to notice when a sticker changed
+/// on disk so its memoized motion probe can be re-run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FileStamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl FileStamp {
+    fn of(path: &Path) -> Self {
+        match std::fs::metadata(path) {
+            Ok(metadata) => FileStamp {
+                len: metadata.len(),
+                modified: metadata.modified().ok(),
+            },
+            Err(_) => FileStamp {
+                len: 0,
+                modified: None,
+            },
+        }
     }
-    let animated = probe_motion(path);
+}
+
+/// A memoized motion probe: the animated flag plus the file stamp it was read
+/// from.
+#[derive(Clone, Debug, PartialEq)]
+struct MotionEntry {
+    animated: bool,
+    stamp: FileStamp,
+}
+
+/// Caches one motion probe per sticker path, re-probing only when the file
+/// changes on disk. Without this the picker opened and read every visible
+/// sticker every frame, which made tiles flicker between empty and decoded
+/// and, when a read failed, left tiles permanently blank.
+#[derive(Clone, Default)]
+struct MotionMemo(HashMap<PathBuf, MotionEntry>);
+
+impl MotionMemo {
+    /// Returns whether `path` moves, calling `probe` only when the cached
+    /// result is missing or the file changed since it was last probed.
+    ///
+    /// A failed probe is not memoized: on Windows a sharing violation or a
+    /// transient read error would otherwise be remembered as "still" and an
+    /// animated sticker would stay misclassified until the file next changed.
+    fn moves(&mut self, path: &Path, probe: impl FnOnce(&Path) -> Option<bool>) -> bool {
+        let stamp = FileStamp::of(path);
+        if let Some(entry) = self.0.get(path)
+            && entry.stamp == stamp
+        {
+            return entry.animated;
+        }
+        let Some(animated) = probe(path) else {
+            // Report "still" for this frame without caching the failure, so the
+            // next frame retries instead of trusting a transient error.
+            return false;
+        };
+        self.0
+            .insert(path.to_path_buf(), MotionEntry { animated, stamp });
+        animated
+    }
+}
+
+/// Returns whether a sticker moves, probing each path once and re-probing
+/// only when the file changes on disk.
+fn moves(ctx: &egui::Context, path: &Path) -> bool {
     ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<HashMap<std::path::PathBuf, bool>>(cache)
-            .insert(path.to_path_buf(), animated);
-    });
-    animated
+        data.get_temp_mut_or_default::<MotionMemo>(egui::Id::new("animated-sticker-paths"))
+            .moves(path, probe_motion)
+    })
 }
 
 /// Checks a WebP header for animation without decoding the file.
-fn probe_motion(path: &Path) -> bool {
+///
+/// Returns `None` when the header cannot be read, so the caller can tell a read
+/// failure from a still image and retry instead of memoizing the failure.
+fn probe_motion(path: &Path) -> Option<bool> {
     let mut head = [0u8; 64];
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let Ok(read) = std::io::Read::read(&mut file, &mut head) else {
-        return false;
-    };
+    let mut file = std::fs::File::open(path).ok()?;
+    let read = std::io::Read::read(&mut file, &mut head).ok()?;
     let head = &head[..read];
-    head.len() >= 12
-        && &head[0..4] == b"RIFF"
-        && &head[8..12] == b"WEBP"
-        && head.windows(4).any(|window| window == b"ANIM")
+    Some(
+        head.len() >= 12
+            && &head[0..4] == b"RIFF"
+            && &head[8..12] == b"WEBP"
+            && head.windows(4).any(|window| window == b"ANIM"),
+    )
 }
 
 fn sticker_picture(ui: &egui::Ui, path: &Path, rect: Rect) {
@@ -1290,16 +1345,73 @@ mod motion_tests {
     use super::*;
 
     #[test]
-    fn sticker_motion_is_probed_once_per_path() {
+    fn sticker_motion_is_probed_once_until_the_file_changes() {
         let dir = std::env::temp_dir().join(format!("zapfast-motion-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("creates temporary directory");
+        let path = dir.join("animated.webp");
+        std::fs::write(&path, b"RIFF0000WEBPANIM").expect("writes animated header");
+        let mut memo = MotionMemo::default();
+        let reads = std::cell::Cell::new(0usize);
+        let probe = |path: &Path| {
+            reads.set(reads.get() + 1);
+            probe_motion(path)
+        };
+        assert!(memo.moves(&path, probe), "animated header is detected");
+        assert!(memo.moves(&path, probe), "the memo answers the next probe");
+        assert_eq!(
+            reads.get(),
+            1,
+            "an unchanged file must not be re-read per frame"
+        );
+        // A different-sized still header changes the file stamp, so the memo
+        // re-probes instead of trusting a stale result.
+        std::fs::write(&path, b"RIFF0000WEBPVP8X still").expect("writes a still header");
+        assert!(!memo.moves(&path, probe), "a changed file is re-probed");
+        assert_eq!(reads.get(), 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sticker_motion_is_served_from_the_picker_context() {
+        let dir = std::env::temp_dir().join(format!("zapfast-motion-ctx-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("creates temporary directory");
         let path = dir.join("animated.webp");
         std::fs::write(&path, b"RIFF0000WEBPANIM").expect("writes animated header");
         let ctx = egui::Context::default();
         assert!(moves(&ctx, &path));
-        std::fs::remove_file(&path).expect("removes sticker after its first probe");
-        assert!(moves(&ctx, &path), "cached result avoids another file read");
-        assert!(!moves(&egui::Context::default(), &path));
+        assert!(moves(&ctx, &path), "the picker memo survives frames");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_probe_is_retried_instead_of_memoized() {
+        let dir = std::env::temp_dir().join(format!("zapfast-motion-retry-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("creates temporary directory");
+        let path = dir.join("animated.webp");
+        std::fs::write(&path, b"RIFF0000WEBPANIM").expect("writes animated header");
+        let mut memo = MotionMemo::default();
+        let reads = std::cell::Cell::new(0usize);
+        // The first probe fails the way a sharing violation or a transient read
+        // error does; the header is readable afterwards.
+        let probe = |path: &Path| {
+            reads.set(reads.get() + 1);
+            if reads.get() == 1 {
+                None
+            } else {
+                probe_motion(path)
+            }
+        };
+        assert!(
+            !memo.moves(&path, probe),
+            "a failed probe reports the sticker as still for this frame"
+        );
+        assert!(
+            memo.moves(&path, probe),
+            "the failure is not memoized: the next frame re-probes and sees the animation"
+        );
+        assert_eq!(reads.get(), 2);
+        assert!(memo.moves(&path, probe), "the successful probe is memoized");
+        assert_eq!(reads.get(), 2, "a memoized success is not re-read");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

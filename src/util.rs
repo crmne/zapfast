@@ -26,10 +26,151 @@ fn today() -> Date {
     Zoned::now().date()
 }
 
+/// Whether the system shows times on a 12-hour clock. Read once per run.
+pub fn twelve_hour_clock() -> bool {
+    static TWELVE_HOUR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TWELVE_HOUR.get_or_init(clock_preference::twelve_hour)
+}
+
+/// Whether a time pattern uses a 12-hour hour field. Windows patterns spell
+/// it `h`, ICU patterns `h` or `K`, and C formats `%I`, `%l`, or `%r`.
+fn pattern_is_twelve_hour(pattern: &str) -> bool {
+    if pattern.contains('%') {
+        return ["%I", "%l", "%r", "%p"]
+            .iter()
+            .any(|field| pattern.contains(field));
+    }
+    // Skip quoted literals such as 'h' in "HH 'h' mm".
+    let mut quoted = false;
+    for character in pattern.chars() {
+        match character {
+            '\'' => quoted = !quoted,
+            'h' | 'K' if !quoted => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "linux")]
+mod clock_preference {
+    pub fn twelve_hour() -> bool {
+        gnome().unwrap_or_else(locale)
+    }
+
+    /// GNOME keeps its own clock format, independent of the locale.
+    fn gnome() -> Option<bool> {
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok()?;
+        if !desktop
+            .split(':')
+            .any(|name| name.eq_ignore_ascii_case("GNOME"))
+        {
+            return None;
+        }
+        let output = std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "clock-format"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        match String::from_utf8_lossy(&output.stdout).trim() {
+            "'12h'" => Some(true),
+            "'24h'" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// The time locale's own format, read without changing the process locale.
+    fn locale() -> bool {
+        // SAFETY: an empty name selects the environment's LC_TIME; the locale
+        // is freed after its format string has been copied.
+        unsafe {
+            let locale = libc::newlocale(libc::LC_TIME_MASK, c"".as_ptr(), std::ptr::null_mut());
+            if locale.is_null() {
+                return false;
+            }
+            let format = libc::nl_langinfo_l(libc::T_FMT, locale);
+            let twelve = !format.is_null()
+                && super::pattern_is_twelve_hour(
+                    &std::ffi::CStr::from_ptr(format).to_string_lossy(),
+                );
+            libc::freelocale(locale);
+            twelve
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod clock_preference {
+    use objc2_foundation::{NSDateFormatter, NSLocale, NSString};
+
+    /// The "j" template asks for the locale's preferred hour, which follows
+    /// the 24-hour switch in System Settings.
+    pub fn twelve_hour() -> bool {
+        let locale = NSLocale::currentLocale();
+        NSDateFormatter::dateFormatFromTemplate_options_locale(
+            &NSString::from_str("j"),
+            0,
+            Some(&locale),
+        )
+        .is_some_and(|pattern| super::pattern_is_twelve_hour(&pattern.to_string()))
+    }
+}
+
+#[cfg(windows)]
+mod clock_preference {
+    use windows_sys::Win32::Globalization::{GetLocaleInfoEx, LOCALE_STIMEFORMAT};
+
+    /// The user's time format from Region settings, such as "h:mm:ss tt".
+    pub fn twelve_hour() -> bool {
+        let mut buffer = [0u16; 80];
+        // SAFETY: a null name means the user's default locale; the buffer
+        // length is in UTF-16 units.
+        let written = unsafe {
+            GetLocaleInfoEx(
+                std::ptr::null(),
+                LOCALE_STIMEFORMAT,
+                buffer.as_mut_ptr(),
+                buffer.len() as i32,
+            )
+        };
+        written > 0
+            && super::pattern_is_twelve_hour(&String::from_utf16_lossy(
+                &buffer[..written as usize - 1],
+            ))
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+mod clock_preference {
+    pub fn twelve_hour() -> bool {
+        false
+    }
+}
+
+/// Time of day on the system's clock, such as "14:05" or "2:05 PM".
+fn hour_minute(when: &Zoned) -> String {
+    time_of_day(when.hour(), when.minute(), twelve_hour_clock())
+}
+
+/// Formats an hour and minute of day as 24-hour "14:05" or 12-hour "2:05 PM".
+fn time_of_day(hour: i8, minute: i8, twelve_hour: bool) -> String {
+    if twelve_hour {
+        let (hour, meridiem) = match hour {
+            0 => (12, "AM"),
+            1..=11 => (hour, "AM"),
+            12 => (12, "PM"),
+            _ => (hour - 12, "PM"),
+        };
+        format!("{hour}:{minute:02} {meridiem}")
+    } else {
+        format!("{hour:02}:{minute:02}")
+    }
+}
+
 /// Local message time such as "14:05".
 pub fn clock(unix_seconds: i64) -> String {
     zoned(unix_seconds)
-        .map(|when| format!("{:02}:{:02}", when.hour(), when.minute()))
+        .map(|when| hour_minute(&when))
         .unwrap_or_default()
 }
 
@@ -63,7 +204,7 @@ fn stamp_relative_to(locale: Locale, date: Date, today: Date, when: &Zoned) -> S
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
-        0 => format!("{:02}:{:02}", when.hour(), when.minute()),
+        0 => hour_minute(when),
         1 => crate::i18n::gettext(locale, "Yesterday").into_owned(),
         2..=6 => weekday_name(locale, date.weekday()),
         _ => short_date(locale, date),
@@ -84,7 +225,7 @@ pub fn moment_stamp(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
-    let time = format!("{:02}:{:02}", when.hour(), when.minute());
+    let time = hour_minute(&when);
     let days = today()
         .since(when.date())
         .map(|span| span.get_days())
@@ -357,6 +498,34 @@ pub fn tray_template_rgba(size: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn clock_patterns_from_every_platform_are_recognized() {
+        for pattern in [
+            "h:mm:ss tt",
+            "h a",
+            "K:mm a",
+            "%r",
+            "%I:%M:%S %p",
+            "%l:%M %p",
+        ] {
+            assert!(super::pattern_is_twelve_hour(pattern), "{pattern}");
+        }
+        for pattern in ["HH:mm:ss", "H:mm", "%T", "%H:%M:%S", "HH 'h' mm", "HH"] {
+            assert!(!super::pattern_is_twelve_hour(pattern), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn time_of_day_switches_between_24_and_12_hour() {
+        assert_eq!(time_of_day(0, 5, false), "00:05");
+        assert_eq!(time_of_day(14, 5, false), "14:05");
+        assert_eq!(time_of_day(0, 5, true), "12:05 AM");
+        assert_eq!(time_of_day(9, 5, true), "9:05 AM");
+        assert_eq!(time_of_day(12, 0, true), "12:00 PM");
+        assert_eq!(time_of_day(14, 5, true), "2:05 PM");
+        assert_eq!(time_of_day(23, 59, true), "11:59 PM");
+    }
+
+    #[test]
     fn image_paths_keep_the_native_path_after_loader_conversion() {
         for path in [
             r"C:\Users\Ada\photo.jpg",
@@ -430,7 +599,7 @@ mod tests {
         let date = when.date();
         assert_eq!(
             stamp_relative_to(Locale::English, date, date, &when),
-            "22:13"
+            time_of_day(22, 13, twelve_hour_clock())
         );
         assert_eq!(
             stamp_relative_to(Locale::English, date, date.tomorrow().expect("date"), &when),

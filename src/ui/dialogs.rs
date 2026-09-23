@@ -35,7 +35,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::NewChat => 420.0,
                 Dialog::UnlockLockedChats | Dialog::ConfirmLockChat(_) => 380.0,
                 Dialog::ChatInfo(_) => 360.0,
-                Dialog::ConfirmDeleteChat(_) => 380.0,
+                Dialog::ConfirmDeleteChat(_) | Dialog::JoinGroup => 380.0,
                 Dialog::Forward { .. } => 420.0,
                 Dialog::CreatePoll(_) => 420.0,
                 Dialog::PollResults { .. } | Dialog::InteractiveList { .. } => {
@@ -64,6 +64,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ChatInfo(id) => chat_info(app, ui, &id),
                 Dialog::ConfirmDeleteChat(id) => confirm_delete_chat(app, ui, &id),
                 Dialog::Forward { chat, message } => forward(app, ui, &chat, &message),
+                Dialog::JoinGroup => join_group(app, ui),
             }
         });
     if response.should_close() {
@@ -676,6 +677,90 @@ fn confirm_delete_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
                 app.actions.push(Action::CloseDialog);
             }
             if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn join_group(app: &mut App, ui: &mut egui::Ui) {
+    use crate::model::InviteState;
+    let palette = app.palette;
+    let Some(invite) = app.invite.clone() else {
+        app.actions.push(Action::CloseDialog);
+        return;
+    };
+    let (info, joining) = match &invite.state {
+        InviteState::Loading => {
+            title(ui, app, "Group invite");
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(egui::RichText::new("Looking up the group…").color(palette.secondary));
+            });
+            cancel_row(app, ui);
+            return;
+        }
+        InviteState::Failed(error) => {
+            title(ui, app, "Group invite");
+            theme::paragraph(ui, error, theme::regular(13.5), palette.text);
+            cancel_row(app, ui);
+            return;
+        }
+        InviteState::Ready(info) => (info, false),
+        InviteState::Joining(info) => (info, true),
+    };
+    super::widgets::rich_text(ui, &info.subject, theme::semibold(17.0), palette.text);
+    let members = if info.members == 1 {
+        "1 member".to_owned()
+    } else {
+        format!("{} members", info.members)
+    };
+    ui.label(egui::RichText::new(members).color(palette.secondary));
+    if let Some(description) = &info.description {
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .max_height(140.0)
+            .show(ui, |ui| {
+                super::widgets::rich_text(ui, description, theme::regular(13.5), palette.text);
+            });
+    }
+    let member = app.chats.iter().any(|chat| chat.id == info.id);
+    if info.approval && !member {
+        ui.add_space(4.0);
+        theme::paragraph(
+            ui,
+            "An admin must approve your request before you join.",
+            theme::regular(13.0),
+            palette.secondary,
+        );
+    }
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let label = match (member, info.approval) {
+                (true, _) => "Open chat",
+                (false, true) => "Request to join",
+                (false, false) => "Join group",
+            };
+            let join = ui.add_enabled_ui(!joining, |ui| {
+                theme::pill_button(ui, &palette, if joining { "Joining…" } else { label }, true)
+            });
+            if join.inner.clicked() {
+                app.actions.push(Action::JoinGroup);
+            }
+            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn cancel_row(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::pill_button(ui, &palette, "Close", false).clicked() {
                 app.actions.push(Action::CloseDialog);
             }
         });

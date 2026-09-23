@@ -87,7 +87,28 @@ impl Conversation {
         } else {
             for message in incoming {
                 match self.messages.iter_mut().find(|m| m.id == message.id) {
-                    Some(existing) => *existing = message,
+                    Some(existing) => {
+                        // A reload or scroll delivers a freshly classified copy
+                        // of an already-loaded message whose Media has no local
+                        // path and a default state. Replacing it would throw
+                        // away an in-flight download and re-fetch media already
+                        // on disk, so keep the runtime-only fields (as
+                        // `MessageUpdated` already does for the state).
+                        let media = existing
+                            .content
+                            .media()
+                            .map(|media| (media.state.clone(), media.path.clone()));
+                        *existing = message;
+                        // A copy that carries its own path is newer, for
+                        // example after the archive relocated the file.
+                        if let (Some((state, path)), Some(media)) =
+                            (media, existing.content.media_mut())
+                            && media.path.is_none()
+                        {
+                            media.state = state;
+                            media.path = path;
+                        }
+                    }
                     None => self.messages.push(message),
                 }
             }
@@ -108,6 +129,17 @@ impl Conversation {
 pub struct Presence {
     pub online: bool,
     pub last_seen: Option<i64>,
+}
+
+/// The "unread messages" divider of the open chat. It stays until another
+/// chat opens, like on the phone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnreadDivider {
+    pub chat: ChatId,
+    /// Unread incoming messages when the chat was opened.
+    pub count: u32,
+    /// The transcript has scrolled to it once.
+    pub placed: bool,
 }
 
 /// WhatsApp keeps at most three pinned chats without WhatsApp Plus, and
@@ -180,6 +212,10 @@ pub struct App {
     pub presence: HashMap<String, Presence>,
     /// Whether account privacy disables direct-chat read receipts.
     pub account_receipts_off: bool,
+    /// The group invite link being previewed or joined.
+    pub invite: Option<crate::model::GroupInvite>,
+    /// Where the unread messages began when the open chat was opened.
+    pub unread_divider: Option<UnreadDivider>,
     avatars: HashMap<String, Option<PathBuf>>,
     avatar_requests: HashSet<String>,
     /// Full-size profile pictures for info dialogs.
@@ -357,6 +393,14 @@ impl App {
             let waker = waker.clone();
             app.tray = TrayService::spawn(move || waker.wake());
         }
+        // The clock preference may run a helper on Linux; keep it off the
+        // first frame.
+        std::thread::Builder::new()
+            .name("clock-format".into())
+            .spawn(|| {
+                crate::util::twelve_hour_clock();
+            })
+            .ok();
         if crate::autostart::supported() {
             app.start_with_system = Some(crate::autostart::enabled());
         }
@@ -432,6 +476,8 @@ impl App {
             typing: HashMap::new(),
             presence: HashMap::new(),
             account_receipts_off: false,
+            invite: None,
+            unread_divider: None,
             avatars: HashMap::new(),
             avatar_requests: HashSet::new(),
             avatars_full: HashMap::new(),
@@ -515,7 +561,9 @@ impl App {
             notification_opens: Default::default(),
             notifications: Default::default(),
         };
-        app.player.set_speed(app.settings.voice_speed);
+        // A hand-edited speed snaps to a supported one, so a speed control
+        // always shows the speed that plays.
+        app.settings.voice_speed = app.player.set_speed(app.settings.voice_speed);
         app
     }
 
@@ -1093,6 +1141,14 @@ impl App {
         contacts
     }
 
+    /// Archived chats with unread messages, for the Archived chip.
+    pub fn archived_unread(&self) -> usize {
+        self.chats
+            .iter()
+            .filter(|chat| chat.archived && !chat.locked && chat.unread > 0)
+            .count()
+    }
+
     pub fn archived_count(&self) -> usize {
         self.chats
             .iter()
@@ -1432,6 +1488,44 @@ impl App {
                     conversation.complete = false;
                 }
                 Event::ReceiptsPrivacy { disabled } => self.account_receipts_off = disabled,
+                Event::InvitePreview { code, result } => {
+                    use crate::model::InviteState;
+                    if let Some(invite) = self.invite.as_mut().filter(|invite| invite.code == code)
+                    {
+                        invite.state = match result {
+                            Ok(info) => InviteState::Ready(info),
+                            Err(error) => InviteState::Failed(error),
+                        };
+                    }
+                }
+                Event::InviteJoined { code, result } => {
+                    if self
+                        .invite
+                        .as_ref()
+                        .is_some_and(|invite| invite.code == code)
+                    {
+                        match result {
+                            Ok((id, pending)) => {
+                                self.invite = None;
+                                if self.dialog == Some(Dialog::JoinGroup) {
+                                    self.dialog = None;
+                                }
+                                if pending {
+                                    self.toast(
+                                        "Request sent. An admin must approve it before you join.",
+                                    );
+                                } else {
+                                    self.actions.push(Action::OpenChat(id));
+                                }
+                            }
+                            Err(error) => {
+                                if let Some(invite) = self.invite.as_mut() {
+                                    invite.state = crate::model::InviteState::Failed(error);
+                                }
+                            }
+                        }
+                    }
+                }
                 Event::ContactReady { id, name } => {
                     self.new_contact_pending = false;
                     if self.dialog == Some(Dialog::NewContact) {
@@ -1781,6 +1875,14 @@ impl App {
                 }
                 self.stop_composing(&previous);
             }
+            self.unread_divider =
+                self.chat(&id)
+                    .filter(|chat| chat.unread > 0)
+                    .map(|chat| UnreadDivider {
+                        chat: id.clone(),
+                        count: chat.unread,
+                        placed: false,
+                    });
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
             self.reply_to = None;
@@ -2428,7 +2530,14 @@ impl App {
                 }
             }
             Action::OpenUrl(url) => {
-                if let Some(url) = crate::safety::external_url(&url) {
+                if let Some(code) = crate::safety::group_invite_code(&url) {
+                    self.invite = Some(crate::model::GroupInvite {
+                        code: code.clone(),
+                        state: crate::model::InviteState::Loading,
+                    });
+                    self.dialog = Some(Dialog::JoinGroup);
+                    self.backend.send(Command::PreviewInvite(code));
+                } else if let Some(url) = crate::safety::external_url(&url) {
                     ctx.open_url(egui::OpenUrl::new_tab(url));
                 } else {
                     self.toast_error("This link type cannot be opened from ZapFast");
@@ -2532,8 +2641,8 @@ impl App {
                     self.toast_error(error);
                 }
             }
-            Action::CycleVoiceSpeed => {
-                self.settings.voice_speed = self.player.cycle_speed();
+            Action::SetVoiceSpeed(speed) => {
+                self.settings.voice_speed = self.player.set_speed(speed);
                 self.mark_settings_dirty();
             }
             Action::StartRecording => {
@@ -2835,6 +2944,7 @@ impl App {
             Action::CloseDialog => {
                 self.clear_chat_lock_entry();
                 self.dialog = None;
+                self.invite = None;
                 self.forward_search.clear();
                 self.contact_edit = None;
                 self.refocus_composer(ctx);
@@ -2873,6 +2983,32 @@ impl App {
                     self.search_hits.clear();
                 }
                 self.chat_filter = filter;
+                self.show_archived = false;
+                self.unread_kept.clear();
+            }
+            Action::JoinGroup => {
+                use crate::model::InviteState;
+                if let Some(invite) = self.invite.as_mut()
+                    && let InviteState::Ready(info) = &invite.state
+                {
+                    if self.chats.iter().any(|chat| chat.id == info.id) {
+                        let id = info.id.clone();
+                        self.invite = None;
+                        self.dialog = None;
+                        self.actions.push(Action::OpenChat(id));
+                    } else {
+                        invite.state = InviteState::Joining(info.clone());
+                        self.backend.send(Command::JoinInvite(invite.code.clone()));
+                    }
+                }
+            }
+            Action::ShowArchived(show) => {
+                if self.locked_folder {
+                    self.close_locked_folder();
+                    self.search.clear();
+                    self.search_hits.clear();
+                }
+                self.show_archived = show;
                 self.unread_kept.clear();
             }
             // Reading a chat must not pull its row out from under the pointer.
@@ -4138,6 +4274,61 @@ mod tests {
     }
 
     #[test]
+    fn opening_an_unread_chat_remembers_where_its_unread_messages_begin() {
+        let mut app = app();
+        let mut busy = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        busy.unread = 4;
+        let quiet = Chat::new("2@s.whatsapp.net".into(), "Bob".into());
+        app.chats = vec![busy, quiet];
+        app.open_chat("1@s.whatsapp.net".into());
+        assert_eq!(
+            app.unread_divider.as_ref().map(|divider| divider.count),
+            Some(4)
+        );
+        assert_eq!(app.chat("1@s.whatsapp.net").unwrap().unread, 0);
+        // Reopening the same chat keeps it; another chat without unread clears it.
+        app.open_chat("1@s.whatsapp.net".into());
+        assert!(app.unread_divider.is_some());
+        app.open_chat("2@s.whatsapp.net".into());
+        assert!(app.unread_divider.is_none());
+    }
+
+    #[test]
+    fn an_invite_link_is_previewed_and_joined_inside_the_app() {
+        use crate::model::{InviteInfo, InviteState};
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::OpenUrl("https://chat.whatsapp.com/AbCdEf1234567890XyZ".into()),
+            &ctx,
+        );
+        assert_eq!(app.dialog, Some(Dialog::JoinGroup));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::PreviewInvite(code)) if code == "AbCdEf1234567890XyZ"
+        ));
+        let info = InviteInfo {
+            id: "1@g.us".into(),
+            subject: "Club".into(),
+            description: None,
+            members: 3,
+            approval: false,
+        };
+        app.invite.as_mut().unwrap().state = InviteState::Ready(info);
+        app.apply(Action::JoinGroup, &ctx);
+        assert!(matches!(commands.try_recv(), Ok(Command::JoinInvite(_))));
+        assert!(matches!(
+            app.invite.as_ref().unwrap().state,
+            InviteState::Joining(_)
+        ));
+        // A second click while joining sends nothing more.
+        app.apply(Action::JoinGroup, &ctx);
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
     fn a_fourth_pin_is_refused_like_on_the_phone() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
@@ -4372,6 +4563,59 @@ mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn merge_keeps_a_downloaded_medias_path_and_state() {
+        let mut conversation = Conversation::default();
+        let chat = "fixture@s.whatsapp.net";
+        let image = |path: Option<PathBuf>, state: MediaState| Message {
+            content: Content::Image {
+                caption: None,
+                media: Media {
+                    mime: "image/jpeg".into(),
+                    size: 100,
+                    width: None,
+                    height: None,
+                    path,
+                    state,
+                },
+            },
+            ..message(chat, "picture", 1)
+        };
+        conversation.merge(vec![image(None, MediaState::Idle)], false);
+        // A download lands, then is marked failed after the fact.
+        let downloaded = PathBuf::from("/tmp/picture.jpg");
+        if let Some(media) = conversation
+            .message_mut("picture")
+            .expect("loaded")
+            .content
+            .media_mut()
+        {
+            media.path = Some(downloaded.clone());
+            media.state = MediaState::Failed("gone".into());
+        }
+        // A reload delivers the same message freshly classified, without the
+        // local path or the runtime state.
+        conversation.merge(vec![image(None, MediaState::Idle)], false);
+        let media = conversation
+            .message("picture")
+            .and_then(|message| message.content.media().cloned())
+            .expect("still present");
+        assert_eq!(media.path, Some(downloaded));
+        assert_eq!(media.state, MediaState::Failed("gone".into()));
+        // A copy with its own path replaces the in-memory one.
+        let relocated = PathBuf::from("/elsewhere/picture.jpg");
+        conversation.merge(
+            vec![image(Some(relocated.clone()), MediaState::Idle)],
+            false,
+        );
+        let media = conversation
+            .message("picture")
+            .and_then(|message| message.content.media().cloned())
+            .expect("still present");
+        assert_eq!(media.path, Some(relocated));
+        assert_eq!(media.state, MediaState::Idle);
     }
 
     #[test]
@@ -4680,6 +4924,37 @@ mod tests {
     }
 
     #[test]
+    fn channels_have_their_own_chip_and_archived_chats_theirs() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let mut friend = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        friend.unread = 1;
+        let mut channel = Chat::new("2@newsletter".into(), "News".into());
+        channel.unread = 3;
+        let mut archived = Chat::new("3@s.whatsapp.net".into(), "Old".into());
+        archived.archived = true;
+        archived.unread = 2;
+        app.chats = vec![friend, channel, archived];
+        let names = |app: &App| {
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&app), ["Ada"], "All leaves channels out");
+        assert_eq!(app.unread_chats(ChatFilter::Unread), 1);
+        assert_eq!(app.unread_chats(ChatFilter::Channels), 1);
+        app.apply(Action::SetChatFilter(ChatFilter::Channels), &ctx);
+        assert_eq!(names(&app), ["News"]);
+        app.apply(Action::ShowArchived(true), &ctx);
+        assert_eq!(names(&app), ["Old"]);
+        assert_eq!(app.archived_unread(), 1);
+        app.apply(Action::SetChatFilter(ChatFilter::All), &ctx);
+        assert!(!app.show_archived, "choosing a filter leaves the archive");
+        assert_eq!(names(&app), ["Ada"]);
+    }
+
+    #[test]
     fn visible_chats_pin_first_and_filter() {
         let mut app = app();
         let mut a = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
@@ -4730,7 +5005,13 @@ mod tests {
                 .map(|chat| chat.name.clone())
                 .collect()
         };
-        assert_eq!(names(&app), ["Ada", "Bob", "Club", "News"]);
+        assert_eq!(
+            names(&app),
+            ["Ada", "Bob", "Club"],
+            "channels have their own chip"
+        );
+        app.chat_filter = ChatFilter::Channels;
+        assert_eq!(names(&app), ["News"]);
         app.chat_filter = ChatFilter::Unread;
         assert_eq!(names(&app), ["Ada", "Club"]);
         app.chat_filter = ChatFilter::Private;
@@ -5143,6 +5424,33 @@ mod tests {
         assert!(app.open_chat.is_none());
         app.open_chat(id.into());
         assert_eq!(app.composer, "unfinished message");
+    }
+
+    #[test]
+    fn a_saved_speed_between_choices_snaps_to_one() {
+        let root = std::env::temp_dir().join(format!("zapfast-speed-{}", std::process::id()));
+        let settings = Settings {
+            voice_speed: 1.3,
+            ..Settings::default()
+        };
+        let app = App::headless(AppDirs::under(&root), settings).0;
+        assert_eq!(app.player.speed(), 1.25);
+        assert_eq!(app.settings.voice_speed, 1.25);
+    }
+
+    #[test]
+    fn direct_speed_selection_reaches_player_and_settings() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+
+        for speed in crate::audio::SPEEDS {
+            app.apply(Action::SetVoiceSpeed(speed), &ctx);
+            assert_eq!(app.player.speed(), speed);
+            assert_eq!(app.settings.voice_speed, speed);
+        }
+
+        app.apply(Action::SetVoiceSpeed(4.0), &ctx);
+        assert_eq!(app.settings.voice_speed, crate::audio::SPEEDS[4]);
     }
 
     #[test]

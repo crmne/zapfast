@@ -39,10 +39,19 @@ pub enum ChatFilter {
     /// One-to-one chats: neither groups nor broadcasts.
     Private,
     Groups,
+    /// Followed channels (newsletters), kept out of the other filters as in
+    /// the official apps.
+    Channels,
 }
 
 impl ChatFilter {
-    pub const EVERY: [Self; 4] = [Self::All, Self::Unread, Self::Private, Self::Groups];
+    pub const EVERY: [Self; 5] = [
+        Self::All,
+        Self::Unread,
+        Self::Private,
+        Self::Groups,
+        Self::Channels,
+    ];
 
     pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
         use crate::i18n::gettext;
@@ -51,15 +60,17 @@ impl ChatFilter {
             Self::Unread => gettext(locale, "Unread"),
             Self::Private => gettext(locale, "Private"),
             Self::Groups => gettext(locale, "Groups"),
+            Self::Channels => gettext(locale, "Channels"),
         }
     }
 
     pub fn matches(self, chat: &Chat) -> bool {
         match self {
-            Self::All => true,
-            Self::Unread => chat.unread > 0,
+            Self::All => !chat.is_channel(),
+            Self::Unread => chat.unread > 0 && !chat.is_channel(),
             Self::Private => chat.kind == ChatKind::Direct,
             Self::Groups => chat.kind == ChatKind::Group,
+            Self::Channels => chat.is_channel(),
         }
     }
 }
@@ -128,6 +139,11 @@ impl Chat {
     /// Newsletter publishing permissions are not supported by this client.
     pub fn can_send(&self) -> bool {
         !self.locked && !self.read_only && self.kind != ChatKind::Broadcast
+    }
+
+    /// A followed WhatsApp channel (newsletter).
+    pub fn is_channel(&self) -> bool {
+        self.id.ends_with("@newsletter")
     }
 
     pub fn is_group(&self) -> bool {
@@ -682,6 +698,34 @@ pub enum Dialog {
         message: String,
         button: usize,
     },
+    /// Previews a group invite link before joining.
+    JoinGroup,
+}
+
+/// A group invite link being previewed or joined.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupInvite {
+    pub code: String,
+    pub state: InviteState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum InviteState {
+    Loading,
+    Ready(InviteInfo),
+    Joining(InviteInfo),
+    Failed(String),
+}
+
+/// What an invite link says about its group, without joining it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InviteInfo {
+    pub id: ChatId,
+    pub subject: String,
+    pub description: Option<String>,
+    pub members: usize,
+    /// Admins approve new members before they join.
+    pub approval: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -765,8 +809,8 @@ pub enum Action {
         path: PathBuf,
         fraction: f32,
     },
-    /// Cycles voice playback speed between 1x, 1.5x, and 2x.
-    CycleVoiceSpeed,
+    /// Sets the voice playback speed to one of the supported speeds.
+    SetVoiceSpeed(f32),
     /// Starts, cancels, or sends a voice recording.
     StartRecording,
     CancelRecording,
@@ -878,6 +922,10 @@ pub enum Action {
     CloseDialog,
     ToggleSidebar,
     SetChatFilter(ChatFilter),
+    /// Shows or leaves the archived chats.
+    ShowArchived(bool),
+    /// Joins the group of the invite being previewed.
+    JoinGroup,
     /// A chat opened from the main list, kept there under the Unread filter.
     KeepUnread(ChatId),
     FocusSearch,
