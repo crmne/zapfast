@@ -1589,6 +1589,16 @@ fn open_reaction_picker_action(chat: &str, message: &str) -> Action {
     }
 }
 
+/// The screen-reader label names whose message the hover control reacts to, so
+/// a user can tell the controls apart. The visual tooltip stays a short "React".
+fn reaction_button_label(from_me: bool, sender: &str) -> String {
+    if from_me {
+        "React to your message".to_owned()
+    } else {
+        format!("React to {sender}'s message")
+    }
+}
+
 /// Draws a Smile control beside a hovered message and opens the existing picker.
 fn reaction_affordance(
     ui: &mut egui::Ui,
@@ -1619,8 +1629,10 @@ fn reaction_affordance(
 
     // Acquire under the same layer as the bubble so the row strip keeps clicks.
     let response = ui.interact(rect, bubble.id.with("react"), Sense::click());
+    let sender = (view.names_or)(&message.sender, message.sender_name.as_deref());
+    let label = reaction_button_label(message.from_me, &sender);
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "React")
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
     });
     theme::reveal_focus(&response);
     let revealed = reaction_affordance_visible(pointer, bubble.rect, rect);
@@ -4021,6 +4033,15 @@ mod tests {
             Action::OpenReactionPicker { chat, message }
                 if chat == "chat@example" && message == "message-42"
         ));
+    }
+
+    #[test]
+    fn reaction_button_label_names_whose_message_it_reacts_to() {
+        assert_eq!(reaction_button_label(true, "Ada"), "React to your message");
+        assert_eq!(
+            reaction_button_label(false, "Ada"),
+            "React to Ada's message"
+        );
     }
 
     #[test]
