@@ -88,7 +88,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 ui.available_width().max(0.0),
                 ui.available_height().max(0.0),
             );
-            let image = egui::Image::new(crate::util::image_uri(preview.path()));
+            // Registered with the image cache like every other draw site, so a
+            // sweep never releases the picture while it is on screen.
+            let image = crate::ui::widgets::file_image(ui, preview.path());
             match image.load_for_size(ctx, canvas) {
                 Ok(egui::load::TexturePoll::Ready { texture }) => {
                     let size = display_size(texture.size, canvas, preview.is_fit(), preview.zoom());
