@@ -126,6 +126,14 @@ pub fn selectable_rich_text(
     response
 }
 
+/// An image for a local file, registered so egui's caches for it can be
+/// released once it leaves the screen.
+pub fn file_image(ui: &Ui, path: &Path) -> egui::Image<'static> {
+    let uri = crate::util::image_uri(path);
+    crate::image_cache::touch(ui.ctx(), &uri);
+    egui::Image::new(uri)
+}
+
 /// Round profile picture, or id-colored initials when no picture is available.
 pub fn avatar(
     ui: &mut Ui,
@@ -178,8 +186,7 @@ pub fn paint_avatar(
     let size = rect.width();
     let mut painted = false;
     if let Some(picture) = picture {
-        let uri = crate::util::image_uri(picture);
-        let image = egui::Image::new(uri)
+        let image = file_image(ui, picture)
             .fit_to_exact_size(Vec2::splat(size))
             .corner_radius(size / 2.0);
         if let Ok(egui::load::TexturePoll::Ready { .. }) =
