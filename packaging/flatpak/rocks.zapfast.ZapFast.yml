@@ -24,7 +24,7 @@ finish-args:
   - --device=dri
   # Sound: PulseAudio, which PipeWire also answers.
   - --socket=pulseaudio
-  # WhatsApp, attachment downloads and the local single-instance socket.
+  # WhatsApp and attachment downloads.
   - --share=network
   # Archive key and status notifier tray.
   - --talk-name=org.freedesktop.secrets

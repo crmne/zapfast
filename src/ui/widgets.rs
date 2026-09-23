@@ -61,6 +61,7 @@ pub fn line(
     let format = egui::TextFormat::simple(font, color);
     let single = text.lines().next().unwrap_or_default();
     emoji::append(
+        ui,
         &mut job,
         &mut placements,
         if max_rows == 1 { single } else { text },
@@ -451,6 +452,15 @@ pub fn search_field(
             .max_rect(field_rect)
             .layout(Layout::left_to_right(Align::Center)),
     );
+    let format = egui::TextFormat::simple(theme::regular(14.0), palette.text);
+    let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap: f32| {
+        bidi::layout_field(ui, buffer.as_str(), &format, wrap)
+    };
+    let align = if bidi::base_rtl(text) {
+        Align::RIGHT
+    } else {
+        Align::LEFT
+    };
     let response = child.add(
         egui::TextEdit::singleline(text)
             .id(id)
@@ -463,7 +473,9 @@ pub fn search_field(
             .text_color(palette.text)
             .frame(egui::Frame::NONE)
             .desired_width(field_rect.width())
-            .vertical_align(Align::Center),
+            .vertical_align(Align::Center)
+            .horizontal_align(align)
+            .layouter(&mut layouter),
     );
     theme::focus_outline(ui, response.id, rect, height / 2.0);
     ui.ctx()

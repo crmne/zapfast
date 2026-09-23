@@ -1734,7 +1734,7 @@ impl Worker {
             .collect();
         let lids = self.lid_to_pn.clone();
         tokio::spawn(async move {
-            match client.groups().get_metadata(&jid).await {
+            match client.groups().fetch_metadata(&jid).await {
                 Ok(metadata) => {
                     let canonical = |jid: &Jid| -> String {
                         if jid.is_lid()
@@ -1766,7 +1766,7 @@ impl Worker {
                     let _ = commands.send(Command::GroupInfo {
                         chat,
                         // Empty subjects leave cached titles intact and retry.
-                        name: Some(metadata.subject.clone()),
+                        name: Some(metadata.subject.clone().unwrap_or_default()),
                         participants,
                         read_only: metadata.is_announcement && !admin,
                         // GroupEphemeralSettings carries a trigger mode, not a
@@ -4096,7 +4096,7 @@ impl Worker {
                         .await
                         .map(|group| crate::model::InviteInfo {
                             id: group.id.to_string(),
-                            subject: group.subject,
+                            subject: group.subject.unwrap_or_default(),
                             description: group.description.filter(|text| !text.trim().is_empty()),
                             members: group
                                 .size
@@ -5904,7 +5904,7 @@ async fn send_outgoing(
             // exactly as encryption would. No separate burst of metadata queries.
             let group = client
                 .groups()
-                .query_info(&jid)
+                .routing_info(&jid)
                 .await
                 .map_err(|error| error.to_string())?;
             let lids = group
