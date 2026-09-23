@@ -15,7 +15,7 @@ use crate::app::{App, Conversation};
 use crate::markup;
 use crate::model::{
     Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
-    PickerTab,
+    PickerTab, ReadReceiptPreference,
 };
 use crate::theme::{self, Icon, Palette};
 
@@ -213,6 +213,20 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         palette.text,
                         "More",
                     );
+                    let receipts = app.read_receipt_preference(&chat.id);
+                    let sends = receipts.resolve(app.settings.send_read_receipts);
+                    let receipts_label = match receipts {
+                        ReadReceiptPreference::InheritGlobal => format!(
+                            "Read receipts: default ({})",
+                            if sends { "on" } else { "off" }
+                        ),
+                        ReadReceiptPreference::Explicit(true) => {
+                            "Read receipts: always on".to_owned()
+                        }
+                        ReadReceiptPreference::Explicit(false) => {
+                            "Read receipts: always off".to_owned()
+                        }
+                    };
                     let width = widgets::menu_width(
                         ui,
                         &[
@@ -221,6 +235,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             "Unarchive",
                             "Copy number",
                             "Close chat",
+                            &receipts_label,
                         ],
                         true,
                     );
@@ -253,6 +268,17 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             ) {
                                 app.actions
                                     .push(Action::SetArchived(chat.id.clone(), !chat.archived));
+                            }
+                            if widgets::menu_item(
+                                ui,
+                                &palette,
+                                Some(if sends { Icon::Check } else { Icon::X }),
+                                &receipts_label,
+                            ) {
+                                app.actions.push(Action::SetReadReceipts {
+                                    chat: chat.id.clone(),
+                                    preference: receipts.next(),
+                                });
                             }
                             widgets::menu_separator(ui, &palette);
                             if let Some(phone) = chat.phone()

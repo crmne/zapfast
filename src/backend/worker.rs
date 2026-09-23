@@ -621,6 +621,7 @@ impl Worker {
                     | Event::Contacts(_)
                     | Event::SearchHits { .. }
                     | Event::Typing { .. }
+                    | Event::ReadReceipts(_)
             )
         {
             return;
@@ -742,6 +743,7 @@ impl Worker {
                     self.polish_chat(chat);
                 }
                 self.emit(Event::Chats(chats));
+                self.emit_read_receipts();
             }
             Err(error) => log::warn!("could not list chats: {error}"),
         }
@@ -1774,6 +1776,7 @@ impl Worker {
         let _ = std::fs::remove_dir_all(self.dirs.avatar_cache_dir());
         let _ = std::fs::remove_dir_all(self.dirs.media_cache_dir());
         self.emit(Event::Chats(Vec::new()));
+        self.emit(Event::ReadReceipts(Vec::new()));
         self.privacy_ready = false;
         self.privacy_recovering = false;
         self.privacy_retry = Instant::now();
@@ -2931,6 +2934,9 @@ impl Worker {
                 });
             }
             Command::MarkRead { chat, receipts } => self.mark_read(chat, receipts),
+            Command::SetReadReceipts { chat, receipts } => {
+                self.set_read_receipts(&chat, receipts);
+            }
             Command::ReadSyncFinished {
                 chat,
                 through,
@@ -3672,6 +3678,22 @@ impl Worker {
             id,
             message,
             expiration,
+        ));
+    }
+
+    /// Stores one chat's read-receipt override, or clears it so the chat
+    /// follows the global setting again, then reports the new overrides.
+    fn set_read_receipts(&mut self, chat: &str, receipts: Option<bool>) {
+        if let Err(error) = self.archive.set_read_receipts(chat, receipts) {
+            log::warn!("could not store a read-receipt preference: {error}");
+        }
+        self.emit_read_receipts();
+    }
+
+    /// Sends every chat that disagrees with the global read-receipt setting.
+    fn emit_read_receipts(&self) {
+        self.emit(Event::ReadReceipts(
+            self.archive.read_receipts().unwrap_or_default(),
         ));
     }
 

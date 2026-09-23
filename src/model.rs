@@ -520,6 +520,53 @@ pub enum PickerTab {
     Stickers,
 }
 
+/// Whether one chat sends read receipts, following the global setting unless it
+/// says otherwise.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReadReceiptPreference {
+    /// Follow the global setting.
+    #[default]
+    InheritGlobal,
+    /// Send receipts for this chat, or never send them, whatever the global
+    /// setting says.
+    Explicit(bool),
+}
+
+impl ReadReceiptPreference {
+    /// The next preference the chat menu walks to, so one item covers
+    /// inheriting, forcing, and blocking.
+    pub fn next(self) -> Self {
+        match self {
+            Self::InheritGlobal => Self::Explicit(true),
+            Self::Explicit(true) => Self::Explicit(false),
+            Self::Explicit(false) => Self::InheritGlobal,
+        }
+    }
+
+    /// Whether a chat with this preference sends read receipts, given the
+    /// global setting.
+    pub fn resolve(self, global: bool) -> bool {
+        match self {
+            Self::InheritGlobal => global,
+            Self::Explicit(send) => send,
+        }
+    }
+
+    /// The stored form: `None` means the chat follows the global setting.
+    pub fn stored(self) -> Option<bool> {
+        match self {
+            Self::InheritGlobal => None,
+            Self::Explicit(send) => Some(send),
+        }
+    }
+
+    /// Reads back a stored override. A chat without one inherits the global
+    /// setting.
+    pub fn from_stored(stored: Option<bool>) -> Self {
+        stored.map_or(Self::InheritGlobal, Self::Explicit)
+    }
+}
+
 /// Imported sticker pack stored as a named WebP directory.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StickerPack {
@@ -627,6 +674,12 @@ pub enum Action {
         composing: bool,
     },
     MarkRead(ChatId),
+    /// Chooses whether one chat sends read receipts, on top of the global
+    /// setting.
+    SetReadReceipts {
+        chat: ChatId,
+        preference: ReadReceiptPreference,
+    },
     LoadOlder(ChatId),
     /// Requests messages older than the local archive.
     FetchOlder(ChatId),

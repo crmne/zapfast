@@ -169,6 +169,12 @@ pub enum Command {
         chat: ChatId,
         receipts: bool,
     },
+    /// Stores one chat's read-receipt override, or clears it so the chat
+    /// follows the global setting again.
+    SetReadReceipts {
+        chat: ChatId,
+        receipts: Option<bool>,
+    },
     /// Result of a private read-state update to the other linked devices.
     ReadSyncFinished {
         chat: ChatId,
@@ -461,6 +467,9 @@ pub enum Event {
     },
     /// Full chat list, newest first.
     Chats(Vec<Chat>),
+    /// Chats that override the global read-receipt setting, sent once at
+    /// startup. A chat missing from this list follows the global setting.
+    ReadReceipts(Vec<(ChatId, bool)>),
     ChatUpdated(Box<Chat>),
     /// Chat messages in ascending order. `older` prepends them; `complete`
     /// means the archive has no earlier rows.

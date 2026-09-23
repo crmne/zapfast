@@ -11,7 +11,7 @@ use crate::audio::{Player, Recorder};
 use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
-    MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
+    MediaState, Message, Page, PickerTab, ReadReceiptPreference, StickerPack, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
@@ -137,6 +137,8 @@ pub struct App {
     pub scroll_chat_into_view: Option<ChatId>,
     /// Composer drafts by chat.
     pub drafts: HashMap<ChatId, String>,
+    /// Chats that override the global read-receipt setting.
+    pub read_receipt_overrides: HashMap<ChatId, bool>,
     draft_mentions: HashMap<ChatId, Vec<ComposerMention>>,
     pub composer: String,
     composer_mentions: Vec<ComposerMention>,
@@ -389,6 +391,7 @@ impl App {
             open_chat,
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
+            read_receipt_overrides: HashMap::new(),
             draft_mentions: HashMap::new(),
             composer: String::new(),
             composer_mentions: Vec::new(),
@@ -1168,6 +1171,9 @@ impl App {
                     self.me_name = name;
                     self.me_about = about;
                 }
+                Event::ReadReceipts(overrides) => {
+                    self.read_receipt_overrides = overrides.into_iter().collect();
+                }
                 Event::Chats(chats) => {
                     for chat in &chats {
                         if chat.unread == 0 {
@@ -1675,6 +1681,18 @@ impl App {
         self.backend.send(Command::FetchOlder(chat.to_owned()));
     }
 
+    /// The read-receipt preference stored for one chat, if any.
+    pub fn read_receipt_preference(&self, chat: &str) -> ReadReceiptPreference {
+        ReadReceiptPreference::from_override(self.read_receipt_overrides.get(chat).copied())
+    }
+
+    /// Whether this chat sends read receipts: its own choice, or the global
+    /// setting when it has none.
+    pub fn sends_read_receipts(&self, chat: &str) -> bool {
+        self.read_receipt_preference(chat)
+            .resolve(self.settings.send_read_receipts)
+    }
+
     fn mark_read(&mut self, chat: &str) {
         self.notifications.clear(chat);
         if let Some(known) = self.chat_mut(chat) {
@@ -1683,7 +1701,7 @@ impl App {
         // Clear local unread state regardless of receipt settings.
         self.backend.send(Command::MarkRead {
             chat: chat.to_owned(),
-            receipts: self.settings.send_read_receipts,
+            receipts: self.sends_read_receipts(chat),
         });
     }
 
@@ -2258,6 +2276,17 @@ impl App {
                 }
             }
             Action::MarkRead(chat) => self.mark_read(&chat),
+            Action::SetReadReceipts { chat, preference } => {
+                let chosen = preference.override_value();
+                match chosen {
+                    Some(send) => self.read_receipt_overrides.insert(chat.clone(), send),
+                    None => self.read_receipt_overrides.remove(&chat),
+                };
+                self.backend.send(Command::SetReadReceipts {
+                    chat,
+                    receipts: chosen,
+                });
+            }
             Action::LoadOlder(chat) => self.load_older(&chat),
             Action::FetchOlder(chat) => self.fetch_older(&chat),
             Action::Download { chat, message } => {
@@ -3063,12 +3092,13 @@ impl App {
             return;
         }
         let sender = row.sender.clone();
+        let receipts = self.sends_read_receipts(&chat);
         self.played_told.insert(message.clone());
         self.backend.send(Command::MarkPlayed {
             chat,
             message,
             sender,
-            receipts: self.settings.send_read_receipts,
+            receipts,
         });
     }
 
@@ -3475,6 +3505,75 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn a_chat_can_override_the_global_read_receipt_setting() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat = "peer@s.whatsapp.net";
+        let ctx = egui::Context::default();
+        app.settings.send_read_receipts = false;
+        assert!(
+            !app.sends_read_receipts(chat),
+            "a chat with no preference follows the global setting"
+        );
+        app.apply(
+            Action::SetReadReceipts {
+                chat: chat.to_owned(),
+                preference: ReadReceiptPreference::Explicit(true),
+            },
+            &ctx,
+        );
+        app.apply_actions(&ctx);
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::SetReadReceipts {
+                receipts: Some(true),
+                ..
+            }
+        ));
+        assert!(
+            app.sends_read_receipts(chat),
+            "this chat sends receipts although the global setting is off"
+        );
+        app.mark_read(chat);
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::MarkRead { receipts: true, .. }
+        ));
+        app.apply(
+            Action::SetReadReceipts {
+                chat: chat.to_owned(),
+                preference: ReadReceiptPreference::InheritGlobal,
+            },
+            &ctx,
+        );
+        app.apply_actions(&ctx);
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::SetReadReceipts { receipts: None, .. }
+        ));
+        assert!(!app.sends_read_receipts(chat), "back to the global setting");
+    }
+
+    #[test]
+    fn the_backend_reports_the_read_receipt_overrides_it_loaded() {
+        let root = std::env::temp_dir().join(format!("zapfast-receipts-{}", std::process::id()));
+        let (mut app, events) = App::headless(AppDirs::under(&root), Settings::default());
+        events
+            .send(Event::ReadReceipts(vec![(
+                "peer@s.whatsapp.net".to_owned(),
+                false,
+            )]))
+            .unwrap();
+        app.handle_events();
+        assert!(!app.sends_read_receipts("peer@s.whatsapp.net"));
+        assert!(
+            app.sends_read_receipts("other@s.whatsapp.net"),
+            "chats without an override follow the global setting"
+        );
     }
 
     fn paste_release() -> egui::Event {

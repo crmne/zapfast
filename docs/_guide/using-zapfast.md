@@ -80,6 +80,12 @@ Right-click a chat to pin, archive, or mute it for eight hours, one week, or
 indefinitely. These changes also apply on your phone. Click the chat header to
 see its picture, number, and group members.
 
+The ⋮ menu of the open chat decides read receipts for that chat alone:
+**Read receipts: default (…)**, **always on**, or **always off**. "Always"
+overrides the global setting for this chat only; "default" hands the chat back
+to the global setting. The choice stays in the encrypted archive and applies
+from the next message on.
+
 ## Notifications and the tray
 
 Closing the window keeps ZapFast linked in the tray. Click the tray icon or
