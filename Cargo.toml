@@ -1,6 +1,6 @@
 [package]
 name = "zapfast"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -22,7 +22,7 @@ path = "src/main.rs"
 anyhow = "1"
 # Hashes saved stickers by content. Already included through wacore.
 sha2 = "0.11"
-# Already in the tree through rustls; used for the locked-chat code verifier.
+# Already in the tree through rustls; verifies lock codes and update signatures.
 ring = "0.17"
 # Decrypts Signal sticker packs. All four crates are already included through
 # wacore at these versions.
@@ -102,6 +102,10 @@ opus = "0.4"
 ogg = "0.9"
 # Converts animated Signal APNG stickers to the animated WebP used by WhatsApp.
 webp-animation = "0.10"
+# A small translation trait for catalogs generated from PO files at build time.
+tr = { version = "0.1.11", default-features = false }
+# Detects the user's system locale across platforms, for the interface language.
+sys-locale = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify = "8.2"
@@ -119,7 +123,7 @@ apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 # stay on the main thread.
 objc2 = "0.6"
 raw-window-handle = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication", "NSText", "NSView", "NSWindow"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDate", "NSGeometry", "NSObjCRuntime", "NSRunLoop", "NSString"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -151,3 +155,9 @@ panic = "abort"
 # Keep the application crate incremental.
 [profile.dev.package."*"]
 opt-level = 2
+
+[build-dependencies]
+# Validate/filter unfinished PO entries, then compile catalog text and gettext
+# plural expressions to Rust. Ordinary builds do not need gettext tools.
+include-po = "0.2"
+polib = "0.3"

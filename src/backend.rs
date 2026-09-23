@@ -153,6 +153,12 @@ pub enum Command {
         quoting: Option<String>,
         mentions: Vec<String>,
     },
+    ReplyInteractive {
+        chat: ChatId,
+        message: String,
+        button: usize,
+        choice: Option<usize>,
+    },
     /// Forwards an archived message to another chat.
     Forward {
         from_chat: ChatId,
@@ -183,6 +189,7 @@ pub enum Command {
     /// Requests messages before the archive's earliest message.
     FetchOlder(ChatId),
     Download {
+        card: Option<usize>,
         chat: ChatId,
         message: String,
     },
@@ -270,6 +277,7 @@ pub enum Command {
     SendSticker {
         chat: ChatId,
         path: PathBuf,
+        quoting: Option<String>,
     },
     /// Saves a sticker file.
     SaveSticker {
@@ -340,11 +348,22 @@ pub enum Command {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Deletes a chat on the phone, then here once the phone agreed.
+    DeleteChat(ChatId),
+    /// Whether the phone deleted a chat requested through `DeleteChat`.
+    ChatDeleted {
+        chat: ChatId,
+        deleted: bool,
+        through: i64,
+    },
     SetPinned(ChatId, bool),
     PairWithPhone(String),
     /// Unlinks the device remotely and locally.
     Unlink,
     Reconnect,
+    /// Whether the person is looking at ZapFast. While they are not, the
+    /// linked phone keeps receiving push notifications.
+    SetOnline(bool),
     Shutdown,
     /// Internal send result.
     Sent {
@@ -354,6 +373,7 @@ pub enum Command {
     },
     /// Internal attachment-download result.
     Downloaded {
+        card: Option<usize>,
         chat: ChatId,
         id: String,
         result: Result<PathBuf, String>,
@@ -434,6 +454,11 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    InteractiveReplyState {
+        chat: ChatId,
+        message: String,
+        pending: bool,
+    },
     PollCreated {
         chat: ChatId,
         error: Option<String>,
@@ -497,6 +522,15 @@ pub enum Event {
         chat: ChatId,
         id: String,
     },
+    /// A chat was deleted here or on a linked device.
+    ChatRemoved {
+        chat: ChatId,
+    },
+    /// A chat's messages were cleared while the chat itself stays.
+    ChatCleared {
+        chat: ChatId,
+        through: i64,
+    },
     /// GIF search results or failure.
     Gifs {
         query: String,
@@ -509,6 +543,7 @@ pub enum Event {
         recent: Vec<PathBuf>,
     },
     Media {
+        card: Option<usize>,
         chat: ChatId,
         message: String,
         result: Result<PathBuf, String>,

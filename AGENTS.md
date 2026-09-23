@@ -7,7 +7,10 @@ protocol. These notes are for coding agents and new contributors.
 ## Product boundaries
 
 - Keep it a small native client. No browser engine, no telemetry, no
-  hosted backend, no second account system.
+  hosted backend, no ZapFast-operated account system. Features never send
+  message content to a third party.
+- Do not vendor, fork, or patch upstream crates (egui, epaint, whatsapp-rust)
+  in this repository. Fix them upstream.
 - The protocol comes from whatsapp-rust. Do not reimplement pieces of it
   here, and do not advertise a capability merely because a protobuf field
   for it exists.
@@ -46,15 +49,32 @@ protocol. These notes are for coding agents and new contributors.
   a disposable archive. Tests use fixtures and mock credentials only.
 - `src/model.rs` holds the app's own types. Views never touch a protobuf;
   the worker translates in `classify()` and `parse_conversation()`.
+- Interactive messages are parsed in `backend/worker/interactive.rs`. Views receive
+  labels and local capabilities, never protocol option ids. `ReplyInteractive`
+  carries only the archived message id and visible button/choice indices;
+  `interactive/replies.rs` re-resolves them from raw protobuf and uses the library's
+  quote context and normal send path. Only known quick replies and single-select
+  lists may send responses. Copy-code actions stay local. Do not turn arbitrary
+  flow JSON into replies or fall back to sending its visible label as plain text.
+  The versioned archive backfill must preserve downloaded image paths and edits.
+  Carousel cards retain independent images and local actions. Download commands
+  carry an optional card index, and the archive stores each image path separately.
+  The version-4 backfill preserves those paths when rebuilding derived content.
+  See [compatibility notes](docs/interactive-message-actions.md) for response
+  families, source references, and live-test limits.
 - Poll creation, voting, and decryption use whatsapp-rust's `Client::polls()`.
   `backend/worker/polls.rs` retains the original creator identity and key in the
   encrypted archive; `archive/polls.rs` keeps each voter's latest timestamp and
   message id, including encrypted updates whose parent has not arrived yet.
   History replay must not undo a newer vote or withdrawal. Decryption runs in
-  batches of eight, with failures retried after reconnecting. The interface only
-  receives option counts and its own selection, never keys or protobufs. Visible
-  polls request phone history automatically, anchored after the creation message
-  so the response includes its vote snapshot. `poll_history.rs` serializes these
+  batches of eight, with failures retried after reconnecting. The interface receives
+  option counts, its own selection, and the latest decrypted voter names/times
+  for the results dialog, never keys or protobufs. New, non-offline poll creations
+  received through normal delivery start with a complete zero-vote baseline,
+  persisted in `poll_history`. PDO recovery and
+  duplicate deliveries do not establish that baseline. Visible polls without a
+  complete baseline request phone history automatically, anchored after the
+  creation message so the response includes its vote snapshot. `poll_history.rs` serializes these
   requests and retries from 30 seconds to 15 minutes without an interface timer.
   History request timestamps are Unix seconds: the library argument and wire
   field misleadingly end in `Ms`. Do not multiply archive timestamps by 1,000.
@@ -218,6 +238,28 @@ Three egui pitfalls this code has already hit:
   the input over its own rect and opens `Popup::menu` itself, so the menu
   comes up anywhere on the message.
 
+## Branches
+
+Use trunk-based development. Work on `main` and keep releasable work there.
+Commit directly to `main`, one topic per commit, with each commit compiling and
+passing the relevant checks on its own. Feature branches and pull requests are
+for outside contributors; the maintainer's own work, and work done with the
+maintainer, does not go through them. Do not create or push a branch unless the
+maintainer explicitly asks for one.
+
+Keep `main` linear. Squash outside pull requests into one focused commit while
+preserving contributor credit. Never create or push merge commits. When
+updating a local checkout, use fast-forward-only pulls and rebase unpublished
+local commits if needed. Before pushing, verify that the commits being added
+contain no merge commits. Rewriting published history requires explicit
+maintainer approval, an exact force-with-lease guard, and a recovery ref.
+
+Every normal release, including a release candidate or other prerelease, must
+tag a commit already pushed to and reachable from `origin/main`. A release
+branch is allowed only for an explicitly requested backport to an older
+supported line. Prefer fixing forward on `main`; do not create backport or
+release branches speculatively.
+
 ## Releasing
 
 Never use em dashes in user-facing writing, including release titles, release
@@ -230,7 +272,9 @@ a full-changelog link. Credit who did what on the relevant item, with issue
 or PR numbers, and acknowledge reporters separately from implementers.
 Include screenshots or short videos of the main features, especially Omarchy
 theme integration when relevant. Capture only synthetic offline demo content,
-never real chats. Verify every media link and do not leave generated notes
+never real chats. Upload the media as assets of the GitHub release and link
+those URLs from the notes; never commit screenshots or recordings to the
+repository. Verify every media link and do not leave generated notes
 in place. Describe known limitations honestly.
 
 Do not cut a release for every fix. Work accumulates on `main` until
@@ -241,9 +285,11 @@ released, which goes out as soon as it is fixed.
 
 A release is not finished when the tag is pushed. Do these in order:
 
-1. Bump `version` in `Cargo.toml` and update `Cargo.lock` with a build. Run
-   the full checks, commit, and push before tagging so the binaries report
-   the right version.
+1. From a clean, up-to-date `main`, bump `version` in `Cargo.toml` and update
+   `Cargo.lock` with a build. Run the full checks, commit, and push `main`.
+   Before tagging, verify the release commit is reachable from `origin/main`
+   so the binaries report the right version and the release contains the
+   canonical history.
 2. Tag `vX.Y.Z` and push the tag. Wait for every platform build, artifact,
    and `checksums.txt`.
 3. Replace the generated GitHub notes with written release notes. Start with

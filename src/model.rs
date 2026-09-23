@@ -44,12 +44,13 @@ pub enum ChatFilter {
 impl ChatFilter {
     pub const EVERY: [Self; 4] = [Self::All, Self::Unread, Self::Private, Self::Groups];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+        use crate::i18n::gettext;
         match self {
-            Self::All => "All",
-            Self::Unread => "Unread",
-            Self::Private => "Private",
-            Self::Groups => "Groups",
+            Self::All => gettext(locale, "All"),
+            Self::Unread => gettext(locale, "Unread"),
+            Self::Private => gettext(locale, "Private"),
+            Self::Groups => gettext(locale, "Groups"),
         }
     }
 
@@ -68,6 +69,8 @@ pub struct Chat {
     pub id: ChatId,
     /// Best known address-book, push, or phone-number name.
     pub name: String,
+    /// Distinguishes an actual subject "Group" from older cached placeholders.
+    pub group_subject_known: bool,
     pub kind: ChatKind,
     /// Latest-message Unix timestamp used for ordering.
     pub last_activity: i64,
@@ -106,6 +109,7 @@ impl Chat {
         Self {
             id,
             name,
+            group_subject_known: false,
             kind,
             last_activity: 0,
             unread: 0,
@@ -244,6 +248,12 @@ pub enum Content {
         #[serde(default)]
         preview: Option<LinkPreview>,
     },
+    /// Readable text plus presentation metadata. Raw protocol data stays in the worker.
+    Interactive {
+        text: String,
+        #[serde(default)]
+        card: Option<Box<InteractiveCard>>,
+    },
     Image {
         caption: Option<String>,
         media: Media,
@@ -296,6 +306,47 @@ pub enum Content {
     },
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InteractiveCard {
+    /// Message text without the action labels, which have their own rows.
+    pub body: String,
+    pub buttons: Vec<InteractiveButton>,
+    pub image: Option<Media>,
+    /// Unrenderable attachments, forms, or missing message text.
+    pub needs_phone: bool,
+    /// Independent carousel cards, in wire order. No protocol ids or keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub carousel: Vec<InteractiveCard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InteractiveButton {
+    pub label: String,
+    /// Validated HTTP(S) target, also retained for older archived cards.
+    pub url: Option<String>,
+    /// Non-link action. Protocol option ids stay in the worker.
+    #[serde(default)]
+    pub action: InteractiveAction,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum InteractiveAction {
+    #[default]
+    Unavailable,
+    Reply,
+    Copy(String),
+    Select(Vec<InteractiveOption>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InteractiveOption {
+    pub section: String,
+    pub title: String,
+    pub description: String,
+}
+
 /// Poll information safe to send to the interface; encryption keys stay in the worker.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -309,6 +360,18 @@ pub struct PollState {
     pub refresh_needed: bool,
     pub refreshing: bool,
     pub refresh_failed: bool,
+    /// Latest decrypted votes only. Derived on load, never stored in content JSON.
+    #[serde(skip)]
+    pub votes: Vec<PollVoter>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PollVoter {
+    pub id: String,
+    pub name: String,
+    pub from_me: bool,
+    pub timestamp: i64,
+    pub choices: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -372,7 +435,9 @@ impl Content {
 
     pub fn summary(&self) -> String {
         match self {
-            Self::Text { text, .. } => text.lines().next().unwrap_or_default().to_owned(),
+            Self::Text { text, .. } | Self::Interactive { text, .. } => {
+                text.lines().next().unwrap_or_default().to_owned()
+            }
             Self::Image { caption, .. } => with_caption("Photo", caption),
             Self::Video { caption, gif, .. } => {
                 with_caption(if *gif { "GIF" } else { "Video" }, caption)
@@ -412,7 +477,45 @@ impl Content {
             | Self::Audio { media, .. }
             | Self::Document { media, .. }
             | Self::Sticker { media, .. } => Some(media),
+            Self::Interactive {
+                card: Some(card), ..
+            } => card.image.as_ref(),
             _ => None,
+        }
+    }
+
+    pub fn media_at_mut(&mut self, card_index: Option<usize>) -> Option<&mut Media> {
+        match card_index {
+            None => self.media_mut(),
+            Some(index) => match self {
+                Self::Interactive {
+                    card: Some(card), ..
+                } => card.carousel.get_mut(index)?.image.as_mut(),
+                _ => None,
+            },
+        }
+    }
+
+    /// Carries downloaded file paths over from `old` when rederiving content
+    /// from the raw protobuf: the main attachment and each carousel card's image.
+    pub fn keep_local_paths(&mut self, old: &Content) {
+        if let (Some(new), Some(old)) = (self.media_mut(), old.media()) {
+            new.path = old.path.clone();
+        }
+        if let (
+            Self::Interactive {
+                card: Some(new), ..
+            },
+            Self::Interactive {
+                card: Some(old), ..
+            },
+        ) = (self, old)
+        {
+            for (new, old) in new.carousel.iter_mut().zip(&old.carousel) {
+                if let (Some(new), Some(old)) = (&mut new.image, &old.image) {
+                    new.path = old.path.clone();
+                }
+            }
         }
     }
 
@@ -423,6 +526,9 @@ impl Content {
             | Self::Audio { media, .. }
             | Self::Document { media, .. }
             | Self::Sticker { media, .. } => Some(media),
+            Self::Interactive {
+                card: Some(card), ..
+            } => card.image.as_mut(),
             _ => None,
         }
     }
@@ -438,6 +544,9 @@ fn with_caption(label: &str, caption: &Option<String>) -> String {
     }
 }
 
+/// Maximum size accepted for a downloaded attachment.
+pub(crate) const ATTACHMENT_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
+
 /// Attachment metadata, download state, and optional local file. Download keys
 /// remain in the archive's raw message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -452,6 +561,16 @@ pub struct Media {
     /// Non-persisted download state.
     #[serde(skip)]
     pub state: MediaState,
+}
+
+impl Media {
+    /// Whether the attachment's declared size can be downloaded locally.
+    ///
+    /// A missing size is represented as zero and is allowed here. The worker
+    /// still enforces the limit while streaming it from WhatsApp.
+    pub fn is_within_download_limit(&self) -> bool {
+        self.size <= ATTACHMENT_DOWNLOAD_LIMIT
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -494,6 +613,7 @@ impl Contact {
 pub enum Page {
     Chats,
     Settings,
+    Wallpaper,
 }
 
 /// The tabs of the picker above the composer.
@@ -538,15 +658,30 @@ pub enum Dialog {
     ConfirmUnlink,
     /// Phone number used for pairing-code linking.
     PairWithPhone,
+    /// Contacts and the self-chat shortcut.
+    NewChat,
     /// Manually entered number for messaging or saving a contact.
     NewContact,
+    UnlockLockedChats,
+    ConfirmLockChat(ChatId),
     ChatInfo(ChatId),
+    /// Confirms deleting a chat, which cannot be undone.
+    ConfirmDeleteChat(ChatId),
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
         message: String,
     },
     CreatePoll(ChatId),
+    PollResults {
+        chat: ChatId,
+        message: String,
+    },
+    InteractiveList {
+        chat: ChatId,
+        message: String,
+        button: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -555,6 +690,8 @@ pub enum ToastKind {
     Error,
 }
 
+/// Info toasts fade after a few seconds; errors stay until dismissed so they
+/// can be read to the end and copied.
 #[derive(Clone, Debug)]
 pub struct Toast {
     pub message: String,
@@ -584,6 +721,12 @@ pub enum Action {
         /// Quoted message id.
         quoting: Option<String>,
     },
+    ReplyInteractive {
+        chat: ChatId,
+        message: String,
+        button: usize,
+        choice: Option<usize>,
+    },
     CreatePoll {
         chat: ChatId,
         draft: PollDraft,
@@ -607,6 +750,7 @@ pub enum Action {
     /// Requests messages older than the local archive.
     FetchOlder(ChatId),
     Download {
+        card: Option<usize>,
         chat: ChatId,
         message: String,
     },
@@ -631,6 +775,8 @@ pub enum Action {
     OpenFolder(PathBuf),
     OpenUrl(String),
     CopyText(String),
+    /// Closes the toast at this index. Only errors wait to be dismissed.
+    DismissToast(usize),
     /// Starts a reply to a message in the open chat.
     Reply(String),
     CancelReply,
@@ -716,6 +862,8 @@ pub enum Action {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Deletes a chat here and on the phone.
+    DeleteChat(ChatId),
     SetPinned(ChatId, bool),
     ShowDialog(Dialog),
     CloseDialog,
@@ -727,6 +875,12 @@ pub enum Action {
     FocusComposer,
     HideShortcutHints,
     DismissChatLockHint,
+    OpenLockedFolder,
+    UnlockLockedFolder(String),
+    CreateChatLockCode(String),
+    MessageYourself,
+    CloseLockedFolder,
+    SetChatLockCode(Option<String>),
     ScrollToBottom,
     /// Scrolls the open chat to a message.
     ScrollTo(String),
@@ -737,10 +891,15 @@ pub enum Action {
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
+    SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
+    SetWallpaperColor(crate::settings::WallpaperColor),
+    SetWallpaperDoodles(bool),
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
+    /// Registers or removes the login entry that starts ZapFast in the tray.
+    SetStartWithSystem(bool),
     ZoomBy(f32),
     ResetZoom,
     /// Requests a pairing code for a phone number.
@@ -775,6 +934,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rederived_interactive_content_keeps_every_downloaded_image() {
+        let image = |path: Option<&str>| Media {
+            mime: "image/jpeg".into(),
+            size: 1,
+            width: None,
+            height: None,
+            path: path.map(PathBuf::from),
+            state: MediaState::Idle,
+        };
+        let content = |main: Option<&str>, cards: [Option<&str>; 2]| Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(InteractiveCard {
+                image: Some(image(main)),
+                carousel: cards
+                    .map(|path| InteractiveCard {
+                        image: Some(image(path)),
+                        ..Default::default()
+                    })
+                    .into(),
+                ..Default::default()
+            })),
+        };
+        let old = content(Some("/main.jpg"), [None, Some("/second.jpg")]);
+        let mut new = content(None, [None, None]);
+        new.keep_local_paths(&old);
+        assert_eq!(new, old);
+    }
+
+    #[test]
     fn polls_validate_trimmed_questions_and_distinct_bounded_answers() {
         let mut draft = PollDraft {
             question: " Lunch? ".into(),
@@ -807,6 +995,15 @@ mod tests {
             path: None,
             state: MediaState::Idle,
         }
+    }
+
+    #[test]
+    fn attachment_download_limit_includes_the_boundary() {
+        let mut item = media();
+        item.size = ATTACHMENT_DOWNLOAD_LIMIT;
+        assert!(item.is_within_download_limit());
+        item.size += 1;
+        assert!(!item.is_within_download_limit());
     }
 
     #[test]

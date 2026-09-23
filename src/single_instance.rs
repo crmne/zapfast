@@ -19,7 +19,7 @@ const OK_REPLY: &str = "fastsapp:ok";
 pub enum Outcome {
     /// This process owns the instance guard.
     Only(Guard),
-    /// The existing instance was asked to show its window.
+    /// Another instance is running and received the request.
     Surfaced,
 }
 
@@ -30,6 +30,8 @@ pub enum ControlCommand {
     Show,
     /// Reload local theme files without opening the window.
     ReloadThemes,
+    /// Confirms an instance is running and changes nothing.
+    Ping,
 }
 
 /// Owns the listener that marks this process as the running instance.
@@ -67,12 +69,15 @@ fn send_to(port: u16, verb: &str) -> std::io::Result<()> {
     }
 }
 
-pub fn acquire(waker: &crate::backend::Waker) -> Outcome {
+/// Becomes the running instance, or hands `verb` to the one already running.
+pub fn acquire(waker: &crate::backend::Waker, verb: &str) -> Outcome {
     let listener = match TcpListener::bind((Ipv4Addr::LOCALHOST, INSTANCE_PORT)) {
         Ok(listener) => listener,
         Err(_) => {
             // If the port is held, continue only when it is not ZapFast.
-            if send("show").is_ok() {
+            // A background start never runs beside a copy that may be
+            // ZapFast, including older ones that do not answer `ping`.
+            if send(verb).is_ok() || verb == "ping" {
                 return Outcome::Surfaced;
             }
             log::warn!("port {INSTANCE_PORT} is busy but not with ZapFast; running unguarded");
@@ -122,6 +127,7 @@ fn parse(line: &str) -> Option<ControlCommand> {
     match line.trim_end().strip_prefix(PREFIX)? {
         "show" => Some(ControlCommand::Show),
         "reload-themes" => Some(ControlCommand::ReloadThemes),
+        "ping" => Some(ControlCommand::Ping),
         _ => None,
     }
 }
@@ -157,6 +163,7 @@ mod tests {
     fn only_our_own_show_is_understood() {
         assert_eq!(parse("fastsapp:show\n"), Some(ControlCommand::Show));
         assert_eq!(parse("fastsapp:show"), Some(ControlCommand::Show));
+        assert_eq!(parse("fastsapp:ping"), Some(ControlCommand::Ping));
         assert_eq!(parse("GET / HTTP/1.1"), None);
         assert_eq!(parse("fastsapp:frobnicate"), None);
         assert_eq!(parse(""), None);

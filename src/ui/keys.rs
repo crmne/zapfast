@@ -3,9 +3,10 @@
 use egui::{Key, Modifiers};
 
 use crate::app::App;
-use crate::model::{Action, Dialog, Page};
+use crate::model::{Action, Chat, Dialog, Page};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
+    let editing_text = ctx.text_edit_focused();
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         let mut key = |modifiers: Modifiers, key: Key, action: Action| {
@@ -15,10 +16,26 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         };
         key(Modifiers::COMMAND, Key::F, Action::FocusSearch);
         key(Modifiers::COMMAND, Key::K, Action::FocusSearch);
+        if app.is_linked() {
+            key(
+                Modifiers::COMMAND,
+                Key::N,
+                Action::ShowDialog(Dialog::NewChat),
+            );
+        }
+        if !editing_text {
+            key(
+                Modifiers::NONE,
+                Key::Questionmark,
+                Action::ShowDialog(Dialog::Shortcuts),
+            );
+        }
         if app.page == Page::Chats
             && app.open_chat.is_some()
             && app.dialog.is_none()
             && !app.show_update
+            && app.picker.is_none()
+            && app.reaction_target.is_none()
             && app.recording.is_none()
         {
             key(Modifiers::COMMAND, Key::L, Action::FocusComposer);
@@ -41,8 +58,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     // Escape cancels the topmost state. Menus handle Escape themselves.
     let menu_open = egui::Popup::is_any_open(ctx);
     let search_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search")));
-    let escape =
-        !menu_open && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+    let escape = (!menu_open || app.reaction_target.is_some())
+        && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     if escape {
         if app.show_update {
             actions.push(Action::CloseUpdate);
@@ -62,6 +79,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CancelEdit);
         } else if app.reply_to.is_some() {
             actions.push(Action::CancelReply);
+        } else if app.page == Page::Wallpaper {
+            actions.push(Action::Open(Page::Settings));
         } else if app.page == Page::Settings {
             actions.push(Action::Open(Page::Chats));
         } else if search_focused || !app.search.is_empty() {
@@ -73,6 +92,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             }
         } else if app.open_chat.is_some() {
             actions.push(Action::CloseChat);
+        } else if app.locked_folder {
+            actions.push(Action::CloseLockedFolder);
         }
     }
     // Enter sends a recording because the text field is hidden.
@@ -111,6 +132,51 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::OpenChat(next));
         }
     }
+    // Arrow Up in an empty, focused composer edits the user's most recent
+    // message, as WhatsApp does. The key keeps its normal meaning everywhere
+    // else: it navigates open overlays and moves the cursor in a non-empty
+    // field.
+    let composer_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text")));
+    let edit_previous = composer_focused
+        && app.page == Page::Chats
+        && app.open_chat.is_some()
+        && app
+            .open_chat
+            .as_deref()
+            .and_then(|id| app.chat(id))
+            .is_some_and(Chat::can_send)
+        && app.composer.is_empty()
+        && app.pending.is_empty()
+        && app.editing.is_none()
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.recording.is_none()
+        && !menu_open
+        && ctx.input_mut(|input| {
+            let mut taken = false;
+            input.events.retain(|event| {
+                if taken {
+                    return true;
+                }
+                let matches = matches!(
+                    event,
+                    egui::Event::Key {
+                        key: found,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if *found == Key::ArrowUp && *modifiers == Modifiers::NONE
+                );
+                taken |= matches;
+                !matches
+            });
+            taken
+        });
+    if let Some(id) = edit_previous.then(|| app.previous_own_editable()).flatten() {
+        actions.push(Action::Edit(id));
+    }
     app.actions.extend(actions);
 }
 
@@ -119,18 +185,23 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+F / Ctrl+K", "Search chats"),
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
+    ("↑", "Edit the previous message (when the input is empty)"),
     ("Enter", "Send (Shift+Enter for a new line)"),
     (
         "Escape",
         "Dismiss the current action, return from search, or close the chat",
     ),
-    ("Ctrl+V", "Paste text, or send a picture from the clipboard"),
+    ("Ctrl+N", "New chat or message yourself"),
+    (
+        "Ctrl+V",
+        "Paste text, or stage a picture from the clipboard",
+    ),
     ("Ctrl+B", "Show or hide the chat list"),
     ("Ctrl+End", "Jump to the newest message"),
     ("Ctrl+,", "Settings"),
     ("Ctrl++ / Ctrl+-", "Zoom in / out"),
     ("Ctrl+0", "Reset zoom"),
-    ("Ctrl+/", "This list"),
+    ("? / Ctrl+/", "Keyboard shortcuts (? when not typing)"),
     ("Ctrl+W", "Close the window (ZapFast remains in the tray)"),
     ("Ctrl+Q", "Quit"),
 ];

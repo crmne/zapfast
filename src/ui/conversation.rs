@@ -1,8 +1,7 @@
 //! The open chat: its header, the messages, and the composer.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use egui::{
@@ -18,14 +17,18 @@ use crate::model::{
     PickerTab,
 };
 use crate::theme::{self, Icon, Palette};
+use crate::wallpaper;
 
+use super::focus::{Stop, TabStop};
 use super::widgets;
 
-/// Maximum automatic attachment download size.
-const AUTO_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 /// Group-message avatar size.
 const SENDER_AVATAR: f32 = 28.0;
 const BODY_SIZE: f32 = 14.5;
+/// Footer label on an outgoing message that failed to send.
+const NOT_SENT: &str = "Not sent";
+const NOT_SENT_HINT: &str =
+    "This message could not be sent, and ZapFast will not retry it. Send it again yourself.";
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let Some(chat) = app.current_chat().cloned() else {
@@ -36,6 +39,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         empty(app, ui);
         return;
     };
+    if app.settings.show_wallpaper {
+        wallpaper::paint(ui, app.settings.wallpaper_color_for(app.palette.dark));
+    }
     header(app, ui, &chat);
     if theme::macos_chrome(ui.ctx()) {
         super::banner(app, ui);
@@ -77,7 +83,10 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
         ui.painter().text(
             center + vec2(0.0, 56.0),
             Align2::CENTER_CENTER,
-            "Ctrl+K to search · Ctrl+/ for shortcuts",
+            super::keys::label(
+                crate::i18n::gettext(app.locale, "Ctrl+K to search · ? for keyboard shortcuts")
+                    .as_ref(),
+            ),
             theme::regular(12.5),
             palette.dim,
         );
@@ -117,6 +126,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         palette.text,
                         "Show the chat list (Ctrl+B)",
                     )
+                    .tab_stop(Stop::Sidebar)
                     .clicked()
                 {
                     app.actions.push(Action::ToggleSidebar);
@@ -299,7 +309,10 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
         }
         if let Some(seen) = presence.last_seen {
             return (
-                format!("last seen {}", crate::util::chat_stamp(seen).to_lowercase()),
+                format!(
+                    "last seen {}",
+                    crate::util::chat_stamp(app.locale, seen).to_lowercase()
+                ),
                 palette.secondary,
             );
         }
@@ -698,7 +711,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
 
 fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
-    egui::Panel::bottom("composer")
+    let shown = egui::Panel::bottom("composer")
         .show_separator_line(false)
         .frame(
             Frame::new()
@@ -710,6 +723,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 if chat.kind == crate::model::ChatKind::Broadcast {
                     ui.vertical_centered(|ui| {
                         theme::text(ui, "Channels are read-only in ZapFast", theme::regular(13.5), palette.secondary);
+                    });
+                    return;
+                }
+                if chat.locked {
+                    ui.vertical_centered(|ui| {
+                        theme::text(ui, "Locked chats are read-only in ZapFast", theme::regular(13.5), palette.secondary);
                     });
                     return;
                 }
@@ -820,11 +839,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         palette.text,
                         "Send files (or drop them on the window)",
                     )
+                    .tab_stop(Stop::Attach)
                     .clicked()
                 {
                     app.actions.push(Action::Attach);
                 }
-                if app.editing.is_none() && theme::icon_button(ui, Icon::ListChecks, 20.0, palette.secondary, palette.text, "Create poll").clicked() {
+                if app.editing.is_none() && theme::icon_button(ui, Icon::ListChecks, 20.0, palette.secondary, palette.text, "Create poll").tab_stop(Stop::Poll).clicked() {
                     app.actions.push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
                 }
                 if app.editing.is_none() {
@@ -839,14 +859,14 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         },
                         palette.text,
                         "Emoji, GIFs, and stickers",
-                    );
+                    ).tab_stop(Stop::Emoji);
                     app.picker_anchor = Some(smile.rect);
                     if smile.clicked() {
                         app.actions.push(Action::TogglePicker(PickerTab::Emoji));
                     }
                 }
                 let field_width = (ui.available_width() - button_width - 10.0).max(0.0);
-                Frame::new()
+                let field = Frame::new()
                     .fill(palette.surface)
                     .corner_radius(CornerRadius::same(theme::RADIUS + 4))
                     .inner_margin(Margin::symmetric(12, 7))
@@ -885,9 +905,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .margin(Margin::ZERO)
                                     .hint_text(
                                         egui::RichText::new(if app.pending.is_empty() {
-                                            "Type a message"
+                                            crate::i18n::gettext(app.locale, "Type a message")
+                                                .into_owned()
                                         } else {
-                                            "Add a caption"
+                                            crate::i18n::gettext(app.locale, "Add a caption")
+                                                .into_owned()
                                         })
                                         .color(palette.dim)
                                         .font(theme::regular(BODY_SIZE)),
@@ -921,7 +943,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .translate(output.galley_pos.to_vec2());
                                     crate::emoji::paint_cluster(ui, cluster, rect);
                                 }
-                                let response = &output.response.response;
+                                let response = output.response.response.clone().tab_stop(Stop::Composer);
                                 ui.ctx().accesskit_node_builder(response.id, |node| node.set_label("Message"));
                                 if response.changed() {
                                     app.actions.push(Action::Composing {
@@ -980,6 +1002,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }
                             });
                     });
+                theme::focus_outline(ui, id, field.response.rect, f32::from(theme::RADIUS + 4));
                 let ready = !app.composer.trim().is_empty() || !app.pending.is_empty();
                 let (fill, hover, icon) = if ready {
                     (palette.accent, palette.accent_hover, palette.on_accent)
@@ -997,6 +1020,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         palette.secondary,
                         "Record a voice message",
                     )
+                    .tab_stop(Stop::Send)
                     .clicked()
                     {
                         app.actions.push(Action::StartRecording);
@@ -1008,6 +1032,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         Icon::Send
                     };
                     if theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
+                        .tab_stop(Stop::Send)
                         .clicked()
                     {
                         send_click = true;
@@ -1034,11 +1059,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 app.focus_composer = true;
             }
             if app.settings.show_shortcut_hints {
-                let hint = super::keys::label(if enter_sends {
-                    "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+                let hint_text = if enter_sends {
+                    crate::i18n::gettext(app.locale, "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
                 } else {
-                    "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-                });
+                    crate::i18n::gettext(app.locale, "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
+                };
+                let hint = super::keys::label(hint_text.as_ref());
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if theme::icon_button(
@@ -1047,7 +1073,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         13.0,
                         palette.dim,
                         palette.secondary,
-                        "Hide shortcut hints (restore in Settings)",
+                        crate::i18n::gettext(app.locale, "Hide shortcut hints (restore in Settings)").as_ref(),
                     )
                     .clicked()
                     {
@@ -1062,7 +1088,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             13.0,
                             palette.dim,
                             palette.secondary,
-                            &format!("All shortcuts ({})", super::keys::label("Ctrl+/")),
+                            &crate::i18n::gettext(app.locale, "All shortcuts ({})")
+                                .replace("{}", &super::keys::label("Ctrl+/")),
                         )
                         .clicked()
                         {
@@ -1072,6 +1099,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 });
             }
         });
+    // Toasts sit above the composer so they never cover its buttons.
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
 }
 
 fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
@@ -1154,22 +1184,29 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
 /// App data needed while drawing a checked-out conversation.
 struct View<'a> {
     palette: Palette,
+    locale: crate::i18n::Locale,
     chat: &'a Chat,
     me: Option<&'a str>,
     auto_download: bool,
     connected: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
+    interactive_pending: &'a HashSet<(ChatId, String)>,
     /// Show avatars for all incoming messages, not only groups.
     pictures: bool,
     anchor: Option<&'a str>,
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
+    reaction: Option<&'a str>,
+    reaction_emoji: &'a [(String, u32)],
+    keyboard_navigation: &'a std::cell::Cell<bool>,
     /// Resolves a name with the message's stored name as fallback.
     names_or: &'a dyn Fn(&str, Option<&str>) -> String,
     /// Resolves mention names without replacing our name with "You".
     mention_names: &'a dyn Fn(&str) -> String,
     avatars: &'a HashMap<String, Option<PathBuf>>,
     now: i64,
+    /// Animate media only while this window is active.
+    animate: bool,
     player: &'a crate::audio::Player,
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
 }
@@ -1196,13 +1233,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     }
     let names_or = |id: &str, hint: Option<&str>| app.display_name_or(id, hint);
     let mention_names = |id: &str| app.mention_name(id);
+    let keyboard_navigation = std::cell::Cell::new(false);
     let view = View {
         palette,
+        locale: app.locale,
         chat,
         me: app.me.as_deref(),
         auto_download: app.settings.auto_download,
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
+        interactive_pending: &app.interactive_sending,
         pictures: app.settings.show_sender_pictures,
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
@@ -1210,10 +1250,18 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             app.scroll_anchor.as_deref()
         },
         open_menu: app.open_message_menu.as_deref(),
+        reaction: app
+            .reaction_target
+            .as_ref()
+            .filter(|(id, _)| id == &chat.id)
+            .map(|(_, message)| message.as_str()),
+        reaction_emoji: &app.settings.reaction_emoji,
+        keyboard_navigation: &keyboard_navigation,
         names_or: &names_or,
         mention_names: &mention_names,
         avatars: &avatars,
         now: crate::util::now(),
+        animate: app.window_focused,
         player: &app.player,
         copy_rows: app.copy_rows.as_ref(),
     };
@@ -1227,7 +1275,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
-        .stick_to_bottom(true)
+        .stick_to_bottom(view.reaction.is_none())
+        .scroll_source(if view.reaction.is_some() {
+            egui::scroll_area::ScrollSource::NONE
+        } else {
+            Default::default()
+        })
         .animated(false)
         .show(ui, |ui| {
             // Scroll while selecting near an edge. `scroll_with_delta` also
@@ -1240,7 +1293,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         viewport.contains(origin) && origin.x < viewport.right() - 16.0
                     })
             });
-            if held_inside && let Some(pointer) = ui.input(|input| input.pointer.latest_pos()) {
+            if view.reaction.is_none()
+                && held_inside
+                && let Some(pointer) = ui.input(|input| input.pointer.latest_pos())
+            {
                 let delta = edge_scroll(pointer.y, viewport.top(), viewport.bottom());
                 if delta != 0.0 {
                     if delta < 0.0 {
@@ -1271,7 +1327,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 widgets::chip(
                                     ui,
                                     &palette,
-                                    &crate::util::day_label(message.timestamp),
+                                    &crate::util::day_label(app.locale, message.timestamp),
                                 );
                             });
                             ui.add_space(4.0);
@@ -1295,7 +1351,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         typing_bubble(ui, &view, &typing);
                     }
                     ui.add_space(4.0);
-                    if scroll_to_bottom {
+                    if scroll_to_bottom && !keyboard_navigation.get() && view.reaction.is_none() {
                         ui.scroll_to_rect_animation(
                             Rect::from_min_size(ui.cursor().min, Vec2::ZERO),
                             None,
@@ -1332,7 +1388,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     app.conversations
         .insert(chat.id.clone(), std::mem::take(&mut conversation));
     app.at_bottom = at_bottom;
-    if app.scroll_to_bottom && reader_scrolled {
+    if app.scroll_to_bottom && (reader_scrolled || keyboard_navigation.get()) {
         app.scroll_to_bottom = false;
     }
     if anchored {
@@ -1522,8 +1578,15 @@ fn bubble(
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let own = message.from_me;
+    // Greys that read on the panel can vanish on the bubble; use its own.
+    let view = &View {
+        palette: view.palette.on_bubble(own),
+        ..*view
+    };
     let with_avatar = !own && (view.chat.is_group() || view.pictures);
-    let max_width = ((ui.available_width() * 0.72).min(560.0)
+    let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
+    let max_width = ((ui.available_width() * if carousel { 0.95 } else { 0.72 })
+        .min(if carousel { 920.0 } else { 560.0 })
         - if with_avatar {
             SENDER_AVATAR + 8.0
         } else {
@@ -1536,7 +1599,7 @@ fn bubble(
     let previous = ui.ctx().data(|data| data.get_temp::<Rect>(id.with("rect")));
     if let Some(rect) = previous {
         let strip = Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
-        let strip = ui.interact(strip, id.with("row"), Sense::click());
+        let strip = ui.interact(strip, id.with("row"), Sense::CLICK);
         reply_on_double_click(&strip, message, actions);
     }
     let mut response = None;
@@ -1545,8 +1608,15 @@ fn bubble(
         |ui| {
             if with_avatar {
                 ui.horizontal_top(|ui| {
-                    let (rect, avatar) =
-                        ui.allocate_exact_size(Vec2::splat(SENDER_AVATAR), Sense::click());
+                    let (rect, avatar) = ui.allocate_exact_size(
+                        Vec2::splat(SENDER_AVATAR),
+                        if show_sender {
+                            Sense::CLICK
+                        } else {
+                            Sense::hover()
+                        },
+                    );
+                    theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR / 2.0);
                     if show_sender
                         && avatar
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1702,6 +1772,11 @@ fn transcript_row(
         Content::Location { .. } => Some("[location]".to_owned()),
         Content::Contact { display_name, .. } => Some(format!("[contact: {display_name}]")),
         Content::Poll { question, .. } => Some(format!("[poll: {question}]")),
+        Content::Interactive {
+            card: Some(card), ..
+        } if card.image.is_some() || card.carousel.iter().any(|card| card.image.is_some()) => {
+            Some("[photo]".to_owned())
+        }
         _ => None,
     };
     let reactions = if message.reactions.is_empty() {
@@ -1786,7 +1861,8 @@ fn bubble_frame(
     let palette = view.palette;
     let own = message.from_me;
     // Draw stickers without a bubble.
-    let fill = if matches!(message.content, Content::Sticker { .. }) {
+    let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
+    let fill = if carousel || matches!(message.content, Content::Sticker { .. }) {
         Color32::TRANSPARENT
     } else if own {
         palette.bubble_out
@@ -1800,7 +1876,7 @@ fn bubble_frame(
     // the first frame's rect.
     let rect_id = bubble_id.with("rect");
     let previous = ui.ctx().data(|data| data.get_temp::<Rect>(rect_id));
-    let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::click()));
+    let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::CLICK));
     let inner = Frame::new()
         .fill(fill)
         .corner_radius(CornerRadius::same(10))
@@ -1825,7 +1901,7 @@ fn bubble_frame(
                     .interact(
                         response.rect,
                         ui.id().with(("sender", &message.id)),
-                        Sense::click(),
+                        Sense::CLICK,
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if response.clicked() {
@@ -1857,7 +1933,8 @@ fn bubble_frame(
             // Bubbles without cards use the natural text width.
             let cap = ((max_width - 20.0).min(ui.available_width())).max(0.0);
             let reserve = footer_width(ui, message);
-            let slot = match settled_width(ui, view, message, cap) {
+            let settled = settled_width(ui, view, message, cap);
+            let slot = match settled {
                 Some(width) => {
                     if let Some(quoted) = &message.quoted {
                         quote_block(ui, view, message, quoted, width, actions);
@@ -1867,11 +1944,45 @@ fn bubble_frame(
                 None => content(ui, view, message, cap, reserve, actions),
             };
             footer(ui, &palette, message, slot);
+            if matches!(message.content, Content::Poll { .. }) {
+                super::polls::results_button(
+                    ui,
+                    &palette,
+                    message,
+                    settled.unwrap_or(cap),
+                    actions,
+                );
+            }
+            if let Content::Interactive {
+                card: Some(card), ..
+            } = &message.content
+            {
+                interactive_buttons(ui, view, message, card, settled.unwrap_or(cap), actions);
+            }
         });
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
-    let bubble =
-        early.unwrap_or_else(|| ui.interact(inner.response.rect, bubble_id, Sense::click()));
+    let bubble = early.unwrap_or_else(|| ui.interact(inner.response.rect, bubble_id, Sense::CLICK));
+    theme::reveal_focus(&bubble);
+    theme::focus_outline(ui, bubble.id, inner.response.rect, 10.0);
+    if ui.ctx().data(|data| {
+        data.get_temp::<bool>(theme::keyboard_focus_id())
+            .unwrap_or(false)
+    }) && let Some(focused) = ui
+        .memory(|memory| memory.focused())
+        .and_then(|id| ui.ctx().read_response(id))
+        && (focused.id == bubble.id || inner.response.rect.contains(focused.rect.center()))
+    {
+        view.keyboard_navigation.set(true);
+        if focused.gained_focus() && !ui.clip_rect().contains_rect(focused.rect) {
+            ui.scroll_to_rect_animation(
+                inner.response.rect.expand(4.0),
+                None,
+                egui::style::ScrollAnimation::none(),
+            );
+        }
+    }
+    let reacting = view.reaction == Some(message.id.as_str());
     // Inner widgets own their clicks, so this fires only on the bubble's padding
     // and footer. Double-click on the body keeps selecting the word.
     reply_on_double_click(&bubble, message, actions);
@@ -1891,7 +2002,7 @@ fn bubble_frame(
                 .is_none_or(|layer| layer == bubble.layer_id)
         });
     let force_menu = view.open_menu == Some(message.id.as_str());
-    let quick = quick_reactions(message).len() as f32 + 1.0;
+    let quick = quick_reactions(message, view.reaction_emoji).len() as f32 + 1.0;
     let width = widgets::menu_width(
         ui,
         &[
@@ -1902,7 +2013,9 @@ fn bubble_frame(
         true,
     )
     .max(quick * 36.0 + 12.0);
-    let open = if right_clicked || force_menu {
+    let keyboard_clicked =
+        bubble.clicked() && bubble.has_focus() && !ui.input(|input| input.pointer.any_click());
+    let open = if right_clicked || force_menu || reacting || keyboard_clicked {
         Some(egui::SetOpenCommand::Bool(true))
     } else if bubble.clicked() {
         Some(egui::SetOpenCommand::Bool(false))
@@ -1911,29 +2024,86 @@ fn bubble_frame(
     };
     let popup = egui::Popup::menu(&bubble)
         .open_memory(open)
+        .close_behavior(if reacting {
+            egui::PopupCloseBehavior::IgnoreClicks
+        } else {
+            egui::PopupCloseBehavior::CloseOnClickOutside
+        })
         .width(width)
         .frame(widgets::menu_frame(&palette));
-    let popup = if force_menu {
+    let popup = if reacting {
+        // Keep the menu next to the picker, anchored to this message rather
+        // than whichever pointer position happened to open the emoji grid.
+        let screen = ui.ctx().content_rect();
+        let menu = ui
+            .ctx()
+            .data(|data| data.get_temp::<Rect>(bubble_id.with("menu-rect")))
+            .unwrap_or(bubble.rect);
+        let x = menu.left().clamp(
+            screen.left() + 8.0,
+            (screen.right() - width - 468.0).max(screen.left() + 8.0),
+        );
+        popup.at_position(pos2(x, menu.top()))
+    } else if force_menu || keyboard_clicked {
         popup.at_position(bubble.rect.left_top() + vec2(12.0, 8.0))
     } else {
         popup.at_pointer_fixed()
     };
-    popup.show(|ui| {
+    let menu = popup.show(|ui| {
         context_menu(ui, view, message, actions);
     });
+    if let Some(menu) = menu {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(bubble_id.with("menu-rect"), menu.response.rect));
+    }
+    // Keep the target explicit for every menu action, not just the emoji
+    // picker. Paint in the message layer so the menu itself remains above it.
+    if egui::Popup::is_id_open(ui.ctx(), bubble_id.with("popup")) {
+        ui.painter().rect_stroke(
+            inner.response.rect.expand(2.0),
+            12.0,
+            Stroke::new(theme::FOCUS_STROKE_WIDTH, palette.accent),
+            egui::StrokeKind::Outside,
+        );
+    }
+    if reacting && !egui::Popup::is_id_open(ui.ctx(), bubble_id.with("popup")) {
+        actions.push(Action::ClosePicker);
+    }
     // Store this frame's final rect for later scrolling.
     inner.response
 }
 
 /// Minimum shared width for cards inside message bubbles.
 const CARD_WIDTH: f32 = 320.0;
+const CAROUSEL_CARD_WIDTH: f32 = 280.0;
+const CAROUSEL_GAP: f32 = 8.0;
 
 /// Returns the shared card width, bounded by [`CARD_WIDTH`] and `cap`.
 fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
+    if let Content::Interactive {
+        card: Some(card), ..
+    } = &message.content
+        && !card.carousel.is_empty()
+    {
+        // Keep short carousels, their heading and their timestamp together.
+        // Wider strips still occupy the cap and scroll horizontally.
+        let count = card.carousel.len();
+        let cards = count as f32 * (CAROUSEL_CARD_WIDTH + 20.0);
+        let gaps = count.saturating_sub(1) as f32 * CAROUSEL_GAP;
+        return Some((cards + gaps).min(cap));
+    }
+    if let Content::Interactive {
+        card: Some(card), ..
+    } = &message.content
+        && card.image.is_some()
+    {
+        return Some(CARD_WIDTH.min(cap));
+    }
     let card = message.quoted.is_some()
         || match &message.content {
             Content::Text { preview, .. } => preview.is_some(),
             Content::Document { .. } | Content::Audio { .. } | Content::Poll { .. } => true,
+            Content::Interactive { card, .. } => card.is_some(),
             // Videos without a poster use the file-row layout.
             Content::Video { .. } => message.thumbnail.is_none(),
             _ => false,
@@ -1948,7 +2118,7 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
 fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
     let palette = view.palette;
     let text = match &message.content {
-        Content::Text { text, .. } => text,
+        Content::Text { text, .. } | Content::Interactive { text, .. } => text,
         Content::Image {
             caption: Some(caption),
             ..
@@ -2096,7 +2266,20 @@ fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
     } else {
         0.0
     };
-    time + edited + if message.from_me { 19.0 } else { 0.0 }
+    let not_sent = if not_sent(message) {
+        ui.painter()
+            .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), Color32::WHITE)
+            .size()
+            .x
+            + 6.0
+    } else {
+        0.0
+    };
+    time + edited + not_sent + if message.from_me { 19.0 } else { 0.0 }
+}
+
+fn not_sent(message: &Message) -> bool {
+    message.from_me && message.status == Delivery::Failed
 }
 
 /// Paints the time and ticks at the bubble's right edge without widening it.
@@ -2111,9 +2294,18 @@ fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<
         ui.painter()
             .layout_no_wrap("edited".to_owned(), font, palette.dim)
     });
+    // A red dot alone does not say what went wrong or what to do. The word
+    // uses the text colour: the danger red on an outgoing bubble is too faint
+    // to read, and the red icon beside it already carries the alarm.
+    let failed = not_sent(message).then(|| {
+        ui.painter()
+            .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), palette.text)
+    });
     let tick_width = if message.from_me { 19.0 } else { 0.0 };
-    let width =
-        time.size().x + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0) + tick_width;
+    let width = time.size().x
+        + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0)
+        + failed.as_ref().map_or(0.0, |galley| galley.size().x + 6.0)
+        + tick_width;
     let rect = match slot {
         Some(slot) => slot,
         None => {
@@ -2141,6 +2333,26 @@ fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<
             edited,
             palette.dim,
         );
+    }
+    if let Some(failed) = failed {
+        x -= failed.size().x + 6.0;
+        let label = Rect::from_min_size(
+            pos2(x, rect.center().y - failed.size().y / 2.0),
+            failed.size(),
+        );
+        ui.painter().galley(label.min, failed, palette.text);
+        // Explain on hover and to screen readers; hovering takes no clicks
+        // from the bubble.
+        let status = Rect::from_min_max(label.min, pos2(rect.right(), label.max.y));
+        let response = ui.interact(
+            status,
+            ui.id().with(("not-sent", &message.id)),
+            Sense::hover(),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, NOT_SENT_HINT)
+        });
+        response.on_hover_text(NOT_SENT_HINT);
     }
 }
 
@@ -2221,8 +2433,20 @@ pub(crate) fn reaction_choice(current: Option<&str>, emoji: &str) -> String {
 }
 
 /// Quick reactions plus our current reaction when needed.
-fn quick_reactions(message: &Message) -> Vec<&str> {
-    let mut list = QUICK_REACTIONS.to_vec();
+fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> Vec<&'a str> {
+    let mut list = Vec::new();
+    for emoji in preferred
+        .iter()
+        .map(|(emoji, _)| emoji.as_str())
+        .chain(QUICK_REACTIONS.iter().copied())
+    {
+        if emojis::get(emoji).is_some() && !list.contains(&emoji) {
+            list.push(emoji);
+        }
+        if list.len() == QUICK_REACTIONS.len() {
+            break;
+        }
+    }
     if let Some(mine) = own_reaction(message)
         && !list.contains(&mine)
     {
@@ -2240,10 +2464,11 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            for emoji in quick_reactions(message) {
+            for emoji in quick_reactions(message, view.reaction_emoji) {
                 let chosen = mine == Some(emoji);
                 let line = widgets::line(ui, emoji, theme::regular(20.0), palette.text, 40.0, 1);
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+                theme::focus_outline(ui, response.id, rect, 17.0);
                 if chosen {
                     ui.painter()
                         .circle_filled(rect.center(), 17.0, palette.surface_active);
@@ -2274,6 +2499,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 }
             }
             let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+            theme::focus_outline(ui, response.id, rect, 17.0);
             if ui.is_rect_visible(rect) {
                 let hovered = response.hovered();
                 ui.painter().circle_filled(
@@ -2298,7 +2524,6 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                     chat: chat.clone(),
                     message: message.id.clone(),
                 });
-                ui.close();
             }
         },
     );
@@ -2310,7 +2535,10 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     }
     if !matches!(
         message.content,
-        Content::Revoked | Content::Unsupported { .. } | Content::Poll { .. }
+        Content::Revoked
+            | Content::Unsupported { .. }
+            | Content::Poll { .. }
+            | Content::Interactive { .. }
     ) && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
     {
         actions.push(Action::ShowDialog(Dialog::Forward {
@@ -2319,7 +2547,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         }));
     }
     let text = match &message.content {
-        Content::Text { text, .. } => Some(text.clone()),
+        Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.clone(),
@@ -2372,8 +2600,20 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 }
             }
             None => {
-                if widgets::menu_item(ui, &palette, Some(Icon::Download), "Download") {
+                let downloading = matches!(media.state, MediaState::Downloading);
+                if widgets::menu_item_enabled(
+                    ui,
+                    &palette,
+                    Some(Icon::Download),
+                    if downloading {
+                        "Downloading…"
+                    } else {
+                        "Download"
+                    },
+                    !downloading,
+                ) {
                     actions.push(Action::Download {
+                        card: None,
                         chat: chat.clone(),
                         message: message.id.clone(),
                     });
@@ -2382,23 +2622,26 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         }
     }
     widgets::menu_separator(ui, &palette);
-    // Show sent, delivered, and read times as available.
-    if widgets::menu_item(
+    // Sent, delivered, and read times inform only; they are not actions.
+    widgets::menu_info(
         ui,
         &palette,
-        Some(Icon::Check),
-        &format!("Sent {}", crate::util::moment_stamp(message.timestamp)),
-    ) {
-        actions.push(Action::CopyText(message.id.clone()));
-    }
+        Icon::Check,
+        &format!(
+            "Sent {}",
+            crate::util::moment_stamp(view.locale, message.timestamp)
+        ),
+    );
     if message.from_me {
         if message.delivered_at.is_some() || message.status == Delivery::Delivered {
-            let _ = widgets::menu_item(
+            widgets::menu_info(
                 ui,
                 &palette,
-                Some(Icon::CheckCheck),
+                Icon::CheckCheck,
                 &match message.delivered_at {
-                    Some(when) => format!("Delivered {}", crate::util::moment_stamp(when)),
+                    Some(when) => {
+                        format!("Delivered {}", crate::util::moment_stamp(view.locale, when))
+                    }
                     None => "Delivered".to_owned(),
                 },
             );
@@ -2409,16 +2652,23 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             } else {
                 "Read"
             };
-            let _ = widgets::menu_item(
+            widgets::menu_info(
                 ui,
                 &palette,
-                Some(Icon::CheckCheck),
+                Icon::CheckCheck,
                 &match message.read_at {
-                    Some(when) => format!("{what} {}", crate::util::moment_stamp(when)),
+                    Some(when) => {
+                        format!("{what} {}", crate::util::moment_stamp(view.locale, when))
+                    }
                     None => what.to_owned(),
                 },
             );
         }
+    }
+    // The id helps when looking a message up for a bug report. Clicking
+    // "Sent" used to copy it without saying so.
+    if widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy message ID") {
+        actions.push(Action::CopyText(message.id.clone()));
     }
 }
 
@@ -2458,6 +2708,10 @@ fn content(
     // Add non-text messages to cross-message transcript copies.
     let has_body = match &message.content {
         Content::Text { .. } => true,
+        // Image-only cards and carousels without a body draw no text.
+        Content::Interactive { card, .. } => card.as_ref().is_none_or(|card| {
+            !card.body.is_empty() || (card.image.is_none() && card.carousel.is_empty())
+        }),
         Content::Image { caption, .. }
         | Content::Video { caption, .. }
         | Content::Document { caption, .. } => caption.is_some(),
@@ -2470,6 +2724,38 @@ fn content(
             .push(transcript_row(view, message, String::new(), Vec::new()));
     }
     match &message.content {
+        Content::Interactive { text, card } => {
+            let Some(card) = card else {
+                let span = message.quoted.is_some().then_some(width);
+                return rich_body(ui, view, message, text, width, Some(reserve), span, actions);
+            };
+            if !card.carousel.is_empty() {
+                carousel(ui, view, message, card, width, actions);
+                return None;
+            }
+            if let Some(image) = &card.image {
+                picture(ui, view, message, image, width, None, actions);
+                ui.add_space(4.0);
+                if card.body.is_empty() {
+                    return None;
+                }
+            }
+            let body = if card.body.is_empty() {
+                "Interactive message"
+            } else {
+                &card.body
+            };
+            rich_body(
+                ui,
+                view,
+                message,
+                body,
+                width,
+                Some(reserve),
+                Some(width),
+                actions,
+            )
+        }
         Content::Text { text, preview } => {
             if let Some(preview) = preview {
                 preview_card(ui, view, message, preview, width, actions);
@@ -2682,6 +2968,578 @@ fn content(
     }
 }
 
+/// Horizontal, independently cached cards with overlaid previous/next controls.
+/// Keep a partial next card visible and preserve native wheel/touchpad scrolling.
+fn carousel(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    card: &crate::model::InteractiveCard,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    if !card.body.is_empty() {
+        rich_body(
+            ui,
+            view,
+            message,
+            &card.body,
+            width,
+            None,
+            Some(width),
+            actions,
+        );
+        ui.add_space(4.0);
+    }
+    // Reserve a glimpse of the next card only when there is another card.
+    let inset = if card.carousel.len() > 1 { 36.0 } else { 20.0 };
+    let card_width = CAROUSEL_CARD_WIDTH.min((width - inset).max(140.0));
+    let id = bubble_id(&message.chat, &message.id);
+    for direction in [-1, 1] {
+        ui.ctx().data_mut(|data| {
+            data.remove::<Rect>(id.with(("carousel-arrow", direction)));
+        });
+    }
+    let output = egui::ScrollArea::horizontal()
+        .id_salt(("carousel", &message.chat, &message.id))
+        .max_width(width)
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .auto_shrink([false, true])
+        .show_viewport(ui, |ui, viewport| {
+            let strip = ui
+                .with_layout(Layout::left_to_right(Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.x = CAROUSEL_GAP;
+                    for (index, child) in card.carousel.iter().enumerate() {
+                        let row = carousel_row(message, index, child);
+                        ui.push_id(("carousel-card", index), |ui| {
+                            let response = Frame::new()
+                                .fill(if message.from_me {
+                                    view.palette.bubble_out
+                                } else {
+                                    view.palette.bubble_in
+                                })
+                                .corner_radius(10)
+                                .inner_margin(Margin {
+                                    left: 10,
+                                    right: 10,
+                                    top: 6,
+                                    bottom: 5,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_width(card_width);
+                                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                        ui.set_width(card_width);
+                                        if child.image.is_some() {
+                                            carousel_picture(
+                                                ui, view, message, index, child, card_width,
+                                                actions,
+                                            );
+                                        }
+                                        if !child.body.is_empty() {
+                                            rich_body(
+                                                ui,
+                                                view,
+                                                &row,
+                                                &child.body,
+                                                card_width,
+                                                None,
+                                                Some(card_width),
+                                                actions,
+                                            );
+                                        }
+                                        interactive_buttons(
+                                            ui, view, &row, child, card_width, actions,
+                                        );
+                                    });
+                                });
+                            ui.ctx().data_mut(|data| {
+                                data.insert_temp(
+                                    bubble_id(&message.chat, &message.id)
+                                        .with(("carousel-card", index)),
+                                    response.response.rect,
+                                )
+                            });
+                        });
+                    }
+                })
+                .response
+                .rect;
+            let limit = (strip.width() - viewport.width()).max(0.0);
+            let visible = Rect::from_min_size(
+                pos2(strip.left() + viewport.left(), strip.top()),
+                vec2(viewport.width(), strip.height()),
+            );
+            if limit > 1.0 {
+                for direction in [-1, 1] {
+                    let available = if direction < 0 {
+                        viewport.left() > 1.0
+                    } else {
+                        viewport.left() < limit - 1.0
+                    };
+                    if !available {
+                        continue;
+                    }
+                    let x = if direction < 0 {
+                        visible.left() + 26.0
+                    } else {
+                        visible.right() - 26.0
+                    };
+                    let rect =
+                        Rect::from_center_size(pos2(x, visible.center().y), Vec2::splat(40.0));
+                    let arrow = carousel_arrow(
+                        ui,
+                        &view.palette,
+                        rect,
+                        id.with(("carousel-arrow", direction)),
+                        direction < 0,
+                    );
+                    if arrow.clicked() {
+                        let step = card_width + 20.0 + CAROUSEL_GAP;
+                        let target = (viewport.left() + direction as f32 * step).clamp(0.0, limit);
+                        // Issue this inside the horizontal ScrollArea so the
+                        // conversation's vertical scroll cannot consume it.
+                        ui.scroll_with_delta(vec2(viewport.left() - target, 0.0));
+                    }
+                }
+            }
+            visible
+        });
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id.with("carousel-viewport"), output.inner));
+}
+
+/// Stands in for one carousel card when drawing its text and actions. Only the
+/// parent's identity is kept: cloning the whole message would copy every
+/// card's thumbnail per card each frame, and the parent's quote and reactions
+/// would repeat on each card in copied transcripts.
+fn carousel_row(message: &Message, index: usize, card: &crate::model::InteractiveCard) -> Message {
+    Message {
+        id: format!("{}-card-{index}", message.id),
+        chat: message.chat.clone(),
+        sender: message.sender.clone(),
+        sender_name: message.sender_name.clone(),
+        from_me: message.from_me,
+        timestamp: message.timestamp,
+        content: Content::Interactive {
+            text: card.body.clone(),
+            card: None,
+        },
+        status: message.status,
+        delivered_at: None,
+        read_at: None,
+        quoted: None,
+        reactions: Vec::new(),
+        edited: message.edited,
+        mentions: message.mentions.clone(),
+        forwarded: false,
+        thumbnail: None,
+    }
+}
+
+fn carousel_arrow(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    rect: Rect,
+    id: egui::Id,
+    previous: bool,
+) -> egui::Response {
+    let label = if previous {
+        "Previous card"
+    } else {
+        "Next card"
+    };
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    ui.ctx().data_mut(|data| data.insert_temp(id, rect));
+    theme::reveal_focus(&response);
+    if ui.is_rect_visible(rect) {
+        let fill = if response.hovered() || response.has_focus() {
+            palette.surface_hover
+        } else {
+            palette.overlay
+        };
+        ui.painter()
+            .circle_filled(rect.center() + vec2(0.0, 2.0), 21.0, palette.shadow);
+        ui.painter().circle_filled(rect.center(), 20.0, fill);
+        ui.painter().circle_stroke(
+            rect.center(),
+            19.5,
+            Stroke::new(
+                1.0,
+                if response.has_focus() {
+                    palette.link
+                } else {
+                    palette.outline
+                },
+            ),
+        );
+        theme::paint_icon(
+            ui,
+            if previous {
+                Icon::ChevronLeft
+            } else {
+                Icon::ChevronRight
+            },
+            rect,
+            if response.is_pointer_button_down_on() {
+                21.0
+            } else {
+                23.0
+            },
+            palette.text,
+        );
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(label)
+}
+
+/// A carousel uses a short image preview; opening it shows the full picture.
+fn carousel_picture(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    index: usize,
+    card: &crate::model::InteractiveCard,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    let Some(media) = &card.image else { return };
+    let size = vec2(width, width * 0.56);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let label = match (&media.path, &media.state) {
+        (Some(_), _) => "Open card image",
+        (None, MediaState::Failed(_)) => "Retry card image download",
+        (None, MediaState::Downloading) => "Downloading card image",
+        (None, MediaState::Idle) => "Download card image",
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    // Tab can land on a card scrolled out of the carousel's viewport.
+    theme::reveal_focus(&response);
+    let visible = ui.is_rect_visible(rect);
+    if visible {
+        ui.painter().rect_filled(rect, 6.0, view.palette.surface);
+        let uri = media
+            .path
+            .as_ref()
+            .map(|path| {
+                let uri = crate::util::image_uri(path);
+                crate::image_cache::touch(ui.ctx(), &uri);
+                uri
+            })
+            .or_else(|| {
+                card.thumbnail.as_deref().map(|bytes| {
+                    thumbnail_uri(
+                        ui.ctx(),
+                        &message.chat,
+                        &format!("{}-card-{index}", message.id),
+                        bytes,
+                    )
+                })
+            });
+        if let Some(uri) = uri {
+            let image = egui::Image::new(uri);
+            let dimensions = match image.load_for_size(ui.ctx(), size) {
+                Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture.size),
+                Ok(egui::load::TexturePoll::Pending { .. }) => Some(vec2(
+                    media.width.unwrap_or(16) as f32,
+                    media.height.unwrap_or(9) as f32,
+                )),
+                Err(_) => None,
+            };
+            if let Some(dimensions) = dimensions {
+                let ratio = dimensions.x / dimensions.y.max(1.0);
+                let target = size.x / size.y.max(1.0);
+                let uv_size = if ratio > target {
+                    vec2(target / ratio, 1.0)
+                } else {
+                    vec2(1.0, ratio / target)
+                };
+                image
+                    .uv(Rect::from_center_size(pos2(0.5, 0.5), uv_size))
+                    .fit_to_exact_size(size)
+                    .corner_radius(6.0)
+                    .paint_at(ui, rect);
+            } else if media.path.is_some() {
+                theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, view.palette.danger);
+                ui.painter().text(
+                    rect.center() + vec2(0.0, 24.0),
+                    Align2::CENTER_CENTER,
+                    "Could not display this picture. Click to open it.",
+                    theme::regular(11.5),
+                    view.palette.secondary,
+                );
+            }
+        }
+        if media.path.is_none() {
+            let disc = Rect::from_center_size(rect.center(), Vec2::splat(42.0));
+            ui.painter()
+                .circle_filled(disc.center(), 21.0, Color32::from_black_alpha(130));
+            match &media.state {
+                MediaState::Downloading => theme::paint_spinner(ui, disc, 20.0, Color32::WHITE),
+                MediaState::Failed(_) => {
+                    theme::paint_icon(ui, Icon::CircleAlert, disc, 20.0, Color32::WHITE);
+                    ui.painter().text(
+                        rect.center() + vec2(0.0, 34.0),
+                        Align2::CENTER_CENTER,
+                        "Download failed. Click to retry.",
+                        theme::regular(11.5),
+                        Color32::WHITE,
+                    );
+                }
+                MediaState::Idle => {
+                    theme::paint_icon(ui, Icon::Download, disc, 20.0, Color32::WHITE)
+                }
+            }
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect.shrink(1.0),
+                6.0,
+                Stroke::new(theme::FOCUS_STROKE_WIDTH, view.palette.link),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let clicked = response.clicked();
+    if let MediaState::Failed(error) = &media.state {
+        response.on_hover_text(format!("{error} · Click to retry"));
+    }
+    if let Some(path) = &media.path {
+        if clicked {
+            actions.push(Action::OpenFile(path.clone()));
+        }
+    } else if !matches!(media.state, MediaState::Downloading)
+        && (clicked
+            || (visible
+                && auto_download_allowed(media, false, view.auto_download)
+                && matches!(media.state, MediaState::Idle)))
+    {
+        actions.push(Action::Download {
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+            card: Some(index),
+        });
+    }
+}
+
+/// Full-width action rows below the message timestamp, matching business cards.
+/// Show only executable actions as active, with the same keyboard path as clicks.
+fn interactive_buttons(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    card: &crate::model::InteractiveCard,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    use crate::model::InteractiveAction;
+    let palette = &view.palette;
+    let spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    for (index, button) in card.buttons.iter().enumerate() {
+        let sends = matches!(
+            button.action,
+            InteractiveAction::Reply | InteractiveAction::Select(_)
+        );
+        let enabled = button.url.is_some()
+            || match &button.action {
+                InteractiveAction::Copy(_) => true,
+                InteractiveAction::Reply | InteractiveAction::Select(_) => {
+                    view.connected
+                        && view.chat.can_send()
+                        && !message.from_me
+                        && !message.edited
+                        && !view
+                            .interactive_pending
+                            .contains(&(message.chat.clone(), message.id.clone()))
+                }
+                InteractiveAction::Unavailable => false,
+            };
+        // Muted/link colours target incoming surfaces; outgoing tinted bubbles
+        // need the main foreground to keep small labels readable in both themes.
+        let color = if message.from_me {
+            palette.text
+        } else if enabled {
+            palette.link
+        } else {
+            palette.secondary
+        };
+        let icon = if button.url.is_some() {
+            Some(Icon::ExternalLink)
+        } else {
+            match button.action {
+                InteractiveAction::Reply => None,
+                InteractiveAction::Select(_) => Some(Icon::ListChecks),
+                InteractiveAction::Copy(_) => Some(Icon::Copy),
+                InteractiveAction::Unavailable => Some(Icon::Smartphone),
+            }
+        };
+        let line = widgets::line(
+            ui,
+            &button.label,
+            theme::medium(14.0),
+            color,
+            (width - 48.0).max(1.0),
+            2,
+        );
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, _) = ui.allocate_exact_size(
+            vec2(width, (line.size().y + 22.0).max(44.0)),
+            Sense::hover(),
+        );
+        // Action rows belong to the card itself, including its side padding.
+        // The final row follows the bubble's bottom corners and margin.
+        let last = index + 1 == card.buttons.len() && !card.needs_phone;
+        let row_rect = Rect::from_min_max(
+            rect.min - vec2(10.0, 0.0),
+            rect.max + vec2(10.0, if last { 5.0 } else { 0.0 }),
+        );
+        let corners = CornerRadius {
+            sw: if last { 10 } else { 0 },
+            se: if last { 10 } else { 0 },
+            ..CornerRadius::ZERO
+        };
+        let response = ui.interact(
+            row_rect,
+            bubble_id(&message.chat, &message.id).with(("interactive-action", index)),
+            sense,
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &button.label)
+        });
+        theme::reveal_focus(&response);
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                bubble_id(&message.chat, &message.id).with(("interactive-button", index)),
+                row_rect,
+            )
+        });
+        if ui.is_rect_visible(rect) {
+            if enabled && (response.hovered() || response.has_focus()) {
+                ui.painter().rect_filled(
+                    row_rect,
+                    corners,
+                    palette
+                        .text
+                        .gamma_multiply(if response.is_pointer_button_down_on() {
+                            0.08
+                        } else {
+                            0.04
+                        }),
+                );
+            }
+            ui.painter().hline(
+                row_rect.x_range(),
+                rect.top(),
+                Stroke::new(1.0, palette.secondary.gamma_multiply(0.2)),
+            );
+            if response.has_focus() {
+                ui.painter().rect_stroke(
+                    rect.shrink(2.0),
+                    4.0,
+                    Stroke::new(1.0, palette.link),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            let inset = if icon.is_some() { 22.0 } else { 0.0 };
+            let content_width = line.size().x + inset;
+            let left = rect.center().x - content_width / 2.0;
+            if let Some(icon) = icon {
+                theme::paint_icon(
+                    ui,
+                    icon,
+                    Rect::from_center_size(
+                        egui::pos2(left + 7.0, rect.center().y),
+                        Vec2::splat(14.0),
+                    ),
+                    14.0,
+                    color,
+                );
+            }
+            line.paint(
+                ui,
+                egui::pos2(left + inset, rect.center().y - line.size().y / 2.0),
+                color,
+            );
+        }
+        let reply = |choice| Action::ReplyInteractive {
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+            button: index,
+            choice,
+        };
+        if !enabled {
+            let reason = if sends
+                && view
+                    .interactive_pending
+                    .contains(&(message.chat.clone(), message.id.clone()))
+            {
+                "Sending reply…"
+            } else if sends && !view.connected {
+                "Connect to WhatsApp to reply"
+            } else if sends && !view.chat.can_send() {
+                "This conversation is read-only"
+            } else if sends && message.from_me {
+                "Reply options are for the recipient"
+            } else {
+                "Open this option in WhatsApp Web or on your phone"
+            };
+            response.on_hover_text(format!("{}\n{reason}", button.label));
+        } else if let Some(url) = &button.url {
+            if response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(format!("{}\n{url}", button.label))
+                .clicked()
+            {
+                actions.push(Action::OpenUrl(url.clone()));
+            }
+        } else {
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            match &button.action {
+                InteractiveAction::Reply => {
+                    if response
+                        .on_hover_text(format!("Send reply: {}", button.label))
+                        .clicked()
+                    {
+                        actions.push(reply(None));
+                    }
+                }
+                InteractiveAction::Copy(code) => {
+                    if response.on_hover_text("Copy code").clicked() {
+                        actions.push(Action::CopyText(code.clone()));
+                    }
+                }
+                InteractiveAction::Select(_) => {
+                    if response.clicked() {
+                        actions.push(Action::ShowDialog(crate::model::Dialog::InteractiveList {
+                            chat: message.chat.clone(),
+                            message: message.id.clone(),
+                            button: index,
+                        }));
+                    }
+                }
+                InteractiveAction::Unavailable => {}
+            }
+        }
+    }
+    if card.needs_phone {
+        ui.add_space(6.0);
+        widgets::rich_text(
+            ui,
+            "More content in WhatsApp Web or on your phone",
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    ui.spacing_mut().item_spacing.y = spacing;
+}
+
 /// Draws formatted message text. `reserve` leaves footer space on the last
 /// line. `span` sets a minimum left-aligned row width for text below cards.
 #[allow(clippy::too_many_arguments)]
@@ -2727,7 +3585,9 @@ fn rich_body(
             laid.placements().to_vec(),
         ));
     // Click links and drag to select text.
-    let (rect, response) = ui.allocate_exact_size(allocation, Sense::click_and_drag());
+    // Text selection and pointer links do not need a sequential Tab stop.
+    // The surrounding transcript remains available to accessibility readers.
+    let (rect, response) = ui.allocate_exact_size(allocation, Sense::CLICK | Sense::DRAG);
     // Store the body rect for selection tests.
     ui.ctx().data_mut(|data| {
         data.insert_temp(bubble_id(&view.chat.id, &message.id).with("body"), rect);
@@ -2772,10 +3632,7 @@ fn preview_card(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
-    let thumbnail = message
-        .thumbnail
-        .as_deref()
-        .map(|bytes| thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes));
+    let thumbnail = message.thumbnail.as_deref();
     let domain = preview
         .url
         .split("://")
@@ -2799,12 +3656,17 @@ fn preview_card(
             ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(card_width);
                 ui.horizontal(|ui| {
-                    if let Some(uri) = &thumbnail {
-                        ui.add(
+                    if let Some(bytes) = thumbnail {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
+                        // Off-screen cards are laid out too; only a visible
+                        // one keeps its thumbnail resident.
+                        if ui.is_rect_visible(rect) {
+                            let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes);
                             egui::Image::new(uri)
-                                .fit_to_exact_size(Vec2::splat(64.0))
-                                .corner_radius(4.0),
-                        );
+                                .fit_to_exact_size(rect.size())
+                                .corner_radius(4.0)
+                                .paint_at(ui, rect);
+                        }
                     }
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
@@ -2848,10 +3710,6 @@ fn preview_card(
     }
 }
 
-/// Thumbnails registered in each egui context.
-#[derive(Clone, Default)]
-struct Thumbnails(Arc<Mutex<HashSet<String>>>);
-
 fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> String {
     let uri = format!(
         "bytes://thumb-{}-{}",
@@ -2860,18 +3718,7 @@ fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> Str
             .collect::<String>(),
         id
     );
-    let known: Thumbnails = ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<Thumbnails>(egui::Id::new("thumbnails"))
-            .clone()
-    });
-    let fresh = known
-        .0
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(uri.clone());
-    if fresh {
-        ctx.include_bytes(uri.clone(), bytes.to_vec());
-    }
+    crate::image_cache::include(ctx, uri.clone(), bytes);
     uri
 }
 
@@ -2915,7 +3762,12 @@ fn fit_sticker(width: f32, height: f32) -> Vec2 {
 }
 
 /// Reserved size for an image or video before and after download.
-fn frame_size(media: &Media, thumbnail_hint: Option<(u32, u32)>, limit: f32) -> Vec2 {
+fn frame_size(
+    media: &Media,
+    thumbnail_hint: Option<(u32, u32)>,
+    max_width: f32,
+    max_height: f32,
+) -> Vec2 {
     let (w, h) = match (media.width, media.height) {
         (Some(w), Some(h)) if w > 0 && h > 0 => (w as f32, h as f32),
         _ => match thumbnail_hint {
@@ -2923,7 +3775,7 @@ fn frame_size(media: &Media, thumbnail_hint: Option<(u32, u32)>, limit: f32) -> 
             _ => (4.0, 3.0),
         },
     };
-    fit_picture(w, h, limit, PICTURE_HEIGHT.min(limit * 1.3))
+    fit_picture(w, h, max_width, max_height)
 }
 
 /// Draws an image or sticker, using its preview until downloaded. Returns its width.
@@ -2949,7 +3801,7 @@ fn picture(
             );
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             if ui.is_rect_visible(rect) {
-                match animation::frame(ui, path, rect) {
+                match animation::frame(ui, path, rect, view.animate && response.hovered()) {
                     animation::Frame::Ready(texture) => {
                         ui.painter().image(
                             texture.id(),
@@ -2958,7 +3810,10 @@ fn picture(
                             Color32::WHITE,
                         );
                     }
-                    _ => egui::Image::new(file_uri(path)).paint_at(ui, rect),
+                    _ => {
+                        ui.painter().rect_filled(rect, 6.0, palette.surface);
+                        theme::paint_icon(ui, Icon::Sticker, rect, 32.0, palette.secondary);
+                    }
                 }
             }
             if response
@@ -2969,7 +3824,16 @@ fn picture(
             }
             return size.x;
         }
-        let image = egui::Image::new(file_uri(path));
+        // A row that is off screen only reserves its space. Loading the image
+        // decodes it and uploads a texture, so it waits until it is scrolled
+        // into view, and `image_cache` can release it once it leaves again.
+        let reserved = frame_size(media, None, max_width, max_height);
+        let position = ui.next_widget_position();
+        if !ui.is_rect_visible(Rect::from_min_size(position, reserved)) {
+            ui.allocate_exact_size(reserved, Sense::hover());
+            return reserved.x;
+        }
+        let image = widgets::file_image(ui, path);
         return match image.load_for_size(ui.ctx(), vec2(max_width, max_height)) {
             Ok(egui::load::TexturePoll::Ready { texture }) => {
                 let size = if sticker.is_some() {
@@ -2995,7 +3859,7 @@ fn picture(
                 let size = if sticker.is_some() {
                     Vec2::splat(STICKER_SIDE)
                 } else {
-                    frame_size(media, None, max_width)
+                    frame_size(media, None, max_width, max_height)
                 };
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                 if ui.is_rect_visible(rect) {
@@ -3008,7 +3872,7 @@ fn picture(
                 let size = if sticker.is_some() {
                     Vec2::splat(STICKER_SIDE)
                 } else {
-                    frame_size(media, None, max_width)
+                    frame_size(media, None, max_width, max_height)
                 };
                 let (rect, response) = ui.allocate_exact_size(size, Sense::click());
                 if ui.is_rect_visible(rect) {
@@ -3029,7 +3893,7 @@ fn picture(
             }
         };
     }
-    let size = frame_size(media, None, max_width);
+    let size = frame_size(media, None, max_width, max_height);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     if ui.is_rect_visible(rect) {
         let thumbnail = message
@@ -3101,14 +3965,21 @@ fn picture(
         && !matches!(media.state, MediaState::Downloading);
     let auto = ui.is_rect_visible(rect)
         && matches!(media.state, MediaState::Idle)
-        && (sticker.is_some() || (view.auto_download && media.size <= AUTO_DOWNLOAD_LIMIT));
+        && auto_download_allowed(media, sticker.is_some(), view.auto_download);
     if wants || auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
     }
     size.x
+}
+
+/// Stickers always download when visible, while other media follows the setting.
+/// Every automatic download still respects the shared size limit.
+fn auto_download_allowed(media: &Media, sticker: bool, auto_download: bool) -> bool {
+    media.is_within_download_limit() && (sticker || auto_download)
 }
 
 /// Draws a video poster and opens the downloaded video in the default player.
@@ -3144,12 +4015,17 @@ fn video(
         );
         return width;
     };
-    let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
-    let size = frame_size(media, Some((16, 9)), width.min(PICTURE_WIDTH));
+    let limit = width.min(PICTURE_WIDTH);
+    let size = frame_size(media, Some((16, 9)), limit, PICTURE_HEIGHT.min(limit * 1.3));
     // Play downloaded GIFs in place; keep a poster for other videos.
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let playing = match (&media.path, gif) {
-        (Some(path), true) => Some(animation::frame(ui, path, rect)),
+        (Some(path), true) => Some(animation::frame(
+            ui,
+            path,
+            rect,
+            view.animate && response.hovered(),
+        )),
         _ => None,
     };
     if let Some(animation::Frame::Ready(texture)) = &playing {
@@ -3171,6 +4047,8 @@ fn video(
         return size.x;
     }
     if ui.is_rect_visible(rect) {
+        // Registering the poster decodes it, so it waits for the row to show.
+        let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
         egui::Image::new(uri)
             .fit_to_exact_size(size)
             .corner_radius(6.0)
@@ -3221,9 +4099,10 @@ fn video(
         && media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
-        && media.size <= AUTO_DOWNLOAD_LIMIT;
+        && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
@@ -3235,6 +4114,7 @@ fn video(
             Some(path) => actions.push(Action::OpenFile(path.clone())),
             None if !matches!(media.state, MediaState::Downloading) => {
                 actions.push(Action::Download {
+                    card: None,
                     chat: view.chat.id.clone(),
                     message: message.id.clone(),
                 })
@@ -3316,9 +4196,10 @@ fn attachment(
         && media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
-        && media.size <= AUTO_DOWNLOAD_LIMIT;
+        && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
@@ -3341,6 +4222,7 @@ fn attachment(
             Some(path) => actions.push(Action::OpenFile(path.clone())),
             None if !matches!(media.state, MediaState::Downloading) => {
                 actions.push(Action::Download {
+                    card: None,
                     chat: view.chat.id.clone(),
                     message: message.id.clone(),
                 })
@@ -3430,6 +4312,7 @@ fn voice_player(
                     .clicked()
                     {
                         actions.push(Action::Download {
+                            card: None,
                             chat: view.chat.id.clone(),
                             message: message.id.clone(),
                         });
@@ -3620,9 +4503,10 @@ fn voice_player(
     let auto = media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
-        && media.size <= AUTO_DOWNLOAD_LIMIT;
+        && media.is_within_download_limit();
     if auto {
         actions.push(Action::Download {
+            card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
@@ -3698,10 +4582,6 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
     );
 }
 
-fn file_uri(path: &Path) -> String {
-    crate::util::image_uri(path)
-}
-
 /// Whether a conversation has visible content. Used by tests.
 #[allow(dead_code)]
 pub fn has_messages(conversation: &Conversation) -> bool {
@@ -3742,19 +4622,82 @@ mod tests {
     }
 
     #[test]
+    fn picture_placeholder_matches_decoded_dimensions() {
+        for limit in [200.0, PICTURE_WIDTH] {
+            for (width, height) in [(900, 1200), (600, 1600), (1600, 900)] {
+                assert_eq!(
+                    frame_size(
+                        &media(Some(width), Some(height)),
+                        None,
+                        limit,
+                        PICTURE_HEIGHT
+                    ),
+                    fit_picture(width as f32, height as f32, limit, PICTURE_HEIGHT),
+                    "decoding a {width}x{height} photo must not shift the transcript"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn picture_frames_keep_their_shape_within_the_limit() {
-        let landscape = frame_size(&media(Some(1600), Some(1200)), None, 340.0);
+        let landscape = frame_size(&media(Some(1600), Some(1200)), None, 340.0, PICTURE_HEIGHT);
         assert!((landscape.x - 340.0).abs() < 0.01);
         assert!((landscape.y - 255.0).abs() < 0.01);
-        let tall = frame_size(&media(Some(600), Some(1200)), None, 340.0);
+        let tall = frame_size(&media(Some(600), Some(1200)), None, 340.0, PICTURE_HEIGHT);
         assert!(tall.y > 340.0 && tall.y <= PICTURE_HEIGHT);
         let exact = fit_picture(900.0, 1600.0, PICTURE_WIDTH, PICTURE_HEIGHT);
         assert!((exact.y - PICTURE_HEIGHT).abs() < 0.01);
         assert!(exact.x < PICTURE_WIDTH);
-        let unknown = frame_size(&media(None, None), Some((16, 9)), 340.0);
+        let unknown = frame_size(&media(None, None), Some((16, 9)), 340.0, PICTURE_HEIGHT);
         assert!(unknown.x > unknown.y);
-        let tiny = frame_size(&media(Some(40), Some(40)), None, 340.0);
+        let tiny = frame_size(&media(Some(40), Some(40)), None, 340.0, PICTURE_HEIGHT);
         assert!(tiny.x >= 120.0);
+    }
+
+    #[test]
+    fn a_failed_footer_reserves_room_for_its_label() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut message = Message {
+            id: "fixture".into(),
+            chat: "1@s.whatsapp.net".into(),
+            sender: "me@s.whatsapp.net".into(),
+            sender_name: None,
+            from_me: true,
+            timestamp: 1000,
+            content: Content::text("Fixture"),
+            status: Delivery::Sent,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        let mut widths = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            widths.push(footer_width(ui, &message));
+            message.status = Delivery::Failed;
+            widths.push(footer_width(ui, &message));
+            // Only our own messages can fail to send.
+            message.from_me = false;
+            widths.push(footer_width(ui, &message) + 19.0);
+        });
+        output.textures_delta.clear();
+        assert!(widths[1] > widths[0] + 30.0, "{widths:?}");
+        assert_eq!(widths[2], widths[0]);
+    }
+
+    #[test]
+    fn visible_stickers_download_automatically_with_the_attachment_setting_off() {
+        let mut sticker = media(Some(180), Some(180));
+        assert!(auto_download_allowed(&sticker, true, false));
+        assert!(!auto_download_allowed(&sticker, false, false));
+        sticker.size = crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1;
+        assert!(!auto_download_allowed(&sticker, true, false));
     }
 
     #[test]
@@ -3833,7 +4776,7 @@ mod reaction_tests {
     fn only_our_own_reaction_counts_as_chosen() {
         let message = with_reactions(vec![reaction(false, "😂"), reaction(true, "❤️")]);
         assert_eq!(own_reaction(&message), Some("❤️"));
-        assert_eq!(quick_reactions(&message), QUICK_REACTIONS.to_vec());
+        assert_eq!(quick_reactions(&message, &[]), QUICK_REACTIONS.to_vec());
         assert_eq!(
             own_reaction(&with_reactions(vec![reaction(false, "😂")])),
             None
@@ -3841,9 +4784,19 @@ mod reaction_tests {
     }
 
     #[test]
+    fn quick_reactions_start_with_preferences_and_fill_with_unique_defaults() {
+        let message = with_reactions(Vec::new());
+        let preferred = vec![("🦀".into(), 5), ("👍".into(), 2), ("invalid".into(), 1)];
+        let quick = quick_reactions(&message, &preferred);
+        assert_eq!(&quick[..2], &["🦀", "👍"]);
+        assert_eq!(quick.len(), 6);
+        assert_eq!(quick.iter().filter(|&&emoji| emoji == "👍").count(), 1);
+    }
+
+    #[test]
     fn an_unusual_reaction_of_ours_joins_the_quick_row() {
         let message = with_reactions(vec![reaction(true, "🦀")]);
-        let quick = quick_reactions(&message);
+        let quick = quick_reactions(&message, &[]);
         assert_eq!(quick.len(), QUICK_REACTIONS.len() + 1);
         assert_eq!(quick.last(), Some(&"🦀"));
     }
@@ -3862,7 +4815,7 @@ mod reaction_tests {
         assert_eq!(own_reaction(&message), None);
         assert_eq!(message.reactions[0].emoji, "🏆");
         assert!(!message.reactions[0].from_me);
-        assert_eq!(quick_reactions(&message), QUICK_REACTIONS.to_vec());
+        assert_eq!(quick_reactions(&message, &[]), QUICK_REACTIONS.to_vec());
     }
 }
 
@@ -3932,7 +4885,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     }
                     crate::app::Pending::File(path) => {
                         if crate::app::Pending::is_picture_file(path) {
-                            egui::Image::new(file_uri(path))
+                            widgets::file_image(ui, path)
                                 .fit_to_exact_size(Vec2::splat(tile - 8.0))
                                 .corner_radius(6.0)
                                 .paint_at(ui, rect.shrink(4.0));

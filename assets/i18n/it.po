@@ -1,0 +1,219 @@
+# Italian translation of the ZapFast navigation pilot.
+# Distributed under the same MIT license as ZapFast.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-09-23 10:38+0200\n"
+"PO-Revision-Date: 2026-09-22 00:00-0300\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: Italian\n"
+"Language: it\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/model.rs:50
+msgid "All"
+msgstr "Tutti"
+
+#: src/model.rs:51
+msgid "Unread"
+msgstr "Non letti"
+
+#: src/model.rs:52
+msgid "Private"
+msgstr "Privati"
+
+#: src/model.rs:53
+msgid "Groups"
+msgstr "Gruppi"
+
+#: src/util.rs:67 src/util.rs:117
+msgid "Yesterday"
+msgstr "Ieri"
+
+#: src/util.rs:94
+#, rust-format
+msgid "Yesterday at {time}"
+msgstr "Ieri alle {time}"
+
+#: src/util.rs:95
+#, rust-format
+msgid "{weekday} at {time}"
+msgstr "{weekday} alle {time}"
+
+#: src/util.rs:98
+#, rust-format
+msgid "{date} at {time}"
+msgstr "{date} alle {time}"
+
+#: src/util.rs:116
+msgid "Today"
+msgstr "Oggi"
+
+#: src/util.rs:132
+msgid "Monday"
+msgstr "Lunedì"
+
+#: src/util.rs:133
+msgid "Tuesday"
+msgstr "Martedì"
+
+#: src/util.rs:134
+msgid "Wednesday"
+msgstr "Mercoledì"
+
+#: src/util.rs:135
+msgid "Thursday"
+msgstr "Giovedì"
+
+#: src/util.rs:136
+msgid "Friday"
+msgstr "Venerdì"
+
+#: src/util.rs:137
+msgid "Saturday"
+msgstr "Sabato"
+
+#: src/util.rs:138
+msgid "Sunday"
+msgstr "Domenica"
+
+#: src/util.rs:146
+msgid "January"
+msgstr "Gennaio"
+
+#: src/util.rs:147
+msgid "February"
+msgstr "Febbraio"
+
+#: src/util.rs:148
+msgid "March"
+msgstr "Marzo"
+
+#: src/util.rs:149
+msgid "April"
+msgstr "Aprile"
+
+#: src/util.rs:150
+msgid "May"
+msgstr "Maggio"
+
+#: src/util.rs:151
+msgid "June"
+msgstr "Giugno"
+
+#: src/util.rs:152
+msgid "July"
+msgstr "Luglio"
+
+#: src/util.rs:153
+msgid "August"
+msgstr "Agosto"
+
+#: src/util.rs:154
+msgid "September"
+msgstr "Settembre"
+
+#: src/util.rs:155
+msgid "October"
+msgstr "Ottobre"
+
+#: src/util.rs:156
+msgid "November"
+msgstr "Novembre"
+
+#: src/util.rs:157
+msgid "December"
+msgstr "Dicembre"
+
+#: src/ui/chats.rs:111 src/ui/chats.rs:226 src/ui/settings.rs:168
+msgid "Chats"
+msgstr "Chat"
+
+#: src/ui/chats.rs:168 src/ui/chats.rs:267
+msgid "Search"
+msgstr "Cerca"
+
+#: src/ui/chats.rs:340
+msgid "Locked"
+msgstr "Bloccati"
+
+#: src/ui/conversation.rs:87
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Ctrl+K per cercare · ? per le scorciatoie da tastiera"
+
+#: src/ui/conversation.rs:908
+msgid "Type a message"
+msgstr "Scrivi un messaggio"
+
+#: src/ui/conversation.rs:911
+msgid "Add a caption"
+msgstr "Aggiungi una didascalia"
+
+#: src/ui/conversation.rs:1063
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
+"pastes a picture"
+msgstr ""
+"Enter invia · Shift+Enter per una nuova riga · *grassetto* _corsivo_ "
+"~barrato~ · Ctrl+V incolla un'immagine"
+
+#: src/ui/conversation.rs:1065
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr ""
+"Ctrl+Enter invia · *grassetto* _corsivo_ ~barrato~ · Ctrl+V incolla "
+"un'immagine"
+
+#: src/ui/conversation.rs:1076
+msgid "Hide shortcut hints (restore in Settings)"
+msgstr ""
+"Nascondi i suggerimenti delle scorciatoie (ripristina nelle Impostazioni)"
+
+#: src/ui/conversation.rs:1091
+#, rust-format
+msgid "All shortcuts ({})"
+msgstr "Tutte le scorciatoie ({})"
+
+#: src/ui/dialogs.rs:1020
+#, rust-format
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} membro"
+msgstr[1] "{} membri"
+
+#: src/ui/settings.rs:40
+msgid "Settings"
+msgstr "Impostazioni"
+
+#: src/ui/settings.rs:44
+msgid "Appearance"
+msgstr "Aspetto"
+
+#: src/ui/settings.rs:133
+msgid "Language"
+msgstr "Lingua"
+
+#: src/ui/settings.rs:139 src/ui/settings.rs:148
+msgid "Auto"
+msgstr "Automatico"
+
+#: src/ui/settings.rs:218
+msgid "Window"
+msgstr "Finestra"
+
+#: src/ui/settings.rs:258
+msgid "Account"
+msgstr "Account"
+
+#: src/ui/settings.rs:285
+msgid "Files"
+msgstr "File"
+
+#: src/ui/settings.rs:318
+msgid "About"
+msgstr "Informazioni"
