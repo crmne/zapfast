@@ -2946,6 +2946,54 @@ mod tests {
         assert_eq!(app.composer, "", "Enter sends");
     }
 
+    /// The composer keeps its draft while the preview is open: Enter does not
+    /// send it, and Tab and Enter reach the preview's own controls instead.
+    #[test]
+    fn the_image_preview_owns_the_keyboard() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.focus_composer = true;
+        render(&mut app, &ctx);
+        frame_with(&mut app, &ctx, vec![egui::Event::Text("draft".into())]);
+        assert_eq!(app.composer, "draft");
+
+        let (photo, _) = sample_files(&app);
+        app.actions.push(crate::model::Action::PreviewImage(photo));
+        // Enter in the very frame the preview opens, before egui knows about
+        // the modal layer.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+        assert_eq!(app.composer, "draft", "Enter must not send the draft");
+        assert!(app.image_preview.is_some());
+
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Tab, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+        let focused = ctx
+            .memory(|memory| memory.focused())
+            .and_then(|id| ctx.read_response(id))
+            .expect("Tab focuses a preview control");
+        assert_eq!(focused.layer_id.id, egui::Id::new("image-preview"));
+
+        // The first control is Close; Enter activates it.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+        assert!(app.image_preview.is_none(), "Enter activates Close");
+        assert_eq!(app.composer, "draft");
+    }
+
     #[test]
     fn colon_starts_emoji_autocomplete_in_the_composer() {
         let mut app = app();

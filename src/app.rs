@@ -2375,6 +2375,14 @@ impl App {
                     self.image_preview = Some(PreviewState::new(path));
                     self.dialog = None;
                     self.picker = None;
+                    // egui drops the focus of widgets behind a modal only from
+                    // the frame after it first shows; until then a focused
+                    // composer would still take Enter and send the draft.
+                    ctx.memory_mut(|memory| {
+                        if let Some(focused) = memory.focused() {
+                            memory.surrender_focus(focused);
+                        }
+                    });
                 } else {
                     self.actions.push(Action::OpenFile(path));
                 }

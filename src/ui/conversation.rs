@@ -996,7 +996,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 {
                                     app.mention_start = None;
                                 }
-                                if app.focus_composer {
+                                // The composer waits for the image preview to
+                                // close before taking focus back.
+                                if app.focus_composer && app.image_preview.is_none() {
                                     app.focus_composer = false;
                                     response.request_focus();
                                 }

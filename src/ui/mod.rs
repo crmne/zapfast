@@ -33,6 +33,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.picker.is_none()
         && app.reaction_target.is_none()
         && app.recording.is_none()
+        && app.image_preview.is_none()
         && app.emoji_start.is_none()
         && app.mention_start.is_none()
         && !egui::Popup::is_any_open(ctx);
