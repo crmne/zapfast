@@ -1580,6 +1580,61 @@ mod tests {
     }
 
     #[test]
+    fn clicking_a_speed_button_applies_and_persists_the_choice() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        // The speed row only appears for a downloaded clip, so give the open
+        // sample chat one voice message that carries a media path.
+        let chat = sample_ids()[0].to_owned();
+        let mut clip = media("audio/ogg; codecs=opus", 12_000, None, None);
+        clip.path = Some(std::path::PathBuf::from("demo/voice.ogg"));
+        app.conversations.get_mut(&chat).unwrap().messages = vec![message(
+            &chat,
+            "voice-speed",
+            false,
+            100,
+            Content::Audio {
+                media: clip,
+                seconds: Some(5),
+                voice_note: true,
+                waveform: demo_waveform(),
+            },
+        )];
+        // Start away from the first button so its click proves the dispatch.
+        app.settings.voice_speed = 2.0;
+        render(&mut app, &ctx);
+        for option in crate::audio::SPEEDS {
+            let rect = ctx
+                .data(|data| {
+                    data.get_temp::<egui::Rect>(crate::ui::conversation::speed_button_id(
+                        &chat,
+                        "voice-speed",
+                        option,
+                    ))
+                })
+                .expect("the speed button is on screen");
+            let pos = rect.center();
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos), press(true)],
+            );
+            frame_with(&mut app, &ctx, vec![press(false)]);
+            assert_eq!(
+                app.settings.voice_speed, option,
+                "clicking the {option}x button reaches App and settings"
+            );
+        }
+    }
+
+    #[test]
     fn enter_sends_and_shift_enter_breaks_the_line() {
         let mut app = app();
         let ctx = egui::Context::default();
