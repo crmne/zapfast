@@ -2,7 +2,7 @@
 
 use super::widgets;
 use crate::app::App;
-use crate::model::{Action, Content, Message, PollState};
+use crate::model::{Action, Content, Dialog, Message, PollState};
 use crate::theme::{self, Icon, Palette};
 use egui::{Align, Layout, Sense, Stroke, pos2, vec2};
 
@@ -196,29 +196,34 @@ pub fn ballot(
                     3,
                 );
                 let (rect, response) = ui.allocate_exact_size(
-                    vec2(width, label.size().y.max(18.0) + 20.0),
-                    Sense::click(),
+                    vec2(width, label.size().y.max(18.0) + 34.0),
+                    if enabled && state.can_vote && !pending {
+                        Sense::click()
+                    } else {
+                        Sense::hover()
+                    },
                 );
                 let active = enabled && state.can_vote && !pending;
                 if ui.is_rect_visible(rect) {
                     if active && response.hovered() {
                         ui.painter().rect_filled(rect, 5.0, palette.surface_hover);
                     }
-                    let center = pos2(rect.left() + 10.0, rect.center().y - 3.0);
-                    ui.painter().circle_stroke(
-                        center,
-                        6.0,
-                        Stroke::new(
-                            1.5,
-                            if selected {
-                                palette.accent
-                            } else {
-                                palette.dim
-                            },
-                        ),
-                    );
+                    let center = pos2(rect.left() + 10.0, rect.top() + 16.0);
                     if selected {
-                        ui.painter().circle_filled(center, 3.0, palette.accent);
+                        ui.painter().circle_filled(center, 8.0, palette.accent);
+                        theme::paint_icon(
+                            ui,
+                            Icon::Check,
+                            egui::Rect::from_center_size(center, vec2(12.0, 12.0)),
+                            12.0,
+                            palette.window,
+                        );
+                    } else {
+                        ui.painter().circle_stroke(
+                            center,
+                            8.0,
+                            Stroke::new(1.5, palette.secondary),
+                        );
                     }
                     label.paint(ui, pos2(rect.left() + 25.0, rect.top() + 6.0), palette.text);
                     let count = state.counts.get(index).copied().unwrap_or_default();
@@ -229,15 +234,36 @@ pub fn ballot(
                         theme::regular(12.0),
                         palette.secondary,
                     );
-                    if state.voters > 0 {
-                        let fraction = count as f32 / state.voters as f32;
+                    let track = egui::Rect::from_min_size(
+                        pos2(rect.left() + 25.0, rect.bottom() - 12.0),
+                        vec2((width - 30.0).max(0.0), 6.0),
+                    );
+                    ui.painter()
+                        .rect_filled(track, 3.0, palette.text.gamma_multiply(0.10));
+                    if state.voters > 0 && count > 0 {
+                        let fraction = (count as f32 / state.voters as f32).min(1.0);
                         let bar = egui::Rect::from_min_size(
-                            pos2(rect.left() + 25.0, rect.bottom() - 5.0),
-                            vec2((width - 30.0) * fraction, 3.0),
+                            track.min,
+                            vec2(track.width() * fraction, track.height()),
                         );
-                        ui.painter().rect_filled(bar, 2.0, palette.accent);
+                        ui.painter().rect_filled(
+                            bar,
+                            3.0,
+                            if selected {
+                                palette.accent
+                            } else {
+                                palette.secondary
+                            },
+                        );
                     }
                 }
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        super::conversation::bubble_id(&message.chat, &message.id)
+                            .with(("poll-option", index)),
+                        rect,
+                    )
+                });
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(egui::WidgetType::Checkbox, active, selected, option)
                 });
@@ -302,6 +328,206 @@ pub fn ballot(
             message: message.id.clone(),
         });
     }
+}
+
+/// The message timestamp stays above this full-width action, like interactive cards.
+pub fn results_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    message: &Message,
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    let Content::Poll { state, .. } = &message.content else {
+        return;
+    };
+    let enabled = state.voters > 0;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 39.0), Sense::hover());
+    let rect = rect.expand2(vec2(10.0, 0.0));
+    let rect = egui::Rect::from_min_max(rect.min, rect.max + vec2(0.0, 5.0));
+    let response = ui.interact(
+        rect,
+        super::conversation::bubble_id(&message.chat, &message.id).with("poll-results"),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Show votes"));
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            super::conversation::bubble_id(&message.chat, &message.id).with("poll-results-rect"),
+            rect,
+        )
+    });
+    if enabled && (response.hovered() || response.has_focus()) {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius {
+                sw: 10,
+                se: 10,
+                ..Default::default()
+            },
+            palette.text.gamma_multiply(0.04),
+        );
+    }
+    ui.painter().hline(
+        rect.x_range(),
+        rect.top(),
+        Stroke::new(1.0, palette.secondary.gamma_multiply(0.2)),
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "Show votes",
+        theme::medium(13.5),
+        if enabled {
+            palette.link
+        } else {
+            palette.secondary
+        },
+    );
+    theme::reveal_focus(&response);
+    if enabled
+        && response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+    {
+        actions.push(Action::ShowDialog(Dialog::PollResults {
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+        }));
+    }
+}
+
+pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
+    let palette = app.palette;
+    ui.horizontal(|ui| {
+        theme::text(ui, "Poll results", theme::semibold(18.0), palette.text);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::icon_button(ui, Icon::X, 16.0, palette.secondary, palette.text, "Close")
+                .clicked()
+            {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+    let Some(message) = app
+        .conversations
+        .get(chat)
+        .and_then(|c| c.message(id))
+        .cloned()
+    else {
+        widgets::rich_text(
+            ui,
+            "This poll is no longer available.",
+            theme::regular(14.0),
+            palette.secondary,
+        );
+        return;
+    };
+    let Content::Poll {
+        question,
+        options,
+        state,
+    } = &message.content
+    else {
+        return;
+    };
+    ui.add_space(12.0);
+    widgets::rich_text(ui, question, theme::semibold(16.0), palette.text);
+    if !state.history_complete {
+        widgets::rich_text(
+            ui,
+            "Earlier votes may still be missing. Results update as they arrive.",
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    let height = (ui.ctx().content_rect().height() - 230.0).clamp(100.0, 520.0);
+    let area = egui::ScrollArea::vertical()
+        .id_salt(("poll-results", chat, id))
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .max_height(height)
+        .min_scrolled_height(height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for (index, option) in options.iter().enumerate() {
+                ui.add_space(16.0);
+                let count = state.counts.get(index).copied().unwrap_or(0);
+                let heading = ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 70.0).max(1.0);
+                    let label = widgets::line(
+                        ui,
+                        option,
+                        theme::semibold(14.0),
+                        palette.text,
+                        width,
+                        usize::MAX,
+                    );
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(width, label.size().y), Sense::hover());
+                    label.paint(ui, rect.min, palette.text);
+                    theme::text(
+                        ui,
+                        format!("{count} {}", if count == 1 { "vote" } else { "votes" }),
+                        theme::regular(12.0),
+                        palette.secondary,
+                    );
+                });
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        super::conversation::bubble_id(chat, id)
+                            .with(("poll-result-option", index)),
+                        heading.response.rect,
+                    )
+                });
+                let voters: Vec<_> = state
+                    .votes
+                    .iter()
+                    .filter(|vote| vote.choices.contains(&index))
+                    .collect();
+                for voter in &voters {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        let picture = app.avatar(&voter.id);
+                        widgets::avatar(
+                            ui,
+                            &palette,
+                            &voter.name,
+                            &voter.id,
+                            34.0,
+                            picture.as_deref(),
+                        );
+                        ui.vertical(|ui| {
+                            widgets::rich_text(ui, &voter.name, theme::regular(14.0), palette.text);
+                            theme::text(
+                                ui,
+                                crate::util::moment_stamp(voter.timestamp),
+                                theme::regular(12.0),
+                                palette.secondary,
+                            );
+                        });
+                    });
+                }
+                if voters.len() < count {
+                    theme::text(
+                        ui,
+                        "Participant details are not available yet",
+                        theme::regular(12.0),
+                        palette.secondary,
+                    );
+                }
+            }
+        });
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            super::conversation::bubble_id(chat, id).with("poll-results-viewport"),
+            area.inner_rect,
+        )
+    });
 }
 
 fn selection_after_click(state: &PollState, index: usize) -> Option<Vec<usize>> {

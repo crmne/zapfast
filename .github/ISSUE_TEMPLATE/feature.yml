@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest an improvement to the app.
+labels: [enhancement]
+body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before requesting
+      options:
+        - label: I searched open and closed issues for this request.
+          required: true
+        - label: I read the project boundaries in CONTRIBUTING.md.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem should ZapFast solve?
+      description: Explain what you are trying to do and what stops you.
+      placeholder: "When I ..., I cannot ..., so I currently have to ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would a good solution look like?
+      description: Include other options you tried, how often you need this, and how the official WhatsApp apps handle it.
+    validations:
+      required: true
+  - type: textarea
+    id: fit
+    attributes:
+      label: Why does this fit ZapFast?
+      description: Explain why it belongs in a small, native WhatsApp client.
+    validations:
+      required: true

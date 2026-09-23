@@ -10,6 +10,7 @@ labels:
   documentation: Incorrect or missing documentation for this project.
   enhancement: A missing capability within the documented product scope.
   invalid: The premise is directly disproved by repository evidence.
+  out-of-scope: The exact request conflicts with a documented product boundary.
   question: One specific missing technical fact prevents investigation.
   wontfix: The exact request is explicitly ruled out by repository documentation.
 sources:
@@ -30,6 +31,7 @@ replies:
   error: What is the exact error message? Please remove message contents, phone numbers, keys,
     and QR payloads.
   platform: Which operating system are you using?
+  artifact: What is the SHA-256 of the exact file flagged by your antivirus?
 instructions: |
   Triage this project's issues and discussions using the supplied report and
   latest comments. Add at most two justified labels to issues; no labels on
@@ -47,7 +49,8 @@ instructions: |
   for a useful technical answer and cite only what those files establish;
   otherwise leave reply null. Leave uncertain diagnoses and product decisions
   to the maintainer. Use the tools to search and read relevant docs, source,
-  issues, and releases. Close only clear duplicates under the configured rules.
+  issues, and releases. Link related reports; close only clear duplicates under
+  the configured rules.
   Name a fixed version only when release evidence establishes it; code on main
   is not a release.
   Do not promise
@@ -57,8 +60,9 @@ instructions: |
 
   ZapFast is a native WhatsApp client using whatsapp-rust. A protobuf field
   alone does not prove a supported capability. No browser engine, telemetry,
-  hosted backend, or second account system. Leave uncertain protocol support
-  to the maintainer. Never repeat messages, phone numbers, device keys,
+  hosted backend, ZapFast-operated account, or feature that sends message
+  content to a third party. Use out-of-scope only for a documented product
+  boundary. Leave uncertain protocol support to the maintainer. Never repeat messages, phone numbers, device keys,
   authorization values, or QR payloads; request only a redacted error if
   needed.
 
@@ -69,3 +73,14 @@ instructions: |
   not establish an answer, stay silent rather than posting that the docs do not
   cover it. For feature requests, check relevant documentation for existing
   support before leaving product decisions to the maintainer.
+
+  Never infer an antivirus false positive from a detection name, unsigned
+  binary, or source code. Ask for the flagged artifact's SHA-256 when missing.
+  Never recommend restoring quarantine, disabling protection, or exclusions.
+
+  When a report includes a screenshot that may show real conversations, contact
+  names, or phone numbers, ask the reporter to crop or redact it.
+
+  Address the latest human update and account for checks already tried. Do not
+  repeat an answered question or a completed diagnostic step. If a bot replied
+  most recently, only a useful new related-issue link warrants another comment.
