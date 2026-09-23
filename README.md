@@ -141,6 +141,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   The conversation stays still while you choose; the emoji
   grid can scroll. Quick reactions learn from usage on this computer, independently
   of inserted emoji. These preferences do not sync from the phone.
+  Hovering a message also shows a small smiley control beside it; clicking it
+  opens the full reaction picker for that message, so right-click is never required.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
   timer, including replies, attachments, edits, and forwards. Forwarded copies
   use the destination chat's timer. Received messages remain in the local archive
