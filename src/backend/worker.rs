@@ -5927,10 +5927,12 @@ mod tests {
                             wa::HydratedTemplateButton {
                                 hydrated_button: Some(
                                     wa::hydrated_template_button::HydratedButton::QuickReplyButton(
-                                        wa::hydrated_template_button::HydratedQuickReplyButton {
-                                            display_text: Some("Yes".into()),
-                                            ..Default::default()
-                                        },
+                                        Box::new(
+                                            wa::hydrated_template_button::HydratedQuickReplyButton {
+                                                display_text: Some("Yes".into()),
+                                                ..Default::default()
+                                            },
+                                        ),
                                     ),
                                 ),
                                 ..Default::default()
@@ -5938,10 +5940,12 @@ mod tests {
                             wa::HydratedTemplateButton {
                                 hydrated_button: Some(
                                     wa::hydrated_template_button::HydratedButton::UrlButton(
-                                        wa::hydrated_template_button::HydratedURLButton {
-                                            display_text: Some("Details".into()),
-                                            ..Default::default()
-                                        },
+                                        Box::new(
+                                            wa::hydrated_template_button::HydratedURLButton {
+                                                display_text: Some("Details".into()),
+                                                ..Default::default()
+                                            },
+                                        ),
                                     ),
                                 ),
                                 ..Default::default()
@@ -5949,10 +5953,12 @@ mod tests {
                             wa::HydratedTemplateButton {
                                 hydrated_button: Some(
                                     wa::hydrated_template_button::HydratedButton::CallButton(
-                                        wa::hydrated_template_button::HydratedCallButton {
-                                            display_text: Some("Call us".into()),
-                                            ..Default::default()
-                                        },
+                                        Box::new(
+                                            wa::hydrated_template_button::HydratedCallButton {
+                                                display_text: Some("Call us".into()),
+                                                ..Default::default()
+                                            },
+                                        ),
                                     ),
                                 ),
                                 ..Default::default()
