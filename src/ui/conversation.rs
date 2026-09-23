@@ -497,14 +497,8 @@ fn emoji_suggestion(emoji: &'static emojis::Emoji) -> EmojiSuggestion {
     }
 }
 
-/// Emoji the composer completes from. `emojis::iter` already yields each
-/// sequence once, including the default variant of a skin-tone-capable emoji
-/// such as 👍 or 🤰, which reports `Some(SkinTone::Default)`; do not filter on
-/// `skin_tone` here, or those emoji never appear.
-fn completion_emojis() -> impl Iterator<Item = &'static emojis::Emoji> {
-    emojis::iter()
-}
-
+/// Completions for `:query`. `emojis::iter` yields each emoji once, and a
+/// skin-tone-capable one such as 👍 reports `Some(SkinTone::Default)`.
 fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
     const LIMIT: usize = 6;
     let query = query.to_lowercase();
@@ -515,7 +509,7 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
             .recent_emoji
             .iter()
             .filter_map(|emoji| emojis::get(emoji))
-            .chain(completion_emojis())
+            .chain(emojis::iter())
             .filter(|emoji| seen.insert(emoji.as_str()))
             .take(LIMIT)
             .map(emoji_suggestion)
@@ -523,7 +517,7 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
         return recent;
     }
 
-    let mut found: Vec<_> = completion_emojis()
+    let mut found: Vec<_> = emojis::iter()
         .enumerate()
         .filter_map(|(order, emoji)| {
             emoji_match_score(emoji, &query).map(|score| (score, order, emoji))
@@ -5664,17 +5658,19 @@ mod tests {
     }
 
     #[test]
-    fn completion_offers_skin_tone_capable_base_emoji() {
-        let matches = |query: &str| {
-            let mut found: Vec<_> = completion_emojis()
-                .filter(|emoji| emoji_match_score(emoji, query).is_some())
-                .map(|emoji| emoji.as_str())
-                .collect();
-            found.sort_unstable();
-            found
+    fn completion_offers_skin_tone_capable_emoji() {
+        let directory = tempfile::tempdir().unwrap();
+        let (app, _events) = App::headless(
+            crate::paths::AppDirs::under(directory.path()),
+            crate::settings::Settings::default(),
+        );
+        let offers = |query: &str, emoji: &str| {
+            emoji_candidates(&app, query)
+                .iter()
+                .any(|suggestion| suggestion.emoji == emoji)
         };
-        assert!(matches("preg").contains(&"🤰"), "pregnant woman");
-        assert!(matches("thumbs").contains(&"👍"));
+        assert!(offers("pregnant", "🤰"));
+        assert!(offers("thumbsup", "👍"));
     }
 }
 
