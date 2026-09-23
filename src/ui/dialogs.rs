@@ -376,22 +376,8 @@ fn confirm_lock_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
 fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     title(ui, app, "New chat");
+    // "Message yourself" heads the contact list below, as on the phone.
     ui.horizontal_wrapped(|ui| {
-        if ui
-            .add_enabled_ui(app.me.is_some(), |ui| {
-                theme::soft_button(
-                    ui,
-                    &palette,
-                    Some(Icon::MessageCircle),
-                    "Message yourself",
-                    false,
-                )
-            })
-            .inner
-            .clicked()
-        {
-            app.actions.push(Action::MessageYourself);
-        }
         if theme::soft_button(ui, &palette, Some(Icon::Plus), "Add contact", false).clicked() {
             app.actions.push(Action::ShowDialog(Dialog::NewContact));
         }
@@ -439,7 +425,11 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
         .max_height((ui.ctx().content_rect().height() - 280.0).clamp(100.0, 420.0))
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            if contacts.is_empty() {
+            let offer_self = app.offers_self(&needle);
+            if offer_self {
+                super::chats::self_row(app, ui);
+            }
+            if contacts.is_empty() && !offer_self {
                 theme::text(
                     ui,
                     "No matching contacts",

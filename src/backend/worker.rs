@@ -24,7 +24,7 @@ use whatsapp_rust::prelude::{
 };
 use whatsapp_rust::send::RevokeType;
 use whatsapp_rust::types::events as wa_events;
-use whatsapp_rust::types::message::{MessageInfo, MessageSource};
+use whatsapp_rust::types::message::{EncMediaType, MessageInfo, MessageSource};
 use whatsapp_rust::types::presence::{ChatPresence, ReceiptType};
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::wacore::download::{DownloadWriter, Downloadable};
@@ -41,7 +41,7 @@ mod poll_history;
 mod polls;
 mod stickers;
 
-use super::{Command, Event, LinkStatus, Waker, read_sync::ReadSync};
+use super::{Command, Event, LinkStatus, Refusal, Unsent, Waker, read_sync::ReadSync};
 use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
@@ -418,6 +418,18 @@ pub async fn run(
     // state rebuilt from a snapshot; a new link receives it with the first sync.
     let privacy_snapshot =
         !privacy_confirmed && archive.chats().is_ok_and(|chats| !chats.is_empty());
+    // A new link receives the phone's favorites with its first sync; only an
+    // archive filled before favorites were followed needs them replayed.
+    let favorites_recovered = archive
+        .meta(stickers::FAVORITES_RECOVERED)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("complete")
+        || (archive.chats().is_ok_and(|chats| chats.is_empty())
+            && archive
+                .set_meta(stickers::FAVORITES_RECOVERED, "complete")
+                .is_ok());
     let mut worker = Worker {
         privacy_ready: privacy_confirmed,
         privacy_confirmed,
@@ -467,6 +479,8 @@ pub async fn run(
         favorite_fetches: HashSet::new(),
         favorites_pushing: false,
         favorites_again: false,
+        favorites_recovered,
+        favorites_recovering: false,
         downloads: HashSet::new(),
         read_sync: ReadSync::default(),
         poll_decrypting: 0,
@@ -696,6 +710,10 @@ struct Worker {
     favorites_pushing: bool,
     /// More favorite changes arrived while a push was running.
     favorites_again: bool,
+    /// The phone's favorites from before ZapFast followed them were replayed.
+    favorites_recovered: bool,
+    /// That replay is running.
+    favorites_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
 }
@@ -1902,6 +1920,8 @@ impl Worker {
                 self.pump_read_sync();
                 self.poll_history.reconnect(Instant::now());
                 self.push_favorites();
+                self.fetch_missing_favorites();
+                self.recover_favorites();
                 let _ = self.archive.retry_poll_votes();
                 self.pump_poll_votes();
                 if let Some(client) = self.client.clone() {
@@ -1999,7 +2019,11 @@ impl Worker {
                 }
             }
             E::UndecryptableMessage(undecryptable) => {
-                self.ingest_undecryptable(&undecryptable.info, undecryptable.unavailable_type);
+                self.ingest_undecryptable(
+                    &undecryptable.info,
+                    undecryptable.unavailable_type,
+                    undecryptable.decrypt_fail_mode,
+                );
             }
             E::Receipt(receipt) => self.on_receipt(receipt),
             E::ChatPresence(presence) => {
@@ -2728,9 +2752,17 @@ impl Worker {
         if self.update_live_location(&chat, &sender, base, info) {
             return;
         }
-        let Some(content) = classify(base) else {
+        let Some(mut content) = classify(base) else {
             return;
         };
+        if let Content::PhoneOnly { live_location, .. } = &mut content
+            && info.media_type == Some(EncMediaType::LiveLocation)
+        {
+            *live_location = true;
+            if self.continues_masked_live_location(&chat, &sender, &info.id, info) {
+                return;
+            }
+        }
         let quoted = self.quoted_of(base);
         let mentions = self.mentions_of(&mentioned_of(base));
         let row = Message {
@@ -2768,7 +2800,14 @@ impl Worker {
             && !info.is_offline
             && info.unavailable_request_id.is_none()
             && matches!(self.archive.message(&chat, &row.id), Ok(None));
-        let sent_elsewhere = from_me && matches!(self.archive.message(&chat, &row.id), Ok(None));
+        // A placeholder stored while the message could not be opened does
+        // not count: this is the first time its content arrives.
+        let sent_elsewhere = from_me
+            && match self.archive.message(&chat, &row.id) {
+                Ok(None) => true,
+                Ok(Some(stored)) => stored.content.is_placeholder(),
+                Err(_) => false,
+            };
         let id = row.id.clone();
         self.archive_message(
             row,
@@ -2823,6 +2862,37 @@ impl Worker {
         }
         self.emit_message(chat, &share.id);
         true
+    }
+
+    /// Whether a masked live location only continues the share `sender`
+    /// last posted in this chat. Linked devices cannot follow the position,
+    /// so a share keeps the one bubble it started with.
+    fn continues_masked_live_location(
+        &self,
+        chat: &str,
+        sender: &str,
+        id: &str,
+        info: &MessageInfo,
+    ) -> bool {
+        let Ok(Some(latest)) = self.archive.latest_id_from(chat, sender) else {
+            return false;
+        };
+        if latest == id {
+            return false;
+        }
+        self.archive
+            .message(chat, &latest)
+            .ok()
+            .flatten()
+            .is_some_and(|message| {
+                matches!(
+                    message.content,
+                    Content::PhoneOnly {
+                        live_location: true,
+                        ..
+                    }
+                ) && info.timestamp.timestamp() - message.timestamp <= LIVE_LOCATION_LIMIT
+            })
     }
 
     /// The stored live location that a position from `sender` updates: the
@@ -3014,15 +3084,23 @@ impl Worker {
         }
     }
 
+    /// Stores a placeholder for a message this device could not open, so
+    /// it never vanishes without a trace. That includes our own messages
+    /// sent from the phone: WhatsApp keeps some of them, such as live
+    /// locations, off linked devices, and they belong in the chat all the same.
     fn ingest_undecryptable(
         &mut self,
         info: &MessageInfo,
         unavailable: wa_events::UnavailableType,
+        mode: wa_events::DecryptFailMode,
     ) {
         self.learn_source(&info.source);
-        if info.source.chat.is_status_broadcast() || info.source.is_from_me {
+        // The sender marks internal traffic, such as reactions and protocol
+        // messages, as not worth a placeholder.
+        if info.source.chat.is_status_broadcast() || mode == wa_events::DecryptFailMode::Hide {
             return;
         }
+        let from_me = info.source.is_from_me;
         let chat = self.canonical(&info.source.chat);
         if self
             .archive
@@ -3034,25 +3112,54 @@ impl Worker {
             return;
         }
         let push_name = (!info.push_name.is_empty()).then(|| info.push_name.clone());
+        let sender = if from_me {
+            self.me()
+        } else {
+            self.canonical(&info.source.sender)
+        };
+        let live_location = info.media_type == Some(EncMediaType::LiveLocation);
+        if live_location && self.continues_masked_live_location(&chat, &sender, &info.id, info) {
+            return;
+        }
         let row = Message {
             id: info.id.to_string(),
             chat,
-            sender: self.canonical(&info.source.sender),
-            sender_name: push_name.as_ref().map(ToString::to_string),
-            from_me: false,
+            sender,
+            sender_name: if from_me {
+                None
+            } else {
+                push_name.as_ref().map(ToString::to_string)
+            },
+            from_me,
             timestamp: info.timestamp.timestamp(),
             content: match unavailable {
+                // A live location keeps moving on the phone only, so say
+                // where to follow it rather than that it is on its way.
+                _ if live_location => Content::PhoneOnly {
+                    view_once: false,
+                    live_location: true,
+                },
                 // The phone never shares these with linked devices, so do not
                 // suggest that the message is still on its way.
-                wa_events::UnavailableType::ViewOnce => Content::PhoneOnly { view_once: true },
+                wa_events::UnavailableType::ViewOnce => Content::PhoneOnly {
+                    view_once: true,
+                    live_location: false,
+                },
                 wa_events::UnavailableType::Hosted | wa_events::UnavailableType::Bot => {
-                    Content::PhoneOnly { view_once: false }
+                    Content::PhoneOnly {
+                        view_once: false,
+                        live_location: false,
+                    }
                 }
                 _ => Content::Unsupported {
                     what: "Waiting for this message. Open WhatsApp on your phone".to_owned(),
                 },
             },
-            status: Delivery::None,
+            status: if from_me {
+                Delivery::Sent
+            } else {
+                Delivery::None
+            },
             delivered_at: None,
             read_at: None,
             quoted: None,
@@ -3062,7 +3169,12 @@ impl Worker {
             forwarded: false,
             thumbnail: None,
         };
+        let id = row.id.clone();
+        let chat = row.chat.clone();
         self.store_message(row, None, push_name.as_deref());
+        if from_me {
+            self.settle_early_receipts(&chat, &id);
+        }
     }
 
     /// Archives a message and emits chat and row updates.
@@ -3860,8 +3972,9 @@ impl Worker {
                 paths,
                 caption,
                 mentions,
+                quoting,
             } => {
-                self.send_files(chat, paths, caption, mentions);
+                self.send_files(chat, paths, caption, mentions, quoting);
             }
             Command::SendImage {
                 chat,
@@ -3870,7 +3983,8 @@ impl Worker {
                 rgba,
                 caption,
                 mentions,
-            } => self.send_pasted_image(chat, width, height, rgba, caption, mentions),
+                quoting,
+            } => self.send_pasted_image(chat, width, height, rgba, caption, mentions, quoting),
             Command::Outbound { chat, row, raw } => self.outbound(chat, *row, raw),
             Command::SendSticker {
                 chat,
@@ -3887,6 +4001,7 @@ impl Worker {
             } => self.favorite_pushed(&hash, updated_at, result),
             Command::FavoritesPushed => self.favorites_pushed(),
             Command::FavoriteFetched { hash, result } => self.favorite_fetched(&hash, result),
+            Command::FavoritesRecovered { complete } => self.favorites_recovered(complete),
             Command::ImportStickerUrl { url } => {
                 let commands = self.commands.clone();
                 let packs = self.packs_dir();
@@ -4278,7 +4393,7 @@ impl Worker {
                     self.mark_played(chat, message, sender);
                 }
             }
-            Command::SendGif { chat, gif } => self.send_gif(chat, gif),
+            Command::SendGif { chat, gif, quoting } => self.send_gif(chat, gif, quoting),
             Command::SearchGifs { query, key } => {
                 let commands = self.commands.clone();
                 let dir = self.dirs.cache.join("gifs");
@@ -4790,6 +4905,68 @@ impl Worker {
         }
     }
 
+    /// Resolves the message a send replies to. A reply whose original cannot
+    /// be quoted is refused rather than sent as an unrelated message: the
+    /// quote needs the original's archived row and its raw protobuf.
+    fn quote(
+        &self,
+        chat: &str,
+        id: Option<&str>,
+    ) -> Result<Option<(wa::ContextInfo, Quoted)>, Refusal> {
+        let Some(id) = id else { return Ok(None) };
+        let unavailable = Refusal::QuoteUnavailable;
+        if id.is_empty() {
+            return Err(unavailable);
+        }
+        let row = self
+            .archive
+            .message(chat, id)
+            .map_err(|_| unavailable)?
+            .ok_or(unavailable)?;
+        if matches!(row.content, Content::Revoked) {
+            return Err(unavailable);
+        }
+        let raw = self
+            .archive
+            .raw(chat, id)
+            .map_err(|_| unavailable)?
+            .ok_or(unavailable)?;
+        let original = wa::Message::decode_from_slice(&raw).map_err(|_| unavailable)?;
+        let jid = Self::jid_of(chat).ok_or(unavailable)?;
+        let sender = Self::jid_of(&row.sender).ok_or(unavailable)?;
+        let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
+            row.id.clone(),
+            &sender,
+            &jid,
+            &jid,
+            &original,
+        );
+        let shown = Quoted {
+            mentions: row.mentions.clone(),
+            id: row.id,
+            sender_name: if row.from_me {
+                Some("You".to_owned())
+            } else {
+                row.sender_name
+                    .clone()
+                    .or_else(|| self.name_for(&row.sender))
+            },
+            sender: row.sender,
+            summary: row.content.summary(),
+        };
+        Ok(Some((context, shown)))
+    }
+
+    /// Hands a send that cannot go out back to the app.
+    fn refuse(&self, chat: ChatId, quoting: Option<String>, unsent: Unsent, reason: Refusal) {
+        self.emit(Event::SendRefused {
+            chat,
+            quoting,
+            unsent,
+            reason,
+        });
+    }
+
     fn send_text(
         &mut self,
         chat: ChatId,
@@ -4797,26 +4974,18 @@ impl Worker {
         quoting: Option<String>,
         mentions: Vec<String>,
     ) {
+        let (context, shown) = match self.quote(&chat, quoting.as_deref()) {
+            Ok(Some((context, shown))) => (Some(context), Some(shown)),
+            Ok(None) => (None, None),
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Text(text), reason);
+                return;
+            }
+        };
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+            self.refuse(chat, quoting, Unsent::Text(text), Refusal::Offline);
             return;
         };
-        let mut quoted_row = None;
-        let context = quoting.as_deref().and_then(|id| {
-            let raw = self.archive.raw(&chat, id).ok().flatten()?;
-            let quoted = wa::Message::decode_from_slice(&raw).ok()?;
-            let row = self.archive.message(&chat, id).ok().flatten()?;
-            let sender = Self::jid_of(&row.sender).unwrap_or_else(|| jid.clone());
-            let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
-                row.id.clone(),
-                &sender,
-                &jid,
-                &jid,
-                &quoted,
-            );
-            quoted_row = Some(row);
-            Some(context)
-        });
         let mut message = outgoing_text(text.clone(), context, &mentions);
         let expiration = self.apply_ephemeral(&chat, &mut message);
         let mentions = self.mentions_of(&mentions);
@@ -4832,19 +5001,7 @@ impl Worker {
             status: Delivery::Pending,
             delivered_at: None,
             read_at: None,
-            quoted: quoted_row.map(|row| Quoted {
-                mentions: row.mentions.clone(),
-                id: row.id,
-                sender_name: if row.from_me {
-                    Some("You".to_owned())
-                } else {
-                    row.sender_name
-                        .clone()
-                        .or_else(|| self.name_for(&row.sender))
-                },
-                sender: row.sender,
-                summary: row.content.summary(),
-            }),
+            quoted: shown,
             reactions: Vec::new(),
             edited: false,
             mentions,
@@ -5627,12 +5784,28 @@ impl Worker {
         paths: Vec<PathBuf>,
         caption: Option<String>,
         mentions: Vec<String>,
+        quoting: Option<String>,
     ) {
-        for (index, path) in paths.into_iter().enumerate() {
-            let Some(client) = self.client.clone() else {
-                self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+        let mut quote = match self.quote(&chat, quoting.as_deref()) {
+            Ok(quote) => quote,
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Files { paths, caption }, reason);
                 return;
-            };
+            }
+        };
+        let Some(client) = self.client.clone() else {
+            self.refuse(
+                chat,
+                quoting,
+                Unsent::Files { paths, caption },
+                Refusal::Offline,
+            );
+            return;
+        };
+        for (index, path) in paths.into_iter().enumerate() {
+            let client = client.clone();
+            // Like the caption, the reply belongs to the first file.
+            let quote = quote.take();
             let commands = self.commands.clone();
             let chat = chat.clone();
             let dir = self.dirs.media_cache_dir();
@@ -5657,7 +5830,10 @@ impl Worker {
                         .map(|name| name.to_string_lossy().into_owned());
                     let prepared =
                         prepare_media(&client, bytes, &mime, file_name.as_deref(), false).await?;
-                    file_outbound(&client, &chat, &me, &dir, prepared, caption, mentions).await
+                    quoted_outbound(
+                        &client, &chat, &me, &dir, prepared, caption, mentions, quote,
+                    )
+                    .await
                 }
                 .await;
                 match outcome {
@@ -5680,6 +5856,7 @@ impl Worker {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn send_pasted_image(
         &mut self,
         chat: ChatId,
@@ -5688,9 +5865,23 @@ impl Worker {
         rgba: Vec<u8>,
         caption: Option<String>,
         mentions: Vec<String>,
+        quoting: Option<String>,
     ) {
+        let unsent = |rgba, caption| Unsent::Image {
+            width,
+            height,
+            rgba,
+            caption,
+        };
+        let quote = match self.quote(&chat, quoting.as_deref()) {
+            Ok(quote) => quote,
+            Err(reason) => {
+                self.refuse(chat, quoting, unsent(rgba, caption), reason);
+                return;
+            }
+        };
         let Some(client) = self.client.clone() else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+            self.refuse(chat, quoting, unsent(rgba, caption), Refusal::Offline);
             return;
         };
         let commands = self.commands.clone();
@@ -5706,7 +5897,10 @@ impl Worker {
                 .await
                 .map_err(|error| error.to_string())??;
                 let prepared = prepare_media(&client, encoded, "image/jpeg", None, false).await?;
-                file_outbound(&client, &chat, &me, &dir, prepared, caption, mentions).await
+                quoted_outbound(
+                    &client, &chat, &me, &dir, prepared, caption, mentions, quote,
+                )
+                .await
             }
             .await;
             match outcome {
@@ -5730,41 +5924,17 @@ impl Worker {
 
     /// Encodes and sends an OGG/Opus voice message with optional quote.
     fn send_voice(&mut self, chat: ChatId, samples: Vec<f32>, quoting: Option<String>) {
-        let Some(client) = self.client.clone() else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
-            return;
+        let (context, shown) = match self.quote(&chat, quoting.as_deref()) {
+            Ok(Some((context, shown))) => (Some(Box::new(context)), Some(shown)),
+            Ok(None) => (None, None),
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Voice(samples), reason);
+                return;
+            }
         };
-        let quote = quoting.as_deref().and_then(|id| {
-            let raw = self.archive.raw(&chat, id).ok().flatten()?;
-            let quoted = wa::Message::decode_from_slice(&raw).ok()?;
-            let row = self.archive.message(&chat, id).ok().flatten()?;
-            let jid = Self::jid_of(&chat)?;
-            let sender = Self::jid_of(&row.sender).unwrap_or_else(|| jid.clone());
-            let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
-                row.id.clone(),
-                &sender,
-                &jid,
-                &jid,
-                &quoted,
-            );
-            let shown = Quoted {
-                mentions: row.mentions.clone(),
-                id: row.id,
-                sender_name: if row.from_me {
-                    Some("You".to_owned())
-                } else {
-                    row.sender_name
-                        .clone()
-                        .or_else(|| self.name_for(&row.sender))
-                },
-                sender: row.sender,
-                summary: row.content.summary(),
-            };
-            Some((context, shown))
-        });
-        let (context, shown) = match quote {
-            Some((context, shown)) => (Some(Box::new(context)), Some(shown)),
-            None => (None, None),
+        let Some(client) = self.client.clone() else {
+            self.refuse(chat, quoting, Unsent::Voice(samples), Refusal::Offline);
+            return;
         };
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
@@ -5831,40 +6001,16 @@ impl Worker {
     }
 
     fn send_sticker(&mut self, chat: ChatId, path: PathBuf, quoting: Option<String>) {
-        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
-            return;
+        let quote = match self.quote(&chat, quoting.as_deref()) {
+            Ok(quote) => quote,
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Sticker, reason);
+                return;
+            }
         };
-        let quote = quoting.as_deref().and_then(|id| {
-            let raw = self.archive.raw(&chat, id).ok().flatten()?;
-            let quoted = wa::Message::decode_from_slice(&raw).ok()?;
-            let row = self.archive.message(&chat, id).ok().flatten()?;
-            let sender = Self::jid_of(&row.sender).unwrap_or_else(|| jid.clone());
-            let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
-                row.id.clone(),
-                &sender,
-                &jid,
-                &jid,
-                &quoted,
-            );
-            let shown = Quoted {
-                mentions: row.mentions.clone(),
-                id: row.id,
-                sender_name: if row.from_me {
-                    Some("You".to_owned())
-                } else {
-                    row.sender_name
-                        .clone()
-                        .or_else(|| self.name_for(&row.sender))
-                },
-                sender: row.sender,
-                summary: row.content.summary(),
-            };
-            Some((context, shown))
-        });
-        let (context, shown) = match quote {
-            Some((context, shown)) => (Some(context), Some(shown)),
-            None => (None, None),
+        let Some(client) = self.client.clone() else {
+            self.refuse(chat, quoting, Unsent::Sticker, Refusal::Offline);
+            return;
         };
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
@@ -5874,18 +6020,12 @@ impl Worker {
                 let bytes = tokio::fs::read(&path)
                     .await
                     .map_err(|error| error.to_string())?;
-                let mut prepared = prepare_sticker(&client, bytes).await?;
-                if let Some(context) = context
-                    && !prepared.message.set_context_info(context)
-                {
-                    return Err("Could not attach the reply context".to_owned());
-                }
-                file_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new()).await
+                let prepared = prepare_sticker(&client, bytes).await?;
+                quoted_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new(), quote).await
             }
             .await;
             match outcome {
-                Ok((mut row, raw)) => {
-                    row.quoted = shown;
+                Ok((row, raw)) => {
                     let _ = commands.send(Command::Outbound {
                         chat,
                         row: Box::new(row),
@@ -5903,9 +6043,16 @@ impl Worker {
         });
     }
 
-    fn send_gif(&mut self, chat: ChatId, gif: Gif) {
+    fn send_gif(&mut self, chat: ChatId, gif: Gif, quoting: Option<String>) {
+        let quote = match self.quote(&chat, quoting.as_deref()) {
+            Ok(quote) => quote,
+            Err(reason) => {
+                self.refuse(chat, quoting, Unsent::Gif, reason);
+                return;
+            }
+        };
         let Some(client) = self.client.clone() else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+            self.refuse(chat, quoting, Unsent::Gif, Refusal::Offline);
             return;
         };
         let commands = self.commands.clone();
@@ -5932,7 +6079,7 @@ impl Worker {
                     video.width = Some(gif.width);
                     video.height = Some(gif.height);
                 }
-                file_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new()).await
+                quoted_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new(), quote).await
             }
             .await;
             match outcome {
@@ -6564,6 +6711,14 @@ fn classify(base: &wa::Message) -> Option<Content> {
                 .collect(),
         });
     }
+    if base.placeholder_message.is_set() {
+        // The phone masks some messages from linked devices, live locations
+        // among them, and sends this stand-in so the chat still shows them.
+        return Some(Content::PhoneOnly {
+            view_once: false,
+            live_location: false,
+        });
+    }
     let unsupported = |what: &str| {
         Some(Content::Unsupported {
             what: what.to_owned(),
@@ -6613,7 +6768,6 @@ fn classify(base: &wa::Message) -> Option<Content> {
         || base.sticker_sync_rmr_message.is_set()
         || base.message_context_info.is_set()
         || base.device_sent_message.is_set()
-        || base.placeholder_message.is_set()
         || base.secret_encrypted_message.is_set()
         || base.message_history_bundle.is_set()
         || base.message_history_notice.is_set()
@@ -7034,6 +7188,51 @@ fn search_gifs(query: &str, key: &str, dir: &Path) -> Result<Vec<Gif>, GifError>
 }
 
 /// Copies a sent attachment to media storage and builds its archive row.
+/// Attaches a reply's quote to a prepared attachment, then builds its
+/// outgoing row like [`file_outbound`]. An attachment that cannot carry the
+/// quote is not sent at all.
+#[allow(clippy::too_many_arguments)]
+async fn quoted_outbound(
+    client: &Client,
+    chat: &str,
+    me: &str,
+    dir: &Path,
+    mut prepared: Prepared,
+    caption: Option<String>,
+    mentions: Vec<String>,
+    quote: Option<(wa::ContextInfo, Quoted)>,
+) -> Result<(Message, Vec<u8>), String> {
+    let shown = attach_quote(&mut prepared.message, quote)?;
+    let (mut row, raw) = file_outbound(client, chat, me, dir, prepared, caption, mentions).await?;
+    row.quoted = shown;
+    Ok((row, raw))
+}
+
+/// Puts a reply's quote on an outgoing message, returning what the reply's
+/// row shows. A message kind that cannot carry a quote is an error.
+fn attach_quote(
+    message: &mut wa::Message,
+    quote: Option<(wa::ContextInfo, Quoted)>,
+) -> Result<Option<Quoted>, String> {
+    let Some((context, shown)) = quote else {
+        return Ok(None);
+    };
+    if !message.set_context_info(context) {
+        return Err("Could not attach the reply context".to_owned());
+    }
+    Ok(Some(shown))
+}
+
+/// Mentions people in an attachment, keeping a reply context it carries.
+fn add_mentions(message: &mut wa::Message, mentions: &[String]) {
+    if mentions.is_empty() {
+        return;
+    }
+    let mut context = context_of(message).cloned().unwrap_or_default();
+    context.mentioned_jid = mentions.to_vec();
+    message.set_context_info(context);
+}
+
 pub(super) async fn file_outbound(
     client: &Client,
     chat: &str,
@@ -7060,12 +7259,7 @@ pub(super) async fn file_outbound(
             document.caption = Some(caption);
         }
     }
-    if !mentions.is_empty() {
-        prepared.message.set_context_info(wa::ContextInfo {
-            mentioned_jid: mentions.clone(),
-            ..Default::default()
-        });
-    }
+    add_mentions(&mut prepared.message, &mentions);
     let id = client.generate_message_id();
     let path = media_path(
         dir,
@@ -7941,6 +8135,304 @@ mod tests {
         ));
     }
 
+    /// What the phone sends linked devices in place of a live location: the
+    /// content is masked, and only the stanza's `mediatype` says what it is.
+    fn masked_live_location() -> Arc<wa::Message> {
+        Arc::new(wa::Message {
+            placeholder_message: MessageField::some(wa::message::PlaceholderMessage {
+                r#type: Some(
+                    wa::message::placeholder_message::PlaceholderType::MASK_LINKED_DEVICES,
+                ),
+            }),
+            message_context_info: MessageField::some(wa::MessageContextInfo {
+                message_secret: Some(vec![7; 32]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+    }
+
+    fn live_location_info(id: &str, at: i64, source: MessageSource) -> MessageInfo {
+        MessageInfo {
+            id: id.into(),
+            source,
+            timestamp: whatsapp_rust::wacore::time::from_secs(at).unwrap(),
+            media_type: Some(EncMediaType::LiveLocation),
+            ..Default::default()
+        }
+    }
+
+    const GROUP: &str = "120363025246125888@g.us";
+
+    /// A contact in a chat, our phone in our own chat, and our phone and a
+    /// member in a group.
+    fn live_location_sources(worker: &Worker) -> Vec<(&'static str, MessageSource, String)> {
+        const PEER: &str = super::receipt_tests::PEER;
+        let me = worker.me();
+        let phone: Jid = me.parse().unwrap();
+        vec![
+            (
+                "contact",
+                MessageSource {
+                    chat: PEER.parse().unwrap(),
+                    sender: PEER.parse().unwrap(),
+                    ..Default::default()
+                },
+                PEER.to_owned(),
+            ),
+            (
+                "self",
+                MessageSource {
+                    chat: phone.clone(),
+                    sender: phone.clone(),
+                    is_from_me: true,
+                    recipient: Some(phone.clone()),
+                    ..Default::default()
+                },
+                me.clone(),
+            ),
+            (
+                "group-mine",
+                MessageSource {
+                    chat: GROUP.parse().unwrap(),
+                    sender: phone.clone(),
+                    is_from_me: true,
+                    is_group: true,
+                    ..Default::default()
+                },
+                GROUP.to_owned(),
+            ),
+            (
+                "group-member",
+                MessageSource {
+                    chat: GROUP.parse().unwrap(),
+                    sender: PEER.parse().unwrap(),
+                    is_group: true,
+                    ..Default::default()
+                },
+                GROUP.to_owned(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn a_masked_live_location_shows_a_bubble_that_points_to_the_phone() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        for (id, source, chat) in live_location_sources(&worker) {
+            let from_me = source.is_from_me;
+            worker.ingest(
+                &masked_live_location(),
+                &live_location_info(id, now - 600, source),
+            );
+            let stored = worker
+                .archive
+                .message(&chat, id)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{id}: no bubble"));
+            assert_eq!(
+                stored.content,
+                Content::PhoneOnly {
+                    view_once: false,
+                    live_location: true,
+                },
+                "{id}"
+            );
+            assert_eq!(stored.from_me, from_me, "{id}");
+            assert!(
+                worker
+                    .archive
+                    .chats()
+                    .unwrap()
+                    .iter()
+                    .any(|listed| listed.id == chat),
+                "{id}: the chat is listed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_masked_live_location_keeps_one_bubble_per_share() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        let source = || MessageSource {
+            chat: PEER.parse().unwrap(),
+            sender: PEER.parse().unwrap(),
+            ..Default::default()
+        };
+        worker.ingest(
+            &masked_live_location(),
+            &live_location_info("start", now - 600, source()),
+        );
+        worker.ingest(
+            &masked_live_location(),
+            &live_location_info("next", now - 540, source()),
+        );
+        assert_eq!(worker.archive.messages(PEER, None, 10).unwrap().len(), 1);
+        // Something said in between ends the share's run of bubbles.
+        let mut info = live_location_info("chat", now - 300, source());
+        info.media_type = None;
+        worker.ingest(
+            &Arc::new(wa::Message {
+                conversation: Some("on my way".into()),
+                ..Default::default()
+            }),
+            &info,
+        );
+        worker.ingest(
+            &masked_live_location(),
+            &live_location_info("again", now, source()),
+        );
+        assert_eq!(worker.archive.messages(PEER, None, 10).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn other_masked_messages_say_they_are_on_the_phone() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let mut info = live_location_info(
+            "masked",
+            crate::util::now(),
+            MessageSource {
+                chat: PEER.parse().unwrap(),
+                sender: PEER.parse().unwrap(),
+                ..Default::default()
+            },
+        );
+        info.media_type = None;
+        worker.ingest(&masked_live_location(), &info);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "masked")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::PhoneOnly {
+                view_once: false,
+                live_location: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_live_location_from_our_phone_shows_its_card() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        let live = wa::Message {
+            live_location_message: MessageField::some(wa::message::LiveLocationMessage {
+                degrees_latitude: Some(41.9028),
+                degrees_longitude: Some(12.4964),
+                accuracy_in_meters: Some(12),
+                sequence_number: Some(1),
+                jpeg_thumbnail: Some(vec![0xff, 0xd8]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        for (id, source, chat) in live_location_sources(&worker) {
+            // Our phone wraps what it sent for its linked devices.
+            let message = if source.is_from_me {
+                wa::Message {
+                    device_sent_message: MessageField::some(wa::message::DeviceSentMessage {
+                        destination_jid: Some(chat.clone()),
+                        message: MessageField::some(wa::Message {
+                            ephemeral_message: MessageField::some(
+                                wa::message::FutureProofMessage {
+                                    message: MessageField::some(live.clone()),
+                                },
+                            ),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            } else {
+                live.clone()
+            };
+            let mut info = live_location_info(id, now - 60, source);
+            info.media_type = None;
+            worker.ingest(&Arc::new(message), &info);
+            let stored = worker.archive.message(&chat, id).unwrap().unwrap();
+            assert!(
+                matches!(
+                    stored.content,
+                    Content::LiveLocation {
+                        latitude: 41.9028,
+                        ..
+                    }
+                ),
+                "{id}: {:?}",
+                stored.content
+            );
+        }
+    }
+
+    #[test]
+    fn our_phones_unreadable_messages_leave_a_placeholder() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        for (id, source, chat) in live_location_sources(&worker) {
+            let from_me = source.is_from_me;
+            let mut info = live_location_info(id, now - 60, source);
+            info.media_type = None;
+            worker.ingest_undecryptable(
+                &info,
+                wa_events::UnavailableType::Unknown,
+                wa_events::DecryptFailMode::Show,
+            );
+            let stored = worker.archive.message(&chat, id).unwrap().unwrap();
+            assert!(
+                matches!(stored.content, Content::Unsupported { .. }),
+                "{id}"
+            );
+            assert_eq!(stored.from_me, from_me, "{id}");
+        }
+        // A copy that names its live location says so, and the real content
+        // replaces the placeholder once the phone resends it.
+        let me = worker.me();
+        let (_, self_chat, _) = live_location_sources(&worker).swap_remove(1);
+        worker.ingest_undecryptable(
+            &live_location_info("unreadable", now, self_chat.clone()),
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Show,
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(&me, "unreadable")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::PhoneOnly {
+                view_once: false,
+                live_location: true,
+            }
+        );
+        let (message, _) = live_position("unreadable", now, 1, 45.0, None);
+        let mut info = live_location_info("unreadable", now, self_chat.clone());
+        info.unavailable_request_id = Some("pdo".into());
+        worker.ingest(&message, &info);
+        assert!(matches!(
+            worker
+                .archive
+                .message(&me, "unreadable")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::LiveLocation { latitude: 45.0, .. }
+        ));
+        // Internal traffic the sender asked not to show stays hidden.
+        worker.ingest_undecryptable(
+            &live_location_info("hidden", now, self_chat),
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Hide,
+        );
+        assert!(worker.archive.message(&me, "hidden").unwrap().is_none());
+    }
+
     #[test]
     fn history_reports_a_finished_live_location_as_ended() {
         let last = wa::message::LiveLocationMessage {
@@ -8243,12 +8735,18 @@ mod tests {
             (
                 "once",
                 wa_events::UnavailableType::ViewOnce,
-                Some(Content::PhoneOnly { view_once: true }),
+                Some(Content::PhoneOnly {
+                    view_once: true,
+                    live_location: false,
+                }),
             ),
             (
                 "bot",
                 wa_events::UnavailableType::Bot,
-                Some(Content::PhoneOnly { view_once: false }),
+                Some(Content::PhoneOnly {
+                    view_once: false,
+                    live_location: false,
+                }),
             ),
             ("later", wa_events::UnavailableType::Unknown, None),
         ] {
@@ -8262,7 +8760,7 @@ mod tests {
                 timestamp: whatsapp_rust::wacore::time::from_secs(100).unwrap(),
                 ..Default::default()
             };
-            worker.ingest_undecryptable(&info, unavailable);
+            worker.ingest_undecryptable(&info, unavailable, wa_events::DecryptFailMode::Show);
             let stored = worker
                 .archive
                 .message("200@s.whatsapp.net", id)
@@ -8742,6 +9240,8 @@ mod receipt_tests {
             favorite_fetches: HashSet::new(),
             favorites_pushing: false,
             favorites_again: false,
+            favorites_recovered: true,
+            favorites_recovering: false,
             downloads: HashSet::new(),
             read_sync: ReadSync::default(),
             poll_decrypting: 0,
@@ -10107,6 +10607,281 @@ mod receipt_tests {
         };
         assert_eq!(status("B2"), Delivery::Delivered);
         assert_eq!(status("B1"), Delivery::Sent);
+    }
+    #[test]
+    fn replies_keep_the_original_reference_on_the_wire_and_in_the_archive() {
+        for chat in [PEER, "123-456@g.us"] {
+            for sender in [ME, PEER, "987654321@lid"] {
+                let (worker, _, _, _) = worker();
+                worker.archive.ensure_chat(chat, "Fixture").unwrap();
+                let source = Message {
+                    chat: chat.into(),
+                    sender: sender.into(),
+                    from_me: sender == ME,
+                    content: Content::text("Original fixture"),
+                    ..own_message("original", 100)
+                };
+                let original = wa::Message::text("Original fixture");
+                worker
+                    .archive
+                    .insert_message(&source, Some(&original.encode_to_vec()))
+                    .unwrap();
+                let (context, shown) = worker.quote(chat, Some("original")).unwrap().unwrap();
+                let mut reply = outgoing_text("Reply fixture".into(), Some(context), &[]);
+                apply_ephemeral_expiration(&mut reply, Some(86400));
+                let raw = reply.encode_to_vec();
+                let decoded = wa::Message::decode_from_slice(&raw).unwrap();
+                let context = context_of(&decoded).unwrap();
+                assert_eq!(context.stanza_id.as_deref(), Some("original"));
+                assert_eq!(context.participant.as_deref(), Some(sender));
+                assert_eq!(context.remote_jid, None);
+                assert_eq!(
+                    context.quoted_message.as_option().unwrap().text_content(),
+                    Some("Original fixture")
+                );
+                assert_eq!(decoded.text_content(), Some("Reply fixture"));
+                assert_eq!(worker.quoted_of(&decoded).unwrap().id, "original");
+                let row = Message {
+                    chat: chat.into(),
+                    quoted: Some(shown),
+                    content: Content::text("Reply fixture"),
+                    ..own_message("reply", 101)
+                };
+                worker.archive.insert_message(&row, Some(&raw)).unwrap();
+                let stored = worker.archive.message(chat, "reply").unwrap().unwrap();
+                assert_eq!(stored.quoted.unwrap().id, "original");
+                let restored = wa::Message::decode_from_slice(
+                    &worker.archive.raw(chat, "reply").unwrap().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    context_of(&restored).unwrap().stanza_id.as_deref(),
+                    Some("original")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_replies_require_a_valid_original() {
+        let (worker, _, _, _) = worker();
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        let unavailable = Err(Refusal::QuoteUnavailable);
+        assert!(worker.quote(PEER, None).unwrap().is_none());
+        assert_eq!(worker.quote(PEER, Some("")).map(|_| ()), unavailable);
+        assert_eq!(worker.quote(PEER, Some("missing")).map(|_| ()), unavailable);
+        // A row without its raw protobuf cannot be quoted.
+        let mut row = own_message("original", 100);
+        worker.archive.insert_message(&row, None).unwrap();
+        assert_eq!(
+            worker.quote(PEER, Some("original")).map(|_| ()),
+            unavailable
+        );
+        // Nor can an unreadable protobuf.
+        worker.archive.insert_message(&row, Some(&[0xff])).unwrap();
+        assert_eq!(
+            worker.quote(PEER, Some("original")).map(|_| ()),
+            unavailable
+        );
+        // A readable original is quoted.
+        let original = wa::Message::text("old").encode_to_vec();
+        worker
+            .archive
+            .insert_message(&row, Some(&original))
+            .unwrap();
+        assert!(worker.quote(PEER, Some("original")).unwrap().is_some());
+        // A deleted original is not.
+        row.content = Content::Revoked;
+        worker
+            .archive
+            .insert_message(&row, Some(&original))
+            .unwrap();
+        assert_eq!(
+            worker.quote(PEER, Some("original")).map(|_| ()),
+            unavailable
+        );
+    }
+
+    /// Every command that can send a reply, quoting `quoting` in `PEER`.
+    fn reply_sends(quoting: Option<&str>) -> Vec<(Command, Unsent)> {
+        let quoting = quoting.map(str::to_owned);
+        let gif = Gif {
+            id: "fixture-gif".into(),
+            still: None,
+            mp4: "https://example.invalid/fixture.mp4".into(),
+            width: 2,
+            height: 2,
+        };
+        vec![
+            (
+                Command::SendText {
+                    chat: PEER.into(),
+                    text: "Reply fixture".into(),
+                    quoting: quoting.clone(),
+                    mentions: Vec::new(),
+                },
+                Unsent::Text("Reply fixture".into()),
+            ),
+            (
+                Command::SendVoice {
+                    chat: PEER.into(),
+                    samples: vec![0.25; 8],
+                    quoting: quoting.clone(),
+                },
+                Unsent::Voice(vec![0.25; 8]),
+            ),
+            (
+                Command::SendFiles {
+                    chat: PEER.into(),
+                    paths: vec!["/fixture/a.pdf".into(), "/fixture/b.png".into()],
+                    caption: Some("Caption fixture".into()),
+                    mentions: Vec::new(),
+                    quoting: quoting.clone(),
+                },
+                Unsent::Files {
+                    paths: vec!["/fixture/a.pdf".into(), "/fixture/b.png".into()],
+                    caption: Some("Caption fixture".into()),
+                },
+            ),
+            (
+                Command::SendImage {
+                    chat: PEER.into(),
+                    width: 1,
+                    height: 1,
+                    rgba: vec![1, 2, 3, 4],
+                    caption: Some("Picture fixture".into()),
+                    mentions: Vec::new(),
+                    quoting: quoting.clone(),
+                },
+                Unsent::Image {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![1, 2, 3, 4],
+                    caption: Some("Picture fixture".into()),
+                },
+            ),
+            (
+                Command::SendSticker {
+                    chat: PEER.into(),
+                    path: "/fixture/sticker.webp".into(),
+                    quoting: quoting.clone(),
+                },
+                Unsent::Sticker,
+            ),
+            (
+                Command::SendGif {
+                    chat: PEER.into(),
+                    gif,
+                    quoting,
+                },
+                Unsent::Gif,
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn every_send_path_refuses_a_reply_it_cannot_quote() {
+        let (mut worker, events, _commands, _wa) = worker();
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        // Stored without its raw protobuf, so it cannot be quoted.
+        worker
+            .archive
+            .insert_message(&own_message("bare", 100), None)
+            .unwrap();
+        let original = wa::Message::text("hi").encode_to_vec();
+        worker
+            .archive
+            .insert_message(&own_message("original", 101), Some(&original))
+            .unwrap();
+        let before = worker.archive.messages(PEER, None, 100).unwrap().len();
+        for (quoting, reason) in [
+            (Some("missing"), Refusal::QuoteUnavailable),
+            (Some("bare"), Refusal::QuoteUnavailable),
+            // A quotable reply gets past the check and then meets the missing
+            // connection: the worker has no client.
+            (Some("original"), Refusal::Offline),
+            (None, Refusal::Offline),
+        ] {
+            for (command, unsent) in reply_sends(quoting) {
+                let label = format!("{command:?}");
+                worker.handle_command(command).await;
+                let refused: Vec<_> = events
+                    .try_iter()
+                    .filter(|event| matches!(event, Event::SendRefused { .. }))
+                    .collect();
+                assert!(
+                    matches!(
+                        refused.as_slice(),
+                        [Event::SendRefused { chat, quoting: q, unsent: u, reason: r }]
+                            if chat == PEER && q.as_deref() == quoting && *u == unsent && *r == reason
+                    ),
+                    "{label} with {quoting:?}: {refused:?}"
+                );
+            }
+        }
+        // Nothing reached the archive, so nothing went out unquoted.
+        assert_eq!(
+            worker.archive.messages(PEER, None, 100).unwrap().len(),
+            before
+        );
+    }
+
+    #[test]
+    fn attachments_carry_the_quote_alongside_their_mentions() {
+        let (worker, _, _, _) = worker();
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        let original = wa::Message::text("Original fixture").encode_to_vec();
+        worker
+            .archive
+            .insert_message(&own_message("original", 100), Some(&original))
+            .unwrap();
+        let attachments = [
+            wa::Message {
+                image_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                video_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                document_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                audio_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                sticker_message: MessageField::some(Default::default()),
+                ..Default::default()
+            },
+        ];
+        for mut message in attachments {
+            let quote = worker.quote(PEER, Some("original")).unwrap();
+            let shown = attach_quote(&mut message, quote).unwrap().unwrap();
+            assert_eq!(shown.id, "original");
+            add_mentions(&mut message, &[PEER.to_owned()]);
+            let decoded = wa::Message::decode_from_slice(&message.encode_to_vec()).unwrap();
+            let context = context_of(&decoded).unwrap();
+            assert_eq!(
+                context.stanza_id.as_deref(),
+                Some("original"),
+                "{decoded:?}"
+            );
+            assert_eq!(context.mentioned_jid, vec![PEER.to_owned()]);
+            assert_eq!(worker.quoted_of(&decoded).unwrap().id, "original");
+        }
+        // Without a reply, mentions alone still attach, and nothing is quoted.
+        let mut plain = wa::Message {
+            image_message: MessageField::some(Default::default()),
+            ..Default::default()
+        };
+        assert!(attach_quote(&mut plain, None).unwrap().is_none());
+        add_mentions(&mut plain, &[PEER.to_owned()]);
+        let context = context_of(&plain).unwrap();
+        assert_eq!(context.stanza_id, None);
+        assert_eq!(context.mentioned_jid, vec![PEER.to_owned()]);
     }
 }
 

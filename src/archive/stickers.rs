@@ -127,6 +127,16 @@ impl Archive {
         rows.collect()
     }
 
+    /// Stickers that are favorites on the phone too, by content hash.
+    pub fn favorite_stickers_from_phone(&self) -> Result<Vec<String>> {
+        let mut statement = self.connection.prepare(
+            "SELECT hash FROM favorite_stickers WHERE favorite = 1 AND pushed = 1
+             ORDER BY updated_at",
+        )?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect()
+    }
+
     /// Raw sticker messages, newest first, to find a sticker's CDN references.
     pub fn sticker_message_raws(&self, limit: usize) -> Result<Vec<Vec<u8>>> {
         let mut statement = self.connection.prepare(

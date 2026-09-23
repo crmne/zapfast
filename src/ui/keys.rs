@@ -11,6 +11,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let editing_text = ctx.text_edit_focused();
+    let find = find_action(app);
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         let mut key = |modifiers: Modifiers, key: Key, action: Action| {
@@ -22,9 +23,9 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         key(
             Modifiers::COMMAND | Modifiers::SHIFT,
             Key::F,
-            Action::OpenChatSearch,
+            Action::FocusSearch,
         );
-        key(Modifiers::COMMAND, Key::F, Action::FocusSearch);
+        key(Modifiers::COMMAND, Key::F, find);
         key(Modifiers::COMMAND, Key::K, Action::FocusSearch);
         if app.is_linked() {
             key(
@@ -239,13 +240,20 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) {
     app.actions.extend(actions);
 }
 
+/// Ctrl+F searches the open chat, as in WhatsApp, and the chat list when
+/// no chat is open.
+fn find_action(app: &App) -> Action {
+    if app.open_chat.is_some() && app.page == Page::Chats {
+        Action::OpenChatSearch
+    } else {
+        Action::FocusSearch
+    }
+}
+
 /// Shortcuts shown in the help dialog.
 pub const SHORTCUTS: &[(&str, &str)] = &[
-    ("Ctrl+F / Ctrl+K", "Search chats"),
-    (
-        "Ctrl+Shift+F",
-        "Search the open chat (Enter for the next match)",
-    ),
+    ("Ctrl+K / Ctrl+Shift+F", "Search chats"),
+    ("Ctrl+F", "Search the open chat (Enter for the next match)"),
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
     ("↑", "Edit the previous message (when the input is empty)"),
@@ -281,6 +289,22 @@ pub fn label(keys: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ctrl_f_searches_the_open_chat_or_else_the_list() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        assert!(matches!(find_action(&app), Action::FocusSearch));
+        app.open_chat = Some("1@s.whatsapp.net".into());
+        app.page = Page::Chats;
+        assert!(matches!(find_action(&app), Action::OpenChatSearch));
+        app.page = Page::Settings;
+        assert!(matches!(find_action(&app), Action::FocusSearch));
+    }
 
     fn escape(app: &mut App, ctx: &egui::Context) {
         let mut output = ctx.run_ui(

@@ -584,7 +584,13 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
     let hits: Vec<Message> = app.search_hits.clone();
     let contacts: Vec<Contact> = app.matching_contacts().into_iter().cloned().collect();
-    if chats.is_empty() && hits.is_empty() && contacts.is_empty() {
+    let needle = crate::util::search_key(app.search.trim());
+    let offer_self = !needle.is_empty()
+        && app.offers_self(&needle)
+        && !chats
+            .iter()
+            .any(|chat| app.me.as_deref() == Some(chat.id.as_str()));
+    if chats.is_empty() && hits.is_empty() && contacts.is_empty() && !offer_self {
         widgets::empty_state(
             ui,
             &palette,
@@ -617,8 +623,11 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                     ui.push_id(("hit", &hit.chat, &hit.id), |ui| hit_row(app, ui, hit));
                 }
             }
-            if !contacts.is_empty() {
+            if !contacts.is_empty() || offer_self {
                 section(ui, &palette, "Contacts");
+                if offer_self {
+                    ui.push_id("self", |ui| self_row(app, ui));
+                }
                 for contact in &contacts {
                     ui.push_id(("contact", &contact.id), |ui| contact_row(app, ui, contact));
                 }
@@ -738,8 +747,36 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
 
 /// A contact without a chat. Clicking starts one.
 pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
-    let palette = app.palette;
     let name = app.display_name(&contact.id);
+    let detail = crate::model::phone_of(&contact.id).map(crate::util::phone);
+    if person_row(app, ui, &contact.id, &name, detail.as_deref()).clicked() {
+        app.actions.push(Action::StartChat {
+            id: contact.id.clone(),
+            name,
+        });
+    }
+}
+
+/// Offers the chat with ourselves, as "Name (You)" over "Message yourself".
+pub(super) fn self_row(app: &mut App, ui: &mut egui::Ui) {
+    let Some(me) = app.me.clone() else {
+        return;
+    };
+    let name = app.self_title();
+    let detail = crate::i18n::gettext(app.locale, "Message yourself");
+    if person_row(app, ui, &me, &name, Some(detail.as_ref())).clicked() {
+        app.actions.push(Action::MessageYourself);
+    }
+}
+
+fn person_row(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    id: &str,
+    name: &str,
+    detail: Option<&str>,
+) -> egui::Response {
+    let palette = app.palette;
     let (rect, response) = ui.allocate_exact_size(
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
@@ -751,29 +788,22 @@ pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
         }
         let avatar_rect =
             Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
-        let picture = app.avatar(&contact.id);
-        widgets::paint_avatar(
-            ui,
-            &palette,
-            avatar_rect,
-            &name,
-            &contact.id,
-            picture.as_deref(),
-        );
+        let picture = app.avatar(id);
+        widgets::paint_avatar(ui, &palette, avatar_rect, name, id, picture.as_deref());
         let left = rect.left() + 76.0;
         let name_line = widgets::line(
             ui,
-            &name,
+            name,
             theme::medium(14.5),
             palette.text,
             rect.right() - 14.0 - left,
             1,
         );
         name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
-        if let Some(phone) = crate::model::phone_of(&contact.id) {
+        if let Some(detail) = detail {
             let phone_line = widgets::line(
                 ui,
-                &crate::util::phone(phone),
+                detail,
                 theme::regular(13.0),
                 palette.dim,
                 rect.right() - 14.0 - left,
@@ -787,13 +817,7 @@ pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
             egui::Stroke::new(1.0, palette.outline),
         );
     }
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    if response.clicked() {
-        app.actions.push(Action::StartChat {
-            id: contact.id.clone(),
-            name,
-        });
-    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {

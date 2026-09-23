@@ -105,8 +105,18 @@ fn main() -> eframe::Result<()> {
     let cli = Cli::parse();
     let discovered = paths::AppDirs::discover();
     if matches!(cli.command, Some(Control::ReloadThemes)) {
-        single_instance::send(&discovered.runtime, "reload-themes")
-            .map_err(|error| eframe::Error::AppCreation(error.into()))?;
+        if let Err(error) = single_instance::send(&discovered.runtime, "reload-themes") {
+            use std::io::ErrorKind;
+            if matches!(
+                error.kind(),
+                ErrorKind::NotFound | ErrorKind::ConnectionRefused
+            ) {
+                eprintln!("ZapFast is not running, so there are no themes to reload.");
+            } else {
+                eprintln!("Could not reach the running ZapFast: {error}");
+            }
+            std::process::exit(1);
+        }
         return Ok(());
     }
     let waker = backend::Waker::default();

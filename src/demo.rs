@@ -1911,10 +1911,71 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     },
                 );
                 row.thumbnail = Some(sample_map());
+                // Then a plain location of our own, without a preview.
+                let pinned = message(
+                    ada,
+                    "ada-location-now",
+                    true,
+                    now - 60 * 2,
+                    Content::Location {
+                        latitude: 51.5226,
+                        longitude: -0.1571,
+                        name: None,
+                        address: None,
+                    },
+                );
                 if let Some(conversation) = app.conversations.get_mut(ada) {
                     conversation.messages.push(row);
+                    conversation.messages.push(pinned);
                 }
                 app.open_chat = Some(ada.to_owned());
+                app.scroll_to_bottom = true;
+            }
+            // Our phone shares a live location in our own chat, masked from
+            // linked devices as WhatsApp does.
+            "live-phone" => {
+                let now = crate::util::now();
+                let messages = vec![
+                    message(
+                        ME,
+                        "self-note",
+                        true,
+                        now - 60 * 5,
+                        Content::text("Parking"),
+                    ),
+                    message(
+                        ME,
+                        "self-live",
+                        true,
+                        now - 60 * 2,
+                        Content::PhoneOnly {
+                            view_once: false,
+                            live_location: true,
+                        },
+                    ),
+                ];
+                let mut chat = Chat::new(ME.into(), "You".into());
+                chat.last_activity = now;
+                chat.last = messages.last().map(|last| crate::model::LastMessage {
+                    from_me: true,
+                    sender: last.sender.clone(),
+                    sender_name: None,
+                    summary: last.summary(),
+                    status: last.status,
+                });
+                app.chats.insert(0, chat);
+                app.conversations.insert(
+                    ME.into(),
+                    Conversation {
+                        messages,
+                        complete: true,
+                        requested: true,
+                        phone_exhausted: true,
+                        ..Default::default()
+                    },
+                );
+                app.open_chat = Some(ME.into());
+                app.typing.clear();
                 app.scroll_to_bottom = true;
             }
             "typing" => {
@@ -3578,6 +3639,85 @@ mod tests {
         }
     }
 
+    /// A refused voice message waits above its own chat's composer, where
+    /// Enter in the empty composer sends it again and the strip's X discards
+    /// it; other chats neither show nor send it.
+    #[test]
+    fn a_refused_voice_message_is_offered_only_in_its_chat() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        let own = SAMPLES[0].id.to_owned();
+        let other = SAMPLES[2].id.to_owned();
+        let clip = vec![0.25; crate::voice::RATE as usize * 6];
+        app.actions.push(crate::model::Action::OpenChat(other));
+        render(&mut app, &ctx);
+        app.unsent_voice = Some((own.clone(), clip.clone()));
+        let discard = |ctx: &egui::Context| {
+            ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new("unsent-voice-discard")))
+        };
+        let enter = |app: &mut App| {
+            app.focus_composer = true;
+            render(app, &ctx);
+            frame_with(
+                app,
+                &ctx,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            render(app, &ctx);
+            app.backend.take_demo_commands()
+        };
+        let sent = enter(&mut app);
+        assert!(
+            !sent
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::SendVoice { .. })),
+            "another chat does not send the clip"
+        );
+        assert!(discard(&ctx).is_none(), "another chat does not show it");
+        assert!(app.unsent_voice.is_some());
+        app.actions
+            .push(crate::model::Action::OpenChat(own.clone()));
+        render(&mut app, &ctx);
+        assert!(
+            discard(&ctx).is_some(),
+            "its own chat shows the unsent clip"
+        );
+        let sent = enter(&mut app);
+        assert!(
+            sent.iter().any(|command| matches!(command,
+                crate::backend::Command::SendVoice { chat, samples, .. }
+                    if *chat == own && samples.len() == clip.len())),
+            "Enter sends the clip again"
+        );
+        assert!(app.unsent_voice.is_none());
+        // The strip's X discards a clip without sending it.
+        app.unsent_voice = Some((own, clip));
+        render(&mut app, &ctx);
+        let pos = discard(&ctx).unwrap().center();
+        let click = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), click(true)],
+        );
+        frame_with(&mut app, &ctx, vec![click(false)]);
+        render(&mut app, &ctx);
+        assert!(app.unsent_voice.is_none());
+        assert!(
+            !app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::SendVoice { .. }))
+        );
+    }
+
     #[test]
     fn enter_sends_and_shift_enter_breaks_the_line() {
         let mut app = app();
@@ -4310,6 +4450,29 @@ mod tests {
             app.reaction_target.is_none(),
             "the context menu does not open the reaction picker"
         );
+    }
+
+    /// A location in our own bubble keeps one width from frame to frame
+    /// instead of flickering, and stays a card rather than spanning the chat.
+    #[test]
+    fn our_location_cards_hold_still() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        apply_flags(&mut app, Some("live"));
+        let id = crate::ui::conversation::bubble_id(sample_ids()[0], "ada-location-now");
+        let rect =
+            |ctx: &egui::Context| ctx.data(|data| data.get_temp::<egui::Rect>(id.with("rect")));
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let first = rect(&ctx).expect("the location bubble was drawn");
+        for _ in 0..4 {
+            render(&mut app, &ctx);
+            assert_eq!(rect(&ctx), Some(first), "the bubble moved between frames");
+        }
+        assert!(first.width() < 360.0, "the card spans {}", first.width());
     }
 
     #[test]

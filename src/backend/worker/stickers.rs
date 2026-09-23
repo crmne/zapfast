@@ -8,25 +8,56 @@
 use super::*;
 use whatsapp_rust::schemas;
 
-/// The hex content hash for a WhatsApp `filehash`.
+/// The hex content hash for a WhatsApp `filehash`. WhatsApp writes standard
+/// padded base64, but an unpadded or URL-safe digest names the same file.
 pub(super) fn hash_of_filehash(filehash: &str) -> Option<String> {
     use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(filehash.trim())
-        .ok()?;
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+    let filehash = filehash.trim();
+    let bytes = [STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD]
+        .iter()
+        .find_map(|engine| engine.decode(filehash).ok())?;
     (bytes.len() == 32).then(|| bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// The raw SHA-256 behind a hex content hash.
+fn digest_of_hash(hash: &str) -> Option<Vec<u8>> {
+    if hash.len() != 64 {
+        return None;
+    }
+    (0..32)
+        .map(|index| u8::from_str_radix(hash.get(index * 2..index * 2 + 2)?, 16).ok())
+        .collect()
+}
+
+/// Whether an action carries enough to fetch the sticker from the CDN.
+fn fetchable(action: &wa::sync_action_value::StickerAction) -> bool {
+    action
+        .direct_path
+        .as_deref()
+        .is_some_and(|path| !path.is_empty())
+        || (action.media_key.is_none() && action.url.as_deref().is_some_and(|url| !url.is_empty()))
+}
+
+/// A download error without the CDN paths and tokens it may quote.
+fn redacted(error: &str) -> String {
+    error
+        .split_whitespace()
+        .map(|word| {
+            if word.contains("://") || word.contains("/v/") || word.contains("oh=") {
+                "<link>"
+            } else {
+                word
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The WhatsApp `filehash` for a hex content hash.
 pub(super) fn filehash_of_hash(hash: &str) -> Option<String> {
     use base64::Engine;
-    if hash.len() != 64 {
-        return None;
-    }
-    let bytes = (0..32)
-        .map(|index| u8::from_str_radix(hash.get(index * 2..index * 2 + 2)?, 16).ok())
-        .collect::<Option<Vec<u8>>>()?;
-    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+    Some(base64::engine::general_purpose::STANDARD.encode(digest_of_hash(hash)?))
 }
 
 /// How a WhatsApp sticker pack message reads in a chat.
@@ -125,32 +156,52 @@ fn now_millis() -> i64 {
 /// How many recent sticker messages to search for a sticker's references.
 const REFERENCE_SEARCH: usize = 2000;
 
+/// Archive marker: favorites the phone synced before ZapFast followed them
+/// have been replayed.
+pub(super) const FAVORITES_RECOVERED: &str = "favorite_stickers_recovered_v1";
+
 /// A favorite sticker the phone told us about, fetched by its references.
-struct FavoriteDownload(wa::sync_action_value::StickerAction);
+/// The filehash is the plaintext SHA-256, which an unencrypted sticker (one
+/// the phone has no media key for) needs to be fetched at all.
+struct FavoriteDownload {
+    action: wa::sync_action_value::StickerAction,
+    file_sha256: Vec<u8>,
+}
 
 impl Downloadable for FavoriteDownload {
     fn direct_path(&self) -> Option<&str> {
-        self.0.direct_path.as_deref()
+        self.action
+            .direct_path
+            .as_deref()
+            .filter(|path| !path.is_empty())
     }
 
     fn media_key(&self) -> Option<&[u8]> {
-        self.0.media_key.as_deref()
+        self.action.media_key.as_deref()
     }
 
     fn file_enc_sha256(&self) -> Option<&[u8]> {
-        self.0.file_enc_sha256.as_deref()
+        self.action.file_enc_sha256.as_deref()
     }
 
     fn file_sha256(&self) -> Option<&[u8]> {
-        None
+        Some(&self.file_sha256)
     }
 
     fn file_length(&self) -> Option<u64> {
-        self.0.file_length
+        self.action.file_length
     }
 
     fn app_info(&self) -> MediaType {
         MediaType::Sticker
+    }
+
+    fn static_url(&self) -> Option<&str> {
+        // Only a plain CDN file without a direct path is fetched by its URL.
+        if self.media_key().is_some() || self.direct_path().is_some() {
+            return None;
+        }
+        self.action.url.as_deref().filter(|url| !url.is_empty())
     }
 }
 
@@ -537,49 +588,181 @@ impl Worker {
         }
     }
 
-    /// Applies a favorite added or removed on the phone, unless a later
-    /// change here wins. A new favorite is fetched into the favorites folder.
+    /// Applies a favorite added or removed on the phone. The phone's change
+    /// comes later in the sync order than anything it already had from us, so
+    /// it wins unless a change made here is still on its way to the phone and
+    /// is newer. A new favorite is copied from a local copy of the same sticker
+    /// or fetched into the favorites folder, and fetched again on the next
+    /// connection until its file arrives.
     pub(super) fn favorite_sticker_update(&mut self, update: &wa_events::FavoriteStickerUpdate) {
+        let source = if update.from_full_sync {
+            "phone (full sync)"
+        } else {
+            "phone"
+        };
         let Some(hash) = hash_of_filehash(&update.filehash) else {
+            log::warn!(
+                "ignored a favorite sticker change from the {source}: unreadable file hash ({} characters)",
+                update.filehash.len()
+            );
             return;
         };
         let Some(favorite) = update.action.is_favorite else {
+            log::warn!("ignored a favorite sticker change from the {source}: no favorite flag");
             return;
         };
-        let at = update.timestamp.timestamp_millis();
+        // Syncd timestamps are milliseconds; a missing one reads as the epoch.
+        let stamped = update.timestamp.timestamp_millis();
         if let Ok(Some(known)) = self.archive.favorite_sticker(&hash)
-            && known.updated_at > at
+            && !known.pushed
+            && known.updated_at > stamped
         {
+            log::info!("kept a newer favorite sticker change made here over one from the {source}");
             return;
         }
-        let action = update.action.encode_to_vec();
+        let at = if stamped > 0 { stamped } else { now_millis() };
+        // Removing a favorite carries no references; keep the ones we know.
+        let action = fetchable(&update.action).then(|| update.action.encode_to_vec());
         if let Err(error) =
             self.archive
-                .set_favorite_sticker(&hash, favorite, at, Some(&action), true)
+                .set_favorite_sticker(&hash, favorite, at, action.as_deref(), true)
         {
             log::warn!("could not record a favorite sticker: {error}");
         }
-        let dir = self.dirs.saved_sticker_dir();
-        let path = dir.join(format!("{hash}.webp"));
+        log::info!(
+            "favorite sticker {} on the {source}",
+            if favorite { "added" } else { "removed" }
+        );
         if !favorite {
+            let path = self.dirs.saved_sticker_dir().join(format!("{hash}.webp"));
             if std::fs::remove_file(&path).is_ok() {
                 self.emit_stickers();
             }
             return;
         }
-        if path.exists() || !self.favorite_fetches.insert(hash.clone()) {
+        self.fetch_favorite(hash);
+    }
+
+    /// Brings a favorite's file into the favorites folder: from a copy of the
+    /// same sticker already on this computer, otherwise from the CDN.
+    fn fetch_favorite(&mut self, hash: String) {
+        let dir = self.dirs.saved_sticker_dir();
+        let path = dir.join(format!("{hash}.webp"));
+        if path.exists() || self.favorite_fetches.contains(&hash) {
+            return;
+        }
+        if let Some(source) = self.local_sticker_copy(&hash) {
+            match super::super::sticker_store::save(&dir, &source) {
+                Ok(_) => {
+                    log::info!("favorite sticker copied from a local copy");
+                    self.emit_stickers();
+                    return;
+                }
+                Err(error) => log::warn!("could not copy a favorite sticker: {error}"),
+            }
+        }
+        let Some(file_sha256) = digest_of_hash(&hash) else {
+            return;
+        };
+        let stored = self
+            .archive
+            .favorite_sticker(&hash)
+            .ok()
+            .flatten()
+            .and_then(|known| known.action)
+            .and_then(|raw| wa::sync_action_value::StickerAction::decode_from_slice(&raw).ok());
+        let candidates: Vec<FavoriteDownload> = stored
+            .into_iter()
+            .chain(self.sticker_references(&hash))
+            .filter(fetchable)
+            .map(|action| FavoriteDownload {
+                action,
+                file_sha256: file_sha256.clone(),
+            })
+            .collect();
+        if candidates.is_empty() {
+            log::warn!(
+                "could not fetch a favorite sticker: no download references and no local copy"
+            );
             return;
         }
         let Some(client) = self.client.clone() else {
-            self.favorite_fetches.remove(&hash);
+            log::info!("a favorite sticker will be fetched once connected");
             return;
         };
-        let download = FavoriteDownload((*update.action).clone());
+        self.favorite_fetches.insert(hash.clone());
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            let result = download_attachment(&client, &download, &dir, &path).await;
+            let mut result = Err("no download references".to_owned());
+            for download in &candidates {
+                result = download_attachment(&client, download, &dir, &path).await;
+                if result.is_ok() {
+                    break;
+                }
+            }
             let _ = commands.send(Command::FavoriteFetched { hash, result });
         });
+    }
+
+    /// A file on this computer holding the sticker with this content hash: in
+    /// the phone's recent stickers, stickers from chats, or a pack.
+    fn local_sticker_copy(&self, hash: &str) -> Option<PathBuf> {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Ok(phone) = self.archive.phone_stickers() {
+            candidates.extend(
+                phone
+                    .into_iter()
+                    .filter(|sticker| sticker.hash == hash)
+                    .filter_map(|sticker| sticker.path),
+            );
+        }
+        if let Ok(rows) = self.archive.recent_stickers(REFERENCE_SEARCH) {
+            candidates.extend(rows.into_iter().filter_map(|sticker| {
+                let raw = sticker.raw.as_deref()?;
+                let message = wa::Message::decode_from_slice(raw).ok()?;
+                let found = message.get_base_message().sticker_message.as_option()?;
+                (sticker_hash(found.file_sha256.as_deref(), None).as_deref() == Some(hash))
+                    .then_some(sticker.path)
+            }));
+        }
+        candidates.extend(
+            self.sticker_packs()
+                .into_iter()
+                .flat_map(|pack| pack.stickers)
+                .filter(|path| {
+                    path.file_stem()
+                        .is_some_and(|stem| stem.to_string_lossy() == hash)
+                }),
+        );
+        candidates.into_iter().find(|path| {
+            std::fs::read(path)
+                .is_ok_and(|bytes| super::super::sticker_store::content_hash(&bytes) == hash)
+        })
+    }
+
+    /// Fetches favorites the phone named whose files never arrived, such as
+    /// one whose download failed or that came while offline.
+    pub(super) fn fetch_missing_favorites(&mut self) {
+        let dir = self.dirs.saved_sticker_dir();
+        let missing: Vec<String> = match self.archive.favorite_stickers_from_phone() {
+            Ok(hashes) => hashes
+                .into_iter()
+                .filter(|hash| !dir.join(format!("{hash}.webp")).exists())
+                .collect(),
+            Err(error) => {
+                log::warn!("could not list favorite stickers to fetch: {error}");
+                return;
+            }
+        };
+        if !missing.is_empty() {
+            log::info!(
+                "fetching {} favorite stickers from the phone",
+                missing.len()
+            );
+        }
+        for hash in missing {
+            self.fetch_favorite(hash);
+        }
     }
 
     /// Keeps a fetched favorite only when it is the sticker the phone named.
@@ -589,13 +772,70 @@ impl Worker {
             Ok(path) => {
                 let matches = std::fs::read(&path)
                     .is_ok_and(|bytes| super::super::sticker_store::content_hash(&bytes) == hash);
-                if !matches {
+                if matches {
+                    log::info!("favorite sticker fetched from the phone");
+                } else {
                     log::warn!("a favorite sticker did not match its hash");
                     let _ = std::fs::remove_file(&path);
                 }
                 self.emit_stickers();
             }
-            Err(_error) => log::warn!("could not fetch a favorite sticker"),
+            // The phone's record stays, so the next connection tries again.
+            Err(error) => log::warn!(
+                "could not fetch a favorite sticker; retrying on the next connection: {}",
+                redacted(&error)
+            ),
+        }
+    }
+
+    /// Favorites saved on the phone before ZapFast followed them were already
+    /// consumed by earlier syncs, and incremental syncs never repeat them.
+    /// Rebuilds the collection holding them once, so they replay.
+    pub(super) fn recover_favorites(&mut self) {
+        if self.favorites_recovered
+            || self.favorites_recovering
+            || !matches!(self.status, LinkStatus::Connected)
+        {
+            return;
+        }
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        self.favorites_recovering = true;
+        log::info!("reading favorite stickers from the phone");
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            use whatsapp_rust::WAPatchName;
+            let complete = match client
+                .resync_app_state(
+                    [WAPatchName::RegularLow],
+                    whatsapp_rust::AppStateResyncMode::Snapshot,
+                )
+                .await
+            {
+                Ok(report) => report.synced.contains(&WAPatchName::RegularLow),
+                Err(error) => {
+                    log::warn!("could not read favorite stickers from the phone: {error}");
+                    false
+                }
+            };
+            let _ = commands.send(Command::FavoritesRecovered { complete });
+        });
+    }
+
+    /// The one-time favorites replay finished, or waits for the next
+    /// connection.
+    pub(super) fn favorites_recovered(&mut self, complete: bool) {
+        self.favorites_recovering = false;
+        if !complete {
+            log::warn!(
+                "favorite stickers from the phone not read yet; retrying on the next connection"
+            );
+            return;
+        }
+        self.favorites_recovered = true;
+        if let Err(error) = self.archive.set_meta(FAVORITES_RECOVERED, "complete") {
+            log::warn!("could not record the favorite sticker sync: {error}");
         }
     }
 
@@ -811,5 +1051,242 @@ mod tests {
         assert!(hash_of_filehash("not base64!").is_none());
         assert!(hash_of_filehash("c2hvcnQ=").is_none(), "too short");
         assert!(filehash_of_hash("abc").is_none());
+        // The same digest written without padding or URL-safe still names it.
+        use base64::Engine;
+        let digest = digest_of_hash(&hash).expect("digest");
+        for engine in [
+            base64::engine::general_purpose::STANDARD_NO_PAD,
+            base64::engine::general_purpose::URL_SAFE,
+            base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        ] {
+            assert_eq!(
+                hash_of_filehash(&engine.encode(&digest)).as_deref(),
+                Some(hash.as_str())
+            );
+        }
+    }
+
+    /// Bytes standing in for a WebP sticker file, distinct per test.
+    fn sticker_bytes(tag: &str) -> Vec<u8> {
+        format!("RIFF....WEBPVP8L sticker {tag}").into_bytes()
+    }
+
+    /// A `favoriteSticker` change as the phone syncs it, in upstream's test
+    /// format: indexed by the standard base64 SHA-256 of the sticker file,
+    /// carrying the CDN references a companion fetches it by, stamped in
+    /// milliseconds (`0` when the phone sent no timestamp, which upstream
+    /// turns into the epoch).
+    fn phone_favorite(
+        bytes: &[u8],
+        favorite: bool,
+        at_ms: i64,
+    ) -> wa_events::FavoriteStickerUpdate {
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+        let filehash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(bytes));
+        let action = wa::sync_action_value::StickerAction {
+            url: Some("https://mmg.whatsapp.net/v/t62.15575-24/sticker.enc?oh=x&oe=y".into()),
+            file_enc_sha256: Some(vec![9; 32]),
+            media_key: Some(vec![7; 32]),
+            mimetype: Some("image/webp".into()),
+            height: Some(512),
+            width: Some(512),
+            direct_path: Some("/v/t62.15575-24/sticker.enc?oh=x&oe=y".into()),
+            file_length: Some(bytes.len() as u64),
+            is_favorite: Some(favorite),
+            device_id_hint: Some(0),
+            ..Default::default()
+        };
+        wa_events::FavoriteStickerUpdate::builder()
+            .filehash(filehash)
+            .timestamp(whatsapp_rust::wacore::time::from_millis_or_now(at_ms))
+            .action(Box::new(action))
+            .from_full_sync(false)
+            .build()
+    }
+
+    fn sticker_worker() -> (
+        Worker,
+        tempfile::TempDir,
+        std::sync::mpsc::Receiver<Event>,
+        mpsc::UnboundedReceiver<Command>,
+    ) {
+        let (mut worker, events, commands, _wa) = super::super::receipt_tests::worker();
+        let root = tempfile::tempdir().expect("temp");
+        worker.dirs = AppDirs::under(root.path());
+        (worker, root, events, commands)
+    }
+
+    fn favorites_listed(events: &std::sync::mpsc::Receiver<Event>) -> Option<Vec<PathBuf>> {
+        events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Stickers { favorites, .. } => Some(favorites),
+                _ => None,
+            })
+            .last()
+    }
+
+    /// Carmine's test: a sticker favorited on the phone never showed up. The
+    /// phone favorites a sticker from its own tray, which ZapFast already has
+    /// as one of the phone's recent stickers.
+    #[test]
+    fn a_sticker_favorited_on_the_phone_appears_in_favorites() {
+        let (mut worker, _root, events, _commands) = sticker_worker();
+        let bytes = sticker_bytes("from the phone's tray");
+        let hash = crate::backend::sticker_store::content_hash(&bytes);
+        let cache = worker.dirs.sticker_cache_dir();
+        std::fs::create_dir_all(&cache).expect("cache");
+        let cached = cache.join("recent.webp");
+        std::fs::write(&cached, &bytes).expect("writes");
+        worker
+            .archive
+            .upsert_phone_sticker(&hash, b"meta", 100, 1.0)
+            .expect("stores");
+        worker
+            .archive
+            .set_sticker_path(&hash, &cached)
+            .expect("stores");
+
+        worker.favorite_sticker_update(&phone_favorite(&bytes, true, now_millis()));
+
+        let saved = worker.dirs.saved_sticker_dir().join(format!("{hash}.webp"));
+        assert_eq!(
+            std::fs::read(&saved).ok(),
+            Some(bytes),
+            "saved as a favorite"
+        );
+        assert_eq!(favorites_listed(&events), Some(vec![saved]));
+        let known = worker
+            .archive
+            .favorite_sticker(&hash)
+            .expect("reads")
+            .expect("row");
+        assert!(known.favorite && known.pushed, "the phone already has it");
+    }
+
+    /// A favorite the phone names but that cannot be fetched now stays owed:
+    /// the next connection fetches it instead of forgetting it.
+    #[test]
+    fn a_favorite_that_could_not_be_fetched_is_fetched_again() {
+        let (mut worker, _root, _events, _commands) = sticker_worker();
+        let bytes = sticker_bytes("not on this computer yet");
+        let hash = crate::backend::sticker_store::content_hash(&bytes);
+        worker.favorite_sticker_update(&phone_favorite(&bytes, true, now_millis()));
+        worker.favorite_fetched(&hash, Err("HTTP 410 https://mmg.example/v/x".to_owned()));
+        assert_eq!(
+            worker
+                .archive
+                .favorite_stickers_from_phone()
+                .expect("lists"),
+            vec![hash.clone()]
+        );
+        let stored = worker
+            .archive
+            .favorite_sticker(&hash)
+            .expect("reads")
+            .and_then(|known| known.action)
+            .expect("the phone's references are kept for the retry");
+        let action =
+            wa::sync_action_value::StickerAction::decode_from_slice(&stored).expect("decodes");
+        assert!(fetchable(&action));
+
+        // By the next connection the sticker arrived in a pack.
+        let pack = worker.packs_dir().join("Ducks");
+        std::fs::create_dir_all(&pack).expect("pack");
+        std::fs::write(pack.join(format!("{hash}.webp")), &bytes).expect("writes");
+        worker.fetch_missing_favorites();
+        let saved = worker.dirs.saved_sticker_dir().join(format!("{hash}.webp"));
+        assert_eq!(std::fs::read(saved).ok(), Some(bytes));
+    }
+
+    /// The phone's clock need not agree with this computer's. A change the
+    /// phone makes after it received ours comes later in the sync, so it
+    /// wins even when its timestamp reads earlier, or is missing.
+    #[test]
+    fn a_phone_change_wins_over_one_the_phone_already_has() {
+        for phone_at in [now_millis() - 60_000, 0] {
+            let (mut worker, root, _events, _commands) = sticker_worker();
+            let bytes = sticker_bytes("favorited here first");
+            let file = root.path().join("picked.webp");
+            std::fs::write(&file, &bytes).expect("writes");
+            worker.favorite_sticker(&file);
+            let hash = crate::backend::sticker_store::content_hash(&bytes);
+            let saved = worker.dirs.saved_sticker_dir().join(format!("{hash}.webp"));
+            assert!(saved.exists());
+            let here = worker
+                .archive
+                .favorite_sticker(&hash)
+                .expect("reads")
+                .expect("row");
+            worker
+                .archive
+                .favorite_sticker_pushed(&hash, here.updated_at, Some(b"refs"))
+                .expect("pushed");
+
+            worker.favorite_sticker_update(&phone_favorite(&bytes, false, phone_at));
+
+            assert!(
+                !saved.exists(),
+                "removed on the phone (timestamp {phone_at})"
+            );
+            let known = worker
+                .archive
+                .favorite_sticker(&hash)
+                .expect("reads")
+                .expect("row");
+            assert!(!known.favorite && known.pushed);
+            assert!(known.updated_at > 0, "a missing timestamp is stored as now");
+        }
+    }
+
+    /// A change made here that the phone has not received yet is newer than
+    /// the phone's, so it is kept and still sent.
+    #[test]
+    fn a_newer_change_on_its_way_to_the_phone_is_kept() {
+        let (mut worker, root, _events, _commands) = sticker_worker();
+        let bytes = sticker_bytes("favorited here while offline");
+        let file = root.path().join("picked.webp");
+        std::fs::write(&file, &bytes).expect("writes");
+        worker.favorite_sticker(&file);
+        let hash = crate::backend::sticker_store::content_hash(&bytes);
+        worker.favorite_sticker_update(&phone_favorite(&bytes, false, now_millis() - 60_000));
+        let saved = worker.dirs.saved_sticker_dir().join(format!("{hash}.webp"));
+        assert!(saved.exists());
+        let known = worker
+            .archive
+            .favorite_sticker(&hash)
+            .expect("reads")
+            .expect("row");
+        assert!(known.favorite && !known.pushed, "still to be sent");
+    }
+
+    /// The filehash is the plaintext SHA-256, which a sticker the phone holds
+    /// no media key for needs to be fetched and checked by.
+    #[test]
+    fn a_favorite_download_carries_the_file_hash() {
+        let bytes = sticker_bytes("plain");
+        let update = phone_favorite(&bytes, true, 1);
+        let hash = hash_of_filehash(&update.filehash).expect("hash");
+        let mut action = (*update.action).clone();
+        action.media_key = None;
+        action.direct_path = None;
+        action.url = Some("https://static.whatsapp.net/sticker?id=1".into());
+        assert!(fetchable(&action));
+        let download = FavoriteDownload {
+            action,
+            file_sha256: digest_of_hash(&hash).expect("digest"),
+        };
+        use sha2::{Digest, Sha256};
+        assert_eq!(download.file_sha256(), Some(&Sha256::digest(&bytes)[..]));
+        assert_eq!(
+            download.static_url(),
+            Some("https://static.whatsapp.net/sticker?id=1")
+        );
+        assert!(!download.is_encrypted());
+        assert_eq!(
+            redacted("HTTP 410 for https://mmg.whatsapp.net/v/t62/x?oh=1"),
+            "HTTP 410 for <link>"
+        );
     }
 }
