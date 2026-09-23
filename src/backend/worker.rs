@@ -2036,15 +2036,7 @@ impl Worker {
         // fresh envelopes (new ids) and reference the session's start message
         // through contextInfo.stanzaId, so they are filed under that anchor id
         // and ordered by sequenceNumber.
-        if self.ingest_live_location(
-            &chat,
-            &sender,
-            from_me,
-            push_name.as_deref(),
-            base,
-            &info.id,
-            info.timestamp.timestamp(),
-        ) {
+        if self.ingest_live_location(&chat, &sender, from_me, push_name.as_deref(), base, info) {
             return;
         }
         let Some(content) = classify(base) else {
@@ -2096,13 +2088,12 @@ impl Worker {
         from_me: bool,
         push_name: Option<&str>,
         base: &wa::Message,
-        id: &str,
-        timestamp: i64,
+        info: &MessageInfo,
     ) -> bool {
         let Some((content, anchor)) = live_location_of(base) else {
             return false;
         };
-        let anchor = anchor.unwrap_or_else(|| id.to_owned());
+        let anchor = anchor.unwrap_or_else(|| info.id.to_string());
 
         // Sequence guard: an out-of-order, duplicate, or post-end update never
         // regresses the bubble.
@@ -2122,7 +2113,7 @@ impl Worker {
                 push_name.map(ToString::to_string)
             },
             from_me,
-            timestamp,
+            timestamp: info.timestamp.timestamp(),
             content,
             status: if from_me {
                 Delivery::Sent
