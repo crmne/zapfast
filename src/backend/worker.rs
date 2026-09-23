@@ -183,24 +183,39 @@ async fn download_attachment(
 
 /// Publishes a complete attachment only after its download has been verified.
 /// Never replaces an existing file: a name collision publishes under a unique
-/// name instead, and the caller stores and reports that actual path. Unix
-/// rename replaces silently, so the destination must be probed first.
+/// name instead, and the caller stores and reports that actual path. The hard
+/// link is atomic and refuses an existing destination on every filesystem
+/// that supports links, closing the probe/rename race Unix rename has; the
+/// probe-and-rename fallback only serves filesystems without link support
+/// (FAT/exFAT), where the AlreadyExists recheck after a failed rename closes
+/// the race on platforms that refuse to replace a destination.
 async fn publish_attachment(temporary: &Path, path: &Path) -> Result<PathBuf, String> {
     let mut target = path.to_owned();
     loop {
-        // Never overwrite a user's file or mistake it for this attachment.
-        // The recheck after a failed rename closes the probe/rename race on
-        // platforms that refuse to replace a destination.
-        if target.try_exists().map_err(|error| error.to_string())? {
-            target = media_storage::collision_safe_name(&target);
-            continue;
-        }
-        match tokio::fs::rename(temporary, &target).await {
-            Ok(()) => return Ok(target),
+        match std::fs::hard_link(temporary, &target) {
+            Ok(()) => {
+                // One inode under the real name now; the hidden staging name
+                // goes away. A leftover is cleaned at startup like any
+                // interrupted staging file.
+                let _ = std::fs::remove_file(temporary);
+                return Ok(target);
+            }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 target = media_storage::collision_safe_name(&target);
             }
-            Err(error) => return Err(error.to_string()),
+            Err(_) => {
+                if target.try_exists().map_err(|error| error.to_string())? {
+                    target = media_storage::collision_safe_name(&target);
+                    continue;
+                }
+                match tokio::fs::rename(temporary, &target).await {
+                    Ok(()) => return Ok(target),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        target = media_storage::collision_safe_name(&target);
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
+            }
         }
     }
 }
