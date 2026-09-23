@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 23:10+0200\n"
+"POT-Creation-Date: 2026-09-23 23:15+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -151,6 +151,10 @@ msgstr "Archiviate"
 msgid "Locked"
 msgstr "Bloccati"
 
+#: src/ui/chats.rs:766 src/app.rs:1068
+msgid "Message yourself"
+msgstr "Invia un messaggio a te stesso"
+
 #: src/ui/conversation.rs:161
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K per cercare · ? per le scorciatoie da tastiera"
@@ -203,7 +207,7 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} messaggio non letto"
 msgstr[1] "{} messaggi non letti"
 
-#: src/ui/conversation.rs:3140 src/ui/dialogs.rs:973 src/ui/picker.rs:1570
+#: src/ui/conversation.rs:3140 src/ui/dialogs.rs:963 src/ui/picker.rs:1570
 msgid "Add to favorites"
 msgstr "Aggiungi ai preferiti"
 
@@ -223,7 +227,7 @@ msgstr "Apri in una mappa"
 msgid "Live location ended"
 msgstr "Posizione in tempo reale terminata"
 
-#: src/ui/conversation.rs:3483
+#: src/ui/conversation.rs:3483 src/ui/conversation.rs:3652
 msgid "Live location"
 msgstr "Posizione in tempo reale"
 
@@ -243,64 +247,68 @@ msgstr[1] "{} sticker"
 msgid "View stickers"
 msgstr "Vedi sticker"
 
-#: src/ui/conversation.rs:4958
+#: src/ui/conversation.rs:3660
+msgid "Open WhatsApp on your phone to follow it."
+msgstr "Apri WhatsApp sul telefono per seguirla."
+
+#: src/ui/conversation.rs:4991
 msgid "Pause"
 msgstr "Pausa"
 
-#: src/ui/conversation.rs:4960
+#: src/ui/conversation.rs:4993
 #, fuzzy
 msgid "Play"
 msgstr "Riprodotto"
 
-#: src/ui/conversation.rs:4983
+#: src/ui/conversation.rs:5016
 msgid "Unmute"
 msgstr "Riattiva audio"
 
-#: src/ui/conversation.rs:4985
+#: src/ui/conversation.rs:5018
 msgid "Mute"
 msgstr "Disattiva audio"
 
-#: src/ui/dialogs.rs:799
+#: src/ui/dialogs.rs:789
 msgid "Sticker pack"
 msgstr "Pacchetto di sticker"
 
-#: src/ui/dialogs.rs:804
+#: src/ui/dialogs.rs:794
 msgid "Downloading the pack…"
 msgstr "Download del pacchetto…"
 
-#: src/ui/dialogs.rs:828
+#: src/ui/dialogs.rs:818
 msgid "Add to my stickers"
 msgstr "Aggiungi ai miei sticker"
 
-#: src/ui/dialogs.rs:835 src/ui/message_info.rs:28 src/ui/labels.rs:271
+#: src/ui/dialogs.rs:825 src/ui/message_info.rs:28 src/ui/labels.rs:271
 msgid "Close"
 msgstr "Chiudi"
 
-#: src/ui/dialogs.rs:852
+#: src/ui/dialogs.rs:842
 msgid "Make a sticker"
 msgstr "Crea uno sticker"
 
-#: src/ui/dialogs.rs:916
+#: src/ui/dialogs.rs:906
 msgid "Size"
 msgstr "Dimensione"
 
-#: src/ui/dialogs.rs:931
+#: src/ui/dialogs.rs:921
 msgid "Keep the transparent background"
 msgstr "Mantieni lo sfondo trasparente"
 
-#: src/ui/dialogs.rs:948
+#: src/ui/dialogs.rs:938
 msgid "Emojis that describe it, like 😂 or ❤️"
 msgstr "Emoji che lo descrivono, come 😂 o ❤️"
 
-#: src/ui/dialogs.rs:965
+#: src/ui/dialogs.rs:955
 msgid "Send"
 msgstr "Invia"
 
-#: src/ui/dialogs.rs:980 src/ui/settings.rs:686
+#: src/ui/dialogs.rs:970 src/ui/settings.rs:686
 msgid "Cancel"
 msgstr "Annulla"
 
-#: src/ui/dialogs.rs:1385
+#: src/ui/dialogs.rs:1375
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -502,30 +510,41 @@ msgstr "Ancora nessuno"
 msgid "A label named “{name}” already exists."
 msgstr "Esiste già un’etichetta chiamata «{name}»."
 
-#: src/app.rs:2172
+#: src/app.rs:1049
+#, rust-format
+msgid "{name} (You)"
+msgstr "{name} (Tu)"
+
+#: src/app.rs:1050 src/app.rs:1069
+msgid "You"
+msgstr "Tu"
+
+#: src/app.rs:2215
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Non inviato: ZapFast non è connesso a WhatsApp."
 
-#: src/app.rs:2176
+#: src/app.rs:2219
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
-msgstr "Non inviato: il messaggio a cui stai rispondendo non è disponibile su questo computer. Annulla la risposta per inviare senza citazione."
+msgstr ""
+"Non inviato: il messaggio a cui stai rispondendo non è disponibile su questo "
+"computer. Annulla la risposta per inviare senza citazione."
 
-#: src/app.rs:3396
+#: src/app.rs:3439
 msgid "Added to favorites"
 msgstr "Aggiunto ai preferiti"
 
-#: src/app.rs:3471
+#: src/app.rs:3514
 msgid "Sending the sticker pack…"
 msgstr "Invio del pacchetto di sticker…"
 
-#: src/app.rs:3727 src/ui/labels.rs:294
+#: src/app.rs:3770 src/ui/labels.rs:294
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Hai {limit} etichette, il massimo che ZapFast conserva."
 
-#: src/app.rs:4206
+#: src/app.rs:4249
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"
 
@@ -754,14 +773,3 @@ msgstr "Rimuovi dai preferiti"
 #: src/ui/picker.rs:1571
 msgid "Remove from recents"
 msgstr "Rimuovi dai recenti"
-
-#~ msgid ""
-#~ "Recent stickers appear here. Right-click one to save it. To import a "
-#~ "pack, paste a signal.art link or open a .wastickers file."
-#~ msgstr ""
-#~ "Qui compaiono gli sticker recenti. Fai clic destro su uno per salvarlo. "
-#~ "Per importare un pacchetto, incolla un link signal.art o apri un "
-#~ "file .wastickers."
-
-#~ msgid "Saved"
-#~ msgstr "Salvati"

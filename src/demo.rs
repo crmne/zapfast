@@ -1917,6 +1917,53 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.open_chat = Some(ada.to_owned());
                 app.scroll_to_bottom = true;
             }
+            // Our phone shares a live location in our own chat, masked from
+            // linked devices as WhatsApp does.
+            "live-phone" => {
+                let now = crate::util::now();
+                let messages = vec![
+                    message(
+                        ME,
+                        "self-note",
+                        true,
+                        now - 60 * 5,
+                        Content::text("Parking"),
+                    ),
+                    message(
+                        ME,
+                        "self-live",
+                        true,
+                        now - 60 * 2,
+                        Content::PhoneOnly {
+                            view_once: false,
+                            live_location: true,
+                        },
+                    ),
+                ];
+                let mut chat = Chat::new(ME.into(), "You".into());
+                chat.last_activity = now;
+                chat.last = messages.last().map(|last| crate::model::LastMessage {
+                    from_me: true,
+                    sender: last.sender.clone(),
+                    sender_name: None,
+                    summary: last.summary(),
+                    status: last.status,
+                });
+                app.chats.insert(0, chat);
+                app.conversations.insert(
+                    ME.into(),
+                    Conversation {
+                        messages,
+                        complete: true,
+                        requested: true,
+                        phone_exhausted: true,
+                        ..Default::default()
+                    },
+                );
+                app.open_chat = Some(ME.into());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "typing" => {
                 app.composer = (1..=9)
                     .map(|line| format!("line {line}"))

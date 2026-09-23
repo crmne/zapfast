@@ -379,6 +379,9 @@ pub enum Content {
     /// media. Linked devices receive a placeholder that never fills in.
     PhoneOnly {
         view_once: bool,
+        /// A live location, which WhatsApp shows only on the phone.
+        #[serde(default)]
+        live_location: bool,
     },
 }
 
@@ -572,9 +575,20 @@ impl Content {
             Self::Poll { question, .. } => format!("Poll: {question}"),
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
-            Self::PhoneOnly { view_once: true } => "View once message".to_owned(),
-            Self::PhoneOnly { view_once: false } => "Message on your phone".to_owned(),
+            Self::PhoneOnly {
+                live_location: true,
+                ..
+            } => "Live location".to_owned(),
+            Self::PhoneOnly {
+                view_once: true, ..
+            } => "View once message".to_owned(),
+            Self::PhoneOnly { .. } => "Message on your phone".to_owned(),
         }
+    }
+
+    /// Whether this stands in for a message this device could not open.
+    pub fn is_placeholder(&self) -> bool {
+        matches!(self, Self::Unsupported { .. } | Self::PhoneOnly { .. })
     }
 
     pub fn media(&self) -> Option<&Media> {

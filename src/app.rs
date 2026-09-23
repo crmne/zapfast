@@ -1029,10 +1029,53 @@ impl App {
                 participants
             };
         }
-        if chat.is_group() || self.me.as_deref() == Some(chat.id.as_str()) {
+        if self.me.as_deref() == Some(chat.id.as_str()) {
+            return self.self_title();
+        }
+        if chat.is_group() {
             return chat.name.clone();
         }
         self.person_name(&chat.id, None)
+    }
+
+    /// Our own chat's title, "Name (You)" as on the phone, so searching for
+    /// our own name finds it.
+    pub fn self_title(&self) -> String {
+        match self
+            .me_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+        {
+            Some(name) => crate::i18n::gettext(self.locale, "{name} (You)").replace("{name}", name),
+            None => crate::i18n::gettext(self.locale, "You").into_owned(),
+        }
+    }
+
+    /// Whether a contact search for `needle`, already a search key, should
+    /// offer the chat with ourselves: by our name, our number, "You" or
+    /// "Message yourself", in English or the interface language.
+    pub fn offers_self(&self, needle: &str) -> bool {
+        let Some(me) = self.me.as_deref() else {
+            return false;
+        };
+        // A locked chat stays out of every list but the locked one.
+        if self.chat(me).is_some_and(|chat| chat.locked) {
+            return false;
+        }
+        if needle.is_empty() {
+            return true;
+        }
+        let yourself = crate::i18n::gettext(self.locale, "Message yourself");
+        let you = crate::i18n::gettext(self.locale, "You");
+        [
+            self.self_title().as_str(),
+            yourself.as_ref(),
+            you.as_ref(),
+            "Message yourself",
+        ]
+        .iter()
+        .any(|text| crate::util::search_key(text).contains(needle))
+            || crate::model::phone_of(me).is_some_and(|phone| phone.contains(needle))
     }
 
     fn person_name(&self, id: &str, hint: Option<&str>) -> String {
@@ -6945,6 +6988,60 @@ mod tests {
         assert!(app.chat_lock_entry.is_empty());
         assert!(app.chat_lock_confirm.is_empty());
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn our_own_chat_is_titled_and_found_by_our_name() {
+        let mut app = app();
+        let me = "15550000000@s.whatsapp.net";
+        app.me = Some(me.into());
+        let mut own = Chat::new(me.into(), "You".into());
+        own.last_activity = 10;
+        let mut ada = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        ada.last_activity = 20;
+        app.chats = vec![own, ada];
+        assert_eq!(app.chat_title(&app.chats[0].clone()), "You");
+        app.me_name = Some("Carmine Paolino".into());
+        assert_eq!(
+            app.chat_title(&app.chats[0].clone()),
+            "Carmine Paolino (You)"
+        );
+        for search in ["carmine", "you", "5550000"] {
+            app.search = search.into();
+            let ids: Vec<&str> = app
+                .visible_chats()
+                .iter()
+                .map(|chat| chat.id.as_str())
+                .collect();
+            assert_eq!(ids, vec![me], "{search}");
+        }
+        app.locale = crate::i18n::Locale::German;
+        assert_eq!(
+            app.chat_title(&app.chats[0].clone()),
+            "Carmine Paolino (Du)"
+        );
+    }
+
+    #[test]
+    fn contact_searches_offer_to_message_ourselves() {
+        let mut app = app();
+        assert!(!app.offers_self(""), "not before we know who we are");
+        app.me = Some("15550000000@s.whatsapp.net".into());
+        app.me_name = Some("Carmine".into());
+        for needle in ["", "carm", "you", "message your", "555000"] {
+            assert!(app.offers_self(needle), "{needle}");
+        }
+        assert!(!app.offers_self("ada"));
+        app.locale = crate::i18n::Locale::Italian;
+        assert!(app.offers_self("te stesso"), "the interface language");
+        assert!(app.offers_self("yourself"), "English still works");
+        let mut own = Chat::new(app.me.clone().unwrap(), "You".into());
+        own.locked = true;
+        app.chats = vec![own];
+        assert!(
+            !app.offers_self(""),
+            "a locked chat stays in the locked list"
+        );
     }
 
     #[test]

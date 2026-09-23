@@ -24,7 +24,7 @@ use whatsapp_rust::prelude::{
 };
 use whatsapp_rust::send::RevokeType;
 use whatsapp_rust::types::events as wa_events;
-use whatsapp_rust::types::message::{MessageInfo, MessageSource};
+use whatsapp_rust::types::message::{EncMediaType, MessageInfo, MessageSource};
 use whatsapp_rust::types::presence::{ChatPresence, ReceiptType};
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::wacore::download::{DownloadWriter, Downloadable};
@@ -1999,7 +1999,11 @@ impl Worker {
                 }
             }
             E::UndecryptableMessage(undecryptable) => {
-                self.ingest_undecryptable(&undecryptable.info, undecryptable.unavailable_type);
+                self.ingest_undecryptable(
+                    &undecryptable.info,
+                    undecryptable.unavailable_type,
+                    undecryptable.decrypt_fail_mode,
+                );
             }
             E::Receipt(receipt) => self.on_receipt(receipt),
             E::ChatPresence(presence) => {
@@ -2728,9 +2732,17 @@ impl Worker {
         if self.update_live_location(&chat, &sender, base, info) {
             return;
         }
-        let Some(content) = classify(base) else {
+        let Some(mut content) = classify(base) else {
             return;
         };
+        if let Content::PhoneOnly { live_location, .. } = &mut content
+            && info.media_type == Some(EncMediaType::LiveLocation)
+        {
+            *live_location = true;
+            if self.continues_masked_live_location(&chat, &sender, &info.id, info) {
+                return;
+            }
+        }
         let quoted = self.quoted_of(base);
         let mentions = self.mentions_of(&mentioned_of(base));
         let row = Message {
@@ -2768,7 +2780,14 @@ impl Worker {
             && !info.is_offline
             && info.unavailable_request_id.is_none()
             && matches!(self.archive.message(&chat, &row.id), Ok(None));
-        let sent_elsewhere = from_me && matches!(self.archive.message(&chat, &row.id), Ok(None));
+        // A placeholder stored while the message could not be opened does
+        // not count: this is the first time its content arrives.
+        let sent_elsewhere = from_me
+            && match self.archive.message(&chat, &row.id) {
+                Ok(None) => true,
+                Ok(Some(stored)) => stored.content.is_placeholder(),
+                Err(_) => false,
+            };
         let id = row.id.clone();
         self.archive_message(
             row,
@@ -2823,6 +2842,37 @@ impl Worker {
         }
         self.emit_message(chat, &share.id);
         true
+    }
+
+    /// Whether a masked live location only continues the share `sender`
+    /// last posted in this chat. Linked devices cannot follow the position,
+    /// so a share keeps the one bubble it started with.
+    fn continues_masked_live_location(
+        &self,
+        chat: &str,
+        sender: &str,
+        id: &str,
+        info: &MessageInfo,
+    ) -> bool {
+        let Ok(Some(latest)) = self.archive.latest_id_from(chat, sender) else {
+            return false;
+        };
+        if latest == id {
+            return false;
+        }
+        self.archive
+            .message(chat, &latest)
+            .ok()
+            .flatten()
+            .is_some_and(|message| {
+                matches!(
+                    message.content,
+                    Content::PhoneOnly {
+                        live_location: true,
+                        ..
+                    }
+                ) && info.timestamp.timestamp() - message.timestamp <= LIVE_LOCATION_LIMIT
+            })
     }
 
     /// The stored live location that a position from `sender` updates: the
@@ -3014,15 +3064,23 @@ impl Worker {
         }
     }
 
+    /// Stores a placeholder for a message this device could not open, so
+    /// it never vanishes without a trace. That includes our own messages
+    /// sent from the phone: WhatsApp keeps some of them, such as live
+    /// locations, off linked devices, and they belong in the chat all the same.
     fn ingest_undecryptable(
         &mut self,
         info: &MessageInfo,
         unavailable: wa_events::UnavailableType,
+        mode: wa_events::DecryptFailMode,
     ) {
         self.learn_source(&info.source);
-        if info.source.chat.is_status_broadcast() || info.source.is_from_me {
+        // The sender marks internal traffic, such as reactions and protocol
+        // messages, as not worth a placeholder.
+        if info.source.chat.is_status_broadcast() || mode == wa_events::DecryptFailMode::Hide {
             return;
         }
+        let from_me = info.source.is_from_me;
         let chat = self.canonical(&info.source.chat);
         if self
             .archive
@@ -3034,25 +3092,54 @@ impl Worker {
             return;
         }
         let push_name = (!info.push_name.is_empty()).then(|| info.push_name.clone());
+        let sender = if from_me {
+            self.me()
+        } else {
+            self.canonical(&info.source.sender)
+        };
+        let live_location = info.media_type == Some(EncMediaType::LiveLocation);
+        if live_location && self.continues_masked_live_location(&chat, &sender, &info.id, info) {
+            return;
+        }
         let row = Message {
             id: info.id.to_string(),
             chat,
-            sender: self.canonical(&info.source.sender),
-            sender_name: push_name.as_ref().map(ToString::to_string),
-            from_me: false,
+            sender,
+            sender_name: if from_me {
+                None
+            } else {
+                push_name.as_ref().map(ToString::to_string)
+            },
+            from_me,
             timestamp: info.timestamp.timestamp(),
             content: match unavailable {
+                // A live location keeps moving on the phone only, so say
+                // where to follow it rather than that it is on its way.
+                _ if live_location => Content::PhoneOnly {
+                    view_once: false,
+                    live_location: true,
+                },
                 // The phone never shares these with linked devices, so do not
                 // suggest that the message is still on its way.
-                wa_events::UnavailableType::ViewOnce => Content::PhoneOnly { view_once: true },
+                wa_events::UnavailableType::ViewOnce => Content::PhoneOnly {
+                    view_once: true,
+                    live_location: false,
+                },
                 wa_events::UnavailableType::Hosted | wa_events::UnavailableType::Bot => {
-                    Content::PhoneOnly { view_once: false }
+                    Content::PhoneOnly {
+                        view_once: false,
+                        live_location: false,
+                    }
                 }
                 _ => Content::Unsupported {
                     what: "Waiting for this message. Open WhatsApp on your phone".to_owned(),
                 },
             },
-            status: Delivery::None,
+            status: if from_me {
+                Delivery::Sent
+            } else {
+                Delivery::None
+            },
             delivered_at: None,
             read_at: None,
             quoted: None,
@@ -3062,7 +3149,12 @@ impl Worker {
             forwarded: false,
             thumbnail: None,
         };
+        let id = row.id.clone();
+        let chat = row.chat.clone();
         self.store_message(row, None, push_name.as_deref());
+        if from_me {
+            self.settle_early_receipts(&chat, &id);
+        }
     }
 
     /// Archives a message and emits chat and row updates.
@@ -6598,6 +6690,14 @@ fn classify(base: &wa::Message) -> Option<Content> {
                 .collect(),
         });
     }
+    if base.placeholder_message.is_set() {
+        // The phone masks some messages from linked devices, live locations
+        // among them, and sends this stand-in so the chat still shows them.
+        return Some(Content::PhoneOnly {
+            view_once: false,
+            live_location: false,
+        });
+    }
     let unsupported = |what: &str| {
         Some(Content::Unsupported {
             what: what.to_owned(),
@@ -6647,7 +6747,6 @@ fn classify(base: &wa::Message) -> Option<Content> {
         || base.sticker_sync_rmr_message.is_set()
         || base.message_context_info.is_set()
         || base.device_sent_message.is_set()
-        || base.placeholder_message.is_set()
         || base.secret_encrypted_message.is_set()
         || base.message_history_bundle.is_set()
         || base.message_history_notice.is_set()
@@ -8015,6 +8114,304 @@ mod tests {
         ));
     }
 
+    /// What the phone sends linked devices in place of a live location: the
+    /// content is masked, and only the stanza's `mediatype` says what it is.
+    fn masked_live_location() -> Arc<wa::Message> {
+        Arc::new(wa::Message {
+            placeholder_message: MessageField::some(wa::message::PlaceholderMessage {
+                r#type: Some(
+                    wa::message::placeholder_message::PlaceholderType::MASK_LINKED_DEVICES,
+                ),
+            }),
+            message_context_info: MessageField::some(wa::MessageContextInfo {
+                message_secret: Some(vec![7; 32]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+    }
+
+    fn live_location_info(id: &str, at: i64, source: MessageSource) -> MessageInfo {
+        MessageInfo {
+            id: id.into(),
+            source,
+            timestamp: whatsapp_rust::wacore::time::from_secs(at).unwrap(),
+            media_type: Some(EncMediaType::LiveLocation),
+            ..Default::default()
+        }
+    }
+
+    const GROUP: &str = "120363025246125888@g.us";
+
+    /// A contact in a chat, our phone in our own chat, and our phone and a
+    /// member in a group.
+    fn live_location_sources(worker: &Worker) -> Vec<(&'static str, MessageSource, String)> {
+        const PEER: &str = super::receipt_tests::PEER;
+        let me = worker.me();
+        let phone: Jid = me.parse().unwrap();
+        vec![
+            (
+                "contact",
+                MessageSource {
+                    chat: PEER.parse().unwrap(),
+                    sender: PEER.parse().unwrap(),
+                    ..Default::default()
+                },
+                PEER.to_owned(),
+            ),
+            (
+                "self",
+                MessageSource {
+                    chat: phone.clone(),
+                    sender: phone.clone(),
+                    is_from_me: true,
+                    recipient: Some(phone.clone()),
+                    ..Default::default()
+                },
+                me.clone(),
+            ),
+            (
+                "group-mine",
+                MessageSource {
+                    chat: GROUP.parse().unwrap(),
+                    sender: phone.clone(),
+                    is_from_me: true,
+                    is_group: true,
+                    ..Default::default()
+                },
+                GROUP.to_owned(),
+            ),
+            (
+                "group-member",
+                MessageSource {
+                    chat: GROUP.parse().unwrap(),
+                    sender: PEER.parse().unwrap(),
+                    is_group: true,
+                    ..Default::default()
+                },
+                GROUP.to_owned(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn a_masked_live_location_shows_a_bubble_that_points_to_the_phone() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        for (id, source, chat) in live_location_sources(&worker) {
+            let from_me = source.is_from_me;
+            worker.ingest(
+                &masked_live_location(),
+                &live_location_info(id, now - 600, source),
+            );
+            let stored = worker
+                .archive
+                .message(&chat, id)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{id}: no bubble"));
+            assert_eq!(
+                stored.content,
+                Content::PhoneOnly {
+                    view_once: false,
+                    live_location: true,
+                },
+                "{id}"
+            );
+            assert_eq!(stored.from_me, from_me, "{id}");
+            assert!(
+                worker
+                    .archive
+                    .chats()
+                    .unwrap()
+                    .iter()
+                    .any(|listed| listed.id == chat),
+                "{id}: the chat is listed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_masked_live_location_keeps_one_bubble_per_share() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        let source = || MessageSource {
+            chat: PEER.parse().unwrap(),
+            sender: PEER.parse().unwrap(),
+            ..Default::default()
+        };
+        worker.ingest(
+            &masked_live_location(),
+            &live_location_info("start", now - 600, source()),
+        );
+        worker.ingest(
+            &masked_live_location(),
+            &live_location_info("next", now - 540, source()),
+        );
+        assert_eq!(worker.archive.messages(PEER, None, 10).unwrap().len(), 1);
+        // Something said in between ends the share's run of bubbles.
+        let mut info = live_location_info("chat", now - 300, source());
+        info.media_type = None;
+        worker.ingest(
+            &Arc::new(wa::Message {
+                conversation: Some("on my way".into()),
+                ..Default::default()
+            }),
+            &info,
+        );
+        worker.ingest(
+            &masked_live_location(),
+            &live_location_info("again", now, source()),
+        );
+        assert_eq!(worker.archive.messages(PEER, None, 10).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn other_masked_messages_say_they_are_on_the_phone() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let mut info = live_location_info(
+            "masked",
+            crate::util::now(),
+            MessageSource {
+                chat: PEER.parse().unwrap(),
+                sender: PEER.parse().unwrap(),
+                ..Default::default()
+            },
+        );
+        info.media_type = None;
+        worker.ingest(&masked_live_location(), &info);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "masked")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::PhoneOnly {
+                view_once: false,
+                live_location: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_live_location_from_our_phone_shows_its_card() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        let live = wa::Message {
+            live_location_message: MessageField::some(wa::message::LiveLocationMessage {
+                degrees_latitude: Some(41.9028),
+                degrees_longitude: Some(12.4964),
+                accuracy_in_meters: Some(12),
+                sequence_number: Some(1),
+                jpeg_thumbnail: Some(vec![0xff, 0xd8]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        for (id, source, chat) in live_location_sources(&worker) {
+            // Our phone wraps what it sent for its linked devices.
+            let message = if source.is_from_me {
+                wa::Message {
+                    device_sent_message: MessageField::some(wa::message::DeviceSentMessage {
+                        destination_jid: Some(chat.clone()),
+                        message: MessageField::some(wa::Message {
+                            ephemeral_message: MessageField::some(
+                                wa::message::FutureProofMessage {
+                                    message: MessageField::some(live.clone()),
+                                },
+                            ),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            } else {
+                live.clone()
+            };
+            let mut info = live_location_info(id, now - 60, source);
+            info.media_type = None;
+            worker.ingest(&Arc::new(message), &info);
+            let stored = worker.archive.message(&chat, id).unwrap().unwrap();
+            assert!(
+                matches!(
+                    stored.content,
+                    Content::LiveLocation {
+                        latitude: 41.9028,
+                        ..
+                    }
+                ),
+                "{id}: {:?}",
+                stored.content
+            );
+        }
+    }
+
+    #[test]
+    fn our_phones_unreadable_messages_leave_a_placeholder() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        for (id, source, chat) in live_location_sources(&worker) {
+            let from_me = source.is_from_me;
+            let mut info = live_location_info(id, now - 60, source);
+            info.media_type = None;
+            worker.ingest_undecryptable(
+                &info,
+                wa_events::UnavailableType::Unknown,
+                wa_events::DecryptFailMode::Show,
+            );
+            let stored = worker.archive.message(&chat, id).unwrap().unwrap();
+            assert!(
+                matches!(stored.content, Content::Unsupported { .. }),
+                "{id}"
+            );
+            assert_eq!(stored.from_me, from_me, "{id}");
+        }
+        // A copy that names its live location says so, and the real content
+        // replaces the placeholder once the phone resends it.
+        let me = worker.me();
+        let (_, self_chat, _) = live_location_sources(&worker).swap_remove(1);
+        worker.ingest_undecryptable(
+            &live_location_info("unreadable", now, self_chat.clone()),
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Show,
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(&me, "unreadable")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::PhoneOnly {
+                view_once: false,
+                live_location: true,
+            }
+        );
+        let (message, _) = live_position("unreadable", now, 1, 45.0, None);
+        let mut info = live_location_info("unreadable", now, self_chat.clone());
+        info.unavailable_request_id = Some("pdo".into());
+        worker.ingest(&message, &info);
+        assert!(matches!(
+            worker
+                .archive
+                .message(&me, "unreadable")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::LiveLocation { latitude: 45.0, .. }
+        ));
+        // Internal traffic the sender asked not to show stays hidden.
+        worker.ingest_undecryptable(
+            &live_location_info("hidden", now, self_chat),
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Hide,
+        );
+        assert!(worker.archive.message(&me, "hidden").unwrap().is_none());
+    }
+
     #[test]
     fn history_reports_a_finished_live_location_as_ended() {
         let last = wa::message::LiveLocationMessage {
@@ -8317,12 +8714,18 @@ mod tests {
             (
                 "once",
                 wa_events::UnavailableType::ViewOnce,
-                Some(Content::PhoneOnly { view_once: true }),
+                Some(Content::PhoneOnly {
+                    view_once: true,
+                    live_location: false,
+                }),
             ),
             (
                 "bot",
                 wa_events::UnavailableType::Bot,
-                Some(Content::PhoneOnly { view_once: false }),
+                Some(Content::PhoneOnly {
+                    view_once: false,
+                    live_location: false,
+                }),
             ),
             ("later", wa_events::UnavailableType::Unknown, None),
         ] {
@@ -8336,7 +8739,7 @@ mod tests {
                 timestamp: whatsapp_rust::wacore::time::from_secs(100).unwrap(),
                 ..Default::default()
             };
-            worker.ingest_undecryptable(&info, unavailable);
+            worker.ingest_undecryptable(&info, unavailable, wa_events::DecryptFailMode::Show);
             let stored = worker
                 .archive
                 .message("200@s.whatsapp.net", id)

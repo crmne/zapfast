@@ -3634,7 +3634,40 @@ fn content(
             );
             None
         }
-        Content::PhoneOnly { view_once } => {
+        Content::PhoneOnly {
+            live_location: true,
+            ..
+        } => {
+            mirrored_row(
+                ui,
+                own,
+                |ui| {
+                    theme::icon(ui, Icon::MapPin, 18.0, palette.accent);
+                },
+                |ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        widgets::rich_text(
+                            ui,
+                            &crate::i18n::gettext(view.locale, "Live location"),
+                            theme::medium(14.0),
+                            palette.text,
+                        );
+                        widgets::rich_text(
+                            ui,
+                            &crate::i18n::gettext(
+                                view.locale,
+                                "Open WhatsApp on your phone to follow it.",
+                            ),
+                            theme::regular(12.5),
+                            palette.secondary,
+                        );
+                    });
+                },
+            );
+            None
+        }
+        Content::PhoneOnly { view_once, .. } => {
             let text = if *view_once {
                 "View once message. For your privacy, it opens only on your phone."
             } else {

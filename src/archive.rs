@@ -1256,6 +1256,18 @@ impl Archive {
             .optional()
     }
 
+    /// The id of `sender`'s newest message in `chat`.
+    pub fn latest_id_from(&self, chat: &str, sender: &str) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT id FROM messages WHERE chat = ?1 AND sender = ?2
+                 ORDER BY timestamp DESC, rowid DESC LIMIT 1",
+                params![chat, sender],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
         let mut statement = self.connection.prepare(
             "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
