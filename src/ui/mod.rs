@@ -4,8 +4,10 @@ pub mod chats;
 pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
+pub mod image_preview;
 pub mod keys;
 pub mod login;
+pub mod message_info;
 pub mod picker;
 pub mod polls;
 pub mod settings;
@@ -32,6 +34,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.picker.is_none()
         && app.reaction_target.is_none()
         && app.recording.is_none()
+        && app.image_preview.is_none()
         && app.emoji_start.is_none()
         && app.mention_start.is_none()
         && !egui::Popup::is_any_open(ctx);
@@ -65,6 +68,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     update::show(app, ctx);
     picker::show(app, ctx);
     dialogs::show(app, ctx);
+    image_preview::show(app, ctx);
     drop_target(app, ctx);
     toasts(app, ctx);
     focus_ring(app, ctx);

@@ -39,26 +39,38 @@ pub enum ChatFilter {
     /// One-to-one chats: neither groups nor broadcasts.
     Private,
     Groups,
+    /// Followed channels (newsletters), kept out of the other filters as in
+    /// the official apps.
+    Channels,
 }
 
 impl ChatFilter {
-    pub const EVERY: [Self; 4] = [Self::All, Self::Unread, Self::Private, Self::Groups];
+    pub const EVERY: [Self; 5] = [
+        Self::All,
+        Self::Unread,
+        Self::Private,
+        Self::Groups,
+        Self::Channels,
+    ];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+        use crate::i18n::gettext;
         match self {
-            Self::All => "All",
-            Self::Unread => "Unread",
-            Self::Private => "Private",
-            Self::Groups => "Groups",
+            Self::All => gettext(locale, "All"),
+            Self::Unread => gettext(locale, "Unread"),
+            Self::Private => gettext(locale, "Private"),
+            Self::Groups => gettext(locale, "Groups"),
+            Self::Channels => gettext(locale, "Channels"),
         }
     }
 
     pub fn matches(self, chat: &Chat) -> bool {
         match self {
-            Self::All => true,
-            Self::Unread => chat.unread > 0,
+            Self::All => !chat.is_channel(),
+            Self::Unread => chat.unread > 0 && !chat.is_channel(),
             Self::Private => chat.kind == ChatKind::Direct,
             Self::Groups => chat.kind == ChatKind::Group,
+            Self::Channels => chat.is_channel(),
         }
     }
 }
@@ -90,6 +102,8 @@ pub struct Chat {
     pub locked: bool,
     /// Disappearing-message duration in seconds, if enabled.
     pub ephemeral_expiration: Option<u32>,
+    /// This chat's own notification sound; `None` follows Settings.
+    pub notification_sound: Option<crate::settings::NotificationSound>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -121,12 +135,18 @@ impl Chat {
             read_only: false,
             locked: false,
             ephemeral_expiration: None,
+            notification_sound: None,
         }
     }
 
     /// Newsletter publishing permissions are not supported by this client.
     pub fn can_send(&self) -> bool {
         !self.locked && !self.read_only && self.kind != ChatKind::Broadcast
+    }
+
+    /// A followed WhatsApp channel (newsletter).
+    pub fn is_channel(&self) -> bool {
+        self.id.ends_with("@newsletter")
     }
 
     pub fn is_group(&self) -> bool {
@@ -262,6 +282,9 @@ pub enum Content {
         media: Media,
         seconds: Option<u32>,
         gif: bool,
+        /// A round video message, which WhatsApp calls PTV.
+        #[serde(default)]
+        note: bool,
     },
     Audio {
         media: Media,
@@ -302,6 +325,11 @@ pub enum Content {
     /// Unsupported content with a user-facing description.
     Unsupported {
         what: String,
+    },
+    /// A message WhatsApp only delivers to the phone, such as view-once
+    /// media. Linked devices receive a placeholder that never fills in.
+    PhoneOnly {
+        view_once: bool,
     },
 }
 
@@ -438,9 +466,18 @@ impl Content {
                 text.lines().next().unwrap_or_default().to_owned()
             }
             Self::Image { caption, .. } => with_caption("Photo", caption),
-            Self::Video { caption, gif, .. } => {
-                with_caption(if *gif { "GIF" } else { "Video" }, caption)
-            }
+            Self::Video {
+                caption, gif, note, ..
+            } => with_caption(
+                if *gif {
+                    "GIF"
+                } else if *note {
+                    "Video message"
+                } else {
+                    "Video"
+                },
+                caption,
+            ),
             Self::Audio {
                 voice_note,
                 seconds,
@@ -466,6 +503,8 @@ impl Content {
             Self::Poll { question, .. } => format!("Poll: {question}"),
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
+            Self::PhoneOnly { view_once: true } => "View once message".to_owned(),
+            Self::PhoneOnly { view_once: false } => "Message on your phone".to_owned(),
         }
     }
 
@@ -676,7 +715,8 @@ pub enum Dialog {
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
-        message: String,
+        /// Message ids, in the order they appear in the chat.
+        messages: Vec<String>,
     },
     CreatePoll(ChatId),
     PollResults {
@@ -688,6 +728,111 @@ pub enum Dialog {
         message: String,
         button: usize,
     },
+    /// Previews a group invite link before joining.
+    JoinGroup,
+    /// Confirms setting aside an archive whose key is gone.
+    ConfirmStartOver,
+    /// Who has received and read one of our messages.
+    MessageInfo {
+        chat: ChatId,
+        message: String,
+    },
+}
+
+/// One recipient's receipts for one of our group messages.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recipient {
+    pub id: String,
+    /// Named in the audience saved when the message was sent.
+    pub expected: bool,
+    pub delivered_at: Option<i64>,
+    pub read_at: Option<i64>,
+    pub played_at: Option<i64>,
+}
+
+/// Per-recipient receipts for one of our group messages, as far as they are
+/// known. Receipts are only kept from when ZapFast began recording them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MessageReceipts {
+    pub chat: ChatId,
+    pub message: String,
+    pub recipients: Vec<Recipient>,
+}
+
+impl MessageReceipts {
+    /// Whether the message's audience was saved, so that members without a
+    /// receipt are known to be waiting rather than simply unrecorded.
+    pub fn audience_known(&self) -> bool {
+        self.recipients.iter().any(|recipient| recipient.expected)
+    }
+
+    /// Recipients who played a voice or video note, most recent first.
+    pub fn played(&self) -> Vec<&Recipient> {
+        self.newest_first(|recipient| recipient.played_at)
+    }
+
+    /// Recipients who read the message without playing it, most recent first.
+    pub fn read(&self) -> Vec<&Recipient> {
+        self.newest_first(|recipient| recipient.read_at.filter(|_| recipient.played_at.is_none()))
+    }
+
+    /// Recipients whose device has the message but who have not read it yet.
+    pub fn delivered(&self) -> Vec<&Recipient> {
+        self.newest_first(|recipient| {
+            recipient
+                .delivered_at
+                .filter(|_| recipient.read_at.is_none() && recipient.played_at.is_none())
+        })
+    }
+
+    /// Audience members with no receipt at all.
+    pub fn remaining(&self) -> usize {
+        self.recipients
+            .iter()
+            .filter(|recipient| {
+                recipient.expected
+                    && recipient.delivered_at.is_none()
+                    && recipient.read_at.is_none()
+                    && recipient.played_at.is_none()
+            })
+            .count()
+    }
+
+    fn newest_first(&self, at: impl Fn(&Recipient) -> Option<i64>) -> Vec<&Recipient> {
+        let mut rows: Vec<_> = self
+            .recipients
+            .iter()
+            .filter_map(|recipient| Some((at(recipient)?, recipient)))
+            .collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
+        rows.into_iter().map(|(_, recipient)| recipient).collect()
+    }
+}
+
+/// A group invite link being previewed or joined.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupInvite {
+    pub code: String,
+    pub state: InviteState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum InviteState {
+    Loading,
+    Ready(InviteInfo),
+    Joining(InviteInfo),
+    Failed(String),
+}
+
+/// What an invite link says about its group, without joining it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InviteInfo {
+    pub id: ChatId,
+    pub subject: String,
+    pub description: Option<String>,
+    pub members: usize,
+    /// Admins approve new members before they join.
+    pub approval: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -720,6 +865,14 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
+    /// Opens the search bar for the open chat.
+    OpenChatSearch,
+    /// Closes it and drops the query.
+    CloseChatSearch,
+    /// Replaces the query of the open chat's search bar.
+    ChatSearch(String),
+    /// Moves to the next (`1`) or previous (`-1`) match in the open chat.
+    StepChatSearch(i32),
     CloseChat,
     SendText {
         chat: ChatId,
@@ -771,14 +924,44 @@ pub enum Action {
         path: PathBuf,
         fraction: f32,
     },
-    /// Cycles voice playback speed between 1x, 1.5x, and 2x.
-    CycleVoiceSpeed,
+    /// Sets the voice playback speed to one of the supported speeds.
+    SetVoiceSpeed(f32),
+    /// Plays or pauses a downloaded video inside its message.
+    PlayVideo {
+        message: String,
+        path: PathBuf,
+    },
+    /// Plays a video in the open chat once its download finishes.
+    PlayVideoWhenDownloaded(String),
+    /// Jumps to a fraction from 0 to 1 of the playing video.
+    SeekVideo {
+        message: String,
+        fraction: f32,
+    },
+    /// Mutes or unmutes video playback.
+    ToggleVideoSound,
     /// Starts, cancels, or sends a voice recording.
     StartRecording,
     CancelRecording,
     SendRecording,
+    /// Opens a downloaded image in ZapFast's native preview. Only the file
+    /// extension and existence are checked here, and anything else opens
+    /// externally; an image that then fails to decode shows a message with an
+    /// Open externally button inside the preview.
+    PreviewImage(PathBuf),
+    ZoomImageIn,
+    /// Shows the previewed image at its original size.
+    ImageActualSize,
+    ZoomImageOut,
+    FitImage,
+    CloseImagePreview,
     OpenFile(PathBuf),
     OpenFolder(PathBuf),
+    /// Saves a copy of a downloaded attachment where the person chooses.
+    SaveAttachmentAs {
+        path: PathBuf,
+        name: String,
+    },
     OpenUrl(String),
     CopyText(String),
     /// Closes the toast at this index. Only errors wait to be dismissed.
@@ -789,9 +972,17 @@ pub enum Action {
     /// Forwards an archived message to another chat.
     Forward {
         from_chat: ChatId,
-        message: String,
+        messages: Vec<String>,
         to_chat: ChatId,
     },
+    /// Starts selecting messages in the open chat, beginning with this one.
+    SelectMessage(String),
+    /// Adds a message to the selection or removes it.
+    ToggleSelected(String),
+    /// Selects every message from the last one clicked to this one.
+    SelectRange(String),
+    /// Leaves selection mode.
+    CancelSelection,
     /// Loads an outgoing message into the composer for editing.
     Edit(String),
     CancelEdit,
@@ -887,8 +1078,16 @@ pub enum Action {
     CloseDialog,
     ToggleSidebar,
     SetChatFilter(ChatFilter),
+    /// Shows or leaves the archived chats.
+    ShowArchived(bool),
+    /// Mutes (`true`) or unmutes every followed channel.
+    MuteAllChannels(bool),
+    /// Joins the group of the invite being previewed.
+    JoinGroup,
     /// A chat opened from the main list, kept there under the Unread filter.
     KeepUnread(ChatId),
+    /// Focuses the chat-list search and leaves the open chat alone.
+    FocusChatList,
     FocusSearch,
     FocusComposer,
     HideShortcutHints,
@@ -909,12 +1108,46 @@ pub enum Action {
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
+    SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),
     SetWallpaperDoodles(bool),
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
+    /// Registers or removes the login entry that starts ZapFast in the tray.
+    SetStartWithSystem(bool),
+    /// Sets the notification sound for groups (`true`) or other chats.
+    SetNotificationSound {
+        group: bool,
+        sound: crate::settings::NotificationSound,
+    },
+    /// Asks for an audio file to use as a notification sound.
+    PickNotificationSound {
+        group: bool,
+    },
+    /// Sets a chat's own notification sound; `None` follows Settings.
+    SetChatSound {
+        chat: ChatId,
+        sound: Option<crate::settings::NotificationSound>,
+    },
+    /// Asks for an audio file for one chat's notifications.
+    PickChatSound(ChatId),
+    /// Asks for a folder for new downloads.
+    PickDownloadFolder,
+    /// Changes our display name and About text; `None` keeps the current one.
+    SetProfile {
+        name: Option<String>,
+        about: Option<String>,
+    },
+    /// Asks for a picture and makes it our profile picture.
+    PickProfilePicture,
+    /// Sets or resets (`None`) the folder for new downloads.
+    SetDownloadFolder(Option<PathBuf>),
+    /// Saves the proxy setting and reconnects. Empty follows the environment.
+    SetProxy(String),
+    /// Plays a notification sound once, as a preview.
+    PreviewSound(crate::settings::NotificationSound),
     ZoomBy(f32),
     ResetZoom,
     /// Requests a pairing code for a phone number.
@@ -922,6 +1155,8 @@ pub enum Action {
     /// Unlinks the device remotely and locally.
     Unlink,
     Reconnect,
+    /// Sets aside an archive whose key is gone and links again.
+    StartOverArchive,
     Quit,
     /// Shows the window, creating it when running headless.
     ShowWindow,
@@ -947,6 +1182,42 @@ pub enum Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn message_receipts_sort_each_recipient_into_one_list() {
+        let recipient = |id: &str, expected, delivered, read, played| Recipient {
+            id: id.into(),
+            expected,
+            delivered_at: delivered,
+            read_at: read,
+            played_at: played,
+        };
+        let receipts = MessageReceipts {
+            chat: "g@g.us".into(),
+            message: "m".into(),
+            recipients: vec![
+                recipient("a", true, Some(10), Some(20), None),
+                recipient("b", true, Some(11), Some(30), None),
+                recipient("c", true, Some(12), None, None),
+                recipient("d", true, None, None, None),
+                recipient("e", true, Some(13), Some(14), Some(15)),
+                // Joined after the send, or answered under an unsaved alias.
+                recipient("f", false, Some(16), None, None),
+            ],
+        };
+        let ids = |rows: Vec<&Recipient>| rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+        assert!(receipts.audience_known());
+        assert_eq!(ids(receipts.played()), ["e"]);
+        assert_eq!(ids(receipts.read()), ["b", "a"]);
+        assert_eq!(ids(receipts.delivered()), ["f", "c"]);
+        assert_eq!(receipts.remaining(), 1);
+        let unknown = MessageReceipts {
+            recipients: vec![recipient("a", false, Some(1), None, None)],
+            ..Default::default()
+        };
+        assert!(!unknown.audience_known());
+        assert_eq!(unknown.remaining(), 0);
+    }
 
     #[test]
     fn rederived_interactive_content_keeps_every_downloaded_image() {

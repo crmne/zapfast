@@ -170,7 +170,11 @@ fn download_with_key(
         "Invalid release version"
     );
     let policy = source.clone();
-    let http = reqwest::blocking::Client::builder()
+    let mut http = reqwest::blocking::Client::builder();
+    if let Some(proxy) = crate::proxy::reqwest_proxy() {
+        http = http.proxy(proxy);
+    }
+    let http = http
         .user_agent(concat!("ZapFast/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(15 * 60))

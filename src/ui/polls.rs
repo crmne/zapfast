@@ -482,7 +482,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                             widgets::rich_text(ui, &voter.name, theme::regular(14.0), palette.text);
                             theme::text(
                                 ui,
-                                crate::util::moment_stamp(voter.timestamp),
+                                crate::util::moment_stamp(app.locale, voter.timestamp),
                                 theme::regular(12.0),
                                 palette.secondary,
                             );
