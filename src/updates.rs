@@ -8,6 +8,7 @@ use serde::Deserialize;
 pub mod install;
 #[cfg(target_os = "macos")]
 mod macos;
+mod signing;
 mod transfer;
 pub use transfer::{Source, download};
 
@@ -49,7 +50,8 @@ struct LatestRelease {
 
 /// The newest release, when it is newer than this build.
 pub fn newer_release() -> Result<Option<Release>> {
-    let mut response = ureq::get(LATEST_RELEASE_URL)
+    let mut response = crate::proxy::agent()
+        .get(LATEST_RELEASE_URL)
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", concat!("ZapFast/", env!("CARGO_PKG_VERSION")))
         .call()?;

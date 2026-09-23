@@ -53,8 +53,10 @@ impl Palette {
             surface_active: Color32::from_rgb(0x35, 0x44, 0x4d),
             outline: Color32::from_rgb(0x22, 0x2d, 0x34),
             text: Color32::from_rgb(0xe9, 0xed, 0xef),
-            secondary: Color32::from_rgb(0x86, 0x96, 0xa0),
-            dim: Color32::from_rgb(0x66, 0x77, 0x81),
+            // Secondary and dim text reach WCAG AA (4.5:1) on the window,
+            // panel, surface, and menu colours.
+            secondary: Color32::from_rgb(0x97, 0xa5, 0xae),
+            dim: Color32::from_rgb(0x8a, 0x98, 0x9f),
             accent: Color32::from_rgb(0x00, 0xa8, 0x84),
             accent_hover: Color32::from_rgb(0x06, 0xcf, 0x9c),
             on_accent: Color32::from_rgb(0x0b, 0x14, 0x1a),
@@ -80,10 +82,14 @@ impl Palette {
             surface_active: Color32::from_rgb(0xd9, 0xdd, 0xe1),
             outline: Color32::from_rgb(0xe9, 0xed, 0xef),
             text: Color32::from_rgb(0x11, 0x1b, 0x21),
-            secondary: Color32::from_rgb(0x66, 0x77, 0x81),
-            dim: Color32::from_rgb(0x8f, 0x9c, 0xa5),
-            accent: Color32::from_rgb(0x00, 0xa8, 0x84),
-            accent_hover: Color32::from_rgb(0x00, 0x8f, 0x6f),
+            // Secondary and dim text reach WCAG AA (4.5:1) on the window,
+            // panel, surface, chat, and menu colours. The accent is the green
+            // WhatsApp uses in its light theme, readable as text on white and
+            // under white button labels.
+            secondary: Color32::from_rgb(0x51, 0x5f, 0x67),
+            dim: Color32::from_rgb(0x63, 0x6b, 0x72),
+            accent: Color32::from_rgb(0x00, 0x80, 0x69),
+            accent_hover: Color32::from_rgb(0x00, 0x6e, 0x5a),
             on_accent: Color32::WHITE,
             danger: Color32::from_rgb(0xea, 0x00, 0x38),
             warning: Color32::from_rgb(0xa0, 0x6b, 0x00),
@@ -93,7 +99,23 @@ impl Palette {
             bubble_in: Color32::from_rgb(0xff, 0xff, 0xff),
             bubble_out: Color32::from_rgb(0xd9, 0xfd, 0xd3),
             link: Color32::from_rgb(0x02, 0x7e, 0xb5),
-            read: Color32::from_rgb(0x53, 0xbd, 0xeb),
+            // The lighter blue vanished on the green outgoing bubble.
+            read: Color32::from_rgb(0x02, 0x7e, 0xb5),
+        }
+    }
+
+    /// The palette for a message bubble's contents. Secondary and dim text,
+    /// and the read ticks, move toward the text colour just far enough to
+    /// stay readable on the bubble: a grey that reads on the panel can vanish
+    /// on the outgoing bubble. Works for custom themes as well.
+    pub fn on_bubble(&self, own: bool) -> Self {
+        let fill = if own { self.bubble_out } else { self.bubble_in };
+        Self {
+            secondary: readable_on(fill, self.secondary, self.text, 4.5),
+            dim: readable_on(fill, self.dim, self.text, 4.5),
+            // Icons need 3:1 (WCAG 1.4.11).
+            read: readable_on(fill, self.read, self.text, 3.0),
+            ..*self
         }
     }
 
@@ -142,6 +164,7 @@ fn hsl(hue: f32, saturation: f32, lightness: f32) -> Color32 {
 
 pub const RADIUS: u8 = 8;
 pub const RADIUS_SMALL: u8 = 4;
+pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
 pub const ROW_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
 
@@ -170,6 +193,10 @@ pub fn install(ctx: &egui::Context) {
     install_fonts(ctx);
     register_icons(ctx);
     egui_extras::install_image_loaders(ctx);
+    // Drop the raw bytes and the decoded pixels once a texture is on the GPU.
+    // egui keeps all three copies of every image otherwise, and only ever
+    // evicts the textures of SVGs.
+    ctx.options_mut(|options| options.reduce_texture_memory = true);
 }
 
 /// Applies the palette to egui widgets.
@@ -191,7 +218,7 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     visuals.weak_text_color = Some(palette.secondary);
     visuals.hyperlink_color = palette.link;
     visuals.selection.bg_fill = palette.accent.gamma_multiply(0.35);
-    visuals.selection.stroke = Stroke::new(1.0, palette.accent);
+    visuals.selection.stroke = Stroke::new(FOCUS_STROKE_WIDTH, palette.accent);
     visuals.window_stroke = Stroke::new(1.0, palette.outline);
     visuals.window_corner_radius = CornerRadius::same(RADIUS + 2);
     visuals.menu_corner_radius = CornerRadius::same(RADIUS);
@@ -316,6 +343,7 @@ fn install_fonts(ctx: &egui::Context) {
     for font in crate::system_fonts::fallbacks() {
         let mut data = FontData::from_static(&font.bytes);
         data.index = font.index;
+        data.tweak.scale = font.scale;
         fonts.font_data.insert(font.name.clone(), Arc::new(data));
         for family in fonts.families.values_mut() {
             family.push(font.name.clone());
@@ -369,6 +397,7 @@ pub enum Icon {
     Info,
     Keyboard,
     Lock,
+    LockOpen,
     LogOut,
     MapPin,
     Maximize,
@@ -402,6 +431,7 @@ pub enum Icon {
     User,
     Users,
     Video,
+    Volume2,
     VolumeX,
     WifiOff,
     X,
@@ -440,6 +470,7 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     Info => "info",
     Keyboard => "keyboard",
     Lock => "lock",
+    LockOpen => "lock-open",
     LogOut => "log-out",
     MapPin => "map-pin",
     Maximize => "maximize-2",
@@ -473,6 +504,7 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     User => "user",
     Users => "users",
     Video => "video",
+    Volume2 => "volume-2",
     VolumeX => "volume-x",
     WifiOff => "wifi-off",
     X => "x",
@@ -493,10 +525,43 @@ impl Icon {
     }
 }
 
-fn register_icons(ctx: &egui::Context) {
-    for (_, uri, bytes) in ICONS {
-        ctx.include_bytes(*uri, *bytes);
+/// Serves the embedded icon SVGs for the life of the context.
+///
+/// `reduce_texture_memory` makes egui drop an image's bytes once its texture
+/// is uploaded. An icon drawn at more than one size loses that texture when
+/// egui prunes the extra size variants, and with the bytes gone the next draw
+/// finds neither and paints egui's red "failed" placeholder. A loader whose
+/// `forget` does nothing keeps them: the icons are 69 small SVGs, so holding
+/// them costs nothing next to a single photo.
+struct IconBytes;
+
+impl egui::load::BytesLoader for IconBytes {
+    fn id(&self) -> &str {
+        egui::generate_loader_id!(IconBytes)
     }
+
+    fn load(&self, _: &egui::Context, uri: &str) -> egui::load::BytesLoadResult {
+        match ICONS.iter().find(|(_, icon, _)| *icon == uri) {
+            Some((_, _, bytes)) => Ok(egui::load::BytesPoll::Ready {
+                size: None,
+                bytes: (*bytes).into(),
+                mime: Some("image/svg+xml".to_owned()),
+            }),
+            None => Err(egui::load::LoadError::NotSupported),
+        }
+    }
+
+    fn forget(&self, _uri: &str) {}
+
+    fn forget_all(&self) {}
+
+    fn byte_size(&self) -> usize {
+        ICONS.iter().map(|(_, _, bytes)| bytes.len()).sum()
+    }
+}
+
+fn register_icons(ctx: &egui::Context) {
+    ctx.add_bytes_loader(std::sync::Arc::new(IconBytes));
 }
 
 /// A static icon.
@@ -521,6 +586,7 @@ pub fn icon_button(
 ) -> Response {
     let edge = size + 12.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(edge), Sense::click());
+    reveal_focus(&response);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
@@ -556,6 +622,8 @@ pub fn circle_button(
     tooltip: &str,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click());
+    reveal_focus(&response);
+    focus_outline_on_fill(ui, response.id, rect, diameter / 2.0, fill);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
@@ -603,11 +671,25 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
     let padding = Vec2::new(18.0, 8.0);
     let size = galley.size() + padding * 2.0;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    reveal_focus(&response);
+    focus_outline_on_fill(
+        ui,
+        response.id,
+        rect,
+        rect.height() / 2.0,
+        if primary {
+            palette.accent
+        } else {
+            Color32::TRANSPARENT
+        },
+    );
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
+    // A disabled Ui already fades the painter; it must not react to hover.
+    let enabled = ui.is_enabled();
     if ui.is_rect_visible(rect) {
-        let hovered = response.hovered();
+        let hovered = enabled && response.hovered();
         let radius = rect.height() / 2.0;
         if primary {
             let fill = if hovered {
@@ -628,7 +710,11 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
         let pos = rect.center() - galley.size() / 2.0;
         ui.painter().galley(pos, galley, color);
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
 }
 
 /// Subtle button with an optional icon and label.
@@ -647,6 +733,8 @@ pub fn soft_button(
     let padding = Vec2::new(12.0, 7.0);
     let size = Vec2::new(galley.size().x + icon_width, galley.size().y) + padding * 2.0;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    reveal_focus(&response);
+    focus_outline(ui, response.id, rect, rect.height() / 2.0);
     if ui.is_rect_visible(rect) {
         let hovered = response.hovered();
         let fill = if active {
@@ -679,6 +767,63 @@ pub fn soft_button_width(ui: &egui::Ui, label: &str, icon: bool) -> f32 {
         .layout_no_wrap(label.to_owned(), medium(13.0), Color32::WHITE);
     let icon_width = if icon { 15.0 + 6.0 } else { 0.0 };
     galley.size().x + icon_width + 24.0
+}
+
+/// Whether focus last moved by keyboard, like the web's `:focus-visible`.
+pub fn keyboard_focus_id() -> egui::Id {
+    egui::Id::new("keyboard-focus")
+}
+
+/// The visible control may be larger than its text editor, or circular rather
+/// than rectangular. Keep its outline geometry with the current frame only.
+#[derive(Clone, Copy, Debug)]
+pub struct FocusOutline {
+    pub rect: egui::Rect,
+    pub radius: f32,
+    pub clip: egui::Rect,
+    pub frame: u64,
+    pub fill: Color32,
+}
+
+pub fn focus_outline(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, radius: f32) {
+    focus_outline_on_fill(ui, id, rect, radius, Color32::TRANSPARENT);
+}
+
+fn focus_outline_on_fill(
+    ui: &egui::Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    radius: f32,
+    fill: Color32,
+) {
+    let outline = FocusOutline {
+        rect,
+        radius,
+        clip: ui.clip_rect(),
+        frame: ui.ctx().cumulative_frame_nr(),
+        fill,
+    };
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id.with("focus-outline"), outline));
+}
+
+/// Scrolls a widget that keyboard focus reached into view. egui does not do
+/// this itself, and a scroll target only counts when set while the widget's
+/// scroll area is being laid out, so each focusable widget calls this.
+pub fn reveal_focus(response: &Response) {
+    let keyboard = response
+        .ctx
+        .data(|data| data.get_temp::<bool>(keyboard_focus_id()).unwrap_or(false));
+    // Once per focus change: scrolling again before the first scroll lands
+    // would overshoot.
+    if keyboard && response.gained_focus() && response.interact_rect != response.rect {
+        // Jump rather than glide: the focus should be visible at once.
+        // A small margin avoids subpixel clipping when scroll offsets round to
+        // device pixels, and leaves room for the focus stroke.
+        let mut target = response.clone();
+        target.rect = target.rect.expand(4.0);
+        target.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+    }
 }
 
 /// Animated busy indicator with timer-based repainting.
@@ -789,6 +934,36 @@ pub fn blend(a: Color32, b: Color32, t: f32) -> Color32 {
     )
 }
 
+/// WCAG contrast ratio between two opaque colours, from 1 to 21.
+pub fn contrast(a: Color32, b: Color32) -> f32 {
+    fn luminance(color: Color32) -> f32 {
+        let channel = |value: u8| {
+            let value = f32::from(value) / 255.0;
+            if value <= 0.040_45 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+    }
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// `color`, blended toward `toward` only as far as needed to reach `target`
+/// contrast on `background`.
+pub fn readable_on(background: Color32, color: Color32, toward: Color32, target: f32) -> Color32 {
+    let mut step = 0.0;
+    loop {
+        let candidate = blend(color, toward, step);
+        if step >= 1.0 || contrast(candidate, background) >= target {
+            return candidate;
+        }
+        step = (step + 0.05_f32).min(1.0);
+    }
+}
+
 /// Native macOS layout, also selectable in offline layout previews.
 pub fn macos_chrome(ctx: &egui::Context) -> bool {
     #[cfg(any(test, feature = "demo"))]
@@ -830,12 +1005,150 @@ mod tests {
     use super::*;
 
     #[test]
+    fn inter_figures_are_tabular() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let width = |text: &str| {
+                ui.painter()
+                    .layout_no_wrap(text.to_owned(), regular(13.0), Color32::WHITE)
+                    .rect
+                    .width()
+            };
+            // With proportional figures "1:11" is far narrower than "8:88",
+            // so timers and durations jitter as they count.
+            assert!(
+                (width("1:11") - width("8:88")).abs() < 0.01,
+                "bundled Inter should draw tabular figures"
+            );
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
     fn every_icon_has_a_file() {
         for (icon, uri, bytes) in ICONS {
             assert!(!bytes.is_empty(), "{icon:?} is empty");
             assert!(uri.ends_with(".svg"));
             assert_eq!(icon.uri(), *uri);
         }
+    }
+
+    /// egui drops an image's bytes after the texture upload when
+    /// `reduce_texture_memory` is on, and then prunes the SVG's extra size
+    /// variants. A loader that survives both is what keeps an icon that is
+    /// drawn at two sizes from falling back to egui's red placeholder.
+    #[test]
+    fn icon_bytes_outlive_forgetting() {
+        use egui::load::{BytesLoader as _, BytesPoll};
+        let loader = IconBytes;
+        let (icon, uri, bytes) = ICONS[0];
+        let served =
+            |loader: &IconBytes, uri: &str| match loader.load(&egui::Context::default(), uri) {
+                Ok(BytesPoll::Ready { bytes, .. }) => Some(bytes),
+                _ => None,
+            };
+        let loaded = served(&loader, uri).expect("the icon loader serves every icon");
+        assert_eq!(&*loaded, bytes, "{icon:?} bytes differ");
+        loader.forget(uri);
+        loader.forget_all();
+        assert!(
+            served(&loader, uri).is_some(),
+            "{icon:?} must survive a forget"
+        );
+        assert!(
+            matches!(
+                loader.load(&egui::Context::default(), "bytes://zapfast-icon-nope.svg"),
+                Err(egui::load::LoadError::NotSupported)
+            ),
+            "other URIs must fall through to the default loader"
+        );
+    }
+
+    fn assert_readable(name: &str, pairs: &[(&str, Color32, Color32)], target: f32) {
+        for (what, color, background) in pairs {
+            let ratio = contrast(*color, *background);
+            assert!(
+                ratio >= target,
+                "{name}: {what} is {ratio:.2}:1, needs {target}:1"
+            );
+        }
+    }
+
+    /// Secondary and dim carry real content: previews, times, numbers,
+    /// hints. They must reach WCAG AA wherever the built-in themes put them.
+    #[test]
+    fn built_in_text_colours_reach_aa() {
+        for (name, p) in [("dark", Palette::dark()), ("light", Palette::light())] {
+            let mut pairs = Vec::new();
+            for (surface, background) in [
+                ("window", p.window),
+                ("panel", p.panel),
+                ("surface", p.surface),
+                ("menu", p.overlay),
+            ] {
+                pairs.push((
+                    "secondary on ".to_owned() + surface,
+                    p.secondary,
+                    background,
+                ));
+                pairs.push(("dim on ".to_owned() + surface, p.dim, background));
+            }
+            pairs.push(("accent text on panel".into(), p.accent, p.panel));
+            pairs.push(("button label on accent".into(), p.on_accent, p.accent));
+            let pairs: Vec<_> = pairs
+                .iter()
+                .map(|(what, color, background)| (what.as_str(), *color, *background))
+                .collect();
+            assert_readable(name, &pairs, 4.5);
+        }
+        let light = Palette::light();
+        assert_readable(
+            "light",
+            &[
+                ("secondary on chat", light.secondary, light.chat),
+                ("dim on chat", light.dim, light.chat),
+            ],
+            4.5,
+        );
+    }
+
+    /// Bubble contents stay readable for every palette, custom ones included.
+    #[test]
+    fn bubble_text_is_readable_in_every_palette() {
+        let palettes = [("dark", Palette::dark()), ("light", Palette::light())]
+            .into_iter()
+            .map(|(name, palette)| (name.to_owned(), palette))
+            .chain(presets::themes().map(|theme| (theme.filename.clone(), theme.palette)));
+        for (name, palette) in palettes {
+            for own in [false, true] {
+                let fill = if own {
+                    palette.bubble_out
+                } else {
+                    palette.bubble_in
+                };
+                let bubble = palette.on_bubble(own);
+                let name = format!("{name}, {} bubble", if own { "own" } else { "their" });
+                assert_readable(
+                    &name,
+                    &[
+                        ("secondary", bubble.secondary, fill),
+                        ("dim", bubble.dim, fill),
+                    ],
+                    4.5,
+                );
+                assert_readable(&name, &[("read ticks", bubble.read, fill)], 3.0);
+            }
+        }
+    }
+
+    #[test]
+    fn readable_on_leaves_a_readable_colour_alone() {
+        let light = Palette::light();
+        assert_eq!(
+            readable_on(light.bubble_in, light.secondary, light.text, 4.5),
+            light.secondary
+        );
     }
 
     #[test]

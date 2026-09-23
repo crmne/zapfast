@@ -42,8 +42,15 @@ fn register_identity() -> std::io::Result<()> {
     Ok(())
 }
 
-fn notification(title: &str, body: &str, picture: Option<&Path>) -> Toast {
+fn notification(title: &str, body: &str, picture: Option<&Path>, system_sound: bool) -> Toast {
     let toast = Toast::new(APPLICATION_ID).title(title).text1(body);
+    // Without the system sound the toast is silent; a custom sound is played
+    // by ZapFast itself.
+    let toast = if system_sound {
+        toast
+    } else {
+        toast.sound(None)
+    };
     if let Some(picture) = picture {
         toast.icon(picture, IconCrop::Circular, "Sender")
     } else {
@@ -51,12 +58,17 @@ fn notification(title: &str, body: &str, picture: Option<&Path>) -> Toast {
     }
 }
 
-pub(super) fn show(title: &str, body: &str, picture: Option<&Path>) -> anyhow::Result<()> {
+pub(super) fn show(
+    title: &str,
+    body: &str,
+    picture: Option<&Path>,
+    system_sound: bool,
+) -> anyhow::Result<()> {
     static REGISTERED: OnceLock<Result<(), String>> = OnceLock::new();
     if let Err(error) = REGISTERED.get_or_init(|| register_identity().map_err(|e| e.to_string())) {
         anyhow::bail!("notification identity unavailable: {error}");
     }
-    notification(title, body, picture).show()?;
+    notification(title, body, picture, system_sound).show()?;
     Ok(())
 }
 

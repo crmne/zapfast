@@ -3,6 +3,8 @@
 use jiff::civil::Date;
 use jiff::{Timestamp, Zoned};
 
+use crate::i18n::Locale;
+
 /// File-loader identifier for a native path. egui requires a slash after
 /// `file://` on Windows or it interprets a drive path as a UNC hostname.
 /// Keep native characters: egui's loader does not percent-decode URLs.
@@ -24,10 +26,151 @@ fn today() -> Date {
     Zoned::now().date()
 }
 
+/// Whether the system shows times on a 12-hour clock. Read once per run.
+pub fn twelve_hour_clock() -> bool {
+    static TWELVE_HOUR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TWELVE_HOUR.get_or_init(clock_preference::twelve_hour)
+}
+
+/// Whether a time pattern uses a 12-hour hour field. Windows patterns spell
+/// it `h`, ICU patterns `h` or `K`, and C formats `%I`, `%l`, or `%r`.
+fn pattern_is_twelve_hour(pattern: &str) -> bool {
+    if pattern.contains('%') {
+        return ["%I", "%l", "%r", "%p"]
+            .iter()
+            .any(|field| pattern.contains(field));
+    }
+    // Skip quoted literals such as 'h' in "HH 'h' mm".
+    let mut quoted = false;
+    for character in pattern.chars() {
+        match character {
+            '\'' => quoted = !quoted,
+            'h' | 'K' if !quoted => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "linux")]
+mod clock_preference {
+    pub fn twelve_hour() -> bool {
+        gnome().unwrap_or_else(locale)
+    }
+
+    /// GNOME keeps its own clock format, independent of the locale.
+    fn gnome() -> Option<bool> {
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok()?;
+        if !desktop
+            .split(':')
+            .any(|name| name.eq_ignore_ascii_case("GNOME"))
+        {
+            return None;
+        }
+        let output = std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "clock-format"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        match String::from_utf8_lossy(&output.stdout).trim() {
+            "'12h'" => Some(true),
+            "'24h'" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// The time locale's own format, read without changing the process locale.
+    fn locale() -> bool {
+        // SAFETY: an empty name selects the environment's LC_TIME; the locale
+        // is freed after its format string has been copied.
+        unsafe {
+            let locale = libc::newlocale(libc::LC_TIME_MASK, c"".as_ptr(), std::ptr::null_mut());
+            if locale.is_null() {
+                return false;
+            }
+            let format = libc::nl_langinfo_l(libc::T_FMT, locale);
+            let twelve = !format.is_null()
+                && super::pattern_is_twelve_hour(
+                    &std::ffi::CStr::from_ptr(format).to_string_lossy(),
+                );
+            libc::freelocale(locale);
+            twelve
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod clock_preference {
+    use objc2_foundation::{NSDateFormatter, NSLocale, NSString};
+
+    /// The "j" template asks for the locale's preferred hour, which follows
+    /// the 24-hour switch in System Settings.
+    pub fn twelve_hour() -> bool {
+        let locale = NSLocale::currentLocale();
+        NSDateFormatter::dateFormatFromTemplate_options_locale(
+            &NSString::from_str("j"),
+            0,
+            Some(&locale),
+        )
+        .is_some_and(|pattern| super::pattern_is_twelve_hour(&pattern.to_string()))
+    }
+}
+
+#[cfg(windows)]
+mod clock_preference {
+    use windows_sys::Win32::Globalization::{GetLocaleInfoEx, LOCALE_STIMEFORMAT};
+
+    /// The user's time format from Region settings, such as "h:mm:ss tt".
+    pub fn twelve_hour() -> bool {
+        let mut buffer = [0u16; 80];
+        // SAFETY: a null name means the user's default locale; the buffer
+        // length is in UTF-16 units.
+        let written = unsafe {
+            GetLocaleInfoEx(
+                std::ptr::null(),
+                LOCALE_STIMEFORMAT,
+                buffer.as_mut_ptr(),
+                buffer.len() as i32,
+            )
+        };
+        written > 0
+            && super::pattern_is_twelve_hour(&String::from_utf16_lossy(
+                &buffer[..written as usize - 1],
+            ))
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+mod clock_preference {
+    pub fn twelve_hour() -> bool {
+        false
+    }
+}
+
+/// Time of day on the system's clock, such as "14:05" or "2:05 PM".
+fn hour_minute(when: &Zoned) -> String {
+    time_of_day(when.hour(), when.minute(), twelve_hour_clock())
+}
+
+/// Formats an hour and minute of day as 24-hour "14:05" or 12-hour "2:05 PM".
+fn time_of_day(hour: i8, minute: i8, twelve_hour: bool) -> String {
+    if twelve_hour {
+        let (hour, meridiem) = match hour {
+            0 => (12, "AM"),
+            1..=11 => (hour, "AM"),
+            12 => (12, "PM"),
+            _ => (hour - 12, "PM"),
+        };
+        format!("{hour}:{minute:02} {meridiem}")
+    } else {
+        format!("{hour:02}:{minute:02}")
+    }
+}
+
 /// Local message time such as "14:05".
 pub fn clock(unix_seconds: i64) -> String {
     zoned(unix_seconds)
-        .map(|when| format!("{:02}:{:02}", when.hour(), when.minute()))
+        .map(|when| hour_minute(&when))
         .unwrap_or_default()
 }
 
@@ -48,23 +191,23 @@ pub fn copy_stamp(unix_seconds: i64) -> String {
 }
 
 /// Chat-row timestamp: time today, weekday this week, or date.
-pub fn chat_stamp(unix_seconds: i64) -> String {
+pub fn chat_stamp(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
-    stamp_relative_to(when.date(), today(), &when)
+    stamp_relative_to(locale, when.date(), today(), &when)
 }
 
-fn stamp_relative_to(date: Date, today: Date, when: &Zoned) -> String {
+fn stamp_relative_to(locale: Locale, date: Date, today: Date, when: &Zoned) -> String {
     let days = today
         .since(date)
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
-        0 => format!("{:02}:{:02}", when.hour(), when.minute()),
-        1 => "Yesterday".to_owned(),
-        2..=6 => weekday_name(date.weekday()).to_owned(),
-        _ => short_date(date),
+        0 => hour_minute(when),
+        1 => crate::i18n::gettext(locale, "Yesterday").into_owned(),
+        2..=6 => weekday_name(locale, date.weekday()),
+        _ => short_date(locale, date),
     }
 }
 
@@ -78,25 +221,29 @@ pub fn split_name(name: &str) -> (String, String) {
 }
 
 /// Message-info timestamp with date and minute.
-pub fn moment_stamp(unix_seconds: i64) -> String {
+pub fn moment_stamp(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
-    let time = format!("{:02}:{:02}", when.hour(), when.minute());
+    let time = hour_minute(&when);
     let days = today()
         .since(when.date())
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
         0 => time,
-        1 => format!("Yesterday at {time}"),
-        2..=6 => format!("{} at {time}", weekday_name(when.date().weekday())),
-        _ => format!("{} at {time}", short_date(when.date())),
+        1 => crate::i18n::gettext(locale, "Yesterday at {time}").replace("{time}", &time),
+        2..=6 => crate::i18n::gettext(locale, "{weekday} at {time}")
+            .replace("{weekday}", &weekday_name(locale, when.date().weekday()))
+            .replace("{time}", &time),
+        _ => crate::i18n::gettext(locale, "{date} at {time}")
+            .replace("{date}", &short_date(locale, when.date()))
+            .replace("{time}", &time),
     }
 }
 
 /// Conversation day-separator label.
-pub fn day_label(unix_seconds: i64) -> String {
+pub fn day_label(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
@@ -107,10 +254,10 @@ pub fn day_label(unix_seconds: i64) -> String {
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
     match days {
-        0 => "Today".to_owned(),
-        1 => "Yesterday".to_owned(),
-        2..=6 => weekday_name(date.weekday()).to_owned(),
-        _ => long_date(date),
+        0 => crate::i18n::gettext(locale, "Today").into_owned(),
+        1 => crate::i18n::gettext(locale, "Yesterday").into_owned(),
+        2..=6 => weekday_name(locale, date.weekday()),
+        _ => long_date(locale, date),
     }
 }
 
@@ -119,50 +266,51 @@ pub fn day_key(unix_seconds: i64) -> Option<Date> {
     zoned(unix_seconds).map(|when| when.date())
 }
 
-fn weekday_name(weekday: jiff::civil::Weekday) -> &'static str {
+fn weekday_name(locale: Locale, weekday: jiff::civil::Weekday) -> String {
+    use crate::i18n::gettext;
+    // Each literal sits in its own call so xgettext can extract it.
     match weekday {
-        jiff::civil::Weekday::Monday => "Monday",
-        jiff::civil::Weekday::Tuesday => "Tuesday",
-        jiff::civil::Weekday::Wednesday => "Wednesday",
-        jiff::civil::Weekday::Thursday => "Thursday",
-        jiff::civil::Weekday::Friday => "Friday",
-        jiff::civil::Weekday::Saturday => "Saturday",
-        jiff::civil::Weekday::Sunday => "Sunday",
+        jiff::civil::Weekday::Monday => gettext(locale, "Monday"),
+        jiff::civil::Weekday::Tuesday => gettext(locale, "Tuesday"),
+        jiff::civil::Weekday::Wednesday => gettext(locale, "Wednesday"),
+        jiff::civil::Weekday::Thursday => gettext(locale, "Thursday"),
+        jiff::civil::Weekday::Friday => gettext(locale, "Friday"),
+        jiff::civil::Weekday::Saturday => gettext(locale, "Saturday"),
+        jiff::civil::Weekday::Sunday => gettext(locale, "Sunday"),
     }
+    .into_owned()
 }
 
-fn month_name(month: i8) -> &'static str {
+fn month_name(locale: Locale, month: i8) -> String {
+    use crate::i18n::gettext;
     match month {
-        1 => "January",
-        2 => "February",
-        3 => "March",
-        4 => "April",
-        5 => "May",
-        6 => "June",
-        7 => "July",
-        8 => "August",
-        9 => "September",
-        10 => "October",
-        11 => "November",
-        _ => "December",
+        1 => gettext(locale, "January"),
+        2 => gettext(locale, "February"),
+        3 => gettext(locale, "March"),
+        4 => gettext(locale, "April"),
+        5 => gettext(locale, "May"),
+        6 => gettext(locale, "June"),
+        7 => gettext(locale, "July"),
+        8 => gettext(locale, "August"),
+        9 => gettext(locale, "September"),
+        10 => gettext(locale, "October"),
+        11 => gettext(locale, "November"),
+        _ => gettext(locale, "December"),
     }
+    .into_owned()
 }
 
-fn short_date(date: Date) -> String {
-    format!(
-        "{} {} {}",
-        date.day(),
-        &month_name(date.month())[..3],
-        date.year()
-    )
+fn short_date(locale: Locale, date: Date) -> String {
+    let month: String = month_name(locale, date.month()).chars().take(3).collect();
+    format!("{} {month} {}", date.day(), date.year())
 }
 
-fn long_date(date: Date) -> String {
+fn long_date(locale: Locale, date: Date) -> String {
     format!(
         "{}, {} {} {}",
-        weekday_name(date.weekday()),
+        weekday_name(locale, date.weekday()),
         date.day(),
-        month_name(date.month()),
+        month_name(locale, date.month()),
         date.year()
     )
 }
@@ -229,11 +377,14 @@ pub fn initials(name: &str) -> String {
     initials
 }
 
-/// Formats a phone number with a plus sign and grouped digits.
+/// Formats a phone number with a plus sign and country-appropriate grouping.
 pub fn phone(digits: &str) -> String {
     let digits: String = digits.chars().filter(char::is_ascii_digit).collect();
     if digits.is_empty() {
         return String::new();
+    }
+    if let Some(formatted) = brazilian_phone(&digits) {
+        return formatted;
     }
     let mut out = String::from("+");
     for (index, character) in digits.chars().enumerate() {
@@ -244,6 +395,27 @@ pub fn phone(digits: &str) -> String {
         out.push(character);
     }
     out
+}
+
+/// Formats Brazil's `+55` numbers as `(DDD) XXXX-XXXX` or `(DDD) XXXXX-XXXX`.
+///
+/// WhatsApp stores direct-chat ids in international form, while Brazilian
+/// numbers use a two-digit area code and either eight-digit fixed lines or
+/// nine-digit mobile numbers.
+fn brazilian_phone(digits: &str) -> Option<String> {
+    let national = digits.strip_prefix("55")?;
+    let subscriber_len = match national.len() {
+        10 | 11 => national.len() - 2,
+        _ => return None,
+    };
+    let area = &national[..2];
+    let subscriber = &national[2..2 + subscriber_len];
+    let split = subscriber.len() - 4;
+    Some(format!(
+        "+55 ({area}) {}-{}",
+        &subscriber[..split],
+        &subscriber[split..]
+    ))
 }
 
 /// Stable id-derived avatar hue.
@@ -326,6 +498,34 @@ pub fn tray_template_rgba(size: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn clock_patterns_from_every_platform_are_recognized() {
+        for pattern in [
+            "h:mm:ss tt",
+            "h a",
+            "K:mm a",
+            "%r",
+            "%I:%M:%S %p",
+            "%l:%M %p",
+        ] {
+            assert!(super::pattern_is_twelve_hour(pattern), "{pattern}");
+        }
+        for pattern in ["HH:mm:ss", "H:mm", "%T", "%H:%M:%S", "HH 'h' mm", "HH"] {
+            assert!(!super::pattern_is_twelve_hour(pattern), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn time_of_day_switches_between_24_and_12_hour() {
+        assert_eq!(time_of_day(0, 5, false), "00:05");
+        assert_eq!(time_of_day(14, 5, false), "14:05");
+        assert_eq!(time_of_day(0, 5, true), "12:05 AM");
+        assert_eq!(time_of_day(9, 5, true), "9:05 AM");
+        assert_eq!(time_of_day(12, 0, true), "12:00 PM");
+        assert_eq!(time_of_day(14, 5, true), "2:05 PM");
+        assert_eq!(time_of_day(23, 59, true), "11:59 PM");
+    }
+
+    #[test]
     fn image_paths_keep_the_native_path_after_loader_conversion() {
         for path in [
             r"C:\Users\Ada\photo.jpg",
@@ -384,6 +584,10 @@ mod tests {
     fn phone_numbers_are_grouped() {
         assert_eq!(phone("393331234567"), "+39 333 123 456 7");
         assert_eq!(phone("15551234567"), "+15 551 234 567");
+        assert_eq!(phone("5511999999999"), "+55 (11) 99999-9999");
+        assert_eq!(phone("551140028922"), "+55 (11) 4002-8922");
+        assert_eq!(phone("551149508333"), "+55 (11) 4950-8333");
+        assert_eq!(phone("+55 (11) 99999-9999"), "+55 (11) 99999-9999");
         assert_eq!(phone(""), "");
     }
 
@@ -393,13 +597,17 @@ mod tests {
             .expect("valid")
             .to_zoned(jiff::tz::TimeZone::UTC);
         let date = when.date();
-        assert_eq!(stamp_relative_to(date, date, &when), "22:13");
         assert_eq!(
-            stamp_relative_to(date, date.tomorrow().expect("date"), &when),
+            stamp_relative_to(Locale::English, date, date, &when),
+            time_of_day(22, 13, twelve_hour_clock())
+        );
+        assert_eq!(
+            stamp_relative_to(Locale::English, date, date.tomorrow().expect("date"), &when),
             "Yesterday"
         );
         assert_eq!(
             stamp_relative_to(
+                Locale::English,
                 date,
                 date.checked_add(jiff::Span::new().days(3)).expect("date"),
                 &when
@@ -408,11 +616,56 @@ mod tests {
         );
         assert_eq!(
             stamp_relative_to(
+                Locale::English,
                 date,
                 date.checked_add(jiff::Span::new().days(30)).expect("date"),
                 &when
             ),
             "14 Nov 2023"
+        );
+    }
+
+    #[test]
+    fn short_dates_take_whole_characters_in_every_locale() {
+        for locale in Locale::ALL {
+            for month in 1..=12 {
+                let date = jiff::civil::date(2024, month, 5);
+                let short = short_date(locale, date);
+                assert!(
+                    short.starts_with("5 ") && short.ends_with(" 2024"),
+                    "{short}"
+                );
+            }
+        }
+        assert_eq!(
+            short_date(Locale::German, jiff::civil::date(2024, 3, 5)),
+            "5 Mär 2024"
+        );
+    }
+
+    #[test]
+    fn brazilian_portuguese_stamps_are_translated() {
+        let when = Timestamp::from_second(1_700_000_000)
+            .expect("valid")
+            .to_zoned(jiff::tz::TimeZone::UTC);
+        let date = when.date();
+        assert_eq!(
+            stamp_relative_to(
+                Locale::PortugueseBrazil,
+                date,
+                date.tomorrow().expect("date"),
+                &when
+            ),
+            "Ontem"
+        );
+        assert_eq!(
+            stamp_relative_to(
+                Locale::PortugueseBrazil,
+                date,
+                date.checked_add(jiff::Span::new().days(3)).expect("date"),
+                &when
+            ),
+            "Terça-feira"
         );
     }
 

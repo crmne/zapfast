@@ -170,6 +170,9 @@ fn ltr_run_right_of_rtl(glyphs: &[Glyph], runs: &[Range<usize>]) -> bool {
     }
 }
 
+// Compare character sets rather than counts: shaped RTL runs can repeat a
+// character in their zero-width continuation entries. Dropping those entries
+// instead loses letters consumed by ligatures and prevents matching the word.
 fn paragraph_letter_tokens(paragraph: &str) -> Vec<Vec<char>> {
     paragraph
         .split_whitespace()
@@ -180,6 +183,7 @@ fn paragraph_letter_tokens(paragraph: &str) -> Vec<Vec<char>> {
                 .filter(|c| (is_rtl(*c) || is_strong_ltr(*c)) && !is_nonspacing_mark(*c))
                 .collect();
             chars.sort_unstable();
+            chars.dedup();
             chars
         })
         .filter(|chars| !chars.is_empty())
@@ -191,13 +195,16 @@ fn letter_run_charsets(glyphs: &[Glyph], runs: &[Range<usize>]) -> Vec<Vec<char>
     for run in runs {
         let mut chars: Vec<char> = glyphs[run.clone()]
             .iter()
-            .filter(|glyph| is_rtl_letter(glyph) || is_ltr_letter(glyph))
+            // Shaping can put a ligature's remaining letters in zero-width
+            // continuation glyphs. Their characters still identify the word.
+            .filter(|glyph| is_strong_rtl(glyph.chr) || is_strong_ltr(glyph.chr))
             .map(|glyph| glyph.chr)
             .collect();
         if chars.is_empty() {
             continue;
         }
         chars.sort_unstable();
+        chars.dedup();
         out.push(chars);
     }
     out
@@ -209,13 +216,14 @@ fn leftmost_letter_charset(glyphs: &[Glyph], runs: &[Range<usize>]) -> Option<Ve
         let slice = &glyphs[run.clone()];
         let mut chars: Vec<char> = slice
             .iter()
-            .filter(|glyph| is_rtl_letter(glyph) || is_ltr_letter(glyph))
+            .filter(|glyph| is_strong_rtl(glyph.chr) || is_strong_ltr(glyph.chr))
             .map(|glyph| glyph.chr)
             .collect();
         if chars.is_empty() {
             continue;
         }
         chars.sort_unstable();
+        chars.dedup();
         let x = min_x(slice);
         if best.as_ref().is_none_or(|(best_x, _)| x < *best_x) {
             best = Some((x, chars));
@@ -356,7 +364,91 @@ mod tests {
     use super::*;
     use egui::text::{FontData, FontDefinitions, FontFamily, LayoutJob, TextFormat};
     use egui::{Color32, FontId, Pos2, vec2};
-    use std::sync::Arc;
+    use std::{path::PathBuf, sync::Arc};
+
+    const RTL_FONT_CANDIDATES: &[&str] = &[
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/gnu-free/FreeSans.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\tahoma.ttf",
+    ];
+
+    fn rtl_font() -> PathBuf {
+        std::env::var_os("ZAPFAST_TEST_RTL_FONT")
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+            .or_else(|| {
+                RTL_FONT_CANDIDATES
+                    .iter()
+                    .map(PathBuf::from)
+                    .find(|path| path.is_file())
+            })
+            .or_else(find_rtl_font)
+            .expect(
+                "set ZAPFAST_TEST_RTL_FONT or install a Hebrew/Arabic-capable sans \
+                 (DejaVu, Liberation, FreeSans, Arial) for RTL layout tests",
+            )
+    }
+
+    /// Distributions put the same fonts in different folders (Fedora uses
+    /// `dejavu-sans-fonts/`, `liberation-sans/`, `gnu-free/`), so look for
+    /// the known file names under the usual font roots.
+    fn find_rtl_font() -> Option<PathBuf> {
+        const NAMES: &[&str] = &[
+            "DejaVuSans.ttf",
+            "LiberationSans-Regular.ttf",
+            "FreeSans.ttf",
+            "FreeSans.otf",
+        ];
+        let mut roots = vec![
+            PathBuf::from("/usr/share/fonts"),
+            PathBuf::from("/usr/local/share/fonts"),
+        ];
+        if let Some(data) = std::env::var_os("XDG_DATA_DIRS") {
+            roots.extend(std::env::split_paths(&data).map(|dir| dir.join("fonts")));
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            roots.push(PathBuf::from(&home).join(".local/share/fonts"));
+            roots.push(PathBuf::from(home).join(".fonts"));
+        }
+        fn search(dir: &std::path::Path, depth: usize, names: &[&str]) -> Option<PathBuf> {
+            let mut subdirs = Vec::new();
+            for entry in std::fs::read_dir(dir).ok()?.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    subdirs.push(path);
+                } else if path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| names.contains(&name))
+                {
+                    return Some(path);
+                }
+            }
+            if depth == 0 {
+                return None;
+            }
+            subdirs.sort();
+            subdirs
+                .iter()
+                .find_map(|subdir| search(subdir, depth - 1, names))
+        }
+        // Prefer the first name in the list across all roots.
+        NAMES.iter().find_map(|name| {
+            roots
+                .iter()
+                .find_map(|root| search(root, 3, std::slice::from_ref(name)))
+        })
+    }
 
     #[test]
     fn first_strong_direction_uses_unicode_bidi_classes() {
@@ -424,32 +516,15 @@ mod tests {
     }
 
     fn layout_raw(text: &str) -> Galley {
-        const CANDIDATES: &[&str] = &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Arial Unicode.ttf",
-            r"C:\Windows\Fonts\arial.ttf",
-            r"C:\Windows\Fonts\tahoma.ttf",
-        ];
-        let path = CANDIDATES
-            .iter()
-            .copied()
-            .find(|path| std::path::Path::new(path).is_file())
-            .expect(
-                "install a Hebrew/Arabic-capable sans (DejaVu, Liberation, Arial) for RTL layout tests",
-            );
+        let path = rtl_font();
         let ctx = egui::Context::default();
         let mut fonts = FontDefinitions::default();
         let inter = include_bytes!("../assets/fonts/InterVariable.ttf");
         fonts
             .font_data
             .insert("inter".into(), Arc::new(FontData::from_static(inter)));
-        let face = std::fs::read(path).unwrap_or_else(|error| panic!("read {path}: {error}"));
+        let face =
+            std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
         fonts
             .font_data
             .insert("rtl-fallback".into(), Arc::new(FontData::from_owned(face)));
@@ -796,17 +871,7 @@ mod tests {
         fonts
             .font_data
             .insert("inter".into(), Arc::new(FontData::from_static(inter)));
-        let path = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            r"C:\Windows\Fonts\arial.ttf",
-        ]
-        .into_iter()
-        .find(|path| std::path::Path::new(path).is_file())
-        .expect("RTL-capable sans for decoration test");
-        let face = std::fs::read(path).unwrap();
+        let face = std::fs::read(rtl_font()).unwrap();
         fonts
             .font_data
             .insert("rtl-fallback".into(), Arc::new(FontData::from_owned(face)));

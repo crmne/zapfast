@@ -19,6 +19,10 @@ struct Cli {
     /// Log more from the WhatsApp library.
     #[arg(short, long)]
     verbose: bool,
+    /// Start in the tray without opening a window, when the tray is available
+    /// and ZapFast keeps running in the background. For login autostart.
+    #[arg(long)]
+    start_hidden: bool,
 
     /// Start with offline sample chats.
     #[cfg(feature = "demo")]
@@ -64,12 +68,32 @@ struct Cli {
     #[cfg(feature = "demo")]
     #[arg(long, value_name = "MS", default_value_t = 1500)]
     demo_shot_delay: u64,
+
+    /// Hold a synthetic pointer at `X,Y` (logical points) to capture hover
+    /// states in demo screenshots without moving the real cursor.
+    #[cfg(feature = "demo")]
+    #[arg(long, value_name = "X,Y")]
+    demo_hover: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]
 enum Control {
     /// Reload palettes in an already-running ZapFast without showing its window.
     ReloadThemes,
+}
+
+/// Default log filter, used when `RUST_LOG` is unset.
+///
+/// `arboard` warns on every clipboard open when a Wayland compositor has no
+/// data-control protocol (GNOME, mutter) and it falls back to X11, which works
+/// there. Quiet that one target so it does not fill the log file, without
+/// hiding real clipboard failures (`arboard=error`) or any other warning.
+fn default_log_filter(verbose: bool) -> &'static str {
+    if verbose {
+        "info,zapfast=debug,whatsapp_rust=debug,wacore=debug"
+    } else {
+        "warn,zapfast=info,arboard=error"
+    }
 }
 
 fn main() -> eframe::Result<()> {
@@ -93,19 +117,21 @@ fn main() -> eframe::Result<()> {
     let instance = if demo {
         None
     } else {
-        match single_instance::acquire(&waker) {
+        // A hidden start must not surface a copy that is already running.
+        let verb = if cli.start_hidden { "ping" } else { "show" };
+        match single_instance::acquire(&waker, verb) {
             single_instance::Outcome::Only(guard) => Some(guard),
+            single_instance::Outcome::Surfaced if cli.start_hidden => {
+                eprintln!("ZapFast is already running");
+                return Ok(());
+            }
             single_instance::Outcome::Surfaced => {
                 eprintln!("ZapFast or FastsApp is already running; asked it to show its window");
                 return Ok(());
             }
         }
     };
-    let default_filter = if cli.verbose {
-        "info,zapfast=debug,whatsapp_rust=debug,wacore=debug"
-    } else {
-        "warn,zapfast=info"
-    };
+    let default_filter = default_log_filter(cli.verbose);
     // A demo must not create empty ZapFast directories that would prevent a
     // later real launch from adopting the existing FastsApp session.
     let dirs = if demo {
@@ -190,52 +216,76 @@ fn main() -> eframe::Result<()> {
         due: std::time::Instant::now() + std::time::Duration::from_millis(cli.demo_shot_delay),
         asked: false,
     });
+    #[cfg(feature = "demo")]
+    let demo_hover = cli.demo_hover.as_deref().and_then(|value| {
+        let (x, y) = value.split_once(',')?;
+        Some(egui::pos2(x.trim().parse().ok()?, y.trim().parse().ok()?))
+    });
     let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(app)));
 
     let mut update_receipt = cli.update_receipt;
+    // Without a tray there is no way back to a hidden window, so show it.
+    let mut start_hidden = cli.start_hidden
+        && !demo
+        && update_receipt.is_none()
+        && slot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .is_some_and(app::App::hides_to_tray);
 
     // The link, archive, and tray outlive windows. Recreate a window when the
     // tray, notification, or another launch requests one.
     loop {
-        let creator_slot = std::sync::Arc::clone(&slot);
-        let creator_waker = waker.clone();
-        let creator_receipt = update_receipt.take();
-        #[cfg(feature = "demo")]
-        let creator_shot = shot.clone();
-        #[cfg(feature = "demo")]
-        let creator_tour_events = cli.demo_tour_events.clone();
-        eframe::run_native(
-            "ZapFast",
-            native_options(demo_persistence.clone()),
-            Box::new(move |cc| {
-                creator_waker.attach(&cc.egui_ctx);
-                let mut app = creator_slot
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .take()
-                    .expect("application state present");
-                app.attach(&cc.egui_ctx);
-                #[cfg(feature = "demo")]
-                if cli.demo_macos {
-                    zapfast::theme::preview_macos(&cc.egui_ctx);
-                }
-                Ok(Box::new(Shell {
-                    app: Some(app),
-                    update_receipt: creator_receipt,
-                    slot: std::sync::Arc::clone(&creator_slot),
+        if std::mem::take(&mut start_hidden) {
+            slot.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .as_mut()
+                .expect("application state present")
+                .hide_intent = true;
+        } else {
+            let creator_slot = std::sync::Arc::clone(&slot);
+            let creator_waker = waker.clone();
+            let creator_receipt = update_receipt.take();
+            #[cfg(feature = "demo")]
+            let creator_shot = shot.clone();
+            #[cfg(feature = "demo")]
+            let creator_tour_events = cli.demo_tour_events.clone();
+            eframe::run_native(
+                "ZapFast",
+                native_options(demo_persistence.clone()),
+                Box::new(move |cc| {
+                    creator_waker.attach(&cc.egui_ctx);
+                    let mut app = creator_slot
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .take()
+                        .expect("application state present");
+                    app.attach(&cc.egui_ctx);
                     #[cfg(feature = "demo")]
-                    shot: creator_shot,
-                    #[cfg(feature = "demo")]
-                    tour: cli.demo_tour.then(|| {
-                        zapfast::demo::tour::Tour::new(
-                            cli.demo_tour_delay.map(std::time::Duration::from_millis),
-                            creator_tour_events,
-                        )
-                    }),
-                }))
-            }),
-        )?;
-        waker.detach();
+                    if cli.demo_macos {
+                        zapfast::theme::preview_macos(&cc.egui_ctx);
+                    }
+                    Ok(Box::new(Shell {
+                        app: Some(app),
+                        update_receipt: creator_receipt,
+                        slot: std::sync::Arc::clone(&creator_slot),
+                        #[cfg(feature = "demo")]
+                        shot: creator_shot,
+                        #[cfg(feature = "demo")]
+                        hover: demo_hover,
+                        #[cfg(feature = "demo")]
+                        tour: cli.demo_tour.then(|| {
+                            zapfast::demo::tour::Tour::new(
+                                cli.demo_tour_delay.map(std::time::Duration::from_millis),
+                                creator_tour_events,
+                            )
+                        }),
+                    }))
+                }),
+            )?;
+            waker.detach();
+        }
 
         let hide = {
             let guard = slot.lock().unwrap_or_else(|p| p.into_inner());
@@ -344,7 +394,10 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
             std::env::var("FLATPAK_ID").unwrap_or_else(|_| "zapfast".to_owned())
         })
         .with_inner_size(demo_size)
-        .with_min_inner_size([720.0, 480.0])
+        // Keep the floor small enough that Windows can still snap the window
+        // into narrow Aero Snap and LG Screen Split zones (a 2560 px ultrawide
+        // split four ways is about 640 px wide, which a 720 px minimum blocks).
+        .with_min_inner_size([400.0, 300.0])
         .with_icon(app_icon())
         // macOS uses a full-size content view under the traffic lights.
         .with_fullsize_content_view(true)
@@ -355,10 +408,10 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
         persistence_path: demo_persistence,
         // Do not restore window size during fixed-size screenshot runs.
         persist_window: !demo,
-        // Disable vsync because hidden Wayland windows may stop receiving frame
-        // callbacks and block the event loop. Repainting is event-driven.
+        // Hidden Wayland windows stop receiving frame callbacks, so vsync is
+        // only on where the patched winit can report them as occluded.
         glow_options: eframe::egui_glow::GlowConfiguration {
-            vsync: false,
+            vsync: zapfast::vsync::enabled(),
             ..Default::default()
         },
         ..Default::default()
@@ -374,6 +427,8 @@ struct Shell {
     shot: Option<Shot>,
     #[cfg(feature = "demo")]
     tour: Option<zapfast::demo::tour::Tour>,
+    #[cfg(feature = "demo")]
+    hover: Option<egui::Pos2>,
 }
 
 impl Drop for Shell {
@@ -434,6 +489,9 @@ impl eframe::App for Shell {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         if let (Some(tour), Some(app)) = (&mut self.tour, &mut self.app) {
             tour.input(app, ctx, input);
+        }
+        if let Some(pos) = self.hover {
+            input.events.push(egui::Event::PointerMoved(pos));
         }
     }
 
@@ -538,5 +596,53 @@ mod tests {
         assert_eq!(cli.demo_tour_delay, Some(5000));
         assert!(Cli::try_parse_from(["zapfast", "--demo-tour-delay", "5000"]).is_err());
         assert!(Cli::try_parse_from(["zapfast", "--demo-tour", "--demo-page", "login",]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod log_filter_tests {
+    use super::*;
+
+    fn matches(filter: &str, level: log::Level, target: &str) -> bool {
+        let logger = env_logger::Builder::new().parse_filters(filter).build();
+        logger.matches(
+            &log::Record::builder()
+                .level(level)
+                .target(target)
+                .args(format_args!("fixture"))
+                .build(),
+        )
+    }
+
+    /// A compositor without data-control makes arboard fall back to X11 and
+    /// warn. That is expected, so the default log must not record it, while a
+    /// genuine arboard failure still must.
+    #[test]
+    fn the_default_log_drops_arboards_wayland_fallback_warning() {
+        let filter = default_log_filter(false);
+        assert!(!matches(
+            filter,
+            log::Level::Warn,
+            "arboard::platform::linux"
+        ));
+        assert!(matches(
+            filter,
+            log::Level::Error,
+            "arboard::platform::linux"
+        ));
+        assert!(matches(
+            filter,
+            log::Level::Warn,
+            "zapfast::backend::worker"
+        ));
+    }
+
+    #[test]
+    fn verbose_keeps_arboard_warnings() {
+        assert!(matches(
+            default_log_filter(true),
+            log::Level::Warn,
+            "arboard::platform::linux"
+        ));
     }
 }

@@ -13,6 +13,7 @@ set -euo pipefail
 binary="$1"
 app="$2"
 version="$3"
+numeric_version="${version%%-*}"
 here="$(cd "$(dirname "$0")" && pwd)"
 
 rm -rf "$app"
@@ -20,7 +21,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
 cp "$binary" "$app/Contents/MacOS/zapfast"
 chmod 755 "$app/Contents/MacOS/zapfast"
-sed "s/__VERSION__/$version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
+sed "s/__VERSION__/$numeric_version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
 
 iconset="$(mktemp -d)/zapfast.iconset"
 mkdir -p "$iconset"

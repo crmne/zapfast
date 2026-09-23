@@ -232,6 +232,21 @@ pub(super) fn replace(prepared: &Prepared) -> Result<()> {
     Ok(())
 }
 
+/// A signed executable is sealed to its bundle's Info.plist and resources,
+/// and macOS kills a copy taken out of the bundle. The helper therefore runs
+/// from a copy of the whole running bundle.
+pub(super) fn helper(prepared: &Prepared) -> Result<PathBuf> {
+    let source = bundle_root(&prepared.installation.executable)?;
+    let bundle = prepared.directory.join("helper.app");
+    ensure!(!bundle.exists(), "The update helper was already prepared");
+    let copy = Command::new("/usr/bin/ditto")
+        .arg(source)
+        .arg(&bundle)
+        .output()?;
+    ensure!(copy.status.success(), "Could not prepare the update helper");
+    Ok(bundle.join("Contents/MacOS/zapfast"))
+}
+
 pub(super) fn restore(prepared: &Prepared) -> Result<()> {
     let backup = prepared.directory.join("previous");
     if backup.is_dir() {
@@ -359,6 +374,37 @@ mod tests {
             b"new metadata"
         );
         assert!(!backup.exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn helper_runs_from_a_whole_copy_of_the_bundle() {
+        let directory =
+            std::env::temp_dir().join(format!("zapfast-helper-test-{}", rand::random::<u64>()));
+        let app = directory.join("ZapFast.app");
+        fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+        fs::write(app.join("Contents/MacOS/zapfast"), b"executable").unwrap();
+        fs::write(app.join("Contents/Info.plist"), b"metadata").unwrap();
+        let installation = Installation {
+            executable: app.join("Contents/MacOS/zapfast"),
+            kind: install::Kind::MacBundle,
+        };
+        let stage = install::staging(&installation).unwrap();
+        let prepared = Prepared {
+            installation,
+            directory: stage.clone(),
+            payload: stage.join("update.dmg"),
+            sha256: String::new(),
+            version: "0.7.2".into(),
+        };
+        let executable = helper(&prepared).unwrap();
+        assert_eq!(executable, stage.join("helper.app/Contents/MacOS/zapfast"));
+        assert_eq!(fs::read(&executable).unwrap(), b"executable");
+        assert_eq!(
+            fs::read(stage.join("helper.app/Contents/Info.plist")).unwrap(),
+            b"metadata"
+        );
+        assert!(helper(&prepared).is_err());
         fs::remove_dir_all(directory).unwrap();
     }
 
