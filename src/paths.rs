@@ -139,8 +139,16 @@ impl AppDirs {
     }
 
     /// Returns true if `path` resolves to the default media cache directory.
+    /// An unresolvable path is never the default; the cache boundary check
+    /// rejects it from there.
     pub fn is_default_media_dir(&self, path: &Path) -> bool {
-        Self::resolved_for_compare(path) == Self::resolved_for_compare(&self.media_cache_dir())
+        match (
+            Self::resolved_for_compare(path),
+            Self::resolved_for_compare(&self.media_cache_dir()),
+        ) {
+            (Some(path), Some(default)) => path == default,
+            _ => false,
+        }
     }
 
     /// Returns true if `path` is equal to or contained within `self.cache`.
@@ -150,9 +158,15 @@ impl AppDirs {
 
     /// Checks whether `child` is equal to or located within `parent`.
     pub fn is_subpath(child: &Path, parent: &Path) -> bool {
-        let child = Self::resolved_for_compare(child);
-        let parent = Self::resolved_for_compare(parent);
-        path_starts_with(&child, &parent)
+        match (
+            Self::resolved_for_compare(child),
+            Self::resolved_for_compare(parent),
+        ) {
+            (Some(child), Some(parent)) => path_starts_with(&child, &parent),
+            // An unresolvable spelling fails closed: boundary checks reject
+            // the path, and disposable-source checks keep it.
+            _ => true,
+        }
     }
 
     /// Resolves a path as far as it currently exists, following symlinks in
@@ -161,16 +175,16 @@ impl AppDirs {
     /// the missing components appear. Dangling symlinks resolve to their
     /// target too: a link whose target is missing still tells where the path
     /// lands once the target appears, which is exactly when a boundary check
-    /// must already have rejected it.
-    fn resolved_for_compare(path: &Path) -> PathBuf {
+    /// must already have rejected it. Returns `None` when even the bounded
+    /// resolution cannot settle the spelling (a chain longer than the bound
+    /// or a symlink loop); callers fail closed on `None`.
+    fn resolved_for_compare(path: &Path) -> Option<PathBuf> {
         let mut current = path.to_path_buf();
         // Each pass substitutes the earliest symlink component, including
-        // dangling ones, and retries the canonical lookup. The bound keeps a
-        // symlink loop from spinning; an unresolved path only makes the
-        // comparison more conservative.
+        // dangling ones, and retries the canonical lookup.
         for _ in 0..40 {
             if let Ok(resolved) = current.canonicalize() {
-                return simplify_verbatim(resolved);
+                return Some(simplify_verbatim(resolved));
             }
             let components: Vec<_> = current.components().collect();
             let mut substitution = None;
@@ -201,10 +215,13 @@ impl AppDirs {
             }
             match substitution {
                 Some(expanded) => current = expanded,
-                None => break,
+                // No symlink left to settle: the lexical spelling is exact.
+                None => return Some(Self::lexical_normalize(&current)),
             }
         }
-        Self::lexical_normalize(&current)
+        // The bound exists to stop symlink loops, but an unsettled spelling
+        // must never be compared against the app-data boundaries.
+        None
     }
 
     /// Collapses `.` and `..` textually without touching the file system.
@@ -357,19 +374,19 @@ fn adopt_directory(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The Windows filesystem is case-insensitive, so a path comparison there
-/// must fold case too: a differently-cased missing path would land in the
-/// same directory once created and slip past a case-sensitive check. On
-/// other platforms the file system is case-sensitive and the spelling is
-/// part of the path's identity.
-#[cfg(windows)]
+/// The Windows and default macOS filesystems are case-insensitive, so a path
+/// comparison there must fold case too: a differently-cased missing path
+/// under `state`, `config`, or `cache` would land in the same directory once
+/// created and slip past a case-sensitive check. Folding on a case-sensitive
+/// macOS volume only makes the boundary stricter, never looser.
+#[cfg(any(windows, target_os = "macos"))]
 fn path_starts_with(child: &Path, parent: &Path) -> bool {
     let child = child.as_os_str().to_string_lossy().to_lowercase();
     let parent = parent.as_os_str().to_string_lossy().to_lowercase();
     Path::new(&child).starts_with(Path::new(&parent))
 }
 
-#[cfg(not(windows))]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn path_starts_with(child: &Path, parent: &Path) -> bool {
     child.starts_with(parent)
 }
@@ -725,17 +742,48 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn validated_custom_media_rejects_differently_cased_paths_into_app_data() {
         let root = root("validated-case");
         let dirs = AppDirs::under(&root);
         dirs.ensure().unwrap();
-        // The Windows filesystem is case-insensitive: this missing path
-        // would land inside `state` once created, so the spelling must not
-        // be what decides the boundary check.
+        // These filesystems are case-insensitive: this missing path would
+        // land inside `state` once created, so the spelling must not be what
+        // decides the boundary check.
         let upper = root.join("STATE/future-attachments");
         assert_eq!(dirs.validated_custom_media(Some(upper)), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unresolvable_symlinks_fail_closed_into_app_data() {
+        let root = root("validated-unresolvable");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        // A symlink loop never settles: the spelling cannot be trusted, so
+        // the path must fail closed and count as inside every boundary
+        // instead of being compared lexically.
+        std::os::unix::fs::symlink(root.join("loop-b"), root.join("loop-a")).unwrap();
+        std::os::unix::fs::symlink(root.join("loop-a"), root.join("loop-b")).unwrap();
+        for boundary in [&dirs.state, &dirs.config, &dirs.cache] {
+            assert!(AppDirs::is_subpath(&root.join("loop-a"), boundary));
+        }
+        assert!(!dirs.is_default_media_dir(&root.join("loop-a")));
+        assert_eq!(dirs.validated_custom_media(Some(root.join("loop-a"))), None);
+        // A chain deeper than the resolver's bound, ending under app data,
+        // fails closed the same way.
+        let mut next = dirs.state.join("future");
+        for index in (0..=40).rev() {
+            let link = root.join(format!("chain-{index}"));
+            std::os::unix::fs::symlink(&next, &link).unwrap();
+            next = link;
+        }
+        assert_eq!(
+            dirs.validated_custom_media(Some(root.join("chain-0"))),
+            None
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
