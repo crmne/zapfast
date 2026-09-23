@@ -252,7 +252,9 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
             }
             DECODING.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             let slot = DecodeSlot;
-            entries.insert(path.to_path_buf(), Entry::Decoding);
+            animations
+                .entries
+                .insert(path.to_path_buf(), Entry::Decoding);
             let file = path.to_path_buf();
             let ctx = ctx.clone();
             let spawned = std::thread::Builder::new()
@@ -271,7 +273,7 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
                     ctx.request_repaint();
                 });
             if spawned.is_err() {
-                entries.insert(path.to_path_buf(), Entry::Failed);
+                animations.entries.insert(path.to_path_buf(), Entry::Failed);
                 return Frame::Unavailable;
             }
             Frame::Pending
