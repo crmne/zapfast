@@ -1898,6 +1898,26 @@ fn bubble_frame(
                     },
                 );
             }
+            if message.revoked_by_sender {
+                mirrored_row(
+                    ui,
+                    own,
+                    |ui| {
+                        theme::icon(ui, Icon::Trash, 14.0, palette.dim);
+                    },
+                    |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new("Deleted by sender")
+                                    .font(theme::regular(12.5))
+                                    .italics()
+                                    .color(palette.dim),
+                            )
+                            .selectable(false),
+                        );
+                    },
+                );
+            }
             // Cards share the bubble's settled width: at least CARD_WIDTH and
             // no more than the cap. Text spans that width and stays left-aligned.
             // Bubbles without cards use the natural text width.
@@ -3944,6 +3964,7 @@ mod tests {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         };
         let mut widths = Vec::new();
@@ -4029,6 +4050,7 @@ mod reaction_tests {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         }
     }

@@ -630,6 +630,10 @@ impl App {
             .name("emoji-font".into())
             .spawn(crate::emoji::warm_up)
             .ok();
+        // The worker decides on incoming deletions, so it needs the
+        // preference before any revoke arrives.
+        self.backend
+            .send(Command::SetKeepDeleted(self.settings.keep_deleted_messages));
         self.applied_dark = None;
         self.zoom_applied = false;
         self.window_hidden = false;
@@ -2903,7 +2907,11 @@ impl App {
                 self.search_hits.clear();
                 self.mark_settings_dirty();
             }
-            Action::SettingsChanged => self.mark_settings_dirty(),
+            Action::SettingsChanged => {
+                self.mark_settings_dirty();
+                self.backend
+                    .send(Command::SetKeepDeleted(self.settings.keep_deleted_messages));
+            }
             Action::ZoomBy(delta) => {
                 self.settings.zoom = (self.settings.zoom + delta).clamp(0.6, 2.0);
                 self.zoom_applied = false;
@@ -3860,6 +3868,29 @@ mod tests {
     }
 
     #[test]
+    fn the_worker_learns_whether_to_keep_deleted_messages() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        assert!(
+            !app.settings.keep_deleted_messages,
+            "the protocol tombstone stays the default"
+        );
+        app.attach(&ctx);
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::SetKeepDeleted(false)),
+            "the worker hears the preference when the app starts"
+        );
+        app.settings.keep_deleted_messages = true;
+        app.apply(Action::SettingsChanged, &ctx);
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::SetKeepDeleted(true)),
+            "and again when the setting changes"
+        );
+    }
+
+    #[test]
     fn a_deleted_chat_leaves_only_after_the_phone_confirmed_it() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
@@ -4038,6 +4069,7 @@ mod tests {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         }
     }
@@ -5006,6 +5038,7 @@ mod name_tests {
                 id: "15550001111@s.whatsapp.net".into(),
             }],
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         };
         assert_eq!(app.message_text(&message), "ciao @Carmine");

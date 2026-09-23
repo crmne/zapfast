@@ -194,6 +194,9 @@ pub struct Message {
     /// Forwarded from another chat.
     #[serde(default)]
     pub forwarded: bool,
+    /// The sender deleted this message and the archive kept it.
+    #[serde(default)]
+    pub revoked_by_sender: bool,
     /// JPEG preview sent with an attachment or link.
     #[serde(default)]
     pub thumbnail: Option<Vec<u8>>,

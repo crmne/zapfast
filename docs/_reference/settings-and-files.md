@@ -51,6 +51,9 @@ Changes on the Settings page are saved to `settings.json` immediately:
 - **Names from your address book**: use contact names everywhere. When off,
   prefer public profile names.
 - **Send read receipts**: the blue ticks others see.
+- **Keep messages the sender deleted**: keep a message a chat partner deleted,
+  with its media, under a *Deleted by sender* note. WhatsApp and your other
+  devices still delete it.
 - **Keep running in the background**: keep ZapFast in the tray when the
   window closes.
 - **Notifications**: use desktop notifications with the chat picture.

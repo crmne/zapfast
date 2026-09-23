@@ -611,6 +611,7 @@ mod idle_tests {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         });
         conversation.complete = true;
@@ -669,6 +670,7 @@ mod idle_tests {
                 edited: false,
                 mentions: Vec::new(),
                 forwarded: false,
+                revoked_by_sender: false,
                 thumbnail: None,
             });
         }

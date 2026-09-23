@@ -239,6 +239,7 @@ fn message(chat: &str, id: &str, from_me: bool, timestamp: i64, content: Content
         edited: false,
         mentions: Vec::new(),
         forwarded: false,
+        revoked_by_sender: false,
         thumbnail: None,
     }
 }
@@ -694,6 +695,17 @@ pub fn populate(app: &mut App) {
             },
         ),
         message(ada, "ada-deleted", false, older + 60 * 25, Content::Revoked),
+        {
+            let mut kept = message(
+                ada,
+                "ada-kept",
+                false,
+                older + 60 * 27,
+                Content::text("I deleted this one, but it stayed here."),
+            );
+            kept.revoked_by_sender = true;
+            kept
+        },
     ];
     let conversation = app.conversations.get_mut(ada).expect("sample chat");
     conversation.messages.splice(0..0, extra);

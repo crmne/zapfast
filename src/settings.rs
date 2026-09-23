@@ -71,6 +71,9 @@ pub struct Settings {
     pub enter_sends: bool,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
+    /// Keep messages the sender deleted, with their media, instead of
+    /// replacing them with a tombstone.
+    pub keep_deleted_messages: bool,
     /// Send typing state while composing.
     pub send_typing: bool,
     /// Download attachments when they enter view instead of on click.
@@ -121,6 +124,7 @@ impl Default for Settings {
             sidebar_width: 320.0,
             enter_sends: true,
             send_read_receipts: true,
+            keep_deleted_messages: false,
             send_typing: true,
             auto_download: true,
             show_sender_pictures: false,

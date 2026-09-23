@@ -253,6 +253,8 @@ pub enum Command {
     SetMuted(ChatId, Option<i64>),
     /// Locks or unlocks a chat (the locked folder).
     SetLocked(ChatId, bool),
+    /// Keeps messages the sender deleted instead of replacing them.
+    SetKeepDeleted(bool),
     /// Normalizes, encodes, and sends mono 48 kHz push-to-talk audio.
     SendVoice {
         chat: ChatId,

@@ -435,6 +435,7 @@ impl Worker {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         };
         if let Err(error) =

@@ -80,6 +80,11 @@ Right-click a chat to pin, archive, or mute it for eight hours, one week, or
 indefinitely. These changes also apply on your phone. Click the chat header to
 see its picture, number, and group members.
 
+Messages a chat partner deletes normally read "This message was deleted". Turn
+on **Keep messages the sender deleted** in Settings to keep what they wrote and
+its media instead, marked **Deleted by sender**. WhatsApp and your other devices
+still delete it.
+
 ## Notifications and the tray
 
 Closing the window keeps ZapFast linked in the tray. Click the tray icon or

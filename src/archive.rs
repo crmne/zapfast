@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS messages (
     quoted TEXT,
     reactions TEXT NOT NULL DEFAULT '[]',
     edited INTEGER NOT NULL DEFAULT 0,
+    revoked_by_sender INTEGER NOT NULL DEFAULT 0,
     raw BLOB,
     PRIMARY KEY (chat, id)
 );
@@ -126,6 +127,11 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "participants", "TEXT NOT NULL DEFAULT '[]'"),
     ("chats", "read_only", "INTEGER NOT NULL DEFAULT 0"),
     ("messages", "forwarded", "INTEGER NOT NULL DEFAULT 0"),
+    (
+        "messages",
+        "revoked_by_sender",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
     ("messages", "delivered_at", "INTEGER"),
     ("messages", "read_at", "INTEGER"),
     ("chats", "read_through", "INTEGER"),
@@ -656,11 +662,11 @@ impl Archive {
         };
         let reactions = self.merged_reactions(message)?;
         self.connection.execute(
-            "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, revoked_by_sender)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
              ON CONFLICT(chat, id) DO UPDATE SET
                 sender_name = COALESCE(excluded.sender_name, sender_name),
-                content = excluded.content,
+                content = CASE WHEN revoked_by_sender = 1 THEN content ELSE excluded.content END,
                 status = excluded.status,
                 quoted = COALESCE(excluded.quoted, quoted),
                 reactions = excluded.reactions,
@@ -669,6 +675,7 @@ impl Archive {
                 thumbnail = COALESCE(excluded.thumbnail, thumbnail),
                 mentions = excluded.mentions,
                 forwarded = excluded.forwarded,
+                revoked_by_sender = MAX(revoked_by_sender, excluded.revoked_by_sender),
                 delivered_at = COALESCE(delivered_at, excluded.delivered_at),
                 read_at = COALESCE(read_at, excluded.read_at)",
             params![
@@ -692,6 +699,7 @@ impl Archive {
                 message.forwarded,
                 message.delivered_at,
                 message.read_at,
+                message.revoked_by_sender,
             ],
         )?;
         self.connection.execute(
@@ -723,7 +731,7 @@ impl Archive {
         limit: usize,
     ) -> Result<Vec<Message>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
+            "SELECT id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, revoked_by_sender
              FROM messages
              WHERE chat = ?1 AND (timestamp < ?2 OR (timestamp = ?2 AND rowid <
                  (SELECT rowid FROM messages WHERE chat = ?1 AND id = ?3)))
@@ -755,6 +763,7 @@ impl Archive {
                     edited: row.get(9)?,
                     mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                     forwarded: row.get(12)?,
+                    revoked_by_sender: row.get(15)?,
                     thumbnail: row.get(10)?,
                 })
             })?;
@@ -775,7 +784,7 @@ impl Archive {
                 .replace('_', "\\_")
         );
         let mut statement = self.connection.prepare(
-            "SELECT chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
+            "SELECT chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, revoked_by_sender
              FROM messages
              WHERE json_valid(content) AND lower(
                      coalesce(json_extract(content, '$.text'), '') || char(10) ||
@@ -812,6 +821,7 @@ impl Archive {
                 edited: row.get(10)?,
                 mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                 forwarded: row.get(13)?,
+                revoked_by_sender: row.get(16)?,
                 thumbnail: row.get(11)?,
             })
         })?;
@@ -828,7 +838,7 @@ impl Archive {
         limit: usize,
     ) -> Result<Vec<Message>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
+            "SELECT id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, revoked_by_sender
              FROM messages
              WHERE chat = ?1 AND timestamp >= ?2 AND (timestamp < ?3 OR (timestamp = ?3 AND rowid <
                  (SELECT rowid FROM messages WHERE chat = ?1 AND id = ?4)))
@@ -860,6 +870,7 @@ impl Archive {
                     edited: row.get(9)?,
                     mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                     forwarded: row.get(12)?,
+                    revoked_by_sender: row.get(15)?,
                     thumbnail: row.get(10)?,
                 })
             },
@@ -1114,7 +1125,7 @@ impl Archive {
 
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
         let mut statement = self.connection.prepare(
-            "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
+            "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, revoked_by_sender
              FROM messages WHERE chat = ?1 AND id = ?2",
         )?;
         statement
@@ -1141,6 +1152,7 @@ impl Archive {
                     edited: row.get(8)?,
                     mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                     forwarded: row.get(11)?,
+                    revoked_by_sender: row.get(14)?,
                     thumbnail: row.get(9)?,
                 })
             })
@@ -1248,6 +1260,18 @@ impl Archive {
                 serde_json::to_string(content).unwrap_or_default(),
                 edited
             ],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Keeps a message the sender deleted and records that they deleted it.
+    ///
+    /// The content and its media stay untouched, which is the whole point of
+    /// the "Keep messages the sender deleted" setting.
+    pub fn set_revoked_by_sender(&self, chat: &str, id: &str) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE messages SET revoked_by_sender = 1 WHERE chat = ?1 AND id = ?2",
+            params![chat, id],
         )?;
         Ok(changed > 0)
     }
@@ -1414,6 +1438,7 @@ pub(crate) mod tests {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         }
     }
@@ -1513,6 +1538,56 @@ pub(crate) mod tests {
                 .expect("oldest")
                 .map(|m| m.id),
             Some("m1".into())
+        );
+    }
+
+    #[test]
+    fn a_kept_deletion_keeps_the_content_and_the_flag() {
+        let archive = Archive::in_memory().expect("opens");
+        let mut original = message("1@s.whatsapp.net", "m1", 1, false);
+        original.content = Content::text("before");
+        archive.insert_message(&original, None).expect("insert");
+        assert!(
+            !archive
+                .message("1@s.whatsapp.net", "m1")
+                .expect("read")
+                .expect("exists")
+                .revoked_by_sender,
+            "messages start out undeleted"
+        );
+        assert!(
+            archive
+                .set_revoked_by_sender("1@s.whatsapp.net", "m1")
+                .expect("flag"),
+            "the row is there to flag"
+        );
+        let kept = archive
+            .message("1@s.whatsapp.net", "m1")
+            .expect("read")
+            .expect("exists");
+        assert!(kept.revoked_by_sender);
+        assert_eq!(kept.content, Content::text("before"), "the text survives");
+        assert_eq!(
+            archive
+                .messages("1@s.whatsapp.net", None, 10)
+                .expect("list")[0]
+                .revoked_by_sender,
+            true,
+            "listing reads the flag back"
+        );
+        // A later sync carrying the tombstone must not undo any of it.
+        let mut tombstone = original.clone();
+        tombstone.content = Content::Revoked;
+        archive.insert_message(&tombstone, None).expect("insert");
+        let again = archive
+            .message("1@s.whatsapp.net", "m1")
+            .expect("read")
+            .expect("exists");
+        assert!(again.revoked_by_sender, "the flag never clears");
+        assert_eq!(
+            again.content,
+            Content::text("before"),
+            "and neither does the text"
         );
     }
 
@@ -2338,6 +2413,7 @@ mod sticker_tests {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         }
     }
@@ -2424,6 +2500,7 @@ mod media_path_tests {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         }
     }

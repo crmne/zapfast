@@ -116,6 +116,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     };
                     toggle(ui, app, "Send read receipts", receipts_note, |settings| &mut settings.send_read_receipts);
                     toggle(ui, app, "Show when you are typing", "", |settings| &mut settings.send_typing);
+                    toggle(ui, app, "Keep messages the sender deleted", "When someone deletes a message after sending it, keep it here with its media and mark it as deleted by them. WhatsApp and your other devices still delete it.", |settings| &mut settings.keep_deleted_messages);
                     toggle(ui, app, "Download attachments automatically", "Download non-sticker attachments up to 64 MiB when they enter view. Visible stickers also download automatically up to this limit. When off, click an attachment up to this limit to download it.", |settings| &mut settings.auto_download);
                     toggle(ui, app, "Show sender pictures in every chat", "WhatsApp shows them in groups only.", |settings| &mut settings.show_sender_pictures);
                     toggle(ui, app, "Names from your address book", "Prefer saved contact names. When off, prefer public WhatsApp profile names. This applies throughout the app.", |settings| &mut settings.names_from_contacts);

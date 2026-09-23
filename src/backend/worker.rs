@@ -359,6 +359,7 @@ pub async fn run(
         == Some("complete");
     let mut worker = Worker {
         privacy_ready,
+        keep_deleted: false,
         privacy_recovering: false,
         privacy_generation: 0,
         privacy_retry: Instant::now(),
@@ -467,6 +468,9 @@ struct Worker {
     poll_decrypting: usize,
     poll_history: poll_history::Requests,
     poll_sending: HashSet<(ChatId, String)>,
+    /// Keep messages the sender deleted, with their media, instead of
+    /// replacing them with a tombstone.
+    keep_deleted: bool,
     dirs: AppDirs,
     events: std::sync::mpsc::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
@@ -1984,10 +1988,7 @@ impl Worker {
             };
             match protocol.r#type {
                 Some(Type::REVOKE) => {
-                    if let Ok(true) =
-                        self.archive
-                            .set_content(&chat, &target, &Content::Revoked, false)
-                    {
+                    if self.revoke_for_everyone(&chat, &target) {
                         self.emit_message(&chat, &target);
                         self.emit_chat(&chat);
                     }
@@ -2061,6 +2062,7 @@ impl Worker {
             edited: false,
             mentions,
             forwarded: forwarded_of(base),
+            revoked_by_sender: false,
             thumbnail: thumbnail_of(base),
         };
         let is_poll = matches!(row.content, Content::Poll { .. });
@@ -2262,6 +2264,7 @@ impl Worker {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         };
         self.store_message(row, None, push_name.as_deref());
@@ -2677,6 +2680,7 @@ impl Worker {
                     edited: false,
                     mentions,
                     forwarded: message.forwarded,
+                    revoked_by_sender: false,
                     thumbnail: message.thumbnail,
                 };
                 let mut poll_history_received = false;
@@ -2723,9 +2727,7 @@ impl Worker {
                 );
             }
             for revoked in chat.revoked {
-                let _ = self
-                    .archive
-                    .set_content(&id, &revoked, &Content::Revoked, false);
+                self.revoke_for_everyone(&id, &revoked);
             }
             if (metadata || existing.is_none())
                 && let Some(snapshot_unread) = chat.unread
@@ -2978,6 +2980,7 @@ impl Worker {
                 mentions,
             } => self.edit_text(chat, id, text, mentions),
             Command::Revoke { chat, id } => self.revoke(chat, id),
+            Command::SetKeepDeleted(keep) => self.set_keep_deleted(keep),
             Command::DeleteLocal { chat, id } => {
                 if let Ok(true) = self.archive.delete_message(&chat, &id) {
                     self.emit(Event::MessageDeleted {
@@ -3603,6 +3606,7 @@ impl Worker {
             edited: false,
             mentions,
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         };
         self.store_message(row, Some(message.encode_to_vec()), None);
@@ -4418,6 +4422,26 @@ impl Worker {
                 });
             }
         });
+    }
+
+    /// Records whether deletions the sender asks for are kept.
+    fn set_keep_deleted(&mut self, keep: bool) {
+        self.keep_deleted = keep;
+    }
+
+    /// Applies a deletion the sender asked for.
+    ///
+    /// With the setting on the content and its media stay and only a flag is
+    /// recorded, so the message keeps what it said under a note that the
+    /// sender deleted it. With the setting off this is the protocol's
+    /// tombstone, as before.
+    fn revoke_for_everyone(&mut self, chat: &str, id: &str) -> bool {
+        let written = if self.keep_deleted {
+            self.archive.set_revoked_by_sender(chat, id)
+        } else {
+            self.archive.set_content(chat, id, &Content::Revoked, false)
+        };
+        matches!(written, Ok(true))
     }
 
     fn revoke(&mut self, chat: ChatId, id: String) {
@@ -5825,6 +5849,7 @@ async fn file_outbound(
             })
             .collect(),
         forwarded: false,
+        revoked_by_sender: false,
         thumbnail: prepared.thumbnail,
     };
     Ok((row, prepared.message.encode_to_vec()))
@@ -6150,6 +6175,7 @@ mod tests {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         }
     }
@@ -6744,6 +6770,7 @@ mod tests {
             edited: true,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: Some(vec![1]),
         };
         let mention = MentionRef {
@@ -6911,6 +6938,7 @@ mod receipt_tests {
         let (wa_sender, wa_events) = mpsc::unbounded_channel();
         let root = std::env::temp_dir().join(format!("zapfast-worker-test-{}", std::process::id()));
         let worker = Worker {
+            keep_deleted: false,
             privacy_ready: true,
             privacy_recovering: false,
             privacy_generation: 0,
@@ -6971,6 +6999,7 @@ mod receipt_tests {
             edited: false,
             mentions: Vec::new(),
             forwarded: false,
+            revoked_by_sender: false,
             thumbnail: None,
         }
     }
