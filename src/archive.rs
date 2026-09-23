@@ -637,33 +637,28 @@ impl Archive {
 
     /// Upserts a message, preserves the furthest delivery state, and updates
     /// chat activity. `raw` contains attachment metadata.
+    ///
+    /// Both preservation rules run inside the UPSERT: the stored delivery state
+    /// only moves forward, and a history row that arrives without reactions
+    /// keeps the reactions already stored. Inserting a message is therefore one
+    /// write instead of a read followed by a write.
     pub fn insert_message(&self, message: &Message, raw: Option<&[u8]>) -> Result<()> {
-        let existing: Option<i64> = self
-            .connection
-            .query_row(
-                "SELECT status FROM messages WHERE chat = ?1 AND id = ?2",
-                params![message.chat, message.id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let status = match existing {
-            Some(rank)
-                if message.status != Delivery::Failed && rank > status_rank(message.status) =>
-            {
-                rank
-            }
-            _ => status_rank(message.status),
-        };
-        let reactions = self.merged_reactions(message)?;
         self.connection.execute(
             "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(chat, id) DO UPDATE SET
                 sender_name = COALESCE(excluded.sender_name, sender_name),
                 content = excluded.content,
-                status = excluded.status,
+                status = CASE
+                    WHEN messages.status > excluded.status AND excluded.status <> ?18
+                    THEN messages.status
+                    ELSE excluded.status
+                END,
                 quoted = COALESCE(excluded.quoted, quoted),
-                reactions = excluded.reactions,
+                reactions = CASE
+                    WHEN excluded.reactions = '[]' THEN messages.reactions
+                    ELSE excluded.reactions
+                END,
                 edited = excluded.edited,
                 raw = COALESCE(excluded.raw, raw),
                 thumbnail = COALESCE(excluded.thumbnail, thumbnail),
@@ -679,12 +674,12 @@ impl Archive {
                 message.from_me,
                 message.timestamp,
                 serde_json::to_string(&message.content).unwrap_or_default(),
-                status,
+                status_rank(message.status),
                 message
                     .quoted
                     .as_ref()
                     .map(|quoted| serde_json::to_string(quoted).unwrap_or_default()),
-                serde_json::to_string(&reactions).unwrap_or_default(),
+                serde_json::to_string(&message.reactions).unwrap_or_default(),
                 message.edited,
                 raw,
                 message.thumbnail.as_deref(),
@@ -692,6 +687,8 @@ impl Archive {
                 message.forwarded,
                 message.delivered_at,
                 message.read_at,
+                // An explicit failure still writes over a further state.
+                status_rank(Delivery::Failed),
             ],
         )?;
         self.connection.execute(
@@ -699,19 +696,6 @@ impl Archive {
             params![message.chat, message.timestamp],
         )?;
         Ok(())
-    }
-
-    /// History rows often omit reactions. Keep any already stored when the
-    /// incoming list is empty (wipe protection). A non-empty list is the
-    /// current snapshot, so write it unchanged.
-    fn merged_reactions(&self, message: &Message) -> Result<Vec<crate::model::Reaction>> {
-        let incoming = &message.reactions;
-        if incoming.is_empty()
-            && let Some(existing) = self.message(&message.chat, &message.id)?
-        {
-            return Ok(existing.reactions);
-        }
-        Ok(incoming.clone())
     }
 
     /// Returns up to `limit` messages before an optional timestamp/id boundary,
@@ -2000,6 +1984,68 @@ pub(crate) mod tests {
                 .set_status(chat, "m1", Delivery::Failed, 700)
                 .expect("status")
         );
+    }
+
+    #[test]
+    fn one_insert_keeps_the_furthest_status_and_the_stored_reactions() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "A").expect("chat");
+        let reaction = |sender: &str, emoji: &str| crate::model::Reaction {
+            sender: sender.into(),
+            from_me: false,
+            emoji: emoji.into(),
+        };
+
+        let mut sent = message(chat, "m1", 100, true);
+        sent.status = Delivery::Sent;
+        sent.reactions = vec![reaction("2@s.whatsapp.net", "🎉")];
+        archive.insert_message(&sent, None).expect("insert");
+        let stored = archive.message(chat, "m1").expect("read").expect("exists");
+        assert_eq!(stored.status, Delivery::Sent);
+        assert_eq!(stored.reactions.len(), 1);
+
+        // A receipt moves the state forward, and the history row that arrives
+        // without reactions must not wipe the stored list.
+        let mut receipt = message(chat, "m1", 100, true);
+        receipt.status = Delivery::Delivered;
+        archive.insert_message(&receipt, None).expect("receipt");
+        let stored = archive.message(chat, "m1").expect("read").expect("exists");
+        assert_eq!(stored.status, Delivery::Delivered);
+        assert_eq!(stored.reactions.len(), 1, "an empty list must not wipe");
+        assert_eq!(stored.reactions[0].emoji, "🎉");
+
+        // A replay cannot lower the state, but an explicit failure must show.
+        let mut replay = message(chat, "m1", 100, true);
+        replay.status = Delivery::Pending;
+        archive.insert_message(&replay, None).expect("replay");
+        assert_eq!(
+            archive
+                .message(chat, "m1")
+                .expect("read")
+                .expect("exists")
+                .status,
+            Delivery::Delivered
+        );
+        let mut failure = message(chat, "m1", 100, true);
+        failure.status = Delivery::Failed;
+        archive.insert_message(&failure, None).expect("failure");
+        assert_eq!(
+            archive
+                .message(chat, "m1")
+                .expect("read")
+                .expect("exists")
+                .status,
+            Delivery::Failed
+        );
+
+        // A history snapshot with reactions replaces the list.
+        let mut snapshot = message(chat, "m1", 100, true);
+        snapshot.reactions = vec![reaction("3@s.whatsapp.net", "👍")];
+        archive.insert_message(&snapshot, None).expect("snapshot");
+        let stored = archive.message(chat, "m1").expect("read").expect("exists");
+        assert_eq!(stored.reactions.len(), 1);
+        assert_eq!(stored.reactions[0].sender, "3@s.whatsapp.net");
     }
 
     #[test]
