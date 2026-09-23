@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 18:51+0200\n"
+"POT-Creation-Date: 2026-09-23 19:29+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -156,15 +156,15 @@ msgstr "Заблокированные"
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K для поиска · ? для сочетаний клавиш"
 
-#: src/ui/conversation.rs:997
+#: src/ui/conversation.rs:998
 msgid "Type a message"
 msgstr "Введите сообщение"
 
-#: src/ui/conversation.rs:1000
+#: src/ui/conversation.rs:1001
 msgid "Add a caption"
 msgstr "Добавить подпись"
 
-#: src/ui/conversation.rs:1154
+#: src/ui/conversation.rs:1155
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -172,22 +172,22 @@ msgstr ""
 "Enter отправляет · Shift+Enter для новой строки · *жирный* _курсив_ "
 "~зачёркнутый~ · Ctrl+V вставляет изображение"
 
-#: src/ui/conversation.rs:1156
+#: src/ui/conversation.rs:1157
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Ctrl+Enter отправляет · *жирный* _курсив_ ~зачёркнутый~ · Ctrl+V вставляет "
 "изображение"
 
-#: src/ui/conversation.rs:1167
+#: src/ui/conversation.rs:1168
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Скрыть подсказки сочетаний клавиш (восстановить в настройках)"
 
-#: src/ui/conversation.rs:1182
+#: src/ui/conversation.rs:1183
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Все сочетания клавиш ({})"
 
-#: src/ui/conversation.rs:1458
+#: src/ui/conversation.rs:1459
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
@@ -195,45 +195,45 @@ msgstr[0] "{} непрочитанное сообщение"
 msgstr[1] "{} непрочитанных сообщения"
 msgstr[2] "{} непрочитанных сообщений"
 
-#: src/ui/conversation.rs:3074
+#: src/ui/conversation.rs:3075
 msgid "Open in system player"
 msgstr "Открыть в системном плеере"
 
-#: src/ui/conversation.rs:3142 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3143 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Данные сообщения"
 
-#: src/ui/conversation.rs:3373 src/ui/conversation.rs:3454
+#: src/ui/conversation.rs:3374 src/ui/conversation.rs:3455
 msgid "Open in a map"
 msgstr "Открыть на карте"
 
-#: src/ui/conversation.rs:3406
+#: src/ui/conversation.rs:3407
 msgid "Live location ended"
 msgstr "Трансляция геоданных завершена"
 
-#: src/ui/conversation.rs:3408
+#: src/ui/conversation.rs:3409
 msgid "Live location"
 msgstr "Геоданные в реальном времени"
 
-#: src/ui/conversation.rs:3419
+#: src/ui/conversation.rs:3420
 #, rust-format
 msgid "Updated {time}"
 msgstr "Обновлено в {time}"
 
-#: src/ui/conversation.rs:4835
+#: src/ui/conversation.rs:4836
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/ui/conversation.rs:4837
+#: src/ui/conversation.rs:4838
 #, fuzzy
 msgid "Play"
 msgstr "Прослушано"
 
-#: src/ui/conversation.rs:4860
+#: src/ui/conversation.rs:4861
 msgid "Unmute"
 msgstr "Включить звук"
 
-#: src/ui/conversation.rs:4862
+#: src/ui/conversation.rs:4863
 msgid "Mute"
 msgstr "Выключить звук"
 
@@ -432,6 +432,6 @@ msgstr[2] "ещё {}"
 msgid "No one yet"
 msgstr "Пока никто"
 
-#: src/app.rs:3760
+#: src/app.rs:3775
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"

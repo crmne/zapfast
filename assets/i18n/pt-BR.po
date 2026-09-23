@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 18:51+0200\n"
+"POT-Creation-Date: 2026-09-23 19:29+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -155,15 +155,15 @@ msgstr "Trancadas"
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K para buscar · ? para atalhos de teclado"
 
-#: src/ui/conversation.rs:997
+#: src/ui/conversation.rs:998
 msgid "Type a message"
 msgstr "Digite uma mensagem"
 
-#: src/ui/conversation.rs:1000
+#: src/ui/conversation.rs:1001
 msgid "Add a caption"
 msgstr "Adicione uma legenda"
 
-#: src/ui/conversation.rs:1154
+#: src/ui/conversation.rs:1155
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -171,66 +171,66 @@ msgstr ""
 "Enter envia · Shift+Enter para nova linha · *negrito* _itálico_ ~riscado~ · "
 "Ctrl+V cola uma imagem"
 
-#: src/ui/conversation.rs:1156
+#: src/ui/conversation.rs:1157
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Ctrl+Enter envia · *negrito* _itálico_ ~riscado~ · Ctrl+V cola uma imagem"
 
-#: src/ui/conversation.rs:1167
+#: src/ui/conversation.rs:1168
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Ocultar dicas de atalho (restaure em Configurações)"
 
-#: src/ui/conversation.rs:1182
+#: src/ui/conversation.rs:1183
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Todos os atalhos ({})"
 
-#: src/ui/conversation.rs:1458
+#: src/ui/conversation.rs:1459
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} mensagem não lida"
 msgstr[1] "{} mensagens não lidas"
 
-#: src/ui/conversation.rs:3074
+#: src/ui/conversation.rs:3075
 msgid "Open in system player"
 msgstr "Abrir no player do sistema"
 
-#: src/ui/conversation.rs:3142 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3143 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Dados da mensagem"
 
-#: src/ui/conversation.rs:3373 src/ui/conversation.rs:3454
+#: src/ui/conversation.rs:3374 src/ui/conversation.rs:3455
 msgid "Open in a map"
 msgstr "Abrir em um mapa"
 
-#: src/ui/conversation.rs:3406
+#: src/ui/conversation.rs:3407
 msgid "Live location ended"
 msgstr "Localização em tempo real encerrada"
 
-#: src/ui/conversation.rs:3408
+#: src/ui/conversation.rs:3409
 msgid "Live location"
 msgstr "Localização em tempo real"
 
-#: src/ui/conversation.rs:3419
+#: src/ui/conversation.rs:3420
 #, rust-format
 msgid "Updated {time}"
 msgstr "Atualizada às {time}"
 
-#: src/ui/conversation.rs:4835
+#: src/ui/conversation.rs:4836
 msgid "Pause"
 msgstr "Pausar"
 
-#: src/ui/conversation.rs:4837
+#: src/ui/conversation.rs:4838
 #, fuzzy
 msgid "Play"
 msgstr "Reproduzida"
 
-#: src/ui/conversation.rs:4860
+#: src/ui/conversation.rs:4861
 msgid "Unmute"
 msgstr "Ativar som"
 
-#: src/ui/conversation.rs:4862
+#: src/ui/conversation.rs:4863
 msgid "Mute"
 msgstr "Silenciar"
 
@@ -426,6 +426,6 @@ msgstr[1] "{} restantes"
 msgid "No one yet"
 msgstr "Ninguém ainda"
 
-#: src/app.rs:3760
+#: src/app.rs:3775
 msgid "This video opens in your system player"
 msgstr "Este vídeo abre no player do sistema"
