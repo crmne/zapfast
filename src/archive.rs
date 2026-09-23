@@ -1567,12 +1567,11 @@ pub(crate) mod tests {
             .expect("exists");
         assert!(kept.revoked_by_sender);
         assert_eq!(kept.content, Content::text("before"), "the text survives");
-        assert_eq!(
+        assert!(
             archive
                 .messages("1@s.whatsapp.net", None, 10)
                 .expect("list")[0]
                 .revoked_by_sender,
-            true,
             "listing reads the flag back"
         );
         // A later sync carrying the tombstone must not undo any of it.
