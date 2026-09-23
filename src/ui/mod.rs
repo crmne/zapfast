@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
 pub mod keys;
+pub mod labels;
 pub mod login;
 pub mod picker;
 pub mod polls;
@@ -35,6 +36,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.emoji_start.is_none()
         && app.mention_start.is_none()
         && !egui::Popup::is_any_open(ctx);
+    // The pane with the keyboard lends the list its label; a split swaps the
+    // two panes in and out as it draws them.
+    if !app.split_open() {
+        app.panes[0].chat = app.open_chat.clone();
+    }
+    app.pane_label = app.panes[if app.split_open() {
+        app.focused_pane
+    } else {
+        0
+    }]
+    .label
+    .clone();
     focus::begin(ctx, main_navigation);
     // The open chat's composer records its rect again below, if there is one.
     ctx.data_mut(|data| data.remove::<egui::Rect>(composer_rect_id()));
@@ -51,14 +64,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if !macos {
         banner(app, ui);
     }
-    if app.sidebar_visible {
-        chats::show(app, ui);
+    // A split workspace draws a chat list inside each pane instead.
+    if app.sidebar_visible && !app.split_open() {
+        chats::show(app, ui, 0);
     }
     egui::CentralPanel::default()
         .frame(central_frame(app))
         .show(ui, |ui| match app.page {
             Page::Settings => settings::show(app, ui),
-            Page::Chats => conversation::show(app, ui),
+            Page::Chats if app.split_open() => workspace(app, ui),
+            Page::Chats => conversation::show(app, ui, 0),
             Page::Wallpaper => settings::wallpaper_show(app, ui),
         });
     focus::finish(ctx, main_navigation);
@@ -91,6 +106,129 @@ fn central_frame(app: &App) -> Frame {
     };
 
     Frame::new().fill(central_background(app)).stroke(stroke)
+}
+
+/// The chat area while the workspace is split in two.
+///
+/// Each pane draws its own chat list and conversation, side by side. Both
+/// share one `App`, so what belongs to a pane alone — the chat it has open,
+/// the label it shows, the panel ids it draws with — is put in place while
+/// that pane renders and handed back afterwards.
+fn workspace(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let rect = ui.available_rect_before_wrap();
+    let gap = 8.0;
+    let ratio = app.split_ratio.clamp(0.2, 0.8);
+    let left =
+        egui::Rect::from_min_size(rect.min, vec2((rect.width() - gap) * ratio, rect.height()));
+    let divider = egui::Rect::from_min_size(
+        egui::pos2(left.right(), rect.top()),
+        vec2(gap, rect.height()),
+    );
+    let right = egui::Rect::from_min_size(
+        egui::pos2(divider.right(), rect.top()),
+        vec2((rect.right() - divider.right()).max(0.0), rect.height()),
+    );
+    pane(app, ui, 0, left);
+    pane(app, ui, 1, right);
+    // Dragging the divider moves the split.
+    let response = ui.interact(
+        divider,
+        egui::Id::new("workspace-divider"),
+        egui::Sense::click_and_drag(),
+    );
+    let color = if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        palette.accent
+    } else {
+        palette.outline
+    };
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(
+            egui::pos2(divider.center().x - 0.5, divider.top()),
+            vec2(1.0, divider.height()),
+        ),
+        CornerRadius::same(1),
+        color,
+    );
+    if response.dragged() {
+        let pointer = ui.ctx().pointer_interact_pos().unwrap_or(divider.center());
+        let ratio = ((pointer.x - rect.left()) / rect.width().max(1.0)).clamp(0.2, 0.8);
+        app.actions.push(Action::SetSplitRatio(ratio));
+    }
+    // Closing the second pane from the divider keeps the button off the
+    // conversation's own controls.
+    let close = egui::Rect::from_center_size(
+        egui::pos2(divider.center().x, divider.top() + 16.0),
+        egui::Vec2::splat(20.0),
+    );
+    let close_response = ui.interact(
+        close,
+        egui::Id::new("workspace-close"),
+        egui::Sense::click(),
+    );
+    let hovered = close_response.hovered();
+    ui.painter().circle_filled(
+        close.center(),
+        9.0,
+        if hovered {
+            palette.surface_hover
+        } else {
+            palette.surface
+        },
+    );
+    theme::paint_icon(
+        ui,
+        Icon::X,
+        close,
+        12.0,
+        if hovered {
+            palette.text
+        } else {
+            palette.secondary
+        },
+    );
+    if close_response.clicked() {
+        app.actions.push(Action::CloseSplit);
+    }
+    // Between frames the open chat belongs to the pane with the keyboard.
+    app.open_chat = app.panes[app.focused_pane].chat.clone();
+    // The focused pane wears a quiet edge, so it is clear where typing goes.
+    let focused = if app.focused_pane == 1 { right } else { left };
+    ui.painter().rect_stroke(
+        focused.shrink(0.5),
+        CornerRadius::ZERO,
+        Stroke::new(1.0, palette.accent.gamma_multiply(0.6)),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// Draws one pane of a split workspace: its chat list, then its conversation.
+fn pane(app: &mut App, ui: &mut egui::Ui, index: usize, rect: egui::Rect) {
+    let state = app.panes[index].clone();
+    let open = std::mem::replace(&mut app.open_chat, state.chat);
+    let label = std::mem::replace(&mut app.pane_label, state.label);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.push_id(("workspace-pane", index), |ui| {
+            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+            // Clicking anywhere in the pane hands it the keyboard, unless a
+            // widget inside the pane takes the click first.
+            if ui
+                .interact(
+                    rect,
+                    egui::Id::new(("workspace-pane", index, "background")),
+                    egui::Sense::click(),
+                )
+                .clicked()
+            {
+                app.actions.push(Action::FocusPane(index));
+            }
+            chats::show(app, ui, index);
+            conversation::show(app, ui, index);
+        })
+    });
+    app.panes[index].chat = std::mem::replace(&mut app.open_chat, open);
+    app.panes[index].label = std::mem::replace(&mut app.pane_label, label);
 }
 
 /// Where the focus ring was drawn this frame, used by interaction tests.
@@ -681,7 +819,7 @@ mod idle_tests {
                     )),
                     ..Default::default()
                 },
-                |ui| conversation::show(&mut app, ui),
+                |ui| conversation::show(&mut app, ui, 0),
             );
             delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
             output.textures_delta.clear();
@@ -743,7 +881,7 @@ mod idle_tests {
                     )),
                     ..Default::default()
                 },
-                |ui| conversation::show(&mut app, ui),
+                |ui| conversation::show(&mut app, ui, 0),
             );
             output.textures_delta.clear();
         }
@@ -765,7 +903,7 @@ mod idle_tests {
                     )),
                     ..Default::default()
                 },
-                |ui| conversation::show(&mut app, ui),
+                |ui| conversation::show(&mut app, ui, 0),
             );
             output.textures_delta.clear();
         }

@@ -300,6 +300,8 @@ pub struct Settings {
     pub enter_sends: bool,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
+    /// Show labels as a tab bar above the chat list instead of a filter menu.
+    pub labels_as_tabs: bool,
     /// Send typing state while composing.
     pub send_typing: bool,
     /// Download attachments when they enter view instead of on click.
@@ -356,6 +358,7 @@ impl Default for Settings {
             sidebar_width: 320.0,
             enter_sends: true,
             send_read_receipts: true,
+            labels_as_tabs: false,
             send_typing: true,
             auto_download: true,
             show_sender_pictures: false,

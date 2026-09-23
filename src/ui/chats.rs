@@ -8,24 +8,42 @@ use crate::model::{Action, Chat, ChatFilter, Contact, Dialog, Message, Page};
 use crate::theme::{self, Icon, Palette};
 
 use super::focus::{Stop, TabStop};
+use super::labels;
 use super::widgets;
 
-pub fn show(app: &mut App, ui: &mut egui::Ui) {
+/// Draws the chat list. `pane` is which half of a split workspace it belongs
+/// to, which keeps its panel ids apart from the other pane's.
+pub fn show(app: &mut App, ui: &mut egui::Ui, pane: usize) {
     let palette = app.palette;
-    let panel = egui::Panel::left("chats")
-        .resizable(true)
-        .default_size(app.settings.sidebar_width)
-        .size_range(if theme::macos_chrome(ui.ctx()) {
-            (theme::traffic_light_inset(ui.ctx()) + 210.0).max(280.0)..=520.0
-        } else {
-            260.0..=520.0
-        })
+    let split = app.split_open();
+    let mut panel = egui::Panel::left(egui::Id::new(("chats", pane)))
         .show_separator_line(false)
         .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
+    if split {
+        // Inside a split each list shares the width with its conversation, and
+        // its width belongs to the pane rather than to the window.
+        let available = ui.available_width();
+        panel = panel
+            .resizable(false)
+            .default_size((available * 0.42).clamp(200.0, 320.0))
+            .size_range(180.0..=(available * 0.75).max(200.0));
+    } else {
+        panel = panel
+            .resizable(true)
+            .default_size(app.settings.sidebar_width)
+            .size_range(if theme::macos_chrome(ui.ctx()) {
+                (theme::traffic_light_inset(ui.ctx()) + 210.0).max(280.0)..=520.0
+            } else {
+                260.0..=520.0
+            });
+    }
     let response = panel.show(ui, |ui| {
-        header(app, ui);
+        header(app, ui, pane);
         list(app, ui);
     });
+    if split {
+        return;
+    }
     let width = response.response.rect.width();
     if (width - app.settings.sidebar_width).abs() > 1.0 {
         app.settings.sidebar_width = width;
@@ -40,9 +58,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     );
 }
 
-fn header(app: &mut App, ui: &mut egui::Ui) {
-    if theme::macos_chrome(ui.ctx()) {
-        macos_header(app, ui);
+fn header(app: &mut App, ui: &mut egui::Ui, pane: usize) {
+    if theme::macos_chrome(ui.ctx()) && !app.split_open() {
+        macos_header(app, ui, pane);
         return;
     }
     let palette = app.palette;
@@ -151,6 +169,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                     }
                 });
             });
+            labels::tab_bar(app, ui, pane, &palette);
             ui.add_space(6.0);
             let id = egui::Id::new("chat-search");
             let width = ui.available_width();
@@ -168,7 +187,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
-fn macos_header(app: &mut App, ui: &mut egui::Ui) {
+fn macos_header(app: &mut App, ui: &mut egui::Ui, pane: usize) {
     let palette = app.palette;
     let inset = theme::traffic_light_inset(ui.ctx());
     let mut drag = ui.max_rect();
@@ -240,6 +259,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     }
                 });
             });
+            labels::tab_bar(app, ui, pane, &palette);
             ui.add_space(6.0);
             let mut text = app.search.clone();
             let response = widgets::search_field(
@@ -287,6 +307,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
+                labels::filter_menu(app, ui, &palette);
                 for filter in ChatFilter::EVERY {
                     let count = match filter {
                         ChatFilter::All => 0,
@@ -1033,6 +1054,8 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
             Action::ShowDialog(Dialog::ConfirmLockChat(chat.id.clone()))
         });
     }
+    widgets::menu_separator(ui, palette);
+    labels::chat_menu(app, ui, chat, palette);
     widgets::menu_separator(ui, palette);
     if let Some(phone) = chat.phone()
         && widgets::menu_item(ui, palette, Some(Icon::Copy), "Copy number")

@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use crate::audio::{Player, Recorder};
 use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
 use crate::model::{
-    Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
-    MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
+    Action, Chat, ChatFilter, ChatId, ChatPaneState, Contact, Content, Delivery, Dialog, Gif,
+    GifError, Label, Media, MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
+    ViewLayoutMode,
 };
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
@@ -255,6 +256,24 @@ pub struct App {
     pub show_archived: bool,
     /// Chat-list filter; applies to the main list, not to search or the archive.
     pub chat_filter: ChatFilter,
+    /// Labels known here, in creation order. Local to this computer.
+    pub labels: Vec<Label>,
+    /// Name typed in the label manager.
+    pub label_name: String,
+    /// Colour the manager will use for the next label.
+    pub label_color: String,
+    /// Label being renamed, with the name being typed.
+    pub label_editing: Option<(String, String)>,
+    /// Panes of the workspace: the first always, the second while split.
+    pub panes: [ChatPaneState; 2],
+    /// Whether the workspace shows two panes side by side.
+    pub split: bool,
+    /// Pane holding the keyboard.
+    pub focused_pane: usize,
+    /// Share of the width given to the first pane while split.
+    pub split_ratio: f32,
+    /// Label the pane being drawn shows, swapped in while it renders.
+    pub pane_label: Option<String>,
     /// Chats opened from the Unread list, kept there until the filter changes.
     unread_kept: HashSet<ChatId>,
     pub toasts: Vec<Toast>,
@@ -467,6 +486,15 @@ impl App {
             sidebar_visible: true,
             show_archived: false,
             chat_filter: ChatFilter::All,
+            labels: Vec::new(),
+            label_name: String::new(),
+            label_color: crate::archive::DEFAULT_COLOR.to_owned(),
+            label_editing: None,
+            panes: [ChatPaneState::default(), ChatPaneState::default()],
+            split: false,
+            focused_pane: 0,
+            split_ratio: 0.5,
+            pane_label: None,
             unread_kept: HashSet::new(),
             toasts: Vec::new(),
             actions: Vec::new(),
@@ -704,7 +732,7 @@ impl App {
         }
         if self.open_chat.as_deref() == Some(id) {
             self.stop_composing(id);
-            self.open_chat = None;
+            self.show_chat(None);
             self.composer.clear();
             self.composer_mentions.clear();
             self.pending.clear();
@@ -727,6 +755,111 @@ impl App {
             .as_deref()
             .and_then(|id| self.chat(id))
             .filter(|chat| !chat.locked || self.locked_folder_open())
+    }
+
+    /// Shows a chat in the pane with the keyboard, which is the one the user
+    /// is looking at. The pane and the open chat move together, so closing or
+    /// opening a chat in a split touches only that half.
+    pub fn show_chat(&mut self, chat: Option<ChatId>) {
+        if self.split_open() {
+            self.panes[self.focused_pane].chat = chat.clone();
+        }
+        self.open_chat = chat;
+    }
+
+    /// The label with this id, when it still exists.
+    pub fn label(&self, id: &str) -> Option<&Label> {
+        self.labels.iter().find(|label| label.id == id)
+    }
+
+    /// Whether a chat wears a label id.
+    pub fn chat_wears(&self, chat: &Chat, label: &str) -> bool {
+        chat.labels.iter().any(|worn| worn == label)
+    }
+
+    /// Unread messages across the chats wearing a label.
+    ///
+    /// Archived chats are left out, because a label lists the ones it can show.
+    pub fn label_unread(&self, id: &str) -> u32 {
+        self.chats
+            .iter()
+            .filter(|chat| !chat.archived && self.chat_wears(chat, id))
+            .map(|chat| chat.unread)
+            .sum()
+    }
+
+    /// Whether the workspace shows two panes right now.
+    pub fn split_open(&self) -> bool {
+        self.split && self.page == Page::Chats
+    }
+
+    /// The workspace as the two-tab model the tab bar draws.
+    pub fn view_layout(&self) -> ViewLayoutMode {
+        if self.split_open() {
+            ViewLayoutMode::SplitTab {
+                primary_label_id: self.panes[0].label.clone(),
+                secondary_label_id: self.panes[1].label.clone(),
+            }
+        } else {
+            ViewLayoutMode::SingleTab {
+                primary_label_id: self.panes[0].label.clone(),
+            }
+        }
+    }
+
+    /// Drops filters and edits that point at labels which are gone.
+    fn prune_labels(&mut self) {
+        let known: Vec<String> = self.labels.iter().map(|label| label.id.clone()).collect();
+        for pane in &mut self.panes {
+            if pane.label.as_ref().is_some_and(|id| !known.contains(id)) {
+                pane.label = None;
+            }
+        }
+        if self
+            .pane_label
+            .as_ref()
+            .is_some_and(|id| !known.contains(id))
+        {
+            self.pane_label = None;
+        }
+        if self
+            .label_editing
+            .as_ref()
+            .is_some_and(|(id, _)| !known.contains(id))
+        {
+            self.label_editing = None;
+        }
+    }
+
+    /// Picks the label one pane shows. A label replaces the chip filter, which
+    /// is what a tab click means.
+    fn select_label(&mut self, pane: usize, label: Option<String>) {
+        if pane >= self.panes.len() {
+            return;
+        }
+        if label.is_some() && self.locked_folder {
+            self.close_locked_folder();
+        }
+        self.panes[pane].label = label;
+        if pane == 0 || self.split {
+            self.chat_filter = ChatFilter::All;
+            self.unread_kept.clear();
+        }
+    }
+
+    /// Opens a label beside the current one, splitting the workspace.
+    fn open_label_split(&mut self, label: Option<String>) {
+        self.split = true;
+        self.panes[1] = ChatPaneState { label, chat: None };
+        self.focused_pane = 1;
+        self.page = Page::Chats;
+    }
+
+    /// Folds the workspace back into a single pane.
+    fn close_split(&mut self) {
+        self.split = false;
+        self.panes[1] = ChatPaneState::default();
+        self.focused_pane = 0;
     }
 
     /// Resolves an address-book, push, phone-number, or fallback name.
@@ -1017,6 +1150,11 @@ impl App {
                     || (self.chat_filter == ChatFilter::Unread
                         && self.unread_kept.contains(&chat.id))
             })
+            .filter(|chat| match &self.pane_label {
+                // The pane being drawn shows one label, if it has one.
+                Some(label) => self.chat_wears(chat, label),
+                None => true,
+            })
             .filter(|chat| {
                 // Inside the locked folder the typed text is the secret code,
                 // not a query to match.
@@ -1172,6 +1310,10 @@ impl App {
                     self.me_name = name;
                     self.me_about = about;
                 }
+                Event::Labels(labels) => {
+                    self.labels = labels;
+                    self.prune_labels();
+                }
                 Event::Chats(chats) => {
                     for chat in &chats {
                         if chat.unread == 0 {
@@ -1181,7 +1323,7 @@ impl App {
                     self.chats = chats;
                     if let Some(open) = self.open_chat.clone() {
                         if self.chat(&open).is_none_or(|chat| chat.locked) {
-                            self.open_chat = None;
+                            self.show_chat(None);
                         } else {
                             // Show archived messages immediately, including offline.
                             self.ensure_loaded(&open);
@@ -1489,7 +1631,7 @@ impl App {
                 self.conversations.clear();
                 self.contacts.clear();
                 self.avatars.clear();
-                self.open_chat = None;
+                self.show_chat(None);
                 self.toast_error("This device was unlinked from your phone");
             }
             LinkStatus::Failed(message) => self.toast_error(message.clone()),
@@ -1765,7 +1907,7 @@ impl App {
         }
         self.emoji_start = None;
         self.mention_start = None;
-        self.open_chat = Some(id.clone());
+        self.show_chat(Some(id.clone()));
         self.page = Page::Chats;
         self.scroll_to_bottom = true;
         self.at_bottom = true;
@@ -2239,6 +2381,9 @@ impl App {
                     } else {
                         self.composer_mentions.clear();
                     }
+                }
+                if self.split_open() {
+                    self.panes[self.focused_pane].chat = None;
                 }
                 self.reply_to = None;
                 self.emoji_start = None;
@@ -2811,6 +2956,39 @@ impl App {
                 }
                 self.chat_filter = filter;
                 self.unread_kept.clear();
+            }
+            Action::SelectLabel { pane, label } => self.select_label(pane, label),
+            Action::OpenLabelSplit(label) => self.open_label_split(label),
+            Action::CloseSplit => self.close_split(),
+            Action::FocusPane(pane) => {
+                if self.split {
+                    self.focused_pane = pane.min(1);
+                }
+            }
+            Action::SetSplitRatio(ratio) => self.split_ratio = ratio.clamp(0.2, 0.8),
+            Action::SetChatLabels { chat, labels } => {
+                self.backend.send(Command::SetChatLabels { chat, labels });
+            }
+            Action::CreateLabel { name, color_hex } => {
+                self.backend.send(Command::CreateLabel { name, color_hex });
+                self.label_name.clear();
+                self.label_color = crate::archive::DEFAULT_COLOR.to_owned();
+            }
+            Action::UpdateLabel {
+                id,
+                name,
+                color_hex,
+            } => {
+                self.backend.send(Command::UpdateLabel {
+                    id,
+                    name,
+                    color_hex,
+                });
+                self.label_editing = None;
+            }
+            Action::DeleteLabel(id) => {
+                self.backend.send(Command::DeleteLabel(id));
+                self.label_editing = None;
             }
             // Reading a chat must not pull its row out from under the pointer.
             // Only the filtered list sends this: search results and
@@ -3853,6 +4031,164 @@ mod tests {
             .unwrap();
         app.background_frame(&ctx);
         assert!(app.poll_voting.is_empty());
+    }
+
+    fn label(id: &str, name: &str) -> Label {
+        Label {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            color_hex: "#3b82f6".to_owned(),
+            created_at: 1,
+        }
+    }
+
+    fn labeled(id: &str, unread: u32, labels: &[&str]) -> Chat {
+        let mut chat = Chat::new(id.to_owned(), id.to_owned());
+        chat.unread = unread;
+        chat.labels = labels.iter().map(|label| (*label).to_owned()).collect();
+        chat.last_activity = i64::from(unread) + 1;
+        chat
+    }
+
+    #[test]
+    fn a_label_tab_replaces_the_chip_filter() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        app.chat_filter = ChatFilter::Unread;
+        app.apply(
+            Action::SelectLabel {
+                pane: 0,
+                label: Some("label-1".into()),
+            },
+            &ctx,
+        );
+        assert_eq!(app.panes[0].label.as_deref(), Some("label-1"));
+        assert_eq!(
+            app.chat_filter,
+            ChatFilter::All,
+            "a label replaces what the chips were filtering"
+        );
+        assert_eq!(
+            app.view_layout(),
+            ViewLayoutMode::SingleTab {
+                primary_label_id: Some("label-1".into())
+            }
+        );
+    }
+
+    #[test]
+    fn ctrl_click_splits_the_workspace_and_closing_folds_it_back() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work"), label("label-2", "Home")];
+        app.apply(
+            Action::SelectLabel {
+                pane: 0,
+                label: Some("label-1".into()),
+            },
+            &ctx,
+        );
+        app.apply(Action::OpenLabelSplit(Some("label-2".into())), &ctx);
+        assert!(app.split_open());
+        assert_eq!(app.focused_pane, 1, "the new pane takes the keyboard");
+        assert_eq!(app.panes[1].label.as_deref(), Some("label-2"));
+        assert_eq!(
+            app.view_layout(),
+            ViewLayoutMode::SplitTab {
+                primary_label_id: Some("label-1".into()),
+                secondary_label_id: Some("label-2".into()),
+            }
+        );
+        app.apply(Action::FocusPane(0), &ctx);
+        assert_eq!(app.focused_pane, 0);
+        app.apply(Action::SetSplitRatio(0.9), &ctx);
+        assert_eq!(app.split_ratio, 0.8, "the divider keeps both panes usable");
+        app.apply(Action::CloseSplit, &ctx);
+        assert!(!app.split_open());
+        assert_eq!(app.panes[1], ChatPaneState::default());
+        assert_eq!(
+            app.view_layout(),
+            ViewLayoutMode::SingleTab {
+                primary_label_id: Some("label-1".into())
+            }
+        );
+    }
+
+    #[test]
+    fn a_label_counts_the_unread_messages_of_the_chats_wearing_it() {
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        let mut archived = labeled("3@s.whatsapp.net", 5, &["label-1"]);
+        archived.archived = true;
+        app.chats = vec![
+            labeled("1@s.whatsapp.net", 3, &["label-1"]),
+            labeled("2@s.whatsapp.net", 2, &["label-1", "label-2"]),
+            labeled("4@s.whatsapp.net", 7, &[]),
+            archived,
+        ];
+        assert_eq!(
+            app.label_unread("label-1"),
+            5,
+            "archived chats are not listed, so they are not counted"
+        );
+        assert_eq!(
+            app.unread_total(),
+            12,
+            "archived chats stay out of the total"
+        );
+        assert!(app.chat_wears(&app.chats[1], "label-2"));
+        assert!(!app.chat_wears(&app.chats[2], "label-1"));
+    }
+
+    #[test]
+    fn the_pane_being_drawn_lists_only_its_label() {
+        let mut app = app();
+        app.labels = vec![label("label-1", "Work")];
+        app.chats = vec![
+            labeled("1@s.whatsapp.net", 0, &["label-1"]),
+            labeled("2@s.whatsapp.net", 0, &[]),
+        ];
+        app.pane_label = Some("label-1".into());
+        let listed: Vec<String> = app
+            .visible_chats()
+            .into_iter()
+            .map(|chat| chat.id.clone())
+            .collect();
+        assert_eq!(listed, vec!["1@s.whatsapp.net".to_owned()]);
+        app.pane_label = None;
+        assert_eq!(
+            app.visible_chats().len(),
+            2,
+            "without a label every chat shows"
+        );
+    }
+
+    #[test]
+    fn a_gone_label_leaves_every_pane_showing_all_chats() {
+        let root = std::env::temp_dir().join(format!("zapfast-labels-{}", std::process::id()));
+        let (mut app, events) = App::headless(AppDirs::under(&root), Settings::default());
+        let ctx = egui::Context::default();
+        app.labels = vec![label("label-1", "Work"), label("label-2", "Home")];
+        app.split = true;
+        app.panes[0].label = Some("label-1".into());
+        app.panes[1].label = Some("label-2".into());
+        app.pane_label = Some("label-2".into());
+        app.label_editing = Some(("label-2".into(), "Hous".into()));
+        events
+            .send(Event::Labels(vec![label("label-1", "Work")]))
+            .unwrap();
+        app.background_frame(&ctx);
+        assert_eq!(app.panes[0].label.as_deref(), Some("label-1"));
+        assert!(
+            app.panes[1].label.is_none(),
+            "the pane falls back to showing every chat"
+        );
+        assert!(app.pane_label.is_none());
+        assert!(
+            app.label_editing.is_none(),
+            "the editor let go of the label"
+        );
     }
 
     #[test]

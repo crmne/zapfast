@@ -260,6 +260,24 @@ pub enum Command {
     SetMuted(ChatId, Option<i64>),
     /// Locks or unlocks a chat (the locked folder).
     SetLocked(ChatId, bool),
+    /// Creates a label; the worker owns the clock for its id.
+    CreateLabel {
+        name: String,
+        color_hex: String,
+    },
+    /// Renames and recolours a label.
+    UpdateLabel {
+        id: String,
+        name: String,
+        color_hex: String,
+    },
+    /// Deletes a label and takes it off every chat.
+    DeleteLabel(String),
+    /// Replaces the labels of one chat.
+    SetChatLabels {
+        chat: ChatId,
+        labels: Vec<String>,
+    },
     /// Normalizes, encodes, and sends mono 48 kHz push-to-talk audio.
     SendVoice {
         chat: ChatId,
@@ -474,6 +492,8 @@ pub enum Event {
     },
     /// Full chat list, newest first.
     Chats(Vec<Chat>),
+    /// Every label in creation order. Chats carry the labels they wear.
+    Labels(Vec<crate::model::Label>),
     ChatUpdated(Box<Chat>),
     /// Chat messages in ascending order. `older` prepends them; `complete`
     /// means the archive has no earlier rows.

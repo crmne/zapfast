@@ -10,6 +10,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message};
 
 mod encryption;
+mod labels;
+pub use labels::{DEFAULT_COLOR, LABEL_LIMIT};
 mod polls;
 mod receipts;
 pub use polls::PollVote;
@@ -178,6 +180,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         last,
         participants: serde_json::from_str(&participants).unwrap_or_default(),
         read_only: row.get(14)?,
+        labels: Vec::new(),
         ephemeral_expiration: row
             .get::<_, Option<u32>>(16)?
             .filter(|expiration| *expiration != 0),
@@ -252,6 +255,7 @@ impl Archive {
     fn prepare(connection: Connection) -> Result<Self> {
         connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         connection.execute_batch(SCHEMA)?;
+        connection.execute_batch(labels::SCHEMA)?;
         connection.execute_batch(polls::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
@@ -1106,7 +1110,13 @@ impl Archive {
 
     /// Drops every chat-scoped row outside the `chats` table itself.
     fn purge_chat_rows(&self, chat: &str) -> Result<()> {
-        for table in ["messages", "group_receipts", "polls", "poll_history"] {
+        for table in [
+            "messages",
+            "group_receipts",
+            "polls",
+            "poll_history",
+            "chat_labels",
+        ] {
             self.connection.execute(
                 &format!("DELETE FROM {table} WHERE chat = ?1"),
                 params![chat],
@@ -1411,7 +1421,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids;",
+            "DELETE FROM chat_labels; DELETE FROM labels; DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids;",
         )
     }
 }
@@ -1707,7 +1717,8 @@ pub(crate) mod tests {
                  INSERT INTO poll_history (chat, id) VALUES ('{chat}', 'p1');
                  INSERT INTO poll_votes (chat, poll, voter, sender, update_id, at, from_me)
                      VALUES ('{chat}', 'p1', '{chat}', '{chat}', 'u1', 150, 0);
-                 INSERT INTO group_receipts (chat, id, recipient) VALUES ('{chat}', 'm1', '{chat}');"
+                 INSERT INTO group_receipts (chat, id, recipient) VALUES ('{chat}', 'm1', '{chat}');
+                 INSERT INTO chat_labels (chat, label) VALUES ('{chat}', 'label-1');"
             ))
             .expect("poll and receipt rows");
         for table in CHAT_TABLES {
@@ -1720,12 +1731,13 @@ pub(crate) mod tests {
     }
 
     /// Every table keyed by chat besides `chats` itself.
-    const CHAT_TABLES: [&str; 5] = [
+    const CHAT_TABLES: [&str; 6] = [
         "messages",
         "group_receipts",
         "polls",
         "poll_history",
         "poll_votes",
+        "chat_labels",
     ];
 
     fn rows(archive: &Archive, table: &str, chat: &str) -> i64 {

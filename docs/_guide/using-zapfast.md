@@ -166,6 +166,31 @@ Right-click a chat to pin, archive, or mute it for eight hours, one week, or
 indefinitely. These changes also apply on your phone. Click the chat header to
 see its picture, number, and group members.
 
+## Labels
+
+Labels are yours alone. They stay on this computer, they never reach your phone,
+and nobody else sees them. Make one from the **Labels** entries in any chat's
+right-click menu, or from the **+** in the tab bar, and give it a name and one of
+the offered colours. Twenty is the ceiling, the same as WhatsApp Business.
+
+A chat can wear several labels at once. Open a chat's right-click menu to see
+them: one entry per label, and the ones the chat wears show a checkmark. Deleting
+a label takes it off every chat and nothing else; the chats keep their messages.
+
+Turn on **Show labels as tabs** in the settings to put a bar of tabs above the
+chat list. **All** comes first, then one tab per label showing its colour, its
+name, and the number of unread messages in the chats wearing it. Click a tab to
+show only those chats; click the active tab again to go back to **All**.
+
+`Ctrl`-click a tab (`⌘`-click on macOS) to open it beside the current one. The
+window splits into two lists, and each half has its own tab, its own open chat,
+and its own scroll position. The half you last clicked takes the keyboard, which
+its edge shows. Drag the divider to move the split, click the **×** on it to fold
+back to one pane, or click a tab in either half.
+
+With the setting off, the same filter sits in a **Labels** menu beside the filter
+chips.
+
 ## Notifications and the tray
 
 Closing the window keeps ZapFast linked in the tray. Click the tray icon or
