@@ -9,14 +9,13 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::model::{
-    Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerGroup, StickerPack,
-};
+use crate::model::{Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack};
 use crate::paths::AppDirs;
 
 // Re-exported so the picker can detect pasted Signal pack links.
 mod read_sync;
 pub(crate) mod sticker_import;
+pub(crate) mod sticker_store;
 mod worker;
 
 /// Phone-link state.
@@ -351,18 +350,14 @@ pub enum Command {
     StickerPackImported {
         result: Result<String, String>,
     },
-    /// Creates a sticker group under the given name.
-    CreateStickerGroup {
+    /// Creates an empty local sticker pack under the given name.
+    CreateStickerPack {
         name: String,
     },
-    /// Deletes a sticker group and its memberships, leaving the files alone.
-    DeleteStickerGroup {
-        name: String,
-    },
-    /// Files a sticker under a group, or takes it out of one. The sticker is
-    /// named by the opaque key the backend derives from its location.
-    SetStickerGroup {
-        group: String,
+    /// Files a sticker into a local pack by its content, or takes it out.
+    /// The sticker's own file stays where it is.
+    SetStickerPack {
+        pack: PathBuf,
         sticker: PathBuf,
         member: bool,
     },
@@ -628,7 +623,6 @@ pub enum Event {
         saved: Vec<PathBuf>,
         packs: Vec<StickerPack>,
         recent: Vec<PathBuf>,
-        groups: Vec<StickerGroup>,
     },
     Media {
         card: Option<usize>,

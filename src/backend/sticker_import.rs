@@ -400,7 +400,7 @@ fn encode_animated(frames: Vec<(image::RgbaImage, u32)>) -> Option<Vec<u8>> {
 }
 
 /// Creates a unique pack directory from a sanitized title.
-fn unique_pack_dir(root: &Path, title: &str) -> Result<PathBuf, String> {
+pub(super) fn unique_pack_dir(root: &Path, title: &str) -> Result<PathBuf, String> {
     let clean: String = title
         .trim()
         .chars()

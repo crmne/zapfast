@@ -4170,23 +4170,31 @@ impl Worker {
             Command::GifResults { query, results } => {
                 self.emit(Event::Gifs { query, results });
             }
-            Command::CreateStickerGroup { name } => self.create_sticker_group(&name),
-            Command::DeleteStickerGroup { name } => {
-                if let Err(error) = self.archive.delete_sticker_group(&name) {
-                    log::warn!("could not delete a sticker group: {error}");
+            Command::CreateStickerPack { name } => {
+                match super::sticker_store::create_local_pack(
+                    &self.packs_dir(),
+                    &name,
+                    crate::util::now(),
+                ) {
+                    Ok(_) => self.emit_stickers(),
+                    Err(error) => {
+                        self.emit(Event::Error(format!("Could not create the pack: {error}")))
+                    }
                 }
-                self.emit_stickers();
             }
-            Command::SetStickerGroup {
-                group,
+            Command::SetStickerPack {
+                pack,
                 sticker,
                 member,
             } => {
-                let key = self.sticker_key(&sticker);
-                if let Err(error) = self.archive.set_sticker_group(&group, &key, member) {
-                    log::warn!("could not file a sticker in its group: {error}");
+                // Restrict changes to folders in the pack directory.
+                let root = self.packs_dir();
+                if pack.starts_with(&root) && pack != root {
+                    if let Err(error) = super::sticker_store::set_member(&pack, &sticker, member) {
+                        log::warn!("could not file a sticker in its pack: {error}");
+                    }
+                    self.emit_stickers();
                 }
-                self.emit_stickers();
             }
             Command::RecentStickers => {
                 self.fetch_missing_stickers();
@@ -5124,159 +5132,27 @@ impl Worker {
             saved: self.saved_stickers(),
             packs: self.sticker_packs(),
             recent: list.into_iter().map(|(_, path)| path).collect(),
-            groups: self.sticker_groups(),
         });
     }
 
-    /// Creates a group unless the name is blank, then tells the picker about
-    /// the groups it has now.
-    fn create_sticker_group(&mut self, name: &str) {
-        let name = name.trim();
-        if name.is_empty() {
-            return;
-        }
-        if let Err(error) = self.archive.create_sticker_group(name, crate::util::now()) {
-            log::warn!("could not create a sticker group: {error}");
-        }
-        self.emit_stickers();
-    }
-
-    /// User groups with their sticker files. A key whose file is gone is
-    /// dropped, so an empty group reads as empty instead of showing blanks.
-    fn sticker_groups(&self) -> Vec<crate::model::StickerGroup> {
-        let Ok(groups) = self.archive.sticker_groups() else {
-            return Vec::new();
-        };
-        groups
-            .into_iter()
-            .map(|(name, keys)| crate::model::StickerGroup {
-                name,
-                stickers: keys
-                    .iter()
-                    .map(|key| self.sticker_path(key))
-                    .filter(|path| path.exists())
-                    .collect(),
-            })
-            .collect()
-    }
-
-    /// The sticker directories a group key can point into.
-    fn sticker_roots(&self) -> [(&'static str, PathBuf); 2] {
-        [
-            ("saved", self.dirs.saved_sticker_dir()),
-            ("cache", self.dirs.sticker_cache_dir()),
-        ]
-    }
-
-    /// Stable name for a sticker file: its path inside the sticker directory
-    /// it lives in, tagged with that directory. Moving the profile to another
-    /// path therefore keeps every group intact.
-    fn sticker_key(&self, path: &Path) -> String {
-        for (tag, root) in self.sticker_roots() {
-            if let Ok(rest) = path.strip_prefix(&root) {
-                return format!("{tag}/{}", rest.display());
-            }
-        }
-        path.display().to_string()
-    }
-
-    /// The file a sticker key names.
-    fn sticker_path(&self, key: &str) -> PathBuf {
-        for (tag, root) in self.sticker_roots() {
-            if let Some(rest) = key.strip_prefix(&format!("{tag}/")) {
-                return root.join(rest);
-            }
-        }
-        PathBuf::from(key)
-    }
-
-    /// Root directory for imported sticker packs.
+    /// Root directory for sticker packs.
     fn packs_dir(&self) -> PathBuf {
         self.dirs.saved_sticker_dir().join("packs")
     }
 
-    /// Returns imported packs, newest first, with files in name order.
+    /// Returns sticker packs, newest first.
     fn sticker_packs(&self) -> Vec<crate::model::StickerPack> {
-        let Ok(entries) = std::fs::read_dir(self.packs_dir()) else {
-            return Vec::new();
-        };
-        let mut packs: Vec<(std::time::SystemTime, crate::model::StickerPack)> = entries
-            .flatten()
-            .filter_map(|entry| {
-                let dir = entry.path();
-                if !dir.is_dir() {
-                    return None;
-                }
-                let mut stickers: Vec<PathBuf> = std::fs::read_dir(&dir)
-                    .ok()?
-                    .flatten()
-                    .map(|file| file.path())
-                    .filter(|path| {
-                        path.extension()
-                            .is_some_and(|extension| extension == "webp")
-                    })
-                    .collect();
-                if stickers.is_empty() {
-                    return None;
-                }
-                stickers.sort();
-                let when = entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                Some((
-                    when,
-                    crate::model::StickerPack {
-                        name: entry.file_name().to_string_lossy().into_owned(),
-                        dir,
-                        stickers,
-                    },
-                ))
-            })
-            .collect();
-        packs.sort_by_key(|(when, _)| std::cmp::Reverse(*when));
-        packs.into_iter().map(|(_, pack)| pack).collect()
+        super::sticker_store::packs(&self.packs_dir())
     }
 
     /// Returns saved sticker files, newest first.
     fn saved_stickers(&self) -> Vec<PathBuf> {
-        let Ok(entries) = std::fs::read_dir(self.dirs.saved_sticker_dir()) else {
-            return Vec::new();
-        };
-        let mut saved: Vec<(std::time::SystemTime, PathBuf)> = entries
-            .flatten()
-            .filter_map(|entry| {
-                let path = entry.path();
-                path.extension()
-                    .is_some_and(|extension| extension == "webp")
-                    .then(|| {
-                        let when = entry
-                            .metadata()
-                            .and_then(|metadata| metadata.modified())
-                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                        (when, path)
-                    })
-            })
-            .collect();
-        saved.sort_by_key(|(when, _)| std::cmp::Reverse(*when));
-        saved.into_iter().map(|(_, path)| path).collect()
+        super::sticker_store::saved(&self.dirs.saved_sticker_dir())
     }
 
     /// Saves a sticker under its content hash to deduplicate copies.
     fn save_sticker(&self, path: &Path) -> Result<(), String> {
-        use sha2::{Digest, Sha256};
-        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-        let hash: String = Sha256::digest(&bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        let dir = self.dirs.saved_sticker_dir();
-        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-        let target = dir.join(format!("{hash}.webp"));
-        if !target.exists() {
-            std::fs::write(&target, &bytes).map_err(|error| error.to_string())?;
-        }
-        Ok(())
+        super::sticker_store::save(&self.dirs.saved_sticker_dir(), path)
     }
 
     fn avatar_file(&self, id: &str, full: bool) -> PathBuf {

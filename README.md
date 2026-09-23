@@ -197,8 +197,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   choose it. GIF search needs a free GIPHY API key unless the build includes
   one.
 - **Sticker packs.** Import a pack from a `signal.art` link or `.wastickers`
-  file. Animated packs remain animated. Packs are stored as WebP files on your
-  computer.
+  file, or make your own packs from any sticker with a right-click. Animated
+  packs remain animated. Packs are stored as WebP files on your computer.
 - **Consistent names.** Use names from your address book or public WhatsApp
   profile names across chats, replies, mentions, and notifications.
 - **Groups.** See members, sender names, and sender pictures. Announcement

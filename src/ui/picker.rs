@@ -10,7 +10,8 @@ use egui::{
 };
 
 use crate::app::App;
-use crate::model::{Action, PickerTab, StickerGroup};
+use crate::i18n::gettext;
+use crate::model::{Action, PickerTab, StickerPack};
 use crate::theme::{self, Icon, Palette};
 
 use super::conversation;
@@ -22,9 +23,9 @@ const HEIGHT: f32 = 400.0;
 const FRAME_MARGIN: i8 = 10;
 /// Minimum emoji cell width. Columns expand to fill the grid.
 const CELL: f32 = 40.0;
-/// Width of the sticker-group sidebar inside the sticker tab.
+/// Width of the local-pack sidebar inside the sticker tab.
 const GROUP_PANEL: f32 = 208.0;
-/// Height of one row in the sticker-group sidebar.
+/// Height of one row in the local-pack sidebar.
 const GROUP_ROW: f32 = 30.0;
 
 /// An emoji-grid heading or row.
@@ -1057,36 +1058,37 @@ struct StickerChoices {
     send: Option<std::path::PathBuf>,
     save: Option<std::path::PathBuf>,
     forget: Option<std::path::PathBuf>,
-    /// Filing a sticker under a group, or taking it out of one.
-    group: Option<(String, std::path::PathBuf, bool)>,
+    /// Filing a sticker into a local pack, or taking it out of one.
+    pack: Option<(PathBuf, PathBuf, bool)>,
 }
 
-/// Sidebar entries: everything first, then the groups in creation order.
-fn group_entries(groups: &[StickerGroup], all: &str) -> Vec<(Option<String>, String)> {
+/// Sidebar entries: everything first, then the local packs, newest first.
+fn pack_entries(packs: &[StickerPack], all: &str) -> Vec<(Option<PathBuf>, String)> {
     std::iter::once((None, all.to_owned()))
         .chain(
-            groups
+            packs
                 .iter()
-                .map(|group| (Some(group.name.clone()), group.name.clone())),
+                .filter(|pack| pack.local)
+                .map(|pack| (Some(pack.dir.clone()), pack.name.clone())),
         )
         .collect()
 }
 
-/// What a click on a group row asked for.
+/// What a click on a pack row asked for.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GroupRow {
     Picked,
     Removed,
 }
 
-/// Where a group row was drawn, so interaction tests can click it.
+/// Where a pack row was drawn, so interaction tests can click it.
 pub fn group_row_id(label: &str) -> egui::Id {
-    egui::Id::new(("sticker-group-row", label))
+    egui::Id::new(("sticker-pack-row", label))
 }
 
-/// One row of the group list: the name on the left, a delete cross on the
+/// One row of the pack list: the name on the left, a delete cross on the
 /// right. Rows span the panel so long names have room, and the name goes
-/// through the rich-text path because a group name can hold emoji.
+/// through the rich-text path because a pack name can hold emoji.
 fn group_row(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -1156,14 +1158,14 @@ fn group_row(
     response.clicked().then_some(GroupRow::Picked)
 }
 
-/// Sticker-group sidebar: create a group, pick one, or delete one.
-fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
-    let entries = group_entries(&app.sticker_groups, "All");
-    let active = app.sticker_group.clone();
+/// Local-pack sidebar: create a pack, pick one, or delete one.
+fn packs_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    let entries = pack_entries(&app.sticker_packs, &gettext(app.locale, "All"));
+    let active = app.sticker_pack.clone();
     let mut pick = None;
     let mut remove = None;
     let mut create = false;
-    egui::Panel::right("sticker-groups")
+    egui::Panel::right("sticker-packs")
         .show_separator_line(false)
         .frame(
             Frame::new()
@@ -1172,7 +1174,12 @@ fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         )
         .show(ui, |ui| {
             ui.set_width(GROUP_PANEL);
-            theme::text(ui, "Groups", theme::semibold(13.0), palette.secondary);
+            theme::text(
+                ui,
+                gettext(app.locale, "My packs"),
+                theme::semibold(13.0),
+                palette.secondary,
+            );
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if theme::icon_button(
@@ -1181,7 +1188,7 @@ fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     16.0,
                     palette.accent,
                     palette.text,
-                    "Create this group",
+                    &gettext(app.locale, "Create this pack"),
                 )
                 .clicked()
                 {
@@ -1193,10 +1200,10 @@ fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     .inner_margin(Margin::symmetric(8, 4))
                     .show(ui, |ui| {
                         ui.add(
-                            egui::TextEdit::singleline(&mut app.sticker_group_name)
-                                .id(egui::Id::new("sticker-group-name"))
+                            egui::TextEdit::singleline(&mut app.sticker_pack_name)
+                                .id(egui::Id::new("sticker-pack-name"))
                                 .hint_text(
-                                    egui::RichText::new("Create new group…")
+                                    egui::RichText::new(gettext(app.locale, "New pack…"))
                                         .color(palette.dim)
                                         .font(theme::regular(12.5)),
                                 )
@@ -1214,7 +1221,7 @@ fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             ui.add_space(6.0);
             ui.spacing_mut().item_spacing.y = 2.0;
             egui::ScrollArea::vertical()
-                .id_salt("sticker-group-list")
+                .id_salt("sticker-pack-list")
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     for (name, label) in &entries {
@@ -1222,8 +1229,8 @@ fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         match group_row(ui, palette, label, selected, name.is_some()) {
                             Some(GroupRow::Picked) => pick = Some(name.clone()),
                             Some(GroupRow::Removed) => {
-                                if let Some(group) = name {
-                                    remove = Some(group.clone());
+                                if let Some(dir) = name {
+                                    remove = Some(dir.clone());
                                 }
                             }
                             None => {}
@@ -1231,24 +1238,24 @@ fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     }
                 });
         });
-    let name = app.sticker_group_name.trim().to_owned();
+    let name = app.sticker_pack_name.trim().to_owned();
     if create && !name.is_empty() {
-        app.actions.push(Action::CreateStickerGroup(name));
-        app.sticker_group_name.clear();
+        app.actions.push(Action::CreateStickerPack(name));
+        app.sticker_pack_name.clear();
     }
-    if let Some(name) = pick {
-        app.actions.push(Action::SelectStickerGroup(name));
+    if let Some(dir) = pick {
+        app.actions.push(Action::SelectStickerPack(dir));
     }
-    if let Some(name) = remove {
-        app.actions.push(Action::DeleteStickerGroup(name));
+    if let Some(dir) = remove {
+        app.actions.push(Action::DeleteStickerPack(dir));
     }
 }
 
 fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
-    groups_panel(app, ui, palette);
+    packs_panel(app, ui, palette);
     import_row(app, ui, palette);
     ui.add_space(4.0);
-    let selected = app.selected_group();
+    let selected = app.selected_pack().cloned();
     if selected.is_none()
         && app.stickers.is_empty()
         && app.stickers_saved.is_empty()
@@ -1259,9 +1266,9 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             theme::paragraph(
                 ui,
                 if app.stickers_pending {
-                    "Loading your stickers…"
+                    gettext(app.locale, "Loading your stickers…")
                 } else {
-                    "Recent stickers appear here. Right-click one to save it. To import a pack, paste a signal.art link or open a .wastickers file."
+                    gettext(app.locale, "Recent stickers appear here. Right-click one to save it. To import a pack, paste a signal.art link or open a .wastickers file.")
                 },
                 theme::regular(13.0),
                 palette.secondary,
@@ -1272,41 +1279,47 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let saved = app.stickers_saved.clone();
     let packs = app.sticker_packs.clone();
     let recent = app.stickers.clone();
-    let groups = app.sticker_groups.clone();
+    let local: Vec<StickerPack> = packs.iter().filter(|pack| pack.local).cloned().collect();
     let animate = app.window_focused;
+    let locale = app.locale;
     let mut choices = StickerChoices::default();
     let mut delete_pack = None;
     egui::ScrollArea::vertical()
         .id_salt("sticker-grid")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            // A chosen group replaces every section with its own grid.
-            if let Some(group) = &selected {
-                theme::text(ui, &group.name, theme::semibold(12.5), palette.secondary);
-                if group.stickers.is_empty() {
+            let grid = GridContext {
+                locale,
+                animate,
+                local: &local,
+            };
+            // A chosen pack replaces every section with its own grid.
+            if let Some(pack) = &selected {
+                theme::text(ui, &pack.name, theme::semibold(12.5), palette.secondary);
+                if pack.stickers.is_empty() {
                     ui.add_space(6.0);
                     theme::paragraph(
                         ui,
-                        "Nothing filed here yet. Right-click any sticker to add it to this group.",
+                        gettext(
+                            locale,
+                            "Nothing here yet. Right-click any sticker to add it to this pack.",
+                        ),
                         theme::regular(13.0),
                         palette.secondary,
                     );
                 } else {
-                    sticker_grid(
-                        ui,
-                        palette,
-                        &group.stickers,
-                        false,
-                        animate,
-                        &groups,
-                        &mut choices,
-                    );
+                    sticker_grid(ui, palette, &pack.stickers, false, &grid, &mut choices);
                 }
                 return;
             }
             if !saved.is_empty() {
-                theme::text(ui, "Saved", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &saved, true, animate, &groups, &mut choices);
+                theme::text(
+                    ui,
+                    gettext(locale, "Saved"),
+                    theme::semibold(12.5),
+                    palette.secondary,
+                );
+                sticker_grid(ui, palette, &saved, true, &grid, &mut choices);
                 ui.add_space(8.0);
             }
             for pack in &packs {
@@ -1319,7 +1332,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                             14.0,
                             palette.dim,
                             palette.danger,
-                            "Remove this pack",
+                            &gettext(locale, "Remove this pack"),
                         )
                         .clicked()
                         {
@@ -1327,20 +1340,17 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         }
                     });
                 });
-                sticker_grid(
-                    ui,
-                    palette,
-                    &pack.stickers,
-                    false,
-                    animate,
-                    &groups,
-                    &mut choices,
-                );
+                sticker_grid(ui, palette, &pack.stickers, false, &grid, &mut choices);
                 ui.add_space(8.0);
             }
             if !recent.is_empty() {
-                theme::text(ui, "Recent", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &recent, false, animate, &groups, &mut choices);
+                theme::text(
+                    ui,
+                    gettext(locale, "Recent"),
+                    theme::semibold(12.5),
+                    palette.secondary,
+                );
+                sticker_grid(ui, palette, &recent, false, &grid, &mut choices);
             }
         });
     if let Some(path) = choices.send {
@@ -1352,9 +1362,9 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if let Some(path) = choices.forget {
         app.actions.push(Action::ForgetSticker(path));
     }
-    if let Some((group, sticker, member)) = choices.group {
-        app.actions.push(Action::SetStickerGroup {
-            group,
+    if let Some((pack, sticker, member)) = choices.pack {
+        app.actions.push(Action::SetStickerPack {
+            pack,
             sticker,
             member,
         });
@@ -1432,23 +1442,34 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     }
 }
 
+/// What every sticker grid in the tab shares.
+struct GridContext<'a> {
+    locale: crate::i18n::Locale,
+    /// Play animated stickers on hover.
+    animate: bool,
+    /// Local packs a sticker can be filed into.
+    local: &'a [StickerPack],
+}
+
 /// Sticker tiles. Click sends; right-click saves, removes, or files the tile
-/// under one of the user's groups.
+/// into one of the local packs.
 fn sticker_grid(
     ui: &mut egui::Ui,
     palette: &Palette,
-    stickers: &[std::path::PathBuf],
+    stickers: &[PathBuf],
     saved: bool,
-    animate: bool,
-    groups: &[StickerGroup],
+    grid: &GridContext<'_>,
     choices: &mut StickerChoices,
 ) {
+    let animate = grid.animate;
+    let remove_label = gettext(grid.locale, "Remove from saved");
+    let save_label = gettext(grid.locale, "Save sticker");
     let columns = 5;
     let gap = 6.0;
     let cell = (ui.available_width() - gap * (columns as f32 - 1.0)) / columns as f32;
     ui.spacing_mut().item_spacing = vec2(gap, gap);
-    let mut labels = vec!["Remove from saved"];
-    labels.extend(groups.iter().map(|group| group.name.as_str()));
+    let mut labels = vec![remove_label.as_ref(), save_label.as_ref()];
+    labels.extend(grid.local.iter().map(|pack| pack.name.as_str()));
     let menu_width = widgets::menu_width(ui, &labels, true);
     for row in stickers.chunks(columns) {
         ui.horizontal(|ui| {
@@ -1497,27 +1518,24 @@ fn sticker_grid(
                     .frame(widgets::menu_frame(palette))
                     .show(|ui| {
                         if saved {
-                            if widgets::menu_item(ui, palette, Some(Icon::X), "Remove from saved") {
+                            if widgets::menu_item(ui, palette, Some(Icon::X), &remove_label) {
                                 choices.forget = Some(path.clone());
                             }
-                        } else if widgets::menu_item(
-                            ui,
-                            palette,
-                            Some(Icon::Sticker),
-                            "Save sticker",
-                        ) {
+                        } else if widgets::menu_item(ui, palette, Some(Icon::Sticker), &save_label)
+                        {
                             choices.save = Some(path.clone());
                         }
-                        if !groups.is_empty() {
+                        if !grid.local.is_empty() {
                             widgets::menu_separator(ui, palette);
-                            for group in groups {
+                            let hash = content_hash(ui.ctx(), path);
+                            for pack in grid.local {
                                 // A checked entry is a member: picking it again
                                 // takes the sticker back out.
-                                let member = group.stickers.contains(path);
+                                let member =
+                                    hash.as_deref().is_some_and(|hash| pack_holds(pack, hash));
                                 let icon = member.then_some(Icon::Check);
-                                if widgets::menu_item(ui, palette, icon, &group.name) {
-                                    choices.group =
-                                        Some((group.name.clone(), path.clone(), !member));
+                                if widgets::menu_item(ui, palette, icon, &pack.name) {
+                                    choices.pack = Some((pack.dir.clone(), path.clone(), !member));
                                 }
                             }
                         }
@@ -1594,6 +1612,42 @@ impl MotionMemo {
             .insert(path.to_path_buf(), MotionEntry { animated, stamp });
         animated
     }
+}
+
+/// Content hashes of sticker files, re-read only when a file changes.
+#[derive(Clone, Default)]
+struct HashMemo(HashMap<PathBuf, (FileStamp, String)>);
+
+/// A sticker's content hash, which names it inside local packs. Read once per
+/// file version, and only while a sticker menu is open.
+fn content_hash(ctx: &egui::Context, path: &Path) -> Option<String> {
+    let id = egui::Id::new("sticker-content-hashes");
+    let stamp = FileStamp::of(path);
+    let known = ctx.data(|data| {
+        data.get_temp::<HashMemo>(id).and_then(|memo| {
+            memo.0
+                .get(path)
+                .filter(|(seen, _)| *seen == stamp)
+                .map(|(_, hash)| hash.clone())
+        })
+    });
+    if known.is_some() {
+        return known;
+    }
+    let hash = crate::backend::sticker_store::content_hash(&std::fs::read(path).ok()?);
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<HashMemo>(id)
+            .0
+            .insert(path.to_path_buf(), (stamp, hash.clone()))
+    });
+    Some(hash)
+}
+
+/// Whether a local pack holds the sticker with this content hash.
+fn pack_holds(pack: &StickerPack, hash: &str) -> bool {
+    pack.stickers
+        .iter()
+        .any(|path| path.file_stem().is_some_and(|stem| stem == hash))
 }
 
 /// Returns whether a sticker moves, probing each path once and re-probing
@@ -1705,34 +1759,58 @@ mod motion_tests {
 }
 
 #[cfg(test)]
-mod group_tests {
+mod pack_tests {
     use super::*;
 
+    fn pack(name: &str, local: bool) -> StickerPack {
+        StickerPack {
+            name: name.into(),
+            dir: PathBuf::from(format!("/packs/{name}")),
+            stickers: Vec::new(),
+            local,
+        }
+    }
+
     #[test]
-    fn the_sidebar_lists_everything_first_then_groups_in_creation_order() {
-        let groups = vec![
-            StickerGroup {
-                name: "Bom dia".into(),
-                stickers: Vec::new(),
-            },
-            StickerGroup {
-                name: "Futebol".into(),
-                stickers: Vec::new(),
-            },
+    fn the_sidebar_lists_everything_first_then_the_local_packs() {
+        let packs = vec![
+            pack("Bom dia", true),
+            pack("Frogs", false),
+            pack("Futebol", true),
         ];
         assert_eq!(
-            group_entries(&groups, "All"),
+            pack_entries(&packs, "All"),
             vec![
                 (None, "All".to_owned()),
-                (Some("Bom dia".to_owned()), "Bom dia".to_owned()),
-                (Some("Futebol".to_owned()), "Futebol".to_owned()),
-            ]
+                (Some(PathBuf::from("/packs/Bom dia")), "Bom dia".to_owned()),
+                (Some(PathBuf::from("/packs/Futebol")), "Futebol".to_owned()),
+            ],
+            "imported packs cannot take stickers, so they stay out"
         );
         assert_eq!(
-            group_entries(&[], "All"),
+            pack_entries(&[], "All"),
             vec![(None, "All".to_owned())],
-            "with no groups the sidebar still offers everything"
+            "with no packs the sidebar still offers everything"
         );
+    }
+
+    #[test]
+    fn a_local_pack_holds_a_sticker_by_its_content_hash() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = dir.path().join("from-a-chat.webp");
+        std::fs::write(&path, b"sun").expect("writes");
+        let ctx = egui::Context::default();
+        let hash = content_hash(&ctx, &path).expect("hashes");
+        assert_eq!(hash, crate::backend::sticker_store::content_hash(b"sun"));
+        let mut holder = pack("Bom dia", true);
+        assert!(!pack_holds(&holder, &hash));
+        holder
+            .stickers
+            .push(holder.dir.join(format!("{hash}.webp")));
+        assert!(pack_holds(&holder, &hash));
+        // A changed file is hashed again.
+        std::fs::write(&path, b"moon!").expect("writes");
+        assert_ne!(content_hash(&ctx, &path).expect("hashes"), hash);
     }
 
     fn click(pos: egui::Pos2) -> Vec<egui::Event> {
@@ -1754,27 +1832,18 @@ mod group_tests {
     }
 
     #[test]
-    fn a_row_picks_its_group_and_its_cross_removes_it() {
+    fn a_row_picks_its_pack_and_its_cross_removes_it() {
         let directory = tempfile::tempdir().expect("creates a temporary directory");
         let (mut app, _events) = App::headless(
             crate::paths::AppDirs::under(directory.path()),
             crate::settings::Settings::default(),
         );
-        app.sticker_groups = vec![
-            StickerGroup {
-                name: "Bom dia".to_owned(),
-                stickers: Vec::new(),
-            },
-            StickerGroup {
-                name: "Futebol".to_owned(),
-                stickers: Vec::new(),
-            },
-        ];
+        app.sticker_packs = vec![pack("Bom dia", true), pack("Futebol", true)];
         let palette = app.palette;
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 420.0));
-        // Draw one frame of the group sidebar.
+        // Draw one frame of the pack sidebar.
         fn frame(
             app: &mut App,
             ctx: &egui::Context,
@@ -1788,7 +1857,7 @@ mod group_tests {
                     events,
                     ..Default::default()
                 },
-                |ui| groups_panel(app, ui, palette),
+                |ui| packs_panel(app, ui, palette),
             );
             output.textures_delta.clear();
         }
@@ -1796,14 +1865,14 @@ mod group_tests {
         frame(&mut app, &ctx, &palette, screen, Vec::new());
         let row = ctx
             .data(|data| data.get_temp::<egui::Rect>(group_row_id("Futebol")))
-            .expect("the sidebar draws a row per group");
+            .expect("the sidebar draws a row per pack");
         assert!(
             row.width() > 150.0,
-            "a group row spans the sidebar: {}",
+            "a pack row spans the sidebar: {}",
             row.width()
         );
 
-        // The cross removes the group without also picking it.
+        // The cross removes the pack without also picking it.
         frame(
             &mut app,
             &ctx,
@@ -1813,14 +1882,14 @@ mod group_tests {
         );
         assert!(
             app.actions
-                .contains(&Action::DeleteStickerGroup("Futebol".to_owned())),
-            "the cross deletes the group"
+                .contains(&Action::DeleteStickerPack(PathBuf::from("/packs/Futebol"))),
+            "the cross deletes the pack"
         );
         assert!(
             !app.actions
                 .iter()
-                .any(|action| matches!(action, Action::SelectStickerGroup(_))),
-            "deleting must not also select the group"
+                .any(|action| matches!(action, Action::SelectStickerPack(_))),
+            "deleting must not also select the pack"
         );
 
         app.actions.clear();
@@ -1833,8 +1902,10 @@ mod group_tests {
         );
         assert!(
             app.actions
-                .contains(&Action::SelectStickerGroup(Some("Futebol".to_owned()))),
-            "clicking the row picks the group"
+                .contains(&Action::SelectStickerPack(Some(PathBuf::from(
+                    "/packs/Futebol"
+                )))),
+            "clicking the row picks the pack"
         );
     }
 }

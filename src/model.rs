@@ -662,19 +662,14 @@ pub enum PickerTab {
     Stickers,
 }
 
-/// Imported sticker pack stored as a named WebP directory.
+/// Sticker pack stored as a folder of WebP files, imported or made here.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StickerPack {
     pub name: String,
     pub dir: PathBuf,
     pub stickers: Vec<PathBuf>,
-}
-
-/// User-defined sticker group: a name and the sticker files filed under it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct StickerGroup {
-    pub name: String,
-    pub stickers: Vec<PathBuf>,
+    /// Put together in ZapFast, so stickers can be filed into it.
+    pub local: bool,
 }
 
 /// GIF search failure.
@@ -1033,17 +1028,15 @@ pub enum Action {
     ImportStickerUrl(String),
     /// Selects and imports a .wastickers or zip file.
     PickStickerArchive,
-    /// Deletes an imported pack directory.
+    /// Deletes a pack directory.
     DeleteStickerPack(PathBuf),
-    /// Creates a sticker group.
-    CreateStickerGroup(String),
-    /// Deletes a sticker group and its memberships.
-    DeleteStickerGroup(String),
-    /// Filters the picker by one group, or by everything when `None`.
-    SelectStickerGroup(Option<String>),
-    /// Files a sticker under a group, or takes it out of it.
-    SetStickerGroup {
-        group: String,
+    /// Creates a local sticker pack.
+    CreateStickerPack(String),
+    /// Filters the picker by one local pack, or shows everything when `None`.
+    SelectStickerPack(Option<PathBuf>),
+    /// Files a sticker into a local pack, or takes it out of it.
+    SetStickerPack {
+        pack: PathBuf,
         sticker: PathBuf,
         member: bool,
     },

@@ -1810,6 +1810,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     name: "Happy Frogs".to_owned(),
                     dir: std::path::PathBuf::from("Happy Frogs"),
                     stickers: vec![sticker.clone(); 6],
+                    local: false,
                 }];
                 app.stickers = vec![sticker; 7];
             }

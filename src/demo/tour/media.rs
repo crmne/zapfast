@@ -62,6 +62,7 @@ pub fn populate(app: &mut App) -> Result<()> {
         name: "Launch party".into(),
         dir,
         stickers,
+        local: false,
     }];
     app.stickers_pending = false;
     Ok(())

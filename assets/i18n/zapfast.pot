@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 16:56+0200\n"
+"POT-Creation-Date: 2026-09-23 18:50+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -19,7 +19,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: src/model.rs:59
+#: src/model.rs:59 src/ui/picker.rs:1163
 msgid "All"
 msgstr ""
 
@@ -401,6 +401,52 @@ msgstr[1] ""
 msgid "No one yet"
 msgstr ""
 
-#: src/app.rs:3740
+#: src/app.rs:3799
 msgid "This video opens in your system player"
+msgstr ""
+
+#: src/ui/picker.rs:1179
+msgid "My packs"
+msgstr ""
+
+#: src/ui/picker.rs:1191
+msgid "Create this pack"
+msgstr ""
+
+#: src/ui/picker.rs:1206
+msgid "New pack…"
+msgstr ""
+
+#: src/ui/picker.rs:1269
+msgid "Loading your stickers…"
+msgstr ""
+
+#: src/ui/picker.rs:1271
+msgid ""
+"Recent stickers appear here. Right-click one to save it. To import a pack, "
+"paste a signal.art link or open a .wastickers file."
+msgstr ""
+
+#: src/ui/picker.rs:1305
+msgid "Nothing here yet. Right-click any sticker to add it to this pack."
+msgstr ""
+
+#: src/ui/picker.rs:1318
+msgid "Saved"
+msgstr ""
+
+#: src/ui/picker.rs:1335
+msgid "Remove this pack"
+msgstr ""
+
+#: src/ui/picker.rs:1349
+msgid "Recent"
+msgstr ""
+
+#: src/ui/picker.rs:1465
+msgid "Remove from saved"
+msgstr ""
+
+#: src/ui/picker.rs:1466
+msgid "Save sticker"
 msgstr ""
