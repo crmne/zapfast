@@ -256,6 +256,29 @@ fn discard_attachment_staging(dir: &Path) {
     }
 }
 
+/// Removes incomplete staging wherever it can hide: the managed cache, the
+/// sticker cache, the configured custom folder, and any folder the archive
+/// still points at. A folder change that died mid-copy can leave staging in
+/// a folder the settings no longer name, before the new paths persisted.
+fn discard_startup_staging(dirs: &AppDirs, archive: &Archive) {
+    discard_attachment_staging(&dirs.media_cache_dir());
+    discard_attachment_staging(&dirs.sticker_cache_dir());
+    if let Some(custom) = &dirs.custom_media {
+        discard_attachment_staging(custom);
+    }
+    let parents = archive
+        .media_paths()
+        .map(|rows| {
+            rows.into_iter()
+                .filter_map(|(_, _, path)| path.parent().map(Path::to_path_buf))
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    for parent in parents {
+        discard_attachment_staging(&parent);
+    }
+}
+
 /// Matches the exact staging names `temporary_attachment_path` generates,
 /// `.{file}.{16 hex digits}.part`.
 fn is_attachment_staging(name: &str) -> bool {
@@ -440,13 +463,7 @@ pub async fn run(
     worker.load_state();
     worker.backfill();
     worker.relocate_media();
-    discard_attachment_staging(&worker.dirs.media_cache_dir());
-    discard_attachment_staging(&worker.dirs.sticker_cache_dir());
-    // Interrupted downloads stage next to the destination, which may be a
-    // custom attachment folder rather than the cache.
-    if let Some(custom) = &worker.dirs.custom_media {
-        discard_attachment_staging(custom);
-    }
+    discard_startup_staging(&worker.dirs, &worker.archive);
     worker.start_bot().await;
     let mut wa_events = wa_events;
     let mut tick = tokio::time::interval(Duration::from_secs(5));
@@ -6393,6 +6410,43 @@ mod tests {
         for kept in [foreign, short, bare, visible] {
             assert!(kept.exists(), "never deletes {}", kept.display());
         }
+    }
+
+    #[test]
+    fn startup_cleanup_discards_staging_wherever_the_archive_points() {
+        let (worker, _events, _inbox, _wa) = receipt_tests::worker();
+        let root = tempfile::tempdir().unwrap();
+        // A folder change that died after the archive transaction committed
+        // but before the settings named the new folder leaves staging in a
+        // directory the configured folders no longer point at.
+        let former = root.path().join("former-custom");
+        std::fs::create_dir_all(&former).unwrap();
+        worker
+            .archive
+            .ensure_chat("1@s.whatsapp.net", "Fixture")
+            .unwrap();
+        let mut message = crate::archive::tests::message("1@s.whatsapp.net", "orphan", 1, false);
+        message.content = crate::model::Content::Image {
+            caption: None,
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 7,
+                width: None,
+                height: None,
+                path: Some(former.join("photo.jpg")),
+                state: Default::default(),
+            },
+        };
+        worker.archive.insert_message(&message, None).unwrap();
+        let staging = former.join(".zapfast.b2c3d4e5f6071819.part");
+        std::fs::write(&staging, b"partial").unwrap();
+        let foreign = former.join(".other-app.part");
+        std::fs::write(&foreign, b"user data").unwrap();
+
+        discard_startup_staging(&worker.dirs, &worker.archive);
+
+        assert!(!staging.exists());
+        assert!(foreign.exists(), "never deletes {}", foreign.display());
     }
 
     #[test]

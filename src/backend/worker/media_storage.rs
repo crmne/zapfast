@@ -174,9 +174,9 @@ impl Worker {
             }
             let custom = custom.filter(|path| !dirs.is_default_media_dir(path));
             let dir = custom.clone().unwrap_or_else(|| dirs.media_cache_dir());
-            std::fs::create_dir_all(&dir)?;
-            // Resolve symlinks and '..' before checking the cache boundary.
-            let dir = dir.canonicalize()?;
+            // Check the boundaries before creating anything. The checks
+            // resolve not-yet-created paths, and a rejected folder must not
+            // be left behind as an empty directory inside the app data.
             if custom.is_some() && dirs.is_cache_path(&dir) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -192,6 +192,9 @@ impl Worker {
                     "Custom attachment folder cannot be inside the app data folders",
                 ));
             }
+            std::fs::create_dir_all(&dir)?;
+            // Resolve symlinks and '..' before the copies and the stored path.
+            let dir = dir.canonicalize()?;
             let custom = custom.map(|_| dir.clone());
             // Even an empty archive must not accept an unwritable directory.
             let _probe = staging_file(&dir)?;
@@ -402,6 +405,10 @@ mod tests {
             assert!(matches!(events.try_recv().unwrap(), Event::Error(_)));
             assert_eq!(worker.dirs.custom_media, None);
         }
+        assert!(
+            !worker.dirs.cache.join("forbidden").exists(),
+            "a rejected folder must not be created as an empty leftover"
+        );
         worker
             .change_media_dir(Some(root.path().join("downloads")))
             .await;
