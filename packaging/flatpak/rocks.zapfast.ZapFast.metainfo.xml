@@ -7,7 +7,7 @@
     <name>Carmine Paolino</name>
   </developer>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>MIT AND GPL-2.0-only</project_license>
   <description>
     <p>A native WhatsApp companion for Linux, macOS and Windows, written in Rust
     without a browser engine. Link your phone to read and send messages.</p>

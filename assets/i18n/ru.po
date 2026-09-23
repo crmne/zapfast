@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 23:03+0200\n"
+"POT-Creation-Date: 2026-09-23 23:10+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -351,15 +351,15 @@ msgstr ""
 "после."
 
 #: src/ui/settings.rs:193
-msgid "Pause music while playing voice messages"
-msgstr "Ставить музыку на паузу при прослушивании голосовых"
+msgid "Pause music while playing voice messages and videos"
+msgstr "Пауза музыки при голосовых и видео"
 
 #: src/ui/settings.rs:193
 msgid ""
-"Pause media players while a voice or audio message plays and resume them "
-"when it stops."
+"Pause media players while a voice message, audio, or video plays with sound, "
+"and resume them when it stops."
 msgstr ""
-"Ставить плееры на паузу, пока играет голосовое или аудиосообщение, и "
+"Ставить плееры на паузу, пока играет голосовое, аудио или видео со звуком, и "
 "продолжать после."
 
 #: src/ui/settings.rs:232
@@ -506,30 +506,30 @@ msgstr "Пока никто"
 msgid "A label named “{name}” already exists."
 msgstr "Метка «{name}» уже есть."
 
-#: src/app.rs:2171
+#: src/app.rs:2172
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
 
-#: src/app.rs:2175
+#: src/app.rs:2176
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr "Не отправлено: сообщение, на которое вы отвечаете, недоступно на этом компьютере. Отмените ответ, чтобы отправить без цитаты."
 
-#: src/app.rs:3395
+#: src/app.rs:3396
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: src/app.rs:3470
+#: src/app.rs:3471
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:3726 src/ui/labels.rs:294
+#: src/app.rs:3727 src/ui/labels.rs:294
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
 
-#: src/app.rs:4204
+#: src/app.rs:4206
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
 

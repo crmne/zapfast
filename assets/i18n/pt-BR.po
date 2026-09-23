@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 23:03+0200\n"
+"POT-Creation-Date: 2026-09-23 23:10+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -345,16 +345,16 @@ msgstr ""
 "Pausa os players enquanto você grava uma mensagem de voz e os retoma depois."
 
 #: src/ui/settings.rs:193
-msgid "Pause music while playing voice messages"
-msgstr "Pausar a música ao ouvir mensagens de voz"
+msgid "Pause music while playing voice messages and videos"
+msgstr "Pausar a música em mensagens de voz e vídeos"
 
 #: src/ui/settings.rs:193
 msgid ""
-"Pause media players while a voice or audio message plays and resume them "
-"when it stops."
+"Pause media players while a voice message, audio, or video plays with sound, "
+"and resume them when it stops."
 msgstr ""
-"Pausa os players enquanto uma mensagem de voz ou áudio toca e os retoma "
-"quando ela termina."
+"Pausa os players enquanto uma mensagem de voz, um áudio ou um vídeo com som "
+"toca, e os retoma quando termina."
 
 #: src/ui/settings.rs:232
 msgid "Window"
@@ -499,30 +499,30 @@ msgstr "Ninguém ainda"
 msgid "A label named “{name}” already exists."
 msgstr "Já existe uma etiqueta chamada “{name}”."
 
-#: src/app.rs:2171
+#: src/app.rs:2172
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Não enviado: o ZapFast não está conectado ao WhatsApp."
 
-#: src/app.rs:2175
+#: src/app.rs:2176
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr "Não enviado: a mensagem que você está respondendo não está disponível neste computador. Cancele a resposta para enviar sem citação."
 
-#: src/app.rs:3395
+#: src/app.rs:3396
 msgid "Added to favorites"
 msgstr "Adicionada aos favoritos"
 
-#: src/app.rs:3470
+#: src/app.rs:3471
 msgid "Sending the sticker pack…"
 msgstr "Enviando o pacote de figurinhas…"
 
-#: src/app.rs:3726 src/ui/labels.rs:294
+#: src/app.rs:3727 src/ui/labels.rs:294
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Você tem {limit} etiquetas, o máximo que o ZapFast guarda."
 
-#: src/app.rs:4204
+#: src/app.rs:4206
 msgid "This video opens in your system player"
 msgstr "Este vídeo abre no player do sistema"
 

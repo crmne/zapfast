@@ -132,7 +132,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   pitch; the last choice applies to later messages. The app normalizes quiet
   recordings and handles OGG/Opus without external tools. On Linux and
   Windows, music and other media playing in other apps pause while you record
-  or play a voice message and resume afterwards; only players that were
+  or play a voice message, or watch a video with sound, and resume afterwards;
+  only players that were
   playing are resumed. Two switches in Settings turn this off for recording
   and for playback. Linux uses MPRIS, so any player that implements it works;
   macOS has no public API for this, so the switches are hidden there.
@@ -251,10 +252,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   device dismisses its outstanding notifications. On macOS, notifications use
   the installed ZapFast application's identity without an application chooser;
   unregistered development builds skip notifications if that identity is unavailable.
-  **Message sound** and **Group sound** in Settings choose ZapFast's own
-  **Chime** (the default for one-to-one chats) or **Ripple** (the default for
-  groups), the system's notification sound, no sound, or an audio file (WAV,
-  MP3, or OGG Vorbis) that ZapFast plays itself. **Notification sound** in a chat's right-click
+  **Message sound** and **Group sound** in Settings choose Pidgin's classic
+  message sound (the default for one-to-one chats) or its alert (the default
+  for groups), the system's notification sound, no sound, or an audio file
+  (WAV, MP3, or OGG Vorbis) that ZapFast plays itself. **Notification sound** in a chat's right-click
   menu gives that chat its own sound, stored in the encrypted archive.
 - **Unread count on the taskbar.** On Linux, ZapFast publishes the unread total
   through the Unity Launcher API, so KDE Plasma shows it as a badge on the
@@ -716,3 +717,5 @@ Release packaging uses the [native-packages](https://rubygems.org/gems/native-pa
 
 MIT. Inter and Noto Color Emoji are under the SIL Open Font License; the icons
 and the chat wallpaper doodles are from [Lucide](https://lucide.dev) (ISC).
+The notification sounds are [Pidgin](https://pidgin.im)'s, under the GPL-2.0
+(see `assets/sounds/`).

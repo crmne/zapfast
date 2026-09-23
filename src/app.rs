@@ -4154,7 +4154,8 @@ impl App {
     fn hold_media(&mut self) {
         let wanted = self.pauses_media
             && (self.recording.is_some() && self.settings.pause_media_while_recording
-                || self.player.is_playing() && self.settings.pause_media_while_playing);
+                || self.settings.pause_media_while_playing
+                    && (self.player.is_playing() || self.video.is_active() && !self.video.muted()));
         if wanted != self.media_hold.is_some() {
             self.media_hold = wanted.then(crate::media_pause::hold);
         }
@@ -5641,7 +5642,7 @@ mod tests {
             &ctx,
         );
         assert_eq!(app.settings.group_sound, NotificationSound::None);
-        assert_eq!(app.settings.message_sound, NotificationSound::Chime);
+        assert_eq!(app.settings.message_sound, NotificationSound::Receive);
     }
 
     #[test]

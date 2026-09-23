@@ -87,7 +87,7 @@ jobs:
           else
             cp "target/${{ matrix.target }}/release/zapfast" "dist/$name/"
           fi
-          cp README.md LICENSE packaging/zapfast-portable.txt "dist/$name/"
+          cp README.md LICENSE THIRD-PARTY-NOTICES.md packaging/zapfast-portable.txt "dist/$name/"
           if [ "${{ runner.os }}" = "Linux" ]; then
             # Desktop integration for package builds and hand-installs.
             cp --parents packaging/applications/zapfast.desktop packaging/icons/zapfast.svg contrib/omarchy/zapfast.json.tpl contrib/omarchy/zapfast-theme "dist/$name/"
@@ -181,7 +181,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist/macos-input
           bash packaging/macos/bundle.sh universal/zapfast dist/macos-input/ZapFast.app "$version"
-          cp README.md LICENSE dist/macos-input/
+          cp README.md LICENSE THIRD-PARTY-NOTICES.md dist/macos-input/
 
       - name: Package, sign and notarize macOS app
         run: |

@@ -279,11 +279,13 @@ impl WallpaperColor {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationSound {
-    /// ZapFast's two-note chime, the default for one-to-one chats.
+    /// Pidgin's message sound, the default for one-to-one chats.
     #[default]
-    Chime,
-    /// ZapFast's three-note ripple, the default for groups.
-    Ripple,
+    #[serde(alias = "chime")]
+    Receive,
+    /// Pidgin's alert sound, the default for groups.
+    #[serde(alias = "ripple")]
+    Alert,
     /// Whatever the operating system plays for notifications.
     System,
     /// No sound.
@@ -409,8 +411,8 @@ impl Default for Settings {
             giphy_key: String::new(),
             keep_running_in_background: true,
             notifications: true,
-            message_sound: NotificationSound::Chime,
-            group_sound: NotificationSound::Ripple,
+            message_sound: NotificationSound::Receive,
+            group_sound: NotificationSound::Alert,
             download_folder: None,
             proxy: String::new(),
             check_for_updates: true,
@@ -553,6 +555,14 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn earlier_bundled_sound_names_still_load() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"message_sound":"chime","group_sound":"ripple"}"#).unwrap();
+        assert_eq!(settings.message_sound, NotificationSound::Receive);
+        assert_eq!(settings.group_sound, NotificationSound::Alert);
+    }
 
     #[test]
     fn unknown_and_missing_fields_are_tolerated() {

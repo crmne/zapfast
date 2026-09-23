@@ -190,7 +190,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         if crate::media_pause::SUPPORTED {
                             let locale = app.locale;
                             toggle(ui, app, &crate::i18n::gettext(locale, "Pause music while recording"), &crate::i18n::gettext(locale, "Pause media players while you record a voice message and resume them afterwards."), |settings| &mut settings.pause_media_while_recording);
-                            toggle(ui, app, &crate::i18n::gettext(locale, "Pause music while playing voice messages"), &crate::i18n::gettext(locale, "Pause media players while a voice or audio message plays and resume them when it stops."), |settings| &mut settings.pause_media_while_playing);
+                            toggle(ui, app, &crate::i18n::gettext(locale, "Pause music while playing voice messages and videos"), &crate::i18n::gettext(locale, "Pause media players while a voice message, audio, or video plays with sound, and resume them when it stops."), |settings| &mut settings.pause_media_while_playing);
                         }
 
                         {
@@ -848,8 +848,8 @@ fn sound_row(ui: &mut egui::Ui, app: &mut App, group: bool) {
         )
     };
     let selected = match &current {
-        NotificationSound::Chime => "Chime".to_owned(),
-        NotificationSound::Ripple => "Ripple".to_owned(),
+        NotificationSound::Receive => "Pidgin".to_owned(),
+        NotificationSound::Alert => "Pidgin alert".to_owned(),
         NotificationSound::System => "System default".to_owned(),
         NotificationSound::None => "None".to_owned(),
         NotificationSound::Custom(path) => path.file_name().map_or_else(
@@ -876,8 +876,8 @@ fn sound_row(ui: &mut egui::Ui, app: &mut App, group: bool) {
             .width(170.0_f32.min(ui.available_width()))
             .show_ui(ui, |ui| {
                 for (sound, name) in [
-                    (NotificationSound::Chime, "Chime"),
-                    (NotificationSound::Ripple, "Ripple"),
+                    (NotificationSound::Receive, "Pidgin"),
+                    (NotificationSound::Alert, "Pidgin alert"),
                     (NotificationSound::System, "System default"),
                     (NotificationSound::None, "None"),
                 ] {

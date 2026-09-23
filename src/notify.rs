@@ -112,16 +112,16 @@ impl Notifications {
     }
 }
 
-/// ZapFast's own sounds, synthesized by `assets/sounds/generate.py`.
-const CHIME: &[u8] = include_bytes!("../assets/sounds/chime.ogg");
-const RIPPLE: &[u8] = include_bytes!("../assets/sounds/ripple.ogg");
+/// Pidgin's message and alert sounds (GPL-2.0, see `assets/sounds/README.md`).
+const RECEIVE: &[u8] = include_bytes!("../assets/sounds/receive.wav");
+const ALERT: &[u8] = include_bytes!("../assets/sounds/alert.wav");
 
 /// Plays a notification sound on its own thread, for notifications and
 /// their preview in Settings. System sounds and silence play nothing here.
 pub fn play_sound(sound: NotificationSound) {
     let source: Box<dyn Fn() -> std::io::Result<Box<dyn ReadSeek>> + Send> = match sound {
-        NotificationSound::Chime => Box::new(|| Ok(Box::new(std::io::Cursor::new(CHIME)))),
-        NotificationSound::Ripple => Box::new(|| Ok(Box::new(std::io::Cursor::new(RIPPLE)))),
+        NotificationSound::Receive => Box::new(|| Ok(Box::new(std::io::Cursor::new(RECEIVE)))),
+        NotificationSound::Alert => Box::new(|| Ok(Box::new(std::io::Cursor::new(ALERT)))),
         NotificationSound::Custom(path) => Box::new(move || {
             Ok(Box::new(std::io::BufReader::new(std::fs::File::open(
                 &path,
