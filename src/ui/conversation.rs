@@ -500,6 +500,8 @@ fn emoji_suggestion(emoji: &'static emojis::Emoji) -> EmojiSuggestion {
     }
 }
 
+/// Completions for `:query`. `emojis::iter` yields each emoji once, and a
+/// skin-tone-capable one such as 👍 reports `Some(SkinTone::Default)`.
 fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
     const LIMIT: usize = 6;
     let query = query.to_lowercase();
@@ -510,7 +512,7 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
             .recent_emoji
             .iter()
             .filter_map(|emoji| emojis::get(emoji))
-            .chain(emojis::iter().filter(|emoji| emoji.skin_tone().is_none()))
+            .chain(emojis::iter())
             .filter(|emoji| seen.insert(emoji.as_str()))
             .take(LIMIT)
             .map(emoji_suggestion)
@@ -520,7 +522,6 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
 
     let mut found: Vec<_> = emojis::iter()
         .enumerate()
-        .filter(|(_, emoji)| emoji.skin_tone().is_none())
         .filter_map(|(order, emoji)| {
             emoji_match_score(emoji, &query).map(|score| (score, order, emoji))
         })
@@ -5756,6 +5757,22 @@ mod tests {
         assert_eq!(emoji_match_score(grinning, "grin"), Some(1));
         assert_eq!(emoji_match_score(grinning, "face"), Some(3));
         assert_eq!(emoji_match_score(grinning, "rocket"), None);
+    }
+
+    #[test]
+    fn completion_offers_skin_tone_capable_emoji() {
+        let directory = tempfile::tempdir().unwrap();
+        let (app, _events) = App::headless(
+            crate::paths::AppDirs::under(directory.path()),
+            crate::settings::Settings::default(),
+        );
+        let offers = |query: &str, emoji: &str| {
+            emoji_candidates(&app, query)
+                .iter()
+                .any(|suggestion| suggestion.emoji == emoji)
+        };
+        assert!(offers("pregnant", "🤰"));
+        assert!(offers("thumbsup", "👍"));
     }
 }
 

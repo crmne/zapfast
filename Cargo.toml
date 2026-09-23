@@ -55,8 +55,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # (upstream #1365, #1374 and #1375). Selected features provide Tokio transport, ureq media downloads,
 # and the SQLite device store. The window handles shutdown instead of `signal`.
 # Includes upstream Business pairing (#1440), LockChatUpdate and snapshot replay
-# (#1507). Device-store compatibility retains the legacy created_at column.
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "ae3cefd86065872a577bbd0ad5ee21b60c86c616", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
+# (#1507), the viewer's channel mute state (#1537), favorite and recent sticker
+# sync events (#1538), and boolean AB props (#1539). Device-store
+# compatibility retains the legacy created_at column.
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbf3568167b2ca76c0737543966400785fc9ca1c", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 # Opens the WhatsApp WebSocket through a proxy. Both crates are already
 # included through the Tokio transport at these versions.
@@ -118,9 +120,10 @@ notify = "8.2"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 # Linux status-notifier tray item over D-Bus.
 ksni = { version = "0.3", features = ["blocking"] }
-# Pauses MPRIS media players while recording or playing voice messages.
+# Pauses MPRIS media players while recording or playing voice messages, and
+# emits the Unity Launcher API signal launchers show as a taskbar badge.
 # Already in the tree through notify-rust and ksni.
-zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+zbus = { version = "5.19", default-features = false, features = ["blocking-api", "tokio"] }
 # Reads the time locale's clock format.
 libc = "0.2"
 # Asks the Wayland compositor whether it reports hidden windows as suspended
