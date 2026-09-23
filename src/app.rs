@@ -11,7 +11,7 @@ use crate::audio::{Player, Recorder};
 use crate::backend::{Backend, Command, Event, LinkStatus, Waker};
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
-    MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
+    MediaState, Message, Page, PickerTab, StickerGroup, StickerPack, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
@@ -227,6 +227,12 @@ pub struct App {
     pub sticker_import_pending: bool,
     /// signal.art link in the sticker tab.
     pub sticker_link: String,
+    /// User sticker groups, in creation order.
+    pub sticker_groups: Vec<StickerGroup>,
+    /// The group the sticker grid is filtered by, if any.
+    pub sticker_group: Option<String>,
+    /// Text in the "Create new group" field.
+    pub sticker_group_name: String,
     scroll_lock: Option<(ScrollAxis, Instant)>,
     scroll_from_trackpad: bool,
     scroll_history: egui::util::History<egui::Vec2>,
@@ -445,6 +451,9 @@ impl App {
             stickers_pending: false,
             sticker_import_pending: false,
             sticker_link: String::new(),
+            sticker_groups: Vec::new(),
+            sticker_group: None,
+            sticker_group_name: String::new(),
             scroll_lock: None,
             scroll_from_trackpad: false,
             scroll_history: egui::util::History::new(2..16, 0.1),
@@ -1360,10 +1369,21 @@ impl App {
                     saved,
                     packs,
                     recent,
+                    groups,
                 } => {
                     self.stickers_saved = saved;
                     self.sticker_packs = packs;
                     self.stickers = recent;
+                    self.sticker_groups = groups;
+                    // A group deleted on another surface cannot stay selected.
+                    if let Some(selected) = self.sticker_group.as_deref()
+                        && !self
+                            .sticker_groups
+                            .iter()
+                            .any(|group| group.name == selected)
+                    {
+                        self.sticker_group = None;
+                    }
                     self.stickers_pending = false;
                     self.sticker_import_pending = false;
                 }
@@ -1602,6 +1622,15 @@ impl App {
                 self.picker = None;
             }
         }
+    }
+
+    /// The sticker group the picker is filtered by, when it still exists.
+    pub fn selected_group(&self) -> Option<StickerGroup> {
+        let name = self.sticker_group.as_deref()?;
+        self.sticker_groups
+            .iter()
+            .find(|group| group.name == name)
+            .cloned()
     }
 
     fn hide_locked_chat(&mut self, id: &str) {
@@ -2636,6 +2665,35 @@ impl App {
             Action::DeleteStickerPack(dir) => {
                 self.backend.send(Command::DeleteStickerPack { dir });
             }
+            Action::CreateStickerGroup(name) => {
+                let name = name.trim().to_owned();
+                if !name.is_empty() {
+                    // Show the new group's grid straight away; the backend
+                    // confirms it with the next Stickers event.
+                    self.sticker_group = Some(name.clone());
+                    self.backend.send(Command::CreateStickerGroup { name });
+                }
+            }
+            Action::DeleteStickerGroup(name) => {
+                if self.sticker_group.as_deref() == Some(name.as_str()) {
+                    self.sticker_group = None;
+                }
+                self.backend.send(Command::DeleteStickerGroup { name });
+            }
+            Action::SelectStickerGroup(name) => {
+                self.sticker_group = name;
+            }
+            Action::SetStickerGroup {
+                group,
+                sticker,
+                member,
+            } => {
+                self.backend.send(Command::SetStickerGroup {
+                    group,
+                    sticker,
+                    member,
+                });
+            }
             Action::SendSticker(path) => {
                 if let Some(chat) = self.open_chat.clone() {
                     let quoting = self.reply_to.take();
@@ -3578,6 +3636,55 @@ mod tests {
         assert_eq!(app.settings.wallpaper_color, light_color);
         assert!(app.settings_dirty);
     }
+
+    #[test]
+    fn naming_a_group_filters_the_grid_by_it() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.apply(Action::CreateStickerGroup("  Bom dia  ".into()), &ctx);
+        assert_eq!(
+            app.sticker_group.as_deref(),
+            Some("Bom dia"),
+            "a padded name is trimmed before it becomes the selection"
+        );
+        app.apply(Action::CreateStickerGroup("   ".into()), &ctx);
+        assert_eq!(
+            app.sticker_group.as_deref(),
+            Some("Bom dia"),
+            "a blank name creates nothing and keeps the current selection"
+        );
+        app.apply(Action::SelectStickerGroup(None), &ctx);
+        assert!(app.sticker_group.is_none(), "everything is a selection too");
+    }
+
+    #[test]
+    fn a_group_that_vanished_cannot_stay_selected() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, events) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let stickers = |groups: Vec<StickerGroup>| Event::Stickers {
+            saved: Vec::new(),
+            packs: Vec::new(),
+            recent: Vec::new(),
+            groups,
+        };
+        events
+            .send(stickers(vec![StickerGroup {
+                name: "Bom dia".into(),
+                stickers: vec![PathBuf::from("/fixture/aa.webp")],
+            }]))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.sticker_groups.len(), 1);
+        let ctx = egui::Context::default();
+        app.apply(Action::SelectStickerGroup(Some("Bom dia".into())), &ctx);
+        assert!(app.selected_group().is_some());
+        events.send(stickers(Vec::new())).unwrap();
+        app.handle_events();
+        assert!(
+            app.sticker_group.is_none(),
+            "a group deleted elsewhere cannot keep filtering the grid"
+        );
+        assert!(app.selected_group().is_none());    }
 
     fn paste_release() -> egui::Event {
         egui::Event::Key {

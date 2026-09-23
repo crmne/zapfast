@@ -631,6 +631,13 @@ pub struct StickerPack {
     pub stickers: Vec<PathBuf>,
 }
 
+/// User-defined sticker group: a name and the sticker files filed under it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StickerGroup {
+    pub name: String,
+    pub stickers: Vec<PathBuf>,
+}
+
 /// GIF search failure.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GifError {
@@ -837,6 +844,18 @@ pub enum Action {
     PickStickerArchive,
     /// Deletes an imported pack directory.
     DeleteStickerPack(PathBuf),
+    /// Creates a sticker group.
+    CreateStickerGroup(String),
+    /// Deletes a sticker group and its memberships.
+    DeleteStickerGroup(String),
+    /// Filters the picker by one group, or by everything when `None`.
+    SelectStickerGroup(Option<String>),
+    /// Files a sticker under a group, or takes it out of it.
+    SetStickerGroup {
+        group: String,
+        sticker: PathBuf,
+        member: bool,
+    },
     /// Opens the prefilled contact-name editor.
     EditContact(String),
     /// Saves a contact through WhatsApp contact sync. `first` is the short

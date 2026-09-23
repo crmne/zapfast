@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::app::App;
-use crate::model::{Action, PickerTab};
+use crate::model::{Action, PickerTab, StickerGroup};
 use crate::theme::{self, Icon, Palette};
 
 use super::conversation;
@@ -22,6 +22,8 @@ const HEIGHT: f32 = 400.0;
 const FRAME_MARGIN: i8 = 10;
 /// Minimum emoji cell width. Columns expand to fill the grid.
 const CELL: f32 = 40.0;
+/// Width of the sticker-group sidebar inside the sticker tab.
+const GROUP_PANEL: f32 = 138.0;
 
 /// An emoji-grid heading or row.
 enum Row {
@@ -1004,12 +1006,130 @@ struct StickerChoices {
     send: Option<std::path::PathBuf>,
     save: Option<std::path::PathBuf>,
     forget: Option<std::path::PathBuf>,
+    /// Filing a sticker under a group, or taking it out of one.
+    group: Option<(String, std::path::PathBuf, bool)>,
+}
+
+/// Sidebar entries: everything first, then the groups in creation order.
+fn group_entries(groups: &[StickerGroup], all: &str) -> Vec<(Option<String>, String)> {
+    std::iter::once((None, all.to_owned()))
+        .chain(
+            groups
+                .iter()
+                .map(|group| (Some(group.name.clone()), group.name.clone())),
+        )
+        .collect()
+}
+
+/// Sticker-group sidebar: create a group, pick one, or delete one.
+fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    let entries = group_entries(&app.sticker_groups, "All");
+    let active = app.sticker_group.clone();
+    let mut pick = None;
+    let mut remove = None;
+    let mut create = false;
+    egui::Panel::right("sticker-groups")
+        .show_separator_line(false)
+        .frame(
+            Frame::new()
+                .fill(palette.panel)
+                .inner_margin(Margin::symmetric(8, 8)),
+        )
+        .show(ui, |ui| {
+            ui.set_width(GROUP_PANEL);
+            ui.horizontal(|ui| {
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut app.sticker_group_name)
+                        .id(egui::Id::new("sticker-group-name"))
+                        .hint_text(
+                            egui::RichText::new("Create new group…")
+                                .color(palette.dim)
+                                .font(theme::regular(12.0)),
+                        )
+                        .font(theme::regular(12.0))
+                        .text_color(palette.text)
+                        .desired_width(GROUP_PANEL - 34.0),
+                );
+                if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                    create = true;
+                }
+                if theme::icon_button(
+                    ui,
+                    Icon::Plus,
+                    16.0,
+                    palette.accent,
+                    palette.text,
+                    "Create this group",
+                )
+                .clicked()
+                {
+                    create = true;
+                }
+            });
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical()
+                .id_salt("sticker-group-list")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (name, label) in &entries {
+                        ui.horizontal(|ui| {
+                            if theme::soft_button(
+                                ui,
+                                palette,
+                                None,
+                                label,
+                                active.as_deref() == name.as_deref(),
+                            )
+                            .clicked()
+                            {
+                                pick = Some(name.clone());
+                            }
+                            if let Some(group) = name {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if theme::icon_button(
+                                            ui,
+                                            Icon::X,
+                                            12.0,
+                                            palette.dim,
+                                            palette.danger,
+                                            "Delete this group",
+                                        )
+                                        .clicked()
+                                        {
+                                            remove = Some(group.clone());
+                                        }
+                                    },
+                                );
+                            }
+                        });
+                    }
+                });
+        });
+    let name = app.sticker_group_name.trim().to_owned();
+    if create && !name.is_empty() {
+        app.actions.push(Action::CreateStickerGroup(name));
+        app.sticker_group_name.clear();
+    }
+    if let Some(name) = pick {
+        app.actions.push(Action::SelectStickerGroup(name));
+    }
+    if let Some(name) = remove {
+        app.actions.push(Action::DeleteStickerGroup(name));
+    }
 }
 
 fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    groups_panel(app, ui, palette);
     import_row(app, ui, palette);
     ui.add_space(4.0);
-    if app.stickers.is_empty() && app.stickers_saved.is_empty() && app.sticker_packs.is_empty() {
+    let selected = app.selected_group();
+    if selected.is_none()
+        && app.stickers.is_empty()
+        && app.stickers_saved.is_empty()
+        && app.sticker_packs.is_empty()
+    {
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
             theme::paragraph(
@@ -1028,15 +1148,41 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let saved = app.stickers_saved.clone();
     let packs = app.sticker_packs.clone();
     let recent = app.stickers.clone();
+    let groups = app.sticker_groups.clone();
+    let animate = app.window_focused;
     let mut choices = StickerChoices::default();
     let mut delete_pack = None;
     egui::ScrollArea::vertical()
         .id_salt("sticker-grid")
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // A chosen group replaces every section with its own grid.
+            if let Some(group) = &selected {
+                theme::text(ui, &group.name, theme::semibold(12.5), palette.secondary);
+                if group.stickers.is_empty() {
+                    ui.add_space(6.0);
+                    theme::paragraph(
+                        ui,
+                        "Nothing filed here yet. Right-click any sticker to add it to this group.",
+                        theme::regular(13.0),
+                        palette.secondary,
+                    );
+                } else {
+                    sticker_grid(
+                        ui,
+                        palette,
+                        &group.stickers,
+                        false,
+                        animate,
+                        &groups,
+                        &mut choices,
+                    );
+                }
+                return;
+            }
             if !saved.is_empty() {
                 theme::text(ui, "Saved", theme::semibold(12.5), palette.secondary);
-                sticker_grid(ui, palette, &saved, true, app.window_focused, &mut choices);
+                sticker_grid(ui, palette, &saved, true, animate, &groups, &mut choices);
                 ui.add_space(8.0);
             }
             for pack in &packs {
@@ -1062,21 +1208,15 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     palette,
                     &pack.stickers,
                     false,
-                    app.window_focused,
+                    animate,
+                    &groups,
                     &mut choices,
                 );
                 ui.add_space(8.0);
             }
             if !recent.is_empty() {
                 theme::text(ui, "Recent", theme::semibold(12.5), palette.secondary);
-                sticker_grid(
-                    ui,
-                    palette,
-                    &recent,
-                    false,
-                    app.window_focused,
-                    &mut choices,
-                );
+                sticker_grid(ui, palette, &recent, false, animate, &groups, &mut choices);
             }
         });
     if let Some(path) = choices.send {
@@ -1087,6 +1227,13 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     }
     if let Some(path) = choices.forget {
         app.actions.push(Action::ForgetSticker(path));
+    }
+    if let Some((group, sticker, member)) = choices.group {
+        app.actions.push(Action::SetStickerGroup {
+            group,
+            sticker,
+            member,
+        });
     }
     if let Some(dir) = delete_pack {
         app.actions.push(Action::DeleteStickerPack(dir));
@@ -1161,20 +1308,24 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     }
 }
 
-/// Sticker tiles. Click sends; right-click saves or removes.
+/// Sticker tiles. Click sends; right-click saves, removes, or files the tile
+/// under one of the user's groups.
 fn sticker_grid(
     ui: &mut egui::Ui,
     palette: &Palette,
     stickers: &[std::path::PathBuf],
     saved: bool,
     animate: bool,
+    groups: &[StickerGroup],
     choices: &mut StickerChoices,
 ) {
     let columns = 5;
     let gap = 6.0;
     let cell = (ui.available_width() - gap * (columns as f32 - 1.0)) / columns as f32;
     ui.spacing_mut().item_spacing = vec2(gap, gap);
-    let menu_width = widgets::menu_width(ui, &["Remove from saved"], true);
+    let mut labels = vec!["Remove from saved"];
+    labels.extend(groups.iter().map(|group| group.name.as_str()));
+    let menu_width = widgets::menu_width(ui, &labels, true);
     for row in stickers.chunks(columns) {
         ui.horizontal(|ui| {
             for path in row {
@@ -1232,6 +1383,19 @@ fn sticker_grid(
                             "Save sticker",
                         ) {
                             choices.save = Some(path.clone());
+                        }
+                        if !groups.is_empty() {
+                            widgets::menu_separator(ui, palette);
+                            for group in groups {
+                                // A checked entry is a member: picking it again
+                                // takes the sticker back out.
+                                let member = group.stickers.contains(path);
+                                let icon = member.then_some(Icon::Check);
+                                if widgets::menu_item(ui, palette, icon, &group.name) {
+                                    choices.group =
+                                        Some((group.name.clone(), path.clone(), !member));
+                                }
+                            }
                         }
                     });
                 if response
@@ -1301,5 +1465,37 @@ mod motion_tests {
         assert!(moves(&ctx, &path), "cached result avoids another file read");
         assert!(!moves(&egui::Context::default(), &path));
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    #[test]
+    fn the_sidebar_lists_everything_first_then_groups_in_creation_order() {
+        let groups = vec![
+            StickerGroup {
+                name: "Bom dia".into(),
+                stickers: Vec::new(),
+            },
+            StickerGroup {
+                name: "Futebol".into(),
+                stickers: Vec::new(),
+            },
+        ];
+        assert_eq!(
+            group_entries(&groups, "All"),
+            vec![
+                (None, "All".to_owned()),
+                (Some("Bom dia".to_owned()), "Bom dia".to_owned()),
+                (Some("Futebol".to_owned()), "Futebol".to_owned()),
+            ]
+        );
+        assert_eq!(
+            group_entries(&[], "All"),
+            vec![(None, "All".to_owned())],
+            "with no groups the sidebar still offers everything"
+        );
     }
 }

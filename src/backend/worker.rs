@@ -3324,6 +3324,24 @@ impl Worker {
             Command::GifResults { query, results } => {
                 self.emit(Event::Gifs { query, results });
             }
+            Command::CreateStickerGroup { name } => self.create_sticker_group(&name),
+            Command::DeleteStickerGroup { name } => {
+                if let Err(error) = self.archive.delete_sticker_group(&name) {
+                    log::warn!("could not delete a sticker group: {error}");
+                }
+                self.emit_stickers();
+            }
+            Command::SetStickerGroup {
+                group,
+                sticker,
+                member,
+            } => {
+                let key = self.sticker_key(&sticker);
+                if let Err(error) = self.archive.set_sticker_group(&group, &key, member) {
+                    log::warn!("could not file a sticker in its group: {error}");
+                }
+                self.emit_stickers();
+            }
             Command::RecentStickers => {
                 self.fetch_missing_stickers();
                 self.emit_stickers();
@@ -4248,7 +4266,70 @@ impl Worker {
             saved: self.saved_stickers(),
             packs: self.sticker_packs(),
             recent: list.into_iter().map(|(_, path)| path).collect(),
+            groups: self.sticker_groups(),
         });
+    }
+
+    /// Creates a group unless the name is blank, then tells the picker about
+    /// the groups it has now.
+    fn create_sticker_group(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        if let Err(error) = self.archive.create_sticker_group(name, crate::util::now()) {
+            log::warn!("could not create a sticker group: {error}");
+        }
+        self.emit_stickers();
+    }
+
+    /// User groups with their sticker files. A key whose file is gone is
+    /// dropped, so an empty group reads as empty instead of showing blanks.
+    fn sticker_groups(&self) -> Vec<crate::model::StickerGroup> {
+        let Ok(groups) = self.archive.sticker_groups() else {
+            return Vec::new();
+        };
+        groups
+            .into_iter()
+            .map(|(name, keys)| crate::model::StickerGroup {
+                name,
+                stickers: keys
+                    .iter()
+                    .map(|key| self.sticker_path(key))
+                    .filter(|path| path.exists())
+                    .collect(),
+            })
+            .collect()
+    }
+
+    /// The sticker directories a group key can point into.
+    fn sticker_roots(&self) -> [(&'static str, PathBuf); 2] {
+        [
+            ("saved", self.dirs.saved_sticker_dir()),
+            ("cache", self.dirs.sticker_cache_dir()),
+        ]
+    }
+
+    /// Stable name for a sticker file: its path inside the sticker directory
+    /// it lives in, tagged with that directory. Moving the profile to another
+    /// path therefore keeps every group intact.
+    fn sticker_key(&self, path: &Path) -> String {
+        for (tag, root) in self.sticker_roots() {
+            if let Ok(rest) = path.strip_prefix(&root) {
+                return format!("{tag}/{}", rest.display());
+            }
+        }
+        path.display().to_string()
+    }
+
+    /// The file a sticker key names.
+    fn sticker_path(&self, key: &str) -> PathBuf {
+        for (tag, root) in self.sticker_roots() {
+            if let Some(rest) = key.strip_prefix(&format!("{tag}/")) {
+                return root.join(rest);
+            }
+        }
+        PathBuf::from(key)
     }
 
     /// Root directory for imported sticker packs.
