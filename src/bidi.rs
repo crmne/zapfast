@@ -938,10 +938,13 @@ mod tests {
             if glyph.advance_width > 0.01 {
                 continue;
             }
+            // A mark the font merges into its letter's glyph becomes a
+            // continuation at epaint's pen, which is rounded to whole pixels
+            // while the letter keeps its fractional advance.
             let on_letter = glyphs.iter().any(|base| {
                 base.advance_width > 0.01
-                    && glyph.pos.x >= base.pos.x - 0.5
-                    && glyph.pos.x <= base.max_x() + 0.5
+                    && glyph.pos.x >= base.pos.x - 1.0
+                    && glyph.pos.x <= base.max_x() + 1.0
             });
             assert!(on_letter, "mark {:?} sits at {}", glyph.chr, glyph.pos.x);
         }
