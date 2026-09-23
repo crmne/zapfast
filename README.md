@@ -56,7 +56,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   A message that could not be sent says "Not sent" beside its time. ZapFast
   does not retry it; send it again yourself. Timestamps follow the system's
   12-hour or 24-hour clock: the time format on Windows and macOS, and GNOME's
-  clock format or the time locale (`LC_TIME`) on Linux.
+  clock format or the time locale (`LC_TIME`) on Linux. **Select** in a
+  message's menu starts a selection: click more messages to add or remove
+  them, then **Forward…** sends them together, in their original order, or
+  Escape cancels.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew and
   Arabic RTL paragraphs keep logical word order by reordering font runs,
@@ -149,8 +152,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   polls, and link previews appear in the chat. Click a downloaded JPEG, PNG,
   WebP, or GIF photo to preview it in ZapFast with fit and zoom controls, or
   choose **Open externally**. Unsupported pictures, videos, and documents keep
-  opening in their default desktop apps. Profile pictures and downloaded images
-  support Windows drive paths and filenames with spaces or non-ASCII characters.
+  opening in their default desktop apps. **Save as…** in a downloaded
+  attachment's right-click menu keeps a copy wherever you choose, starting in
+  your Downloads folder. Profile pictures and downloaded images support
+  Windows drive paths and filenames with spaces or non-ASCII characters.
   If an attachment has expired, ZapFast asks your
   phone to upload it again. Downloads stop after two minutes with an inline
   retry error if they cannot finish; the menu disables Download while one is running.
@@ -217,6 +222,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   device dismisses its outstanding notifications. On macOS, notifications use
   the installed ZapFast application's identity without an application chooser;
   unregistered development builds skip notifications if that identity is unavailable.
+  **Message sound** and **Group sound** in Settings choose the system's
+  notification sound, no sound, or an audio file (WAV, MP3, or OGG Vorbis)
+  that ZapFast plays itself.
 - **Update notices.** ZapFast checks GitHub once a day and shows a download
   link when a newer release is available. You can turn this off in Settings.
 - **Themes.** Light, dark, follow the system, or a local JSON palette. Native
@@ -316,7 +324,12 @@ plaintext archive. Back up both the archive and its OS keyring key: copying only
 A missing key is different from a locked keyring. If ZapFast says the key is
 missing, restore the original OS credential store or use the original profile
 location. Do not delete the archive or create replacement credentials: neither
-can decrypt the existing archive. For help, report the OS, app version, whether
+can decrypt the existing archive. If the original key cannot come back,
+**Start over…** on that screen renames the unreadable archive to
+`archive-unreadable-<date>.db` beside it, forgets the linked session, and
+shows the linking screen: linking again brings recent history back from your
+phone. Remove the old ZapFast entry under Linked devices on the phone
+afterwards. For help, report the OS, app version, whether
 the profile was moved/restored, and the error text with personal paths removed.
 Never attach the archive, keys, or full logs from older releases.
 

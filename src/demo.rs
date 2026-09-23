@@ -1455,7 +1455,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "forward" => {
                 app.dialog = app.open_chat.clone().map(|chat| Dialog::Forward {
                     chat,
-                    message: "ada-format".to_owned(),
+                    messages: vec!["ada-format".to_owned()],
                 });
             }
             "unlink" => app.dialog = Some(Dialog::ConfirmUnlink),
@@ -1467,6 +1467,26 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "delete-chat" => {
                 app.dialog = app.open_chat.clone().map(Dialog::ConfirmDeleteChat);
+            }
+            "select" => {
+                if let Some(chat) = app.open_chat.clone() {
+                    let ids: Vec<String> = app
+                        .conversations
+                        .get(&chat)
+                        .map(|conversation| {
+                            conversation
+                                .messages
+                                .iter()
+                                .rev()
+                                .take(3)
+                                .step_by(2)
+                                .map(|message| message.id.clone())
+                                .rev()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    app.selection = Some((chat, ids));
+                }
             }
             "unread-divider" => {
                 let id = SAMPLES[1].id.to_owned();
@@ -2842,6 +2862,7 @@ mod tests {
             "delete-chat",
             "invite",
             "unread-divider",
+            "select",
             "new-contact",
             "light",
             "archived",

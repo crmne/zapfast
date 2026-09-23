@@ -293,6 +293,15 @@ pub enum Command {
     },
     /// Selects and imports a .wastickers or zip archive.
     PickStickerArchive,
+    /// Asks for an audio file to use as a notification sound.
+    PickNotificationSound {
+        group: bool,
+    },
+    /// Asks where to save a copy of an attachment, then copies it there.
+    SaveAttachmentAs {
+        source: std::path::PathBuf,
+        name: String,
+    },
     /// Deletes an imported pack directory.
     DeleteStickerPack {
         dir: PathBuf,
@@ -361,6 +370,9 @@ pub enum Command {
     /// Unlinks the device remotely and locally.
     Unlink,
     Reconnect,
+    /// Sets aside an unreadable archive and the linked session, then starts
+    /// over with a new archive and a new link.
+    StartOverArchive,
     /// Whether the person is looking at ZapFast. While they are not, the
     /// linked phone keeps receiving push notifications.
     SetOnline(bool),
@@ -569,6 +581,11 @@ pub enum Event {
     /// Whether account privacy disables direct-chat read receipts.
     ReceiptsPrivacy {
         disabled: bool,
+    },
+    /// An audio file chosen as a notification sound.
+    NotificationSoundPicked {
+        group: bool,
+        path: std::path::PathBuf,
     },
     /// The group behind an invite link.
     InvitePreview {

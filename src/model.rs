@@ -320,6 +320,11 @@ pub enum Content {
     Unsupported {
         what: String,
     },
+    /// A message WhatsApp only delivers to the phone, such as view-once
+    /// media. Linked devices receive a placeholder that never fills in.
+    PhoneOnly {
+        view_once: bool,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -483,6 +488,8 @@ impl Content {
             Self::Poll { question, .. } => format!("Poll: {question}"),
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
+            Self::PhoneOnly { view_once: true } => "View once message".to_owned(),
+            Self::PhoneOnly { view_once: false } => "Message on your phone".to_owned(),
         }
     }
 
@@ -686,7 +693,8 @@ pub enum Dialog {
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
-        message: String,
+        /// Message ids, in the order they appear in the chat.
+        messages: Vec<String>,
     },
     CreatePoll(ChatId),
     PollResults {
@@ -700,6 +708,8 @@ pub enum Dialog {
     },
     /// Previews a group invite link before joining.
     JoinGroup,
+    /// Confirms setting aside an archive whose key is gone.
+    ConfirmStartOver,
 }
 
 /// A group invite link being previewed or joined.
@@ -826,6 +836,11 @@ pub enum Action {
     CloseImagePreview,
     OpenFile(PathBuf),
     OpenFolder(PathBuf),
+    /// Saves a copy of a downloaded attachment where the person chooses.
+    SaveAttachmentAs {
+        path: PathBuf,
+        name: String,
+    },
     OpenUrl(String),
     CopyText(String),
     /// Closes the toast at this index. Only errors wait to be dismissed.
@@ -836,9 +851,15 @@ pub enum Action {
     /// Forwards an archived message to another chat.
     Forward {
         from_chat: ChatId,
-        message: String,
+        messages: Vec<String>,
         to_chat: ChatId,
     },
+    /// Starts selecting messages in the open chat, beginning with this one.
+    SelectMessage(String),
+    /// Adds a message to the selection or removes it.
+    ToggleSelected(String),
+    /// Leaves selection mode.
+    CancelSelection,
     /// Loads an outgoing message into the composer for editing.
     Edit(String),
     CancelEdit,
@@ -957,6 +978,17 @@ pub enum Action {
     SettingsChanged,
     /// Registers or removes the login entry that starts ZapFast in the tray.
     SetStartWithSystem(bool),
+    /// Sets the notification sound for groups (`true`) or other chats.
+    SetNotificationSound {
+        group: bool,
+        sound: crate::settings::NotificationSound,
+    },
+    /// Asks for an audio file to use as a notification sound.
+    PickNotificationSound {
+        group: bool,
+    },
+    /// Plays a notification sound once, as a preview.
+    PreviewSound(PathBuf),
     ZoomBy(f32),
     ResetZoom,
     /// Requests a pairing code for a phone number.
@@ -964,6 +996,8 @@ pub enum Action {
     /// Unlinks the device remotely and locally.
     Unlink,
     Reconnect,
+    /// Sets aside an archive whose key is gone and links again.
+    StartOverArchive,
     Quit,
     /// Shows the window, creating it when running headless.
     ShowWindow,

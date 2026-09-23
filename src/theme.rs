@@ -343,6 +343,7 @@ fn install_fonts(ctx: &egui::Context) {
     for font in crate::system_fonts::fallbacks() {
         let mut data = FontData::from_static(&font.bytes);
         data.index = font.index;
+        data.tweak.scale = font.scale;
         fonts.font_data.insert(font.name.clone(), Arc::new(data));
         for family in fonts.families.values_mut() {
             family.push(font.name.clone());

@@ -229,7 +229,8 @@ fn place_picker(screen: Rect, anchor: Option<Rect>, width: f32, height: f32) -> 
     pos2(x, y)
 }
 
-/// Category tabs under the reaction emoji grid, WhatsApp-style.
+/// Category tabs under an emoji grid, WhatsApp-style. The first entry stands
+/// for the grid's own recent section, whatever it is called there.
 const CATEGORIES: &[(Option<emojis::Group>, &str, &str)] = &[
     (None, "🕒", "Frequently Used"),
     (
@@ -257,11 +258,19 @@ const CATEGORIES: &[(Option<emojis::Group>, &str, &str)] = &[
 
 fn category_entries(
     has_recent: bool,
+    recent_label: &'static str,
 ) -> impl Iterator<Item = (Option<emojis::Group>, &'static str, &'static str)> {
     CATEGORIES
         .iter()
         .copied()
         .filter(move |(group, _, _)| group.is_some() || has_recent)
+        .map(move |(group, glyph, label)| {
+            (
+                group,
+                glyph,
+                if group.is_none() { recent_label } else { label },
+            )
+        })
 }
 
 fn header_row(rows: &[Row], label: &str) -> Option<usize> {
@@ -321,9 +330,25 @@ fn move_emoji_selection(selected: usize, count: usize, columns: usize, key: Key)
 }
 
 fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
-    if let Some(emoji) = emoji_grid(app, ui, palette, "emoji-search", "emoji-grid", "Recent") {
-        app.actions.push(Action::InsertEmoji(emoji));
-    }
+    let width = ui.available_width();
+    let grid_height = (ui.available_height() - 40.0).max(0.0);
+    ui.allocate_ui_with_layout(
+        vec2(width, grid_height),
+        Layout::top_down(Align::Min),
+        |ui| {
+            if let Some(emoji) =
+                emoji_grid(app, ui, palette, "emoji-search", "emoji-grid", "Recent")
+            {
+                app.actions.push(Action::InsertEmoji(emoji));
+            }
+        },
+    );
+    let has_recent = app
+        .settings
+        .recent_emoji
+        .iter()
+        .any(|emoji| emojis::get(emoji).is_some());
+    category_tabs(app, ui, palette, "emoji-grid", "Recent", has_recent);
 }
 
 fn reaction_picker(app: &mut App, ctx: &egui::Context) {
@@ -446,7 +471,19 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                                 },
                             );
                             ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                                category_tabs(app, ui, &palette);
+                                let has_recent = app
+                                    .settings
+                                    .reaction_emoji
+                                    .iter()
+                                    .any(|(emoji, _)| emojis::get(emoji).is_some());
+                                category_tabs(
+                                    app,
+                                    ui,
+                                    &palette,
+                                    "reaction-emoji-grid",
+                                    "Frequently Used",
+                                    has_recent,
+                                );
                             });
                         });
                 },
@@ -465,15 +502,17 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-fn category_tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
-    let has_recent = app
-        .settings
-        .reaction_emoji
-        .iter()
-        .any(|(emoji, _)| emojis::get(emoji).is_some());
-    let tabs: Vec<_> = category_entries(has_recent).collect();
+fn category_tabs(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    grid_salt: &str,
+    recent_label: &'static str,
+    has_recent: bool,
+) {
+    let tabs: Vec<_> = category_entries(has_recent, recent_label).collect();
     let default = tabs.first().map(|(_, _, label)| *label);
-    let current = visible_category(ui, "reaction-emoji-grid", &app.picker_search)
+    let current = visible_category(ui, grid_salt, &app.picker_search)
         .filter(|label| tabs.iter().any(|&(_, _, tab)| tab == *label));
     let cell = ((ui.available_width() - 4.0) / tabs.len() as f32).clamp(24.0, 36.0);
     ui.allocate_ui_with_layout(
@@ -792,12 +831,22 @@ mod emoji_tests {
 
     #[test]
     fn empty_recent_omits_the_frequently_used_tab() {
-        let labels: Vec<&str> = category_entries(false).map(|(_, _, label)| label).collect();
+        let labels: Vec<&str> = category_entries(false, "Frequently Used")
+            .map(|(_, _, label)| label)
+            .collect();
         assert!(!labels.contains(&"Frequently Used"));
         assert_eq!(labels.first().copied(), Some("Smileys & Emotion"));
-        let with_recent: Vec<&str> = category_entries(true).map(|(_, _, label)| label).collect();
+        let with_recent: Vec<&str> = category_entries(true, "Frequently Used")
+            .map(|(_, _, label)| label)
+            .collect();
         assert_eq!(with_recent.first().copied(), Some("Frequently Used"));
         assert_eq!(with_recent.len(), labels.len() + 1);
+        // The composer names its recent section "Recent".
+        let composer: Vec<&str> = category_entries(true, "Recent")
+            .map(|(_, _, label)| label)
+            .collect();
+        assert_eq!(composer.first().copied(), Some("Recent"));
+        assert_eq!(&composer[1..], &with_recent[1..]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! The open chat: its header, the messages, and the composer.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use egui::{
@@ -719,6 +719,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .inner_margin(Margin::symmetric(12, 8)),
         )
         .show(ui, |ui| {
+            if let Some((selected_chat, selected)) = app.selection.clone()
+                && selected_chat == chat.id
+            {
+                selection_bar(app, ui, &chat.id, &selected);
+                return;
+            }
             if !chat.can_send() {
                 if chat.kind == crate::model::ChatKind::Broadcast {
                     ui.vertical_centered(|ui| {
@@ -1284,6 +1290,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .map(|message| (message.id.clone(), divider.count, divider.placed))
         });
     let mut divider_placed = false;
+    let selection: Option<Vec<String>> = app
+        .selection
+        .as_ref()
+        .filter(|(selected_chat, _)| *selected_chat == chat.id)
+        .map(|(_, ids)| ids.clone());
     let scroll_to_bottom =
         app.scroll_to_bottom && divider.as_ref().is_none_or(|(.., placed)| *placed);
     let app_pictures = app.settings.show_sender_pictures;
@@ -1376,8 +1387,22 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 || previous.is_none_or(|previous| {
                                     previous.sender != message.sender || previous.from_me
                                 }));
-                        if let Some(response) =
-                            bubble(ui, &view, message, show_sender, &mut actions)
+                        let response = bubble(ui, &view, message, show_sender, &mut actions);
+                        if let (Some(selected), Some(response)) = (&selection, &response) {
+                            if selected.contains(&message.id) {
+                                ui.painter().rect(
+                                    response.rect.expand(2.0),
+                                    10.0,
+                                    palette.accent.gamma_multiply(0.18),
+                                    Stroke::new(2.0, palette.accent),
+                                    egui::StrokeKind::Outside,
+                                );
+                            }
+                            if response.clicked() {
+                                actions.push(Action::ToggleSelected(message.id.clone()));
+                            }
+                        }
+                        if let Some(response) = response
                             && view.anchor == Some(message.id.as_str())
                         {
                             response.scroll_to_me(Some(Align::Center));
@@ -2689,14 +2714,18 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         message.content,
         Content::Revoked
             | Content::Unsupported { .. }
+            | Content::PhoneOnly { .. }
             | Content::Poll { .. }
             | Content::Interactive { .. }
     ) && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
     {
         actions.push(Action::ShowDialog(Dialog::Forward {
             chat: chat.clone(),
-            message: message.id.clone(),
+            messages: vec![message.id.clone()],
         }));
+    }
+    if widgets::menu_item(ui, &palette, Some(Icon::Check), "Select") {
+        actions.push(Action::SelectMessage(message.id.clone()));
     }
     let text = match &message.content {
         Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
@@ -2744,6 +2773,12 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             Some(path) => {
                 if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), "Open file") {
                     actions.push(Action::OpenFile(path.clone()));
+                }
+                if widgets::menu_item(ui, &palette, Some(Icon::Download), "Save as…") {
+                    actions.push(Action::SaveAttachmentAs {
+                        path: path.clone(),
+                        name: attachment_name(&message.content, path),
+                    });
                 }
                 if let Some(folder) = path.parent()
                     && widgets::menu_item(ui, &palette, Some(Icon::FileText), "Show in folder")
@@ -3100,6 +3135,24 @@ fn content(
                         theme::regular(13.5),
                         palette.secondary,
                     );
+                },
+            );
+            None
+        }
+        Content::PhoneOnly { view_once } => {
+            let text = if *view_once {
+                "View once message. For your privacy, it opens only on your phone."
+            } else {
+                "This message can only be seen on your phone."
+            };
+            mirrored_row(
+                ui,
+                own,
+                |ui| {
+                    theme::icon(ui, Icon::Smartphone, 14.0, palette.dim);
+                },
+                |ui| {
+                    theme::text(ui, text, theme::regular(13.5), palette.secondary);
                 },
             );
             None
@@ -4675,6 +4728,54 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
     );
 }
 
+/// Replaces the composer while messages are selected.
+fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[String]) {
+    let palette = app.palette;
+    ui.horizontal(|ui| {
+        if theme::icon_button(
+            ui,
+            Icon::X,
+            18.0,
+            palette.secondary,
+            palette.text,
+            "Cancel selection",
+        )
+        .clicked()
+            || ui.input(|input| input.key_pressed(Key::Escape))
+        {
+            app.actions.push(Action::CancelSelection);
+        }
+        let count = if selected.len() == 1 {
+            "1 selected".to_owned()
+        } else {
+            format!("{} selected", selected.len())
+        };
+        theme::text(ui, &count, theme::medium(14.5), palette.text);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::pill_button(ui, &palette, "Forward…", true).clicked() {
+                app.actions.push(Action::ShowDialog(Dialog::Forward {
+                    chat: chat.to_owned(),
+                    messages: selected.to_vec(),
+                }));
+            }
+        });
+    });
+}
+
+/// The file name to suggest when saving an attachment: the sender's name for
+/// documents, the cached file's name otherwise. Path separators are dropped so
+/// a crafted name cannot point the dialog somewhere else.
+fn attachment_name(content: &Content, path: &Path) -> String {
+    let name = match content {
+        Content::Document { file_name, .. } if !file_name.trim().is_empty() => file_name.clone(),
+        _ => path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "attachment".to_owned()),
+    };
+    name.replace(['/', '\\'], "_")
+}
+
 /// Whether a conversation has visible content. Used by tests.
 #[allow(dead_code)]
 pub fn has_messages(conversation: &Conversation) -> bool {
@@ -4702,6 +4803,23 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_attachments_suggest_a_plain_file_name() {
+        let document = |file_name: &str| Content::Document {
+            media: media(None, None),
+            file_name: file_name.into(),
+            caption: None,
+            pages: None,
+        };
+        let cached = Path::new("/cache/media/abc123.pdf");
+        assert_eq!(attachment_name(&document("Notes.pdf"), cached), "Notes.pdf");
+        assert_eq!(
+            attachment_name(&document("../../.bashrc"), cached),
+            ".._.._.bashrc"
+        );
+        assert_eq!(attachment_name(&document("  "), cached), "abc123.pdf");
+    }
 
     fn media(w: Option<u32>, h: Option<u32>) -> Media {
         Media {

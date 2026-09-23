@@ -395,10 +395,10 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
         persistence_path: demo_persistence,
         // Do not restore window size during fixed-size screenshot runs.
         persist_window: !demo,
-        // Disable vsync because hidden Wayland windows may stop receiving frame
-        // callbacks and block the event loop. Repainting is event-driven.
+        // Hidden Wayland windows stop receiving frame callbacks, so vsync is
+        // only on where the patched winit can report them as occluded.
         glow_options: eframe::egui_glow::GlowConfiguration {
-            vsync: false,
+            vsync: zapfast::vsync::enabled(),
             ..Default::default()
         },
         ..Default::default()

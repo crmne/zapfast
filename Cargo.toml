@@ -114,6 +114,9 @@ zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-c
 ksni = { version = "0.3", features = ["blocking"] }
 # Reads the time locale's clock format.
 libc = "0.2"
+# Asks the Wayland compositor whether it reports hidden windows as suspended
+# (xdg-shell v6), which decides whether vsync is safe. Already in winit's tree.
+wayland-client = "0.31"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # Windows and macOS tray item.
@@ -163,3 +166,10 @@ opt-level = 2
 # plural expressions to Rust. Ordinary builds do not need gettext tools.
 include-po = "0.2"
 polib = "0.3"
+
+[patch.crates-io]
+# winit 0.30.13 plus Wayland `Occluded` events for the xdg-shell suspended
+# state, so a hidden window stops painting instead of blocking on vsync.
+# Shared with Spotifast and proposed upstream as rust-windowing/winit#4709;
+# drop the fork when a winit release includes it.
+winit = { git = "https://github.com/crmne/winit", rev = "c8df61a52b8b563e1bb65e0f1d8630289d1c1bd6" }
