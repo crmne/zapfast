@@ -282,6 +282,9 @@ pub enum Content {
         media: Media,
         seconds: Option<u32>,
         gif: bool,
+        /// A round video message, which WhatsApp calls PTV.
+        #[serde(default)]
+        note: bool,
     },
     Audio {
         media: Media,
@@ -463,9 +466,18 @@ impl Content {
                 text.lines().next().unwrap_or_default().to_owned()
             }
             Self::Image { caption, .. } => with_caption("Photo", caption),
-            Self::Video { caption, gif, .. } => {
-                with_caption(if *gif { "GIF" } else { "Video" }, caption)
-            }
+            Self::Video {
+                caption, gif, note, ..
+            } => with_caption(
+                if *gif {
+                    "GIF"
+                } else if *note {
+                    "Video message"
+                } else {
+                    "Video"
+                },
+                caption,
+            ),
             Self::Audio {
                 voice_note,
                 seconds,
@@ -713,6 +725,81 @@ pub enum Dialog {
     JoinGroup,
     /// Confirms setting aside an archive whose key is gone.
     ConfirmStartOver,
+    /// Who has received and read one of our messages.
+    MessageInfo {
+        chat: ChatId,
+        message: String,
+    },
+}
+
+/// One recipient's receipts for one of our group messages.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recipient {
+    pub id: String,
+    /// Named in the audience saved when the message was sent.
+    pub expected: bool,
+    pub delivered_at: Option<i64>,
+    pub read_at: Option<i64>,
+    pub played_at: Option<i64>,
+}
+
+/// Per-recipient receipts for one of our group messages, as far as they are
+/// known. Receipts are only kept from when ZapFast began recording them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MessageReceipts {
+    pub chat: ChatId,
+    pub message: String,
+    pub recipients: Vec<Recipient>,
+}
+
+impl MessageReceipts {
+    /// Whether the message's audience was saved, so that members without a
+    /// receipt are known to be waiting rather than simply unrecorded.
+    pub fn audience_known(&self) -> bool {
+        self.recipients.iter().any(|recipient| recipient.expected)
+    }
+
+    /// Recipients who played a voice or video note, most recent first.
+    pub fn played(&self) -> Vec<&Recipient> {
+        self.newest_first(|recipient| recipient.played_at)
+    }
+
+    /// Recipients who read the message without playing it, most recent first.
+    pub fn read(&self) -> Vec<&Recipient> {
+        self.newest_first(|recipient| recipient.read_at.filter(|_| recipient.played_at.is_none()))
+    }
+
+    /// Recipients whose device has the message but who have not read it yet.
+    pub fn delivered(&self) -> Vec<&Recipient> {
+        self.newest_first(|recipient| {
+            recipient
+                .delivered_at
+                .filter(|_| recipient.read_at.is_none() && recipient.played_at.is_none())
+        })
+    }
+
+    /// Audience members with no receipt at all.
+    pub fn remaining(&self) -> usize {
+        self.recipients
+            .iter()
+            .filter(|recipient| {
+                recipient.expected
+                    && recipient.delivered_at.is_none()
+                    && recipient.read_at.is_none()
+                    && recipient.played_at.is_none()
+            })
+            .count()
+    }
+
+    fn newest_first(&self, at: impl Fn(&Recipient) -> Option<i64>) -> Vec<&Recipient> {
+        let mut rows: Vec<_> = self
+            .recipients
+            .iter()
+            .filter_map(|recipient| Some((at(recipient)?, recipient)))
+            .collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
+        rows.into_iter().map(|(_, recipient)| recipient).collect()
+    }
 }
 
 /// A group invite link being previewed or joined.
@@ -832,6 +919,20 @@ pub enum Action {
     },
     /// Sets the voice playback speed to one of the supported speeds.
     SetVoiceSpeed(f32),
+    /// Plays or pauses a downloaded video inside its message.
+    PlayVideo {
+        message: String,
+        path: PathBuf,
+    },
+    /// Plays a video in the open chat once its download finishes.
+    PlayVideoWhenDownloaded(String),
+    /// Jumps to a fraction from 0 to 1 of the playing video.
+    SeekVideo {
+        message: String,
+        fraction: f32,
+    },
+    /// Mutes or unmutes video playback.
+    ToggleVideoSound,
     /// Starts, cancels, or sends a voice recording.
     StartRecording,
     CancelRecording,
@@ -842,6 +943,8 @@ pub enum Action {
     /// Open externally button inside the preview.
     PreviewImage(PathBuf),
     ZoomImageIn,
+    /// Shows the previewed image at its original size.
+    ImageActualSize,
     ZoomImageOut,
     FitImage,
     CloseImagePreview,
@@ -1025,7 +1128,7 @@ pub enum Action {
     /// Saves the proxy setting and reconnects. Empty follows the environment.
     SetProxy(String),
     /// Plays a notification sound once, as a preview.
-    PreviewSound(PathBuf),
+    PreviewSound(crate::settings::NotificationSound),
     ZoomBy(f32),
     ResetZoom,
     /// Requests a pairing code for a phone number.
@@ -1060,6 +1163,42 @@ pub enum Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn message_receipts_sort_each_recipient_into_one_list() {
+        let recipient = |id: &str, expected, delivered, read, played| Recipient {
+            id: id.into(),
+            expected,
+            delivered_at: delivered,
+            read_at: read,
+            played_at: played,
+        };
+        let receipts = MessageReceipts {
+            chat: "g@g.us".into(),
+            message: "m".into(),
+            recipients: vec![
+                recipient("a", true, Some(10), Some(20), None),
+                recipient("b", true, Some(11), Some(30), None),
+                recipient("c", true, Some(12), None, None),
+                recipient("d", true, None, None, None),
+                recipient("e", true, Some(13), Some(14), Some(15)),
+                // Joined after the send, or answered under an unsaved alias.
+                recipient("f", false, Some(16), None, None),
+            ],
+        };
+        let ids = |rows: Vec<&Recipient>| rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+        assert!(receipts.audience_known());
+        assert_eq!(ids(receipts.played()), ["e"]);
+        assert_eq!(ids(receipts.read()), ["b", "a"]);
+        assert_eq!(ids(receipts.delivered()), ["f", "c"]);
+        assert_eq!(receipts.remaining(), 1);
+        let unknown = MessageReceipts {
+            recipients: vec![recipient("a", false, Some(1), None, None)],
+            ..Default::default()
+        };
+        assert!(!unknown.audience_known());
+        assert_eq!(unknown.remaining(), 0);
+    }
 
     #[test]
     fn rederived_interactive_content_keeps_every_downloaded_image() {

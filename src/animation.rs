@@ -471,13 +471,13 @@ fn frame_of(
     Some((to_color_image(&scaled), delay))
 }
 
-fn push_annex_b(out: &mut Vec<u8>, nal: &[u8]) {
+pub(crate) fn push_annex_b(out: &mut Vec<u8>, nal: &[u8]) {
     out.extend_from_slice(&[0, 0, 0, 1]);
     out.extend_from_slice(nal);
 }
 
 /// Converts length-prefixed AVCC NAL units to Annex B start codes.
-fn avcc_to_annex_b(out: &mut Vec<u8>, sample: &[u8]) {
+pub(crate) fn avcc_to_annex_b(out: &mut Vec<u8>, sample: &[u8]) {
     let mut rest = sample;
     while rest.len() >= 4 {
         let length = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;

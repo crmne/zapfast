@@ -627,6 +627,7 @@ pub fn populate(app: &mut App) {
                     media: media("video/mp4", 820_000, Some(1280), Some(720)),
                     seconds: Some(5),
                     gif: false,
+                    note: false,
                 },
             );
             row.thumbnail = Some(sample_thumbnail(2));
@@ -1150,6 +1151,108 @@ fn poll_sample(app: &mut App, voted: bool, results: bool) {
     }
 }
 
+/// "Message info" for our message in a bigger group: some members read it,
+/// some only have it, and the rest have not received it yet. Without a saved
+/// audience, the dialog explains that earlier receipts are unknown.
+fn message_info_sample(app: &mut App, recorded: bool) {
+    let chat = SAMPLES[1].id;
+    let now = crate::util::now();
+    app.open_chat = Some(chat.into());
+    app.typing.clear();
+    let c = app.conversations.get_mut(chat).unwrap();
+    let message = c
+        .messages
+        .iter_mut()
+        .rev()
+        .find(|m| m.from_me && matches!(m.content, Content::Text { .. }))
+        .unwrap();
+    message.status = crate::model::Delivery::Delivered;
+    let id = message.id.clone();
+    let recipient = |id: &str, delivered: Option<i64>, read: Option<i64>| crate::model::Recipient {
+        id: id.into(),
+        expected: true,
+        delivered_at: delivered.map(|minutes| now - minutes * 60),
+        read_at: read.map(|minutes| now - minutes * 60),
+        played_at: None,
+    };
+    let recipients = if recorded {
+        vec![
+            recipient("491701111111@s.whatsapp.net", Some(24), Some(3)),
+            recipient("491702222222@s.whatsapp.net", Some(24), Some(11)),
+            recipient(SAMPLES[2].id, Some(23), Some(19)),
+            recipient("491703333333@s.whatsapp.net", Some(22), None),
+            recipient(SAMPLES[4].id, Some(9), None),
+            recipient("12025550137@s.whatsapp.net", Some(20), None),
+            recipient("491704444444@s.whatsapp.net", None, None),
+            recipient("491705555555@s.whatsapp.net", None, None),
+            recipient("491706666666@s.whatsapp.net", None, None),
+        ]
+    } else {
+        Vec::new()
+    };
+    app.message_receipts = Some(crate::model::MessageReceipts {
+        chat: chat.into(),
+        message: id.clone(),
+        recipients,
+    });
+    app.receipts_watch = Some((chat.into(), id.clone()));
+    app.dialog = Some(Dialog::MessageInfo {
+        chat: chat.into(),
+        message: id,
+    });
+}
+
+/// A three-second H.264 and AAC clip, the same one the video tests decode.
+const DEMO_VIDEO: &[u8] = include_bytes!("../tests/fixtures/video/sample.mp4");
+
+/// Replaces the first chat with videos: a downloaded one, a round video
+/// message of our own, and one still on WhatsApp's servers. `play` starts
+/// one of them.
+fn video_sample(app: &mut App, play: Option<&str>) {
+    let id = SAMPLES[0].id;
+    let now = crate::util::now();
+    let path = app.dirs.media_cache_dir().join("demo-video.mp4");
+    let _ = std::fs::create_dir_all(app.dirs.media_cache_dir());
+    let _ = std::fs::write(&path, DEMO_VIDEO);
+    let clip = |note: bool, downloaded: bool| {
+        let mut media = media("video/mp4", DEMO_VIDEO.len() as u64, Some(320), Some(180));
+        if downloaded {
+            media.path = Some(path.clone());
+        }
+        Content::Video {
+            caption: None,
+            media,
+            seconds: Some(3),
+            gif: false,
+            note,
+        }
+    };
+    let mut rows = vec![
+        message(id, "demo-note-remote", false, 0, clip(true, false)),
+        message(id, "demo-video", false, 0, clip(false, true)),
+        message(id, "demo-note", true, 0, clip(true, true)),
+    ];
+    // The one that plays comes last, so it is on screen.
+    if let Some(index) = play.and_then(|play| rows.iter().position(|row| row.id == play)) {
+        let playing = rows.remove(index);
+        rows.push(playing);
+    }
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.thumbnail = Some(sample_thumbnail(index as u32 + 5));
+        row.timestamp = now - 300 + index as i64 * 100;
+    }
+    app.conversations.entry(id.into()).or_default().messages = rows;
+    app.open_chat = Some(id.into());
+    // Screenshots stay quiet.
+    app.video.silence();
+    if let Some(message) = play {
+        app.actions.push(crate::model::Action::PlayVideo {
+            message: message.into(),
+            path,
+        });
+    }
+}
+
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -1173,6 +1276,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "poll-empty" => poll_sample(app, false, false),
             "poll-voted" => poll_sample(app, true, false),
             "poll-results" => poll_sample(app, true, true),
+            "video" => video_sample(app, None),
+            "video-playing" => video_sample(app, Some("demo-video")),
+            "note-playing" => video_sample(app, Some("demo-note")),
             "interactive" | "interactive-media" => {
                 interactive_sample(app, part == "interactive-media")
             }
@@ -1246,6 +1352,25 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "keyring" => {
                 unlink(app);
                 app.link = LinkStatus::Failed("The archive is encrypted but its OS keyring key is missing. Restore the original keyring; the archive has not been changed".into());
+            }
+            "message-info" => message_info_sample(app, true),
+            "message-info-unknown" => message_info_sample(app, false),
+            "message-info-direct" => {
+                let chat = SAMPLES[0].id;
+                let c = app.conversations.get_mut(chat).unwrap();
+                let message = c
+                    .messages
+                    .iter_mut()
+                    .rev()
+                    .find(|m| m.from_me && matches!(m.content, Content::Text { .. }))
+                    .unwrap();
+                message.status = crate::model::Delivery::Read;
+                message.delivered_at = Some(message.timestamp + 4);
+                message.read_at = Some(message.timestamp + 3 * 60);
+                app.dialog = Some(Dialog::MessageInfo {
+                    chat: chat.into(),
+                    message: message.id.clone(),
+                });
             }
             "disappearing" => {
                 let chat = app
@@ -2828,6 +2953,12 @@ mod tests {
             "poll-empty",
             "poll-voted",
             "poll-results",
+            "message-info",
+            "message-info-unknown",
+            "message-info-direct",
+            "video",
+            "video-playing",
+            "note-playing",
             "empty",
             "rtl",
             "disappearing",
@@ -3123,16 +3254,42 @@ mod tests {
             command: !cfg!(target_os = "macos"),
             ..Default::default()
         };
+        // The picture decodes on a loader thread; wait until its fitted
+        // scale is known so zooming starts from a settled size.
+        let loaded = |app: &App| {
+            let path = app.image_preview.as_ref().unwrap().path().to_owned();
+            matches!(
+                ctx.try_load_texture(
+                    &crate::util::image_uri(&path),
+                    egui::TextureOptions::default(),
+                    egui::SizeHint::default(),
+                ),
+                Ok(egui::load::TexturePoll::Ready { .. })
+            )
+        };
+        for _ in 0..200 {
+            render(&mut app, &ctx);
+            if loaded(&app) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        render(&mut app, &ctx);
+        let fitted = app.image_preview.as_ref().unwrap().scale();
         frame_with(&mut app, &ctx, vec![key(egui::Key::Equals, ctrl_shift)]);
         render(&mut app, &ctx);
-        assert_eq!(app.image_preview.as_ref().unwrap().zoom(), 1.25);
+        let first = app.image_preview.as_ref().unwrap().zoom();
+        assert!(
+            (first - fitted * 1.25).abs() < 1e-4,
+            "zooms from the fitted size"
+        );
         frame_with(
             &mut app,
             &ctx,
             vec![key(egui::Key::Plus, egui::Modifiers::COMMAND)],
         );
         render(&mut app, &ctx);
-        assert_eq!(app.image_preview.as_ref().unwrap().zoom(), 1.5625);
+        assert!((app.image_preview.as_ref().unwrap().zoom() - first * 1.25).abs() < 1e-4);
         frame_with(
             &mut app,
             &ctx,
@@ -3403,8 +3560,9 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// The sent, delivered, and read rows only inform. The message id is
-    /// copied by a row that says so, not by clicking "Sent".
+    /// The sent row only informs; delivery and read times open from "Message
+    /// info". The message id is copied by a row that says so, not by clicking
+    /// "Sent".
     #[test]
     fn message_status_rows_are_not_actions() {
         use egui::accesskit::Role;
@@ -3422,10 +3580,9 @@ mod tests {
                 .unwrap_or_else(|| panic!("no {prefix} row"))
                 .clone()
         };
-        for status in ["Sent ", "Delivered ", "Read "] {
-            let (label, role, _) = find(status);
-            assert_eq!(role, Role::Label, "{label} is information, not a button");
-        }
+        let (label, role, _) = find("Sent ");
+        assert_eq!(role, Role::Label, "{label} is information, not a button");
+        assert_eq!(find("Message info").1, Role::Button);
         assert_eq!(find("Copy message ID").1, Role::Button);
 
         let click = |app: &mut App, pos: egui::Pos2| {
@@ -4536,14 +4693,16 @@ mod tests {
             .lock()
             .expect("the view rect")
             .expect("the conversation was drawn");
+        // Press lower down, then drag into the top edge, as when selecting.
+        let start = egui::pos2(view.center().x, view.top() + 80.0);
         let hold = egui::pos2(view.center().x, view.top() + 10.0);
         let press = egui::Event::PointerButton {
-            pos: hold,
+            pos: start,
             button: egui::PointerButton::Primary,
             pressed: true,
             modifiers: egui::Modifiers::NONE,
         };
-        let mut frames: Vec<Vec<egui::Event>> = vec![vec![egui::Event::PointerMoved(hold), press]];
+        let mut frames: Vec<Vec<egui::Event>> = vec![vec![egui::Event::PointerMoved(start), press]];
         frames.extend((0..12).map(|_| vec![egui::Event::PointerMoved(hold)]));
         for events in frames {
             let input = egui::RawInput {
@@ -4567,6 +4726,68 @@ mod tests {
             "the list should have scrolled up; best {moved}"
         );
         assert!(!app.scroll_to_bottom, "heading up releases the pin");
+    }
+
+    /// A click held still near the top edge does not scroll.
+    #[test]
+    fn a_click_held_at_the_top_edge_does_not_scroll() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let chat = sample_ids()[0].to_owned();
+        let ids: Vec<String> = app.conversations[&chat]
+            .messages
+            .iter()
+            .map(|message| message.id.clone())
+            .collect();
+        let rect_of = |ctx: &egui::Context, id: &str| {
+            let key = crate::ui::conversation::bubble_id(&chat, id).with("rect");
+            ctx.data(|data| data.get_temp::<egui::Rect>(key))
+        };
+        let before: Vec<(String, f32)> = ids
+            .iter()
+            .filter_map(|id| rect_of(&ctx, id).map(|rect| (id.clone(), rect.top())))
+            .collect();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 780.0));
+        // Use the frame's stored message-view rect because platform insets vary.
+        let view = app
+            .selection_view
+            .lock()
+            .expect("the view rect")
+            .expect("the conversation was drawn");
+        let start = egui::pos2(view.center().x, view.top() + 10.0);
+        let hold = egui::pos2(view.center().x, view.top() + 10.0);
+        let press = egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut frames: Vec<Vec<egui::Event>> = vec![vec![egui::Event::PointerMoved(start), press]];
+        frames.extend((0..12).map(|_| vec![egui::Event::PointerMoved(hold)]));
+        for events in frames {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            });
+            output.textures_delta.clear();
+        }
+        let moved = before
+            .iter()
+            .filter_map(|(id, top)| rect_of(&ctx, id).map(|rect| rect.top() - top))
+            .fold(f32::MIN, f32::max);
+        assert!(
+            moved.abs() < 1.0,
+            "a still click should not scroll; moved {moved}"
+        );
     }
 
     /// Selection scrolls only near a view edge.
@@ -5599,6 +5820,7 @@ mod tests {
                         media: media("video/mp4", 820_000, Some(1280), Some(720)),
                         seconds: Some(5),
                         gif: false,
+                        note: false,
                     },
                 );
                 row.thumbnail = Some(sample_thumbnail(index as u32));

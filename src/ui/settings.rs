@@ -180,6 +180,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         toggle(ui, app, "Names from your address book", "Prefer saved contact names. When off, prefer public WhatsApp profile names. This applies throughout the app.", |settings| &mut settings.names_from_contacts);
                         toggle(ui, app, "Save contacts to the phone's address book", "Also add contacts saved here to your phone's address book. When off, they remain WhatsApp contacts. Names sync to linked devices either way.", |settings| &mut settings.save_contacts_to_phone);
                         toggle(ui, app, "Show shortcut hints", "", |settings| &mut settings.show_shortcut_hints);
+                        // macOS has no public API to pause other apps' media.
+                        if crate::media_pause::SUPPORTED {
+                            let locale = app.locale;
+                            toggle(ui, app, &crate::i18n::gettext(locale, "Pause music while recording"), &crate::i18n::gettext(locale, "Pause media players while you record a voice message and resume them afterwards."), |settings| &mut settings.pause_media_while_recording);
+                            toggle(ui, app, &crate::i18n::gettext(locale, "Pause music while playing voice messages"), &crate::i18n::gettext(locale, "Pause media players while a voice or audio message plays and resume them when it stops."), |settings| &mut settings.pause_media_while_playing);
+                        }
 
                         {
                             // The buffer lives in egui memory: the hash is the only
@@ -836,6 +842,8 @@ fn sound_row(ui: &mut egui::Ui, app: &mut App, group: bool) {
         )
     };
     let selected = match &current {
+        NotificationSound::Chime => "Chime".to_owned(),
+        NotificationSound::Ripple => "Ripple".to_owned(),
         NotificationSound::System => "System default".to_owned(),
         NotificationSound::None => "None".to_owned(),
         NotificationSound::Custom(path) => path.file_name().map_or_else(
@@ -844,7 +852,7 @@ fn sound_row(ui: &mut egui::Ui, app: &mut App, group: bool) {
         ),
     };
     widgets::setting_row(ui, &palette, label, description, |ui| {
-        if let NotificationSound::Custom(path) = &current
+        if !matches!(current, NotificationSound::System | NotificationSound::None)
             && theme::icon_button(
                 ui,
                 Icon::Play,
@@ -855,13 +863,15 @@ fn sound_row(ui: &mut egui::Ui, app: &mut App, group: bool) {
             )
             .clicked()
         {
-            app.actions.push(Action::PreviewSound(path.clone()));
+            app.actions.push(Action::PreviewSound(current.clone()));
         }
         egui::ComboBox::from_id_salt(("notification-sound", group))
             .selected_text(selected)
             .width(170.0_f32.min(ui.available_width()))
             .show_ui(ui, |ui| {
                 for (sound, name) in [
+                    (NotificationSound::Chime, "Chime"),
+                    (NotificationSound::Ripple, "Ripple"),
                     (NotificationSound::System, "System default"),
                     (NotificationSound::None, "None"),
                 ] {

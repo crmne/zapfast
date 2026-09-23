@@ -430,9 +430,12 @@ pub async fn run(
         poll_history: Default::default(),
         poll_sending: HashSet::new(),
         interactive_sending: HashMap::new(),
+        receipts_watch: None,
+        receipts_pruned: Instant::now(),
     };
     worker.load_state();
     worker.backfill();
+    worker.backfill_video_notes();
     worker.backfill_interactive();
     worker.relocate_media();
     discard_attachment_staging(&worker.dirs.media_cache_dir());
@@ -479,6 +482,7 @@ pub async fn run(
                 worker.pump_read_sync();
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
+                worker.prune_waiting_receipts();
             }
         }
     }
@@ -587,6 +591,10 @@ struct Worker {
     poll_history: poll_history::Requests,
     poll_sending: HashSet<(ChatId, String)>,
     interactive_sending: HashMap<(ChatId, String), String>,
+    /// The group message whose "Message info" is open.
+    receipts_watch: Option<(ChatId, String)>,
+    /// When receipts that never found their message were last dropped.
+    receipts_pruned: Instant,
     dirs: AppDirs,
     events: std::sync::mpsc::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
@@ -709,6 +717,9 @@ struct ParsedMessage {
     raw: Vec<u8>,
     poll_secret: Option<Vec<u8>>,
     poll_votes: Vec<wa::PollUpdate>,
+    /// The phone's per-recipient receipts for one of our messages. A group's
+    /// list may name only some of its members.
+    receipts: Vec<wa::UserReceipt>,
 }
 
 impl Worker {
@@ -1085,6 +1096,56 @@ impl Worker {
         }
     }
 
+    /// Marks archived round video messages, filed before videos told them
+    /// apart, so they draw as circles. Only that flag changes: deriving the
+    /// whole row again would drop edits and local paths.
+    fn backfill_video_notes(&mut self) {
+        const KEY: &str = "video_notes";
+        if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
+            return;
+        }
+        let rows = match self.archive.videos_with_raw() {
+            Ok(rows) => rows,
+            Err(error) => {
+                log::warn!("could not read archived videos: {error}");
+                return;
+            }
+        };
+        let mut updated = 0;
+        for (chat, id, raw) in rows {
+            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                continue;
+            };
+            let base = message.get_base_message();
+            if base.video_message.as_option().is_some() || base.ptv_message.as_option().is_none() {
+                continue;
+            }
+            let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
+                continue;
+            };
+            let mut content = existing.content;
+            let Content::Video { note, .. } = &mut content else {
+                continue;
+            };
+            if *note {
+                continue;
+            }
+            *note = true;
+            if self
+                .archive
+                .set_content(&chat, &id, &content, existing.edited)
+                .is_ok()
+            {
+                updated += 1;
+            }
+        }
+        let _ = self.archive.set_meta(KEY, "1");
+        if updated > 0 {
+            log::info!("marked {updated} archived video messages as round");
+            self.emit_chats();
+        }
+    }
+
     async fn start_bot(&mut self) {
         let path = self.dirs.session_db();
         if let Some(parent) = path.parent() {
@@ -1361,6 +1422,15 @@ impl Worker {
             Ok(true) => self.emit_chats(),
             Ok(false) => {}
             Err(error) => log::warn!("could not remember an id mapping: {error}"),
+        }
+        // Receipts filed under the privacy id may name messages archived
+        // under the phone number.
+        let chat = format!("{pn}@s.whatsapp.net");
+        for id in self.archive.waiting_receipts(&chat).unwrap_or_default() {
+            self.settle_early_receipts(&chat, &id);
+        }
+        if self.receipts_watch.is_some() {
+            self.emit_receipts();
         }
     }
 
@@ -2238,12 +2308,14 @@ impl Worker {
                 return;
             }
             for id in &receipt.message_ids {
-                if !self
+                // A receipt for a message we have not archived yet is kept
+                // until the message arrives; see `settle_early_receipts`.
+                if self
                     .archive
                     .message(&chat, id)
                     .ok()
                     .flatten()
-                    .is_some_and(|row| row.from_me)
+                    .is_some_and(|row| !row.from_me)
                 {
                     continue;
                 }
@@ -2255,6 +2327,9 @@ impl Worker {
                     Ok(false) => {}
                     Err(error) => log::warn!("could not file a group receipt: {error}"),
                 }
+                if self.watching_receipts(&chat, id) {
+                    self.emit_receipts();
+                }
             }
             self.emit_chat(&chat);
             return;
@@ -2262,6 +2337,15 @@ impl Worker {
         let mut newest = 0;
         let mut changed = 0;
         for id in &receipt.message_ids {
+            if !receipt.source.chat.is_status_broadcast()
+                && matches!(self.archive.message(&chat, id), Ok(None))
+            {
+                let recipient = chat.clone();
+                if let Err(error) = self.archive.file_receipt(&chat, id, &recipient, status, at) {
+                    log::warn!("could not keep an early receipt: {error}");
+                }
+                continue;
+            }
             match self.archive.set_status(&chat, id, status, at) {
                 Ok(true) => {
                     changed += 1;
@@ -2288,6 +2372,135 @@ impl Worker {
             }
         }
         self.emit_chat(&chat);
+    }
+
+    /// Hourly, as opening the archive only does it at startup.
+    fn prune_waiting_receipts(&mut self) {
+        if self.receipts_pruned.elapsed() < Duration::from_secs(60 * 60) {
+            return;
+        }
+        self.receipts_pruned = Instant::now();
+        if let Err(error) = self.archive.prune_waiting_receipts() {
+            log::warn!("could not drop stale receipts: {error}");
+        }
+    }
+
+    fn watching_receipts(&self, chat: &str, id: &str) -> bool {
+        self.receipts_watch
+            .as_ref()
+            .is_some_and(|(watched, message)| watched == chat && message == id)
+    }
+
+    /// Sends the followed message's receipts, with privacy ids resolved as far
+    /// as they are known.
+    fn emit_receipts(&self) {
+        let Some((chat, message)) = self.receipts_watch.clone() else {
+            return;
+        };
+        let recipients = match self.archive.receipts(&chat, &message) {
+            Ok(recipients) => recipients,
+            Err(error) => {
+                log::warn!("could not load a message's receipts: {error}");
+                return;
+            }
+        };
+        let recipients = recipients
+            .into_iter()
+            .map(|recipient| crate::model::Recipient {
+                id: self.canonical_str(&recipient.id),
+                ..recipient
+            })
+            .filter(|recipient| !self.is_me(&recipient.id))
+            .collect();
+        self.emit(Event::Receipts(crate::model::MessageReceipts {
+            chat,
+            message,
+            recipients,
+        }));
+    }
+
+    /// Applies receipts that arrived before one of our messages. Messages we
+    /// send from another device reach us after their recipients' receipts
+    /// often enough: receipts are handled while messages are still decrypted.
+    ///
+    /// Such a group message has no saved audience. The group's current members
+    /// are the best record of who it went to, so they become its audience;
+    /// without one, its ticks could never pass "sent".
+    fn settle_early_receipts(&mut self, chat: &str, id: &str) {
+        if !matches!(self.archive.message(chat, id), Ok(Some(_))) {
+            return;
+        }
+        if ChatKind::from_id(chat) == ChatKind::Group {
+            if !self.archive.has_group_audience(chat, id).unwrap_or(true) {
+                let members = self
+                    .archive
+                    .chat(chat)
+                    .ok()
+                    .flatten()
+                    .map(|chat| chat.participants)
+                    .unwrap_or_default();
+                if !members.is_empty() {
+                    self.save_group_recipients(chat, id, &members);
+                }
+            }
+            match self.archive.settle_group(chat, id) {
+                Ok(true) => self.emit_message(chat, id),
+                Ok(false) => {}
+                Err(error) => log::warn!("could not apply early group receipts: {error}"),
+            }
+            if self.watching_receipts(chat, id) {
+                self.emit_receipts();
+            }
+            return;
+        }
+        match self.archive.settle_direct(chat, id) {
+            Ok(Some((status, at))) => {
+                self.emit_message(chat, id);
+                // As with a live read receipt, earlier messages were read too.
+                if status >= Delivery::Read
+                    && let Ok(Some(message)) = self.archive.message(chat, id)
+                    && let Ok(ids) =
+                        self.archive
+                            .advance_statuses(chat, message.timestamp, status, at)
+                {
+                    for id in ids {
+                        self.emit_message(chat, &id);
+                    }
+                }
+                self.emit_chat(chat);
+            }
+            Ok(None) => {}
+            Err(error) => log::warn!("could not apply early receipts: {error}"),
+        }
+    }
+
+    /// Keeps the members' receipts the phone reported for one of our older
+    /// group messages. They may be only some of the members.
+    fn file_history_receipts(&mut self, chat: &str, id: &str, receipts: &[wa::UserReceipt]) {
+        let mut rows = Vec::new();
+        for receipt in receipts {
+            let recipient = self.canonical_str(&receipt.user_jid);
+            if self.is_me(&recipient) {
+                continue;
+            }
+            for (status, at) in [
+                (Delivery::Delivered, receipt.receipt_timestamp),
+                (Delivery::Read, receipt.read_timestamp),
+                (Delivery::Played, receipt.played_timestamp),
+            ] {
+                if let Some(at) = at {
+                    rows.push((recipient.clone(), status, at));
+                }
+            }
+        }
+        if rows.is_empty() {
+            return;
+        }
+        match self.archive.file_receipts(chat, id, &rows) {
+            Ok(true) => self.emit_message(chat, id),
+            Ok(false) => {}
+            Err(error) => log::warn!("could not keep history receipts: {error}"),
+        }
     }
 
     /// Returns raw mention tokens and canonical ids.
@@ -2450,12 +2663,17 @@ impl Worker {
             && !info.is_offline
             && info.unavailable_request_id.is_none()
             && matches!(self.archive.message(&chat, &row.id), Ok(None));
+        let sent_elsewhere = from_me && matches!(self.archive.message(&chat, &row.id), Ok(None));
+        let id = row.id.clone();
         self.archive_message(
             row,
             Some(message.encode_to_vec()),
             push_name.as_deref(),
             poll_baseline,
         );
+        if sent_elsewhere {
+            self.settle_early_receipts(&chat, &id);
+        }
         if is_poll {
             self.pump_poll_votes();
         }
@@ -3077,6 +3295,16 @@ impl Worker {
                     }
                 });
                 let mentions = self.mentions_of(&message.mentions);
+                // A direct chat's receipt times date its ticks. A group's may
+                // be partial, so they only fill in "Message info".
+                let group = ChatKind::from_id(&id) == ChatKind::Group;
+                let first = |at: fn(&wa::UserReceipt) -> Option<i64>| {
+                    message.receipts.iter().filter_map(at).min()
+                };
+                let read = matches!(message.status, Delivery::Read | Delivery::Played);
+                let delivered_at = first(|receipt| receipt.receipt_timestamp)
+                    .filter(|_| !group && (read || message.status == Delivery::Delivered));
+                let read_at = first(|receipt| receipt.read_timestamp).filter(|_| !group && read);
                 let row = Message {
                     id: message.id,
                     chat: id.clone(),
@@ -3090,8 +3318,8 @@ impl Worker {
                     timestamp: message.timestamp,
                     content: message.content,
                     status: message.status,
-                    delivered_at: None,
-                    read_at: None,
+                    delivered_at,
+                    read_at,
                     quoted,
                     reactions,
                     edited: false,
@@ -3115,6 +3343,9 @@ impl Worker {
                 }
                 if let Err(error) = self.archive.insert_message(&row, Some(&raw)) {
                     log::warn!("could not store a history message: {error}");
+                }
+                if group {
+                    self.file_history_receipts(&id, &row.id, &message.receipts);
                 }
                 if matches!(row.content, Content::Poll { .. }) {
                     if poll_history_received {
@@ -3370,6 +3601,10 @@ impl Worker {
                 });
             }
             Command::MarkRead { chat, receipts } => self.mark_read(chat, receipts),
+            Command::WatchReceipts(watch) => {
+                self.receipts_watch = watch;
+                self.emit_receipts();
+            }
             Command::ReadSyncFinished {
                 chat,
                 through,
@@ -5962,6 +6197,7 @@ fn classify(base: &wa::Message) -> Option<Content> {
             ),
             seconds: video.seconds,
             gif: video.gif_playback.unwrap_or(false),
+            note: base.video_message.as_option().is_none(),
         });
     }
     if let Some(audio) = base.audio_message.as_option() {
@@ -6274,6 +6510,7 @@ async fn prepare_media(
                 media: media(Some(&mime_owned), Some(size), None, None),
                 seconds: None,
                 gif,
+                note: false,
             },
             thumbnail: None,
             bytes,
@@ -6790,6 +7027,11 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
             raw: message.encode_to_vec(),
             poll_secret: info.message_secret.clone(),
             poll_votes: info.poll_updates.clone(),
+            receipts: if from_me {
+                info.user_receipt.clone()
+            } else {
+                Vec::new()
+            },
         });
     }
     let last_activity = conversation
@@ -7222,6 +7464,32 @@ mod tests {
         }
         assert_eq!(thumbnail_of(&image), Some(vec![0xff, 0xd8]));
         assert_eq!(classify(&wa::Message::default()), None);
+    }
+
+    #[test]
+    fn round_video_messages_are_marked_as_notes() {
+        let clip = wa::message::VideoMessage {
+            mimetype: Some("video/mp4".into()),
+            seconds: Some(12),
+            ..Default::default()
+        };
+        let note = |content: Option<Content>| match content {
+            Some(Content::Video { note, seconds, .. }) => {
+                assert_eq!(seconds, Some(12));
+                note
+            }
+            other => panic!("unexpected {other:?}"),
+        };
+        let round = wa::Message {
+            ptv_message: MessageField::some(clip.clone()),
+            ..Default::default()
+        };
+        assert!(note(classify(&round)));
+        let plain = wa::Message {
+            video_message: MessageField::some(clip),
+            ..Default::default()
+        };
+        assert!(!note(classify(&plain)));
     }
 
     #[test]
@@ -7957,8 +8225,73 @@ mod receipt_tests {
             poll_history: Default::default(),
             poll_sending: HashSet::new(),
             interactive_sending: HashMap::new(),
+            receipts_watch: None,
+            receipts_pruned: Instant::now(),
         };
         (worker, events_rx, inbox, wa_events)
+    }
+
+    #[test]
+    fn archived_round_videos_become_notes_and_keep_their_rows() {
+        let (mut worker, _events, _commands, _wa) = worker();
+        worker.archive.ensure_chat(PEER, "Demo").unwrap();
+        let clip = wa::message::VideoMessage {
+            mimetype: Some("video/mp4".into()),
+            ..Default::default()
+        };
+        let round = wa::Message {
+            ptv_message: MessageField::some(clip.clone()),
+            ..Default::default()
+        };
+        let plain = wa::Message {
+            video_message: MessageField::some(clip),
+            ..Default::default()
+        };
+        for (id, raw) in [("round", &round), ("plain", &plain)] {
+            let mut message = own_message(id, 1);
+            let Some(Content::Video {
+                mut media,
+                seconds,
+                gif,
+                ..
+            }) = classify(raw)
+            else {
+                panic!("not a video");
+            };
+            media.path = Some(std::path::PathBuf::from("/fixture/clip.mp4"));
+            // Filed before round videos were told apart.
+            message.content = Content::Video {
+                caption: None,
+                media,
+                seconds,
+                gif,
+                note: false,
+            };
+            worker
+                .archive
+                .insert_message(&message, Some(&raw.encode_to_vec()))
+                .unwrap();
+        }
+        worker.backfill_video_notes();
+        let stored = |id: &str| worker.archive.message(PEER, id).unwrap().unwrap().content;
+        match stored("round") {
+            Content::Video { note, media, .. } => {
+                assert!(note);
+                assert_eq!(
+                    media.path,
+                    Some(std::path::PathBuf::from("/fixture/clip.mp4"))
+                );
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(
+            stored("plain"),
+            Content::Video { note: false, .. }
+        ));
+        assert_eq!(
+            worker.archive.meta("video_notes").unwrap().as_deref(),
+            Some("1")
+        );
     }
 
     pub(super) fn own_message(id: &str, timestamp: i64) -> Message {
@@ -8063,6 +8396,126 @@ mod receipt_tests {
         assert_eq!(status(&worker, "old"), Delivery::Sent);
         send(&mut worker, PEER, ReceiptType::Delivered);
         assert_eq!(status(&worker, "new"), Delivery::Read);
+    }
+
+    fn sent_elsewhere(chat: &str, id: &str, timestamp: i64) -> (Arc<wa::Message>, MessageInfo) {
+        let chat: Jid = chat.parse().unwrap();
+        let info = MessageInfo {
+            id: id.into(),
+            source: MessageSource {
+                chat: chat.clone(),
+                sender: ME.parse().unwrap(),
+                is_from_me: true,
+                is_group: chat.is_group(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(timestamp).unwrap(),
+            ..Default::default()
+        };
+        let message = wa::Message {
+            conversation: Some("sent from the phone".into()),
+            ..Default::default()
+        };
+        (Arc::new(message), info)
+    }
+
+    #[test]
+    fn receipts_that_outrun_a_message_sent_elsewhere_still_move_its_ticks() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let now = crate::util::now();
+        worker.store_message(own_message("before", now - 60), None, None);
+        worker
+            .archive
+            .set_status(PEER, "before", Delivery::Delivered, now - 50)
+            .unwrap();
+        worker.on_receipt(&receipt(PEER, &["phone"], ReceiptType::Delivered));
+        worker.on_receipt(&receipt(PEER, &["phone"], ReceiptType::Read));
+        let (message, info) = sent_elsewhere(PEER, "phone", now);
+        worker.ingest(&message, &info);
+        let stored = worker.archive.message(PEER, "phone").unwrap().unwrap();
+        assert_eq!(stored.status, Delivery::Read);
+        assert!(stored.read_at.is_some() && stored.delivered_at.is_some());
+        // As with a live read receipt, the earlier message was read too.
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "before")
+                .unwrap()
+                .unwrap()
+                .status,
+            Delivery::Read
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_message_sent_elsewhere_takes_the_current_members_as_its_audience() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        let other = "12025550123@s.whatsapp.net";
+        let now = crate::util::now();
+        worker.archive.ensure_chat(group, "Group").unwrap();
+        worker
+            .archive
+            .set_group_info(group, None, &[ME.into(), PEER.into(), other.into()], false)
+            .unwrap();
+        let send = |worker: &mut Worker, sender: &str, alt: Option<&str>, kind| {
+            let mut receipt = receipt(group, &["phone"], kind);
+            receipt.source.sender = sender.parse().unwrap();
+            receipt.source.sender_alt = alt.map(|alt| alt.parse().unwrap());
+            receipt.source.is_group = true;
+            worker.on_receipt(&receipt);
+        };
+        // A privacy-id reader, before the message itself arrives.
+        send(&mut worker, PEER_LID, Some(PEER), ReceiptType::Read);
+        let (message, info) = sent_elsewhere(group, "phone", now);
+        worker.ingest(&message, &info);
+        let status = |worker: &Worker| {
+            worker
+                .archive
+                .message(group, "phone")
+                .unwrap()
+                .unwrap()
+                .status
+        };
+        assert_eq!(status(&worker), Delivery::Sent);
+        worker
+            .handle_command(Command::WatchReceipts(Some((group.into(), "phone".into()))))
+            .await;
+        let latest = |events: &std::sync::mpsc::Receiver<Event>| {
+            events
+                .try_iter()
+                .filter_map(|event| match event {
+                    Event::Receipts(receipts) => Some(receipts),
+                    _ => None,
+                })
+                .last()
+                .expect("receipts")
+        };
+        let receipts = latest(&events);
+        assert!(receipts.audience_known());
+        assert_eq!(receipts.read().len(), 1);
+        assert_eq!(
+            receipts.read()[0].id,
+            PEER,
+            "the privacy id maps to the number"
+        );
+        assert_eq!(receipts.remaining(), 1);
+        send(&mut worker, other, None, ReceiptType::Delivered);
+        let receipts = latest(&events);
+        assert_eq!(receipts.delivered()[0].id, other);
+        assert_eq!(receipts.remaining(), 0);
+        assert_eq!(status(&worker), Delivery::Delivered);
+        send(&mut worker, other, None, ReceiptType::Read);
+        assert_eq!(status(&worker), Delivery::Read);
+        assert_eq!(latest(&events).read().len(), 2);
+        worker.handle_command(Command::WatchReceipts(None)).await;
+        send(&mut worker, other, None, ReceiptType::Played);
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::Receipts(_))),
+            "a closed dialog is not followed"
+        );
     }
 
     #[test]
@@ -8505,6 +8958,64 @@ mod receipt_tests {
             parsed(PEER, Status::SERVER_ACK).messages[0].status,
             Delivery::Read
         );
+    }
+
+    #[test]
+    fn history_receipts_date_direct_ticks_and_fill_group_message_info() {
+        use wa::web_message_info::Status;
+        let conversation = |chat: &str, status| {
+            parse_conversation(wa::Conversation {
+                id: chat.into(),
+                messages: vec![wa::HistorySyncMsg {
+                    message: MessageField::some(wa::WebMessageInfo {
+                        key: MessageField::some(wa::MessageKey {
+                            id: Some("history".into()),
+                            from_me: Some(true),
+                            ..Default::default()
+                        }),
+                        message: MessageField::some(wa::Message {
+                            conversation: Some("hello".into()),
+                            ..Default::default()
+                        }),
+                        message_timestamp: Some(90),
+                        status: Some(status),
+                        user_receipt: vec![wa::UserReceipt {
+                            user_jid: PEER.into(),
+                            receipt_timestamp: Some(100),
+                            read_timestamp: Some(123),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+        };
+        let group = "123-456@g.us";
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.apply_history(
+            ParsedHistory {
+                chats: vec![
+                    conversation(PEER, Status::DELIVERY_ACK),
+                    conversation(group, Status::DELIVERY_ACK),
+                ],
+                push_names: Vec::new(),
+                lids: Vec::new(),
+                stickers: Vec::new(),
+            },
+            true,
+        );
+        let direct = worker.archive.message(PEER, "history").unwrap().unwrap();
+        assert_eq!(direct.delivered_at, Some(100));
+        let grouped = worker.archive.message(group, "history").unwrap().unwrap();
+        assert_eq!(grouped.status, Delivery::Delivered, "the phone's aggregate");
+        assert_eq!(grouped.read_at, None);
+        let receipts = worker.archive.receipts(group, "history").unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].id, PEER);
+        assert!(!receipts[0].expected, "a partial list is not the audience");
+        assert_eq!(receipts[0].read_at, Some(123));
     }
 
     fn incoming(id: &str, timestamp: i64) -> Message {
@@ -9183,6 +9694,7 @@ mod chat_removal_tests {
                         raw: Vec::new(),
                         poll_secret: None,
                         poll_votes: Vec::new(),
+                        receipts: Vec::new(),
                     })
                     .collect(),
                 revoked: Vec::new(),

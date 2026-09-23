@@ -220,6 +220,10 @@ pub struct App {
     pub presence: HashMap<String, Presence>,
     /// Whether account privacy disables direct-chat read receipts.
     pub account_receipts_off: bool,
+    /// Receipts of the message whose "Message info" is open.
+    pub message_receipts: Option<crate::model::MessageReceipts>,
+    /// The group message the backend is following receipts for.
+    pub(crate) receipts_watch: Option<(ChatId, String)>,
     /// The group invite link being previewed or joined.
     pub invite: Option<crate::model::GroupInvite>,
     /// Where the unread messages began when the open chat was opened.
@@ -259,8 +263,18 @@ pub struct App {
     pub pending: Vec<Pending>,
     /// In-chat audio player.
     pub player: Player,
+    /// In-chat video player.
+    pub video: crate::video::Player,
+    /// Chat of the loaded video; leaving it stops the video.
+    video_chat: Option<ChatId>,
+    /// Video to play once its download finishes.
+    video_wanted: Option<(ChatId, String)>,
     /// Active voice recorder.
     pub recording: Option<Recorder>,
+    /// Keeps other apps' music paused while recording or playing audio.
+    media_hold: Option<crate::media_pause::Hold>,
+    /// Only the real app pauses other apps' media, never tests or demos.
+    pauses_media: bool,
     /// Image currently shown in the native preview.
     pub image_preview: Option<PreviewState>,
     /// Voice messages with a sent played receipt.
@@ -400,6 +414,7 @@ impl App {
         crate::proxy::configure(&settings.proxy);
         let backend = Backend::spawn(dirs.clone(), waker.clone());
         let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
+        app.pauses_media = true;
         app.custom_themes.enable_desktop_themes();
         app.load_custom_themes();
         if options.tray {
@@ -497,6 +512,8 @@ impl App {
             typing: HashMap::new(),
             presence: HashMap::new(),
             account_receipts_off: false,
+            message_receipts: None,
+            receipts_watch: None,
             invite: None,
             unread_divider: None,
             selection: None,
@@ -519,7 +536,12 @@ impl App {
             emoji_jump: None,
             pending: Vec::new(),
             player: Player::new(waker.clone()),
+            video: crate::video::Player::new(waker.clone()),
+            video_chat: None,
+            video_wanted: None,
             recording: None,
+            media_hold: None,
+            pauses_media: false,
             image_preview: None,
             played_told: HashSet::new(),
             copy_rows: Default::default(),
@@ -1549,8 +1571,18 @@ impl App {
                     conversation.complete = false;
                 }
                 Event::ReceiptsPrivacy { disabled } => self.account_receipts_off = disabled,
+                Event::Receipts(receipts) => {
+                    // A late answer for a dialog that has since closed is stale.
+                    if self.receipts_watch.as_ref().is_some_and(|(chat, message)| {
+                        *chat == receipts.chat && *message == receipts.message
+                    }) {
+                        self.message_receipts = Some(receipts);
+                    }
+                }
                 Event::ChatSoundPicked { chat, path } => {
-                    crate::notify::play_sound(path.clone());
+                    crate::notify::play_sound(crate::settings::NotificationSound::Custom(
+                        path.clone(),
+                    ));
                     self.actions.push(Action::SetChatSound {
                         chat,
                         sound: Some(crate::settings::NotificationSound::Custom(path)),
@@ -1560,7 +1592,9 @@ impl App {
                     self.actions.push(Action::SetDownloadFolder(Some(path)));
                 }
                 Event::NotificationSoundPicked { group, path } => {
-                    crate::notify::play_sound(path.clone());
+                    crate::notify::play_sound(crate::settings::NotificationSound::Custom(
+                        path.clone(),
+                    ));
                     self.actions.push(Action::SetNotificationSound {
                         group,
                         sound: crate::settings::NotificationSound::Custom(path),
@@ -1901,8 +1935,19 @@ impl App {
         };
         match result {
             Ok(path) => {
-                media.path = Some(path);
+                media.path = Some(path.clone());
                 media.state = MediaState::Idle;
+                if self
+                    .video_wanted
+                    .as_ref()
+                    .is_some_and(|(wanted_chat, wanted)| wanted_chat == chat && wanted == id)
+                {
+                    self.video_wanted = None;
+                    self.actions.push(Action::PlayVideo {
+                        message: id.to_owned(),
+                        path,
+                    });
+                }
             }
             Err(error) => {
                 // Show expired-file failures in the bubble, not as a toast.
@@ -2662,6 +2707,11 @@ impl App {
                     preview.fit();
                 }
             }
+            Action::ImageActualSize => {
+                if let Some(preview) = &mut self.image_preview {
+                    preview.actual_size();
+                }
+            }
             Action::CloseImagePreview => {
                 self.image_preview = None;
                 self.refocus_composer(ctx);
@@ -2860,6 +2910,12 @@ impl App {
             }
             Action::ClearPending => self.pending.clear(),
             Action::PlayVoice { message, path } => self.play_voice(message, path),
+            Action::PlayVideo { message, path } => self.play_video(message, path),
+            Action::PlayVideoWhenDownloaded(message) => {
+                self.video_wanted = self.open_chat.clone().map(|chat| (chat, message));
+            }
+            Action::SeekVideo { message, fraction } => self.video.seek(&message, fraction),
+            Action::ToggleVideoSound => self.video.toggle_mute(),
             Action::SeekVoice {
                 message,
                 path,
@@ -3446,7 +3502,7 @@ impl App {
             Action::PickNotificationSound { group } => {
                 self.backend.send(Command::PickNotificationSound { group });
             }
-            Action::PreviewSound(path) => crate::notify::play_sound(path),
+            Action::PreviewSound(sound) => crate::notify::play_sound(sound),
             Action::PickDownloadFolder => self.backend.send(Command::PickDownloadFolder),
             Action::SetProfile { name, about } => {
                 self.backend.send(Command::SetProfile { name, about });
@@ -3622,7 +3678,40 @@ impl App {
         self.handle_events();
         self.tick(ctx);
         self.tick_audio();
+        self.tick_video(ctx);
         self.apply_actions(ctx);
+        self.hold_media();
+        self.follow_receipts();
+    }
+
+    /// Pauses other apps' music while recording or playing audio, as the
+    /// settings allow, and resumes it once neither needs quiet.
+    fn hold_media(&mut self) {
+        let wanted = self.pauses_media
+            && (self.recording.is_some() && self.settings.pause_media_while_recording
+                || self.player.is_playing() && self.settings.pause_media_while_playing);
+        if wanted != self.media_hold.is_some() {
+            self.media_hold = wanted.then(crate::media_pause::hold);
+        }
+    }
+
+    /// Keeps the backend following receipts for exactly the group message
+    /// whose "Message info" is open. A direct message's times are on its row.
+    fn follow_receipts(&mut self) {
+        let wanted = match &self.dialog {
+            Some(Dialog::MessageInfo { chat, message })
+                if crate::model::ChatKind::from_id(chat) == crate::model::ChatKind::Group =>
+            {
+                Some((chat.clone(), message.clone()))
+            }
+            _ => None,
+        };
+        if wanted == self.receipts_watch {
+            return;
+        }
+        self.message_receipts = None;
+        self.receipts_watch = wanted.clone();
+        self.backend.send(Command::WatchReceipts(wanted));
     }
 
     /// Polls audio state and schedules repaints while it changes.
@@ -3639,8 +3728,45 @@ impl App {
         }
     }
 
+    /// Shows the playing video's frames, stops it once its chat is left, and
+    /// hands a video it cannot decode to the system player.
+    fn tick_video(&mut self, ctx: &egui::Context) {
+        if self.video.message().is_some() && self.video_chat != self.open_chat {
+            self.video.stop();
+        }
+        if let Some(crate::video::Notice::Unsupported(path)) = self.video.poll(ctx) {
+            self.toast(crate::i18n::gettext(
+                self.locale,
+                "This video opens in your system player",
+            ));
+            self.actions.push(Action::OpenFile(path));
+        }
+    }
+
+    /// Plays or pauses a video in its message. A video message, the round
+    /// kind, sends its played receipt like a voice message.
+    fn play_video(&mut self, message: String, path: PathBuf) {
+        let Some(chat) = self.open_chat.clone() else {
+            return;
+        };
+        // One sound at a time.
+        self.player.stop();
+        let starting = self.video.message() != Some(message.as_str());
+        self.video.toggle(&message, &path);
+        self.video_chat = Some(chat.clone());
+        let note = self
+            .conversations
+            .get(&chat)
+            .and_then(|conversation| conversation.message(&message))
+            .is_some_and(|row| matches!(row.content, Content::Video { note: true, .. }));
+        if starting && note {
+            self.tell_played(message);
+        }
+    }
+
     /// Plays or pauses audio and sends the first played receipt when needed.
     fn play_voice(&mut self, message: String, path: PathBuf) {
+        self.video.stop();
         if let Err(error) = self.player.toggle(&message, &path) {
             self.toast_error(error);
             return;
@@ -3975,6 +4101,11 @@ impl App {
     pub fn shutdown(&mut self) {
         self.save_state();
         self.flush_open_draft();
+        self.recording = None;
+        // A background resume would die with the process.
+        if self.media_hold.take().is_some() {
+            crate::media_pause::settle(Duration::from_secs(2));
+        }
         self.backend.shutdown();
     }
 
@@ -4595,6 +4726,62 @@ mod tests {
     }
 
     #[test]
+    fn message_info_follows_a_group_messages_receipts_only_while_open() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let group = "123-456@g.us";
+        let watches = |commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>| {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::WatchReceipts(watch) => Some(watch),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let receipts = |message: &str| crate::model::MessageReceipts {
+            chat: group.into(),
+            message: message.into(),
+            recipients: Vec::new(),
+        };
+        app.apply(
+            Action::ShowDialog(Dialog::MessageInfo {
+                chat: group.into(),
+                message: "m".into(),
+            }),
+            &ctx,
+        );
+        app.follow_receipts();
+        app.follow_receipts();
+        assert_eq!(
+            watches(&mut commands),
+            [Some((group.to_owned(), "m".to_owned()))]
+        );
+        // Receipts for another message, from a dialog opened earlier, are stale.
+        events.send(Event::Receipts(receipts("other"))).unwrap();
+        app.handle_events();
+        assert!(app.message_receipts.is_none());
+        events.send(Event::Receipts(receipts("m"))).unwrap();
+        app.handle_events();
+        assert_eq!(app.message_receipts, Some(receipts("m")));
+        app.apply(Action::CloseDialog, &ctx);
+        app.follow_receipts();
+        assert_eq!(watches(&mut commands), [None]);
+        assert!(app.message_receipts.is_none());
+        // A direct message's times are on its row: nothing to follow.
+        app.apply(
+            Action::ShowDialog(Dialog::MessageInfo {
+                chat: "1@s.whatsapp.net".into(),
+                message: "m".into(),
+            }),
+            &ctx,
+        );
+        app.follow_receipts();
+        assert!(watches(&mut commands).is_empty());
+    }
+
+    #[test]
     fn drafts_come_back_after_a_restart_and_leave_with_the_account() {
         let mut app = app();
         let (backend, mut commands, events) = Backend::recording_with_events();
@@ -4703,7 +4890,7 @@ mod tests {
             &ctx,
         );
         assert_eq!(app.settings.group_sound, NotificationSound::None);
-        assert_eq!(app.settings.message_sound, NotificationSound::System);
+        assert_eq!(app.settings.message_sound, NotificationSound::Chime);
     }
 
     #[test]
@@ -5049,6 +5236,63 @@ mod tests {
             .expect("still present");
         assert_eq!(media.path, Some(relocated));
         assert_eq!(media.state, MediaState::Idle);
+    }
+
+    #[test]
+    fn a_video_note_clicked_before_download_plays_once_it_arrives() {
+        let mut app = app();
+        app.video.silence();
+        let chat = "fixture@s.whatsapp.net";
+        let mut clip = message(chat, "clip", 1);
+        clip.content = Content::Video {
+            caption: None,
+            media: Media {
+                mime: "video/mp4".into(),
+                size: 100,
+                width: None,
+                height: None,
+                path: None,
+                state: MediaState::Idle,
+            },
+            seconds: Some(3),
+            gif: false,
+            note: true,
+        };
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![clip], false);
+        app.open_chat = Some(chat.into());
+        let ctx = egui::Context::default();
+        app.apply(Action::PlayVideoWhenDownloaded("clip".into()), &ctx);
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let path = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/video/sample.mp4"
+        ));
+        events
+            .send(Event::Media {
+                card: None,
+                chat: chat.into(),
+                message: "clip".into(),
+                result: Ok(path.clone()),
+            })
+            .unwrap();
+        app.handle_events();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.apply_actions(&ctx);
+        assert_eq!(app.video.message(), Some("clip"));
+        // A round video message is played like a voice message.
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::MarkPlayed { message, .. }) if message == "clip"
+        ));
+        // Leaving the chat stops it.
+        app.open_chat = None;
+        app.tick_video(&ctx);
+        assert!(app.video.message().is_none());
     }
 
     #[test]

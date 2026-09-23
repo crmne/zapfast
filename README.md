@@ -127,7 +127,12 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   in the chat. The speed chip cycles between 1x, 1.5x, and 2x, and the
   message menu offers 1x, 1.25x, 1.5x, 1.75x, and 2x, keeping the speaker's
   pitch; the last choice applies to later messages. The app normalizes quiet
-  recordings and handles OGG/Opus without external tools.
+  recordings and handles OGG/Opus without external tools. On Linux and
+  Windows, music and other media playing in other apps pause while you record
+  or play a voice message and resume afterwards; only players that were
+  playing are resumed. Two switches in Settings turn this off for recording
+  and for playback. Linux uses MPRIS, so any player that implements it works;
+  macOS has no public API for this, so the switches are hidden there.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation; invoking search keeps focus in search, and
@@ -156,8 +161,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   on click. Photos, stickers, GIFs, voice messages, audio, locations, contacts,
   polls, and link previews appear in the chat. Click a downloaded JPEG, PNG,
   WebP, or GIF photo to preview it in ZapFast with fit and zoom controls, or
-  choose **Open externally**. Unsupported pictures, videos, and documents keep
-  opening in their default desktop apps. **Save as…** in a downloaded
+  choose **Open externally**. Click a video to play it in its message, with
+  sound, a seek bar, and a mute switch; round video messages play inside their
+  circle with a progress ring, like on the phone. A video that is not
+  downloaded yet downloads first and then plays. Videos in codecs other than
+  H.264, such as HEVC, open in your system player, and so does **Open in system
+  player** in a video's right-click menu. Unsupported pictures and documents
+  keep opening in their default desktop apps. **Save as…** in a downloaded
   attachment's right-click menu keeps a copy wherever you choose, starting in
   your Downloads folder. Profile pictures and downloaded images support
   Windows drive paths and filenames with spaces or non-ASCII characters.
@@ -227,9 +237,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   device dismisses its outstanding notifications. On macOS, notifications use
   the installed ZapFast application's identity without an application chooser;
   unregistered development builds skip notifications if that identity is unavailable.
-  **Message sound** and **Group sound** in Settings choose the system's
-  notification sound, no sound, or an audio file (WAV, MP3, or OGG Vorbis)
-  that ZapFast plays itself. **Notification sound** in a chat's right-click
+  **Message sound** and **Group sound** in Settings choose ZapFast's own
+  **Chime** (the default for one-to-one chats) or **Ripple** (the default for
+  groups), the system's notification sound, no sound, or an audio file (WAV,
+  MP3, or OGG Vorbis) that ZapFast plays itself. **Notification sound** in a chat's right-click
   menu gives that chat its own sound, stored in the encrypted archive.
 - **Update notices.** ZapFast checks GitHub once a day and shows a download
   link when a newer release is available. You can turn this off in Settings.
@@ -257,8 +268,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 ## What it does not do yet
 
-- Play ordinary videos in the app (they open in your player), or reply to
-  a message with an attachment.
+- Reply to a message with an attachment, or play videos in codecs other than
+  H.264 in the app (they open in your system player).
 - Calls, status posts, communities, newsletters, and group administration.
 - Submit interactive forms, payments, shopping flows, or carousel selections.
   Use these in WhatsApp Web or on your phone. Embedded videos and documents,
@@ -622,6 +633,8 @@ For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
 Use `--demo-page chat-menu` to preview the compact chat context menu, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
+`--demo-page video` shows a video and round video messages, and
+`video-playing` or `note-playing` starts one of them, silently.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.

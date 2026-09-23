@@ -279,8 +279,12 @@ impl WallpaperColor {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationSound {
-    /// Whatever the operating system plays for notifications.
+    /// ZapFast's two-note chime, the default for one-to-one chats.
     #[default]
+    Chime,
+    /// ZapFast's three-note ripple, the default for groups.
+    Ripple,
+    /// Whatever the operating system plays for notifications.
     System,
     /// No sound.
     None,
@@ -359,6 +363,10 @@ pub struct Settings {
     pub names_from_contacts: bool,
     /// Voice and audio playback speed multiplier.
     pub voice_speed: f32,
+    /// Pause other apps' media while recording a voice message.
+    pub pause_media_while_recording: bool,
+    /// Pause other apps' media while a voice or audio message plays.
+    pub pause_media_while_playing: bool,
     /// Also add saved contacts to the phone's address book.
     pub save_contacts_to_phone: bool,
     /// Legacy plaintext code, accepted once and rewritten as a verifier.
@@ -395,8 +403,8 @@ impl Default for Settings {
             giphy_key: String::new(),
             keep_running_in_background: true,
             notifications: true,
-            message_sound: NotificationSound::System,
-            group_sound: NotificationSound::System,
+            message_sound: NotificationSound::Chime,
+            group_sound: NotificationSound::Ripple,
             download_folder: None,
             proxy: String::new(),
             check_for_updates: true,
@@ -404,6 +412,8 @@ impl Default for Settings {
             names_from_contacts: true,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
+            pause_media_while_recording: true,
+            pause_media_while_playing: true,
             chat_lock_code: None,
             chat_lock_code_hash: None,
             chat_lock_hint_dismissed: false,

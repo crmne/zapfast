@@ -1074,6 +1074,8 @@ fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) 
         let current = chat.notification_sound.clone();
         for (sound, label) in [
             (None, "Default"),
+            (Some(NotificationSound::Chime), "Chime"),
+            (Some(NotificationSound::Ripple), "Ripple"),
             (Some(NotificationSound::System), "System sound"),
             (Some(NotificationSound::None), "No sound"),
         ] {

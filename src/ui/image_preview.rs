@@ -43,13 +43,21 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     {
                         app.actions.push(Action::CloseImagePreview);
                     }
-                    if ui.button("Open externally").clicked() {
+                    if theme::icon_button(
+                        ui,
+                        Icon::ExternalLink,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        "Open in another app",
+                    )
+                    .clicked()
+                    {
                         app.actions
                             .push(Action::OpenFile(preview.path().to_owned()));
                     }
-                    if ui.button("Fit").clicked() {
-                        app.actions.push(Action::FitImage);
-                    }
+                    ui.add_space(8.0);
+                    // Right to left: zoom in, the current scale, zoom out.
                     if theme::icon_button(
                         ui,
                         Icon::Plus,
@@ -61,6 +69,27 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     .clicked()
                     {
                         app.actions.push(Action::ZoomImageIn);
+                    }
+                    // One control shows the scale and switches between fitting
+                    // the window and the original size.
+                    let (label, hint, action) = if preview.is_fit() {
+                        (
+                            "Fit".to_owned(),
+                            "Show at original size",
+                            Action::ImageActualSize,
+                        )
+                    } else {
+                        (
+                            format!("{:.0}%", preview.zoom() * 100.0),
+                            "Fit to the window (0)",
+                            Action::FitImage,
+                        )
+                    };
+                    if theme::soft_button(ui, &palette, None, &label, false)
+                        .on_hover_text(hint)
+                        .clicked()
+                    {
+                        app.actions.push(action);
                     }
                     if theme::icon_button(
                         ui,
@@ -74,12 +103,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     {
                         app.actions.push(Action::ZoomImageOut);
                     }
-                    let zoom = if preview.is_fit() {
-                        "Fit".to_owned()
-                    } else {
-                        format!("{:.0}%", preview.zoom() * 100.0)
-                    };
-                    ui.label(zoom);
                 });
             });
             ui.separator();
@@ -94,6 +117,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             match image.load_for_size(ctx, canvas) {
                 Ok(egui::load::TexturePoll::Ready { texture }) => {
                     let size = display_size(texture.size, canvas, preview.is_fit(), preview.zoom());
+                    if preview.is_fit()
+                        && texture.size.x > 0.0
+                        && let Some(state) = &mut app.image_preview
+                    {
+                        state.set_fit_scale(size.x / texture.size.x);
+                    }
                     egui::ScrollArea::both()
                         .id_salt("image-preview-scroll")
                         .auto_shrink([false, false])

@@ -40,7 +40,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 }
                 Dialog::Forward { .. } => 420.0,
                 Dialog::CreatePoll(_) => 420.0,
-                Dialog::PollResults { .. } | Dialog::InteractiveList { .. } => {
+                Dialog::PollResults { .. }
+                | Dialog::InteractiveList { .. }
+                | Dialog::MessageInfo { .. } => {
                     420.0_f32.min((ui.ctx().content_rect().width() - 64.0).max(180.0))
                 }
             });
@@ -68,6 +70,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::Forward { chat, messages } => forward(app, ui, &chat, &messages),
                 Dialog::JoinGroup => join_group(app, ui),
                 Dialog::ConfirmStartOver => confirm_start_over(app, ui),
+                Dialog::MessageInfo { chat, message } => {
+                    super::message_info::show(app, ui, &chat, &message)
+                }
             }
         });
     if response.should_close() {
