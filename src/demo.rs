@@ -1926,9 +1926,11 @@ mod tests {
                 .map(|placed| placed.rect().translate(pos.to_vec2()))
                 .reduce(|a, b| a.union(b))
                 .expect("rows");
+            // Only images inside the text are emoji; a wallpaper tile behind
+            // the bubble can have its centre there too.
             let emoji: Vec<&egui::Rect> = images
                 .iter()
-                .filter(|image| body_rect.contains(image.center()))
+                .filter(|image| body_rect.expand(1.0).contains_rect(**image))
                 .collect();
             let placeholders = body.text().matches(crate::emoji::PLACEHOLDER).count();
             if crate::emoji::available() {
