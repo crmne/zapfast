@@ -1052,10 +1052,13 @@ pub enum Action {
     /// Toggles a picker tab.
     TogglePicker(PickerTab),
     ClosePicker,
-    /// Opens the full emoji picker to react to a message.
+    /// Opens the full emoji picker to react to a message. `beside_menu` keeps
+    /// the message's context menu open next to it, as when the picker comes
+    /// from the menu's "+"; the hover button opens the picker alone.
     OpenReactionPicker {
         chat: ChatId,
         message: String,
+        beside_menu: bool,
     },
     /// Inserts an emoji at the composer cursor.
     InsertEmoji(String),

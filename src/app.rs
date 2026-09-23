@@ -252,6 +252,9 @@ pub struct App {
     pub reaction_target: Option<(ChatId, String)>,
     /// Control that opened the reaction picker.
     pub reaction_anchor: Option<egui::Rect>,
+    /// The reaction picker came from a message's context menu, which stays
+    /// open beside it.
+    pub reaction_beside_menu: bool,
     /// Demo/test: keep this message's context menu open.
     pub open_message_menu: Option<String>,
     /// Demo/test: keep this chat row's context menu open.
@@ -534,6 +537,7 @@ impl App {
             picker_focus: false,
             reaction_target: None,
             reaction_anchor: None,
+            reaction_beside_menu: false,
             open_message_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_chat_menu: None,
@@ -3017,14 +3021,26 @@ impl App {
                     self.refocus_composer(ctx);
                 }
             }
-            Action::OpenReactionPicker { chat, message } => {
+            Action::OpenReactionPicker {
+                chat,
+                message,
+                beside_menu,
+            } => {
                 self.focus_composer = false;
                 self.emoji_start = None;
                 self.mention_start = None;
                 self.picker = None;
                 let id = crate::ui::conversation::bubble_id(&chat, &message);
+                // Anchor to the menu when it stays open, else to the hover
+                // button that opened the picker.
+                let anchor = if beside_menu {
+                    "menu-rect"
+                } else {
+                    "react-rect"
+                };
                 self.reaction_anchor =
-                    ctx.data(|data| data.get_temp::<egui::Rect>(id.with("menu-rect")));
+                    ctx.data(|data| data.get_temp::<egui::Rect>(id.with(anchor)));
+                self.reaction_beside_menu = beside_menu;
                 self.reaction_target = Some((chat, message));
                 self.picker_search.clear();
                 self.picker_focus = true;
