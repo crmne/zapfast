@@ -2944,10 +2944,7 @@ fn preview_card(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
-    let thumbnail = message
-        .thumbnail
-        .as_deref()
-        .map(|bytes| thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes));
+    let thumbnail = message.thumbnail.as_deref();
     let domain = preview
         .url
         .split("://")
@@ -2971,12 +2968,17 @@ fn preview_card(
             ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(card_width);
                 ui.horizontal(|ui| {
-                    if let Some(uri) = &thumbnail {
-                        ui.add(
+                    if let Some(bytes) = thumbnail {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
+                        // Off-screen cards are laid out too; only a visible
+                        // one keeps its thumbnail resident.
+                        if ui.is_rect_visible(rect) {
+                            let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes);
                             egui::Image::new(uri)
-                                .fit_to_exact_size(Vec2::splat(64.0))
-                                .corner_radius(4.0),
-                        );
+                                .fit_to_exact_size(rect.size())
+                                .corner_radius(4.0)
+                                .paint_at(ui, rect);
+                        }
                     }
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
