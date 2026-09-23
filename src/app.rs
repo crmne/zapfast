@@ -1761,6 +1761,14 @@ impl App {
         }
     }
 
+    fn close_chat_search(&mut self) {
+        self.chat_search_open = false;
+        self.chat_search_focus = false;
+        self.chat_search.clear();
+        self.chat_search_hits.clear();
+        self.chat_search_index = 0;
+    }
+
     /// Answers a new query for the open chat's search bar.
     fn search_in_chat(&mut self, query: String) {
         self.chat_search = query;
@@ -3099,16 +3107,12 @@ impl App {
                     self.unread_kept.insert(id);
                 }
             }
-            Action::FocusSearch => {
-                // Ctrl+F searches the open chat, like the other messengers.
-                // Without one in front it searches the chat list instead.
-                if self.open_chat.is_some() && self.page == Page::Chats {
-                    self.actions.push(Action::OpenChatSearch);
-                } else {
-                    self.actions.push(Action::FocusChatList);
-                }
-            }
+            // Ctrl+F keeps searching the chat list everywhere; the open chat
+            // has its own shortcut, Ctrl+Shift+F.
+            Action::FocusSearch => self.actions.push(Action::FocusChatList),
             Action::FocusChatList => {
+                // The list search takes over Escape and Enter from the chat's.
+                self.close_chat_search();
                 self.sidebar_visible = true;
                 self.page = Page::Chats;
                 self.focus_composer = false;
@@ -3156,6 +3160,9 @@ impl App {
                 }
             }
             Action::OpenChatSearch => {
+                if self.open_chat.is_none() || self.page != Page::Chats {
+                    return;
+                }
                 self.chat_search_open = true;
                 self.chat_search_focus = true;
                 self.chat_search.clear();
@@ -3164,11 +3171,8 @@ impl App {
                 self.focus_search = false;
             }
             Action::CloseChatSearch => {
-                self.chat_search_open = false;
-                self.chat_search_focus = false;
-                self.chat_search.clear();
-                self.chat_search_hits.clear();
-                self.chat_search_index = 0;
+                self.close_chat_search();
+                self.refocus_composer(ctx);
             }
             Action::ChatSearch(query) => self.search_in_chat(query),
             Action::StepChatSearch(step) => self.step_chat_search(step),
@@ -5010,22 +5014,21 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_f_searches_the_open_chat_and_the_list_without_one() {
+    fn ctrl_f_searches_the_list_and_ctrl_shift_f_the_open_chat() {
         let mut app = app();
         let ctx = egui::Context::default();
-        // Nothing open: Ctrl+F still reaches the chat list search.
+        // Without an open chat there is nothing to search inside.
+        app.apply(Action::OpenChatSearch, &ctx);
+        assert!(!app.chat_search_open);
+        app.open_chat = Some("1@s.whatsapp.net".into());
+        app.apply(Action::OpenChatSearch, &ctx);
+        assert!(app.chat_search_open);
+        assert!(app.chat_search_focus);
+        // Ctrl+F keeps searching the chat list, and closes the chat's bar.
         app.apply(Action::FocusSearch, &ctx);
         app.apply_actions(&ctx);
         assert!(app.focus_search);
         assert!(!app.chat_search_open);
-        // With a chat in front it opens the in-chat bar instead.
-        app.open_chat = Some("1@s.whatsapp.net".into());
-        app.focus_search = false;
-        app.apply(Action::FocusSearch, &ctx);
-        app.apply_actions(&ctx);
-        assert!(app.chat_search_open);
-        assert!(app.chat_search_focus);
-        assert!(!app.focus_search);
     }
 
     #[test]

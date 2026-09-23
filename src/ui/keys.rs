@@ -14,8 +14,14 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
                 actions.push(action);
             }
         };
+        // Checked first: a plain Ctrl+F binding also matches Ctrl+Shift+F.
+        key(
+            Modifiers::COMMAND | Modifiers::SHIFT,
+            Key::F,
+            Action::OpenChatSearch,
+        );
         key(Modifiers::COMMAND, Key::F, Action::FocusSearch);
-        key(Modifiers::COMMAND, Key::K, Action::FocusChatList);
+        key(Modifiers::COMMAND, Key::K, Action::FocusSearch);
         if app.is_linked() {
             key(
                 Modifiers::COMMAND,
@@ -98,8 +104,11 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CloseLockedFolder);
         }
     }
-    // Enter walks the open chat's matches while its bar is in front.
-    if app.chat_search_open {
+    // Enter walks the open chat's matches while its field has focus; with the
+    // composer focused, Enter keeps sending.
+    if app.chat_search_open
+        && ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search-in-chat")))
+    {
         let step = ctx.input_mut(|input| {
             if input.consume_key(Modifiers::SHIFT, Key::Enter) {
                 Some(-1)
@@ -199,8 +208,11 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
 
 /// Shortcuts shown in the help dialog.
 pub const SHORTCUTS: &[(&str, &str)] = &[
-    ("Ctrl+K", "Search chats"),
-    ("Ctrl+F", "Search the open chat (Enter for the next match)"),
+    ("Ctrl+F / Ctrl+K", "Search chats"),
+    (
+        "Ctrl+Shift+F",
+        "Search the open chat (Enter for the next match)",
+    ),
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
     ("↑", "Edit the previous message (when the input is empty)"),

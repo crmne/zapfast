@@ -232,7 +232,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   WhatsApp's `[time, date] Name:` format. Contact names and numbers are also
   selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
   `(DDD) XXXXX-XXXX`.
-- **Keyboard shortcuts.** `Ctrl+K` searches, `Alt+↑/↓` switches chats and
+- **Keyboard shortcuts.** `Ctrl+F` or `Ctrl+K` searches your chats,
+  `Ctrl+Shift+F` searches the open chat (Enter and Shift+Enter move between
+  matches), `Alt+↑/↓` switches chats and
   keeps the active chat visible in the list, `↑` in an empty input edits your
   previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
   message input, `Ctrl+N` opens New chat, and `?` (outside text fields) or
