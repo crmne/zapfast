@@ -368,7 +368,7 @@ impl Worker {
                 let recipients = if jid.is_group() {
                     client
                         .groups()
-                        .query_info(&jid)
+                        .routing_info(&jid)
                         .await
                         .map_err(|_| "Could not load the group recipients")?
                         .participants

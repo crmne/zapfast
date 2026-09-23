@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 18:50+0200\n"
+"POT-Creation-Date: 2026-09-23 19:16+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -155,15 +155,15 @@ msgstr "Trancadas"
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K para buscar · ? para atalhos de teclado"
 
-#: src/ui/conversation.rs:994
+#: src/ui/conversation.rs:998
 msgid "Type a message"
 msgstr "Digite uma mensagem"
 
-#: src/ui/conversation.rs:997
+#: src/ui/conversation.rs:1001
 msgid "Add a caption"
 msgstr "Adicione uma legenda"
 
-#: src/ui/conversation.rs:1151
+#: src/ui/conversation.rs:1155
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -171,49 +171,49 @@ msgstr ""
 "Enter envia · Shift+Enter para nova linha · *negrito* _itálico_ ~riscado~ · "
 "Ctrl+V cola uma imagem"
 
-#: src/ui/conversation.rs:1153
+#: src/ui/conversation.rs:1157
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Ctrl+Enter envia · *negrito* _itálico_ ~riscado~ · Ctrl+V cola uma imagem"
 
-#: src/ui/conversation.rs:1164
+#: src/ui/conversation.rs:1168
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Ocultar dicas de atalho (restaure em Configurações)"
 
-#: src/ui/conversation.rs:1179
+#: src/ui/conversation.rs:1183
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Todos os atalhos ({})"
 
-#: src/ui/conversation.rs:1455
+#: src/ui/conversation.rs:1459
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} mensagem não lida"
 msgstr[1] "{} mensagens não lidas"
 
-#: src/ui/conversation.rs:3058
+#: src/ui/conversation.rs:3062
 msgid "Open in system player"
 msgstr "Abrir no player do sistema"
 
-#: src/ui/conversation.rs:3126 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3130 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Dados da mensagem"
 
-#: src/ui/conversation.rs:4733
+#: src/ui/conversation.rs:4737
 msgid "Pause"
 msgstr "Pausar"
 
-#: src/ui/conversation.rs:4735
+#: src/ui/conversation.rs:4739
 #, fuzzy
 msgid "Play"
 msgstr "Reproduzida"
 
-#: src/ui/conversation.rs:4758
+#: src/ui/conversation.rs:4762
 msgid "Unmute"
 msgstr "Ativar som"
 
-#: src/ui/conversation.rs:4760
+#: src/ui/conversation.rs:4764
 msgid "Mute"
 msgstr "Silenciar"
 
@@ -240,22 +240,22 @@ msgstr "Idioma"
 msgid "Auto"
 msgstr "Automático"
 
-#: src/ui/settings.rs:186
+#: src/ui/settings.rs:188
 msgid "Pause music while recording"
 msgstr "Pausar a música ao gravar"
 
-#: src/ui/settings.rs:186
+#: src/ui/settings.rs:188
 msgid ""
 "Pause media players while you record a voice message and resume them "
 "afterwards."
 msgstr ""
 "Pausa os players enquanto você grava uma mensagem de voz e os retoma depois."
 
-#: src/ui/settings.rs:187
+#: src/ui/settings.rs:189
 msgid "Pause music while playing voice messages"
 msgstr "Pausar a música ao ouvir mensagens de voz"
 
-#: src/ui/settings.rs:187
+#: src/ui/settings.rs:189
 msgid ""
 "Pause media players while a voice or audio message plays and resume them "
 "when it stops."
@@ -263,76 +263,76 @@ msgstr ""
 "Pausa os players enquanto uma mensagem de voz ou áudio toca e os retoma "
 "quando ela termina."
 
-#: src/ui/settings.rs:226
+#: src/ui/settings.rs:228
 msgid "Window"
 msgstr "Janela"
 
-#: src/ui/settings.rs:271
+#: src/ui/settings.rs:273
 msgid "Network"
 msgstr "Rede"
 
-#: src/ui/settings.rs:303
+#: src/ui/settings.rs:305
 msgid "Account"
 msgstr "Conta"
 
-#: src/ui/settings.rs:307
+#: src/ui/settings.rs:309
 msgid "Files"
 msgstr "Arquivos"
 
-#: src/ui/settings.rs:353 src/ui/settings.rs:614 src/ui/settings.rs:776
+#: src/ui/settings.rs:355 src/ui/settings.rs:616 src/ui/settings.rs:778
 msgid "About"
 msgstr "Sobre"
 
-#: src/ui/settings.rs:434
+#: src/ui/settings.rs:436
 msgid "Add doodles"
 msgstr "Adicionar desenhos"
 
-#: src/ui/settings.rs:438
+#: src/ui/settings.rs:440
 msgid "Show the default doodles over the selected colour."
 msgstr "Mostrar os desenhos padrão sobre a cor selecionada."
 
-#: src/ui/settings.rs:583
+#: src/ui/settings.rs:585
 msgid "Change profile picture"
 msgstr "Alterar foto do perfil"
 
-#: src/ui/settings.rs:606
+#: src/ui/settings.rs:608
 msgid "Your name"
 msgstr "Seu nome"
 
-#: src/ui/settings.rs:622
+#: src/ui/settings.rs:624
 msgid "Linked device"
 msgstr "Dispositivo conectado"
 
-#: src/ui/settings.rs:633
+#: src/ui/settings.rs:635
 msgid "Edit your name and About"
 msgstr "Editar seu nome e recado"
 
-#: src/ui/settings.rs:650
+#: src/ui/settings.rs:652
 msgid "Unlink this computer"
 msgstr "Desconectar este computador"
 
-#: src/ui/settings.rs:670
+#: src/ui/settings.rs:672
 msgid "Save"
 msgstr "Salvar"
 
-#: src/ui/settings.rs:680
+#: src/ui/settings.rs:682
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/ui/settings.rs:744
+#: src/ui/settings.rs:746
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "Um cliente nativo do WhatsApp feito com Rust, egui e whatsapp-rust."
 
-#: src/ui/settings.rs:755
+#: src/ui/settings.rs:757
 #, rust-format
 msgid "Update to {version}"
 msgstr "Atualizar para {version}"
 
-#: src/ui/settings.rs:765
+#: src/ui/settings.rs:767
 msgid "Keyboard shortcuts"
 msgstr "Atalhos de teclado"
 
-#: src/ui/settings.rs:787
+#: src/ui/settings.rs:789
 msgid "Source code"
 msgstr "Código-fonte"
 
@@ -409,7 +409,7 @@ msgstr[1] "{} restantes"
 msgid "No one yet"
 msgstr "Ninguém ainda"
 
-#: src/app.rs:3799
+#: src/app.rs:3834
 msgid "This video opens in your system player"
 msgstr "Este vídeo abre no player do sistema"
 
@@ -433,11 +433,16 @@ msgstr "Carregando suas figurinhas…"
 msgid ""
 "Recent stickers appear here. Right-click one to save it. To import a pack, "
 "paste a signal.art link or open a .wastickers file."
-msgstr "As figurinhas recentes aparecem aqui. Clique com o botão direito em uma para salvá-la. Para importar um pacote, cole um link do signal.art ou abra um arquivo .wastickers."
+msgstr ""
+"As figurinhas recentes aparecem aqui. Clique com o botão direito em uma para "
+"salvá-la. Para importar um pacote, cole um link do signal.art ou abra um "
+"arquivo .wastickers."
 
 #: src/ui/picker.rs:1305
 msgid "Nothing here yet. Right-click any sticker to add it to this pack."
-msgstr "Nada aqui ainda. Clique com o botão direito em qualquer figurinha para adicioná-la a este pacote."
+msgstr ""
+"Nada aqui ainda. Clique com o botão direito em qualquer figurinha para "
+"adicioná-la a este pacote."
 
 #: src/ui/picker.rs:1318
 msgid "Saved"

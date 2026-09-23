@@ -1716,6 +1716,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 );
             }
             "nosidebar" => app.sidebar_visible = false,
+            // The chat list collapsed to avatars with unread badges.
+            "rail" => {
+                app.settings.collapse_chat_list = true;
+                app.sidebar_visible = false;
+            }
             "search" => {
                 app.search = "do".into();
                 let mut hits = Vec::new();
@@ -3010,6 +3015,7 @@ mod tests {
             "emoji-complete",
             "typers",
             "nosidebar",
+            "rail",
             "search",
             "staged",
             "compose-emoji",
@@ -3046,6 +3052,9 @@ mod tests {
                 "settings",
                 "settings,nosidebar",
                 "empty,nosidebar",
+                "rail",
+                "settings,rail",
+                "empty,rail",
                 "archived",
                 "offline",
                 "login",
@@ -5511,7 +5520,7 @@ mod tests {
     #[test]
     fn main_tab_cycle_tracks_hidden_and_read_only_controls() {
         use crate::ui::focus::Stop;
-        for page in ["nosidebar", "empty", "channel", "search", "chat"] {
+        for page in ["nosidebar", "rail", "empty", "channel", "search", "chat"] {
             let mut app = app();
             apply_flags(&mut app, Some(page));
             let ctx = egui::Context::default();
@@ -5522,6 +5531,14 @@ mod tests {
             assert_eq!(
                 controls.iter().any(|(stop, _)| *stop == Stop::Composer),
                 !matches!(page, "empty" | "channel")
+            );
+            assert_eq!(
+                controls
+                    .iter()
+                    .filter(|(stop, _)| *stop == Stop::Sidebar)
+                    .count(),
+                1,
+                "{page}: one button hides or shows the list"
             );
             if page == "nosidebar" {
                 assert_eq!(
@@ -5714,6 +5731,58 @@ mod tests {
                 .any(|id| row(&ctx, id).is_some_and(|rect| rect == focused.rect));
         }
         assert!(reached_hidden, "Tab reached chats that were out of view");
+    }
+
+    #[test]
+    fn tab_scrolls_a_focused_collapsed_avatar_into_view() {
+        let mut app = app();
+        apply_flags(&mut app, Some("settings,rail"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let height = 300.0;
+        for _ in 0..3 {
+            frame_sized(&mut app, &ctx, height, Vec::new());
+        }
+        let avatar = |ctx: &egui::Context, id: &str| {
+            ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::compact_chat_id(id)))
+        };
+        let ids: Vec<String> = app.chats.iter().map(|chat| chat.id.clone()).collect();
+        let hidden: Vec<&String> = ids
+            .iter()
+            .filter(|id| avatar(&ctx, id).is_none_or(|rect| rect.top() >= height))
+            .collect();
+        assert!(
+            !hidden.is_empty(),
+            "the window is short enough to hide avatars"
+        );
+        let mut reached_hidden = false;
+        for _ in 0..40 {
+            frame_sized(&mut app, &ctx, height, tab());
+            for _ in 0..3 {
+                frame_sized(&mut app, &ctx, height, Vec::new());
+            }
+            let Some(focused) = ctx
+                .memory(|memory| memory.focused())
+                .and_then(|id| ctx.read_response(id))
+            else {
+                continue;
+            };
+            // Settings has its own scrolling; only the rail is under test.
+            if !ids
+                .iter()
+                .any(|id| avatar(&ctx, id).is_some_and(|rect| rect == focused.rect))
+            {
+                continue;
+            }
+            assert_eq!(
+                focused.interact_rect, focused.rect,
+                "the focused avatar is fully visible"
+            );
+            reached_hidden |= hidden
+                .iter()
+                .any(|id| avatar(&ctx, id).is_some_and(|rect| rect == focused.rect));
+        }
+        assert!(reached_hidden, "Tab reached avatars that were out of view");
     }
 
     /// Records the images the UI asks for, answering at once so a frame can be

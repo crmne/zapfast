@@ -170,6 +170,9 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     let title = app.chat_title(chat);
+    // The collapsed list has its own show button and clears the traffic
+    // lights itself; only a fully hidden list leaves both to the header.
+    let sidebar_hidden = app.sidebar_mode() == crate::model::SidebarDisplayMode::Hidden;
     egui::Panel::top("chat-header")
         .show_separator_line(false)
         .frame(
@@ -180,7 +183,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         .show(ui, |ui| {
             if theme::macos_chrome(ui.ctx()) {
                 let mut drag = ui.max_rect();
-                if !app.sidebar_visible {
+                if sidebar_hidden {
                     drag.min.x += theme::traffic_light_inset(ui.ctx());
                 }
                 super::titlebar_drag(ui, drag);
@@ -188,10 +191,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             ui.horizontal(|ui| {
                 // Give both rows a fixed height so their contents align.
                 ui.set_min_height(HEADER_ROW);
-                if !app.sidebar_visible && theme::macos_chrome(ui.ctx()) {
+                if sidebar_hidden && theme::macos_chrome(ui.ctx()) {
                     ui.add_space((theme::traffic_light_inset(ui.ctx()) - 14.0).max(0.0));
                 }
-                if !app.sidebar_visible
+                if sidebar_hidden
                     && theme::icon_button(
                         ui,
                         Icon::PanelLeft,
@@ -497,6 +500,8 @@ fn emoji_suggestion(emoji: &'static emojis::Emoji) -> EmojiSuggestion {
     }
 }
 
+/// Completions for `:query`. `emojis::iter` yields each emoji once, and a
+/// skin-tone-capable one such as 👍 reports `Some(SkinTone::Default)`.
 fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
     const LIMIT: usize = 6;
     let query = query.to_lowercase();
@@ -507,7 +512,7 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
             .recent_emoji
             .iter()
             .filter_map(|emoji| emojis::get(emoji))
-            .chain(emojis::iter().filter(|emoji| emoji.skin_tone().is_none()))
+            .chain(emojis::iter())
             .filter(|emoji| seen.insert(emoji.as_str()))
             .take(LIMIT)
             .map(emoji_suggestion)
@@ -517,7 +522,6 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
 
     let mut found: Vec<_> = emojis::iter()
         .enumerate()
-        .filter(|(_, emoji)| emoji.skin_tone().is_none())
         .filter_map(|(order, emoji)| {
             emoji_match_score(emoji, &query).map(|score| (score, order, emoji))
         })
@@ -5654,6 +5658,22 @@ mod tests {
         assert_eq!(emoji_match_score(grinning, "grin"), Some(1));
         assert_eq!(emoji_match_score(grinning, "face"), Some(3));
         assert_eq!(emoji_match_score(grinning, "rocket"), None);
+    }
+
+    #[test]
+    fn completion_offers_skin_tone_capable_emoji() {
+        let directory = tempfile::tempdir().unwrap();
+        let (app, _events) = App::headless(
+            crate::paths::AppDirs::under(directory.path()),
+            crate::settings::Settings::default(),
+        );
+        let offers = |query: &str, emoji: &str| {
+            emoji_candidates(&app, query)
+                .iter()
+                .any(|suggestion| suggestion.emoji == emoji)
+        };
+        assert!(offers("pregnant", "🤰"));
+        assert!(offers("thumbsup", "👍"));
     }
 }
 

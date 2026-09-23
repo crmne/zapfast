@@ -176,12 +176,20 @@ Right-click a chat to pin, archive, or mute it for eight hours, one week, or
 indefinitely. These changes also apply on your phone. Click the chat header to
 see its picture, number, and group members.
 
+The button beside **New chat** hides the list (`Ctrl+B`). Turn on **Collapse the
+chat list to icons** in Settings to keep a narrow column of avatars instead:
+unread chats show their badge, hovering names a chat, clicking opens it, and
+`Ctrl+B` brings the full list back.
+
 ## Notifications and the tray
 
 Closing the window keeps ZapFast linked in the tray. Click the tray icon or
-launch the app again to reopen it. Notifications show the chat picture and open
-the chat when clicked. Muted chats do not send notifications, and archived
-chats stay quiet until you unarchive them. You can change both settings.
+launch the app again to reopen it. Launchers that support the Unity Launcher API
+show the unread count as a badge on the app icon: KDE Plasma's taskbar, with
+**Show badges** enabled in the Task Manager settings, and GNOME's Dash to Dock
+or Dash to Panel. Notifications show the chat picture and open the chat when
+clicked. Muted chats do not send notifications, and archived chats stay quiet
+until you unarchive them. You can change both settings.
 
 Press `Ctrl+/` or click the keyboard button under the composer to list all
 shortcuts.

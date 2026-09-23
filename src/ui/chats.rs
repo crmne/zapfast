@@ -984,6 +984,240 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     response
 }
 
+/// Width of the chat list when it is collapsed to avatars.
+const COMPACT_WIDTH: f32 = 60.0;
+/// Height of one avatar cell in the collapsed list.
+const COMPACT_CELL: f32 = 52.0;
+/// Avatar size inside a collapsed cell.
+const COMPACT_AVATAR: f32 = 36.0;
+/// Height of the rail's top row, level with the conversation header.
+const COMPACT_HEADER: f32 = 60.0;
+
+/// Where one avatar in the collapsed chat list was drawn.
+pub fn compact_chat_id(chat: &str) -> egui::Id {
+    egui::Id::new(("chat-rail", chat))
+}
+
+/// Width of the collapsed list. On macOS it also clears the traffic lights,
+/// which sit over its top row as they sit over the full list's header.
+pub fn compact_width(ctx: &egui::Context) -> f32 {
+    COMPACT_WIDTH.max(theme::traffic_light_inset(ctx))
+}
+
+/// The chat list collapsed to avatars: the list is out of the way, but every
+/// chat is still one click away.
+pub fn compact_show(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    // Its own panel id: sharing the full list's would hand that resizable
+    // panel this narrow width, and it would save it as the list's width.
+    let panel = egui::Panel::left("chat-rail")
+        .resizable(false)
+        .exact_size(compact_width(ui.ctx()))
+        .show_separator_line(false)
+        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
+    let response = panel.show(ui, |ui| {
+        let inset = theme::traffic_light_inset(ui.ctx());
+        if inset > 0.0 {
+            // The traffic lights take the top row; the button goes below.
+            let (strip, _) =
+                ui.allocate_exact_size(vec2(ui.available_width(), COMPACT_HEADER), Sense::hover());
+            super::titlebar_drag(ui, strip);
+        }
+        ui.allocate_ui_with_layout(
+            vec2(
+                ui.available_width(),
+                if inset > 0.0 { 44.0 } else { COMPACT_HEADER },
+            ),
+            Layout::centered_and_justified(egui::Direction::TopDown),
+            |ui| {
+                if theme::icon_button(
+                    ui,
+                    Icon::PanelLeft,
+                    18.0,
+                    palette.secondary,
+                    palette.text,
+                    &super::keys::label("Show the chat list (Ctrl+B)"),
+                )
+                .tab_stop(Stop::Sidebar)
+                .clicked()
+                {
+                    app.actions.push(Action::ToggleSidebar);
+                }
+            },
+        );
+        compact_list(app, ui);
+    });
+    // Separate the rail from the conversation, exactly as the full list does.
+    let rect = response.response.rect;
+    ui.painter().vline(
+        rect.right(),
+        rect.y_range(),
+        egui::Stroke::new(1.0, palette.outline),
+    );
+}
+
+/// The avatars: the chats the full list would show right now, under the same
+/// filter, search, archive, and locked-folder state.
+fn compact_list(app: &mut App, ui: &mut egui::Ui) {
+    if !app.locked_folder_open() && app.secret_code_matched() {
+        // As in the full list, the secret code reveals only the way in.
+        compact_locked_entry(app, ui);
+        return;
+    }
+    let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
+    let mut scroll_area = egui::ScrollArea::vertical()
+        .id_salt("chat-rail")
+        .auto_shrink([false, false]);
+    // Alt+Up/Down reveals the chat it opens here too.
+    let target_row = app
+        .scroll_chat_into_view
+        .as_ref()
+        .and_then(|target| chats.iter().position(|chat| chat.id == *target));
+    if let Some(target_row) = target_row {
+        let id = ui.make_persistent_id(egui::IdSalt::new("chat-rail"));
+        let current = egui::scroll_area::State::load(ui.ctx(), id)
+            .unwrap_or_default()
+            .offset
+            .y;
+        let offset = row_scroll_offset(
+            current,
+            ui.available_height(),
+            target_row,
+            COMPACT_CELL,
+            ui.spacing().item_spacing.y,
+        );
+        scroll_area = scroll_area.vertical_scroll_offset(offset);
+        app.scroll_chat_into_view = None;
+    }
+    // Only the avatars on screen are laid out, however many chats there are.
+    scroll_area.show_rows(ui, COMPACT_CELL, chats.len(), |ui, range| {
+        for chat in &chats[range] {
+            let response = ui
+                .push_id(("chat", &chat.id), |ui| compact_row(app, ui, chat))
+                .inner;
+            if response.clicked() && !app.locked_folder_open() && !app.show_archived {
+                app.actions.push(Action::KeepUnread(chat.id.clone()));
+            }
+        }
+    });
+}
+
+/// The collapsed form of the entry the secret code reveals.
+fn compact_locked_entry(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), COMPACT_CELL), Sense::click());
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Locked chats")
+    });
+    if ui.is_rect_visible(rect) {
+        if response.hovered() {
+            ui.painter().rect_filled(
+                Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_CELL - 4.0)),
+                egui::CornerRadius::same(theme::RADIUS),
+                palette.surface_hover,
+            );
+        }
+        Icon::LockOpen
+            .image(palette.accent, 22.0)
+            .paint_at(ui, Rect::from_center_size(rect.center(), Vec2::splat(22.0)));
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(compact_locked_id(), response.rect));
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Locked chats")
+        .clicked()
+    {
+        app.actions.push(Action::OpenLockedFolder);
+    }
+}
+
+/// Where the collapsed locked-chats entry was drawn.
+fn compact_locked_id() -> egui::Id {
+    egui::Id::new("chat-rail-locked")
+}
+
+/// One avatar in the collapsed chat list: a click opens the chat, hovering
+/// names it, and unread chats carry the same badge as a full row.
+fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
+    let palette = app.palette;
+    let title = app.chat_title(chat);
+    let selected = app.open_chat.as_deref() == Some(chat.id.as_str());
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), COMPACT_CELL), Sense::click());
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            format!("{title}, {} unread messages", chat.unread),
+        )
+    });
+    if ui.is_rect_visible(rect) {
+        if response.hovered() {
+            ui.painter().rect_filled(
+                Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_CELL - 4.0)),
+                egui::CornerRadius::same(theme::RADIUS),
+                palette.surface_hover,
+            );
+        }
+        let avatar_rect = Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_AVATAR));
+        let picture = app.avatar(&chat.id);
+        widgets::paint_avatar(
+            ui,
+            &palette,
+            avatar_rect,
+            &title,
+            &chat.id,
+            picture.as_deref(),
+        );
+        if chat.ephemeral_expiration.is_some() {
+            widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
+        }
+        if selected {
+            // A short accent bar stands in for the selected row's background.
+            ui.painter().rect_filled(
+                Rect::from_min_size(
+                    pos2(rect.left() + 1.0, rect.center().y - 11.0),
+                    vec2(3.0, 22.0),
+                ),
+                1.5,
+                palette.accent,
+            );
+        }
+        if chat.unread > 0 {
+            // Top right, clear of the disappearing-messages timer in the
+            // bottom right corner. A muted chat's badge is dimmed, as in the
+            // full row.
+            widgets::badge(
+                ui,
+                &palette,
+                compact_badge_center(avatar_rect),
+                chat.unread,
+                chat.muted(crate::util::now()),
+            );
+        }
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(compact_chat_id(&chat.id), response.rect));
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(title);
+    if response.clicked() {
+        app.actions.push(Action::OpenChat(chat.id.clone()));
+    }
+    response
+}
+
+/// Centre of the unread badge on a collapsed avatar. A "99+" badge, the
+/// widest, still ends inside the rail.
+fn compact_badge_center(avatar: Rect) -> egui::Pos2 {
+    pos2(avatar.right() - 6.0, avatar.top() + 2.0)
+}
+
 fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette) {
     if chat.unread > 0 && widgets::menu_item(ui, palette, Some(Icon::CheckCheck), "Mark as read") {
         app.actions.push(Action::MarkRead(chat.id.clone()));
@@ -1213,5 +1447,225 @@ mod tests {
         );
         assert!(app.scroll_chat_into_view.is_none(), "reveal was consumed");
         assert!(offset > 0.0, "the list moved down to reveal the last row");
+    }
+
+    #[test]
+    fn the_collapsed_list_is_narrow_and_opens_a_chat_on_click() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let mut first = Chat::new("491700000001@s.whatsapp.net".into(), "Alice".into());
+        first.unread = 3;
+        first.last_activity = 20;
+        let second = Chat::new("491700000002@s.whatsapp.net".into(), "Bob".into());
+        app.chats.push(first.clone());
+        app.chats.push(second.clone());
+        app.open_chat = Some(second.id.clone());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 400.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| compact_show(&mut app, ui),
+            );
+            output.textures_delta.clear();
+        };
+        frame(vec![]);
+        let rect = ctx
+            .data(|data| data.get_temp::<Rect>(compact_chat_id(&first.id)))
+            .expect("the rail draws every visible chat");
+        assert!(
+            ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(&second.id)))
+                .is_some(),
+            "the rail draws the second chat too"
+        );
+        assert!(
+            (rect.width() - compact_width(&ctx)).abs() < 1.0,
+            "an avatar cell is one panel wide, not {} points",
+            rect.width()
+        );
+        let position = rect.center();
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        assert!(
+            app.actions.contains(&Action::OpenChat(first.id.clone())),
+            "clicking an avatar opens that chat: {:?}",
+            app.actions
+        );
+    }
+
+    /// An app with `count` chats, newest first, and a context to draw it in.
+    fn rail_app(count: usize) -> (tempfile::TempDir, App, Vec<String>, egui::Context) {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let mut ids = Vec::new();
+        for index in 0..count {
+            let id = format!("49170000{index:04}@s.whatsapp.net");
+            let mut chat = Chat::new(id.clone(), format!("Chat {index:03}"));
+            chat.last_activity = 10_000 - index as i64;
+            app.chats.push(chat);
+            ids.push(id);
+        }
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        (directory, app, ids, ctx)
+    }
+
+    fn rail_frame(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(900.0, 400.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::super::keys::handle(app, ui.ctx());
+                compact_show(app, ui);
+            },
+        );
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn the_collapsed_list_lays_out_only_the_avatars_on_screen() {
+        let (_directory, mut app, ids, ctx) = rail_app(2_000);
+        rail_frame(&mut app, &ctx, vec![]);
+        let drawn = ids
+            .iter()
+            .filter(|id| ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(id)).is_some()))
+            .count();
+        assert!(drawn > 0, "the first avatars are drawn");
+        assert!(
+            drawn < 20,
+            "a 400-point window has room for a few avatars, yet {drawn} were laid out"
+        );
+    }
+
+    #[test]
+    fn alt_navigation_scrolls_the_collapsed_list_too() {
+        let (_directory, mut app, ids, ctx) = rail_app(40);
+        app.open_chat = Some(ids[0].clone());
+        rail_frame(&mut app, &ctx, vec![]);
+        assert!(
+            ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(&ids[39])))
+                .is_none(),
+            "the last avatar starts off screen"
+        );
+        let alt_up = egui::Event::Key {
+            key: egui::Key::ArrowUp,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::ALT,
+        };
+        rail_frame(&mut app, &ctx, vec![alt_up]);
+        assert!(app.actions.contains(&Action::OpenChat(ids[39].clone())));
+        assert!(app.scroll_chat_into_view.is_none(), "reveal was consumed");
+        rail_frame(&mut app, &ctx, vec![]);
+        let rect = ctx
+            .data(|data| data.get_temp::<Rect>(compact_chat_id(&ids[39])))
+            .expect("the destination avatar is laid out");
+        assert!(
+            rect.bottom() <= 400.0 + 0.5,
+            "the destination avatar is on screen: {rect:?}"
+        );
+    }
+
+    #[test]
+    fn the_secret_code_shows_only_the_way_into_the_locked_folder() {
+        let (_directory, mut app, ids, ctx) = rail_app(3);
+        app.chats[0].locked = true;
+        // A code that also matches an ordinary chat's number.
+        app.settings.set_chat_lock_code(Some("0001"));
+        app.search = "0001".into();
+        rail_frame(&mut app, &ctx, vec![]);
+        for id in &ids {
+            assert!(
+                ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(id)))
+                    .is_none(),
+                "no chat shows while the code is typed"
+            );
+        }
+        let entry = ctx
+            .data(|data| data.get_temp::<Rect>(compact_locked_id()))
+            .expect("the locked entry is drawn");
+        let position = entry.center();
+        for pressed in [true, false] {
+            rail_frame(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert!(app.actions.contains(&Action::OpenLockedFolder));
+    }
+
+    #[test]
+    fn collapsing_and_expanding_keeps_the_saved_list_width() {
+        let (_directory, mut app, _ids, ctx) = rail_app(3);
+        app.settings.sidebar_width = 400.0;
+        let frame = |app: &mut App, collapsed: bool| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    if collapsed {
+                        compact_show(app, ui);
+                    } else {
+                        show(app, ui);
+                    }
+                },
+            );
+            output.textures_delta.clear();
+        };
+        frame(&mut app, false);
+        frame(&mut app, true);
+        frame(&mut app, false);
+        assert!(
+            (app.settings.sidebar_width - 400.0).abs() < 1.0,
+            "the full list came back {} points wide",
+            app.settings.sidebar_width
+        );
+        assert!(!app.actions.contains(&Action::SettingsChanged));
+    }
+
+    #[test]
+    fn the_widest_badge_stays_inside_the_collapsed_list() {
+        let (_directory, _app, _ids, ctx) = rail_app(0);
+        let rail = Rect::from_min_size(egui::Pos2::ZERO, vec2(COMPACT_WIDTH, COMPACT_CELL));
+        let avatar = Rect::from_center_size(rail.center(), Vec2::splat(COMPACT_AVATAR));
+        let mut width = 0.0;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let palette = Palette::dark();
+            width = widgets::badge(ui, &palette, compact_badge_center(avatar), 120, true);
+        });
+        output.textures_delta.clear();
+        let center = compact_badge_center(avatar);
+        assert!(center.x + width / 2.0 <= rail.right(), "{width} too wide");
+        assert!(center.y - 10.0 >= rail.top(), "the badge fits its cell");
     }
 }
