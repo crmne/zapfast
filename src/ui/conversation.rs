@@ -1659,7 +1659,9 @@ pub fn reaction_affordance_rect(bubble: Rect, bounds: Rect, own: bool) -> Rect {
     } else {
         preferred.clamp(bounds.left(), (bounds.right() - size.x).max(bounds.left()))
     };
-    let y = (bubble.top() + 4.0).clamp(bounds.top(), (bounds.bottom() - size.y).max(bounds.top()));
+    // Centred on the whole bubble, quote and footer included.
+    let y = (bubble.center().y - size.y / 2.0)
+        .clamp(bounds.top(), (bounds.bottom() - size.y).max(bounds.top()));
     Rect::from_min_size(pos2(x, y), size)
 }
 
