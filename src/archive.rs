@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message};
 
+mod drafts;
 mod encryption;
 mod polls;
 mod receipts;
@@ -117,7 +118,8 @@ END;
 const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
-                    c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known";
+                    c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known,
+                    c.notification_sound";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -138,6 +140,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "locked", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "lock_updated_at", "INTEGER"),
     ("chats", "archive_updated_at", "INTEGER"),
+    ("chats", "notification_sound", "TEXT"),
     ("chats", "group_subject_known", "INTEGER NOT NULL DEFAULT 0"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
@@ -182,6 +185,9 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         ephemeral_expiration: row
             .get::<_, Option<u32>>(16)?
             .filter(|expiration| *expiration != 0),
+        notification_sound: row
+            .get::<_, Option<String>>(19)?
+            .and_then(|sound| serde_json::from_str(&sound).ok()),
     })
 }
 
@@ -254,6 +260,7 @@ impl Archive {
         connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         connection.execute_batch(SCHEMA)?;
         connection.execute_batch(polls::SCHEMA)?;
+        connection.execute_batch(drafts::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -265,6 +272,7 @@ impl Archive {
                 ))?;
             }
         }
+        Self::prune_receipts(&connection)?;
         Ok(Self { connection })
     }
 
@@ -350,6 +358,20 @@ impl Archive {
             "UPDATE chats SET archived = ?2, archive_updated_at = ?3 WHERE id = ?1
                 AND (archive_updated_at IS NULL OR archive_updated_at <= ?3)",
             params![id, archived, timestamp],
+        )?;
+        Ok(())
+    }
+
+    /// A chat's own notification sound; `None` follows Settings.
+    pub fn set_notification_sound(
+        &self,
+        id: &str,
+        sound: Option<&crate::settings::NotificationSound>,
+    ) -> Result<()> {
+        let sound = sound.map(|sound| serde_json::to_string(sound).unwrap_or_default());
+        self.connection.execute(
+            "UPDATE chats SET notification_sound = ?2 WHERE id = ?1",
+            params![id, sound],
         )?;
         Ok(())
     }
@@ -788,6 +810,41 @@ impl Archive {
         Ok(messages)
     }
 
+    /// Message ids in one chat whose visible text matches, oldest first so
+    /// next and previous walk forward in time. Same fields as the global
+    /// search, scoped to a single chat.
+    pub fn search_chat_messages(
+        &self,
+        chat: &str,
+        needle: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let pattern = format!(
+            "%{}%",
+            needle
+                .to_lowercase()
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        let mut statement = self.connection.prepare(
+            "SELECT id
+             FROM messages
+             WHERE chat = ?1 AND json_valid(content) AND lower(
+                     coalesce(json_extract(content, '$.text'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.caption'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.file_name'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.question'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.display_name'), '') || char(10) ||
+                     coalesce(json_extract(content, '$.name'), '')
+                 ) LIKE ?2 ESCAPE '\\'
+             ORDER BY timestamp ASC, rowid ASC
+             LIMIT ?3",
+        )?;
+        let rows = statement.query_map(params![chat, pattern, limit as i64], |row| row.get(0))?;
+        rows.collect()
+    }
+
     /// Searches visible message text, filenames, polls, contacts, and places.
     /// ASCII matching is case-insensitive; other text follows SQLite behavior.
     pub fn search_messages(&self, needle: &str, limit: usize) -> Result<Vec<Message>> {
@@ -987,6 +1044,16 @@ impl Archive {
         rows.collect()
     }
 
+    /// Video messages with their raw protobuf.
+    pub fn videos_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
+             AND json_extract(content, '$.kind') = 'video'",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
     /// Interactive messages eligible for a derived presentation upgrade.
     /// Deleted and edited rows are left intact; callers preserve local media paths.
     pub fn interactive_placeholders(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
@@ -1118,7 +1185,13 @@ impl Archive {
 
     /// Drops every chat-scoped row outside the `chats` table itself.
     fn purge_chat_rows(&self, chat: &str) -> Result<()> {
-        for table in ["messages", "group_receipts", "polls", "poll_history"] {
+        for table in [
+            "messages",
+            "group_receipts",
+            "polls",
+            "poll_history",
+            "drafts",
+        ] {
             self.connection.execute(
                 &format!("DELETE FROM {table} WHERE chat = ?1"),
                 params![chat],
@@ -1423,7 +1496,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts;",
         )
     }
 }
@@ -1456,6 +1529,58 @@ pub(crate) mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn a_chat_search_is_scoped_ordered_and_escaped() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        let other = "2@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        archive.ensure_chat(other, "Grace").expect("chat");
+        let text = |id: &str, at: i64, body: &str| {
+            let mut message = message(chat, id, at, false);
+            message.content = Content::text(body);
+            message
+        };
+        let mut elsewhere = message(other, "x1", 15, false);
+        elsewhere.content = Content::text("engine notes");
+        for message in [
+            text("m1", 10, "The Difference Engine"),
+            text("m2", 20, "Nothing here"),
+            text("m3", 30, "the engine again"),
+            elsewhere,
+        ] {
+            archive.insert_message(&message, None).expect("insert");
+        }
+        // Only this chat, oldest first, so Enter walks forward in time.
+        assert_eq!(
+            archive
+                .search_chat_messages(chat, "engine", 50)
+                .expect("search"),
+            vec!["m1".to_owned(), "m3".to_owned()]
+        );
+        // The limit keeps the oldest matches.
+        assert_eq!(
+            archive
+                .search_chat_messages(chat, "engine", 1)
+                .expect("search"),
+            vec!["m1".to_owned()]
+        );
+        // A chat whose messages do not match has no hits.
+        assert!(
+            archive
+                .search_chat_messages(other, "nothing", 50)
+                .expect("search")
+                .is_empty()
+        );
+        // Wildcards are text, like the cross-chat search.
+        assert!(
+            archive
+                .search_chat_messages(chat, "%", 50)
+                .expect("search")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1719,7 +1844,8 @@ pub(crate) mod tests {
                  INSERT INTO poll_history (chat, id) VALUES ('{chat}', 'p1');
                  INSERT INTO poll_votes (chat, poll, voter, sender, update_id, at, from_me)
                      VALUES ('{chat}', 'p1', '{chat}', '{chat}', 'u1', 150, 0);
-                 INSERT INTO group_receipts (chat, id, recipient) VALUES ('{chat}', 'm1', '{chat}');"
+                 INSERT INTO group_receipts (chat, id, recipient) VALUES ('{chat}', 'm1', '{chat}');
+                 INSERT INTO drafts (chat, text, updated_at) VALUES ('{chat}', 'unsent', 150);"
             ))
             .expect("poll and receipt rows");
         for table in CHAT_TABLES {
@@ -1732,12 +1858,13 @@ pub(crate) mod tests {
     }
 
     /// Every table keyed by chat besides `chats` itself.
-    const CHAT_TABLES: [&str; 5] = [
+    const CHAT_TABLES: [&str; 6] = [
         "messages",
         "group_receipts",
         "polls",
         "poll_history",
         "poll_votes",
+        "drafts",
     ];
 
     fn rows(archive: &Archive, table: &str, chat: &str) -> i64 {
@@ -1994,6 +2121,23 @@ pub(crate) mod tests {
             archive.put_lid("2", "1").unwrap();
             assert!(!archive.chat(phone).unwrap().unwrap().locked);
         }
+    }
+
+    #[test]
+    fn a_chat_keeps_its_own_notification_sound() {
+        use crate::settings::NotificationSound;
+        let archive = Archive::in_memory().unwrap();
+        let id = "1@s.whatsapp.net";
+        archive.ensure_chat(id, "Ada").unwrap();
+        assert_eq!(archive.chat(id).unwrap().unwrap().notification_sound, None);
+        let sound = NotificationSound::Custom("/sounds/ada.ogg".into());
+        archive.set_notification_sound(id, Some(&sound)).unwrap();
+        assert_eq!(
+            archive.chat(id).unwrap().unwrap().notification_sound,
+            Some(sound)
+        );
+        archive.set_notification_sound(id, None).unwrap();
+        assert_eq!(archive.chat(id).unwrap().unwrap().notification_sound, None);
     }
 
     #[test]

@@ -68,6 +68,12 @@ struct Cli {
     #[cfg(feature = "demo")]
     #[arg(long, value_name = "MS", default_value_t = 1500)]
     demo_shot_delay: u64,
+
+    /// Hold a synthetic pointer at `X,Y` (logical points) to capture hover
+    /// states in demo screenshots without moving the real cursor.
+    #[cfg(feature = "demo")]
+    #[arg(long, value_name = "X,Y")]
+    demo_hover: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -210,6 +216,11 @@ fn main() -> eframe::Result<()> {
         due: std::time::Instant::now() + std::time::Duration::from_millis(cli.demo_shot_delay),
         asked: false,
     });
+    #[cfg(feature = "demo")]
+    let demo_hover = cli.demo_hover.as_deref().and_then(|value| {
+        let (x, y) = value.split_once(',')?;
+        Some(egui::pos2(x.trim().parse().ok()?, y.trim().parse().ok()?))
+    });
     let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(app)));
 
     let mut update_receipt = cli.update_receipt;
@@ -261,6 +272,8 @@ fn main() -> eframe::Result<()> {
                         slot: std::sync::Arc::clone(&creator_slot),
                         #[cfg(feature = "demo")]
                         shot: creator_shot,
+                        #[cfg(feature = "demo")]
+                        hover: demo_hover,
                         #[cfg(feature = "demo")]
                         tour: cli.demo_tour.then(|| {
                             zapfast::demo::tour::Tour::new(
@@ -395,10 +408,10 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
         persistence_path: demo_persistence,
         // Do not restore window size during fixed-size screenshot runs.
         persist_window: !demo,
-        // Disable vsync because hidden Wayland windows may stop receiving frame
-        // callbacks and block the event loop. Repainting is event-driven.
+        // Hidden Wayland windows stop receiving frame callbacks, so vsync is
+        // only on where the patched winit can report them as occluded.
         glow_options: eframe::egui_glow::GlowConfiguration {
-            vsync: false,
+            vsync: zapfast::vsync::enabled(),
             ..Default::default()
         },
         ..Default::default()
@@ -414,6 +427,8 @@ struct Shell {
     shot: Option<Shot>,
     #[cfg(feature = "demo")]
     tour: Option<zapfast::demo::tour::Tour>,
+    #[cfg(feature = "demo")]
+    hover: Option<egui::Pos2>,
 }
 
 impl Drop for Shell {
@@ -474,6 +489,9 @@ impl eframe::App for Shell {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         if let (Some(tour), Some(app)) = (&mut self.tour, &mut self.app) {
             tour.input(app, ctx, input);
+        }
+        if let Some(pos) = self.hover {
+            input.events.push(egui::Event::PointerMoved(pos));
         }
     }
 

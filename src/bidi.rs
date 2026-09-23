@@ -796,6 +796,7 @@ mod tests {
     use super::*;
     use egui::text::{FontData, FontDefinitions, FontFamily, LayoutJob};
     use egui::{Color32, FontId, Pos2, vec2};
+    use std::path::PathBuf;
 
     fn assert_visual(text: &str) {
         let galley = layout_fixed(text);
@@ -989,6 +990,57 @@ mod tests {
             "ellipsis at {} should be the left edge {leftmost}",
             ellipsis.pos.x
         );
+    }
+
+    /// Distributions put the same fonts in different folders (Fedora uses
+    /// `dejavu-sans-fonts/`, `liberation-sans/`, `gnu-free/`), so look for
+    /// the known file names under the usual font roots.
+    fn find_rtl_font() -> Option<PathBuf> {
+        const NAMES: &[&str] = &[
+            "DejaVuSans.ttf",
+            "LiberationSans-Regular.ttf",
+            "FreeSans.ttf",
+            "FreeSans.otf",
+        ];
+        let mut roots = vec![
+            PathBuf::from("/usr/share/fonts"),
+            PathBuf::from("/usr/local/share/fonts"),
+        ];
+        if let Some(data) = std::env::var_os("XDG_DATA_DIRS") {
+            roots.extend(std::env::split_paths(&data).map(|dir| dir.join("fonts")));
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            roots.push(PathBuf::from(&home).join(".local/share/fonts"));
+            roots.push(PathBuf::from(home).join(".fonts"));
+        }
+        fn search(dir: &std::path::Path, depth: usize, names: &[&str]) -> Option<PathBuf> {
+            let mut subdirs = Vec::new();
+            for entry in std::fs::read_dir(dir).ok()?.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    subdirs.push(path);
+                } else if path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| names.contains(&name))
+                {
+                    return Some(path);
+                }
+            }
+            if depth == 0 {
+                return None;
+            }
+            subdirs.sort();
+            subdirs
+                .iter()
+                .find_map(|subdir| search(subdir, depth - 1, names))
+        }
+        // Prefer the first name in the list across all roots.
+        NAMES.iter().find_map(|name| {
+            roots
+                .iter()
+                .find_map(|root| search(root, 3, std::slice::from_ref(name)))
+        })
     }
 
     #[test]
@@ -1296,6 +1348,9 @@ mod tests {
             "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
             "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+            "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/gnu-free/FreeSans.ttf",
             "/System/Library/Fonts/Supplemental/Arial.ttf",
             "/Library/Fonts/Arial Unicode.ttf",
             r"C:\Windows\Fonts\arial.ttf",
@@ -1310,9 +1365,10 @@ mod tests {
                     .map(std::path::PathBuf::from)
                     .find(|path| path.is_file())
             })
+            .or_else(find_rtl_font)
             .expect(
                 "set ZAPFAST_TEST_RTL_FONT or install a Hebrew/Arabic-capable sans \
-                 (DejaVu, Liberation, Arial) for RTL layout tests",
+                 (DejaVu, Liberation, FreeSans, Arial) for RTL layout tests",
             );
         let path = path.to_str().expect("utf-8 font path");
         let mut fonts = FontDefinitions::default();

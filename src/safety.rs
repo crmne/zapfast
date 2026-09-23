@@ -28,6 +28,41 @@ pub fn external_url(value: &str) -> Option<String> {
     }
 }
 
+/// Image formats decoded by ZapFast's in-process preview.
+pub fn can_preview_image(path: &Path) -> bool {
+    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp"
+    )
+}
+
+/// The code of a WhatsApp group invite link such as
+/// `https://chat.whatsapp.com/AbCd123`, which ZapFast opens itself.
+pub fn group_invite_code(value: &str) -> Option<String> {
+    let url = reqwest::Url::parse(value.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.host_str()?.eq_ignore_ascii_case("chat.whatsapp.com")
+    {
+        return None;
+    }
+    let mut segments = url.path_segments()?.filter(|segment| !segment.is_empty());
+    let first = segments.next()?;
+    let code = if first == "invite" {
+        segments.next()?
+    } else {
+        first
+    };
+    (segments.next().is_none()
+        && (10..=40).contains(&code.len())
+        && code
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric()))
+    .then(|| code.to_owned())
+}
+
 /// Only common document/media formats go to their desktop application.
 /// Unknown files, scripts, installers and application bundles can be revealed
 /// in their folder instead. Sender-provided MIME types cannot grant permission.
@@ -80,6 +115,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn group_invite_links_are_recognised_and_nothing_else() {
+        let code = "AbCdEf1234567890XyZ";
+        for link in [
+            format!("https://chat.whatsapp.com/{code}"),
+            format!("https://chat.whatsapp.com/invite/{code}"),
+            format!("http://CHAT.whatsapp.com/{code}/"),
+            format!("https://chat.whatsapp.com/{code}?utm=1"),
+        ] {
+            assert_eq!(group_invite_code(&link).as_deref(), Some(code), "{link}");
+        }
+        for link in [
+            "https://chat.whatsapp.com/",
+            "https://chat.whatsapp.com/short",
+            "https://evil.example/AbCdEf1234567890XyZ",
+            "https://chat.whatsapp.com.evil.example/AbCdEf1234567890XyZ",
+            "https://chat.whatsapp.com/AbCdEf1234567890XyZ/extra",
+            "https://chat.whatsapp.com/AbCd-Ef1234567890XyZ",
+            "whatsapp://chat.whatsapp.com/AbCdEf1234567890XyZ",
+        ] {
+            assert_eq!(group_invite_code(link), None, "{link}");
+        }
+    }
+
+    #[test]
     fn previews_and_actions_reject_desktop_handlers() {
         for value in [
             "file:///tmp/example",
@@ -108,6 +167,28 @@ mod tests {
             external_url("mailto:test@example.com"),
             Some("mailto:test@example.com".into())
         );
+    }
+
+    #[test]
+    fn only_supported_raster_images_open_in_the_native_preview() {
+        for name in [
+            "photo.JPG",
+            "photo.jpeg",
+            "photo.png",
+            "photo.webp",
+            "photo.gif",
+        ] {
+            assert!(can_preview_image(Path::new(name)), "{name}");
+        }
+        for name in [
+            "photo.bmp",
+            "photo.heic",
+            "photo.avif",
+            "photo.jpg.exe",
+            "photo",
+        ] {
+            assert!(!can_preview_image(Path::new(name)), "{name}");
+        }
     }
 
     #[test]

@@ -110,6 +110,15 @@ protocol. These notes are for coding agents and new contributors.
   optional and only adds the SIMD paths (the AUR recipes leave it out,
   the build works without it). Frames become textures on the interface
   thread and are dropped when unseen.
+- `src/video.rs` plays other videos inside their message, one at a time,
+  with the same `mp4` and `openh264` pieces: a thread decodes from the
+  keyframe before the start (openh264 must not flush after each packet or
+  B-frames stop it) and streams scaled frames with presentation times; the
+  interface thread shows the due frame in one texture. rodio's symphonia
+  decodes the AAC track and its position steers the clock. Non-H.264 files go
+  to the system player. `Action::PlayVideo/SeekVideo/ToggleVideoSound` drive
+  it; leaving the chat stops it and an unseen video pauses. Round video
+  messages (PTV) are `Content::Video { note: true }` and draw as circles.
 - Message bodies paint through `markup::paint_selectable` and single lines
   through `widgets::selectable_rich_text`: both hand the galley to
   `egui::text_selection::LabelSelectionState` (which paints it) and only
@@ -336,3 +345,19 @@ A release is not finished when the tag is pushed. Do these in order:
   compiled.
 - Never log message contents, phone numbers, keys, or QR payloads at a
   level that ships. The log file is meant to be attached to bug reports.
+
+## Disk use
+
+Build caches save hours of recompiling, so keep them, but keep them small:
+
+- Use one build cache per project: `target/` in the main checkout. Git
+  worktrees and parallel agents set `CARGO_TARGET_DIR` to that directory
+  instead of building their own; a fresh target costs 20 GB or more.
+- Never put build output or large scratch files in `/tmp`. It is a small
+  in-memory filesystem with a per-user quota, and filling it breaks every
+  shell on the machine.
+- Rotate the cache: `cargo sweep --time 14` (from `cargo install cargo-sweep`)
+  removes artifacts unused for two weeks. If `target/` still exceeds about
+  60 GB, run `cargo clean`.
+- Delete one-off QA, packaging, and release-validation directories (under
+  `.cache/` or `~/.cache/`) once their result is recorded.

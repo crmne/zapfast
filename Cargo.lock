@@ -972,6 +972,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "concat-string"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7439becb5fafc780b6f4de382b1a7a3e70234afe783854a4702ee8adbb838609"
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1460,6 +1466,11 @@ name = "downcast-rs"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
+
+[[package]]
+name = "dpi"
+version = "0.1.1"
+source = "git+https://github.com/crmne/winit?rev=c8df61a52b8b563e1bb65e0f1d8630289d1c1bd6#c8df61a52b8b563e1bb65e0f1d8630289d1c1bd6"
 
 [[package]]
 name = "dpi"
@@ -2599,6 +2610,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
 
 [[package]]
+name = "include-po"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37548ea382c7b78f2b34fc993353fda9792d8a074b93dfce37f778029d7606b9"
+dependencies = [
+ "nom",
+ "nom-language",
+ "thiserror 2.0.20",
+ "tr",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3000,6 +3023,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
 
 [[package]]
+name = "linereader"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d921fea6860357575519aca014c6e22470585accdd543b370c404a8a72d0dd1d"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3193,7 +3225,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1dd04e60bc0b07438a6771710ee1698f98f6ebbc7f89b61264af1563b8aeb878"
 dependencies = [
  "crossbeam-channel",
- "dpi",
+ "dpi 0.1.2",
  "keyboard-types",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
@@ -3294,6 +3326,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "nom-language"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29"
+dependencies = [
+ "nom",
 ]
 
 [[package]]
@@ -4145,6 +4186,16 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide 0.8.9",
+]
+
+[[package]]
+name = "polib"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee83e5a284d919e51b071969bbf2d12d6943857aab02d84c5cc449373c9f3b7b"
+dependencies = [
+ "concat-string",
+ "linereader",
 ]
 
 [[package]]
@@ -5158,6 +5209,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "socks"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0c3dbbd9ae980613c6dd8e28a9407b50509d3803b57624d5dfe8315218cd58b"
+dependencies = [
+ "byteorder",
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "sqlite-wasm-rs"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5386,6 +5448,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -5730,6 +5801,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
+name = "tr"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79d30c7e79732253d80e9d619007002c8f3a362b0816e37340af648d4e2c6092"
+
+[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5893,6 +5970,7 @@ dependencies = [
  "percent-encoding",
  "rustls",
  "rustls-pki-types",
+ "socks",
  "ureq-proto",
  "utf8-zero",
  "webpki-roots",
@@ -6679,6 +6757,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6686,6 +6780,12 @@ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows"
@@ -7141,8 +7241,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6755fa58a9f8350bd1e472d4c3fcc25f824ec358933bba33306d0b63df5978d"
+source = "git+https://github.com/crmne/winit?rev=c8df61a52b8b563e1bb65e0f1d8630289d1c1bd6#c8df61a52b8b563e1bb65e0f1d8630289d1c1bd6"
 dependencies = [
  "ahash",
  "android-activity",
@@ -7156,7 +7255,7 @@ dependencies = [
  "core-foundation 0.9.4",
  "core-graphics",
  "cursor-icon",
- "dpi",
+ "dpi 0.1.1",
  "js-sys",
  "libc",
  "memmap2",
@@ -7355,6 +7454,7 @@ dependencies = [
  "anyhow",
  "apple-native-keyring-store",
  "arboard",
+ "base64 0.22.1",
  "cbc",
  "clap",
  "directories",
@@ -7366,12 +7466,15 @@ dependencies = [
  "getrandom 0.4.3",
  "hkdf",
  "hmac",
+ "http",
  "icu_normalizer",
  "icu_properties",
  "image",
+ "include-po",
  "jiff",
  "keyring-core",
  "ksni",
+ "libc",
  "log",
  "memmap2",
  "mime_guess2",
@@ -7386,6 +7489,7 @@ dependencies = [
  "openh264",
  "opus",
  "png 0.18.1",
+ "polib",
  "qrcode",
  "rand 0.10.2",
  "raw-window-handle",
@@ -7399,18 +7503,24 @@ dependencies = [
  "serde_json",
  "sha2",
  "skrifa",
+ "sys-locale",
  "tauri-winrt-notification",
  "tempfile",
  "tokio",
+ "tokio-websockets",
+ "tr",
  "tray-icon",
  "unicode-bidi",
  "unicode-segmentation",
  "ureq",
+ "wayland-client",
  "webp-animation",
  "whatsapp-rust",
+ "windows 0.62.2",
  "windows-native-keyring-store",
  "windows-sys 0.60.2",
  "winresource",
+ "zbus",
  "zbus-secret-service-keyring-store",
  "zeroize",
  "zip",
