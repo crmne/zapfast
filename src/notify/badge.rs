@@ -8,9 +8,13 @@
 //! `count`/`count-visible` property pair. Nothing is called and no name is
 //! claimed, so emitting it is the whole implementation; other launchers ignore
 //! it.
+//!
+//! A worker thread owns the session-bus connection, so a slow or missing bus
+//! never delays a frame. The connection stays open while the app runs; some
+//! launchers clear the badge when its sender disconnects.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::mpsc;
 
 use zbus::zvariant::Value;
 
@@ -29,23 +33,11 @@ fn desktop_file() -> String {
     std::env::var("FLATPAK_ID").unwrap_or_else(|_| "zapfast".to_owned())
 }
 
-/// One session-bus connection, reused for every update.
-fn connection() -> Option<&'static zbus::blocking::Connection> {
-    static CONNECTION: LazyLock<Option<zbus::blocking::Connection>> =
-        LazyLock::new(|| match zbus::blocking::Connection::session() {
-            Ok(connection) => Some(connection),
-            Err(error) => {
-                log::debug!("no session bus for the taskbar badge: {error}");
-                None
-            }
-        });
-    CONNECTION.as_ref()
-}
-
 /// Counts unread messages on the taskbar icon through the Unity Launcher API.
 #[derive(Default)]
 pub struct Badge {
     shown: Option<u32>,
+    worker: Option<mpsc::Sender<u32>>,
 }
 
 impl Badge {
@@ -54,7 +46,8 @@ impl Badge {
         let Some(count) = self.pending(count) else {
             return;
         };
-        emit(count);
+        // A worker that could not reach the bus has exited; sending then fails.
+        let _ = self.worker.get_or_insert_with(spawn).send(count);
     }
 
     /// The count to publish, or `None` when it matches the last one.
@@ -68,10 +61,35 @@ impl Badge {
     }
 }
 
-fn emit(count: u32) {
-    let Some(connection) = connection() else {
-        return;
-    };
+/// Starts the thread that connects to the session bus and emits each count.
+fn spawn() -> mpsc::Sender<u32> {
+    let (sender, counts) = mpsc::channel::<u32>();
+    let spawned = std::thread::Builder::new()
+        .name("taskbar-badge".into())
+        .spawn(move || {
+            let connection = match zbus::blocking::Connection::session() {
+                Ok(connection) => connection,
+                Err(error) => {
+                    log::debug!("no session bus for the taskbar badge: {error}");
+                    return;
+                }
+            };
+            let uri = launcher_uri(&desktop_file());
+            while let Ok(mut count) = counts.recv() {
+                // Only the latest of several queued counts matters.
+                while let Ok(next) = counts.try_recv() {
+                    count = next;
+                }
+                emit(&connection, &uri, count);
+            }
+        });
+    if let Err(error) = spawned {
+        log::debug!("could not start the taskbar badge thread: {error}");
+    }
+    sender
+}
+
+fn emit(connection: &zbus::blocking::Connection, uri: &str, count: u32) {
     let mut properties: HashMap<&str, Value> = HashMap::new();
     if count > 0 {
         properties.insert("count", Value::from(i64::from(count)));
@@ -80,13 +98,12 @@ fn emit(count: u32) {
         // Zero clears the badge; the count itself is not meaningful then.
         properties.insert("count-visible", Value::from(false));
     }
-    let body = (launcher_uri(&desktop_file()), properties);
     if let Err(error) = connection.emit_signal(
         None::<&str>,
         "/com/canonical/unity/launcherentry/zapfast",
         "com.canonical.Unity.LauncherEntry",
         "Update",
-        &body,
+        &(uri, properties),
     ) {
         log::debug!("taskbar badge not updated: {error}");
     }

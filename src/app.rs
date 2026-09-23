@@ -418,6 +418,7 @@ impl App {
         let backend = Backend::spawn(dirs.clone(), waker.clone());
         let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
         app.pauses_media = true;
+        app.badge = Some(Default::default());
         app.custom_themes.enable_desktop_themes();
         app.load_custom_themes();
         if options.tray {
@@ -449,10 +450,10 @@ impl App {
     /// Creates a disconnected app and event sender for demos and tests.
     pub fn headless(dirs: AppDirs, settings: Settings) -> (Self, std::sync::mpsc::Sender<Event>) {
         let (backend, events) = Backend::detached();
-        let mut app = Self::with_backend(dirs, settings, backend, Waker::default());
-        // Demo and test runs must not put a badge on the real taskbar.
-        app.badge = None;
-        (app, events)
+        (
+            Self::with_backend(dirs, settings, backend, Waker::default()),
+            events,
+        )
     }
 
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
@@ -608,7 +609,7 @@ impl App {
             control_commands: None,
             notification_opens: Default::default(),
             notifications: Default::default(),
-            badge: Some(Default::default()),
+            badge: None,
         };
         // A hand-edited speed snaps to a supported one, so a speed control
         // always shows the speed that plays.
