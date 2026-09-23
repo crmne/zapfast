@@ -1697,7 +1697,14 @@ fn reaction_affordance(
     if bounds.width() < REACTION_AFFORDANCE_SIZE || bounds.height() < REACTION_AFFORDANCE_SIZE {
         return;
     }
-    let rect = reaction_affordance_rect(bubble.rect, bounds, message.from_me);
+    // Only the part of the bubble on screen can be hovered. Anchoring to it
+    // keeps a bubble scrolled mostly out of view from parking its controls,
+    // and catching the pointer, at the edge of the transcript.
+    let shown = bubble.rect.intersect(bounds);
+    if shown.height() < REACTION_AFFORDANCE_SIZE || shown.width() <= 0.0 {
+        return;
+    }
+    let rect = reaction_affordance_rect(shown, bounds, message.from_me);
     let pointer = ui.input(|input| input.pointer.interact_pos());
     // Stay hidden under any floating layer, as the context menu does. The
     // affordance sits beside the bubble, so test the bubble itself rather than
@@ -1721,7 +1728,26 @@ fn reaction_affordance(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
     });
     theme::reveal_focus(&response);
-    let revealed = reaction_affordance_visible(pointer, bubble.rect, rect);
+    // Reply sits one step further out, where the chat accepts messages.
+    let can_reply = view.chat.can_send()
+        && !matches!(
+            message.content,
+            Content::Revoked | Content::PhoneOnly { .. }
+        );
+    let step = REACTION_AFFORDANCE_SIZE + 4.0;
+    let outward = if rect.center().x < bubble.rect.center().x {
+        -step
+    } else {
+        step
+    };
+    let reply_rect = rect.translate(vec2(outward, 0.0));
+    let reply_fits = can_reply && bounds.contains_rect(reply_rect);
+    let reach = if reply_fits {
+        rect.union(reply_rect)
+    } else {
+        rect
+    };
+    let revealed = reaction_affordance_visible(pointer, shown, reach);
     if ui.is_rect_visible(rect) && (response.has_focus() || (uncovered && revealed)) {
         ui.painter().circle_filled(
             rect.center(),
@@ -1750,6 +1776,43 @@ fn reaction_affordance(
         .clicked()
     {
         actions.push(open_reaction_picker_action(&view.chat.id, &message.id));
+    }
+    if !reply_fits {
+        return;
+    }
+    let reply = ui.interact(reply_rect, bubble.id.with("reply"), Sense::click());
+    reply.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Reply")
+    });
+    theme::reveal_focus(&reply);
+    if ui.is_rect_visible(reply_rect) && (reply.has_focus() || (uncovered && revealed)) {
+        ui.painter().circle_filled(
+            reply_rect.center(),
+            reply_rect.width() / 2.0,
+            if reply.hovered() {
+                view.palette.surface_hover
+            } else {
+                view.palette.surface.gamma_multiply(0.72)
+            },
+        );
+        theme::paint_icon(
+            ui,
+            Icon::Reply,
+            reply_rect.shrink(5.0),
+            15.0,
+            if reply.hovered() {
+                view.palette.text
+            } else {
+                view.palette.secondary
+            },
+        );
+    }
+    if reply
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Reply")
+        .clicked()
+    {
+        actions.push(Action::Reply(message.id.clone()));
     }
 }
 
