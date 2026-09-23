@@ -1,0 +1,6 @@
+src/model.rs
+src/util.rs
+src/ui/chats.rs
+src/ui/conversation.rs
+src/ui/dialogs.rs
+src/ui/settings.rs
