@@ -614,6 +614,7 @@ impl Worker {
             && matches!(
                 event,
                 Event::Chats(_)
+                    | Event::Drafts(_)
                     | Event::ChatUpdated(_)
                     | Event::Messages { .. }
                     | Event::MessageUpdated(_)
@@ -742,6 +743,7 @@ impl Worker {
                     self.polish_chat(chat);
                 }
                 self.emit(Event::Chats(chats));
+                self.emit(Event::Drafts(self.archive.drafts().unwrap_or_default()));
             }
             Err(error) => log::warn!("could not list chats: {error}"),
         }
@@ -1774,6 +1776,7 @@ impl Worker {
         let _ = std::fs::remove_dir_all(self.dirs.avatar_cache_dir());
         let _ = std::fs::remove_dir_all(self.dirs.media_cache_dir());
         self.emit(Event::Chats(Vec::new()));
+        self.emit(Event::Drafts(Vec::new()));
         self.privacy_ready = false;
         self.privacy_recovering = false;
         self.privacy_retry = Instant::now();
@@ -2915,6 +2918,16 @@ impl Worker {
                 message,
                 to_chat,
             } => self.forward_message(from_chat, message, to_chat),
+            // Stores the open chat's unsent text, or clears it when empty.
+            Command::SaveDraft { chat, text } => {
+                let at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_secs() as i64)
+                    .unwrap_or_default();
+                if let Err(error) = self.archive.set_draft(&chat, &text, at) {
+                    eprintln!("draft not stored: {error}");
+                }
+            }
             Command::Composing { chat, composing } => {
                 let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
                     return;

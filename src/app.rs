@@ -1168,6 +1168,13 @@ impl App {
                     self.me_name = name;
                     self.me_about = about;
                 }
+                Event::Drafts(drafts) => {
+                    // Unsent text stored by an earlier session. Text typed in
+                    // this session wins over the stored copy.
+                    for (chat, text) in drafts {
+                        self.drafts.entry(chat).or_insert(text);
+                    }
+                }
                 Event::Chats(chats) => {
                     for chat in &chats {
                         if chat.unread == 0 {
@@ -1580,8 +1587,21 @@ impl App {
                 .insert(id.to_owned(), std::mem::take(&mut self.composer));
             self.draft_mentions
                 .insert(id.to_owned(), std::mem::take(&mut self.composer_mentions));
+            self.store_draft(
+                id,
+                self.drafts.get(id).map(String::as_str).unwrap_or_default(),
+            );
         }
         self.leave_chat(id);
+    }
+
+    /// Mirrors a chat's draft into the encrypted archive, so unsent text
+    /// survives a restart. An empty text clears the stored row.
+    fn store_draft(&self, chat: &str, text: &str) {
+        self.backend.send(Command::SaveDraft {
+            chat: chat.to_owned(),
+            text: text.to_owned(),
+        });
     }
 
     fn handle_media(&mut self, chat: &str, id: &str, result: Result<PathBuf, String>) {
@@ -1717,6 +1737,8 @@ impl App {
                     );
                 }
                 self.stop_composing(&previous);
+                let draft = self.drafts.get(&previous).cloned().unwrap_or_default();
+                self.store_draft(&previous, &draft);
             }
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
@@ -1831,6 +1853,8 @@ impl App {
             });
             return;
         }
+        // The text is on its way, so there is nothing left to restore.
+        self.store_draft(&chat, "");
         self.backend.send(Command::SendText {
             chat,
             text,

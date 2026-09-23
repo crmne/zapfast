@@ -164,6 +164,11 @@ pub enum Command {
         chat: ChatId,
         composing: bool,
     },
+    /// Stores the open chat's unsent text, so it survives a restart.
+    SaveDraft {
+        chat: ChatId,
+        text: String,
+    },
     /// Marks a visible chat read and optionally sends receipts.
     MarkRead {
         chat: ChatId,
@@ -461,6 +466,8 @@ pub enum Event {
     },
     /// Full chat list, newest first.
     Chats(Vec<Chat>),
+    /// Unsent text stored for each chat, sent once at startup.
+    Drafts(Vec<(ChatId, String)>),
     ChatUpdated(Box<Chat>),
     /// Chat messages in ascending order. `older` prepends them; `complete`
     /// means the archive has no earlier rows.
