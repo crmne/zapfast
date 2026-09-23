@@ -85,7 +85,25 @@ impl Conversation {
         } else {
             for message in incoming {
                 match self.messages.iter_mut().find(|m| m.id == message.id) {
-                    Some(existing) => *existing = message,
+                    Some(existing) => {
+                        // A reload or scroll delivers a freshly classified copy
+                        // of an already-loaded message whose Media has no local
+                        // path and a default state. Replacing it would throw
+                        // away an in-flight download and re-fetch media already
+                        // on disk, so keep the runtime-only fields (as
+                        // `MessageUpdated` already does for the state).
+                        let media = existing
+                            .content
+                            .media()
+                            .map(|media| (media.state.clone(), media.path.clone()));
+                        *existing = message;
+                        if let (Some((state, path)), Some(media)) =
+                            (media, existing.content.media_mut())
+                        {
+                            media.state = state;
+                            media.path = path;
+                        }
+                    }
                     None => self.messages.push(message),
                 }
             }
@@ -4040,6 +4058,47 @@ mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn merge_keeps_a_downloaded_medias_path_and_state() {
+        let mut conversation = Conversation::default();
+        let chat = "fixture@s.whatsapp.net";
+        let image = |path: Option<PathBuf>, state: MediaState| Message {
+            content: Content::Image {
+                caption: None,
+                media: Media {
+                    mime: "image/jpeg".into(),
+                    size: 100,
+                    width: None,
+                    height: None,
+                    path,
+                    state,
+                },
+            },
+            ..message(chat, "picture", 1)
+        };
+        conversation.merge(vec![image(None, MediaState::Idle)], false);
+        // A download lands, then is marked failed after the fact.
+        let downloaded = PathBuf::from("/tmp/picture.jpg");
+        if let Some(media) = conversation
+            .message_mut("picture")
+            .expect("loaded")
+            .content
+            .media_mut()
+        {
+            media.path = Some(downloaded.clone());
+            media.state = MediaState::Failed("gone".into());
+        }
+        // A reload delivers the same message freshly classified, without the
+        // local path or the runtime state.
+        conversation.merge(vec![image(None, MediaState::Idle)], false);
+        let media = conversation
+            .message("picture")
+            .and_then(|message| message.content.media().cloned())
+            .expect("still present");
+        assert_eq!(media.path, Some(downloaded));
+        assert_eq!(media.state, MediaState::Failed("gone".into()));
     }
 
     #[test]
