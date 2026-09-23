@@ -243,9 +243,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   chats stay quiet until you unarchive them. Windows notifications
   identify ZapFast as the sender and show chat pictures as small circular icons;
   installed and portable builds register this identity in the current user's registry.
-  On Linux,
-  clicking a notification opens the chat, and reading the chat here or on another
-  device dismisses its outstanding notifications. On macOS, notifications use
+  On Linux and Windows, clicking a notification
+  opens the chat at the message it announced, and reading the chat here or on
+  another device dismisses its outstanding notifications. On macOS, notifications use
   the installed ZapFast application's identity without an application chooser;
   unregistered development builds skip notifications if that identity is unavailable.
   **Message sound** and **Group sound** in Settings choose Pidgin's classic

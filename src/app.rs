@@ -392,8 +392,8 @@ pub struct App {
     pub wants_show: bool,
     /// Requests received from later launches.
     control_commands: Option<std::sync::Arc<std::sync::Mutex<Vec<ControlCommand>>>>,
-    /// Chat ids from clicked notifications.
-    notification_opens: std::sync::Arc<std::sync::Mutex<Vec<ChatId>>>,
+    /// Chats and messages from clicked notifications.
+    notification_opens: std::sync::Arc<std::sync::Mutex<Vec<crate::notify::NotificationTarget>>>,
     notifications: crate::notify::Notifications,
     /// Unread count on the taskbar icon, where the desktop reads it. `None`
     /// for demo and test runs, which must not touch the real taskbar.
@@ -718,16 +718,21 @@ impl App {
         }
     }
 
-    /// Opens chats from clicked notifications, creating a window when needed.
+    /// Opens the messages announced by clicked notifications, creating a
+    /// window when needed. The click carries the message, so the reader lands
+    /// on what the notification showed, not on the end of the chat.
     fn handle_notification_opens(&mut self) {
-        let opened: Vec<ChatId> = std::mem::take(
+        let opened: Vec<crate::notify::NotificationTarget> = std::mem::take(
             &mut *self
                 .notification_opens
                 .lock()
                 .unwrap_or_else(|p| p.into_inner()),
         );
-        for chat in opened {
-            self.actions.push(Action::OpenChat(chat));
+        for target in opened {
+            self.actions.push(Action::OpenMessage {
+                chat: target.chat,
+                message: target.message,
+            });
             self.actions.push(Action::ShowWindow);
         }
     }
@@ -775,7 +780,10 @@ impl App {
             body,
             picture,
             sound,
-            chat_id.to_owned(),
+            crate::notify::NotificationTarget {
+                chat: chat_id.to_owned(),
+                message: message.id.clone(),
+            },
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
         );
@@ -5803,6 +5811,39 @@ mod tests {
             commands.try_recv().unwrap(),
             Command::MarkPlayed { receipts: true, .. }
         ));
+    }
+
+    #[test]
+    fn a_clicked_notification_opens_the_message_it_announced() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.chats = vec![Chat::new(chat.into(), "Ada".into())];
+        app.conversations.entry(chat.into()).or_default().merge(
+            vec![message(chat, "first", 1), message(chat, "second", 2)],
+            false,
+        );
+        app.notification_opens
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(crate::notify::NotificationTarget {
+                chat: chat.into(),
+                message: "second".into(),
+            });
+
+        app.handle_notification_opens();
+        app.apply_actions(&ctx);
+
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some(chat),
+            "the click opens its chat"
+        );
+        assert_eq!(
+            app.scroll_anchor.as_deref(),
+            Some("second"),
+            "and brings the announced message into view"
+        );
     }
 
     fn message(chat: &str, id: &str, timestamp: i64) -> Message {

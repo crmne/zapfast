@@ -1,7 +1,8 @@
 //! Desktop notifications when the app is hidden, unfocused, or on another chat.
 //!
 //! Delivery uses the platform notification service. Each notification runs on
-//! its own thread because delivery and click handling can block.
+//! its own thread because delivery and click handling can block. A click hands
+//! back the chat and the message it announced.
 
 use crate::settings::NotificationSound;
 use std::path::PathBuf;
@@ -23,6 +24,15 @@ pub struct Badge;
 impl Badge {
     /// Does nothing; no desktop here reads a taskbar badge.
     pub fn set(&mut self, _count: u32) {}
+}
+
+/// Chat and message a clicked notification opens. The message id travels with
+/// the click, so the reader lands on what was announced instead of on the end
+/// of the chat.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotificationTarget {
+    pub chat: String,
+    pub message: String,
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -85,11 +95,11 @@ impl Notifications {
         body: String,
         picture: Option<PathBuf>,
         sound: NotificationSound,
-        chat: String,
-        opened: Arc<Mutex<Vec<String>>>,
+        target: NotificationTarget,
+        opened: Arc<Mutex<Vec<NotificationTarget>>>,
         wake: impl Fn() + Send + 'static,
     ) {
-        let cancelled = self.register(&chat);
+        let cancelled = self.register(&target.chat);
         let spawned = std::thread::Builder::new()
             .name("notification".into())
             .spawn(move || {
@@ -100,7 +110,7 @@ impl Notifications {
                     &body,
                     picture.as_deref(),
                     system_sound,
-                    chat,
+                    target,
                     opened,
                     wake,
                     cancelled,
@@ -171,8 +181,8 @@ fn deliver(
     body: &str,
     picture: Option<&std::path::Path>,
     system_sound: bool,
-    chat: String,
-    opened: Arc<Mutex<Vec<String>>>,
+    target: NotificationTarget,
+    opened: Arc<Mutex<Vec<NotificationTarget>>>,
     wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<()>,
 ) {
@@ -214,7 +224,7 @@ fn deliver(
                     _ = &mut cancelled => handle.close_async().await,
                     _ = handle.wait_for_action_async(|action| {
                         if matches!(action, notify_rust::NotificationResponse::Default) {
-                            opened.lock().unwrap_or_else(|p| p.into_inner()).push(chat);
+                            opened.lock().unwrap_or_else(|p| p.into_inner()).push(target);
                             wake();
                         }
                     }) => {}
@@ -232,15 +242,15 @@ fn deliver(
     body: &str,
     picture: Option<&std::path::Path>,
     system_sound: bool,
-    _chat: String,
-    _opened: Arc<Mutex<Vec<String>>>,
-    _wake: impl Fn() + Send + 'static,
+    target: NotificationTarget,
+    opened: Arc<Mutex<Vec<NotificationTarget>>>,
+    wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<()>,
 ) {
     if matches!(
         cancelled.try_recv(),
         Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ) && let Err(error) = windows::show(title, body, picture, system_sound)
+    ) && let Err(error) = windows::show(title, body, picture, system_sound, target, opened, wake)
     {
         log::debug!("no Windows notification: {error}");
     }
@@ -253,8 +263,8 @@ fn deliver(
     body: &str,
     picture: Option<&std::path::Path>,
     system_sound: bool,
-    _chat: String,
-    _opened: Arc<Mutex<Vec<String>>>,
+    _target: NotificationTarget,
+    _opened: Arc<Mutex<Vec<NotificationTarget>>>,
     _wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<()>,
 ) {
@@ -348,7 +358,10 @@ mod tests {
             "A test from ZapFast, with a picture".into(),
             picture,
             NotificationSound::System,
-            "test".into(),
+            NotificationTarget {
+                chat: "test".into(),
+                message: "test-message".into(),
+            },
             Default::default(),
             || {},
         );

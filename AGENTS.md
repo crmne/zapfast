@@ -205,8 +205,9 @@ protocol. These notes are for coding agents and new contributors.
   exists). `src/single_instance.rs` holds a loopback port so a second
   launch surfaces the first. `src/notify.rs` sends desktop notifications
   for `Event::Incoming` (live messages from others, not history) when the
-  reader is away from that chat. macOS has no title bar: the content runs
-  to the top. `src/macos.rs` keeps native application menus alive across window
+  reader is away from that chat; a click carries the chat and the message
+  id, so the reader lands on the announced message. macOS has no title bar:
+  the content runs to the top. `src/macos.rs` keeps native application menus alive across window
   recreation and aligns traffic lights with the chat header. Linking retains
   `ui::titlebar_strip`; other headers reserve horizontal space for the buttons.
 - Group delivery uses `archive::receipts`: save the recipients when filing an
