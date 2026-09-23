@@ -6,7 +6,8 @@ use crate::app::App;
 use crate::model::{Action, Chat, Dialog, Page};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
-    if app.image_preview.is_some() && preview_keys(app, ctx) {
+    if app.image_preview.is_some() {
+        preview_keys(app, ctx);
         return;
     }
     let editing_text = ctx.text_edit_focused();
@@ -183,9 +184,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     app.actions.extend(actions);
 }
 
-/// Handles keys while the image preview is open and swallows them so no
-/// shortcut reaches the chat behind it.
-fn preview_keys(app: &mut App, ctx: &egui::Context) -> bool {
+/// Handles keys while the image preview is open. No chat shortcut runs, and
+/// typing and clipboard input are swallowed; Tab, Enter, Space and the arrows
+/// stay for the preview's own controls.
+fn preview_keys(app: &mut App, ctx: &egui::Context) {
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         if input.consume_key(Modifiers::NONE, Key::Escape) {
@@ -209,7 +211,6 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) -> bool {
             .retain(|event| !crate::image_preview::consumes_key(event));
     });
     app.actions.extend(actions);
-    true
 }
 
 /// Shortcuts shown in the help dialog.

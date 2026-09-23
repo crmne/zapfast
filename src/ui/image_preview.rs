@@ -133,7 +133,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 
 /// Size the image is drawn at from the texture's intrinsic pixel dimensions:
 /// fitted into the canvas, or scaled by the preview's zoom factor. Zoom is
-/// applied here only; the texture itself is requested at `canvas` size.
+/// applied here only. The size hint passed when loading does not change the
+/// texture: egui decodes raster formats (all the preview accepts) once at full
+/// resolution and reports the source size, whatever size is asked for.
 fn display_size(original: Vec2, canvas: Vec2, fit: bool, zoom: f32) -> Vec2 {
     let (width, height) = if fit {
         crate::image_preview::fit_size(original.x, original.y, canvas.x, canvas.y)
