@@ -898,6 +898,8 @@ pub enum Action {
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
+    /// Registers or removes the login entry that starts ZapFast in the tray.
+    SetStartWithSystem(bool),
     ZoomBy(f32),
     ResetZoom,
     /// Requests a pairing code for a phone number.

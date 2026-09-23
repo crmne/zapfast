@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 10:35+0200\n"
+"POT-Creation-Date: 2026-09-23 10:38+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Spanish\n"
@@ -143,19 +143,19 @@ msgstr "Buscar"
 msgid "Locked"
 msgstr "Bloqueados"
 
-#: src/ui/conversation.rs:88
+#: src/ui/conversation.rs:87
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K para buscar · ? para atajos de teclado"
 
-#: src/ui/conversation.rs:909
+#: src/ui/conversation.rs:908
 msgid "Type a message"
 msgstr "Escribe un mensaje"
 
-#: src/ui/conversation.rs:912
+#: src/ui/conversation.rs:911
 msgid "Add a caption"
 msgstr "Añade un título"
 
-#: src/ui/conversation.rs:1064
+#: src/ui/conversation.rs:1063
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -163,16 +163,16 @@ msgstr ""
 "Enter envía · Shift+Enter para nueva línea · *negrita* _cursiva_ ~tachado~ · "
 "Ctrl+V pega una imagen"
 
-#: src/ui/conversation.rs:1066
+#: src/ui/conversation.rs:1065
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Ctrl+Enter envía · *negrita* _cursiva_ ~tachado~ · Ctrl+V pega una imagen"
 
-#: src/ui/conversation.rs:1077
+#: src/ui/conversation.rs:1076
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Ocultar sugerencias de atajos (restaurar en Ajustes)"
 
-#: src/ui/conversation.rs:1092
+#: src/ui/conversation.rs:1091
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Todos los atajos ({})"
@@ -204,16 +204,14 @@ msgstr "Automático"
 msgid "Window"
 msgstr "Ventana"
 
-#: src/ui/settings.rs:246
+#: src/ui/settings.rs:258
 msgid "Account"
 msgstr "Cuenta"
 
-#: src/ui/settings.rs:273
+#: src/ui/settings.rs:285
 msgid "Files"
 msgstr "Archivos"
 
-#: src/ui/settings.rs:306
+#: src/ui/settings.rs:318
 msgid "About"
 msgstr "Acerca de"
-
-#, fuzzy

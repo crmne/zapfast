@@ -1,8 +1,7 @@
 //! The open chat: its header, the messages, and the composer.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use egui::{
@@ -3215,16 +3214,24 @@ fn carousel_picture(
     let visible = ui.is_rect_visible(rect);
     if visible {
         ui.painter().rect_filled(rect, 6.0, view.palette.surface);
-        let uri = media.path.as_ref().map(|path| file_uri(path)).or_else(|| {
-            card.thumbnail.as_deref().map(|bytes| {
-                thumbnail_uri(
-                    ui.ctx(),
-                    &message.chat,
-                    &format!("{}-card-{index}", message.id),
-                    bytes,
-                )
+        let uri = media
+            .path
+            .as_ref()
+            .map(|path| {
+                let uri = crate::util::image_uri(path);
+                crate::image_cache::touch(ui.ctx(), &uri);
+                uri
             })
-        });
+            .or_else(|| {
+                card.thumbnail.as_deref().map(|bytes| {
+                    thumbnail_uri(
+                        ui.ctx(),
+                        &message.chat,
+                        &format!("{}-card-{index}", message.id),
+                        bytes,
+                    )
+                })
+            });
         if let Some(uri) = uri {
             let image = egui::Image::new(uri);
             let dimensions = match image.load_for_size(ui.ctx(), size) {
@@ -3620,10 +3627,7 @@ fn preview_card(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
-    let thumbnail = message
-        .thumbnail
-        .as_deref()
-        .map(|bytes| thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes));
+    let thumbnail = message.thumbnail.as_deref();
     let domain = preview
         .url
         .split("://")
@@ -3647,12 +3651,17 @@ fn preview_card(
             ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(card_width);
                 ui.horizontal(|ui| {
-                    if let Some(uri) = &thumbnail {
-                        ui.add(
+                    if let Some(bytes) = thumbnail {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
+                        // Off-screen cards are laid out too; only a visible
+                        // one keeps its thumbnail resident.
+                        if ui.is_rect_visible(rect) {
+                            let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes);
                             egui::Image::new(uri)
-                                .fit_to_exact_size(Vec2::splat(64.0))
-                                .corner_radius(4.0),
-                        );
+                                .fit_to_exact_size(rect.size())
+                                .corner_radius(4.0)
+                                .paint_at(ui, rect);
+                        }
                     }
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
@@ -3696,10 +3705,6 @@ fn preview_card(
     }
 }
 
-/// Thumbnails registered in each egui context.
-#[derive(Clone, Default)]
-struct Thumbnails(Arc<Mutex<HashSet<String>>>);
-
 fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> String {
     let uri = format!(
         "bytes://thumb-{}-{}",
@@ -3708,18 +3713,7 @@ fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> Str
             .collect::<String>(),
         id
     );
-    let known: Thumbnails = ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<Thumbnails>(egui::Id::new("thumbnails"))
-            .clone()
-    });
-    let fresh = known
-        .0
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(uri.clone());
-    if fresh {
-        ctx.include_bytes(uri.clone(), bytes.to_vec());
-    }
+    crate::image_cache::include(ctx, uri.clone(), bytes);
     uri
 }
 
@@ -3825,7 +3819,16 @@ fn picture(
             }
             return size.x;
         }
-        let image = egui::Image::new(file_uri(path));
+        // A row that is off screen only reserves its space. Loading the image
+        // decodes it and uploads a texture, so it waits until it is scrolled
+        // into view, and `image_cache` can release it once it leaves again.
+        let reserved = frame_size(media, None, max_width, max_height);
+        let position = ui.next_widget_position();
+        if !ui.is_rect_visible(Rect::from_min_size(position, reserved)) {
+            ui.allocate_exact_size(reserved, Sense::hover());
+            return reserved.x;
+        }
+        let image = widgets::file_image(ui, path);
         return match image.load_for_size(ui.ctx(), vec2(max_width, max_height)) {
             Ok(egui::load::TexturePoll::Ready { texture }) => {
                 let size = if sticker.is_some() {
@@ -4007,7 +4010,6 @@ fn video(
         );
         return width;
     };
-    let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
     let limit = width.min(PICTURE_WIDTH);
     let size = frame_size(media, Some((16, 9)), limit, PICTURE_HEIGHT.min(limit * 1.3));
     // Play downloaded GIFs in place; keep a poster for other videos.
@@ -4040,6 +4042,8 @@ fn video(
         return size.x;
     }
     if ui.is_rect_visible(rect) {
+        // Registering the poster decodes it, so it waits for the row to show.
+        let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
         egui::Image::new(uri)
             .fit_to_exact_size(size)
             .corner_radius(6.0)
@@ -4529,10 +4533,6 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
     );
 }
 
-fn file_uri(path: &Path) -> String {
-    crate::util::image_uri(path)
-}
-
 /// Whether a conversation has visible content. Used by tests.
 #[allow(dead_code)]
 pub fn has_messages(conversation: &Conversation) -> bool {
@@ -4836,7 +4836,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     }
                     crate::app::Pending::File(path) => {
                         if crate::app::Pending::is_picture_file(path) {
-                            egui::Image::new(file_uri(path))
+                            widgets::file_image(ui, path)
                                 .fit_to_exact_size(Vec2::splat(tile - 8.0))
                                 .corner_radius(6.0)
                                 .paint_at(ui, rect.shrink(4.0));

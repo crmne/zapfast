@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 10:35+0200\n"
+"POT-Creation-Date: 2026-09-23 10:38+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: German\n"
@@ -143,19 +143,19 @@ msgstr "Suchen"
 msgid "Locked"
 msgstr "Gesperrt"
 
-#: src/ui/conversation.rs:88
+#: src/ui/conversation.rs:87
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Strg+K zum Suchen · ? für Tastenkürzel"
 
-#: src/ui/conversation.rs:909
+#: src/ui/conversation.rs:908
 msgid "Type a message"
 msgstr "Nachricht eingeben"
 
-#: src/ui/conversation.rs:912
+#: src/ui/conversation.rs:911
 msgid "Add a caption"
 msgstr "Bildunterschrift hinzufügen"
 
-#: src/ui/conversation.rs:1064
+#: src/ui/conversation.rs:1063
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -163,18 +163,18 @@ msgstr ""
 "Eingabetaste sendet · Umschalt+Eingabe für neue Zeile · *fett* _kursiv_ "
 "~durchgestrichen~ · Strg+V fügt ein Bild ein"
 
-#: src/ui/conversation.rs:1066
+#: src/ui/conversation.rs:1065
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Strg+Eingabetaste sendet · *fett* _kursiv_ ~durchgestrichen~ · Strg+V fügt "
 "ein Bild ein"
 
-#: src/ui/conversation.rs:1077
+#: src/ui/conversation.rs:1076
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr ""
 "Tastenkürzel-Hinweise ausblenden (in den Einstellungen wiederherstellen)"
 
-#: src/ui/conversation.rs:1092
+#: src/ui/conversation.rs:1091
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Alle Tastenkürzel ({})"
@@ -206,16 +206,14 @@ msgstr "Automatisch"
 msgid "Window"
 msgstr "Fenster"
 
-#: src/ui/settings.rs:246
+#: src/ui/settings.rs:258
 msgid "Account"
 msgstr "Konto"
 
-#: src/ui/settings.rs:273
+#: src/ui/settings.rs:285
 msgid "Files"
 msgstr "Dateien"
 
-#: src/ui/settings.rs:306
+#: src/ui/settings.rs:318
 msgid "About"
 msgstr "Über"
-
-#, fuzzy

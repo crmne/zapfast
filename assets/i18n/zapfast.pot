@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 10:35+0200\n"
+"POT-Creation-Date: 2026-09-23 10:38+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -146,33 +146,33 @@ msgstr ""
 msgid "Locked"
 msgstr ""
 
-#: src/ui/conversation.rs:88
+#: src/ui/conversation.rs:87
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr ""
 
-#: src/ui/conversation.rs:909
+#: src/ui/conversation.rs:908
 msgid "Type a message"
 msgstr ""
 
-#: src/ui/conversation.rs:912
+#: src/ui/conversation.rs:911
 msgid "Add a caption"
 msgstr ""
 
-#: src/ui/conversation.rs:1064
+#: src/ui/conversation.rs:1063
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
 msgstr ""
 
-#: src/ui/conversation.rs:1066
+#: src/ui/conversation.rs:1065
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 
-#: src/ui/conversation.rs:1077
+#: src/ui/conversation.rs:1076
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr ""
 
-#: src/ui/conversation.rs:1092
+#: src/ui/conversation.rs:1091
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr ""
@@ -204,14 +204,14 @@ msgstr ""
 msgid "Window"
 msgstr ""
 
-#: src/ui/settings.rs:246
+#: src/ui/settings.rs:258
 msgid "Account"
 msgstr ""
 
-#: src/ui/settings.rs:273
+#: src/ui/settings.rs:285
 msgid "Files"
 msgstr ""
 
-#: src/ui/settings.rs:306
+#: src/ui/settings.rs:318
 msgid "About"
 msgstr ""

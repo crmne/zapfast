@@ -5146,6 +5146,136 @@ mod tests {
         assert!(reached_hidden, "Tab reached chats that were out of view");
     }
 
+    /// Records the images the UI asks for, answering at once so a frame can be
+    /// inspected without waiting on a decoding thread.
+    struct CountingImages(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl egui::load::ImageLoader for CountingImages {
+        fn id(&self) -> &str {
+            "zapfast::demo::tests::CountingImages"
+        }
+
+        fn load(
+            &self,
+            _ctx: &egui::Context,
+            uri: &str,
+            _size_hint: egui::load::SizeHint,
+        ) -> egui::load::ImageLoadResult {
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(uri.to_owned());
+            Ok(egui::load::ImagePoll::Ready {
+                image: std::sync::Arc::new(egui::ColorImage::filled(
+                    [900, 1200],
+                    egui::Color32::from_rgb(20, 40, 60),
+                )),
+            })
+        }
+
+        fn forget(&self, _uri: &str) {}
+
+        fn forget_all(&self) {}
+
+        fn byte_size(&self) -> usize {
+            0
+        }
+    }
+
+    #[test]
+    fn pictures_out_of_view_are_not_decoded() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let loads = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        ctx.add_image_loader(std::sync::Arc::new(CountingImages(std::sync::Arc::clone(
+            &loads,
+        ))));
+
+        // Far more picture rows than the window holds, each with its own path
+        // so every row would ask for an image of its own.
+        let chat = app.chats[0].id.clone();
+        app.open_chat = Some(chat.clone());
+        let rows: Vec<Message> = (0..40)
+            .map(|index| {
+                let mut media = media("image/jpeg", 1_000, Some(900), Some(1200));
+                media.path = Some(std::path::PathBuf::from(format!(
+                    "/nonexistent/demo-picture-{index}.jpg"
+                )));
+                message(
+                    &chat,
+                    &format!("picture-{index}"),
+                    false,
+                    1_700_000_000 + index,
+                    Content::Image {
+                        caption: None,
+                        media,
+                    },
+                )
+            })
+            .collect();
+        app.conversations.entry(chat).or_default().messages = rows;
+
+        render(&mut app, &ctx);
+
+        let asked = loads
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .filter(|uri| uri.contains("demo-picture-"))
+            .count();
+        assert!(
+            asked < 15,
+            "only the rows on screen should be decoded, {asked} of 40 were"
+        );
+    }
+
+    #[test]
+    fn video_posters_out_of_view_are_not_registered() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+
+        let chat = app.chats[0].id.clone();
+        app.open_chat = Some(chat.clone());
+        let id = |index: usize| format!("poster-{index}");
+        let rows: Vec<Message> = (0..40)
+            .map(|index| {
+                let mut row = message(
+                    &chat,
+                    &id(index),
+                    false,
+                    1_700_000_000 + index as i64,
+                    Content::Video {
+                        caption: None,
+                        media: media("video/mp4", 820_000, Some(1280), Some(720)),
+                        seconds: Some(5),
+                        gif: false,
+                    },
+                );
+                row.thumbnail = Some(sample_thumbnail(index as u32));
+                row
+            })
+            .collect();
+        app.conversations.entry(chat.clone()).or_default().messages = rows;
+
+        render(&mut app, &ctx);
+
+        // Registering a poster decodes it, so only the rows on screen may have
+        // done so, and at least one of them must have.
+        let key: String = chat.chars().filter(char::is_ascii_alphanumeric).collect();
+        let registered = (0..40)
+            .filter(|index| {
+                let uri = format!("bytes://thumb-{key}-{}", id(*index));
+                ctx.try_load_bytes(&uri).is_ok()
+            })
+            .count();
+        assert!(
+            (1..15).contains(&registered),
+            "only the rows on screen should register a poster, {registered} of 40 did"
+        );
+    }
+
     #[test]
     fn sidebar_can_be_hidden_and_the_composer_sends() {
         let mut app = app();

@@ -28,7 +28,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Filter the list to unread, private (one-to-one), or group chats with the
   chips under the search bar; a chip with unread chats shows how many it has.
   Pinned chats stay in pin order (most recently pinned first), regardless of
-  new messages. Chat and contact name searches ignore accents, so `Angel`
+  new messages. Like on the phone, you can pin up to three chats. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
   The filters stay on one row and scroll horizontally in narrow sidebars.
   Unnamed groups use a shared participant summary for their title and subtitle;
@@ -177,7 +177,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Groups.** See members, sender names, and sender pictures. Announcement
   groups are read-only for non-admins.
 - **Presence.** See online, last-seen, and typing status, and send your typing
-  status.
+  status. Like WhatsApp Web, ZapFast shows you as online only while its window
+  is focused, and goes offline ten seconds after you switch away or hide it to
+  the tray, so your phone keeps receiving notifications meanwhile.
 - **Idle rendering.** History-sync progress updates when data arrives. Animated
   stickers and GIFs show a still first frame and play while hovered in the
   focused window, keeping idle conversations from continuously repainting.
@@ -189,6 +191,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Runs in the background.** Closing the window keeps ZapFast linked in the
   system tray. Reopen it from the tray or by launching it again. Quit from the
   tray or with `Ctrl+Q`, or disable this behavior in Settings.
+- **Start at login.** Turn on **Start at login** in Settings to start ZapFast in
+  the tray when you log in, without opening a window. It adds
+  `~/.config/autostart/zapfast.desktop` on Linux, a LaunchAgent in
+  `~/Library/LaunchAgents` on macOS, or a `Run` entry for your user on Windows,
+  and removes it when turned off. `zapfast --start-hidden` does the same by hand;
+  it opens the window anyway when no tray is available. The Flatpak does not
+  offer this setting yet.
 - **Desktop notifications.** Get notifications with the chat picture when you
   are away from the open chat. Muted chats do not notify you, and archived
   chats stay quiet until you unarchive them. Windows notifications
@@ -379,9 +388,12 @@ any open locked conversation. Typing the code into ordinary search remains
 an alternative way in. Revealed locked chats are currently read-only:
 sending messages and forwarding into them remain disabled.
 
-On the first start after upgrading, chats wait for WhatsApp's lock-state
-recovery before appearing. Failed recovery retries while keeping chats hidden.
-The recovered state is saved in the encrypted archive for offline use.
+After linking or upgrading, chats wait up to ten seconds for WhatsApp's lock
+state before appearing. Chats already known to be locked stay hidden. If the
+lock state cannot be confirmed in time, the chats appear with a notice that
+chats locked on the phone may show until they sync, and recovery keeps retrying
+in the background. The recovered state is saved in the encrypted archive for
+offline use.
 
 Protocol logs omit private payloads and raw error details, including verbose
 logging. Panic logs record the source location without the panic payload.

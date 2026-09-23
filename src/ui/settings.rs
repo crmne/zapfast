@@ -217,6 +217,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
                     section(ui, app, crate::i18n::gettext(app.locale, "Window").as_ref());
                     toggle(ui, app, "Keep running when the window closes", "Keep ZapFast linked in the system tray. Quit from the tray menu or with Ctrl+Q.", |settings| &mut settings.keep_running_in_background);
+                    if let Some(mut enabled) = app.start_with_system {
+                        widgets::setting_row(ui, &palette, "Start at login", "Start ZapFast when you log in. It waits in the system tray, without a window, while it keeps running in the background.", |ui| {
+                            let response = widgets::switch(ui, &palette, &mut enabled);
+                            theme::reveal_focus(&response);
+                            response.widget_info(|| {
+                                egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), enabled, "Start at login")
+                            });
+                            if response.changed() {
+                                app.actions.push(Action::SetStartWithSystem(enabled));
+                            }
+                        });
+                    }
                     toggle(ui, app, "Notify about new messages", "Show desktop notifications when the window is hidden, in the background, or showing another chat. Muted chats do not notify you.", |settings| &mut settings.notifications);
                     toggle(ui, app, "Download updates automatically", "Download and verify new releases in the background. You choose when to restart. Native packages and Flatpak update through their package manager.", |settings| &mut settings.download_updates_automatically);
                     toggle(ui, app, "Check for updates", "Ask GitHub once a day whether a newer ZapFast release exists. The request identifies only ZapFast and its version.", |settings| &mut settings.check_for_updates);

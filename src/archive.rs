@@ -137,6 +137,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "mute_updated_at", "INTEGER"),
     ("chats", "locked", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "lock_updated_at", "INTEGER"),
+    ("chats", "archive_updated_at", "INTEGER"),
     ("chats", "group_subject_known", "INTEGER NOT NULL DEFAULT 0"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
@@ -276,7 +277,7 @@ impl Archive {
                 name = excluded.name,
                 group_subject_known = excluded.group_subject_known,
                 last_activity = MAX(last_activity, excluded.last_activity),
-                archived = excluded.archived,
+                archived = CASE WHEN archive_updated_at IS NULL THEN excluded.archived ELSE archived END,
                 pinned = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned ELSE pinned END,
                 pinned_at = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned_at ELSE pinned_at END,
                 muted_until = CASE WHEN mute_updated_at IS NULL THEN excluded.muted_until ELSE muted_until END",
@@ -339,9 +340,16 @@ impl Archive {
     }
 
     pub fn set_archived(&self, id: &str, archived: bool) -> Result<()> {
+        self.set_archived_at(id, archived, jiff::Timestamp::now().as_millisecond())
+    }
+
+    /// Apply archive state in timestamp order, like pin and mute, so history
+    /// arriving later cannot undo an archive change received from the phone.
+    pub fn set_archived_at(&self, id: &str, archived: bool, timestamp: i64) -> Result<()> {
         self.connection.execute(
-            "UPDATE chats SET archived = ?2 WHERE id = ?1",
-            params![id, archived],
+            "UPDATE chats SET archived = ?2, archive_updated_at = ?3 WHERE id = ?1
+                AND (archive_updated_at IS NULL OR archive_updated_at <= ?3)",
+            params![id, archived, timestamp],
         )?;
         Ok(())
     }
@@ -634,11 +642,12 @@ impl Archive {
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")])?;
         let changed = self.connection.execute(
             "INSERT INTO chats (id, name, kind, pinned, pinned_at, pin_updated_at,
-                muted_until, mute_updated_at, locked, lock_updated_at)
+                muted_until, mute_updated_at, locked, lock_updated_at, archived, archive_updated_at)
              SELECT ?2, ?3, 'direct', pinned, pinned_at, pin_updated_at,
-                muted_until, mute_updated_at, locked, lock_updated_at FROM chats WHERE id = ?1
+                muted_until, mute_updated_at, locked, lock_updated_at, archived, archive_updated_at
+                FROM chats WHERE id = ?1
                 AND (pin_updated_at IS NOT NULL OR mute_updated_at IS NOT NULL
-                    OR lock_updated_at IS NOT NULL OR locked)
+                    OR lock_updated_at IS NOT NULL OR locked OR archive_updated_at IS NOT NULL)
              ON CONFLICT(id) DO UPDATE SET
                 pinned = CASE WHEN excluded.pin_updated_at >= COALESCE(pin_updated_at, -1)
                     THEN excluded.pinned ELSE pinned END,
@@ -652,7 +661,10 @@ impl Archive {
                     THEN excluded.locked
                     WHEN lock_updated_at IS NULL AND excluded.lock_updated_at IS NULL
                     THEN MAX(locked, excluded.locked) ELSE locked END,
-                lock_updated_at = NULLIF(MAX(COALESCE(lock_updated_at, -1), COALESCE(excluded.lock_updated_at, -1)), -1)",
+                lock_updated_at = NULLIF(MAX(COALESCE(lock_updated_at, -1), COALESCE(excluded.lock_updated_at, -1)), -1),
+                archived = CASE WHEN excluded.archive_updated_at >= COALESCE(archive_updated_at, -1)
+                    THEN excluded.archived ELSE archived END,
+                archive_updated_at = NULLIF(MAX(COALESCE(archive_updated_at, -1), COALESCE(excluded.archive_updated_at, -1)), -1)",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net"), pn],
         )?;
         Ok(changed > 0)
@@ -1981,6 +1993,33 @@ pub(crate) mod tests {
             archive.set_locked_snapshot(lid, true).unwrap();
             archive.put_lid("2", "1").unwrap();
             assert!(!archive.chat(phone).unwrap().unwrap().locked);
+        }
+    }
+
+    #[test]
+    fn privacy_id_mapping_carries_the_newest_archive_state() {
+        for existing in [false, true] {
+            let archive = Archive::in_memory().unwrap();
+            let lid = "2@lid";
+            let phone = "1@s.whatsapp.net";
+            archive.ensure_chat(lid, "Fixture").unwrap();
+            archive.set_archived_at(lid, true, 100).unwrap();
+            if existing {
+                archive.ensure_chat(phone, "Fixture").unwrap();
+            }
+            archive.put_lid("2", "1").unwrap();
+            assert!(archive.chat(phone).unwrap().unwrap().archived);
+
+            // An older privacy-id version cannot undo a newer one.
+            archive.set_archived_at(phone, false, 200).unwrap();
+            archive.put_lid("2", "1").unwrap();
+            assert!(!archive.chat(phone).unwrap().unwrap().archived);
+
+            // History cannot supersede a versioned archive state.
+            let mut history = Chat::new(phone.into(), "History name".into());
+            history.archived = true;
+            archive.upsert_chat(&history).unwrap();
+            assert!(!archive.chat(phone).unwrap().unwrap().archived);
         }
     }
 

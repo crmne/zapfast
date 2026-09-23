@@ -7,7 +7,10 @@ protocol. These notes are for coding agents and new contributors.
 ## Product boundaries
 
 - Keep it a small native client. No browser engine, no telemetry, no
-  hosted backend, no second account system.
+  hosted backend, no ZapFast-operated account system. Features never send
+  message content to a third party.
+- Do not vendor, fork, or patch upstream crates (egui, epaint, whatsapp-rust)
+  in this repository. Fix them upstream.
 - The protocol comes from whatsapp-rust. Do not reimplement pieces of it
   here, and do not advertise a capability merely because a protobuf field
   for it exists.
@@ -269,7 +272,9 @@ a full-changelog link. Credit who did what on the relevant item, with issue
 or PR numbers, and acknowledge reporters separately from implementers.
 Include screenshots or short videos of the main features, especially Omarchy
 theme integration when relevant. Capture only synthetic offline demo content,
-never real chats. Verify every media link and do not leave generated notes
+never real chats. Upload the media as assets of the GitHub release and link
+those URLs from the notes; never commit screenshots or recordings to the
+repository. Verify every media link and do not leave generated notes
 in place. Describe known limitations honestly.
 
 Do not cut a release for every fix. Work accumulates on `main` until

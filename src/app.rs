@@ -109,6 +109,10 @@ pub struct Presence {
     pub last_seen: Option<i64>,
 }
 
+/// WhatsApp keeps at most three pinned chats without WhatsApp Plus, and
+/// replaces an existing pin on the phone when a linked device adds a fourth.
+const MAX_PINNED_CHATS: usize = 3;
+
 pub struct App {
     pub dirs: AppDirs,
     pub settings: Settings,
@@ -280,6 +284,10 @@ pub struct App {
     pub focus_search: bool,
     pub quit_requested: bool,
     pub window_focused: bool,
+    /// Presence last reported to the backend.
+    reported_online: Option<bool>,
+    /// Whether ZapFast starts at login, when this installation supports it.
+    pub start_with_system: Option<bool>,
     /// Cross-thread window repaint handle.
     waker: Waker,
     tray: Option<TrayService>,
@@ -345,6 +353,9 @@ impl App {
         if options.tray {
             let waker = waker.clone();
             app.tray = TrayService::spawn(move || waker.wake());
+        }
+        if crate::autostart::supported() {
+            app.start_with_system = Some(crate::autostart::enabled());
         }
         app
     }
@@ -489,6 +500,8 @@ impl App {
             focus_search: false,
             quit_requested: false,
             window_focused: false,
+            reported_online: None,
+            start_with_system: None,
             waker,
             tray: None,
             window_hidden: false,
@@ -554,6 +567,7 @@ impl App {
             match command {
                 ControlCommand::Show => self.actions.push(Action::ShowWindow),
                 ControlCommand::ReloadThemes => self.actions.push(Action::ReloadThemes),
+                ControlCommand::Ping => {}
             }
         }
     }
@@ -2739,6 +2753,10 @@ impl App {
             // `Event::ChatRemoved`.
             Action::DeleteChat(chat) => self.backend.send(Command::DeleteChat(chat)),
             Action::SetPinned(chat, pinned) => {
+                if pinned && self.pinned_count() >= MAX_PINNED_CHATS {
+                    self.toast(format!("You can only pin {MAX_PINNED_CHATS} chats"));
+                    return;
+                }
                 if let Some(known) = self.chat_mut(&chat) {
                     known.pinned = pinned;
                     known.pinned_at = if pinned {
@@ -2980,6 +2998,10 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::SettingsChanged => self.mark_settings_dirty(),
+            Action::SetStartWithSystem(enabled) => match crate::autostart::set(enabled) {
+                Ok(()) => self.start_with_system = Some(crate::autostart::enabled()),
+                Err(error) => self.toast_error(format!("Could not change the login item: {error}")),
+            },
             Action::ZoomBy(delta) => {
                 self.settings.zoom = (self.settings.zoom + delta).clamp(0.6, 2.0);
                 self.zoom_applied = false;
@@ -3079,6 +3101,24 @@ impl App {
         });
     }
 
+    /// Chats pinned to the top, counted the way WhatsApp limits them.
+    fn pinned_count(&self) -> usize {
+        self.chats
+            .iter()
+            .filter(|chat| chat.pinned && !chat.archived)
+            .count()
+    }
+
+    /// Tells the backend whether the person is looking at the app, so the
+    /// phone keeps its notifications while they are not.
+    fn report_presence(&mut self) {
+        let online = self.window_focused && !self.window_hidden;
+        if self.reported_online != Some(online) {
+            self.reported_online = Some(online);
+            self.backend.send(Command::SetOnline(online));
+        }
+    }
+
     /// Processes app state shared by windowed and headless modes.
     pub fn background_frame(&mut self, ctx: &egui::Context) {
         // Events are drained before frame_ui observes focus. Losing focus in
@@ -3086,6 +3126,7 @@ impl App {
         if self.window_hidden || ctx.input(|input| input.viewport().focused) == Some(false) {
             self.window_focused = false;
         }
+        self.report_presence();
         self.handle_tray();
         #[cfg(target_os = "macos")]
         self.actions.extend(crate::macos::drain(self.window_hidden));
@@ -3196,6 +3237,7 @@ impl App {
             self.refocus_composer(ctx);
         }
         self.window_focused = focused;
+        self.report_presence();
         // Close the window and continue headless when background mode is enabled.
         if ctx.input(|input| input.viewport().close_requested())
             && !self.quit_requested
@@ -3207,6 +3249,8 @@ impl App {
         self.take_drops_and_pastes(ctx);
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
+        // Release the image caches of everything that scrolled away.
+        crate::image_cache::sweep(ctx);
         // Only fading info toasts animate. Errors wait for the reader.
         if self
             .toasts
@@ -4007,6 +4051,60 @@ mod tests {
         let mut output = ctx.run_ui(input, |ui| app.background_frame(ui.ctx()));
         output.textures_delta.clear();
         assert_eq!(app.chat(&chat.id).unwrap().unread, 1);
+    }
+
+    #[test]
+    fn a_fourth_pin_is_refused_like_on_the_phone() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        for index in 0..5 {
+            let mut chat = Chat::new(format!("{index}@s.whatsapp.net"), format!("Chat {index}"));
+            chat.pinned = index < 3;
+            chat.archived = index == 4;
+            app.chats.push(chat);
+        }
+        app.apply(
+            Action::SetPinned("3@s.whatsapp.net".into(), true),
+            &egui::Context::default(),
+        );
+        assert!(!app.chat("3@s.whatsapp.net").unwrap().pinned);
+        assert!(commands.try_recv().is_err());
+        app.apply(
+            Action::SetPinned("0@s.whatsapp.net".into(), false),
+            &egui::Context::default(),
+        );
+        app.apply(
+            Action::SetPinned("3@s.whatsapp.net".into(), true),
+            &egui::Context::default(),
+        );
+        assert!(app.chat("3@s.whatsapp.net").unwrap().pinned);
+    }
+
+    #[test]
+    fn presence_follows_focus_and_the_hidden_window() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let mut reported = || {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::SetOnline(online) => Some(online),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        app.window_focused = true;
+        app.report_presence();
+        app.report_presence();
+        assert_eq!(reported(), [true]);
+        app.window_gone();
+        app.report_presence();
+        assert_eq!(reported(), [false]);
+        // Focus left over from a window callback does not count while hidden.
+        app.window_focused = true;
+        app.report_presence();
+        assert!(reported().is_empty());
     }
 
     #[test]
