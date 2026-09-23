@@ -4304,6 +4304,7 @@ mod tests {
         let ctx = egui::Context::default();
         // Nothing open: Ctrl+F still reaches the chat list search.
         app.apply(Action::FocusSearch, &ctx);
+        app.apply_actions(&ctx);
         assert!(app.focus_search);
         assert!(!app.chat_search_open);
         // With a chat in front it opens the in-chat bar instead.
