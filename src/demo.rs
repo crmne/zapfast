@@ -693,6 +693,25 @@ pub fn populate(app: &mut App) {
                 address: Some("12 St James's Square, London".into()),
             },
         ),
+        {
+            let mut row = message(
+                ada,
+                "ada-live",
+                false,
+                older + 60 * 21,
+                Content::LiveLocation {
+                    latitude: 51.5074,
+                    longitude: -0.1278,
+                    accuracy_m: Some(24),
+                    speed_mps: Some(1.4),
+                    heading_deg: Some(90),
+                    sequence: 1,
+                    ended: false,
+                },
+            );
+            row.thumbnail = Some(sample_thumbnail(7));
+            row
+        },
         message(ada, "ada-deleted", false, older + 60 * 25, Content::Revoked),
     ];
     let conversation = app.conversations.get_mut(ada).expect("sample chat");

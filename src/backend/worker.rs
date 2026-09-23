@@ -2032,6 +2032,21 @@ impl Worker {
             );
             return;
         }
+        // Live location: one bubble that mutates in place. Updates arrive as
+        // fresh envelopes (new ids) and reference the session's start message
+        // through contextInfo.stanzaId, so they are filed under that anchor id
+        // and ordered by sequenceNumber.
+        if self.ingest_live_location(
+            &chat,
+            &sender,
+            from_me,
+            push_name.as_deref(),
+            base,
+            &info.id,
+            info.timestamp.timestamp(),
+        ) {
+            return;
+        }
         let Some(content) = classify(base) else {
             return;
         };
@@ -2069,6 +2084,73 @@ impl Worker {
         if is_poll {
             self.pump_poll_votes();
         }
+    }
+
+    /// Stores a live-location message under its session anchor id, updating the
+    /// existing bubble in place and ignoring out-of-order updates. Returns true
+    /// when the message was a live location and was handled here.
+    fn ingest_live_location(
+        &mut self,
+        chat: &str,
+        sender: &str,
+        from_me: bool,
+        push_name: Option<&str>,
+        base: &wa::Message,
+        id: &str,
+        timestamp: i64,
+    ) -> bool {
+        let Some((content, anchor)) = live_location_of(base) else {
+            return false;
+        };
+        let anchor = anchor.unwrap_or_else(|| id.to_owned());
+
+        // Sequence guard: an out-of-order, duplicate, or post-end update never
+        // regresses the bubble.
+        if let Ok(Some(existing)) = self.archive.message(chat, &anchor)
+            && !live_location_newer(&existing.content, &content)
+        {
+            return true;
+        }
+
+        let row = Message {
+            id: anchor.clone(),
+            chat: chat.to_owned(),
+            sender: sender.to_owned(),
+            sender_name: if from_me {
+                None
+            } else {
+                push_name.map(ToString::to_string)
+            },
+            from_me,
+            timestamp,
+            content,
+            status: if from_me {
+                Delivery::Sent
+            } else {
+                Delivery::None
+            },
+            delivered_at: None,
+            read_at: None,
+            quoted: self.quoted_of(base),
+            reactions: Vec::new(),
+            edited: false,
+            mentions: self.mentions_of(&mentioned_of(base)),
+            forwarded: forwarded_of(base),
+            thumbnail: thumbnail_of(base),
+        };
+        if self.archive.message(chat, &anchor).ok().flatten().is_none() {
+            // First sight of the session: a brand-new bubble.
+            self.store_message(row, None, push_name);
+        } else {
+            // In-place update: same row, newer position and preview.
+            if let Err(error) = self.archive.insert_message(&row, None) {
+                log::warn!("could not store a live location update: {error}");
+                return true;
+            }
+            self.emit_message(chat, &anchor);
+            self.emit_chat(chat);
+        }
+        true
     }
 
     fn store_plain_reaction(
@@ -5145,12 +5227,77 @@ fn thumbnail_of(base: &wa::Message) -> Option<Vec<u8>> {
         video.jpeg_thumbnail.clone()
     } else if let Some(document) = base.document_message.as_option() {
         document.jpeg_thumbnail.clone()
+    } else if let Some(location) = base.location_message.as_option() {
+        location.jpeg_thumbnail.clone()
+    } else if let Some(live) = base.live_location_message.as_option() {
+        live.jpeg_thumbnail.clone()
     } else if let Some(text) = base.extended_text_message.as_option() {
         text.jpeg_thumbnail.clone()
     } else {
         None
     };
     bytes.filter(|bytes| !bytes.is_empty())
+}
+
+/// Builds the live-location content for a message, plus the session anchor id
+/// when the update references its start message via `contextInfo.stanzaId`.
+/// The anchor is `None` for the start itself, so the caller uses the message's
+/// own id.
+fn live_location_of(base: &wa::Message) -> Option<(Content, Option<String>)> {
+    if let Some(live) = base.live_location_message.as_option() {
+        let anchor = live
+            .context_info
+            .as_option()
+            .and_then(|context| context.stanza_id.clone())
+            .filter(|id| !id.is_empty());
+        return Some((
+            Content::LiveLocation {
+                latitude: live.degrees_latitude.unwrap_or(0.0),
+                longitude: live.degrees_longitude.unwrap_or(0.0),
+                accuracy_m: live.accuracy_in_meters,
+                speed_mps: live.speed_in_mps,
+                heading_deg: live.degrees_clockwise_from_magnetic_north,
+                sequence: live.sequence_number.unwrap_or(0),
+                ended: false,
+            },
+            anchor,
+        ));
+    }
+    if let Some(location) = base.location_message.as_option()
+        && location.is_live == Some(true)
+    {
+        return Some((
+            Content::LiveLocation {
+                latitude: location.degrees_latitude.unwrap_or(0.0),
+                longitude: location.degrees_longitude.unwrap_or(0.0),
+                accuracy_m: location.accuracy_in_meters,
+                speed_mps: location.speed_in_mps,
+                heading_deg: location.degrees_clockwise_from_magnetic_north,
+                sequence: 0,
+                ended: false,
+            },
+            None,
+        ));
+    }
+    None
+}
+
+/// Whether `incoming` should replace the stored live location `stored`.
+/// Out-of-order or duplicate `sequence` values, and any update after the
+/// session has ended, are ignored.
+fn live_location_newer(stored: &Content, incoming: &Content) -> bool {
+    let (
+        Content::LiveLocation {
+            sequence: old,
+            ended: old_ended,
+            ..
+        },
+        Content::LiveLocation { sequence: new, .. },
+    ) = (stored, incoming)
+    else {
+        return true;
+    };
+    !*old_ended && *new > *old
 }
 
 /// Converts a protocol message to visible content, or `None` for internal traffic.
@@ -5239,6 +5386,9 @@ fn classify(base: &wa::Message) -> Option<Content> {
         });
     }
     if let Some(location) = base.location_message.as_option() {
+        if location.is_live == Some(true) {
+            return live_location_of(base).map(|(content, _)| content);
+        }
         return Some(Content::Location {
             latitude: location.degrees_latitude.unwrap_or(0.0),
             longitude: location.degrees_longitude.unwrap_or(0.0),
@@ -5246,13 +5396,8 @@ fn classify(base: &wa::Message) -> Option<Content> {
             address: non_empty(&location.address),
         });
     }
-    if let Some(live) = base.live_location_message.as_option() {
-        return Some(Content::Location {
-            latitude: live.degrees_latitude.unwrap_or(0.0),
-            longitude: live.degrees_longitude.unwrap_or(0.0),
-            name: Some("Live location".to_owned()),
-            address: None,
-        });
+    if base.live_location_message.is_set() {
+        return live_location_of(base).map(|(content, _)| content);
     }
     if let Some(contact) = base.contact_message.as_option() {
         return Some(Content::Contact {
@@ -6458,6 +6603,111 @@ mod tests {
         }
         assert_eq!(thumbnail_of(&image), Some(vec![0xff, 0xd8]));
         assert_eq!(classify(&wa::Message::default()), None);
+    }
+
+    #[test]
+    fn live_location_is_classified_separately_from_static_location() {
+        let live = wa::Message {
+            live_location_message: MessageField::some(wa::message::LiveLocationMessage {
+                degrees_latitude: Some(51.5074),
+                degrees_longitude: Some(-0.1278),
+                accuracy_in_meters: Some(24),
+                speed_in_mps: Some(1.4),
+                degrees_clockwise_from_magnetic_north: Some(90),
+                sequence_number: Some(7),
+                jpeg_thumbnail: Some(vec![0xff, 0xd8, 0xff]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        match classify(&live) {
+            Some(Content::LiveLocation {
+                latitude,
+                longitude,
+                accuracy_m,
+                speed_mps,
+                heading_deg,
+                sequence,
+                ended,
+            }) => {
+                assert_eq!(latitude, 51.5074);
+                assert_eq!(longitude, -0.1278);
+                assert_eq!(accuracy_m, Some(24));
+                assert_eq!(speed_mps, Some(1.4));
+                assert_eq!(heading_deg, Some(90));
+                assert_eq!(sequence, 7);
+                assert!(!ended);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(thumbnail_of(&live), Some(vec![0xff, 0xd8, 0xff]));
+
+        let start = wa::Message {
+            location_message: MessageField::some(wa::message::LocationMessage {
+                degrees_latitude: Some(51.5),
+                degrees_longitude: Some(-0.12),
+                is_live: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(
+            classify(&start),
+            Some(Content::LiveLocation {
+                sequence: 0,
+                ended: false,
+                ..
+            })
+        ));
+
+        let pinned = wa::Message {
+            location_message: MessageField::some(wa::message::LocationMessage {
+                degrees_latitude: Some(51.5),
+                degrees_longitude: Some(-0.12),
+                name: Some("Ada's place".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(classify(&pinned), Some(Content::Location { .. })));
+    }
+
+    #[test]
+    fn live_location_updates_anchor_to_the_start_message_id() {
+        let update = wa::Message {
+            live_location_message: MessageField::some(wa::message::LiveLocationMessage {
+                degrees_latitude: Some(1.0),
+                degrees_longitude: Some(2.0),
+                sequence_number: Some(3),
+                context_info: MessageField::some(wa::ContextInfo {
+                    stanza_id: Some("3EB0START".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            live_location_of(&update).map(|(_, anchor)| anchor),
+            Some(Some("3EB0START".to_owned()))
+        );
+    }
+
+    #[test]
+    fn live_location_sequence_guard_rejects_out_of_order_updates() {
+        let live = |sequence, ended| Content::LiveLocation {
+            latitude: 0.0,
+            longitude: 0.0,
+            accuracy_m: None,
+            speed_mps: None,
+            heading_deg: None,
+            sequence,
+            ended,
+        };
+        assert!(live_location_newer(&live(5, false), &live(6, false)));
+        assert!(!live_location_newer(&live(5, false), &live(5, false)));
+        assert!(!live_location_newer(&live(5, false), &live(4, false)));
+        assert!(!live_location_newer(&live(5, true), &live(6, false)));
     }
 
     #[test]

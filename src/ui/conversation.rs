@@ -1751,6 +1751,14 @@ fn transcript_row(
         Content::Document { file_name, .. } => Some(format!("[document: {file_name}]")),
         Content::Sticker { .. } => Some("[sticker]".to_owned()),
         Content::Location { .. } => Some("[location]".to_owned()),
+        Content::LiveLocation { ended, .. } => Some(
+            if *ended {
+                "[live location ended]"
+            } else {
+                "[live location]"
+            }
+            .to_owned(),
+        ),
         Content::Contact { display_name, .. } => Some(format!("[contact: {display_name}]")),
         Content::Poll { question, .. } => Some(format!("[poll: {question}]")),
         _ => None,
@@ -2484,6 +2492,11 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             latitude,
             longitude,
             ..
+        }
+        | Content::LiveLocation {
+            latitude,
+            longitude,
+            ..
         } => Some(format!("{latitude},{longitude}")),
         Content::Contact { vcard, .. } => Some(vcard.clone()),
         _ => None,
@@ -2765,6 +2778,74 @@ fn content(
                     );
                     if let Some(address) = address {
                         widgets::rich_text(ui, address, theme::regular(12.5), palette.secondary);
+                    }
+                    if theme::link(ui, "Open in a map", theme::regular(12.5), palette.link)
+                        .clicked()
+                    {
+                        actions.push(Action::OpenUrl(format!(
+                            "https://www.openstreetmap.org/?mlat={latitude}&mlon={longitude}#map=16/{latitude}/{longitude}"
+                        )));
+                    }
+                });
+            });
+            None
+        }
+        Content::LiveLocation {
+            latitude,
+            longitude,
+            accuracy_m,
+            speed_mps,
+            heading_deg,
+            ended,
+            ..
+        } => {
+            let icon = |ui: &mut egui::Ui| {
+                theme::icon(ui, Icon::MapPin, 18.0, palette.accent);
+            };
+            mirrored_row(ui, own, icon, |ui| {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    widgets::rich_text(
+                        ui,
+                        if *ended {
+                            "Live location ended"
+                        } else {
+                            "Live location"
+                        },
+                        theme::medium(14.0),
+                        palette.text,
+                    );
+                    if !*ended {
+                        let mut meta = Vec::new();
+                        if let Some(accuracy) = accuracy_m {
+                            meta.push(format!("±{accuracy} m"));
+                        }
+                        if let Some(speed) = speed_mps {
+                            meta.push(format!("{:.1} km/h", speed * 3.6));
+                        }
+                        if let Some(heading) = heading_deg {
+                            meta.push(format!("{heading}°"));
+                        }
+                        let age = (view.now - message.timestamp).max(0);
+                        meta.push(format!("Updated {age}s ago"));
+                        widgets::rich_text(
+                            ui,
+                            meta.join(" · "),
+                            theme::regular(12.5),
+                            palette.secondary,
+                        );
+                    }
+                    // WhatsApp's own map preview, with a pin at its centre.
+                    if let Some(bytes) = message.thumbnail.as_deref()
+                        && !bytes.is_empty()
+                    {
+                        let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes);
+                        let response = ui.add(
+                            egui::Image::new(uri)
+                                .fit_to_exact_size(Vec2::new(260.0, 150.0))
+                                .corner_radius(8.0),
+                        );
+                        theme::paint_icon(ui, Icon::MapPin, response.rect, 30.0, palette.accent);
                     }
                     if theme::link(ui, "Open in a map", theme::regular(12.5), palette.link)
                         .clicked()

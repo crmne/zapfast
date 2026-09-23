@@ -281,6 +281,28 @@ pub enum Content {
         name: Option<String>,
         address: Option<String>,
     },
+    /// A live location that updates in place as the sender moves. The map
+    /// preview rides in `Message.thumbnail`; the shared `(chat, id)` upsert
+    /// keeps one bubble per session.
+    LiveLocation {
+        latitude: f64,
+        longitude: f64,
+        /// Position accuracy reported by the sender, in metres.
+        #[serde(default)]
+        accuracy_m: Option<u32>,
+        /// Speed in metres per second.
+        #[serde(default)]
+        speed_mps: Option<f32>,
+        /// Heading, degrees clockwise from magnetic north.
+        #[serde(default)]
+        heading_deg: Option<u32>,
+        /// Monotonic ordering guard against out-of-order updates.
+        #[serde(default)]
+        sequence: i64,
+        /// Whether the sender has stopped sharing.
+        #[serde(default)]
+        ended: bool,
+    },
     Contact {
         display_name: String,
         vcard: String,
@@ -401,6 +423,13 @@ impl Content {
                 Some(name) => format!("Location: {name}"),
                 None => "Location".to_owned(),
             },
+            Self::LiveLocation { ended, .. } => {
+                if *ended {
+                    "Live location ended".to_owned()
+                } else {
+                    "Live location".to_owned()
+                }
+            }
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
             Self::Revoked => "This message was deleted".to_owned(),
@@ -935,5 +964,37 @@ mod tests {
         let json = serde_json::to_string(&content).expect("serializes");
         let back: Content = serde_json::from_str(&json).expect("parses");
         assert_eq!(back, content);
+    }
+
+    #[test]
+    fn live_location_content_survives_json() {
+        let content = Content::LiveLocation {
+            latitude: 51.5,
+            longitude: -0.12,
+            accuracy_m: Some(10),
+            speed_mps: Some(1.1),
+            heading_deg: Some(45),
+            sequence: 7,
+            ended: true,
+        };
+        let json = serde_json::to_string(&content).expect("serializes");
+        let back: Content = serde_json::from_str(&json).expect("parses");
+        assert_eq!(back, content);
+        // Optional fields default when absent, so a sparse payload still parses.
+        let sparse: Content =
+            serde_json::from_str(r#"{"kind":"livelocation","latitude":1.0,"longitude":2.0}"#)
+                .expect("parses sparse");
+        assert_eq!(
+            sparse,
+            Content::LiveLocation {
+                latitude: 1.0,
+                longitude: 2.0,
+                accuracy_m: None,
+                speed_mps: None,
+                heading_deg: None,
+                sequence: 0,
+                ended: false,
+            }
+        );
     }
 }

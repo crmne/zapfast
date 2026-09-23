@@ -1532,6 +1532,68 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn live_location_round_trips_and_upserts_in_place() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        let live = |sequence: i64, ended: bool, thumbnail: Option<Vec<u8>>| {
+            let mut row = message(chat, "live", 100, false);
+            row.content = Content::LiveLocation {
+                latitude: 51.5,
+                longitude: -0.12,
+                accuracy_m: Some(10),
+                speed_mps: Some(1.1),
+                heading_deg: Some(45),
+                sequence,
+                ended,
+            };
+            row.thumbnail = thumbnail;
+            row
+        };
+        archive
+            .insert_message(&live(1, false, None), None)
+            .expect("insert");
+        let read = archive
+            .message(chat, "live")
+            .expect("read")
+            .expect("exists");
+        assert_eq!(read.content, live(1, false, None).content);
+        assert_eq!(read.thumbnail, None);
+
+        // A newer update replaces the row in place rather than appending one.
+        archive
+            .insert_message(&live(2, false, Some(vec![1, 2, 3])), None)
+            .expect("update");
+        let updated = archive
+            .message(chat, "live")
+            .expect("read")
+            .expect("exists");
+        assert_eq!(
+            updated.content,
+            Content::LiveLocation {
+                latitude: 51.5,
+                longitude: -0.12,
+                accuracy_m: Some(10),
+                speed_mps: Some(1.1),
+                heading_deg: Some(45),
+                sequence: 2,
+                ended: false,
+            }
+        );
+        assert_eq!(updated.thumbnail, Some(vec![1, 2, 3]));
+
+        let rows: i64 = archive
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE chat = ?1 AND id = ?2",
+                rusqlite::params![chat, "live"],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
     fn ephemeral_setting_preserves_explicitly_disabled_timer() {
         let archive = Archive::in_memory().expect("opens");
         let chat = "1@s.whatsapp.net";
