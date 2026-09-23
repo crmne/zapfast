@@ -44,7 +44,7 @@ use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
     ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
 };
 use crate::paths::AppDirs;
 
@@ -2623,11 +2623,7 @@ impl Worker {
             );
             return;
         }
-        // Live location: one bubble that mutates in place. Updates arrive as
-        // fresh envelopes (new ids) and reference the session's start message
-        // through contextInfo.stanzaId, so they are filed under that anchor id
-        // and ordered by sequenceNumber.
-        if self.ingest_live_location(&chat, &sender, from_me, push_name.as_deref(), base, info) {
+        if self.update_live_location(&chat, &sender, base, info) {
             return;
         }
         let Some(content) = classify(base) else {
@@ -2686,70 +2682,77 @@ impl Worker {
         }
     }
 
-    /// Stores a live-location message under its session anchor id, updating the
-    /// existing bubble in place and ignoring out-of-order updates. Returns true
-    /// when the message was a live location and was handled here.
-    fn ingest_live_location(
+    /// Applies a live location position to the share it belongs to, so a
+    /// moving sender keeps one bubble and one archive row. Returns false when
+    /// the message starts a share, which is then stored like any other.
+    fn update_live_location(
         &mut self,
         chat: &str,
         sender: &str,
-        from_me: bool,
-        push_name: Option<&str>,
         base: &wa::Message,
         info: &MessageInfo,
     ) -> bool {
-        let Some((content, anchor)) = live_location_of(base) else {
+        let Some((mut content, reference)) = live_location_of(base) else {
             return false;
         };
-        let anchor = anchor.unwrap_or_else(|| info.id.to_string());
-
-        // Sequence guard: an out-of-order, duplicate, or post-end update never
-        // regresses the bubble.
-        if let Ok(Some(existing)) = self.archive.message(chat, &anchor)
-            && !live_location_newer(&existing.content, &content)
-        {
+        let now = info.timestamp.timestamp();
+        if let Content::LiveLocation { updated, .. } = &mut content {
+            *updated = now;
+        }
+        let Some((mut share, named)) = self.live_share(chat, sender, &info.id, reference, now)
+        else {
+            return false;
+        };
+        if !live_location_newer(&share, &content) {
+            // A position the named share already has, or an older one,
+            // changes nothing. One that only looks like it continues the
+            // sender's latest share starts a new share instead.
+            return named;
+        }
+        share.content = content;
+        if let Some(thumbnail) = thumbnail_of(base) {
+            share.thumbnail = Some(thumbnail);
+        }
+        // The row keeps its start time, so a moving share does not reorder
+        // the chat list or the conversation.
+        if let Err(error) = self.archive.insert_message(&share, None) {
+            log::warn!("could not store a live location update: {error}");
             return true;
         }
-
-        let row = Message {
-            id: anchor.clone(),
-            chat: chat.to_owned(),
-            sender: sender.to_owned(),
-            sender_name: if from_me {
-                None
-            } else {
-                push_name.map(ToString::to_string)
-            },
-            from_me,
-            timestamp: info.timestamp.timestamp(),
-            content,
-            status: if from_me {
-                Delivery::Sent
-            } else {
-                Delivery::None
-            },
-            delivered_at: None,
-            read_at: None,
-            quoted: self.quoted_of(base),
-            reactions: Vec::new(),
-            edited: false,
-            mentions: self.mentions_of(&mentioned_of(base)),
-            forwarded: forwarded_of(base),
-            thumbnail: thumbnail_of(base),
-        };
-        if self.archive.message(chat, &anchor).ok().flatten().is_none() {
-            // First sight of the session: a brand-new bubble.
-            self.store_message(row, None, push_name);
-        } else {
-            // In-place update: same row, newer position and preview.
-            if let Err(error) = self.archive.insert_message(&row, None) {
-                log::warn!("could not store a live location update: {error}");
-                return true;
-            }
-            self.emit_message(chat, &anchor);
-            self.emit_chat(chat);
-        }
+        self.emit_message(chat, &share.id);
         true
+    }
+
+    /// The stored live location that a position from `sender` updates: the
+    /// message it names, the same message again, or the sender's share in
+    /// this chat that last moved within [`LIVE_LOCATION_GAP`]. The flag tells
+    /// whether the position named its share.
+    fn live_share(
+        &self,
+        chat: &str,
+        sender: &str,
+        id: &str,
+        reference: Option<String>,
+        now: i64,
+    ) -> Option<(Message, bool)> {
+        let ours = |message: &Message| {
+            message.sender == sender && matches!(message.content, Content::LiveLocation { .. })
+        };
+        for candidate in reference.iter().map(String::as_str).chain([id]) {
+            if let Ok(Some(message)) = self.archive.message(chat, candidate)
+                && ours(&message)
+            {
+                return Some((message, true));
+            }
+        }
+        let latest = self
+            .archive
+            .latest_live_location(chat, sender, now - LIVE_LOCATION_LIMIT)
+            .ok()??;
+        let message = self.archive.message(chat, &latest).ok()??;
+        let moving = !message.content.live_location_over(message.timestamp, now)
+            && now - live_location_time(&message) <= LIVE_LOCATION_GAP;
+        moving.then_some((message, false))
     }
 
     fn store_plain_reaction(
@@ -6221,29 +6224,16 @@ fn thumbnail_of(base: &wa::Message) -> Option<Vec<u8>> {
     bytes.filter(|bytes| !bytes.is_empty())
 }
 
-/// Builds the live-location content for a message, plus the session anchor id
-/// when the update references its start message via `contextInfo.stanzaId`.
-/// The anchor is `None` for the start itself, so the caller uses the message's
-/// own id.
+/// Builds the live location content for a message, plus the id of the
+/// message it quotes, which may be the start of the share it continues.
 fn live_location_of(base: &wa::Message) -> Option<(Content, Option<String>)> {
     if let Some(live) = base.live_location_message.as_option() {
-        let anchor = live
+        let reference = live
             .context_info
             .as_option()
             .and_then(|context| context.stanza_id.clone())
             .filter(|id| !id.is_empty());
-        return Some((
-            Content::LiveLocation {
-                latitude: live.degrees_latitude.unwrap_or(0.0),
-                longitude: live.degrees_longitude.unwrap_or(0.0),
-                accuracy_m: live.accuracy_in_meters,
-                speed_mps: live.speed_in_mps,
-                heading_deg: live.degrees_clockwise_from_magnetic_north,
-                sequence: live.sequence_number.unwrap_or(0),
-                ended: false,
-            },
-            anchor,
-        ));
+        return Some((live_location_content(live, false), reference));
     }
     if let Some(location) = base.location_message.as_option()
         && location.is_live == Some(true)
@@ -6257,6 +6247,7 @@ fn live_location_of(base: &wa::Message) -> Option<(Content, Option<String>)> {
                 heading_deg: location.degrees_clockwise_from_magnetic_north,
                 sequence: 0,
                 ended: false,
+                updated: 0,
             },
             None,
         ));
@@ -6264,22 +6255,66 @@ fn live_location_of(base: &wa::Message) -> Option<(Content, Option<String>)> {
     None
 }
 
-/// Whether `incoming` should replace the stored live location `stored`.
-/// Out-of-order or duplicate `sequence` values, and any update after the
-/// session has ended, are ignored.
-fn live_location_newer(stored: &Content, incoming: &Content) -> bool {
+fn live_location_content(live: &wa::message::LiveLocationMessage, ended: bool) -> Content {
+    Content::LiveLocation {
+        latitude: live.degrees_latitude.unwrap_or(0.0),
+        longitude: live.degrees_longitude.unwrap_or(0.0),
+        accuracy_m: live.accuracy_in_meters,
+        speed_mps: live.speed_in_mps,
+        heading_deg: live.degrees_clockwise_from_magnetic_north,
+        sequence: live.sequence_number.unwrap_or(0),
+        ended,
+        updated: 0,
+    }
+}
+
+/// The last position of a share that history reports as finished.
+fn finished_live_location(last: &wa::message::LiveLocationMessage, sent: i64) -> Content {
+    let mut content = live_location_content(last, true);
+    if let Content::LiveLocation { updated, .. } = &mut content {
+        *updated = sent + i64::from(last.time_offset.unwrap_or(0));
+    }
+    content
+}
+
+/// How long a sender's live location may go without a position before a
+/// position that names no message starts a new share instead of moving it.
+const LIVE_LOCATION_GAP: i64 = 15 * 60;
+
+/// Unix seconds of a stored live location's latest position.
+fn live_location_time(message: &Message) -> i64 {
+    match message.content {
+        Content::LiveLocation { updated, .. } if updated > 0 => updated,
+        _ => message.timestamp,
+    }
+}
+
+/// Whether `incoming` moves the stored live location `share` forward. An
+/// ended share takes no more positions. Sequence numbers order positions
+/// when both carry one, and arrival time orders the rest.
+fn live_location_newer(share: &Message, incoming: &Content) -> bool {
     let (
         Content::LiveLocation {
             sequence: old,
-            ended: old_ended,
+            ended,
             ..
         },
-        Content::LiveLocation { sequence: new, .. },
-    ) = (stored, incoming)
+        Content::LiveLocation {
+            sequence: new,
+            updated,
+            ..
+        },
+    ) = (&share.content, incoming)
     else {
-        return true;
+        return false;
     };
-    !*old_ended && *new > *old
+    if *ended {
+        false
+    } else if *old > 0 && *new > 0 {
+        new > old
+    } else {
+        *updated > live_location_time(share)
+    }
 }
 
 /// Converts a protocol message to visible content, or `None` for internal traffic.
@@ -7082,9 +7117,14 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
             });
             continue;
         }
-        let Some(content) = classify(base) else {
+        let Some(mut content) = classify(base) else {
             continue;
         };
+        if matches!(content, Content::LiveLocation { .. })
+            && let Some(last) = info.final_live_location.as_option()
+        {
+            content = finished_live_location(last, timestamp);
+        }
         use wa::web_message_info::Status;
         let mut status = if from_me {
             match info.status {
@@ -7626,6 +7666,7 @@ mod tests {
                 heading_deg,
                 sequence,
                 ended,
+                ..
             }) => {
                 assert_eq!(latitude, 51.5074);
                 assert_eq!(longitude, -0.1278);
@@ -7669,42 +7710,148 @@ mod tests {
         assert!(matches!(classify(&pinned), Some(Content::Location { .. })));
     }
 
-    #[test]
-    fn live_location_updates_anchor_to_the_start_message_id() {
-        let update = wa::Message {
+    fn live_position(
+        id: &str,
+        at: i64,
+        sequence: i64,
+        latitude: f64,
+        quoting: Option<&str>,
+    ) -> (Arc<wa::Message>, MessageInfo) {
+        const PEER: &str = super::receipt_tests::PEER;
+        let message = wa::Message {
             live_location_message: MessageField::some(wa::message::LiveLocationMessage {
-                degrees_latitude: Some(1.0),
-                degrees_longitude: Some(2.0),
-                sequence_number: Some(3),
-                context_info: MessageField::some(wa::ContextInfo {
-                    stanza_id: Some("3EB0START".into()),
-                    ..Default::default()
-                }),
+                degrees_latitude: Some(latitude),
+                degrees_longitude: Some(-0.12),
+                sequence_number: Some(sequence),
+                jpeg_thumbnail: Some(vec![sequence as u8]),
+                context_info: quoting
+                    .map(|id| {
+                        MessageField::some(wa::ContextInfo {
+                            stanza_id: Some(id.into()),
+                            ..Default::default()
+                        })
+                    })
+                    .unwrap_or_default(),
                 ..Default::default()
             }),
             ..Default::default()
         };
-        assert_eq!(
-            live_location_of(&update).map(|(_, anchor)| anchor),
-            Some(Some("3EB0START".to_owned()))
-        );
+        let info = MessageInfo {
+            id: id.into(),
+            source: MessageSource {
+                chat: PEER.parse().unwrap(),
+                sender: PEER.parse().unwrap(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(at).unwrap(),
+            ..Default::default()
+        };
+        (Arc::new(message), info)
     }
 
     #[test]
-    fn live_location_sequence_guard_rejects_out_of_order_updates() {
-        let live = |sequence, ended| Content::LiveLocation {
-            latitude: 0.0,
-            longitude: 0.0,
-            accuracy_m: None,
-            speed_mps: None,
-            heading_deg: None,
-            sequence,
-            ended,
+    fn live_location_positions_move_one_row_per_share() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let start = crate::util::now() - 3_600;
+        let ingest = |worker: &mut Worker, position: (Arc<wa::Message>, MessageInfo)| {
+            worker.ingest(&position.0, &position.1);
         };
-        assert!(live_location_newer(&live(5, false), &live(6, false)));
-        assert!(!live_location_newer(&live(5, false), &live(5, false)));
-        assert!(!live_location_newer(&live(5, false), &live(4, false)));
-        assert!(!live_location_newer(&live(5, true), &live(6, false)));
+        let rows = |worker: &Worker| worker.archive.messages(PEER, None, 100).unwrap();
+        let share = |worker: &Worker| worker.archive.message(PEER, "start").unwrap().unwrap();
+
+        ingest(&mut worker, live_position("start", start, 1, 51.0, None));
+        // Positions with ids of their own, named or not, move the share.
+        ingest(&mut worker, live_position("p2", start + 60, 2, 51.1, None));
+        ingest(
+            &mut worker,
+            live_position("p3", start + 120, 3, 51.2, Some("start")),
+        );
+        // A late, older position changes nothing.
+        ingest(
+            &mut worker,
+            live_position("p2-late", start + 130, 2, 51.1, Some("start")),
+        );
+        assert_eq!(rows(&worker).len(), 1);
+        let moved = share(&worker);
+        assert_eq!(moved.timestamp, start, "the share keeps its place");
+        assert_eq!(moved.thumbnail, Some(vec![3]));
+        assert!(matches!(
+            moved.content,
+            Content::LiveLocation {
+                latitude: 51.2,
+                sequence: 3,
+                updated,
+                ..
+            } if updated == start + 120
+        ));
+
+        // After a long silence, an unnamed position starts a new share.
+        ingest(
+            &mut worker,
+            live_position("again", start + 120 + LIVE_LOCATION_GAP + 1, 1, 52.0, None),
+        );
+        assert_eq!(rows(&worker).len(), 2);
+        assert!(matches!(
+            share(&worker).content,
+            Content::LiveLocation { latitude: 51.2, .. }
+        ));
+    }
+
+    #[test]
+    fn a_live_location_that_quotes_a_message_does_not_replace_it() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let now = crate::util::now();
+        let text = wa::Message {
+            conversation: Some("where are you?".into()),
+            ..Default::default()
+        };
+        let (_, mut info) = live_position("question", now - 60, 0, 0.0, None);
+        info.timestamp = whatsapp_rust::wacore::time::from_secs(now - 60).unwrap();
+        worker.ingest(&Arc::new(text), &info);
+        let (message, info) = live_position("answer", now, 1, 51.0, Some("question"));
+        worker.ingest(&message, &info);
+        assert!(matches!(
+            worker
+                .archive
+                .message(PEER, "question")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Text { .. }
+        ));
+        assert!(matches!(
+            worker
+                .archive
+                .message(PEER, "answer")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::LiveLocation { .. }
+        ));
+    }
+
+    #[test]
+    fn history_reports_a_finished_live_location_as_ended() {
+        let last = wa::message::LiveLocationMessage {
+            degrees_latitude: Some(48.1),
+            degrees_longitude: Some(11.6),
+            sequence_number: Some(9),
+            time_offset: Some(600),
+            ..Default::default()
+        };
+        let content = finished_live_location(&last, 1_000);
+        assert!(matches!(
+            content,
+            Content::LiveLocation {
+                latitude: 48.1,
+                sequence: 9,
+                ended: true,
+                updated: 1_600,
+                ..
+            }
+        ));
     }
 
     #[test]

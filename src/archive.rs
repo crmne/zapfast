@@ -1225,6 +1225,26 @@ impl Archive {
         rows.collect()
     }
 
+    /// The id of `sender`'s newest live location in `chat` sent at or after
+    /// `since`.
+    pub fn latest_live_location(
+        &self,
+        chat: &str,
+        sender: &str,
+        since: i64,
+    ) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT id FROM messages
+                 WHERE chat = ?1 AND timestamp >= ?3 AND sender = ?2
+                   AND json_extract(content, '$.kind') = 'livelocation'
+                 ORDER BY timestamp DESC LIMIT 1",
+                params![chat, sender, since],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
         let mut statement = self.connection.prepare(
             "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
@@ -1711,6 +1731,7 @@ pub(crate) mod tests {
                 heading_deg: Some(45),
                 sequence,
                 ended,
+                updated: 0,
             };
             row.thumbnail = thumbnail;
             row
@@ -1743,9 +1764,22 @@ pub(crate) mod tests {
                 heading_deg: Some(45),
                 sequence: 2,
                 ended: false,
+                updated: 0,
             }
         );
         assert_eq!(updated.thumbnail, Some(vec![1, 2, 3]));
+        assert_eq!(
+            archive
+                .latest_live_location(chat, &updated.sender, 100)
+                .expect("query"),
+            Some("live".to_owned())
+        );
+        assert_eq!(
+            archive
+                .latest_live_location(chat, &updated.sender, 101)
+                .expect("query"),
+            None
+        );
 
         let rows: i64 = archive
             .connection

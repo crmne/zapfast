@@ -331,6 +331,10 @@ pub enum Content {
         /// Whether the sender has stopped sharing.
         #[serde(default)]
         ended: bool,
+        /// Unix seconds of the latest position, or 0 before any update. The
+        /// message keeps its start time so updates do not reorder the chat.
+        #[serde(default)]
+        updated: i64,
     },
     Contact {
         display_name: String,
@@ -474,7 +478,19 @@ impl PollDraft {
     }
 }
 
+/// WhatsApp's longest live location share, in seconds.
+pub const LIVE_LOCATION_LIMIT: i64 = 8 * 60 * 60;
+
 impl Content {
+    /// Whether a live location sent at `sent` has stopped by `now`: its
+    /// sender ended it, or it has outlived the longest share.
+    pub fn live_location_over(&self, sent: i64, now: i64) -> bool {
+        match self {
+            Self::LiveLocation { ended, .. } => *ended || now - sent > LIVE_LOCATION_LIMIT,
+            _ => false,
+        }
+    }
+
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text {
             text: text.into(),
@@ -1409,6 +1425,7 @@ mod tests {
             heading_deg: Some(45),
             sequence: 7,
             ended: true,
+            updated: 1_700_000_000,
         };
         let json = serde_json::to_string(&content).expect("serializes");
         let back: Content = serde_json::from_str(&json).expect("parses");
@@ -1427,7 +1444,26 @@ mod tests {
                 heading_deg: None,
                 sequence: 0,
                 ended: false,
+                updated: 0,
             }
         );
+    }
+
+    #[test]
+    fn live_location_is_over_when_ended_or_older_than_the_longest_share() {
+        let live = |ended| Content::LiveLocation {
+            latitude: 0.0,
+            longitude: 0.0,
+            accuracy_m: None,
+            speed_mps: None,
+            heading_deg: None,
+            sequence: 1,
+            ended,
+            updated: 0,
+        };
+        assert!(!live(false).live_location_over(1_000, 1_000 + LIVE_LOCATION_LIMIT));
+        assert!(live(false).live_location_over(1_000, 1_001 + LIVE_LOCATION_LIMIT));
+        assert!(live(true).live_location_over(1_000, 1_000));
+        assert!(!Content::text("hi").live_location_over(0, i64::MAX));
     }
 }
