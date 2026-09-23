@@ -78,9 +78,10 @@ pub(super) fn show(
     // the wake and the queue write never touch the interface thread.
     notification(title, body, picture, system_sound)
         .on_activated(move |_| {
-            if let Ok(mut list) = opened.lock() {
-                list.push(target.clone());
-            }
+            opened
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(target.clone());
             wake();
             Ok(())
         })
