@@ -167,6 +167,11 @@ Right-click a chat to pin, archive, or mute it for eight hours, one week, or
 indefinitely. These changes also apply on your phone. Click the chat header to
 see its picture, number, and group members.
 
+The button beside **New chat** hides the list (`Ctrl+B`). Turn on **Collapse the
+chat list to icons** in Settings to keep a narrow column of avatars instead:
+unread chats show their badge, hovering names a chat, clicking opens it, and
+`Ctrl+B` brings the full list back.
+
 ## Notifications and the tray
 
 Closing the window keeps ZapFast linked in the tray. Click the tray icon or

@@ -279,8 +279,12 @@ impl WallpaperColor {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationSound {
-    /// Whatever the operating system plays for notifications.
+    /// ZapFast's two-note chime, the default for one-to-one chats.
     #[default]
+    Chime,
+    /// ZapFast's three-note ripple, the default for groups.
+    Ripple,
+    /// Whatever the operating system plays for notifications.
     System,
     /// No sound.
     None,
@@ -311,6 +315,8 @@ pub struct Settings {
     /// egui zoom factor.
     pub zoom: f32,
     pub sidebar_width: f32,
+    /// Hiding the chat list collapses it to avatars instead of removing it.
+    pub collapse_chat_list: bool,
     /// Whether Enter sends and Shift+Enter adds a line. Off swaps them.
     pub enter_sends: bool,
     /// Send read receipts, subject to the account privacy setting.
@@ -348,6 +354,9 @@ pub struct Settings {
     /// Folder for new downloads. `None` keeps them in the cache. Files
     /// already downloaded stay where they are when this changes.
     pub download_folder: Option<std::path::PathBuf>,
+    /// Proxy for WhatsApp, media, and updates, such as
+    /// `socks5h://127.0.0.1:9050`. Empty follows `ALL_PROXY` / `HTTPS_PROXY`.
+    pub proxy: String,
     /// Ask GitHub once a day whether a newer release exists.
     pub check_for_updates: bool,
     /// Download verified updates in the background; restarting remains explicit.
@@ -356,6 +365,10 @@ pub struct Settings {
     pub names_from_contacts: bool,
     /// Voice and audio playback speed multiplier.
     pub voice_speed: f32,
+    /// Pause other apps' media while recording a voice message.
+    pub pause_media_while_recording: bool,
+    /// Pause other apps' media while a voice or audio message plays.
+    pub pause_media_while_playing: bool,
     /// Also add saved contacts to the phone's address book.
     pub save_contacts_to_phone: bool,
     /// Legacy plaintext code, accepted once and rewritten as a verifier.
@@ -377,6 +390,7 @@ impl Default for Settings {
             system_theme_cache: None,
             zoom: 1.0,
             sidebar_width: 320.0,
+            collapse_chat_list: false,
             enter_sends: true,
             send_read_receipts: true,
             send_typing: true,
@@ -392,14 +406,17 @@ impl Default for Settings {
             giphy_key: String::new(),
             keep_running_in_background: true,
             notifications: true,
-            message_sound: NotificationSound::System,
-            group_sound: NotificationSound::System,
+            message_sound: NotificationSound::Chime,
+            group_sound: NotificationSound::Ripple,
             download_folder: None,
+            proxy: String::new(),
             check_for_updates: true,
             download_updates_automatically: false,
             names_from_contacts: true,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
+            pause_media_while_recording: true,
+            pause_media_while_playing: true,
             chat_lock_code: None,
             chat_lock_code_hash: None,
             chat_lock_hint_dismissed: false,
@@ -544,6 +561,10 @@ mod tests {
         assert!(!parsed.download_updates_automatically);
         assert!(parsed.show_wallpaper);
         assert_eq!(parsed.wallpaper_color, WallpaperColor::Beige);
+        assert!(
+            !parsed.collapse_chat_list,
+            "hiding the list keeps removing it until asked otherwise"
+        );
     }
 
     #[test]
@@ -562,6 +583,7 @@ mod tests {
             zoom: 1.25,
             enter_sends: false,
             voice_speed: 1.5,
+            collapse_chat_list: true,
             interface_language: Some(crate::i18n::Locale::German),
             message_sound: NotificationSound::None,
             group_sound: NotificationSound::Custom("/sounds/ding.wav".into()),

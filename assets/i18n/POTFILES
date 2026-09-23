@@ -4,3 +4,6 @@ src/ui/chats.rs
 src/ui/conversation.rs
 src/ui/dialogs.rs
 src/ui/settings.rs
+src/ui/widgets.rs
+src/ui/message_info.rs
+src/app.rs

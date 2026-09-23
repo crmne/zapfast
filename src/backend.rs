@@ -170,11 +170,19 @@ pub enum Command {
         chat: ChatId,
         composing: bool,
     },
+    /// Stores the open chat's unsent text, so it survives a restart.
+    SaveDraft {
+        chat: ChatId,
+        text: String,
+    },
     /// Marks a visible chat read and optionally sends receipts.
     MarkRead {
         chat: ChatId,
         receipts: bool,
     },
+    /// Follows one of our group messages' receipts while "Message info" is
+    /// open, or stops following with `None`.
+    WatchReceipts(Option<(ChatId, String)>),
     /// Result of a private read-state update to the other linked devices.
     ReadSyncFinished {
         chat: ChatId,
@@ -311,6 +319,21 @@ pub enum Command {
     PickChatSound(ChatId),
     /// Asks for a folder for new downloads.
     PickDownloadFolder,
+    /// Changes our display name and About text; `None` keeps the current one.
+    SetProfile {
+        name: Option<String>,
+        about: Option<String>,
+    },
+    /// Asks for a picture and makes it our profile picture.
+    PickProfilePicture,
+    /// Internal: a picked picture, cropped and encoded as JPEG.
+    SetProfilePicture(Vec<u8>),
+    /// Internal: the server accepted a profile change.
+    ProfileSaved {
+        name: Option<String>,
+        about: Option<String>,
+        picture: bool,
+    },
     /// Where new downloads go; `None` is the cache.
     SetDownloadFolder(Option<std::path::PathBuf>),
     /// Asks where to save a copy of an attachment, then copies it there.
@@ -386,6 +409,8 @@ pub enum Command {
     /// Unlinks the device remotely and locally.
     Unlink,
     Reconnect,
+    /// Use this proxy setting and reconnect. Empty follows the environment.
+    SetProxy(String),
     /// Sets aside an unreadable archive and the linked session, then starts
     /// over with a new archive and a new link.
     StartOverArchive,
@@ -514,6 +539,8 @@ pub enum Event {
     },
     /// Full chat list, newest first.
     Chats(Vec<Chat>),
+    /// Unsent text stored for each chat, sent once at startup.
+    Drafts(Vec<(ChatId, String)>),
     /// Message ids in one chat matching a search, oldest first.
     ChatHits {
         chat: ChatId,
@@ -604,6 +631,9 @@ pub enum Event {
     ReceiptsPrivacy {
         disabled: bool,
     },
+    /// The followed message's receipts, sent when following starts and
+    /// whenever one arrives.
+    Receipts(crate::model::MessageReceipts),
     /// An audio file chosen for one chat's notifications.
     ChatSoundPicked {
         chat: ChatId,
@@ -743,11 +773,22 @@ impl Backend {
     /// Records commands without a runtime or network connection.
     #[cfg(test)]
     pub(crate) fn recording() -> (Self, mpsc::UnboundedReceiver<Command>) {
-        let (mut backend, _) = Self::detached();
+        let (backend, inbox, _) = Self::recording_with_events();
+        (backend, inbox)
+    }
+
+    /// Records commands and lets a test deliver events.
+    #[cfg(test)]
+    pub(crate) fn recording_with_events() -> (
+        Self,
+        mpsc::UnboundedReceiver<Command>,
+        std::sync::mpsc::Sender<Event>,
+    ) {
+        let (mut backend, events) = Self::detached();
         let (commands, inbox) = mpsc::unbounded_channel();
         backend.commands = commands;
         backend.offline = false;
-        (backend, inbox)
+        (backend, inbox, events)
     }
 
     /// Disables commands except shutdown.

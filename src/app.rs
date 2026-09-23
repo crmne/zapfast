@@ -13,7 +13,7 @@ use crate::i18n::Locale;
 use crate::image_preview::PreviewState;
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Media,
-    MediaState, Message, Page, PickerTab, StickerPack, Toast, ToastKind,
+    MediaState, Message, Page, PickerTab, SidebarDisplayMode, StickerPack, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{Settings, ThemeChoice};
@@ -220,6 +220,10 @@ pub struct App {
     pub presence: HashMap<String, Presence>,
     /// Whether account privacy disables direct-chat read receipts.
     pub account_receipts_off: bool,
+    /// Receipts of the message whose "Message info" is open.
+    pub message_receipts: Option<crate::model::MessageReceipts>,
+    /// The group message the backend is following receipts for.
+    pub(crate) receipts_watch: Option<(ChatId, String)>,
     /// The group invite link being previewed or joined.
     pub invite: Option<crate::model::GroupInvite>,
     /// Where the unread messages began when the open chat was opened.
@@ -259,8 +263,18 @@ pub struct App {
     pub pending: Vec<Pending>,
     /// In-chat audio player.
     pub player: Player,
+    /// In-chat video player.
+    pub video: crate::video::Player,
+    /// Chat of the loaded video; leaving it stops the video.
+    video_chat: Option<ChatId>,
+    /// Video to play once its download finishes.
+    video_wanted: Option<(ChatId, String)>,
     /// Active voice recorder.
     pub recording: Option<Recorder>,
+    /// Keeps other apps' music paused while recording or playing audio.
+    media_hold: Option<crate::media_pause::Hold>,
+    /// Only the real app pauses other apps' media, never tests or demos.
+    pauses_media: bool,
     /// Image currently shown in the native preview.
     pub image_preview: Option<PreviewState>,
     /// Voice messages with a sent played receipt.
@@ -400,8 +414,10 @@ impl Default for AppOptions {
 
 impl App {
     pub fn new(waker: &Waker, dirs: AppDirs, settings: Settings, options: AppOptions) -> Self {
+        crate::proxy::configure(&settings.proxy);
         let backend = Backend::spawn(dirs.clone(), waker.clone());
         let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
+        app.pauses_media = true;
         app.custom_themes.enable_desktop_themes();
         app.load_custom_themes();
         if options.tray {
@@ -499,6 +515,8 @@ impl App {
             typing: HashMap::new(),
             presence: HashMap::new(),
             account_receipts_off: false,
+            message_receipts: None,
+            receipts_watch: None,
             invite: None,
             unread_divider: None,
             selection: None,
@@ -521,7 +539,12 @@ impl App {
             emoji_jump: None,
             pending: Vec::new(),
             player: Player::new(waker.clone()),
+            video: crate::video::Player::new(waker.clone()),
+            video_chat: None,
+            video_wanted: None,
             recording: None,
+            media_hold: None,
+            pauses_media: false,
             image_preview: None,
             played_told: HashSet::new(),
             copy_rows: Default::default(),
@@ -595,6 +618,7 @@ impl App {
 
     /// Updates the linked app while no window exists.
     pub fn window_gone(&mut self) {
+        self.flush_open_draft();
         self.clear_chat_lock_entry();
         if self.dialog == Some(Dialog::UnlockLockedChats) {
             self.dialog = None;
@@ -752,6 +776,19 @@ impl App {
 
     pub fn is_connected(&self) -> bool {
         self.link.is_connected()
+    }
+
+    /// How the chat list is drawn right now. Hidden chats either leave the
+    /// window entirely or collapse to an icon column, depending on settings.
+    pub fn sidebar_mode(&self) -> SidebarDisplayMode {
+        if self.sidebar_visible {
+            return SidebarDisplayMode::Expanded;
+        }
+        if self.settings.collapse_chat_list {
+            SidebarDisplayMode::CollapsedIconsOnly
+        } else {
+            SidebarDisplayMode::Hidden
+        }
     }
 
     /// Whether the device has linked data, including while offline.
@@ -1052,7 +1089,7 @@ impl App {
             counted.push(if count == 1 {
                 name
             } else {
-                format!("{name} ×{count}")
+                format!("{name} x{count}")
             });
         }
         numbers.sort();
@@ -1283,6 +1320,21 @@ impl App {
                     self.me = Some(id);
                     self.me_name = name;
                     self.me_about = about;
+                }
+                Event::Drafts(drafts) => {
+                    // Unsent text stored by an earlier session. Text typed in
+                    // this session wins over the stored copy.
+                    for (chat, text) in drafts {
+                        // The chat reopened at startup shows its draft at once.
+                        if self.open_chat.as_deref() == Some(chat.as_str())
+                            && self.editing.is_none()
+                            && self.composer.is_empty()
+                        {
+                            self.composer = text;
+                        } else {
+                            self.drafts.entry(chat).or_insert(text);
+                        }
+                    }
                 }
                 Event::Chats(chats) => {
                     for chat in &chats {
@@ -1536,8 +1588,18 @@ impl App {
                     conversation.complete = false;
                 }
                 Event::ReceiptsPrivacy { disabled } => self.account_receipts_off = disabled,
+                Event::Receipts(receipts) => {
+                    // A late answer for a dialog that has since closed is stale.
+                    if self.receipts_watch.as_ref().is_some_and(|(chat, message)| {
+                        *chat == receipts.chat && *message == receipts.message
+                    }) {
+                        self.message_receipts = Some(receipts);
+                    }
+                }
                 Event::ChatSoundPicked { chat, path } => {
-                    crate::notify::play_sound(path.clone());
+                    crate::notify::play_sound(crate::settings::NotificationSound::Custom(
+                        path.clone(),
+                    ));
                     self.actions.push(Action::SetChatSound {
                         chat,
                         sound: Some(crate::settings::NotificationSound::Custom(path)),
@@ -1547,7 +1609,9 @@ impl App {
                     self.actions.push(Action::SetDownloadFolder(Some(path)));
                 }
                 Event::NotificationSoundPicked { group, path } => {
-                    crate::notify::play_sound(path.clone());
+                    crate::notify::play_sound(crate::settings::NotificationSound::Custom(
+                        path.clone(),
+                    ));
                     self.actions.push(Action::SetNotificationSound {
                         group,
                         sound: crate::settings::NotificationSound::Custom(path),
@@ -1672,6 +1736,11 @@ impl App {
                 self.contacts.clear();
                 self.avatars.clear();
                 self.open_chat = None;
+                // Unsent text belongs to the account that was unlinked.
+                self.drafts.clear();
+                self.draft_mentions.clear();
+                self.composer.clear();
+                self.composer_mentions.clear();
                 self.toast_error("This device was unlinked from your phone");
             }
             LinkStatus::Failed(message) => self.toast_error(message.clone()),
@@ -1746,6 +1815,9 @@ impl App {
     /// pending edit would send `EditText` for a message that no longer exists.
     fn handle_chat_cleared(&mut self, id: &str, through: i64) {
         self.notifications.clear(id);
+        // Clearing a chat also removes its stored draft.
+        self.drafts.remove(id);
+        self.draft_mentions.remove(id);
         self.search_hits
             .retain(|message| message.chat != id || message.timestamp > through);
         // Nothing earlier is left here, and the phone no longer has it either.
@@ -1829,6 +1901,13 @@ impl App {
 
     fn hide_locked_chat(&mut self, id: &str) {
         // A locked chat still exists, so its unsent text waits as a draft.
+        // Text emptied in the composer clears the stored copy too.
+        if self.open_chat.as_deref() == Some(id)
+            && self.editing.is_none()
+            && self.composer.is_empty()
+        {
+            self.store_draft(id, "");
+        }
         if self.open_chat.as_deref() == Some(id)
             && self.editing.is_none()
             && !self.composer.is_empty()
@@ -1837,8 +1916,21 @@ impl App {
                 .insert(id.to_owned(), std::mem::take(&mut self.composer));
             self.draft_mentions
                 .insert(id.to_owned(), std::mem::take(&mut self.composer_mentions));
+            self.store_draft(
+                id,
+                self.drafts.get(id).map(String::as_str).unwrap_or_default(),
+            );
         }
         self.leave_chat(id);
+    }
+
+    /// Mirrors a chat's draft into the encrypted archive, so unsent text
+    /// survives a restart. An empty text clears the stored row.
+    fn store_draft(&self, chat: &str, text: &str) {
+        self.backend.send(Command::SaveDraft {
+            chat: chat.to_owned(),
+            text: text.to_owned(),
+        });
     }
 
     fn handle_media(
@@ -1860,8 +1952,19 @@ impl App {
         };
         match result {
             Ok(path) => {
-                media.path = Some(path);
+                media.path = Some(path.clone());
                 media.state = MediaState::Idle;
+                if self
+                    .video_wanted
+                    .as_ref()
+                    .is_some_and(|(wanted_chat, wanted)| wanted_chat == chat && wanted == id)
+                {
+                    self.video_wanted = None;
+                    self.actions.push(Action::PlayVideo {
+                        message: id.to_owned(),
+                        path,
+                    });
+                }
             }
             Err(error) => {
                 // Show expired-file failures in the bubble, not as a toast.
@@ -1980,6 +2083,8 @@ impl App {
                     );
                 }
                 self.stop_composing(&previous);
+                let draft = self.drafts.get(&previous).cloned().unwrap_or_default();
+                self.store_draft(&previous, &draft);
             }
             self.selection = None;
             self.unread_divider =
@@ -2109,6 +2214,8 @@ impl App {
             });
             return;
         }
+        // The text is on its way, so there is nothing left to restore.
+        self.store_draft(&chat, "");
         self.backend.send(Command::SendText {
             chat,
             text,
@@ -2617,6 +2724,11 @@ impl App {
                     preview.fit();
                 }
             }
+            Action::ImageActualSize => {
+                if let Some(preview) = &mut self.image_preview {
+                    preview.actual_size();
+                }
+            }
             Action::CloseImagePreview => {
                 self.image_preview = None;
                 self.refocus_composer(ctx);
@@ -2815,6 +2927,12 @@ impl App {
             }
             Action::ClearPending => self.pending.clear(),
             Action::PlayVoice { message, path } => self.play_voice(message, path),
+            Action::PlayVideo { message, path } => self.play_video(message, path),
+            Action::PlayVideoWhenDownloaded(message) => {
+                self.video_wanted = self.open_chat.clone().map(|chat| (chat, message));
+            }
+            Action::SeekVideo { message, fraction } => self.video.seek(&message, fraction),
+            Action::ToggleVideoSound => self.video.toggle_mute(),
             Action::SeekVoice {
                 message,
                 path,
@@ -3158,7 +3276,14 @@ impl App {
                     to_phone: self.settings.save_contacts_to_phone,
                 });
             }
-            Action::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
+            Action::ToggleSidebar => match self.sidebar_mode() {
+                // Hiding is the only step out of the full list. With the
+                // preference on, it collapses to avatars instead of leaving.
+                SidebarDisplayMode::Expanded => self.sidebar_visible = false,
+                SidebarDisplayMode::CollapsedIconsOnly | SidebarDisplayMode::Hidden => {
+                    self.sidebar_visible = true;
+                }
+            },
             Action::SetChatFilter(filter) => {
                 if self.locked_folder {
                     self.close_locked_folder();
@@ -3183,6 +3308,17 @@ impl App {
                         invite.state = InviteState::Joining(info.clone());
                         self.backend.send(Command::JoinInvite(invite.code.clone()));
                     }
+                }
+            }
+            Action::MuteAllChannels(mute) => {
+                let channels: Vec<ChatId> = self
+                    .chats
+                    .iter()
+                    .filter(|chat| chat.is_channel())
+                    .map(|chat| chat.id.clone())
+                    .collect();
+                for chat in channels {
+                    self.actions.push(Action::SetMuted(chat, mute.then_some(0)));
                 }
             }
             Action::ShowArchived(show) => {
@@ -3390,8 +3526,12 @@ impl App {
             Action::PickNotificationSound { group } => {
                 self.backend.send(Command::PickNotificationSound { group });
             }
-            Action::PreviewSound(path) => crate::notify::play_sound(path),
+            Action::PreviewSound(sound) => crate::notify::play_sound(sound),
             Action::PickDownloadFolder => self.backend.send(Command::PickDownloadFolder),
+            Action::SetProfile { name, about } => {
+                self.backend.send(Command::SetProfile { name, about });
+            }
+            Action::PickProfilePicture => self.backend.send(Command::PickProfilePicture),
             Action::SetChatSound { chat, sound } => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.notification_sound = sound.clone();
@@ -3403,6 +3543,22 @@ impl App {
                 self.settings.download_folder = folder.clone();
                 self.mark_settings_dirty();
                 self.backend.send(Command::SetDownloadFolder(folder));
+            }
+            Action::SetProxy(value) => {
+                let value = value.trim().to_owned();
+                if value == self.settings.proxy {
+                    return;
+                }
+                if !value.is_empty()
+                    && let Err(error) = crate::proxy::Proxy::parse(&value)
+                {
+                    self.toast_error(error);
+                    return;
+                }
+                self.settings.proxy = value.clone();
+                self.mark_settings_dirty();
+                crate::proxy::configure(&value);
+                self.backend.send(Command::SetProxy(value));
             }
             Action::SetStartWithSystem(enabled) => match crate::autostart::set(enabled) {
                 Ok(()) => self.start_with_system = Some(crate::autostart::enabled()),
@@ -3546,17 +3702,50 @@ impl App {
         self.handle_events();
         self.tick(ctx);
         self.tick_audio();
+        self.tick_video(ctx);
         self.apply_actions(ctx);
+        self.hold_media();
+        self.follow_receipts();
         self.sync_badge();
     }
 
     /// Mirrors the unread total onto the taskbar icon, where the desktop
-    /// reads it. The badge ignores repeats, so calling this each frame is free.
+    /// reads it. The badge ignores repeats, so calling this each frame is cheap.
     fn sync_badge(&mut self) {
         let count = self.unread_total();
         if let Some(badge) = &mut self.badge {
             badge.set(count);
         }
+    }
+
+    /// Pauses other apps' music while recording or playing audio, as the
+    /// settings allow, and resumes it once neither needs quiet.
+    fn hold_media(&mut self) {
+        let wanted = self.pauses_media
+            && (self.recording.is_some() && self.settings.pause_media_while_recording
+                || self.player.is_playing() && self.settings.pause_media_while_playing);
+        if wanted != self.media_hold.is_some() {
+            self.media_hold = wanted.then(crate::media_pause::hold);
+        }
+    }
+
+    /// Keeps the backend following receipts for exactly the group message
+    /// whose "Message info" is open. A direct message's times are on its row.
+    fn follow_receipts(&mut self) {
+        let wanted = match &self.dialog {
+            Some(Dialog::MessageInfo { chat, message })
+                if crate::model::ChatKind::from_id(chat) == crate::model::ChatKind::Group =>
+            {
+                Some((chat.clone(), message.clone()))
+            }
+            _ => None,
+        };
+        if wanted == self.receipts_watch {
+            return;
+        }
+        self.message_receipts = None;
+        self.receipts_watch = wanted.clone();
+        self.backend.send(Command::WatchReceipts(wanted));
     }
 
     /// Polls audio state and schedules repaints while it changes.
@@ -3573,8 +3762,45 @@ impl App {
         }
     }
 
+    /// Shows the playing video's frames, stops it once its chat is left, and
+    /// hands a video it cannot decode to the system player.
+    fn tick_video(&mut self, ctx: &egui::Context) {
+        if self.video.message().is_some() && self.video_chat != self.open_chat {
+            self.video.stop();
+        }
+        if let Some(crate::video::Notice::Unsupported(path)) = self.video.poll(ctx) {
+            self.toast(crate::i18n::gettext(
+                self.locale,
+                "This video opens in your system player",
+            ));
+            self.actions.push(Action::OpenFile(path));
+        }
+    }
+
+    /// Plays or pauses a video in its message. A video message, the round
+    /// kind, sends its played receipt like a voice message.
+    fn play_video(&mut self, message: String, path: PathBuf) {
+        let Some(chat) = self.open_chat.clone() else {
+            return;
+        };
+        // One sound at a time.
+        self.player.stop();
+        let starting = self.video.message() != Some(message.as_str());
+        self.video.toggle(&message, &path);
+        self.video_chat = Some(chat.clone());
+        let note = self
+            .conversations
+            .get(&chat)
+            .and_then(|conversation| conversation.message(&message))
+            .is_some_and(|row| matches!(row.content, Content::Video { note: true, .. }));
+        if starting && note {
+            self.tell_played(message);
+        }
+    }
+
     /// Plays or pauses audio and sends the first played receipt when needed.
     fn play_voice(&mut self, message: String, path: PathBuf) {
+        self.video.stop();
         if let Err(error) = self.player.toggle(&message, &path) {
             self.toast_error(error);
             return;
@@ -3908,7 +4134,23 @@ impl App {
 
     pub fn shutdown(&mut self) {
         self.save_state();
+        self.flush_open_draft();
+        self.recording = None;
+        // A background resume would die with the process.
+        if self.media_hold.take().is_some() {
+            crate::media_pause::settle(Duration::from_secs(2));
+        }
         self.backend.shutdown();
+    }
+
+    /// Stores the open chat's unsent text, which otherwise only moves into
+    /// the archive when another chat opens.
+    fn flush_open_draft(&self) {
+        if let Some(chat) = self.open_chat.as_deref()
+            && self.editing.is_none()
+        {
+            self.store_draft(chat, &self.composer);
+        }
     }
 
     /// Returns attachment state for a loaded message.
@@ -4036,6 +4278,34 @@ mod tests {
     #[test]
     fn demo_and_test_runs_do_not_publish_a_taskbar_badge() {
         assert!(app().badge.is_none());
+    }
+
+    #[test]
+    fn hiding_the_chat_list_collapses_it_only_when_asked() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        assert_eq!(app.sidebar_mode(), SidebarDisplayMode::Expanded);
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(
+            app.sidebar_mode(),
+            SidebarDisplayMode::Hidden,
+            "without the preference, hiding removes the list"
+        );
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(app.sidebar_mode(), SidebarDisplayMode::Expanded);
+        app.settings.collapse_chat_list = true;
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(
+            app.sidebar_mode(),
+            SidebarDisplayMode::CollapsedIconsOnly,
+            "the same button collapses the list instead"
+        );
+        app.apply(Action::ToggleSidebar, &ctx);
+        assert_eq!(
+            app.sidebar_mode(),
+            SidebarDisplayMode::Expanded,
+            "and brings the full list back"
+        );
     }
 
     #[test]
@@ -4525,6 +4795,98 @@ mod tests {
     }
 
     #[test]
+    fn message_info_follows_a_group_messages_receipts_only_while_open() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let group = "123-456@g.us";
+        let watches = |commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>| {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::WatchReceipts(watch) => Some(watch),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let receipts = |message: &str| crate::model::MessageReceipts {
+            chat: group.into(),
+            message: message.into(),
+            recipients: Vec::new(),
+        };
+        app.apply(
+            Action::ShowDialog(Dialog::MessageInfo {
+                chat: group.into(),
+                message: "m".into(),
+            }),
+            &ctx,
+        );
+        app.follow_receipts();
+        app.follow_receipts();
+        assert_eq!(
+            watches(&mut commands),
+            [Some((group.to_owned(), "m".to_owned()))]
+        );
+        // Receipts for another message, from a dialog opened earlier, are stale.
+        events.send(Event::Receipts(receipts("other"))).unwrap();
+        app.handle_events();
+        assert!(app.message_receipts.is_none());
+        events.send(Event::Receipts(receipts("m"))).unwrap();
+        app.handle_events();
+        assert_eq!(app.message_receipts, Some(receipts("m")));
+        app.apply(Action::CloseDialog, &ctx);
+        app.follow_receipts();
+        assert_eq!(watches(&mut commands), [None]);
+        assert!(app.message_receipts.is_none());
+        // A direct message's times are on its row: nothing to follow.
+        app.apply(
+            Action::ShowDialog(Dialog::MessageInfo {
+                chat: "1@s.whatsapp.net".into(),
+                message: "m".into(),
+            }),
+            &ctx,
+        );
+        app.follow_receipts();
+        assert!(watches(&mut commands).is_empty());
+    }
+
+    #[test]
+    fn drafts_come_back_after_a_restart_and_leave_with_the_account() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let (open, other) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        app.open_chat = Some(open.into());
+        events
+            .send(Event::Drafts(vec![
+                (open.into(), "half a reply".into()),
+                (other.into(), "later".into()),
+            ]))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.composer, "half a reply", "the reopened chat shows it");
+        assert_eq!(app.drafts.get(other).map(String::as_str), Some("later"));
+        // Quitting stores what is in the composer.
+        app.composer = "half a reply, finished".into();
+        app.shutdown();
+        let saved: Vec<(String, String)> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::SaveDraft { chat, text } => Some((chat, text)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            saved,
+            [(open.to_owned(), "half a reply, finished".to_owned())]
+        );
+        // Unlinking forgets every draft.
+        events.send(Event::Link(LinkStatus::LoggedOut)).unwrap();
+        app.handle_events();
+        assert!(app.drafts.is_empty());
+        assert!(app.composer.is_empty());
+    }
+
+    #[test]
     fn selected_messages_forward_together_in_chat_order() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
@@ -4597,7 +4959,7 @@ mod tests {
             &ctx,
         );
         assert_eq!(app.settings.group_sound, NotificationSound::None);
-        assert_eq!(app.settings.message_sound, NotificationSound::System);
+        assert_eq!(app.settings.message_sound, NotificationSound::Chime);
     }
 
     #[test]
@@ -4946,6 +5308,63 @@ mod tests {
     }
 
     #[test]
+    fn a_video_note_clicked_before_download_plays_once_it_arrives() {
+        let mut app = app();
+        app.video.silence();
+        let chat = "fixture@s.whatsapp.net";
+        let mut clip = message(chat, "clip", 1);
+        clip.content = Content::Video {
+            caption: None,
+            media: Media {
+                mime: "video/mp4".into(),
+                size: 100,
+                width: None,
+                height: None,
+                path: None,
+                state: MediaState::Idle,
+            },
+            seconds: Some(3),
+            gif: false,
+            note: true,
+        };
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![clip], false);
+        app.open_chat = Some(chat.into());
+        let ctx = egui::Context::default();
+        app.apply(Action::PlayVideoWhenDownloaded("clip".into()), &ctx);
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let path = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/video/sample.mp4"
+        ));
+        events
+            .send(Event::Media {
+                card: None,
+                chat: chat.into(),
+                message: "clip".into(),
+                result: Ok(path.clone()),
+            })
+            .unwrap();
+        app.handle_events();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.apply_actions(&ctx);
+        assert_eq!(app.video.message(), Some("clip"));
+        // A round video message is played like a voice message.
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::MarkPlayed { message, .. }) if message == "clip"
+        ));
+        // Leaving the chat stops it.
+        app.open_chat = None;
+        app.tick_video(&ctx);
+        assert!(app.video.message().is_none());
+    }
+
+    #[test]
     fn repeated_download_clicks_do_not_queue_more_requests() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
@@ -5288,6 +5707,28 @@ mod tests {
         assert_eq!(app.matching_contacts().len(), 1);
         app.search = String::new();
         assert!(app.matching_contacts().is_empty());
+    }
+
+    #[test]
+    fn muting_all_channels_leaves_other_chats_alone() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.chats = vec![
+            Chat::new("1@newsletter".into(), "News".into()),
+            Chat::new("2@newsletter".into(), "More news".into()),
+            Chat::new("3@s.whatsapp.net".into(), "Ada".into()),
+        ];
+        app.apply(Action::MuteAllChannels(true), &ctx);
+        app.apply_actions(&ctx);
+        let muted: Vec<String> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::SetMuted(chat, Some(0)) => Some(chat),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(muted, ["1@newsletter", "2@newsletter"]);
     }
 
     #[test]
@@ -6035,7 +6476,7 @@ mod name_tests {
         chat.participants.push(app.me.clone().unwrap());
         for saved_names in [false, true] {
             app.settings.names_from_contacts = saved_names;
-            assert_eq!(app.participant_names(&chat), "Andrea ×3, Giacomo, You");
+            assert_eq!(app.participant_names(&chat), "Andrea x3, Giacomo, You");
             assert_eq!(app.chat_title(&chat), app.participant_names(&chat));
             chat.name.clear();
             assert_eq!(app.chat_title(&chat), app.participant_names(&chat));
