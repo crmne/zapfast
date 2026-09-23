@@ -23,7 +23,9 @@ const FRAME_MARGIN: i8 = 10;
 /// Minimum emoji cell width. Columns expand to fill the grid.
 const CELL: f32 = 40.0;
 /// Width of the sticker-group sidebar inside the sticker tab.
-const GROUP_PANEL: f32 = 138.0;
+const GROUP_PANEL: f32 = 208.0;
+/// Height of one row in the sticker-group sidebar.
+const GROUP_ROW: f32 = 30.0;
 
 /// An emoji-grid heading or row.
 enum Row {
@@ -1021,6 +1023,90 @@ fn group_entries(groups: &[StickerGroup], all: &str) -> Vec<(Option<String>, Str
         .collect()
 }
 
+/// What a click on a group row asked for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GroupRow {
+    Picked,
+    Removed,
+}
+
+/// Where a group row was drawn, so interaction tests can click it.
+pub fn group_row_id(label: &str) -> egui::Id {
+    egui::Id::new(("sticker-group-row", label))
+}
+
+/// One row of the group list: the name on the left, a delete cross on the
+/// right. Rows span the panel so long names have room, and the name goes
+/// through the rich-text path because a group name can hold emoji.
+fn group_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    label: &str,
+    selected: bool,
+    removable: bool,
+) -> Option<GroupRow> {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), GROUP_ROW), Sense::click());
+    let cross = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - 13.0, rect.center().y),
+        egui::Vec2::splat(16.0),
+    );
+    let remove = removable.then(|| {
+        ui.interact(cross, response.id.with("delete"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+    });
+    let remove_hovered = remove.as_ref().is_some_and(|remove| remove.hovered());
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(group_row_id(label), rect));
+    if ui.is_rect_visible(rect) {
+        let fill = if selected {
+            palette.surface_active
+        } else if response.hovered() || remove_hovered {
+            palette.surface_hover
+        } else {
+            palette.surface
+        };
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(theme::RADIUS), fill);
+        let right = if removable {
+            cross.left() - 4.0
+        } else {
+            rect.right() - 10.0
+        };
+        let left = rect.left() + 10.0;
+        let line = widgets::line(
+            ui,
+            label,
+            theme::regular(13.0),
+            palette.text,
+            (right - left).max(1.0),
+            1,
+        );
+        line.paint(
+            ui,
+            egui::pos2(left, rect.center().y - line.size().y / 2.0),
+            palette.text,
+        );
+        if removable {
+            theme::paint_icon(
+                ui,
+                Icon::X,
+                cross,
+                12.0,
+                if remove_hovered {
+                    palette.danger
+                } else {
+                    palette.dim
+                },
+            );
+        }
+    }
+    if remove.is_some_and(|remove| remove.clicked()) {
+        return Some(GroupRow::Removed);
+    }
+    response.clicked().then_some(GroupRow::Picked)
+}
+
 /// Sticker-group sidebar: create a group, pick one, or delete one.
 fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let entries = group_entries(&app.sticker_groups, "All");
@@ -1033,26 +1119,13 @@ fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .frame(
             Frame::new()
                 .fill(palette.panel)
-                .inner_margin(Margin::symmetric(8, 8)),
+                .inner_margin(Margin::symmetric(10, 10)),
         )
         .show(ui, |ui| {
             ui.set_width(GROUP_PANEL);
+            theme::text(ui, "Groups", theme::semibold(13.0), palette.secondary);
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut app.sticker_group_name)
-                        .id(egui::Id::new("sticker-group-name"))
-                        .hint_text(
-                            egui::RichText::new("Create new group…")
-                                .color(palette.dim)
-                                .font(theme::regular(12.0)),
-                        )
-                        .font(theme::regular(12.0))
-                        .text_color(palette.text)
-                        .desired_width(GROUP_PANEL - 34.0),
-                );
-                if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
-                    create = true;
-                }
                 if theme::icon_button(
                     ui,
                     Icon::Plus,
@@ -1065,45 +1138,47 @@ fn groups_panel(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 {
                     create = true;
                 }
+                let field = Frame::new()
+                    .fill(palette.surface)
+                    .corner_radius(CornerRadius::same(theme::RADIUS))
+                    .inner_margin(Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.sticker_group_name)
+                                .id(egui::Id::new("sticker-group-name"))
+                                .hint_text(
+                                    egui::RichText::new("Create new group…")
+                                        .color(palette.dim)
+                                        .font(theme::regular(12.5)),
+                                )
+                                .font(theme::regular(12.5))
+                                .text_color(palette.text)
+                                .frame(Frame::NONE)
+                                .desired_width(f32::INFINITY),
+                        )
+                    })
+                    .inner;
+                if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                    create = true;
+                }
             });
             ui.add_space(6.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
             egui::ScrollArea::vertical()
                 .id_salt("sticker-group-list")
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     for (name, label) in &entries {
-                        ui.horizontal(|ui| {
-                            if theme::soft_button(
-                                ui,
-                                palette,
-                                None,
-                                label,
-                                active.as_deref() == name.as_deref(),
-                            )
-                            .clicked()
-                            {
-                                pick = Some(name.clone());
+                        let selected = active.as_deref() == name.as_deref();
+                        match group_row(ui, palette, label, selected, name.is_some()) {
+                            Some(GroupRow::Picked) => pick = Some(name.clone()),
+                            Some(GroupRow::Removed) => {
+                                if let Some(group) = name {
+                                    remove = Some(group.clone());
+                                }
                             }
-                            if let Some(group) = name {
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if theme::icon_button(
-                                            ui,
-                                            Icon::X,
-                                            12.0,
-                                            palette.dim,
-                                            palette.danger,
-                                            "Delete this group",
-                                        )
-                                        .clicked()
-                                        {
-                                            remove = Some(group.clone());
-                                        }
-                                    },
-                                );
-                            }
-                        });
+                            None => {}
+                        }
                     }
                 });
         });
@@ -1496,6 +1571,89 @@ mod group_tests {
             group_entries(&[], "All"),
             vec![(None, "All".to_owned())],
             "with no groups the sidebar still offers everything"
+        );
+    }
+
+    fn click(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    #[test]
+    fn a_row_picks_its_group_and_its_cross_removes_it() {
+        let directory = tempfile::tempdir().expect("creates a temporary directory");
+        let (mut app, _events) = App::headless(
+            crate::paths::AppDirs::under(directory.path()),
+            crate::settings::Settings::default(),
+        );
+        app.sticker_groups = vec![
+            StickerGroup {
+                name: "Bom dia".to_owned(),
+                stickers: Vec::new(),
+            },
+            StickerGroup {
+                name: "Futebol".to_owned(),
+                stickers: Vec::new(),
+            },
+        ];
+        let palette = app.palette;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 420.0));
+        let mut frame = |events: Vec<egui::Event>| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| groups_panel(&mut app, ui, &palette),
+            );
+        };
+
+        frame(Vec::new());
+        let row = ctx
+            .data(|data| data.get_temp::<egui::Rect>(group_row_id("Futebol")))
+            .expect("the sidebar draws a row per group");
+        assert!(
+            row.width() > 150.0,
+            "a group row spans the sidebar: {}",
+            row.width()
+        );
+
+        // The cross removes the group without also picking it.
+        frame(click(egui::pos2(row.right() - 13.0, row.center().y)));
+        assert!(
+            app.actions
+                .contains(&Action::DeleteStickerGroup("Futebol".to_owned())),
+            "the cross deletes the group"
+        );
+        assert!(
+            !app.actions
+                .iter()
+                .any(|action| matches!(action, Action::SelectStickerGroup(_))),
+            "deleting must not also select the group"
+        );
+
+        app.actions.clear();
+        frame(click(egui::pos2(row.left() + 20.0, row.center().y)));
+        assert!(
+            app.actions
+                .contains(&Action::SelectStickerGroup(Some("Futebol".to_owned()))),
+            "clicking the row picks the group"
         );
     }
 }
