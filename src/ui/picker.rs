@@ -1286,14 +1286,22 @@ struct MotionMemo(HashMap<PathBuf, MotionEntry>);
 impl MotionMemo {
     /// Returns whether `path` moves, calling `probe` only when the cached
     /// result is missing or the file changed since it was last probed.
-    fn moves(&mut self, path: &Path, probe: impl FnOnce(&Path) -> bool) -> bool {
+    ///
+    /// A failed probe is not memoized: on Windows a sharing violation or a
+    /// transient read error would otherwise be remembered as "still" and an
+    /// animated sticker would stay misclassified until the file next changed.
+    fn moves(&mut self, path: &Path, probe: impl FnOnce(&Path) -> Option<bool>) -> bool {
         let stamp = FileStamp::of(path);
         if let Some(entry) = self.0.get(path)
             && entry.stamp == stamp
         {
             return entry.animated;
         }
-        let animated = probe(path);
+        let Some(animated) = probe(path) else {
+            // Report "still" for this frame without caching the failure, so the
+            // next frame retries instead of trusting a transient error.
+            return false;
+        };
         self.0
             .insert(path.to_path_buf(), MotionEntry { animated, stamp });
         animated
@@ -1310,19 +1318,20 @@ fn moves(ctx: &egui::Context, path: &Path) -> bool {
 }
 
 /// Checks a WebP header for animation without decoding the file.
-fn probe_motion(path: &Path) -> bool {
+///
+/// Returns `None` when the header cannot be read, so the caller can tell a read
+/// failure from a still image and retry instead of memoizing the failure.
+fn probe_motion(path: &Path) -> Option<bool> {
     let mut head = [0u8; 64];
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let Ok(read) = std::io::Read::read(&mut file, &mut head) else {
-        return false;
-    };
+    let mut file = std::fs::File::open(path).ok()?;
+    let read = std::io::Read::read(&mut file, &mut head).ok()?;
     let head = &head[..read];
-    head.len() >= 12
-        && &head[0..4] == b"RIFF"
-        && &head[8..12] == b"WEBP"
-        && head.windows(4).any(|window| window == b"ANIM")
+    Some(
+        head.len() >= 12
+            && &head[0..4] == b"RIFF"
+            && &head[8..12] == b"WEBP"
+            && head.windows(4).any(|window| window == b"ANIM"),
+    )
 }
 
 fn sticker_picture(ui: &egui::Ui, path: &Path, rect: Rect) {
@@ -1371,6 +1380,38 @@ mod motion_tests {
         let ctx = egui::Context::default();
         assert!(moves(&ctx, &path));
         assert!(moves(&ctx, &path), "the picker memo survives frames");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_probe_is_retried_instead_of_memoized() {
+        let dir = std::env::temp_dir().join(format!("zapfast-motion-retry-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("creates temporary directory");
+        let path = dir.join("animated.webp");
+        std::fs::write(&path, b"RIFF0000WEBPANIM").expect("writes animated header");
+        let mut memo = MotionMemo::default();
+        let reads = std::cell::Cell::new(0usize);
+        // The first probe fails the way a sharing violation or a transient read
+        // error does; the header is readable afterwards.
+        let probe = |path: &Path| {
+            reads.set(reads.get() + 1);
+            if reads.get() == 1 {
+                None
+            } else {
+                probe_motion(path)
+            }
+        };
+        assert!(
+            !memo.moves(&path, probe),
+            "a failed probe reports the sticker as still for this frame"
+        );
+        assert!(
+            memo.moves(&path, probe),
+            "the failure is not memoized: the next frame re-probes and sees the animation"
+        );
+        assert_eq!(reads.get(), 2);
+        assert!(memo.moves(&path, probe), "the successful probe is memoized");
+        assert_eq!(reads.get(), 2, "a memoized success is not re-read");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

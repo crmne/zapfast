@@ -4,7 +4,7 @@
 //! other MP4 codecs use `ffmpeg` when available. Idle animations are removed
 //! from memory.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -53,8 +53,20 @@ enum Entry {
     Ready(Playing),
 }
 
+/// Resident animations plus the bookkeeping the eviction sweep needs.
+#[derive(Default)]
+struct Animations {
+    entries: HashMap<PathBuf, Entry>,
+    /// Paths a sweep found idle. A `frame` call for the path clears the mark,
+    /// so only an animation that misses a whole sweep interval undrawn is
+    /// evicted.
+    idle: HashSet<PathBuf>,
+    /// When the eviction sweep last ran.
+    last_sweep: Option<Instant>,
+}
+
 #[derive(Clone, Default)]
-struct Cache(Arc<Mutex<HashMap<PathBuf, Entry>>>);
+struct Cache(Arc<Mutex<Animations>>);
 
 /// Result returned by a decoder thread.
 type Delivery = (PathBuf, Option<Decoded>);
@@ -103,7 +115,7 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
     // Upload decoded frames on the UI thread.
     let arrived: Vec<Delivery> =
         std::mem::take(&mut *inbox.0.lock().unwrap_or_else(|p| p.into_inner()));
-    let mut entries = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+    let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
     for (arrived_path, decoded) in arrived {
         let entry = match decoded {
             Some(decoded) if !decoded.frames.is_empty() => {
@@ -128,51 +140,82 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
             }
             _ => Entry::Failed,
         };
-        entries.insert(arrived_path, entry);
+        animations.entries.insert(arrived_path, entry);
     }
-    // Remove idle and least-recently-used animations. The animation being
-    // drawn right now is kept even when its last drawn frame is older than
-    // `IDLE`: with vsync off and event-driven repaints a visible, paused
-    // animation can sit many seconds without a `frame` call, and evicting it
-    // would re-decode it (and flash the poster) on the next wake. This trades
-    // a little resident memory for a stable poster while the media is visible;
-    // it is only evicted once its rect leaves the screen and stays unseen for
-    // `IDLE`.
     let now = Instant::now();
-    let visible_now = ui.is_rect_visible(rect);
-    entries.retain(|entry_path, entry| match entry {
-        Entry::Ready(playing) => {
-            (visible_now && entry_path.as_path() == path)
-                || now.duration_since(playing.last_drawn) < IDLE
-        }
-        _ => true,
-    });
-    let mut resident: usize = entries
-        .values()
-        .map(|entry| match entry {
-            Entry::Ready(playing) => playing.frames.len(),
-            _ => 0,
-        })
-        .sum();
-    while resident > MAX_RESIDENT_FRAMES {
-        let victim = entries
-            .iter()
-            .filter_map(|(entry_path, entry)| match entry {
-                Entry::Ready(playing) if entry_path.as_path() != path => {
-                    Some((entry_path.clone(), playing.last_drawn, playing.frames.len()))
-                }
-                _ => None,
-            })
-            .min_by_key(|(_, last_drawn, _)| *last_drawn);
-        let Some((victim, _, count)) = victim else {
-            break;
-        };
-        entries.remove(&victim);
-        resident -= count;
+    // Refresh the animation being drawn before the sweep: its own `frame` call
+    // is the only proof that it is on screen, and a sibling drawn later in this
+    // same pass has not had that chance yet.
+    if let Some(Entry::Ready(playing)) = animations.entries.get_mut(path) {
+        playing.last_drawn = now;
     }
-    match entries.get_mut(path) {
+    animations.idle.remove(path);
+    // Eviction is rate limited to one sweep per `IDLE` instead of running
+    // inside every `frame` call, and a sweep only marks what it finds idle.
+    // With vsync off and event-driven repaints a visible, paused animation can
+    // sit longer than `IDLE` without being drawn, so a sweep cannot tell "off
+    // screen" from "not visited yet in this pass": evicting either would
+    // re-decode media that is still on screen and flash the poster. The mark
+    // is cleared by the next `frame` call for the path, so only an animation
+    // that misses a whole sweep interval undrawn is evicted. That trades up to
+    // one extra `IDLE` of resident frames for a stable poster while the media
+    // is visible.
+    if animations
+        .last_sweep
+        .is_none_or(|last| now.duration_since(last) >= IDLE)
+    {
+        animations.last_sweep = Some(now);
+        let previously_idle = std::mem::take(&mut animations.idle);
+        let mut idle = HashSet::new();
+        animations.entries.retain(|entry_path, entry| match entry {
+            Entry::Ready(playing) if now.duration_since(playing.last_drawn) >= IDLE => {
+                if previously_idle.contains(entry_path) {
+                    false
+                } else {
+                    idle.insert(entry_path.clone());
+                    true
+                }
+            }
+            _ => true,
+        });
+        animations.idle = idle;
+        let mut resident: usize = animations
+            .entries
+            .values()
+            .map(|entry| match entry {
+                Entry::Ready(playing) => playing.frames.len(),
+                _ => 0,
+            })
+            .sum();
+        while resident > MAX_RESIDENT_FRAMES {
+            // Animations this sweep found idle are the safest victims: their
+            // pixels have been off screen for more than `IDLE`.
+            let victim = animations
+                .entries
+                .iter()
+                .filter(|(entry_path, entry)| {
+                    entry_path.as_path() != path && matches!(entry, Entry::Ready(_))
+                })
+                .min_by_key(|(entry_path, entry)| match entry {
+                    Entry::Ready(playing) => (
+                        u8::from(!animations.idle.contains(*entry_path)),
+                        playing.last_drawn,
+                    ),
+                    _ => (1, now),
+                })
+                .map(|(entry_path, entry)| match entry {
+                    Entry::Ready(playing) => (entry_path.clone(), playing.frames.len()),
+                    _ => (entry_path.clone(), 0),
+                });
+            let Some((victim, count)) = victim else {
+                break;
+            };
+            animations.entries.remove(&victim);
+            resident -= count;
+        }
+    }
+    match animations.entries.get_mut(path) {
         Some(Entry::Ready(playing)) => {
-            playing.last_drawn = now;
             if !animate {
                 playing.animating = false;
                 return Frame::Ready(playing.frames[0].0.clone());
@@ -532,7 +575,7 @@ mod tests {
             delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
             output.textures_delta.clear();
         }
-        assert!(super::cache(&ctx).0.lock().unwrap().is_empty());
+        assert!(super::cache(&ctx).0.lock().unwrap().entries.is_empty());
         assert!(
             delay > Duration::from_secs(1),
             "offscreen media requested {delay:?}"
@@ -671,18 +714,23 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let first = frames[0].0.id();
-        cache(&ctx).0.lock().expect("animation cache").insert(
-            path.clone(),
-            Entry::Ready(Playing {
-                frames,
-                total: Duration::from_secs(120),
-                // Without a playback-state reset, the next animated pass
-                // would land halfway through the second frame.
-                started: Instant::now() - Duration::from_secs(90),
-                last_drawn: Instant::now(),
-                animating: false,
-            }),
-        );
+        cache(&ctx)
+            .0
+            .lock()
+            .expect("animation cache")
+            .entries
+            .insert(
+                path.clone(),
+                Entry::Ready(Playing {
+                    frames,
+                    total: Duration::from_secs(120),
+                    // Without a playback-state reset, the next animated pass
+                    // would land halfway through the second frame.
+                    started: Instant::now() - Duration::from_secs(90),
+                    last_drawn: Instant::now(),
+                    animating: false,
+                }),
+            );
         // Settle texture uploads before checking the paused frame itself.
         for _ in 0..3 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
@@ -739,18 +787,23 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let first = frames[0].0.id();
-        cache(&ctx).0.lock().expect("animation cache").insert(
-            path.clone(),
-            Entry::Ready(Playing {
-                frames,
-                total: Duration::from_secs(120),
-                started: Instant::now(),
-                // A visible animation whose last draw was long ago: with
-                // event-driven repaints it can go this long without a frame.
-                last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
-                animating: false,
-            }),
-        );
+        cache(&ctx)
+            .0
+            .lock()
+            .expect("animation cache")
+            .entries
+            .insert(
+                path.clone(),
+                Entry::Ready(Playing {
+                    frames,
+                    total: Duration::from_secs(120),
+                    started: Instant::now(),
+                    // A visible animation whose last draw was long ago: with
+                    // event-driven repaints it can go this long without a frame.
+                    last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
+                    animating: false,
+                }),
+            );
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -768,7 +821,8 @@ mod tests {
         output.textures_delta.clear();
         // Still decoded, same first frame: not evicted, not re-decoded.
         let store = cache(&ctx);
-        let entries = store.0.lock().expect("animation cache");
+        let animations = store.0.lock().expect("animation cache");
+        let entries = &animations.entries;
         let Entry::Ready(playing) = entries.get(&path).expect("still cached") else {
             panic!("the visible animation was evicted");
         };
@@ -796,26 +850,80 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
-        cache(&ctx).0.lock().expect("animation cache").insert(
-            stale.clone(),
-            Entry::Ready(Playing {
-                frames: frames("stale"),
-                total: Duration::from_secs(120),
-                started: Instant::now(),
-                last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
-                animating: false,
-            }),
+        cache(&ctx)
+            .0
+            .lock()
+            .expect("animation cache")
+            .entries
+            .insert(
+                stale.clone(),
+                Entry::Ready(Playing {
+                    frames: frames("stale"),
+                    total: Duration::from_secs(120),
+                    started: Instant::now(),
+                    last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
+                    animating: false,
+                }),
+            );
+        cache(&ctx)
+            .0
+            .lock()
+            .expect("animation cache")
+            .entries
+            .insert(
+                fresh.clone(),
+                Entry::Ready(Playing {
+                    frames: frames("fresh"),
+                    total: Duration::from_secs(120),
+                    started: Instant::now(),
+                    last_drawn: Instant::now(),
+                    animating: false,
+                }),
+            );
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(200.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(50.0, 50.0), egui::Sense::hover());
+                assert!(matches!(frame(ui, &fresh, rect, false), Frame::Ready(_)));
+            },
         );
-        cache(&ctx).0.lock().expect("animation cache").insert(
-            fresh.clone(),
-            Entry::Ready(Playing {
-                frames: frames("fresh"),
-                total: Duration::from_secs(120),
-                started: Instant::now(),
-                last_drawn: Instant::now(),
-                animating: false,
-            }),
-        );
+        output.textures_delta.clear();
+        // A sweep cannot tell an animation that is off screen from one that has
+        // not had its `frame` call yet in this pass, so it only marks what it
+        // finds idle.
+        {
+            let store = cache(&ctx);
+            let animations = store.0.lock().expect("animation cache");
+            assert!(
+                animations.entries.contains_key(&stale),
+                "the first sweep only marks the unseen animation"
+            );
+            assert!(
+                animations.idle.contains(&stale),
+                "the unseen path is marked"
+            );
+        }
+        // A whole sweep later it is still undrawn, so it is evicted.
+        {
+            let store = cache(&ctx);
+            let mut animations = store.0.lock().expect("animation cache");
+            animations.last_sweep = Some(Instant::now() - IDLE - Duration::from_secs(10));
+            let Entry::Ready(playing) = animations
+                .entries
+                .get_mut(&stale)
+                .expect("the marked animation is still cached")
+            else {
+                panic!("the unseen animation was evicted before its second sweep");
+            };
+            playing.last_drawn = Instant::now() - IDLE - Duration::from_secs(20);
+        }
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -832,11 +940,103 @@ mod tests {
         );
         output.textures_delta.clear();
         let store = cache(&ctx);
-        let entries = store.0.lock().expect("animation cache");
-        assert!(entries.get(&fresh).is_some(), "the drawn animation stays");
+        let animations = store.0.lock().expect("animation cache");
         assert!(
-            !entries.contains_key(&stale),
-            "an unseen animation must be evicted after IDLE"
+            animations.entries.get(&fresh).is_some(),
+            "the drawn animation stays"
+        );
+        assert!(
+            !animations.entries.contains_key(&stale),
+            "an unseen animation must be evicted once it misses a sweep"
+        );
+    }
+
+    #[test]
+    fn a_sibling_drawn_in_the_same_pass_survives_the_sweep() {
+        // Two paused animations that are both on screen and both past `IDLE`,
+        // the state an event-driven repaint wakes up in. The first item's
+        // `frame` call runs the sweep and must not evict the second before that
+        // item's own call in this pass, which would re-decode it and flash the
+        // poster: exactly the flicker this module avoids.
+        let ctx = egui::Context::default();
+        let first_path = PathBuf::from("sibling-first.gif");
+        let second_path = PathBuf::from("sibling-second.gif");
+        let frames = |name: &str| {
+            [egui::Color32::WHITE, egui::Color32::BLACK]
+                .into_iter()
+                .enumerate()
+                .map(|(index, color)| {
+                    (
+                        ctx.load_texture(
+                            format!("{name}-frame-{index}"),
+                            ColorImage::new([1, 1], vec![color]),
+                            TextureOptions::LINEAR,
+                        ),
+                        Duration::from_secs(60),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut first_textures = Vec::new();
+        for (name, path) in [("first", &first_path), ("second", &second_path)] {
+            let playing_frames = frames(name);
+            first_textures.push(playing_frames[0].0.id());
+            cache(&ctx)
+                .0
+                .lock()
+                .expect("animation cache")
+                .entries
+                .insert(
+                    path.clone(),
+                    Entry::Ready(Playing {
+                        frames: playing_frames,
+                        total: Duration::from_secs(120),
+                        started: Instant::now(),
+                        last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
+                        animating: false,
+                    }),
+                );
+        }
+        // The next `frame` call is due to sweep.
+        cache(&ctx).0.lock().expect("animation cache").last_sweep =
+            Some(Instant::now() - IDLE - Duration::from_secs(10));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(200.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(50.0, 50.0), egui::Sense::hover());
+                assert!(matches!(
+                    frame(ui, &first_path, rect, false),
+                    Frame::Ready(_)
+                ));
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(50.0, 50.0), egui::Sense::hover());
+                assert!(matches!(
+                    frame(ui, &second_path, rect, false),
+                    Frame::Ready(_)
+                ));
+            },
+        );
+        output.textures_delta.clear();
+        let store = cache(&ctx);
+        let animations = store.0.lock().expect("animation cache");
+        let Entry::Ready(second) = animations
+            .entries
+            .get(&second_path)
+            .expect("the sibling survives the sweep the first draw triggered")
+        else {
+            panic!("the second animation was evicted before its own frame call");
+        };
+        assert_eq!(
+            second.frames[0].0.id(),
+            first_textures[1],
+            "the sibling keeps its decoded frames instead of re-decoding"
         );
     }
 }
