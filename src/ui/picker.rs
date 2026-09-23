@@ -1365,7 +1365,7 @@ mod motion_tests {
         );
         // A different-sized still header changes the file stamp, so the memo
         // re-probes instead of trusting a stale result.
-        std::fs::write(&path, b"RIFF0000WEBPVP8X").expect("writes a still header");
+        std::fs::write(&path, b"RIFF0000WEBPVP8X still").expect("writes a still header");
         assert!(!memo.moves(&path, probe), "a changed file is re-probed");
         assert_eq!(reads.get(), 2);
         let _ = std::fs::remove_dir_all(dir);
