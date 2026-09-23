@@ -944,7 +944,7 @@ mod tests {
         let store = cache(&ctx);
         let animations = store.0.lock().expect("animation cache");
         assert!(
-            animations.entries.get(&fresh).is_some(),
+            animations.entries.contains_key(&fresh),
             "the drawn animation stays"
         );
         assert!(
