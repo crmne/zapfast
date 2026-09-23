@@ -1060,11 +1060,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 app.focus_composer = true;
             }
             if app.settings.show_shortcut_hints {
-                let hint = super::keys::label(if enter_sends {
-                    crate::i18n::gettext(app.locale, "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture").as_ref()
+                let hint_text = if enter_sends {
+                    crate::i18n::gettext(app.locale, "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
                 } else {
-                    crate::i18n::gettext(app.locale, "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture").as_ref()
-                });
+                    crate::i18n::gettext(app.locale, "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
+                };
+                let hint = super::keys::label(hint_text.as_ref());
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if theme::icon_button(
