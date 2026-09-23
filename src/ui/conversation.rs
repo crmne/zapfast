@@ -3368,8 +3368,13 @@ fn content(
                     if let Some(address) = address {
                         widgets::rich_text(ui, address, theme::regular(12.5), palette.secondary);
                     }
-                    if theme::link(ui, "Open in a map", theme::regular(12.5), palette.link)
-                        .clicked()
+                    if theme::link(
+                        ui,
+                        crate::i18n::gettext(view.locale, "Open in a map").as_ref(),
+                        theme::regular(12.5),
+                        palette.link,
+                    )
+                    .clicked()
                     {
                         actions.push(Action::OpenUrl(format!(
                             "https://www.openstreetmap.org/?mlat={latitude}&mlon={longitude}#map=16/{latitude}/{longitude}"
@@ -3384,39 +3389,42 @@ fn content(
             longitude,
             accuracy_m,
             speed_mps,
-            heading_deg,
-            ended,
+            sequence,
+            updated,
             ..
         } => {
+            let over = message
+                .content
+                .live_location_over(message.timestamp, view.now);
             let icon = |ui: &mut egui::Ui| {
                 theme::icon(ui, Icon::MapPin, 18.0, palette.accent);
             };
             mirrored_row(ui, own, icon, |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    widgets::rich_text(
-                        ui,
-                        if *ended {
-                            "Live location ended"
+                    let title = if over {
+                        crate::i18n::gettext(view.locale, "Live location ended")
+                    } else {
+                        crate::i18n::gettext(view.locale, "Live location")
+                    };
+                    widgets::rich_text(ui, &title, theme::medium(14.0), palette.text);
+                    if !over {
+                        // An absolute time stays true without repainting.
+                        let at = if *updated > 0 {
+                            *updated
                         } else {
-                            "Live location"
-                        },
-                        theme::medium(14.0),
-                        palette.text,
-                    );
-                    if !*ended {
-                        let mut meta = Vec::new();
+                            message.timestamp
+                        };
+                        let mut meta = vec![
+                            crate::i18n::gettext(view.locale, "Updated {time}")
+                                .replace("{time}", &crate::util::clock(at)),
+                        ];
+                        if let Some(speed) = speed_mps.filter(|speed| *speed >= 0.5) {
+                            meta.push(format!("{:.0} km/h", speed * 3.6));
+                        }
                         if let Some(accuracy) = accuracy_m {
                             meta.push(format!("±{accuracy} m"));
                         }
-                        if let Some(speed) = speed_mps {
-                            meta.push(format!("{:.1} km/h", speed * 3.6));
-                        }
-                        if let Some(heading) = heading_deg {
-                            meta.push(format!("{heading}°"));
-                        }
-                        let age = (view.now - message.timestamp).max(0);
-                        meta.push(format!("Updated {age}s ago"));
                         widgets::rich_text(
                             ui,
                             &meta.join(" · "),
@@ -3424,20 +3432,30 @@ fn content(
                             palette.secondary,
                         );
                     }
-                    // WhatsApp's own map preview, with a pin at its centre.
+                    // The map preview WhatsApp sent, with a pin at its centre.
+                    // Each position gets its own image, as a later preview
+                    // replaces the first.
                     if let Some(bytes) = message.thumbnail.as_deref()
                         && !bytes.is_empty()
                     {
-                        let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes);
+                        let key = format!("{}-{sequence}-{updated}", message.id);
+                        let uri = thumbnail_uri(ui.ctx(), &message.chat, &key, bytes);
+                        ui.add_space(4.0);
                         let response = ui.add(
                             egui::Image::new(uri)
                                 .fit_to_exact_size(Vec2::new(260.0, 150.0))
                                 .corner_radius(8.0),
                         );
                         theme::paint_icon(ui, Icon::MapPin, response.rect, 30.0, palette.accent);
+                        ui.add_space(2.0);
                     }
-                    if theme::link(ui, "Open in a map", theme::regular(12.5), palette.link)
-                        .clicked()
+                    if theme::link(
+                        ui,
+                        crate::i18n::gettext(view.locale, "Open in a map").as_ref(),
+                        theme::regular(12.5),
+                        palette.link,
+                    )
+                    .clicked()
                     {
                         actions.push(Action::OpenUrl(format!(
                             "https://www.openstreetmap.org/?mlat={latitude}&mlon={longitude}#map=16/{latitude}/{longitude}"

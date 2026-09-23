@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-23 16:56+0200\n"
+"POT-Creation-Date: 2026-09-23 18:51+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -155,15 +155,15 @@ msgstr "Verrouillés"
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K pour rechercher · ? pour les raccourcis clavier"
 
-#: src/ui/conversation.rs:994
+#: src/ui/conversation.rs:997
 msgid "Type a message"
 msgstr "Saisissez un message"
 
-#: src/ui/conversation.rs:997
+#: src/ui/conversation.rs:1000
 msgid "Add a caption"
 msgstr "Ajouter une légende"
 
-#: src/ui/conversation.rs:1151
+#: src/ui/conversation.rs:1154
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -171,48 +171,65 @@ msgstr ""
 "Enter envoie · Shift+Enter pour une nouvelle ligne · *gras* _italique_ "
 "~barré~ · Ctrl+V colle une image"
 
-#: src/ui/conversation.rs:1153
+#: src/ui/conversation.rs:1156
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr "Ctrl+Enter envoie · *gras* _italique_ ~barré~ · Ctrl+V colle une image"
 
-#: src/ui/conversation.rs:1164
+#: src/ui/conversation.rs:1167
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Masquer les astuces de raccourcis (restaurer dans Paramètres)"
 
-#: src/ui/conversation.rs:1179
+#: src/ui/conversation.rs:1182
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Tous les raccourcis ({})"
 
-#: src/ui/conversation.rs:1455
+#: src/ui/conversation.rs:1458
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} message non lu"
 msgstr[1] "{} messages non lus"
 
-#: src/ui/conversation.rs:3058
+#: src/ui/conversation.rs:3074
 msgid "Open in system player"
 msgstr "Ouvrir dans le lecteur du système"
 
-#: src/ui/conversation.rs:3126 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3142 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Infos du message"
 
-#: src/ui/conversation.rs:4733
+#: src/ui/conversation.rs:3373 src/ui/conversation.rs:3454
+msgid "Open in a map"
+msgstr "Ouvrir dans une carte"
+
+#: src/ui/conversation.rs:3406
+msgid "Live location ended"
+msgstr "Position en direct terminée"
+
+#: src/ui/conversation.rs:3408
+msgid "Live location"
+msgstr "Position en direct"
+
+#: src/ui/conversation.rs:3419
+#, rust-format
+msgid "Updated {time}"
+msgstr "Mise à jour à {time}"
+
+#: src/ui/conversation.rs:4835
 msgid "Pause"
 msgstr "Pause"
 
-#: src/ui/conversation.rs:4735
+#: src/ui/conversation.rs:4837
 #, fuzzy
 msgid "Play"
 msgstr "Écouté"
 
-#: src/ui/conversation.rs:4758
+#: src/ui/conversation.rs:4860
 msgid "Unmute"
 msgstr "Réactiver le son"
 
-#: src/ui/conversation.rs:4760
+#: src/ui/conversation.rs:4862
 msgid "Mute"
 msgstr "Couper le son"
 
@@ -239,11 +256,11 @@ msgstr "Langue"
 msgid "Auto"
 msgstr "Automatique"
 
-#: src/ui/settings.rs:186
+#: src/ui/settings.rs:188
 msgid "Pause music while recording"
 msgstr "Mettre la musique en pause pendant l'enregistrement"
 
-#: src/ui/settings.rs:186
+#: src/ui/settings.rs:188
 msgid ""
 "Pause media players while you record a voice message and resume them "
 "afterwards."
@@ -251,11 +268,11 @@ msgstr ""
 "Met en pause les lecteurs pendant l'enregistrement d'un message vocal et les "
 "relance ensuite."
 
-#: src/ui/settings.rs:187
+#: src/ui/settings.rs:189
 msgid "Pause music while playing voice messages"
 msgstr "Mettre la musique en pause pendant la lecture des messages vocaux"
 
-#: src/ui/settings.rs:187
+#: src/ui/settings.rs:189
 msgid ""
 "Pause media players while a voice or audio message plays and resume them "
 "when it stops."
@@ -263,76 +280,76 @@ msgstr ""
 "Met en pause les lecteurs pendant la lecture d'un message vocal ou audio et "
 "les relance à la fin."
 
-#: src/ui/settings.rs:226
+#: src/ui/settings.rs:228
 msgid "Window"
 msgstr "Fenêtre"
 
-#: src/ui/settings.rs:271
+#: src/ui/settings.rs:273
 msgid "Network"
 msgstr "Réseau"
 
-#: src/ui/settings.rs:303
+#: src/ui/settings.rs:305
 msgid "Account"
 msgstr "Compte"
 
-#: src/ui/settings.rs:307
+#: src/ui/settings.rs:309
 msgid "Files"
 msgstr "Fichiers"
 
-#: src/ui/settings.rs:353 src/ui/settings.rs:614 src/ui/settings.rs:776
+#: src/ui/settings.rs:355 src/ui/settings.rs:616 src/ui/settings.rs:778
 msgid "About"
 msgstr "À propos"
 
-#: src/ui/settings.rs:434
+#: src/ui/settings.rs:436
 msgid "Add doodles"
 msgstr "Ajouter des dessins"
 
-#: src/ui/settings.rs:438
+#: src/ui/settings.rs:440
 msgid "Show the default doodles over the selected colour."
 msgstr "Afficher les dessins par défaut sur la couleur sélectionnée."
 
-#: src/ui/settings.rs:583
+#: src/ui/settings.rs:585
 msgid "Change profile picture"
 msgstr "Changer la photo de profil"
 
-#: src/ui/settings.rs:606
+#: src/ui/settings.rs:608
 msgid "Your name"
 msgstr "Votre nom"
 
-#: src/ui/settings.rs:622
+#: src/ui/settings.rs:624
 msgid "Linked device"
 msgstr "Appareil connecté"
 
-#: src/ui/settings.rs:633
+#: src/ui/settings.rs:635
 msgid "Edit your name and About"
 msgstr "Modifier votre nom et votre actu"
 
-#: src/ui/settings.rs:650
+#: src/ui/settings.rs:652
 msgid "Unlink this computer"
 msgstr "Déconnecter cet ordinateur"
 
-#: src/ui/settings.rs:670
+#: src/ui/settings.rs:672
 msgid "Save"
 msgstr "Enregistrer"
 
-#: src/ui/settings.rs:680
+#: src/ui/settings.rs:682
 msgid "Cancel"
 msgstr "Annuler"
 
-#: src/ui/settings.rs:744
+#: src/ui/settings.rs:746
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "Un client WhatsApp natif conçu avec Rust, egui et whatsapp-rust."
 
-#: src/ui/settings.rs:755
+#: src/ui/settings.rs:757
 #, rust-format
 msgid "Update to {version}"
 msgstr "Mettre à jour vers {version}"
 
-#: src/ui/settings.rs:765
+#: src/ui/settings.rs:767
 msgid "Keyboard shortcuts"
 msgstr "Raccourcis clavier"
 
-#: src/ui/settings.rs:787
+#: src/ui/settings.rs:789
 msgid "Source code"
 msgstr "Code source"
 
@@ -409,6 +426,6 @@ msgstr[1] "{} restants"
 msgid "No one yet"
 msgstr "Personne pour l’instant"
 
-#: src/app.rs:3740
+#: src/app.rs:3760
 msgid "This video opens in your system player"
 msgstr "Cette vidéo s'ouvre dans le lecteur du système"

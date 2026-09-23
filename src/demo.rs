@@ -52,6 +52,33 @@ pub fn sample_thumbnail(seed: u32) -> Vec<u8> {
     bytes
 }
 
+/// A small street-map picture standing in for a location's map preview.
+fn sample_map() -> Vec<u8> {
+    let (width, height) = (208u32, 120u32);
+    let image = image::RgbImage::from_fn(width, height, |x, y| {
+        let (x, y) = (x as i32, y as i32);
+        let river = (y - (60 + (x - 104) * (x - 104) / 180)).abs() < 5;
+        let park = (130..185).contains(&x) && (12..44).contains(&y);
+        let road = (x - 70).abs() < 3 || (y - 88).abs() < 3 || (x + y - 190).abs() < 3;
+        let street = x % 34 == 0 || y % 26 == 0;
+        image::Rgb(if road {
+            [250, 214, 120]
+        } else if river {
+            [158, 196, 230]
+        } else if park {
+            [190, 222, 170]
+        } else if street {
+            [255, 255, 255]
+        } else {
+            [236, 232, 222]
+        })
+    });
+    let mut bytes = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 85);
+    let _ = encoder.encode_image(&image);
+    bytes
+}
+
 const SAMPLES: &[Sample] = &[
     Sample {
         id: "393331234567@s.whatsapp.net",
@@ -708,9 +735,10 @@ pub fn populate(app: &mut App) {
                     heading_deg: Some(90),
                     sequence: 1,
                     ended: false,
+                    updated: 0,
                 },
             );
-            row.thumbnail = Some(sample_thumbnail(7));
+            row.thumbnail = Some(sample_map());
             row
         },
         message(ada, "ada-deleted", false, older + 60 * 25, Content::Revoked),
@@ -1692,6 +1720,33 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 };
             }
             "syncing" => app.syncing = true,
+            // Ada shares where she is now.
+            "live" => {
+                let ada = SAMPLES[0].id;
+                let now = crate::util::now();
+                let mut row = message(
+                    ada,
+                    "ada-live-now",
+                    false,
+                    now - 60 * 12,
+                    Content::LiveLocation {
+                        latitude: 51.5226,
+                        longitude: -0.1571,
+                        accuracy_m: Some(12),
+                        speed_mps: Some(1.4),
+                        heading_deg: Some(90),
+                        sequence: 14,
+                        ended: false,
+                        updated: now - 60,
+                    },
+                );
+                row.thumbnail = Some(sample_map());
+                if let Some(conversation) = app.conversations.get_mut(ada) {
+                    conversation.messages.push(row);
+                }
+                app.open_chat = Some(ada.to_owned());
+                app.scroll_to_bottom = true;
+            }
             "typing" => {
                 app.composer = (1..=9)
                     .map(|line| format!("line {line}"))
