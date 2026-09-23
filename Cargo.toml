@@ -107,8 +107,18 @@ webp-animation = "0.10"
 
 [patch.crates-io]
 # Right-to-left shaping and glyph clusters from crmne/zapfast#144, on top of
-# epaint 0.36.1. Drop this once egui releases bidirectional text support.
+# egui 0.36.1. Every egui crate comes from the same revision so they share one
+# emath and epaint. Drop this once egui releases bidirectional text support.
+ecolor = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+eframe = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui-wgpu = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui-winit = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui_extras = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+egui_glow = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+emath = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
 epaint = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
+epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "6147de7b09f255190121e8166cbb083d88cabfb2" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify = "8.2"
