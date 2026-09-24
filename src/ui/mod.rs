@@ -1,6 +1,5 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
-pub(crate) mod animation;
 pub mod chats;
 pub mod conversation;
 pub mod dialogs;

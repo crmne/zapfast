@@ -19,7 +19,6 @@ use crate::model::{
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
-use super::animation as ui_animation;
 use super::focus::{Stop, TabStop};
 use super::widgets;
 
@@ -550,20 +549,17 @@ fn take_plain_key(ui: &mut egui::Ui, key: Key) -> bool {
 /// Slack-style emoji suggestions above the composer. The composer keeps
 /// focus, so ordinary typing continues refining the query.
 fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
-    let motion_id = field.with("emoji-suggestions-motion");
     let cursor = egui::TextEdit::load_state(ui.ctx(), field)
         .and_then(|state| state.cursor.char_range())
         .map(|range| range.primary.index.0)
         .unwrap_or_else(|| app.composer.chars().count());
     let Some((end, query)) = active_emoji(&app.composer, app.emoji_start, cursor) else {
         app.emoji_start = None;
-        ui_animation::popup_motion(ui.ctx(), motion_id, false);
         return;
     };
     let start = app.emoji_start.expect("checked above");
     let candidates = emoji_candidates(app, query);
     if candidates.is_empty() {
-        ui_animation::popup_motion(ui.ctx(), motion_id, false);
         return;
     }
 
@@ -579,17 +575,14 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
     let submit = take_plain_key(ui, Key::Enter) || take_plain_key(ui, Key::Tab);
     let mut picked = submit.then(|| candidates[app.emoji_selected].clone());
     let palette = app.palette;
-    let motion = ui_animation::popup_motion(ui.ctx(), motion_id, true);
 
     ui.add_space(4.0);
-    let panel = Frame::new()
+    Frame::new()
         .fill(palette.overlay)
         .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS + 2))
         .inner_margin(Margin::same(4))
-        .multiply_with_opacity(motion.opacity)
         .show(ui, |ui| {
-            ui.set_opacity(motion.opacity);
             let row_height = 36.0;
             ui.spacing_mut().item_spacing.y = 0.0;
             for (index, candidate) in candidates.iter().enumerate() {
@@ -658,11 +651,6 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
                 }
             }
         });
-    let pivot = panel.response.rect.center_bottom();
-    ui.ctx().transform_layer_shapes(
-        panel.response.layer_id,
-        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
-    );
     if let Some(candidate) = picked {
         app.actions.push(Action::InsertEmojiCompletion {
             emoji: candidate.emoji.to_owned(),
@@ -674,20 +662,17 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
 
 /// Group-member suggestions above the composer.
 fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id) {
-    let motion_id = field.with("mention-suggestions-motion");
     let cursor = egui::TextEdit::load_state(ui.ctx(), field)
         .and_then(|state| state.cursor.char_range())
         .map(|range| range.primary.index.0)
         .unwrap_or_else(|| app.composer.chars().count());
     let Some((end, query)) = active_mention(&app.composer, app.mention_start, cursor) else {
         app.mention_start = None;
-        ui_animation::popup_motion(ui.ctx(), motion_id, false);
         return;
     };
     let start = app.mention_start.expect("checked above");
     let candidates = app.mention_candidates(chat, query);
     if candidates.is_empty() {
-        ui_animation::popup_motion(ui.ctx(), motion_id, false);
         return;
     }
     let down = take_plain_key(ui, Key::ArrowDown);
@@ -702,17 +687,14 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     let submit = take_plain_key(ui, Key::Enter) || take_plain_key(ui, Key::Tab);
     let mut picked = submit.then(|| candidates[app.mention_selected].clone());
     let palette = app.palette;
-    let motion = ui_animation::popup_motion(ui.ctx(), motion_id, true);
 
     ui.add_space(4.0);
-    let panel = Frame::new()
+    Frame::new()
         .fill(palette.overlay)
         .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS + 2))
         .inner_margin(Margin::same(4))
-        .multiply_with_opacity(motion.opacity)
         .show(ui, |ui| {
-            ui.set_opacity(motion.opacity);
             let row_height = 38.0;
             egui::ScrollArea::vertical()
                 .id_salt("mention-members")
@@ -789,11 +771,6 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
                     }
                 });
         });
-    let pivot = panel.response.rect.center_bottom();
-    ui.ctx().transform_layer_shapes(
-        panel.response.layer_id,
-        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
-    );
     if let Some((id, name)) = picked {
         app.actions.push(Action::InsertMention {
             id,
@@ -867,17 +844,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             {
                 unsent_voice_strip(app, ui, samples);
             }
-            let preview_active = app.editing.is_some() || app.reply_to.is_some();
-            let preview_motion = ui_animation::bool_factor(
-                ui.ctx(),
-                egui::Id::new("composer-preview-motion"),
-                preview_active,
-            );
-            if preview_motion > 0.001 && preview_motion < 0.999 {
-                ui_animation::settle_repaint(ui.ctx());
-            }
             if app.editing.is_some() {
-                edit_strip(app, ui, preview_motion);
+                edit_strip(app, ui);
             } else if let Some(reply_id) = app.reply_to.clone() {
                 let quoted = app
                     .conversations
@@ -885,7 +853,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     .and_then(|conversation| conversation.message(&reply_id))
                     .cloned();
                 match quoted {
-                    Some(quoted) => reply_strip(app, ui, &quoted, preview_motion),
+                    Some(quoted) => reply_strip(app, ui, &quoted),
                     None => app.reply_to = None,
                 }
             }
@@ -1191,25 +1159,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 let ready = !app.composer.trim().is_empty()
                     || !app.pending.is_empty()
                     || (unsent_voice.is_some() && app.editing.is_none());
-                let ready_factor = ui_animation::bool_factor(
-                    ui.ctx(),
-                    id.with("send-ready"),
-                    ready,
-                );
-                let fill = palette.surface.lerp_to_gamma(palette.accent, ready_factor);
-                let hover = palette
-                    .surface_hover
-                    .lerp_to_gamma(palette.accent_hover, ready_factor);
-                let icon = if ready && app.editing.is_none() {
-                    // Keep the send glyph independent from the animated green
-                    // button fill: white in dark mode and black in light mode.
-                    if ui.visuals().dark_mode {
-                        Color32::WHITE
-                    } else {
-                        Color32::BLACK
-                    }
+                let (fill, hover, icon) = if ready {
+                    (palette.accent, palette.accent_hover, palette.on_accent)
                 } else {
-                    palette.dim.lerp_to_gamma(palette.on_accent, ready_factor)
+                    (palette.surface, palette.surface_hover, palette.dim)
                 };
                 if !ready && app.editing.is_none() {
                     // An empty composer changes the send button to record.
@@ -1303,9 +1256,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
 }
 
-/// The compact plus menu beside the composer, with a visual scale transition.
+/// The plus menu beside the composer: send files or create a poll.
 fn composer_tools_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, plus: &egui::Response) {
-    let ctx = ui.ctx().clone();
     let id = plus.id.with("composer-tools");
     let mut open = app.composer_tools_open;
     let picker_open = app.picker.is_some();
@@ -1317,20 +1269,15 @@ fn composer_tools_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, plus: &egu
             app.actions.push(Action::ClosePicker);
         }
     }
-    let motion = ui_animation::popup_motion(&ctx, id, open);
-    // Keep the popup interactive only while its target state is open. During
-    // a closing transition, reopening it from the animated progress would
-    // make outside clicks appear ineffective.
     let mut draw_open = open;
     if draw_open && !picker_open {
-        let menu = egui::Popup::menu(plus)
+        egui::Popup::menu(plus)
             .id(id)
             .open_bool(&mut draw_open)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .width(190.0)
-            .frame(widgets::menu_frame(&app.palette).multiply_with_opacity(motion.opacity))
+            .frame(widgets::menu_frame(&app.palette))
             .show(|ui| {
-                ui.set_opacity(motion.opacity);
                 if widgets::menu_item(ui, &app.palette, Some(Icon::Paperclip), "Send files") {
                     app.actions.push(Action::Attach);
                 }
@@ -1339,13 +1286,6 @@ fn composer_tools_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, plus: &egu
                         .push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
                 }
             });
-        if let Some(menu) = menu {
-            let pivot = menu.response.rect.center_bottom();
-            ctx.transform_layer_shapes(
-                menu.response.layer_id,
-                egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
-            );
-        }
     }
     if draw_open != app.composer_tools_open {
         app.actions.push(Action::SetComposerTools(draw_open));
@@ -1392,9 +1332,9 @@ fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
     ui.add_space(6.0);
 }
 
-fn edit_strip(app: &mut App, ui: &mut egui::Ui, motion: f32) {
+fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    let panel = Frame::new()
+    Frame::new()
         .fill(palette.surface)
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(10, 6))
@@ -1419,16 +1359,10 @@ fn edit_strip(app: &mut App, ui: &mut egui::Ui, motion: f32) {
                 });
             });
         });
-    let scale = 0.97 + 0.03 * motion;
-    let pivot = panel.response.rect.center_bottom();
-    ui.ctx().transform_layer_shapes(
-        panel.response.layer_id,
-        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
-    );
     ui.add_space(6.0);
 }
 
-fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message, motion: f32) {
+fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
     let palette = app.palette;
     let who = if quoted.from_me {
         "You".to_owned()
@@ -1436,7 +1370,7 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message, motion: f32) 
         app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
     };
     let summary = markup::plain(&quoted.summary(), &app.mention_list(quoted));
-    let panel = Frame::new()
+    Frame::new()
         .fill(palette.surface)
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(10, 6))
@@ -1472,12 +1406,6 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message, motion: f32) 
                 });
             });
         });
-    let scale = 0.97 + 0.03 * motion;
-    let pivot = panel.response.rect.center_bottom();
-    ui.ctx().transform_layer_shapes(
-        panel.response.layer_id,
-        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
-    );
     ui.add_space(6.0);
 }
 

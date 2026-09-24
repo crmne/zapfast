@@ -14,7 +14,6 @@ use crate::i18n::gettext;
 use crate::model::{Action, PickerTab, StickerPack, StickerShelf};
 use crate::theme::{self, Icon, Palette};
 
-use super::animation as ui_animation;
 use super::conversation;
 use super::widgets;
 
@@ -39,15 +38,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         reaction_picker(app, ctx);
         return;
     }
-    ui_animation::popup_motion(ctx, egui::Id::new("reaction-picker-motion"), false);
-    let picker_motion =
-        ui_animation::popup_motion(ctx, egui::Id::new("picker-motion"), app.picker.is_some());
-    ctx.data_mut(|data| {
-        data.insert_temp(
-            egui::Id::new("picker-motion-opacity"),
-            picker_motion.opacity,
-        )
-    });
     let Some(tab) = app.picker else {
         return;
     };
@@ -56,14 +46,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         return;
     };
     let screen = ctx.content_rect();
-    let outer_width = WIDTH + f32::from(FRAME_MARGIN) * 2.0;
-    let outer_height = HEIGHT + f32::from(FRAME_MARGIN) * 2.0;
-    // Keep the picker centered on the smiley button, like the desktop client,
-    // while clamping the full framed popup to the available screen.
-    let pos = place_picker(screen, Some(anchor), outer_width, outer_height);
-    let motion = picker_motion;
+    let x = anchor
+        .left()
+        .clamp(screen.left() + 8.0, (screen.right() - WIDTH - 8.0).max(8.0));
+    let y = (anchor.top() - HEIGHT - 10.0).max(screen.top() + 8.0);
     let area = egui::Area::new(egui::Id::new("picker"))
-        .fixed_pos(pos)
+        .fixed_pos(pos2(x, y))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             Frame::new()
@@ -77,9 +65,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     spread: 0,
                     color: palette.shadow,
                 })
-                .multiply_with_opacity(motion.opacity)
                 .show(ui, |ui| {
-                    ui.set_opacity(motion.opacity);
                     ui.set_width(WIDTH);
                     ui.set_height(HEIGHT);
                     ui.spacing_mut().item_spacing.y = 6.0;
@@ -99,11 +85,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     });
                 });
         });
-    let pivot = area.response.rect.center_bottom();
-    ctx.transform_layer_shapes(
-        area.response.layer_id,
-        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
-    );
     // Close on outside clicks, except on the toggle button or a sticker menu.
     let rect = area.response.rect;
     let clicked_outside = !egui::Popup::is_any_open(ctx)
@@ -231,7 +212,7 @@ fn rows_for(
 fn place_picker(screen: Rect, anchor: Option<Rect>, width: f32, height: f32) -> egui::Pos2 {
     let max_x = (screen.right() - width - 8.0).max(screen.left() + 8.0);
     let x = match anchor {
-        Some(anchor) => (anchor.center().x - width / 2.0).clamp(screen.left() + 8.0, max_x),
+        Some(anchor) => anchor.left().clamp(screen.left() + 8.0, max_x),
         None => (screen.center().x - width / 2.0).clamp(screen.left() + 8.0, max_x),
     };
     let y = match anchor {
@@ -406,8 +387,6 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
         .get(&chat)
         .and_then(|conversation| conversation.message(&message))
         .map(|message| (app.display_name(&message.sender), message.content.summary()));
-    let motion = ui_animation::popup_motion(ctx, egui::Id::new("reaction-picker-motion"), true);
-    ctx.data_mut(|data| data.insert_temp(egui::Id::new("picker-motion-opacity"), motion.opacity));
     let area = egui::Area::new(egui::Id::new("reaction-picker"))
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
@@ -428,9 +407,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                             spread: 0,
                             color: palette.shadow,
                         })
-                        .multiply_with_opacity(motion.opacity)
                         .show(ui, |ui| {
-                            ui.set_opacity(motion.opacity);
                             ui.set_width(width);
                             ui.set_height(HEIGHT);
                             ui.spacing_mut().item_spacing.y = 6.0;
@@ -516,11 +493,6 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                 },
             );
         });
-    let pivot = area.response.rect.center_bottom();
-    ctx.transform_layer_shapes(
-        area.response.layer_id,
-        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
-    );
     let rect = area.response.rect;
     ctx.data_mut(|data| data.insert_temp(egui::Id::new("reaction-picker-rect"), rect));
     let clicked_outside = ctx.input(|input| {
@@ -615,14 +587,9 @@ fn emoji_grid(
     scroll_salt: &'static str,
     recent_label: &'static str,
 ) -> Option<String> {
-    let animation_ready = ui.ctx().data(|data| {
-        data.get_temp::<f32>(egui::Id::new("picker-motion-opacity"))
-            .unwrap_or(1.0)
-            >= 0.99
-    });
-    let newly_opened = app.picker_focus && animation_ready;
-    let search_active = (app.picker_focus && animation_ready)
-        || ui.memory(|memory| memory.has_focus(egui::Id::new(search_id)));
+    let newly_opened = app.picker_focus;
+    let search_active =
+        app.picker_focus || ui.memory(|memory| memory.has_focus(egui::Id::new(search_id)));
     let movement = search_active
         .then(|| {
             [
@@ -643,7 +610,7 @@ fn emoji_grid(
         app.picker_search = search;
         app.emoji_selected = 0;
     }
-    if app.picker_focus && animation_ready {
+    if app.picker_focus {
         app.picker_focus = false;
         response.request_focus();
     }

@@ -684,7 +684,7 @@ Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
 Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
 English lines.
 Use `--demo-page composer-tools` to preview the WhatsApp-style composer pill
-and its animated attachment and poll menu. `typing`, `mention`, and
+and its attachment and poll menu. `typing`, `mention`, and
 `emoji-complete` preview the multiline field and inline suggestions.
 Use `--demo-page chat-menu` to preview the compact chat context menu, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
