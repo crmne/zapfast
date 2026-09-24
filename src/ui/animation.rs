@@ -70,6 +70,19 @@ pub fn whatsapp_bounce(t: f32) -> f32 {
 
 /// Animate a popup's opacity and scale from its stable id.
 pub fn popup_motion(ctx: &Context, id: Id, target: bool) -> PopupMotion {
+    let initialized = ctx.data(|data| {
+        data.get_temp::<bool>(id.with("popup-motion-initialized"))
+            .unwrap_or(false)
+    });
+    if !initialized {
+        ctx.data_mut(|data| {
+            data.insert_temp(id.with("popup-motion-initialized"), true);
+        });
+        // egui's first animate_value call returns its target immediately.
+        // Seed the popup at rest before asking for the real target so its
+        // first visible frame can actually animate in.
+        let _ = value(ctx, id, 0.0);
+    }
     let progress = value(ctx, id, f32::from(target));
     let opacity = whatsapp_ease(progress);
     let scale =

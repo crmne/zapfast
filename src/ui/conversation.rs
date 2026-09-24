@@ -1280,9 +1280,6 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
 fn composer_tools_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, plus: &egui::Response) {
     let ctx = ui.ctx().clone();
     let id = plus.id.with("composer-tools");
-    // Prime the closed state before handling a click so opening has a real
-    // 0 -> 1 transition instead of appearing fully open on its first frame.
-    let _ = ui_animation::value(&ctx, id, if app.composer_tools_open { 1.0 } else { 0.0 });
     let mut open = app.composer_tools_open;
     let picker_open = app.picker.is_some();
     let keyboard_activate = ui.memory(|memory| memory.has_focus(plus.id))
