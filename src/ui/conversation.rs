@@ -927,27 +927,25 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .layout_no_wrap("x".to_owned(), theme::regular(BODY_SIZE), palette.text)
                 .size()
                 .y;
-            // Match the button to a one-line field. The field grows to six
-            // lines while the row stays bottom-aligned.
-            let field_padding = 14.0;
-            const COMPOSER_BUTTON_SIZE: f32 = 40.0;
+            // Every control sits in a band as tall as a one-line field at the
+            // bottom of the row, centred on it. The field grows to six lines
+            // above that band, so the buttons stay beside its last line.
             let button_width = COMPOSER_BUTTON_SIZE;
+            let field_margin = ((COMPOSER_LINE - line_height) / 2.0).round().max(0.0);
             let text_height = ui
                 .ctx()
                 .read_response(id)
                 .map(|previous| previous.rect.height())
                 .unwrap_or(line_height)
                 .clamp(line_height, line_height * 6.0);
-            // Keep the single-line composer at the desktop WhatsApp height;
-            // multiline drafts can still grow up to the existing six-line cap.
-            let row_height = (text_height + field_padding).max(button_width).max(42.0);
+            let row_height = (text_height + 2.0 * field_margin).max(COMPOSER_LINE);
             let pill = composer_pill(&palette).show(ui, |ui| {
             ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), row_height),
                 Layout::left_to_right(Align::Max),
                 |ui| {
                 if app.editing.is_none() {
-                    let tools = theme::icon_button(
+                    let tools = last_line(ui, |ui| theme::icon_button(
                         ui,
                         Icon::Plus,
                         22.0,
@@ -958,10 +956,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         },
                         palette.text,
                         &crate::i18n::gettext(app.locale, "Attach"),
-                    )
+                    ))
                     .tab_stop(Stop::Attach);
                     composer_tools_menu(app, chat, &tools);
-                    let smile = theme::icon_button(
+                    let smile = last_line(ui, |ui| theme::icon_button(
                         ui,
                         Icon::Smile,
                         22.0,
@@ -972,7 +970,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         },
                         palette.text,
                         "Emoji, GIFs, and stickers",
-                    ).tab_stop(Stop::Emoji);
+                    )).tab_stop(Stop::Emoji);
                     app.picker_anchor = Some(smile.rect);
                     if smile.clicked() {
                         if app.composer_tools_open {
@@ -984,7 +982,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 let field_width = (ui.available_width() - button_width - 10.0).max(0.0);
                 Frame::new()
                     .fill(Color32::TRANSPARENT)
-                    .inner_margin(Margin::symmetric(8, 7))
+                    .inner_margin(Margin::symmetric(8, field_margin as i8))
                     .show(ui, |ui| {
                         ui.set_width((field_width - 16.0).max(0.0));
                         // Grow from one to six lines, then scroll.
@@ -1130,7 +1128,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 } else {
                     (palette.surface, palette.surface_hover, palette.dim)
                 };
-                if !ready && app.editing.is_none() {
+                last_line(ui, |ui| if !ready && app.editing.is_none() {
                     // An empty composer changes the send button to record.
                     if theme::circle_button(
                         ui,
@@ -1158,11 +1156,13 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     {
                         send_click = true;
                     }
-                }
+                });
             },
                     );
                 });
             theme::focus_outline(ui, id, pill.response.rect, f32::from(COMPOSER_RADIUS));
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(composer_pill_id(), pill.response.rect));
             if (send_key || send_click)
                 && (!app.composer.trim().is_empty() || !app.pending.is_empty())
             {
@@ -1234,6 +1234,26 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
 
 /// Corner radius of the composer's rounded field.
 const COMPOSER_RADIUS: u8 = 24;
+/// Diameter of the composer's send and record button.
+const COMPOSER_BUTTON_SIZE: f32 = 40.0;
+/// Height of a one-line composer row; the controls are centred on it.
+const COMPOSER_LINE: f32 = 42.0;
+
+/// Where the composer's rounded field was drawn, for layout tests.
+pub(crate) fn composer_pill_id() -> egui::Id {
+    egui::Id::new("composer-pill")
+}
+
+/// Lays out a control centred in the composer's last-line band, however
+/// tall the draft has grown, so every control shares one vertical centre.
+fn last_line<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(
+        vec2(0.0, COMPOSER_LINE),
+        Layout::left_to_right(Align::Center),
+        add,
+    )
+    .inner
+}
 
 /// The rounded field that holds the composer's controls, or the recorder.
 fn composer_pill(palette: &Palette) -> Frame {

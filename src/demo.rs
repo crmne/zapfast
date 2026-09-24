@@ -6507,6 +6507,75 @@ mod tests {
         );
     }
 
+    /// Plus, emoji, the first line of text and send or record share the
+    /// rounded field's vertical centre; a longer draft keeps them on its
+    /// last line.
+    #[test]
+    fn composer_controls_share_the_fields_vertical_centre() {
+        use crate::ui::focus::Stop;
+        let centre = |ctx: &egui::Context, stop: Stop| {
+            let id = crate::ui::focus::stops(ctx)
+                .into_iter()
+                .find(|(found, _)| *found == stop)
+                .map(|(_, id)| id)
+                .unwrap_or_else(|| panic!("{stop:?} is drawn"));
+            ctx.read_response(id).unwrap().rect.center().y
+        };
+        let measure = |app: &mut App, ctx: &egui::Context| {
+            for _ in 0..3 {
+                frame_sized(app, ctx, 780.0, Vec::new());
+            }
+            let pill = ctx
+                .data(|data| {
+                    data.get_temp::<egui::Rect>(crate::ui::conversation::composer_pill_id())
+                })
+                .expect("the composer is drawn");
+            let text = ctx
+                .read_response(egui::Id::new("composer-text"))
+                .unwrap()
+                .rect;
+            (
+                pill,
+                text,
+                [Stop::Attach, Stop::Emoji, Stop::Send].map(|stop| centre(ctx, stop)),
+            )
+        };
+        for (draft, hints) in [("", false), ("A synthetic draft", false), ("", true)] {
+            let mut app = app();
+            app.settings.show_shortcut_hints = hints;
+            app.composer = draft.into();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let (pill, text, controls) = measure(&mut app, &ctx);
+            let middle = pill.center().y;
+            assert!(
+                (text.center().y - middle).abs() <= 1.0,
+                "text {} vs field {middle} ({draft:?})",
+                text.center().y
+            );
+            for (stop, y) in [Stop::Attach, Stop::Emoji, Stop::Send].iter().zip(controls) {
+                assert!(
+                    (y - middle).abs() <= 1.0,
+                    "{stop:?} {y} vs field {middle} ({draft:?})"
+                );
+            }
+        }
+        // Three lines: the controls stay centred on the last line.
+        let mut app = app();
+        app.composer = "one\ntwo\nthree".into();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let (pill, text, controls) = measure(&mut app, &ctx);
+        assert!(pill.height() > 80.0, "the field grew: {pill:?}");
+        let line = text.height() / 3.0;
+        let last = text.bottom() - line / 2.0;
+        for (stop, y) in [Stop::Attach, Stop::Emoji, Stop::Send].iter().zip(controls) {
+            assert!((y - last).abs() <= 1.0, "{stop:?} {y} vs last line {last}");
+        }
+    }
+
     #[test]
     fn the_plus_menu_sends_files_or_creates_a_poll_and_closes() {
         let click = |app: &mut App, ctx: &egui::Context, pos: egui::Pos2| {
