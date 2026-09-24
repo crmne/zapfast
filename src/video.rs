@@ -1246,4 +1246,20 @@ mod tests {
         let seeked = sound_decoder(Path::new(SAMPLE), Duration::from_secs(1)).unwrap();
         assert!(seeked.count() > 0);
     }
+
+    #[test]
+    fn sample_video_plays_its_whole_sound() {
+        let mut decoder = sound_decoder(Path::new(SAMPLE), Duration::ZERO).unwrap();
+        let rate = rodio::Source::sample_rate(&decoder).get();
+        let channels = usize::from(rodio::Source::channels(&decoder).get());
+        let frames = decoder.by_ref().count() / channels;
+        let sound = Duration::from_secs_f64(frames as f64 / f64::from(rate));
+        // The clip lasts three seconds and its sound track lasts as long. A
+        // decoder that stops at the first packet of another track leaves a
+        // tenth of a second, which the listener hears as silence.
+        assert!(
+            sound > Duration::from_millis(2900),
+            "the sound of a three second clip should last about three seconds, not {sound:?}"
+        );
+    }
 }

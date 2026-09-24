@@ -108,7 +108,12 @@ resvg = { version = "0.45", default-features = false }
 notify-rust = { version = "4", default-features = false, features = ["z"] }
 openh264 = "0.9"
 mp4 = "0.14"
-rodio = { version = "0.22", default-features = false, features = ["playback", "recording", "mp3", "mp4", "wav", "vorbis"] }
+# The 0.22 release ends the sound of an interleaved MP4 at the first packet of
+# another track, so a video that has a picture and a sound track plays a tenth
+# of a second of audio and the listener hears silence. This revision is the
+# merge of upstream RustAudio/rodio#833, which skips the packets of every track
+# but the selected one. Drop the pin at the first release that carries it.
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "e89e685d326a684b298c5138adf94caa49e5568c", default-features = false, features = ["playback", "recording", "mp3", "mp4", "wav", "vorbis"] }
 opus = "0.4"
 ogg = "0.9"
 # Converts animated Signal APNG stickers to the animated WebP used by WhatsApp.
