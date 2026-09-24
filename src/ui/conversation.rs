@@ -1212,10 +1212,14 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 let hover = palette
                     .surface_hover
                     .lerp_to_gamma(palette.accent_hover, ready_factor);
-                let icon = if ready {
-                    // The filled send glyph follows the composer icon
-                    // contrast: white in dark mode and black in light mode.
-                    composer_icon
+                let icon = if ready && app.editing.is_none() {
+                    // Keep the send glyph independent from the animated green
+                    // button fill: white in dark mode and black in light mode.
+                    if ui.visuals().dark_mode {
+                        Color32::WHITE
+                    } else {
+                        Color32::BLACK
+                    }
                 } else {
                     palette.dim.lerp_to_gamma(palette.on_accent, ready_factor)
                 };
