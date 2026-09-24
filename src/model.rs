@@ -49,6 +49,8 @@ pub enum ChatFilter {
     Unread,
     /// One-to-one chats: neither groups nor broadcasts.
     Private,
+    /// Chats marked as a favorite, here or on the phone.
+    Favorites,
     Groups,
     /// Followed channels (newsletters), kept out of the other filters as in
     /// the official apps.
@@ -56,10 +58,11 @@ pub enum ChatFilter {
 }
 
 impl ChatFilter {
-    pub const EVERY: [Self; 5] = [
+    pub const EVERY: [Self; 6] = [
         Self::All,
         Self::Unread,
         Self::Private,
+        Self::Favorites,
         Self::Groups,
         Self::Channels,
     ];
@@ -70,6 +73,7 @@ impl ChatFilter {
             Self::All => gettext(locale, "All"),
             Self::Unread => gettext(locale, "Unread"),
             Self::Private => gettext(locale, "Private"),
+            Self::Favorites => gettext(locale, "Favorites"),
             Self::Groups => gettext(locale, "Groups"),
             Self::Channels => gettext(locale, "Channels"),
         }
@@ -80,6 +84,7 @@ impl ChatFilter {
             Self::All => !chat.is_channel(),
             Self::Unread => chat.looks_unread() && !chat.is_channel(),
             Self::Private => chat.kind == ChatKind::Direct,
+            Self::Favorites => chat.favorite && !chat.is_channel(),
             Self::Groups => chat.kind == ChatKind::Group,
             Self::Channels => chat.is_channel(),
         }
@@ -108,10 +113,19 @@ pub struct Chat {
     pub muted_until: Option<i64>,
     /// Latest message shown in the chat list.
     pub last: Option<LastMessage>,
+    /// Whether the chat is one of the favorites, which sync with the phone.
+    /// It is not a WhatsApp pin.
+    pub favorite: bool,
+    /// Place in the phone's favorites list, which orders the Favorites chip.
+    pub favorite_position: u32,
     /// Canonical group-member ids, empty until loaded.
     pub participants: Vec<String>,
     /// Whether this is an announcement group where we cannot post.
     pub read_only: bool,
+    /// Whether we confirmed leaving this group or channel. Kept apart from
+    /// `read_only`, which an announcement group also carries and which a later
+    /// metadata refresh rewrites.
+    pub left: bool,
     /// Hidden while WhatsApp chat lock is enabled on the phone.
     pub locked: bool,
     /// Disappearing-message duration in seconds, if enabled.
@@ -148,8 +162,11 @@ impl Chat {
             pinned_at: 0,
             muted_until: None,
             last: None,
+            favorite: false,
+            favorite_position: 0,
             participants: Vec::new(),
             read_only: false,
+            left: false,
             locked: false,
             ephemeral_expiration: None,
             labels: Vec::new(),
@@ -159,7 +176,7 @@ impl Chat {
 
     /// Newsletter publishing permissions are not supported by this client.
     pub fn can_send(&self) -> bool {
-        !self.locked && !self.read_only && self.kind != ChatKind::Broadcast
+        !self.locked && !self.read_only && !self.left && self.kind != ChatKind::Broadcast
     }
 
     /// A followed WhatsApp channel (newsletter).
@@ -174,6 +191,33 @@ impl Chat {
     /// Counted unread, or marked unread with nothing pending.
     pub fn looks_unread(&self) -> bool {
         self.unread > 0 || self.marked_unread
+    }
+
+    /// Whether Leave is offered. `ours` holds every id we may be listed
+    /// under (phone number and privacy id). An empty group member list, or no
+    /// known id of ours, means the membership is not known yet, so the group
+    /// still offers it. A channel stays leaveable until leaving marks it.
+    pub fn can_leave(&self, ours: &[&str]) -> bool {
+        // A chat we already left has nothing to leave, even when the phone
+        // never told us who was in it. `read_only` cannot say this on its own:
+        // an announcement group we are still in carries it too.
+        if self.left {
+            return false;
+        }
+        if self.is_channel() {
+            return !self.read_only;
+        }
+        if !self.is_group() {
+            return false;
+        }
+        ours.is_empty() || self.participants.is_empty() || self.lists_any(ours)
+    }
+
+    /// Whether the member list names any of `ours`.
+    pub fn lists_any(&self, ours: &[&str]) -> bool {
+        self.participants
+            .iter()
+            .any(|id| ours.contains(&id.as_str()))
     }
 
     pub fn muted(&self, now: i64) -> bool {
@@ -261,6 +305,13 @@ impl Message {
     /// One-line summary used in chat rows and quotes.
     pub fn summary(&self) -> String {
         self.content.summary()
+    }
+
+    /// The line of this message that contains `query`, for a search result's
+    /// preview. The archive matches the whole text, so a hit on a later line
+    /// would otherwise show a first line the query is nowhere in.
+    pub fn text_matching(&self, query: &str) -> Option<String> {
+        self.content.text_matching(query)
     }
 }
 
@@ -530,6 +581,43 @@ impl Content {
         Self::Text {
             text: text.into(),
             preview: None,
+        }
+    }
+
+    /// The first line of the text the archive search looks at that contains
+    /// `query`, trimmed, or `None` when no line has it.
+    pub fn text_matching(&self, query: &str) -> Option<String> {
+        let needle = query.trim().to_lowercase();
+        if needle.is_empty() {
+            return None;
+        }
+        self.searchable_fields()
+            .into_iter()
+            .flat_map(str::lines)
+            .find(|line| line.to_lowercase().contains(&needle))
+            .map(|line| line.trim().to_owned())
+    }
+
+    /// The text fields the archive search matches (its `SEARCHED_TEXT`), so
+    /// a preview is built from the same set.
+    fn searchable_fields(&self) -> Vec<&str> {
+        match self {
+            Self::Text { text, .. } | Self::Interactive { text, .. } => vec![text],
+            Self::Image { caption, .. } | Self::Video { caption, .. } => {
+                caption.as_deref().into_iter().collect()
+            }
+            Self::Document {
+                file_name, caption, ..
+            } => std::iter::once(file_name.as_str())
+                .chain(caption.as_deref())
+                .collect(),
+            Self::StickerPack { name, caption, .. } => std::iter::once(name.as_str())
+                .chain(caption.as_deref())
+                .collect(),
+            Self::Poll { question, .. } => vec![question],
+            Self::Contact { display_name, .. } => vec![display_name],
+            Self::Location { name, .. } => name.as_deref().into_iter().collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -894,6 +982,8 @@ pub enum Dialog {
     Labels,
     /// Confirms deleting a chat, which cannot be undone.
     ConfirmDeleteChat(ChatId),
+    /// Leaves a group or channel, optionally archiving the chat.
+    ConfirmLeaveGroup(ChatId),
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
@@ -1051,14 +1141,14 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
-    /// Opens the search bar for the open chat.
+    /// Opens the search pane beside the open chat, or focuses its field.
     OpenChatSearch,
-    /// Closes it and drops the query.
+    /// Closes the pane and drops its query and day.
     CloseChatSearch,
-    /// Replaces the query of the open chat's search bar.
+    /// Replaces the query of the open chat's search.
     ChatSearch(String),
-    /// Moves to the next (`1`) or previous (`-1`) match in the open chat.
-    StepChatSearch(i32),
+    /// Restricts the in-chat search to a local calendar day.
+    SetChatSearchDay(Option<jiff::civil::Date>),
     CloseChat,
     SendText {
         chat: ChatId,
@@ -1280,9 +1370,16 @@ pub enum Action {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Leaves a group or a channel. `archive` also hides the chat in Archived.
+    LeaveGroup {
+        chat: ChatId,
+        archive: bool,
+    },
     /// Deletes a chat here and on the phone.
     DeleteChat(ChatId),
     SetPinned(ChatId, bool),
+    /// Marks a chat as a favorite, or removes the mark, here and on the phone.
+    SetFavorite(ChatId, bool),
     ShowDialog(Dialog),
     CloseDialog,
     ToggleSidebar,
@@ -1348,6 +1445,11 @@ pub enum Action {
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
+    /// Writes one WhatsApp account privacy category on the phone.
+    SetAccountPrivacy {
+        kind: crate::privacy::PrivacyKind,
+        choice: crate::privacy::PrivacyChoice,
+    },
     /// Registers or removes the login entry that starts ZapFast in the tray.
     SetStartWithSystem(bool),
     /// Sets the sound for mentions and replies to us (`true`) or for
@@ -1416,6 +1518,66 @@ pub enum Action {
 #[cfg(test)]
 mod tests {
     use super::StickerCrop;
+
+    #[test]
+    fn a_preview_comes_from_the_line_the_query_matched() {
+        let text = super::Content::Text {
+            text: "first line\nsecond line with Zebra\nthird".into(),
+            preview: None,
+        };
+        assert_eq!(
+            text.text_matching("zebra").as_deref(),
+            Some("second line with Zebra"),
+            "the matching line, not the first one"
+        );
+        assert_eq!(
+            text.text_matching("First").as_deref(),
+            Some("first line"),
+            "case does not matter"
+        );
+        assert_eq!(text.text_matching("nowhere"), None);
+        assert_eq!(
+            text.text_matching("  "),
+            None,
+            "an empty query matches nothing"
+        );
+        // A caption is searched too, and previewed the same way.
+        let photo = super::Content::Image {
+            caption: Some("a photo of a Zebra".into()),
+            media: media(),
+        };
+        assert_eq!(
+            photo.text_matching("zebra").as_deref(),
+            Some("a photo of a Zebra")
+        );
+        // So is a file name, with no text of its own to show.
+        let file = super::Content::Document {
+            media: media(),
+            file_name: "Zebra report.pdf".into(),
+            caption: None,
+            pages: None,
+        };
+        assert_eq!(
+            file.text_matching("zebra").as_deref(),
+            Some("Zebra report.pdf")
+        );
+    }
+
+    #[test]
+    fn a_left_chat_stops_offering_leave_even_without_members() {
+        let me = "me@s.whatsapp.net";
+        let mut chat = super::Chat::new("1-2@g.us".into(), "Rust".into());
+        // An empty member list means the phone never told us who is in, which
+        // is exactly when the old check kept offering Leave after a leave.
+        assert!(chat.can_leave(&[me]));
+        chat.left = true;
+        assert!(!chat.can_leave(&[me]), "we already left");
+        assert!(!chat.can_send(), "and we cannot post in it");
+        // Being a member again clears it, so a rejoin is leaveable once more.
+        chat.left = false;
+        chat.participants = vec![me.into()];
+        assert!(chat.can_leave(&[me]));
+    }
 
     #[test]
     fn looks_unread_covers_counts_and_the_empty_dot() {
@@ -1587,6 +1749,42 @@ mod tests {
         assert_eq!(ChatKind::from_id("1@lid"), ChatKind::Direct);
         assert_eq!(ChatKind::from_id("1-2@g.us"), ChatKind::Group);
         assert_eq!(ChatKind::from_id("1@newsletter"), ChatKind::Broadcast);
+    }
+
+    #[test]
+    fn a_group_can_be_left_until_we_are_no_longer_a_member() {
+        let me = "me@s.whatsapp.net";
+        let mut chat = Chat::new("1-2@g.us".into(), "Rust".into());
+        assert!(
+            chat.can_leave(&[me]),
+            "unknown membership still offers leave"
+        );
+        chat.participants = vec![me.into(), "other@s.whatsapp.net".into()];
+        assert!(chat.can_leave(&[me]));
+        chat.participants.retain(|id| id != me);
+        assert!(!chat.can_leave(&[me]));
+        // Before the worker knows our own pair, the list may name our privacy id.
+        chat.participants.push("98765@lid".into());
+        assert!(chat.can_leave(&[me, "98765@lid"]));
+        assert!(!chat.can_leave(&[me]));
+        assert!(!Chat::new("1@s.whatsapp.net".into(), "Ada".into()).can_leave(&[me]));
+        assert!(!Chat::new("1@broadcast".into(), "List".into()).can_leave(&[me]));
+    }
+
+    #[test]
+    fn a_channel_can_be_left_until_it_is_read_only() {
+        let me = "me@s.whatsapp.net";
+        let mut chat = Chat::new("1@newsletter".into(), "News".into());
+        assert!(chat.is_channel());
+        assert!(chat.can_leave(&[me]));
+        chat.read_only = true;
+        assert!(!chat.can_leave(&[me]));
+    }
+
+    #[test]
+    fn a_broadcast_list_is_not_a_channel() {
+        assert!(!Chat::new("1@broadcast".into(), "List".into()).is_channel());
+        assert!(Chat::new("1@newsletter".into(), "News".into()).is_channel());
     }
 
     #[test]

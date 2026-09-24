@@ -9,6 +9,13 @@ pub enum Stop {
     Send,
     Attach,
     Emoji,
+    /// The chat header's Search, then the search pane's controls in reading
+    /// order. The arrows walk its results from the field.
+    ChatSearch,
+    ChatSearchClose,
+    ChatSearchDate,
+    ChatSearchField,
+    ChatSearchDay,
     Back,
     Profile,
     Sidebar,
@@ -20,6 +27,7 @@ pub enum Stop {
     All,
     Unread,
     Private,
+    Favorites,
     Groups,
     Channels,
     Archived,

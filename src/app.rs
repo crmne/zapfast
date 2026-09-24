@@ -76,6 +76,17 @@ pub struct Conversation {
     pub phone_misses: u32,
     /// Whether messages arrived after the latest phone request.
     pub phone_delivered: bool,
+    /// The height each row last took, keyed by message id, so the transcript
+    /// can skip rows far from the viewport instead of laying them out.
+    pub(crate) rows: HashMap<String, RowHeight>,
+}
+
+/// A transcript row's height as last laid out or estimated.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RowHeight {
+    pub height: f32,
+    /// The egui pass the row was last laid out in; `None` for an estimate.
+    pub pass: Option<u64>,
 }
 
 impl Conversation {
@@ -199,14 +210,25 @@ pub struct App {
     pub search: String,
     /// Message search results, newest first.
     pub search_hits: Vec<Message>,
-    /// In-conversation search: the query, its matches in the open chat
-    /// (oldest first, so Enter walks forward in time) and the match in view.
-    pub chat_search: String,
+    /// The search pane beside the open chat: its query, day filter and the
+    /// matches it lists.
     pub chat_search_open: bool,
-    pub chat_search_hits: Vec<String>,
-    pub chat_search_index: usize,
-    /// Whether the freshly opened bar should take focus.
-    pub chat_search_focus: bool,
+    pub chat_search: String,
+    /// Matches in the open chat, newest first.
+    pub chat_search_hits: Vec<Message>,
+    /// Whether the archive held more matches than the pane lists.
+    pub chat_search_truncated: bool,
+    /// Whether an answer for the current query and day is still due.
+    pub chat_search_pending: bool,
+    /// The result the arrow keys have reached, if any.
+    pub chat_search_selected: Option<usize>,
+    /// Local day the in-chat search is limited to, if any.
+    pub chat_search_day: Option<jiff::civil::Date>,
+    /// Month the day filter shows.
+    pub chat_search_month: jiff::civil::Date,
+    pub chat_search_calendar: bool,
+    /// Whether the pane's field should take focus.
+    pub focus_chat_search: bool,
     /// Whether the locked-chats folder is open.
     pub locked_folder: bool,
     /// The verifier authenticated for this window session, never the code.
@@ -222,6 +244,8 @@ pub struct App {
     pub presence: HashMap<String, Presence>,
     /// Whether account privacy disables direct-chat read receipts.
     pub account_receipts_off: bool,
+    /// Last account privacy snapshot from the phone.
+    pub account_privacy: crate::privacy::Snapshot,
     /// Receipts of the message whose "Message info" is open.
     pub message_receipts: Option<crate::model::MessageReceipts>,
     /// The group message the backend is following receipts for.
@@ -593,11 +617,16 @@ impl App {
             last_keystroke: None,
             search: String::new(),
             search_hits: Vec::new(),
-            chat_search: String::new(),
             chat_search_open: false,
+            chat_search: String::new(),
             chat_search_hits: Vec::new(),
-            chat_search_index: 0,
-            chat_search_focus: false,
+            chat_search_truncated: false,
+            chat_search_pending: false,
+            chat_search_selected: None,
+            chat_search_day: None,
+            chat_search_month: crate::util::today(),
+            chat_search_calendar: false,
+            focus_chat_search: false,
             locked_folder: false,
             chat_lock_session: None,
             chat_lock_entry: String::new(),
@@ -608,6 +637,7 @@ impl App {
             typing: HashMap::new(),
             presence: HashMap::new(),
             account_receipts_off: false,
+            account_privacy: crate::privacy::Snapshot::default(),
             message_receipts: None,
             receipts_watch: None,
             invite: None,
@@ -854,6 +884,15 @@ impl App {
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
         );
+    }
+
+    /// Every id a member list may name us by: the phone number and, before
+    /// the worker knows the pair, the privacy id.
+    pub fn our_ids(&self) -> Vec<&str> {
+        [self.me.as_deref(), self.me_lid.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     /// Whether a message mentions us or replies to one of our messages. A
@@ -1433,10 +1472,17 @@ impl App {
                     })
             })
             .collect();
+        // The Favorites chip keeps the phone's order below the pinned chats.
+        let favorites_order =
+            filtering && self.label_filter.is_none() && self.chat_filter == ChatFilter::Favorites;
         chats.sort_by(|a, b| {
             b.pinned.cmp(&a.pinned).then_with(|| {
                 if a.pinned && b.pinned {
                     b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
+                } else if favorites_order {
+                    a.favorite_position
+                        .cmp(&b.favorite_position)
+                        .then(a.id.cmp(&b.id))
                 } else {
                     b.last_activity.cmp(&a.last_activity).then(a.id.cmp(&b.id))
                 }
@@ -1670,19 +1716,27 @@ impl App {
                         }
                     }
                 }
-                Event::ChatHits { chat, query, ids } => {
-                    // Hits for another chat, or for a query the user has
-                    // already replaced, arrive too late to matter.
+                Event::ChatHits {
+                    chat,
+                    query,
+                    from,
+                    until,
+                    messages,
+                    truncated,
+                } => {
+                    // Hits for another chat, for a query the user has already
+                    // replaced, or for a day they have already moved off,
+                    // arrive too late to matter.
+                    let (want_from, want_until) = self.chat_search_range();
                     if self.open_chat.as_deref() == Some(chat.as_str())
                         && query == self.chat_search.trim()
+                        && from == want_from
+                        && until == want_until
                     {
-                        self.chat_search_hits = ids;
-                        self.chat_search_index = self.chat_search_hits.len().saturating_sub(1);
-                        if !self.chat_search_hits.is_empty() {
-                            // Show the newest match while the query is typed.
-                            let message = self.chat_search_hits[self.chat_search_index].clone();
-                            self.actions.push(Action::OpenMessage { chat, message });
-                        }
+                        self.chat_search_hits = messages;
+                        self.chat_search_truncated = truncated;
+                        self.chat_search_pending = false;
+                        self.chat_search_selected = None;
                     }
                 }
                 Event::SearchHits { query, messages } => {
@@ -1881,6 +1935,29 @@ impl App {
                     conversation.complete = false;
                 }
                 Event::ReceiptsPrivacy { disabled } => self.account_receipts_off = disabled,
+                Event::AccountPrivacy { values, failed } => {
+                    self.account_privacy.apply_fetch(values, failed);
+                    // The account value wins over the local switch: it is what
+                    // the phone and the other linked devices enforce.
+                    if let Some(choice) = self
+                        .account_privacy
+                        .get(crate::privacy::PrivacyKind::ReadReceipts)
+                    {
+                        self.account_receipts_off =
+                            choice != crate::privacy::PrivacyChoice::Everyone;
+                    }
+                }
+                Event::AccountPrivacySaved { kind } => {
+                    // A confirmation nothing waits for belongs to an account
+                    // that has since been unlinked.
+                    if self.account_privacy.finish_set(kind)
+                        && kind == crate::privacy::PrivacyKind::ReadReceipts
+                    {
+                        self.account_receipts_off = self.account_privacy.get(kind)
+                            != Some(crate::privacy::PrivacyChoice::Everyone);
+                    }
+                }
+                Event::AccountPrivacyFailed { kind } => self.account_privacy.fail_set(kind),
                 Event::PinLimit(limit) => self.pin_limit = limit,
                 Event::Receipts(receipts) => {
                     // A late answer for a dialog that has since closed is stale.
@@ -2065,6 +2142,8 @@ impl App {
                 self.conversations.clear();
                 self.contacts.clear();
                 self.avatars.clear();
+                self.account_privacy = crate::privacy::Snapshot::default();
+                self.account_receipts_off = false;
                 self.open_chat = None;
                 // Unsent text belongs to the account that was unlinked.
                 self.drafts.clear();
@@ -2099,6 +2178,13 @@ impl App {
         // lock closes and clears everything it left behind.
         if chat.locked && !self.locked_folder_open() {
             self.hide_locked_chat(&chat.id);
+        }
+        // Leaving with "and archive" archives the chat once the phone agreed,
+        // so this is where the open conversation closes, not before. Only a
+        // chat that just became archived: a message arriving in one that was
+        // already archived does not close it.
+        if is_open && chat.archived && self.chat(&chat.id).is_none_or(|known| !known.archived) {
+            self.actions.push(Action::CloseChat);
         }
         match self.chats.iter_mut().find(|known| known.id == chat.id) {
             Some(existing) => *existing = chat,
@@ -2196,45 +2282,71 @@ impl App {
         self.sticker_packs.iter().find(|pack| pack.dir == *dir)
     }
 
+    /// Whether the search pane is on screen: it belongs to the open chat and
+    /// only the chat view shows it.
+    pub fn chat_search_visible(&self) -> bool {
+        self.chat_search_open && self.page == Page::Chats && self.open_chat.is_some()
+    }
+
+    /// Opens the search pane beside the open chat, or focuses its field when
+    /// it is already open.
+    fn open_chat_search(&mut self) {
+        if self.open_chat.is_none() || self.page != Page::Chats {
+            return;
+        }
+        if !self.chat_search_open {
+            self.chat_search_open = true;
+            self.chat_search_month = crate::util::today();
+        }
+        self.focus_chat_search = true;
+        self.focus_search = false;
+        self.focus_composer = false;
+    }
+
     fn close_chat_search(&mut self) {
         self.chat_search_open = false;
-        self.chat_search_focus = false;
         self.chat_search.clear();
         self.chat_search_hits.clear();
-        self.chat_search_index = 0;
+        self.chat_search_truncated = false;
+        self.chat_search_pending = false;
+        self.chat_search_selected = None;
+        self.chat_search_day = None;
+        self.chat_search_calendar = false;
+        self.focus_chat_search = false;
     }
 
-    /// Answers a new query for the open chat's search bar.
-    fn search_in_chat(&mut self, query: String) {
-        self.chat_search = query;
-        let needle = self.chat_search.trim().to_owned();
-        self.chat_search_hits.clear();
-        self.chat_search_index = 0;
-        let Some(chat) = self.open_chat.clone() else {
+    /// The Unix-second range the day filter stands for, if a day is picked.
+    fn chat_search_range(&self) -> (Option<i64>, Option<i64>) {
+        match self.chat_search_day.and_then(crate::util::day_bounds) {
+            Some((from, until)) => (Some(from), Some(until)),
+            None => (None, None),
+        }
+    }
+
+    /// Asks for the open chat's matches, for the query and day in force.
+    fn request_chat_search(&mut self) {
+        self.chat_search_selected = None;
+        let query = self.chat_search.trim().to_owned();
+        let (from, until) = self.chat_search_range();
+        let Some(chat) = self
+            .open_chat
+            .clone()
+            .filter(|_| !query.is_empty() || from.is_some())
+        else {
+            self.chat_search_hits.clear();
+            self.chat_search_truncated = false;
+            self.chat_search_pending = false;
             return;
         };
-        if needle.is_empty() {
-            return;
-        }
+        // The earlier matches stay listed until the answer replaces them, so
+        // the list does not blink empty on every keystroke.
+        self.chat_search_pending = true;
         self.backend.send(Command::SearchChatMessages {
             chat,
-            query: needle,
+            query,
+            from,
+            until,
         });
-    }
-
-    /// Moves to the next (`step` 1) or previous (`step` -1) match, wrapping
-    /// around, and brings it into view like any other search result.
-    fn step_chat_search(&mut self, step: i32) {
-        let Some(chat) = self.open_chat.clone() else {
-            return;
-        };
-        if self.chat_search_hits.is_empty() {
-            return;
-        }
-        let count = self.chat_search_hits.len() as i32;
-        self.chat_search_index = (self.chat_search_index as i32 + step).rem_euclid(count) as usize;
-        let message = self.chat_search_hits[self.chat_search_index].clone();
-        self.actions.push(Action::OpenMessage { chat, message });
     }
 
     fn hide_locked_chat(&mut self, id: &str) {
@@ -2558,11 +2670,7 @@ impl App {
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
             // A search belongs to the chat it was typed in.
-            self.chat_search_open = false;
-            self.chat_search_focus = false;
-            self.chat_search.clear();
-            self.chat_search_hits.clear();
-            self.chat_search_index = 0;
+            self.close_chat_search();
             self.reply_to = None;
             self.editing = None;
             // A run of voice messages belongs to the chat it started in.
@@ -2987,6 +3095,11 @@ impl App {
         match action {
             Action::Open(page) => {
                 let opens_chats = page == Page::Chats;
+                // Privacy can change on the phone at any time, and nothing
+                // announces it: read it again whenever Settings opens.
+                if page == Page::Settings && self.page != Page::Settings && self.is_connected() {
+                    self.backend.send(Command::FetchAccountPrivacy);
+                }
                 self.page = page;
                 self.dialog = None;
                 self.emoji_start = None;
@@ -3026,11 +3139,18 @@ impl App {
                 }
             }
             Action::OpenMessage { chat, message } => {
+                // A result picked in the search pane keeps the keyboard in
+                // the pane, so the arrows can walk on to the next one.
+                let from_pane =
+                    self.chat_search_visible() && self.open_chat.as_deref() == Some(chat.as_str());
                 self.open_chat(chat.clone());
                 // A locked chat stays shut outside its folder, even for a
                 // notification clicked before the chat was locked.
                 if self.open_chat.as_deref() != Some(chat.as_str()) {
                     return;
+                }
+                if from_pane {
+                    self.focus_composer = false;
                 }
                 // Keep the search result, not the chat end, in view.
                 self.scroll_to_bottom = false;
@@ -3784,6 +3904,20 @@ impl App {
                     emoji,
                 });
             }
+            Action::LeaveGroup { chat, archive } => {
+                self.dialog = None;
+                let ours: Vec<String> = self.our_ids().into_iter().map(str::to_owned).collect();
+                if let Some(known) = self.chat_mut(&chat) {
+                    known.read_only = true;
+                    known.left = true;
+                    known.participants.retain(|id| !ours.contains(id));
+                }
+                // Archiving and closing the open conversation both wait for the
+                // phone: a refused leave rolls the mark back, and a chat that
+                // archived and closed itself would not come back. The
+                // confirmed update does both.
+                self.backend.send(Command::LeaveGroup { chat, archive });
+            }
             Action::SetArchived(chat, archived) => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.archived = archived;
@@ -3810,6 +3944,14 @@ impl App {
                     };
                 }
                 self.backend.send(Command::SetPinned(chat, pinned));
+            }
+            Action::SetFavorite(chat, favorite) => {
+                if let Some(known) = self.chat_mut(&chat) {
+                    known.favorite = favorite;
+                    // A new favorite joins the end until the archive numbers it.
+                    known.favorite_position = u32::MAX;
+                }
+                self.backend.send(Command::SetFavorite(chat, favorite));
             }
             Action::ShowDialog(dialog) => {
                 self.clear_chat_lock_entry();
@@ -4041,23 +4183,23 @@ impl App {
                     self.backend.send(Command::SearchMessages { query });
                 }
             }
-            Action::OpenChatSearch => {
-                if self.open_chat.is_none() || self.page != Page::Chats {
-                    return;
-                }
-                self.chat_search_open = true;
-                self.chat_search_focus = true;
-                self.chat_search.clear();
-                self.chat_search_hits.clear();
-                self.chat_search_index = 0;
-                self.focus_search = false;
-            }
+            Action::OpenChatSearch => self.open_chat_search(),
             Action::CloseChatSearch => {
                 self.close_chat_search();
                 self.refocus_composer(ctx);
             }
-            Action::ChatSearch(query) => self.search_in_chat(query),
-            Action::StepChatSearch(step) => self.step_chat_search(step),
+            Action::ChatSearch(query) => {
+                self.chat_search = query;
+                self.request_chat_search();
+            }
+            Action::SetChatSearchDay(day) => {
+                self.chat_search_day = day;
+                self.chat_search_calendar = false;
+                if let Some(day) = day {
+                    self.chat_search_month = day;
+                }
+                self.request_chat_search();
+            }
             Action::ShowUpdate => {
                 self.show_update = self.update.is_some();
                 self.inspect_update();
@@ -4166,6 +4308,17 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::SettingsChanged => self.mark_settings_dirty(),
+            Action::SetAccountPrivacy { kind, choice } => {
+                // The value lives on the phone: nothing is written without a
+                // connection and a snapshot to write against.
+                if self.is_connected()
+                    && self.account_privacy.editable()
+                    && self.account_privacy.begin_set(kind, choice)
+                {
+                    self.backend
+                        .send(Command::SetAccountPrivacy { kind, choice });
+                }
+            }
             Action::SetNotificationSound { mention, sound } => {
                 if mention {
                     self.settings.mention_sound = sound;
@@ -5483,6 +5636,132 @@ mod tests {
         let chat = app.chat(&id).expect("chat");
         assert_eq!(chat.unread, 3);
         assert!(!chat.marked_unread);
+    }
+
+    #[test]
+    fn leaving_a_group_marks_it_read_only_and_can_archive() {
+        let mut app = app();
+        let me = "me@s.whatsapp.net";
+        app.me = Some(me.into());
+        let id = "1-2@g.us".to_owned();
+        let mut chat = Chat::new(id.clone(), "Rust".into());
+        chat.participants = vec![me.into(), "other@s.whatsapp.net".into()];
+        app.chats.push(chat);
+        app.open_chat = Some(id.clone());
+        app.dialog = Some(Dialog::ConfirmLeaveGroup(id.clone()));
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: false,
+            },
+            &ctx,
+        );
+        let chat = app.chat(&id).expect("chat");
+        assert!(chat.read_only);
+        assert!(!chat.participants.iter().any(|id| id == me));
+        assert!(!chat.archived);
+        assert_eq!(app.open_chat.as_deref(), Some(id.as_str()));
+        assert!(app.dialog.is_none());
+        // The chat no longer offers leave once we are out of it.
+        assert!(!chat.can_leave(&app.our_ids()));
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: true,
+            },
+            &ctx,
+        );
+        let chat = app.chat(&id).expect("chat");
+        assert!(!chat.archived, "the archive waits for the phone");
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some(id.as_str()),
+            "and the conversation stays open until then"
+        );
+        // The phone agreed, so the archive lands and the open chat closes.
+        let mut confirmed = chat.clone();
+        confirmed.archived = true;
+        app.handle_chat_updated(confirmed);
+        app.apply_actions(&ctx);
+        assert!(app.chat(&id).expect("chat").archived);
+        assert!(app.open_chat.is_none(), "the confirmed archive closes it");
+    }
+
+    #[test]
+    fn a_refused_leave_rolls_back_the_local_mark() {
+        let mut app = app();
+        let me = "me@s.whatsapp.net";
+        app.me = Some(me.into());
+        let id = "1-2@g.us".to_owned();
+        let mut chat = Chat::new(id.clone(), "Rust".into());
+        chat.participants = vec![me.into(), "other@s.whatsapp.net".into()];
+        app.chats.push(chat.clone());
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: false,
+            },
+            &ctx,
+        );
+        assert!(
+            app.chat(&id).expect("chat").read_only,
+            "the menu marks the chat at once"
+        );
+        // The worker could not reach the phone, so it sends the archive row
+        // back untouched. The mark has to go with it.
+        app.handle_chat_updated(chat);
+        let chat = app.chat(&id).expect("chat");
+        assert!(!chat.read_only, "the refused leave is rolled back");
+        assert!(!chat.left, "and so is the leave itself");
+        assert!(chat.participants.iter().any(|id| id == me));
+        assert!(chat.can_leave(&app.our_ids()), "and it can be tried again");
+    }
+
+    #[test]
+    fn leaving_a_channel_marks_it_read_only_and_can_archive() {
+        let mut app = app();
+        let id = "1@newsletter".to_owned();
+        let chat = Chat::new(id.clone(), "News".into());
+        app.chats.push(chat);
+        app.open_chat = Some(id.clone());
+        app.dialog = Some(Dialog::ConfirmLeaveGroup(id.clone()));
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: false,
+            },
+            &ctx,
+        );
+        let chat = app.chat(&id).expect("chat");
+        assert!(chat.read_only);
+        assert!(!chat.archived);
+        assert_eq!(app.open_chat.as_deref(), Some(id.as_str()));
+        assert!(app.dialog.is_none());
+        assert!(!chat.can_leave(&app.our_ids()));
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: true,
+            },
+            &ctx,
+        );
+        let chat = app.chat(&id).expect("chat");
+        assert!(!chat.archived, "the archive waits for the phone");
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some(id.as_str()),
+            "and the conversation stays open until then"
+        );
+        // The phone agreed, so the archive lands and the open chat closes.
+        let mut confirmed = chat.clone();
+        confirmed.archived = true;
+        app.handle_chat_updated(confirmed);
+        app.apply_actions(&ctx);
+        assert!(app.chat(&id).expect("chat").archived);
+        assert!(app.open_chat.is_none(), "the confirmed archive closes it");
     }
 
     #[test]
@@ -7355,7 +7634,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_f_searches_the_open_chat_and_ctrl_k_the_list() {
+    fn ctrl_f_searches_the_open_chat_in_the_pane_and_ctrl_k_the_list() {
         let mut app = app();
         let ctx = egui::Context::default();
         // Without an open chat there is nothing to search inside.
@@ -7363,9 +7642,10 @@ mod tests {
         assert!(!app.chat_search_open);
         app.open_chat = Some("1@s.whatsapp.net".into());
         app.apply(Action::OpenChatSearch, &ctx);
-        assert!(app.chat_search_open);
-        assert!(app.chat_search_focus);
-        // Ctrl+K searches the chat list, and closes the chat's bar.
+        assert!(app.chat_search_visible());
+        assert!(app.focus_chat_search);
+        assert!(!app.focus_composer, "the pane's field takes the keyboard");
+        // Ctrl+K searches the chat list, and closes the pane.
         app.apply(Action::FocusSearch, &ctx);
         app.apply_actions(&ctx);
         assert!(app.focus_search);
@@ -7373,25 +7653,134 @@ mod tests {
     }
 
     #[test]
-    fn the_chat_search_steps_and_wraps_and_escape_resets_it() {
+    fn the_pane_keeps_the_chat_list_search_and_gives_the_composer_back() {
         let mut app = app();
         let ctx = egui::Context::default();
-        app.open_chat = Some("1@s.whatsapp.net".into());
-        app.chat_search = "engine".into();
-        app.chat_search_open = true;
-        app.chat_search_hits = vec!["m1".into(), "m2".into(), "m3".into()];
-        app.chat_search_index = 2;
-        // Past the last match: back to the first.
-        app.apply(Action::StepChatSearch(1), &ctx);
-        assert_eq!(app.chat_search_index, 0);
-        // Before the first one: to the last.
-        app.apply(Action::StepChatSearch(-1), &ctx);
-        assert_eq!(app.chat_search_index, 2);
+        let chat = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Ada".into()));
+        app.open_chat = Some(chat.into());
+        app.search = "list".into();
+        app.apply(Action::OpenChatSearch, &ctx);
+        assert!(app.chat_search_open);
+        assert_eq!(app.search, "list", "the two searches are independent");
+        app.search.clear();
+        app.apply(Action::ChatSearch("engine".into()), &ctx);
         app.apply(Action::CloseChatSearch, &ctx);
         assert!(!app.chat_search_open);
         assert!(app.chat_search.is_empty());
+        assert!(app.focus_composer, "closing hands the keyboard back");
+    }
+
+    #[test]
+    fn the_pane_lists_only_the_answer_to_the_query_and_day_in_force() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.apply(Action::OpenChatSearch, &ctx);
+        let searches = |commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>| {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::SearchChatMessages {
+                        query, from, until, ..
+                    } => Some((query, from.is_some() && until.is_some())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(searches(&mut commands).is_empty(), "nothing to ask yet");
+        app.apply(Action::ChatSearch("eng".into()), &ctx);
+        app.apply(Action::ChatSearch(" engine ".into()), &ctx);
+        assert_eq!(
+            searches(&mut commands),
+            [("eng".to_owned(), false), ("engine".to_owned(), false)]
+        );
+        assert!(app.chat_search_pending);
+        let hits =
+            |query: &str, from: Option<i64>, until: Option<i64>, ids: &[&str]| Event::ChatHits {
+                chat: chat.into(),
+                query: query.into(),
+                from,
+                until,
+                messages: ids.iter().map(|id| message(chat, id, 1)).collect(),
+                truncated: false,
+            };
+        // The answer to the query already replaced arrives too late.
+        events.send(hits("eng", None, None, &["old"])).unwrap();
+        app.handle_events();
         assert!(app.chat_search_hits.is_empty());
-        assert_eq!(app.chat_search_index, 0);
+        assert!(app.chat_search_pending);
+        events
+            .send(hits("engine", None, None, &["m1", "m2"]))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.chat_search_hits.len(), 2);
+        assert!(!app.chat_search_pending);
+        // A day narrows the same query, and an answer without it is stale.
+        let day = jiff::civil::Date::new(2026, 9, 23).expect("a date");
+        app.apply(Action::SetChatSearchDay(Some(day)), &ctx);
+        assert_eq!(searches(&mut commands), [("engine".to_owned(), true)]);
+        assert_eq!(app.chat_search_day, Some(day));
+        assert_eq!(app.chat_search_month, day, "the calendar follows the pick");
+        assert!(!app.chat_search_calendar, "picking a day closes it");
+        events.send(hits("engine", None, None, &["m3"])).unwrap();
+        app.handle_events();
+        assert_eq!(app.chat_search_hits.len(), 2, "still the earlier list");
+        let (from, until) = app.chat_search_range();
+        events.send(hits("engine", from, until, &["m1"])).unwrap();
+        app.handle_events();
+        assert_eq!(app.chat_search_hits.len(), 1);
+        // A day on its own lists that day; with neither, nothing is asked.
+        app.apply(Action::ChatSearch(String::new()), &ctx);
+        assert_eq!(searches(&mut commands), [(String::new(), true)]);
+        app.apply(Action::SetChatSearchDay(None), &ctx);
+        assert!(searches(&mut commands).is_empty());
+        assert!(app.chat_search_hits.is_empty());
+        assert!(!app.chat_search_pending);
+        assert_eq!(app.chat_search_range(), (None, None));
+    }
+
+    #[test]
+    fn a_result_opened_from_the_pane_keeps_the_keyboard_there() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Ada".into()));
+        let conversation = Conversation {
+            requested: true,
+            complete: true,
+            messages: vec![message(chat, "hit", 10)],
+            ..Default::default()
+        };
+        app.conversations.insert(chat.into(), conversation);
+        app.apply(Action::OpenChat(chat.into()), &ctx);
+        app.apply(Action::OpenChatSearch, &ctx);
+        app.apply(Action::ChatSearch("engine".into()), &ctx);
+        app.apply(
+            Action::OpenMessage {
+                chat: chat.into(),
+                message: "hit".into(),
+            },
+            &ctx,
+        );
+        assert!(app.chat_search_open, "the pane stays open");
+        assert_eq!(app.chat_search, "engine", "with its query");
+        assert!(!app.focus_composer);
+        assert_eq!(
+            app.jump_highlight
+                .as_ref()
+                .map(|jump| jump.message.as_str()),
+            Some("hit"),
+            "and the result flashes"
+        );
+        // Another chat's search does not follow the reader there.
+        let other = "2@s.whatsapp.net";
+        app.chats.push(Chat::new(other.into(), "Bo".into()));
+        app.apply(Action::OpenChat(other.into()), &ctx);
+        assert!(!app.chat_search_open);
+        assert!(app.chat_search.is_empty());
     }
 
     #[test]
@@ -7546,6 +7935,44 @@ mod tests {
             .map(|chat| chat.name.as_str())
             .collect();
         assert_eq!(names, vec!["Ada"]);
+    }
+
+    #[test]
+    fn the_favorites_chip_keeps_the_phone_order_below_pins() {
+        let mut app = app();
+        let favorite = |id: &str, name: &str, position: u32, activity: i64| {
+            let mut chat = Chat::new(id.into(), name.into());
+            chat.favorite = true;
+            chat.favorite_position = position;
+            chat.last_activity = activity;
+            chat
+        };
+        let mut pinned = favorite("3@s.whatsapp.net", "Cy", 2, 1);
+        pinned.pinned = true;
+        app.chats = vec![
+            favorite("1@s.whatsapp.net", "Ada", 1, 30),
+            favorite("2@s.whatsapp.net", "Bob", 0, 10),
+            pinned,
+            Chat::new("4@s.whatsapp.net".into(), "Dee".into()),
+        ];
+        app.chat_filter = ChatFilter::Favorites;
+        let names: Vec<&str> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.name.as_str())
+            .collect();
+        assert_eq!(names, ["Cy", "Bob", "Ada"]);
+        app.chat_filter = ChatFilter::All;
+        let names: Vec<&str> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["Cy", "Ada", "Bob", "Dee"],
+            "other chips keep recency"
+        );
     }
 
     #[test]

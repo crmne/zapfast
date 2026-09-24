@@ -100,6 +100,7 @@ pub fn acquire(dir: &Path, waker: &crate::backend::Waker, verb: &str) -> Outcome
     if let Err(error) = listen(dir, guard.commands(), waker.clone()) {
         log::warn!("cannot listen for other launches: {error}");
     }
+    listen_legacy(guard.commands(), waker.clone());
     Outcome::Only(guard)
 }
 
@@ -155,6 +156,41 @@ fn legacy_instance_answers(verb: &str) -> bool {
     // A background start never runs beside a copy that may be ZapFast,
     // including older ones that do not answer `ping`.
     answered || verb == "ping"
+}
+
+/// Answers copies that predate the lock (0.15 and earlier), which only look
+/// for the fixed port: without a reply they would start beside this one on
+/// the same archive and linked device. Only `show` and `ping` are accepted
+/// there, as nothing on that port proves who is asking, and they at most
+/// bring the window forward.
+fn listen_legacy(commands: Queue, waker: crate::backend::Waker) {
+    match TcpListener::bind((Ipv4Addr::LOCALHOST, LEGACY_PORT)) {
+        Ok(listener) => {
+            if let Err(error) = spawn(move || serve_legacy(listener, &commands, &waker)) {
+                log::debug!("cannot answer older launches: {error}");
+            }
+        }
+        Err(error) => log::debug!("cannot answer older launches: {error}"),
+    }
+}
+
+fn serve_legacy(
+    listener: TcpListener,
+    commands: &Mutex<Vec<ControlCommand>>,
+    waker: &crate::backend::Waker,
+) {
+    for mut stream in listener.incoming().flatten() {
+        if let Some(command @ (ControlCommand::Show | ControlCommand::Ping)) =
+            receive(&mut stream, None)
+        {
+            let _ = stream.write_all(format!("{OK_REPLY}\n").as_bytes());
+            commands
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(command);
+            waker.wake();
+        }
+    }
 }
 
 /// Sends one request to the running instance and verifies its reply.
@@ -420,6 +456,24 @@ mod tests {
         assert!(!token_matches(&token, &token.as_bytes()[..63]));
         assert!(!token_matches(&token, format!("{token}0").as_bytes()));
         assert!(!token_matches(&token, b""));
+    }
+
+    #[test]
+    fn older_copies_may_only_ask_for_the_window() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let commands: Queue = Default::default();
+        let queue = Arc::clone(&commands);
+        std::thread::spawn(move || {
+            serve_legacy(listener, &queue, &crate::backend::Waker::default())
+        });
+        request(connect(port), None, "show").expect("an older launch surfaces this one");
+        request(connect(port), None, "ping").expect("a background start sees this one");
+        assert!(request(connect(port), None, "reload-themes").is_err());
+        assert_eq!(
+            *commands.lock().unwrap(),
+            vec![ControlCommand::Show, ControlCommand::Ping]
+        );
     }
 
     #[test]

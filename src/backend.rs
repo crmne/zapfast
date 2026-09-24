@@ -228,10 +228,12 @@ pub enum Command {
     SearchMessages {
         query: String,
     },
-    /// Searches the messages of one chat, for its own search bar.
+    /// Searches one chat, optionally inside a Unix-second day range.
     SearchChatMessages {
         chat: ChatId,
         query: String,
+        from: Option<i64>,
+        until: Option<i64>,
     },
     /// Creates an archive chat before its first message is sent.
     EnsureChat {
@@ -502,6 +504,11 @@ pub enum Command {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Leaves a group or channel. `archive` also hides the chat in Archived.
+    LeaveGroup {
+        chat: ChatId,
+        archive: bool,
+    },
     /// Deletes a chat on the phone, then here once the phone agreed.
     DeleteChat(ChatId),
     /// Whether the phone deleted a chat requested through `DeleteChat`.
@@ -511,6 +518,15 @@ pub enum Command {
         through: i64,
     },
     SetPinned(ChatId, bool),
+    /// Marks a chat as a favorite, or removes the mark, here and on the phone.
+    SetFavorite(ChatId, bool),
+    /// The phone answered a favorites list sent at `at` holding the queued
+    /// changes up to `through`.
+    FavoritesSent {
+        through: i64,
+        at: i64,
+        success: bool,
+    },
     PairWithPhone(String),
     /// Unlinks the device remotely and locally.
     Unlink,
@@ -589,6 +605,9 @@ pub enum Command {
         read_only: bool,
         ephemeral_expiration: Option<u32>,
         ephemeral_setting_timestamp: Option<i64>,
+        /// The chat's leave generation when this metadata was asked for. A
+        /// snapshot older than a confirmed leave cannot undo it.
+        leave_generation: u64,
     },
     /// Internal pairing-code result.
     PairCode {
@@ -597,6 +616,26 @@ pub enum Command {
     /// Internal account read-receipt setting.
     ReceiptsPrivacy {
         disabled: bool,
+    },
+    /// Full account privacy snapshot, or a failed fetch.
+    AccountPrivacy {
+        values: Vec<(crate::privacy::PrivacyKind, crate::privacy::PrivacyChoice)>,
+        failed: bool,
+    },
+    /// Asks the phone for the account privacy snapshot again.
+    FetchAccountPrivacy,
+    /// Writes one account privacy category on the phone.
+    SetAccountPrivacy {
+        kind: crate::privacy::PrivacyKind,
+        choice: crate::privacy::PrivacyChoice,
+    },
+    /// A confirmed SET for one category.
+    AccountPrivacySaved {
+        kind: crate::privacy::PrivacyKind,
+    },
+    /// A failed SET; the interface restores the last snapshot.
+    AccountPrivacyFailed {
+        kind: crate::privacy::PrivacyKind,
     },
     /// Internal: followed channels and whether each is muted on the server.
     ChannelMutes(Vec<(String, bool)>),
@@ -653,11 +692,17 @@ pub enum Event {
     Labels(Vec<crate::model::Label>),
     /// Unsent text stored for each chat, sent once at startup.
     Drafts(Vec<(ChatId, String)>),
-    /// Message ids in one chat matching a search, oldest first.
+    /// Messages in one chat matching a search, newest first, echoing the
+    /// query and range asked for so a stale answer can be told apart.
     ChatHits {
         chat: ChatId,
         query: String,
-        ids: Vec<String>,
+        from: Option<i64>,
+        until: Option<i64>,
+        messages: Vec<Message>,
+        /// Whether the archive held more matches than `messages` carries, so
+        /// the pane can say so instead of dropping them silently.
+        truncated: bool,
     },
     ChatUpdated(Box<Chat>),
     /// Chat messages in ascending order. `older` prepends them; `complete`
@@ -755,6 +800,19 @@ pub enum Event {
     /// Whether account privacy disables direct-chat read receipts.
     ReceiptsPrivacy {
         disabled: bool,
+    },
+    /// Account privacy snapshot from the phone, or a failed fetch.
+    AccountPrivacy {
+        values: Vec<(crate::privacy::PrivacyKind, crate::privacy::PrivacyChoice)>,
+        failed: bool,
+    },
+    /// A confirmed SET for one category.
+    AccountPrivacySaved {
+        kind: crate::privacy::PrivacyKind,
+    },
+    /// A failed SET.
+    AccountPrivacyFailed {
+        kind: crate::privacy::PrivacyKind,
     },
     /// How many chats this account may pin: more with WhatsApp Plus.
     PinLimit(usize),

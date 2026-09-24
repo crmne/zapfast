@@ -21,6 +21,7 @@ pub mod media_pause;
 pub mod model;
 pub mod notify;
 pub mod paths;
+pub mod privacy;
 pub mod proxy;
 pub mod qr;
 pub mod safety;

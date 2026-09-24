@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::animation;
-use crate::app::{App, Conversation, JumpHighlight};
+use crate::app::{App, Conversation, JumpHighlight, RowHeight};
 use crate::markup;
 use crate::model::{
     Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
@@ -43,85 +43,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         wallpaper::paint(ui, app.settings.wallpaper_color_for(app.palette.dark));
     }
     header(app, ui, &chat);
-    chat_search(app, ui);
     if theme::macos_chrome(ui.ctx()) {
         super::banner(app, ui);
     }
     composer(app, ui, &chat);
     messages(app, ui, &chat);
-}
-
-/// Search within the open chat: the query, how many matches it has, and the
-/// buttons that walk them. Escape closes it, Enter goes forward.
-fn chat_search(app: &mut App, ui: &mut egui::Ui) {
-    if !app.chat_search_open {
-        return;
-    }
-    let palette = app.palette;
-    egui::Panel::top("chat-search")
-        .show_separator_line(false)
-        .frame(
-            Frame::new()
-                .fill(palette.panel)
-                .inner_margin(Margin::symmetric(14, 6)),
-        )
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.set_min_height(HEADER_ROW);
-                let controls = 150.0;
-                let width = (ui.available_width() - controls).max(120.0);
-                let id = egui::Id::new("chat-search-in-chat");
-                let mut text = app.chat_search.clone();
-                let response = widgets::search_field(
-                    ui,
-                    &palette,
-                    id,
-                    &mut text,
-                    "Search in this chat",
-                    width,
-                );
-                if text != app.chat_search {
-                    app.actions.push(Action::ChatSearch(text));
-                }
-                if app.chat_search_focus {
-                    app.chat_search_focus = false;
-                    response.request_focus();
-                }
-                let total = app.chat_search_hits.len();
-                let position = if total == 0 {
-                    0
-                } else {
-                    app.chat_search_index + 1
-                };
-                ui.label(
-                    egui::RichText::new(format!("{position} / {total}")).color(palette.secondary),
-                );
-                if theme::icon_button(
-                    ui,
-                    Icon::ChevronUp,
-                    16.0,
-                    palette.secondary,
-                    palette.text,
-                    "Previous match (Shift+Enter)",
-                )
-                .clicked()
-                {
-                    app.actions.push(Action::StepChatSearch(-1));
-                }
-                if theme::icon_button(
-                    ui,
-                    Icon::ChevronDown,
-                    16.0,
-                    palette.secondary,
-                    palette.text,
-                    "Next match (Enter)",
-                )
-                .clicked()
-                {
-                    app.actions.push(Action::StepChatSearch(1));
-                }
-            });
-        });
 }
 
 fn empty(app: &mut App, ui: &mut egui::Ui) {
@@ -210,7 +136,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 }
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
-                let right_controls = 52.0;
+                let right_controls = 72.0;
                 // Treat the avatar, name, and subtitle as one info button.
                 let block = ui
                     .scope(|ui| {
@@ -293,6 +219,14 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     app.actions
                         .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
                 }
+                // The item and the width that has to hold it are measured from
+                // the same localized label: a translation wider than the
+                // English one would otherwise be clipped.
+                let leave_label = if chat.is_channel() {
+                    crate::i18n::gettext(app.locale, "Leave channel")
+                } else {
+                    crate::i18n::gettext(app.locale, "Leave group")
+                };
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let more = theme::icon_button(
                         ui,
@@ -308,6 +242,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             "Info",
                             "Pin to top",
                             "Unarchive",
+                            leave_label.as_ref(),
                             "Copy number",
                             "Close chat",
                         ],
@@ -344,6 +279,19 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .push(Action::SetArchived(chat.id.clone(), !chat.archived));
                             }
                             widgets::menu_separator(ui, &palette);
+                            if chat.can_leave(&app.our_ids())
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::LogOut),
+                                    leave_label.as_ref(),
+                                )
+                            {
+                                app.actions
+                                    .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
+                                        chat.id.clone(),
+                                    )));
+                            }
                             if let Some(phone) = chat.phone()
                                 && widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy number")
                             {
@@ -353,6 +301,33 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 app.actions.push(Action::CloseChat);
                             }
                         });
+                    let searching = app.chat_search_open;
+                    let tip = format!(
+                        "{} ({})",
+                        crate::i18n::gettext(app.locale, "Search messages"),
+                        super::keys::label("Ctrl+F")
+                    );
+                    if theme::icon_button(
+                        ui,
+                        Icon::Search,
+                        18.0,
+                        if searching {
+                            palette.accent
+                        } else {
+                            palette.secondary
+                        },
+                        palette.text,
+                        &tip,
+                    )
+                    .tab_stop(Stop::ChatSearch)
+                    .clicked()
+                    {
+                        app.actions.push(if searching {
+                            Action::CloseChatSearch
+                        } else {
+                            Action::OpenChatSearch
+                        });
+                    }
                 });
             });
         });
@@ -816,8 +791,22 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             }
             if !chat.can_send() {
                 if chat.kind == crate::model::ChatKind::Broadcast {
+                    // A channel we left says so; the rest are only read-only.
                     ui.vertical_centered(|ui| {
-                        theme::text(ui, "Channels are read-only in ZapFast", theme::regular(13.5), palette.secondary);
+                        theme::text(
+                            ui,
+                            if chat.left {
+                                crate::i18n::gettext(app.locale, "You left this channel")
+                            } else {
+                                crate::i18n::gettext(
+                                    app.locale,
+                                    "Channels are read-only in ZapFast",
+                                )
+                            }
+                            .as_ref(),
+                            theme::regular(13.5),
+                            palette.secondary,
+                        );
                     });
                     return;
                 }
@@ -829,18 +818,35 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 }
                 ui.vertical_centered(|ui| {
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        let width = 230.0;
-                        ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
-                        theme::text(ui, "Only", theme::regular(13.5), palette.secondary);
-                        theme::text(ui, "admins", theme::semibold(13.5), palette.accent);
+                    // A group we left says so instead of blaming the admins:
+                    // either we left it here, or the phone says we are no
+                    // longer a member.
+                    let ours = app.our_ids();
+                    let left = chat.left
+                        || (!ours.is_empty()
+                            && !chat.participants.is_empty()
+                            && !chat.lists_any(&ours));
+                    if left {
                         theme::text(
                             ui,
-                            "can send messages",
+                            crate::i18n::gettext(app.locale, "You left this group"),
                             theme::regular(13.5),
                             palette.secondary,
                         );
-                    });
+                    } else {
+                        ui.horizontal(|ui| {
+                            let width = 230.0;
+                            ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
+                            theme::text(ui, "Only", theme::regular(13.5), palette.secondary);
+                            theme::text(ui, "admins", theme::semibold(13.5), palette.accent);
+                            theme::text(
+                                ui,
+                                "can send messages",
+                                theme::regular(13.5),
+                                palette.secondary,
+                            );
+                        });
+                    }
                     ui.add_space(8.0);
                 });
                 return;
@@ -1429,6 +1435,40 @@ struct View<'a> {
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
 }
 
+/// A row height to assume for a message that has not been laid out yet. Rows
+/// near the viewport are always measured, and a change in the height of a row
+/// above the viewport moves the scroll offset with it, so this only shapes the
+/// scrollbar until the reader scrolls near the row.
+fn estimated_height(message: &Message, width: f32, new_day: bool) -> f32 {
+    // Bubbles take at most 72% of the transcript, and 560 points.
+    let bubble = ((width * 0.72).min(560.0) - 20.0).max(40.0);
+    let text_rows = |text: &str| {
+        let per_row = bubble / 7.5;
+        (text.chars().count() as f32 / per_row).ceil().max(1.0)
+    };
+    let caption_rows = |caption: &Option<String>| {
+        caption
+            .as_deref()
+            .map_or(0.0, |caption| text_rows(caption) * 19.0)
+    };
+    let body = match &message.content {
+        Content::Text { text, preview } => {
+            text_rows(text) * 19.0 + if preview.is_some() { 60.0 } else { 0.0 }
+        }
+        Content::Interactive { text, .. } => text_rows(text) * 19.0 + 60.0,
+        Content::Image { caption, .. } | Content::Video { caption, .. } => {
+            200.0 + caption_rows(caption)
+        }
+        Content::Document { caption, .. } => 70.0 + caption_rows(caption),
+        Content::Sticker { .. } => 140.0,
+        Content::Audio { .. } => 60.0,
+        _ => 40.0,
+    };
+    // Bubble padding, the sender line, and the row spacing, plus the date
+    // chip above the first message of a day.
+    40.0 + body + if new_day { 36.0 } else { 0.0 }
+}
+
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     // Check out the conversation while drawing rows and collecting actions.
@@ -1520,6 +1560,37 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // Do not animate programmatic scrolling. Pending animations can delay a
     // later request to reach the end.
     let mut edge_scrolled_up = false;
+    // Rows far from the viewport are skipped rather than laid out, keeping the
+    // height they last took (or an estimate), so a long history costs the rows
+    // near the screen instead of every loaded one. A jump to a message, the
+    // unread divider's first placement, and a text selection lay out every
+    // row: a jump needs exact positions, and egui drops a selection whose
+    // ends it does not see in a frame. Rows near the viewport are measured
+    // again each frame, so a width change or an image that loads corrects
+    // them before they come into view.
+    let layout_width = ui.available_width();
+    let lay_out_all = view.anchor.is_some()
+        || divider.as_ref().is_some_and(|(.., placed)| !placed)
+        || ui
+            .ctx()
+            .plugin_opt::<egui::text_selection::LabelSelectionState>()
+            .is_some_and(|plugin| plugin.lock().has_selection());
+    let pass = ui.ctx().cumulative_pass_nr();
+    let redo = ui.ctx().current_pass_index() > 0;
+    let mut rows = std::mem::take(&mut conversation.rows);
+    // Forget rows that left the conversation, such as deleted messages.
+    if rows.len() > conversation.messages.len() * 2 + 64 {
+        let ids: HashSet<&str> = conversation
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        rows.retain(|id, _| ids.contains(id.as_str()));
+    }
+    // How far rows entirely above the viewport grew this frame. The offset
+    // follows, so what the reader looks at stays put while rows scrolled past
+    // are measured for the first time.
+    let mut grew_above = 0.0;
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
@@ -1567,11 +1638,52 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     ui.spacing_mut().item_spacing.y = 3.0;
                     top_of_history(ui, &palette, &conversation, chat, &mut actions);
                     let mut previous: Option<&Message> = None;
+                    // Rows within a few viewports of the screen are laid out
+                    // and their height remembered, so scrolling finds them
+                    // measured before they show.
+                    let margin = (viewport.height() * 3.0).max(600.0);
                     for message in &conversation.messages {
+                        let before = ui.cursor().top();
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
                                 != crate::util::day_key(message.timestamp)
                         });
+                        let known = rows.get(&message.id).copied();
+                        let height = known.map_or_else(
+                            || estimated_height(message, layout_width, new_day),
+                            |row| row.height,
+                        );
+                        // A pass redone after the offset followed rows that
+                        // grew keeps to the rows it laid out before (and any
+                        // now on screen): measuring rows the shift brought
+                        // into range would move the view once more.
+                        let reach = if redo
+                            && known
+                                .and_then(|row| row.pass)
+                                .is_none_or(|last| last + 1 != pass)
+                        {
+                            0.0
+                        } else {
+                            margin
+                        };
+                        let near = before + height >= viewport.top() - reach
+                            && before <= viewport.bottom() + reach;
+                        if !lay_out_all && !near {
+                            ui.add_space(height);
+                            if known.is_none() {
+                                rows.insert(message.id.clone(), RowHeight { height, pass: None });
+                            }
+                            previous = Some(message);
+                            continue;
+                        }
+                        // A row laid out again after a skip still has the
+                        // rect it last had on screen, where other rows are
+                        // now. The bubble registers its click targets from
+                        // it, so drop it rather than let it take their clicks.
+                        if known.is_none_or(|row| row.pass.is_none_or(|last| last + 1 < pass)) {
+                            let id = bubble_id(&chat.id, &message.id).with("rect");
+                            ui.ctx().data_mut(|data| data.remove::<Rect>(id));
+                        }
                         if new_day {
                             ui.add_space(8.0);
                             ui.vertical_centered(|ui| {
@@ -1672,6 +1784,17 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             response.scroll_to_me(Some(Align::Center));
                             anchored = true;
                         }
+                        let measured = ui.cursor().top() - before;
+                        if before + height <= viewport.top() {
+                            grew_above += measured - height;
+                        }
+                        rows.insert(
+                            message.id.clone(),
+                            RowHeight {
+                                height: measured,
+                                pass: Some(pass),
+                            },
+                        );
                         previous = Some(message);
                     }
                     if !typing.is_empty() {
@@ -1712,6 +1835,18 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let loading = conversation.loading_older;
     let fetching = conversation.fetching_phone;
     let exhausted = conversation.phone_exhausted;
+    conversation.rows = rows;
+    // Keep the rows on screen where they were when rows above them changed
+    // height, unless this frame scrolled on purpose (to the end, a jump, or
+    // the divider) or sticks to the end, where egui keeps the offset anyway.
+    // The pass is redone at the new offset, so the shift never shows.
+    if grew_above.abs() >= 0.5 && !lay_out_all && !scroll_to_bottom && !at_bottom {
+        let mut state = output.state;
+        state.offset.y = (state.offset.y + grew_above).max(0.0);
+        state.store(ui.ctx(), output.id);
+        ui.ctx()
+            .request_discard("transcript rows above the viewport changed height");
+    }
     app.conversations
         .insert(chat.id.clone(), std::mem::take(&mut conversation));
     app.at_bottom = at_bottom;

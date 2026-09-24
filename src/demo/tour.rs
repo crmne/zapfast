@@ -557,7 +557,7 @@ impl Tour {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Dialog, PickerTab};
+    use crate::model::{Dialog, Page, PickerTab};
 
     fn frame(app: &mut App, tour: &mut Tour, ctx: &egui::Context, events: Vec<Event>) {
         let input = egui::RawInput {
@@ -594,6 +594,251 @@ mod tests {
             );
         }
         frame(app, tour, ctx, Vec::new());
+    }
+
+    #[test]
+    fn the_chat_search_pane_lists_hits_and_opens_one() {
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let open = super::super::sample_ids()[0].to_owned();
+        let other = super::super::sample_ids()[1].to_owned();
+        app.actions.push(crate::model::Action::OpenChat(open));
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        app.actions.push(crate::model::Action::OpenChatSearch);
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        app.chat_search = "engine".into();
+        // Hits from another chat, so their text is painted only in the pane
+        // and the click lands on the row rather than on a bubble.
+        app.chat_search_hits = app
+            .conversations
+            .get(&other)
+            .map(|conversation| conversation.messages.clone())
+            .unwrap_or_default();
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        // The pane's copy is translated, and the interface language follows
+        // the system when Settings carries no choice of its own.
+        let title = crate::i18n::gettext(app.locale, "Search messages").to_string();
+        assert!(tour.labels.contains_key(&title), "the pane names itself");
+        let hit = app.chat_search_hits.first().cloned().expect("a hit");
+        // The row previews the line the query matched, not the message's first
+        // line, so that is the text the click lands on.
+        let preview = hit.text_matching("engine").unwrap_or_else(|| hit.summary());
+        click(&mut app, &mut tour, &ctx, &preview);
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some(hit.chat.as_str()),
+            "clicking a hit opens the chat it belongs to"
+        );
+        // The jump is consumed by the frame that scrolls to it, so the flash
+        // it leaves behind is what says the message was the one asked for.
+        assert_eq!(
+            app.jump_highlight
+                .as_ref()
+                .map(|jump| (jump.chat.as_str(), jump.message.as_str())),
+            Some((hit.chat.as_str(), hit.id.as_str())),
+            "and brings that message into view"
+        );
+    }
+
+    #[test]
+    fn the_keyboard_walks_the_chat_search_results_and_escape_closes_the_pane() {
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let open = super::super::sample_ids()[0].to_owned();
+        app.actions
+            .push(crate::model::Action::OpenChat(open.clone()));
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        app.actions.push(crate::model::Action::OpenChatSearch);
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        app.chat_search = "e".into();
+        // Newest first, as the archive answers.
+        app.chat_search_hits = app.conversations[&open]
+            .messages
+            .iter()
+            .rev()
+            .take(3)
+            .cloned()
+            .collect();
+        assert_eq!(app.chat_search_hits.len(), 3);
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        let field = egui::Id::new("chat-message-search");
+        assert!(ctx.memory(|memory| memory.has_focus(field)));
+        let key = |key: egui::Key| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        frame(&mut app, &mut tour, &ctx, vec![key(egui::Key::ArrowDown)]);
+        frame(&mut app, &mut tour, &ctx, vec![key(egui::Key::ArrowDown)]);
+        frame(&mut app, &mut tour, &ctx, vec![key(egui::Key::ArrowDown)]);
+        frame(&mut app, &mut tour, &ctx, vec![key(egui::Key::ArrowDown)]);
+        assert_eq!(app.chat_search_selected, Some(2), "stops at the last");
+        frame(&mut app, &mut tour, &ctx, vec![key(egui::Key::ArrowUp)]);
+        frame(&mut app, &mut tour, &ctx, vec![key(egui::Key::Enter)]);
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        let second = app.chat_search_hits[1].id.clone();
+        assert_eq!(
+            app.jump_highlight
+                .as_ref()
+                .map(|jump| jump.message.as_str()),
+            Some(second.as_str()),
+            "Enter jumps to the result reached"
+        );
+        assert!(
+            ctx.memory(|memory| memory.has_focus(field)),
+            "and the field keeps the keyboard for the next one"
+        );
+        assert!(app.chat_search_open);
+        frame(&mut app, &mut tour, &ctx, vec![key(egui::Key::Escape)]);
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        assert!(!app.chat_search_open, "Escape closes the pane");
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some(open.as_str()),
+            "not the chat"
+        );
+        assert!(app.chat_search.is_empty());
+    }
+
+    #[test]
+    fn a_narrow_window_lays_the_search_pane_over_the_chat_and_folds_it_on_a_pick() {
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let narrow = |app: &mut App, tour: &mut Tour, events: Vec<Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(760.0, 600.0))),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+                tour.observe(app, &ctx);
+            });
+            output.textures_delta.clear();
+        };
+        let open = super::super::sample_ids()[0].to_owned();
+        app.actions
+            .push(crate::model::Action::OpenChat(open.clone()));
+        narrow(&mut app, &mut tour, Vec::new());
+        app.actions.push(crate::model::Action::OpenChatSearch);
+        narrow(&mut app, &mut tour, Vec::new());
+        app.chat_search = "e".into();
+        app.chat_search_hits = app.conversations[&open]
+            .messages
+            .iter()
+            .rev()
+            .take(2)
+            .cloned()
+            .collect();
+        narrow(&mut app, &mut tour, Vec::new());
+        // The chat list leaves too little room to share, so the pane lies
+        // over the conversation rather than squeezing it.
+        let overlay = ctx.memory(|memory| {
+            memory
+                .layer_ids()
+                .any(|layer| layer.id == egui::Id::new("chat-search-overlay"))
+        });
+        assert!(overlay, "the pane is laid over the chat");
+        let enter = Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        narrow(&mut app, &mut tour, vec![enter]);
+        narrow(&mut app, &mut tour, Vec::new());
+        let newest = app.chat_search_hits[0].id.clone();
+        assert_eq!(
+            app.jump_highlight
+                .as_ref()
+                .map(|jump| jump.message.as_str()),
+            Some(newest.as_str())
+        );
+        assert!(!app.chat_search_open, "folded so the message shows");
+        assert_eq!(app.chat_search, "e", "with the search kept for later");
+        app.actions.push(crate::model::Action::OpenChatSearch);
+        narrow(&mut app, &mut tour, Vec::new());
+        assert!(app.chat_search_open);
+        assert_eq!(app.chat_search_hits.len(), 2, "as it was");
+    }
+
+    #[test]
+    fn leaving_is_offered_for_a_group_and_for_a_channel() {
+        for (index, leave, title, archive) in [
+            (
+                1usize,
+                "Leave group",
+                "Leave this group?",
+                "Leave group and archive",
+            ),
+            (
+                9usize,
+                "Leave channel",
+                "Leave this channel?",
+                "Leave channel and archive",
+            ),
+        ] {
+            let mut app = super::super::tests::app();
+            prepare(&mut app);
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            let mut tour = Tour::new(None, None);
+            let id = super::super::sample_ids()[index].to_owned();
+            app.open_chat = Some(id.clone());
+            app.dialog = Some(crate::model::Dialog::ChatInfo(id.clone()));
+            for _ in 0..3 {
+                frame(&mut app, &mut tour, &ctx, Vec::new());
+            }
+            // The controls are announced in the interface language, which
+            // follows the system when Settings carries no choice of its own.
+            let locale = app.locale;
+            let leave = crate::i18n::gettext(locale, leave).to_string();
+            let title = crate::i18n::gettext(locale, title).to_string();
+            let archive = crate::i18n::gettext(locale, archive).to_string();
+            assert!(tour.labels.contains_key(&leave), "chat info offers {leave}");
+            click(&mut app, &mut tour, &ctx, &leave);
+            assert!(
+                matches!(
+                    app.dialog,
+                    Some(crate::model::Dialog::ConfirmLeaveGroup(ref open)) if *open == id
+                ),
+                "the button opens the confirm dialog for {id}"
+            );
+            for _ in 0..3 {
+                frame(&mut app, &mut tour, &ctx, Vec::new());
+            }
+            assert!(tour.labels.contains_key(&title), "the dialog asks {title}");
+            assert!(
+                tour.labels.contains_key(&leave),
+                "the dialog offers {leave}"
+            );
+            assert!(
+                tour.labels.contains_key(&archive),
+                "the dialog offers archiving in the same step"
+            );
+            // Cancelling leaves the chat alone.
+            let cancel = crate::i18n::gettext(locale, "Cancel").to_string();
+            click(&mut app, &mut tour, &ctx, &cancel);
+            assert!(app.dialog.is_none(), "cancel closes the dialog");
+            let chat = app.chat(&id).expect("chat");
+            assert!(!chat.read_only, "cancelling does not leave the chat");
+            assert!(chat.can_leave(&app.our_ids()), "and it stays leaveable");
+        }
     }
 
     #[test]
@@ -647,6 +892,99 @@ mod tests {
             assert_eq!(state.voters, 0);
             assert!(app.poll_voting.is_empty());
         }
+    }
+
+    #[test]
+    fn the_settings_search_finds_account_privacy_rows() {
+        let mut app = super::super::tests::app();
+        app.page = Page::Settings;
+        app.settings_search = "profile photo".into();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        assert!(tour.labels.contains_key("Profile photo"));
+        assert!(!tour.labels.contains_key("Last seen"));
+        assert!(!tour.labels.contains_key("Enter sends"));
+        // The section title keeps every row in it.
+        app.settings_search = "privacy".into();
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        assert!(tour.labels.contains_key("Last seen"));
+        assert!(tour.labels.contains_key("Send read receipts"));
+    }
+
+    #[test]
+    fn receipts_and_typing_sit_in_settings_privacy() {
+        let mut app = super::super::tests::app();
+        app.page = Page::Settings;
+        // The section headings are translated, so pin the interface language
+        // rather than reading whatever this machine is set to.
+        app.settings.interface_language = Some(crate::i18n::Locale::English);
+        app.locale = crate::i18n::Locale::English;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        // Privacy sits below the fold. How far below depends on the platform's
+        // own rows, so scroll until the section is on screen instead of by a
+        // fixed distance: a few points too far and the heading leaves the top
+        // of the view again, and `labels` only holds what a frame painted.
+        let wheel = |delta: f32| {
+            vec![
+                Event::PointerMoved(pos2(590.0, 400.0)),
+                Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(0.0, delta),
+                    modifiers: Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                },
+            ]
+        };
+        // The heading and the first category it writes, with both switches
+        // between them, have to share one frame for the order to mean
+        // anything.
+        let on_screen = |tour: &Tour| {
+            [
+                "Privacy",
+                "Send read receipts",
+                "Show when you are typing",
+                "Last seen",
+            ]
+            .iter()
+            .all(|label| tour.labels.contains_key(*label))
+        };
+        let mut frames = 0;
+        while !on_screen(&tour) && frames < 40 {
+            frame(&mut app, &mut tour, &ctx, wheel(-160.0));
+            frames += 1;
+        }
+        assert!(
+            on_screen(&tour),
+            "the Privacy section and its switches are on screen"
+        );
+        let privacy = *tour.labels.get("Privacy").expect("Privacy section");
+        let last_seen = *tour.labels.get("Last seen").expect("account last seen");
+        let receipts = *tour
+            .labels
+            .get("Send read receipts")
+            .expect("read receipts");
+        let typing = *tour.labels.get("Show when you are typing").expect("typing");
+        // Both switches belong to the account, so they sit inside the Privacy
+        // section, between its heading and the first category it writes.
+        assert!(
+            privacy.y < receipts.y && receipts.y < last_seen.y,
+            "receipts at {receipts:?} should sit between Privacy {privacy:?} and Last seen {last_seen:?}"
+        );
+        assert!(
+            privacy.y < typing.y && typing.y < last_seen.y,
+            "typing at {typing:?} should sit between Privacy {privacy:?} and Last seen {last_seen:?}"
+        );
     }
 
     #[test]

@@ -11,6 +11,8 @@ use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Mess
 
 mod drafts;
 mod encryption;
+mod favorites;
+pub use favorites::Favorite;
 mod labels;
 pub use labels::{DEFAULT_COLOR, LABEL_LIMIT, NAME_LIMIT};
 mod polls;
@@ -123,7 +125,8 @@ const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
                     c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known,
-                    c.notification_sound, c.marked_unread";
+                    c.notification_sound, c.marked_unread,
+                    (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -145,6 +148,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "lock_updated_at", "INTEGER"),
     ("chats", "archive_updated_at", "INTEGER"),
     ("chats", "notification_sound", "TEXT"),
+    ("chats", "left", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "group_subject_known", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "marked_unread", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "pending_unread", "INTEGER"),
@@ -196,6 +200,70 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         notification_sound: row
             .get::<_, Option<String>>(19)?
             .and_then(|sound| serde_json::from_str(&sound).ok()),
+        favorite: row.get::<_, Option<i64>>(21)?.is_some(),
+        favorite_position: row
+            .get::<_, Option<i64>>(21)?
+            .map_or(0, |position| u32::try_from(position).unwrap_or(u32::MAX)),
+        left: row.get(22)?,
+    })
+}
+
+/// The columns [`searched_message`] reads, in its order.
+const SEARCH_COLUMNS: &str = "chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at";
+
+/// The lowercased text a search matches: text, captions, file names, poll
+/// questions, contact names and places, one per line.
+/// `Content::text_matching` previews from the same fields.
+const SEARCHED_TEXT: &str = "lower(
+    coalesce(json_extract(content, '$.text'), '') || char(10) ||
+    coalesce(json_extract(content, '$.caption'), '') || char(10) ||
+    coalesce(json_extract(content, '$.file_name'), '') || char(10) ||
+    coalesce(json_extract(content, '$.question'), '') || char(10) ||
+    coalesce(json_extract(content, '$.display_name'), '') || char(10) ||
+    coalesce(json_extract(content, '$.name'), '')
+)";
+
+/// A `LIKE` pattern that finds `needle` anywhere, with its wildcards taken
+/// as text, or `None` for a blank needle.
+fn search_pattern(needle: &str) -> Option<String> {
+    let needle = needle.trim();
+    (!needle.is_empty()).then(|| {
+        format!(
+            "%{}%",
+            needle
+                .to_lowercase()
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        )
+    })
+}
+
+/// A message from a row of [`SEARCH_COLUMNS`].
+fn searched_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
+    let content: String = row.get(6)?;
+    let quoted: Option<String> = row.get(8)?;
+    let reactions: String = row.get(9)?;
+    let mentions: String = row.get(12)?;
+    Ok(Message {
+        chat: row.get(0)?,
+        id: row.get(1)?,
+        sender: row.get(2)?,
+        sender_name: row.get(3)?,
+        from_me: row.get(4)?,
+        timestamp: row.get(5)?,
+        content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
+            what: "unreadable".into(),
+        }),
+        status: status_from_rank(row.get(7)?),
+        delivered_at: row.get(14)?,
+        read_at: row.get(15)?,
+        quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
+        reactions: serde_json::from_str(&reactions).unwrap_or_default(),
+        edited: row.get(10)?,
+        mentions: serde_json::from_str(&mentions).unwrap_or_default(),
+        forwarded: row.get(13)?,
+        thumbnail: row.get(11)?,
     })
 }
 
@@ -271,6 +339,7 @@ impl Archive {
         connection.execute_batch(polls::SCHEMA)?;
         connection.execute_batch(drafts::SCHEMA)?;
         connection.execute_batch(stickers::SCHEMA)?;
+        connection.execute_batch(favorites::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -282,6 +351,7 @@ impl Archive {
                 ))?;
             }
         }
+        favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
     }
@@ -345,6 +415,18 @@ impl Archive {
                 serde_json::to_string(participants).unwrap_or_else(|_| "[]".into()),
                 read_only
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Records that we left a group or channel, or that we are back in it.
+    /// A durable mark of its own, because `read_only` also covers an
+    /// announcement group we are still a member of, and a later metadata
+    /// refresh rewrites it.
+    pub fn set_left(&self, id: &str, left: bool) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET left = ?2 WHERE id = ?1",
+            params![id, left],
         )?;
         Ok(())
     }
@@ -722,14 +804,17 @@ impl Archive {
         rows.collect()
     }
 
-    /// Stores a privacy id mapping and carries early mute/pin/lock sync to the
-    /// canonical chat. Returns whether that chat's preferences were touched.
+    /// Stores a privacy id mapping and carries early mute/pin/lock sync and
+    /// the favorite mark to the canonical chat. Returns whether that chat's
+    /// preferences were touched.
     pub fn put_lid(&self, lid: &str, pn: &str) -> Result<bool> {
         self.connection.execute(
             "INSERT INTO lids (lid, pn) VALUES (?1, ?2) ON CONFLICT(lid) DO UPDATE SET pn = excluded.pn",
             params![lid, pn],
         )?;
         self.merge_group_recipient(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
+        let favorite =
+            self.move_favorite(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
         self.connection.execute(
             "INSERT INTO chat_removals (chat, through) SELECT ?2, through FROM chat_removals WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through)",
@@ -761,7 +846,7 @@ impl Archive {
                 archive_updated_at = NULLIF(MAX(COALESCE(archive_updated_at, -1), COALESCE(excluded.archive_updated_at, -1)), -1)",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net"), pn],
         )?;
-        Ok(changed > 0)
+        Ok(changed > 0 || favorite)
     }
 
     pub fn lids(&self) -> Result<Vec<(String, String)>> {
@@ -882,95 +967,60 @@ impl Archive {
         Ok(messages)
     }
 
-    /// Message ids in one chat whose visible text matches, oldest first so
-    /// next and previous walk forward in time. Same fields as the global
-    /// search, scoped to a single chat.
+    /// Searches one chat, optionally inside a Unix-second range (`from`
+    /// inclusive, `until` exclusive). Same fields as the global search.
+    ///
+    /// An empty needle matches everything in the range, so the day filter
+    /// works on its own. Newest first, the order the pane lists them in.
     pub fn search_chat_messages(
         &self,
         chat: &str,
         needle: &str,
+        from: Option<i64>,
+        until: Option<i64>,
         limit: usize,
-    ) -> Result<Vec<String>> {
-        let pattern = format!(
-            "%{}%",
-            needle
-                .to_lowercase()
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_")
-        );
-        let mut statement = self.connection.prepare(
-            "SELECT id
+    ) -> Result<Vec<Message>> {
+        // Concrete bounds rather than `?2 IS NULL OR ...`, so SQLite walks the
+        // `(chat, timestamp)` index over just the range.
+        let sql = format!(
+            "SELECT {SEARCH_COLUMNS}
              FROM messages
-             WHERE chat = ?1 AND json_valid(content) AND lower(
-                     coalesce(json_extract(content, '$.text'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.caption'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.file_name'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.question'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.display_name'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.name'), '')
-                 ) LIKE ?2 ESCAPE '\\'
-             ORDER BY timestamp ASC, rowid ASC
-             LIMIT ?3",
+             WHERE chat = ?1 AND timestamp >= ?2 AND timestamp < ?3
+             AND json_valid(content)
+             AND (?4 IS NULL OR {SEARCHED_TEXT} LIKE ?4 ESCAPE '\\')
+             ORDER BY timestamp DESC, rowid DESC
+             LIMIT ?5"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(
+            params![
+                chat,
+                from.unwrap_or(i64::MIN),
+                until.unwrap_or(i64::MAX),
+                search_pattern(needle),
+                limit as i64
+            ],
+            searched_message,
         )?;
-        let rows = statement.query_map(params![chat, pattern, limit as i64], |row| row.get(0))?;
         rows.collect()
     }
 
     /// Searches visible message text, filenames, polls, contacts, and places.
     /// ASCII matching is case-insensitive; other text follows SQLite behavior.
     pub fn search_messages(&self, needle: &str, limit: usize) -> Result<Vec<Message>> {
-        let pattern = format!(
-            "%{}%",
-            needle
-                .to_lowercase()
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_")
-        );
-        let mut statement = self.connection.prepare(
-            "SELECT chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
+        let sql = format!(
+            "SELECT {SEARCH_COLUMNS}
              FROM messages
-             WHERE json_valid(content) AND lower(
-                     coalesce(json_extract(content, '$.text'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.caption'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.file_name'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.question'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.display_name'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.name'), '')
-                 ) LIKE ?1 ESCAPE '\\'
+             WHERE json_valid(content) AND {SEARCHED_TEXT} LIKE ?1 ESCAPE '\\'
              ORDER BY timestamp DESC, rowid DESC
-             LIMIT ?2",
+             LIMIT ?2"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(
+            params![search_pattern(needle), limit as i64],
+            searched_message,
         )?;
-        let rows = statement.query_map(params![pattern, limit as i64], |row| {
-            let chat: String = row.get(0)?;
-            let content: String = row.get(6)?;
-            let quoted: Option<String> = row.get(8)?;
-            let reactions: String = row.get(9)?;
-            let mentions: String = row.get(12)?;
-            Ok(Message {
-                id: row.get(1)?,
-                chat,
-                sender: row.get(2)?,
-                sender_name: row.get(3)?,
-                from_me: row.get(4)?,
-                timestamp: row.get(5)?,
-                content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
-                    what: "unreadable".into(),
-                }),
-                status: status_from_rank(row.get(7)?),
-                delivered_at: row.get(14)?,
-                read_at: row.get(15)?,
-                quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
-                reactions: serde_json::from_str(&reactions).unwrap_or_default(),
-                edited: row.get(10)?,
-                mentions: serde_json::from_str(&mentions).unwrap_or_default(),
-                forwarded: row.get(13)?,
-                thumbnail: row.get(11)?,
-            })
-        })?;
-        let messages: Vec<Message> = rows.collect::<Result<_>>()?;
-        Ok(messages)
+        rows.collect()
     }
 
     /// Returns messages from `from` through `before`, ascending and limited.
@@ -1605,7 +1655,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }
@@ -1641,6 +1691,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_leave_outlives_a_group_info_refresh() {
+        let archive = Archive::in_memory().expect("opens");
+        let id = "1-2@g.us";
+        archive.ensure_chat(id, "Rust").expect("chat");
+        archive.set_left(id, true).expect("left");
+        assert!(archive.chat(id).expect("row").expect("chat").left);
+        // The phone's metadata rewrites `read_only` on every refresh, which is
+        // why the leave needs a field of its own.
+        archive
+            .set_group_info(id, Some("Rust"), &["other@s.whatsapp.net".into()], false)
+            .expect("info");
+        let row = archive.chat(id).expect("row").expect("chat");
+        assert!(row.left, "the leave is remembered");
+        assert!(!row.read_only, "the metadata is applied as it came");
+        archive.set_left(id, false).expect("rejoined");
+        assert!(!archive.chat(id).expect("row").expect("chat").left);
+    }
+
+    #[test]
     fn a_chat_search_is_scoped_ordered_and_escaped() {
         let archive = Archive::in_memory().expect("opens");
         let chat = "1@s.whatsapp.net";
@@ -1662,33 +1731,49 @@ pub(crate) mod tests {
         ] {
             archive.insert_message(&message, None).expect("insert");
         }
-        // Only this chat, oldest first, so Enter walks forward in time.
+        fn ids(hits: Vec<Message>) -> Vec<String> {
+            hits.into_iter().map(|hit| hit.id).collect()
+        }
+        // Only this chat, newest first, the order the pane lists them in.
         assert_eq!(
-            archive
-                .search_chat_messages(chat, "engine", 50)
-                .expect("search"),
-            vec!["m1".to_owned(), "m3".to_owned()]
+            ids(archive
+                .search_chat_messages(chat, "engine", None, None, 50)
+                .expect("search")),
+            vec!["m3".to_owned(), "m1".to_owned()]
         );
-        // The limit keeps the oldest matches.
+        // The limit keeps the newest matches.
         assert_eq!(
-            archive
-                .search_chat_messages(chat, "engine", 1)
-                .expect("search"),
-            vec!["m1".to_owned()]
+            ids(archive
+                .search_chat_messages(chat, "engine", None, None, 1)
+                .expect("search")),
+            vec!["m3".to_owned()]
         );
         // A chat whose messages do not match has no hits.
         assert!(
             archive
-                .search_chat_messages(other, "nothing", 50)
+                .search_chat_messages(other, "nothing", None, None, 50)
                 .expect("search")
                 .is_empty()
         );
         // Wildcards are text, like the cross-chat search.
         assert!(
             archive
-                .search_chat_messages(chat, "%", 50)
+                .search_chat_messages(chat, "%", None, None, 50)
                 .expect("search")
                 .is_empty()
+        );
+        // A day range narrows it, and an empty query matches the whole day.
+        assert_eq!(
+            ids(archive
+                .search_chat_messages(chat, "engine", Some(25), Some(100), 50)
+                .expect("day")),
+            vec!["m3".to_owned()]
+        );
+        assert_eq!(
+            ids(archive
+                .search_chat_messages(chat, "", Some(25), Some(100), 50)
+                .expect("day only")),
+            vec!["m3".to_owned()]
         );
     }
 
@@ -1789,6 +1874,36 @@ pub(crate) mod tests {
                 .map(|m| m.id),
             Some("m1".into())
         );
+    }
+
+    #[test]
+    fn a_favorite_mark_survives_a_chat_update() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        archive.ensure_chat("2@s.whatsapp.net", "Bo").expect("chat");
+        assert!(!archive.chat(chat).expect("read").expect("exists").favorite);
+        archive
+            .set_favorite("2@s.whatsapp.net", true)
+            .expect("mark");
+        archive.set_favorite(chat, true).expect("mark");
+        assert_eq!(
+            archive
+                .chat(chat)
+                .expect("read")
+                .expect("exists")
+                .favorite_position,
+            1,
+            "a new favorite goes to the end"
+        );
+        // Pinning and renaming leave the mark alone.
+        archive.set_pinned(chat, true).expect("pin");
+        archive.ensure_chat(chat, "Ada L.").expect("rename");
+        let row = archive.chat(chat).expect("read").expect("exists");
+        assert!(row.favorite);
+        assert!(row.pinned);
+        archive.set_favorite(chat, false).expect("unmark");
+        assert!(!archive.chat(chat).expect("read").expect("exists").favorite);
     }
 
     #[test]

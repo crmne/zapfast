@@ -24,9 +24,25 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Links to your phone.** Scan a QR code or link with your phone number.
   Recent history is copied to this computer after linking and stored here.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,
-  and message status. Search chats, saved messages, and contacts.
-  Filter the list to unread, private (one-to-one), or group chats with the
-  chips under the search bar; a chip with unread chats shows how many it has.
+  and message status. Search chats, saved messages, and contacts. The
+  **Search** icon in a chat's header (or **Ctrl+F**) opens a pane beside the
+  chat, as in WhatsApp Desktop, listing its matches newest first with the time
+  and the line that matched. The calendar narrows them to one day, or lists
+  that day's messages when the field is empty. Clicking a result, or reaching
+  it with the arrow keys and pressing Enter, brings it into view with a brief
+  flash; Escape closes the calendar, then the pane. The pane can be dragged
+  wider, and in a narrow window it lies over the conversation instead of
+  squeezing it. The newest 80 matches are listed, and the pane says when there
+  are more. Right-click a group or a followed channel and choose **Leave group**
+  or **Leave channel** to leave it, with the option to archive it in the same
+  step; the local history stays on this computer and the chat keeps its
+  messages.
+  Filter the list to unread, private (one-to-one), favorites, or group chats
+  with the chips under the search bar; a chip with unread chats shows how many
+  it has. Right-click a chat and choose **Add to favorites** to mark it.
+  Favorites sync with your phone both ways, and the **Favorites** chip lists
+  them in the phone's order below any pinned chats. A chat added here goes to
+  the end of the list; channels cannot be favorites.
   Followed channels have their own **Channels** chip and stay out of the other
   filters; right-click it to mute or unmute every channel at once. **Archived**
   opens the archived chats. Right-click a chat and choose **Mark as unread**
@@ -43,6 +59,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   an empty cached subject remains eligible for recovery.
   Typing indicators show other participants, excluding your own linked devices.
   Newsletter channels are read-only; publishing channel posts is not supported.
+- **Account privacy.** Settings, Privacy shows who can see your last seen,
+  online status, profile photo, and About, who can add you to groups, your
+  account read receipts, and whether unknown callers are silenced, and
+  changes them on your phone, so a change applies on every linked device. A
+  category set to **My contacts except** shows as such; the people it excludes
+  are chosen on the phone. The values are read when ZapFast connects and when
+  Settings opens; without a connection they cannot be changed.
 - **Read state across devices.** Reading a chat syncs its unread badge with
   your phone and other linked devices, including when read receipts are off.
   Replies from another device clear preceding unread messages. The read-receipt
@@ -244,7 +267,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   remain saved and resume automatically. New messages can still arrive.
 - **Runs in the background.** Closing the window keeps ZapFast linked in the
   system tray. Reopen it from the tray or by launching it again. Quit from the
-  tray or with `Ctrl+Q`, or disable this behavior in Settings.
+  tray or with `Ctrl+Q`, or disable this behavior in Settings. The window
+  reopens where you left it; on Windows and X11, one that would open on no
+  connected monitor (for example on a display that is now unplugged) moves to
+  the middle of the primary monitor.
 - **Start at login.** Turn on **Start at login** in Settings to start ZapFast in
   the tray when you log in, without opening a window. It adds
   `~/.config/autostart/zapfast.desktop` on Linux, a LaunchAgent in
@@ -288,9 +314,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
   `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` or `Ctrl+Shift+F` searches your chats,
-  `Ctrl+F` searches the open chat as in WhatsApp (Enter and Shift+Enter move
-  between matches; with no chat open it searches your chats, and in Settings it
-  searches the settings), `Alt+↑/↓` switches chats and
+  `Ctrl+F` searches the open chat as in WhatsApp (`↑`/`↓` walk the results
+  and Enter jumps to one; with no chat open it searches your chats, and in
+  Settings it searches the settings), `Alt+↑/↓` switches chats and
   keeps the active chat visible in the list, `↑` in an empty input edits your
   previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
   message input, `Ctrl+N` opens New chat, `Ctrl+B` hides or shows the chat
