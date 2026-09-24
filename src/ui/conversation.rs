@@ -1003,6 +1003,18 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 } else {
                     Color32::BLACK
                 };
+                let tooltip = theme::TooltipColors {
+                    fill: if palette.dark {
+                        Color32::WHITE
+                    } else {
+                        Color32::from_rgb(0x20, 0x2c, 0x33)
+                    },
+                    text: if palette.dark {
+                        Color32::BLACK
+                    } else {
+                        Color32::WHITE
+                    },
+                };
                 let tools = theme::icon_button_filled(
                     ui,
                     Icon::Plus,
@@ -1014,6 +1026,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         fill: Color32::TRANSPARENT,
                         fill_hover: palette.surface_hover,
                         fill_pressed: palette.surface_active,
+                        tooltip: Some(tooltip),
                     },
                     app.composer_tools_open,
                     "More message options",
@@ -1039,6 +1052,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             fill: Color32::TRANSPARENT,
                             fill_hover: palette.surface_hover,
                             fill_pressed: palette.surface_active,
+                            tooltip: Some(tooltip),
                         },
                         app.picker.is_some(),
                         "Emoji, GIFs, and stickers",
@@ -1218,6 +1232,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             fill,
                             fill_hover: hover,
                             icon: composer_icon,
+                            tooltip: Some(tooltip),
                         },
                         "Record a voice message",
                     )

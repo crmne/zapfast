@@ -645,7 +645,8 @@ pub fn icon_button_filled(
         } else {
             colors.fill
         };
-        ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
+        ui.painter()
+            .circle_filled(rect.center(), button_size / 2.0, fill);
         let tint = if pressed || highlighted {
             colors.icon_hover
         } else {
@@ -656,6 +657,8 @@ pub fn icon_button_filled(
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if tooltip.is_empty() {
         response
+    } else if let Some(colors) = colors.tooltip {
+        colored_tooltip(response, tooltip, colors)
     } else {
         response.on_hover_text(tooltip)
     }
@@ -669,6 +672,14 @@ pub struct IconButtonColors {
     pub fill: Color32,
     pub fill_hover: Color32,
     pub fill_pressed: Color32,
+    pub tooltip: Option<TooltipColors>,
+}
+
+/// Colors used by a custom tooltip frame.
+#[derive(Clone, Copy)]
+pub struct TooltipColors {
+    pub fill: Color32,
+    pub text: Color32,
 }
 
 /// Round filled icon button.
@@ -677,6 +688,7 @@ pub struct CircleButtonColors {
     pub fill: Color32,
     pub fill_hover: Color32,
     pub icon: Color32,
+    pub tooltip: Option<TooltipColors>,
 }
 
 pub fn circle_button(
@@ -697,6 +709,7 @@ pub fn circle_button(
             fill,
             fill_hover,
             icon: icon_color,
+            tooltip: None,
         },
         tooltip,
     )
@@ -733,9 +746,32 @@ pub fn circle_button_sized(
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if tooltip.is_empty() {
         response
+    } else if let Some(colors) = colors.tooltip {
+        colored_tooltip(response, tooltip, colors)
     } else {
         response.on_hover_text(tooltip)
     }
+}
+
+/// Shows a tooltip with colors that remain legible in either theme.
+pub fn colored_tooltip(response: Response, text: &str, colors: TooltipColors) -> Response {
+    let mut tooltip = egui::Tooltip::for_enabled(&response);
+    tooltip.popup = tooltip.popup.frame(
+        egui::Frame::new()
+            .fill(colors.fill)
+            .corner_radius(CornerRadius::same(6))
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 2],
+                blur: 8,
+                spread: 0,
+                color: Color32::from_black_alpha(45),
+            }),
+    );
+    tooltip.show(|ui| {
+        ui.label(egui::RichText::new(text).color(colors.text));
+    });
+    response
 }
 
 /// Draws the app logo.
