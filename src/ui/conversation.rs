@@ -1861,6 +1861,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             None,
                             egui::style::ScrollAnimation::none(),
                         );
+                        // The first pass may only estimate rows outside the
+                        // viewport. Repaint so egui lays out the transcript
+                        // again after applying the new bottom offset.
+                        ui.ctx().request_repaint();
                     }
                 });
         });
