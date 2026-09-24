@@ -972,7 +972,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             // Match the button to a one-line field. The field grows to six
             // lines while the controls stay centered against the field.
             let field_padding = 14.0;
-            let button_width = line_height + field_padding;
+            const COMPOSER_BUTTON_SIZE: f32 = 40.0;
+            let button_width = COMPOSER_BUTTON_SIZE;
             let text_height = ui
                 .ctx()
                 .read_response(id)
@@ -1002,12 +1003,19 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 } else {
                     Color32::BLACK
                 };
-                let tools = theme::icon_button(
+                let tools = theme::icon_button_filled(
                     ui,
                     Icon::Plus,
+                    COMPOSER_BUTTON_SIZE,
                     24.0,
-                    composer_icon,
-                    composer_icon,
+                    theme::IconButtonColors {
+                        icon: composer_icon,
+                        icon_hover: composer_icon,
+                        fill: Color32::TRANSPARENT,
+                        fill_hover: palette.surface_hover,
+                        fill_pressed: palette.surface_active,
+                    },
+                    app.composer_tools_open,
                     "More message options",
                 )
                 .tab_stop(Stop::Attach);
@@ -1020,12 +1028,19 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     } else {
                         composer_icon
                     };
-                    let smile = theme::icon_button(
+                    let smile = theme::icon_button_filled(
                         ui,
                         Icon::Smiley,
+                        COMPOSER_BUTTON_SIZE,
                         24.0,
-                        smiley_color,
-                        smiley_color,
+                        theme::IconButtonColors {
+                            icon: composer_icon,
+                            icon_hover: smiley_color,
+                            fill: Color32::TRANSPARENT,
+                            fill_hover: palette.surface_hover,
+                            fill_pressed: palette.surface_active,
+                        },
+                        app.picker.is_some(),
                         "Emoji, GIFs, and stickers",
                     ).tab_stop(Stop::Emoji);
                     app.picker_anchor = Some(smile.rect);
@@ -1197,7 +1212,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     if theme::circle_button_sized(
                         ui,
                         Icon::MicAlt,
-                        button_width,
+                        COMPOSER_BUTTON_SIZE,
                         24.0,
                         theme::CircleButtonColors {
                             fill,

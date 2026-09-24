@@ -619,6 +619,58 @@ pub fn icon_button(
     }
 }
 
+/// A fixed-size icon button with a rounded background on hover, press, or
+/// while it represents an open/selected control.
+pub fn icon_button_filled(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    button_size: f32,
+    icon_size: f32,
+    colors: IconButtonColors,
+    selected: bool,
+    tooltip: &str,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(button_size), Sense::click());
+    reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
+    });
+    if ui.is_rect_visible(rect) {
+        let pressed = response.is_pointer_button_down_on();
+        let highlighted = selected || response.hovered() || response.has_focus();
+        let fill = if pressed {
+            colors.fill_pressed
+        } else if highlighted {
+            colors.fill_hover
+        } else {
+            colors.fill
+        };
+        ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
+        let tint = if pressed || highlighted {
+            colors.icon_hover
+        } else {
+            colors.icon
+        };
+        paint_icon(ui, icon, rect, icon_size, tint);
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
+    }
+}
+
+/// Colors for [`icon_button_filled`].
+#[derive(Clone, Copy)]
+pub struct IconButtonColors {
+    pub icon: Color32,
+    pub icon_hover: Color32,
+    pub fill: Color32,
+    pub fill_hover: Color32,
+    pub fill_pressed: Color32,
+}
+
 /// Round filled icon button.
 #[derive(Clone, Copy)]
 pub struct CircleButtonColors {
