@@ -327,6 +327,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                         ChatFilter::All => Stop::All,
                         ChatFilter::Unread => Stop::Unread,
                         ChatFilter::Private => Stop::Private,
+                        ChatFilter::Favorites => Stop::Favorites,
                         ChatFilter::Groups => Stop::Groups,
                         ChatFilter::Channels => Stop::Channels,
                     });
@@ -422,6 +423,9 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     }
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
     if chats.is_empty() {
+        // The favorites title is translated, so it is bound here: the tuple
+        // below borrows it for this frame, and every other arm stays a literal.
+        let favorites_title;
         let (title, body) = if app.show_archived {
             ("Nothing archived", "Archived chats appear here.")
         } else if app.chat_filter != ChatFilter::All {
@@ -429,6 +433,10 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
                 ChatFilter::Unread => "No unread chats",
                 ChatFilter::Private => "No private chats",
                 ChatFilter::Channels => "No channels",
+                ChatFilter::Favorites => {
+                    favorites_title = crate::i18n::gettext(app.locale, "No favorites yet");
+                    favorites_title.as_ref()
+                }
                 _ => "No groups",
             };
             (title, "Choose All to see every chat.")
@@ -984,12 +992,20 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         app.actions.push(Action::OpenChat(chat.id.clone()));
     }
     let menu_palette = palette;
+    // The favorite item is translated, so its width counts in the reader's
+    // language.
+    let favorite_label = if chat.favorite {
+        crate::i18n::gettext(app.locale, "Remove from favorites")
+    } else {
+        crate::i18n::gettext(app.locale, "Add to favorites")
+    };
     let menu_width = widgets::menu_width(
         ui,
         &[
             "Mark as read",
             "Mark as unread",
             "Pin to top",
+            favorite_label.as_ref(),
             "Unarchive",
             "Mute for 8 hours",
             "Mute for a week",
@@ -1280,6 +1296,19 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
     ) {
         app.actions
             .push(Action::SetPinned(chat.id.clone(), !chat.pinned));
+    }
+    // Channels cannot be favorites, as on the phone.
+    if !chat.is_channel() {
+        // Bound before the call so the translated text outlives the borrow.
+        let favorite_label = if chat.favorite {
+            crate::i18n::gettext(app.locale, "Remove from favorites")
+        } else {
+            crate::i18n::gettext(app.locale, "Add to favorites")
+        };
+        if widgets::menu_item(ui, palette, Some(Icon::Heart), favorite_label.as_ref()) {
+            app.actions
+                .push(Action::SetFavorite(chat.id.clone(), !chat.favorite));
+        }
     }
     if widgets::menu_item(
         ui,

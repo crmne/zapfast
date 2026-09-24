@@ -1430,10 +1430,17 @@ impl App {
                     })
             })
             .collect();
+        // The Favorites chip keeps the phone's order below the pinned chats.
+        let favorites_order =
+            filtering && self.label_filter.is_none() && self.chat_filter == ChatFilter::Favorites;
         chats.sort_by(|a, b| {
             b.pinned.cmp(&a.pinned).then_with(|| {
                 if a.pinned && b.pinned {
                     b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
+                } else if favorites_order {
+                    a.favorite_position
+                        .cmp(&b.favorite_position)
+                        .then(a.id.cmp(&b.id))
                 } else {
                     b.last_activity.cmp(&a.last_activity).then(a.id.cmp(&b.id))
                 }
@@ -3794,6 +3801,14 @@ impl App {
                     };
                 }
                 self.backend.send(Command::SetPinned(chat, pinned));
+            }
+            Action::SetFavorite(chat, favorite) => {
+                if let Some(known) = self.chat_mut(&chat) {
+                    known.favorite = favorite;
+                    // A new favorite joins the end until the archive numbers it.
+                    known.favorite_position = u32::MAX;
+                }
+                self.backend.send(Command::SetFavorite(chat, favorite));
             }
             Action::ShowDialog(dialog) => {
                 self.clear_chat_lock_entry();
@@ -7530,6 +7545,44 @@ mod tests {
             .map(|chat| chat.name.as_str())
             .collect();
         assert_eq!(names, vec!["Ada"]);
+    }
+
+    #[test]
+    fn the_favorites_chip_keeps_the_phone_order_below_pins() {
+        let mut app = app();
+        let favorite = |id: &str, name: &str, position: u32, activity: i64| {
+            let mut chat = Chat::new(id.into(), name.into());
+            chat.favorite = true;
+            chat.favorite_position = position;
+            chat.last_activity = activity;
+            chat
+        };
+        let mut pinned = favorite("3@s.whatsapp.net", "Cy", 2, 1);
+        pinned.pinned = true;
+        app.chats = vec![
+            favorite("1@s.whatsapp.net", "Ada", 1, 30),
+            favorite("2@s.whatsapp.net", "Bob", 0, 10),
+            pinned,
+            Chat::new("4@s.whatsapp.net".into(), "Dee".into()),
+        ];
+        app.chat_filter = ChatFilter::Favorites;
+        let names: Vec<&str> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.name.as_str())
+            .collect();
+        assert_eq!(names, ["Cy", "Bob", "Ada"]);
+        app.chat_filter = ChatFilter::All;
+        let names: Vec<&str> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["Cy", "Ada", "Bob", "Dee"],
+            "other chips keep recency"
+        );
     }
 
     #[test]

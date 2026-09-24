@@ -49,6 +49,8 @@ pub enum ChatFilter {
     Unread,
     /// One-to-one chats: neither groups nor broadcasts.
     Private,
+    /// Chats marked as a favorite, here or on the phone.
+    Favorites,
     Groups,
     /// Followed channels (newsletters), kept out of the other filters as in
     /// the official apps.
@@ -56,10 +58,11 @@ pub enum ChatFilter {
 }
 
 impl ChatFilter {
-    pub const EVERY: [Self; 5] = [
+    pub const EVERY: [Self; 6] = [
         Self::All,
         Self::Unread,
         Self::Private,
+        Self::Favorites,
         Self::Groups,
         Self::Channels,
     ];
@@ -70,6 +73,7 @@ impl ChatFilter {
             Self::All => gettext(locale, "All"),
             Self::Unread => gettext(locale, "Unread"),
             Self::Private => gettext(locale, "Private"),
+            Self::Favorites => gettext(locale, "Favorites"),
             Self::Groups => gettext(locale, "Groups"),
             Self::Channels => gettext(locale, "Channels"),
         }
@@ -80,6 +84,7 @@ impl ChatFilter {
             Self::All => !chat.is_channel(),
             Self::Unread => chat.looks_unread() && !chat.is_channel(),
             Self::Private => chat.kind == ChatKind::Direct,
+            Self::Favorites => chat.favorite && !chat.is_channel(),
             Self::Groups => chat.kind == ChatKind::Group,
             Self::Channels => chat.is_channel(),
         }
@@ -108,6 +113,11 @@ pub struct Chat {
     pub muted_until: Option<i64>,
     /// Latest message shown in the chat list.
     pub last: Option<LastMessage>,
+    /// Whether the chat is one of the favorites, which sync with the phone.
+    /// It is not a WhatsApp pin.
+    pub favorite: bool,
+    /// Place in the phone's favorites list, which orders the Favorites chip.
+    pub favorite_position: u32,
     /// Canonical group-member ids, empty until loaded.
     pub participants: Vec<String>,
     /// Whether this is an announcement group where we cannot post.
@@ -148,6 +158,8 @@ impl Chat {
             pinned_at: 0,
             muted_until: None,
             last: None,
+            favorite: false,
+            favorite_position: 0,
             participants: Vec::new(),
             read_only: false,
             locked: false,
@@ -1281,6 +1293,8 @@ pub enum Action {
     /// Deletes a chat here and on the phone.
     DeleteChat(ChatId),
     SetPinned(ChatId, bool),
+    /// Marks a chat as a favorite, or removes the mark, here and on the phone.
+    SetFavorite(ChatId, bool),
     ShowDialog(Dialog),
     CloseDialog,
     ToggleSidebar,

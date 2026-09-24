@@ -311,7 +311,9 @@ pub fn menu_width(ui: &Ui, labels: &[&str], icons: bool) -> f32 {
                 .x
         })
         .fold(0.0, f32::max);
-    widest + if icons { 26.0 } else { 0.0 } + 20.0 + 12.0
+    // Text padding, then `menu_frame`'s margin and its 1-point stroke on each
+    // side: without the stroke the widest label lost its last letters.
+    widest + if icons { 26.0 } else { 0.0 } + 20.0 + 12.0 + 2.0
 }
 
 /// A context-menu entry that opens a submenu, drawn like the plain entries

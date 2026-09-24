@@ -511,6 +511,15 @@ pub enum Command {
         through: i64,
     },
     SetPinned(ChatId, bool),
+    /// Marks a chat as a favorite, or removes the mark, here and on the phone.
+    SetFavorite(ChatId, bool),
+    /// The phone answered a favorites list sent at `at` holding the queued
+    /// changes up to `through`.
+    FavoritesSent {
+        through: i64,
+        at: i64,
+        success: bool,
+    },
     PairWithPhone(String),
     /// Unlinks the device remotely and locally.
     Unlink,

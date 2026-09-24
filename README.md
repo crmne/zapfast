@@ -25,8 +25,12 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Recent history is copied to this computer after linking and stored here.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,
   and message status. Search chats, saved messages, and contacts.
-  Filter the list to unread, private (one-to-one), or group chats with the
-  chips under the search bar; a chip with unread chats shows how many it has.
+  Filter the list to unread, private (one-to-one), favorites, or group chats
+  with the chips under the search bar; a chip with unread chats shows how many
+  it has. Right-click a chat and choose **Add to favorites** to mark it.
+  Favorites sync with your phone both ways, and the **Favorites** chip lists
+  them in the phone's order below any pinned chats. A chat added here goes to
+  the end of the list; channels cannot be favorites.
   Followed channels have their own **Channels** chip and stay out of the other
   filters; right-click it to mute or unmute every channel at once. **Archived**
   opens the archived chats. Right-click a chat and choose **Mark as unread**
