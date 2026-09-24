@@ -168,6 +168,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
                     section(ui, &palette, &crate::i18n::gettext(app.locale, "Chats"), |ui| {
                         toggle(ui, app, "Enter sends", "When off, Enter adds a line and Ctrl+Enter sends.", |settings| &mut settings.enter_sends);
+                        widgets::setting_row(ui, &palette, "Keyboard shortcuts", "Quick actions", |ui| {
+                            if theme::icon_button(
+                                ui,
+                                Icon::Keyboard,
+                                20.0,
+                                palette.secondary,
+                                palette.text,
+                                "Keyboard shortcuts",
+                            )
+                            .clicked()
+                            {
+                                app.actions.push(Action::ShowDialog(Dialog::Shortcuts));
+                            }
+                        });
                         let receipts_note = if app.account_receipts_off {
                             "Read receipts are disabled for your WhatsApp account. Direct chats will not send them. When this switch is on, groups still do. Read state syncs between your devices either way."
                         } else {
@@ -183,7 +197,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         toggle(ui, app, "Show sender pictures in every chat", "WhatsApp shows them in groups only.", |settings| &mut settings.show_sender_pictures);
                         toggle(ui, app, "Names from your address book", "Prefer saved contact names. When off, prefer public WhatsApp profile names. This applies throughout the app.", |settings| &mut settings.names_from_contacts);
                         toggle(ui, app, "Save contacts to the phone's address book", "Also add contacts saved here to your phone's address book. When off, they remain WhatsApp contacts. Names sync to linked devices either way.", |settings| &mut settings.save_contacts_to_phone);
-                        toggle(ui, app, "Show shortcut hints", "", |settings| &mut settings.show_shortcut_hints);
                         toggle(ui, app, "Collapse the chat list to icons", "Hiding the chat list (Ctrl+B) leaves a narrow column of avatars with unread badges instead of removing it. Clicking an avatar opens that chat, and Ctrl+B brings the full list back.", |settings| &mut settings.collapse_chat_list);
 
                         // macOS has no public API to pause other apps' media.
@@ -763,17 +776,6 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             if theme::soft_button(ui, &palette, Some(Icon::Download), &label, false).clicked() {
                 app.actions.push(Action::ShowUpdate);
             }
-        }
-        if theme::soft_button(
-            ui,
-            &palette,
-            Some(Icon::Keyboard),
-            &crate::i18n::gettext(app.locale, "Keyboard shortcuts"),
-            false,
-        )
-        .clicked()
-        {
-            app.actions.push(Action::ShowDialog(Dialog::Shortcuts));
         }
         if theme::soft_button(
             ui,

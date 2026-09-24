@@ -154,18 +154,6 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(14.0),
         palette.secondary,
     );
-    if app.settings.show_shortcut_hints {
-        ui.painter().text(
-            center + vec2(0.0, 56.0),
-            Align2::CENTER_CENTER,
-            super::keys::label(
-                crate::i18n::gettext(app.locale, "Ctrl+K to search · ? for keyboard shortcuts")
-                    .as_ref(),
-            ),
-            theme::regular(12.5),
-            palette.dim,
-        );
-    }
 }
 
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
@@ -921,7 +909,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     .fill(palette.surface)
                     .corner_radius(CornerRadius::same(24))
                     .shadow(egui::epaint::Shadow {
-                        offset: [0, 1],
+                        offset: [0, 0],
                         blur: 6,
                         spread: 0,
                         color: Color32::from_black_alpha(31),
@@ -981,7 +969,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .fill(palette.surface)
                 .corner_radius(CornerRadius::same(24))
                 .shadow(egui::epaint::Shadow {
-                    offset: [0, 1],
+                    offset: [0, 0],
                     blur: 6,
                     spread: 0,
                     color: Color32::from_black_alpha(31),
