@@ -1232,6 +1232,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             fill,
                             fill_hover: hover,
                             icon: composer_icon,
+                            hover_icon: Some(Icon::MicAltFilled),
                             tooltip: Some(tooltip),
                         },
                         "Record a voice message",

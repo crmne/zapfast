@@ -404,6 +404,7 @@ pub enum Icon {
     MessageCircle,
     Mic,
     MicAlt,
+    MicAltFilled,
     Minimize,
     Minus,
     Monitor,
@@ -481,6 +482,7 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     MessageCircle => "message-circle",
     Mic => "mic",
     MicAlt => "mic-alt",
+    MicAltFilled => "mic-alt-filled",
     Minimize => "minimize-2",
     Minus => "minus",
     Monitor => "monitor",
@@ -688,6 +690,7 @@ pub struct CircleButtonColors {
     pub fill: Color32,
     pub fill_hover: Color32,
     pub icon: Color32,
+    pub hover_icon: Option<Icon>,
     pub tooltip: Option<TooltipColors>,
 }
 
@@ -709,6 +712,7 @@ pub fn circle_button(
             fill,
             fill_hover,
             icon: icon_color,
+            hover_icon: None,
             tooltip: None,
         },
         tooltip,
@@ -741,6 +745,11 @@ pub fn circle_button_sized(
         };
         ui.painter().circle_filled(rect.center(), radius, fill);
         let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
+        let icon = if hovered || response.is_pointer_button_down_on() {
+            colors.hover_icon.unwrap_or(icon)
+        } else {
+            icon
+        };
         icon.image(colors.icon, icon_size).paint_at(ui, icon_rect);
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
