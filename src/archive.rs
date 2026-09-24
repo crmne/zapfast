@@ -11,6 +11,8 @@ use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Mess
 
 mod drafts;
 mod encryption;
+mod favorites;
+pub use favorites::Favorite;
 mod labels;
 pub use labels::{DEFAULT_COLOR, LABEL_LIMIT, NAME_LIMIT};
 mod polls;
@@ -123,7 +125,8 @@ const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
                     c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known,
-                    c.notification_sound, c.marked_unread";
+                    c.notification_sound, c.marked_unread,
+                    (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -145,6 +148,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "lock_updated_at", "INTEGER"),
     ("chats", "archive_updated_at", "INTEGER"),
     ("chats", "notification_sound", "TEXT"),
+    ("chats", "left", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "group_subject_known", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "marked_unread", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "pending_unread", "INTEGER"),
@@ -196,6 +200,11 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         notification_sound: row
             .get::<_, Option<String>>(19)?
             .and_then(|sound| serde_json::from_str(&sound).ok()),
+        favorite: row.get::<_, Option<i64>>(21)?.is_some(),
+        favorite_position: row
+            .get::<_, Option<i64>>(21)?
+            .map_or(0, |position| u32::try_from(position).unwrap_or(u32::MAX)),
+        left: row.get(22)?,
     })
 }
 
@@ -271,6 +280,7 @@ impl Archive {
         connection.execute_batch(polls::SCHEMA)?;
         connection.execute_batch(drafts::SCHEMA)?;
         connection.execute_batch(stickers::SCHEMA)?;
+        connection.execute_batch(favorites::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -282,6 +292,7 @@ impl Archive {
                 ))?;
             }
         }
+        favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
     }
@@ -345,6 +356,18 @@ impl Archive {
                 serde_json::to_string(participants).unwrap_or_else(|_| "[]".into()),
                 read_only
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Records that we left a group or channel, or that we are back in it.
+    /// A durable mark of its own, because `read_only` also covers an
+    /// announcement group we are still a member of, and a later metadata
+    /// refresh rewrites it.
+    pub fn set_left(&self, id: &str, left: bool) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET left = ?2 WHERE id = ?1",
+            params![id, left],
         )?;
         Ok(())
     }
@@ -722,14 +745,17 @@ impl Archive {
         rows.collect()
     }
 
-    /// Stores a privacy id mapping and carries early mute/pin/lock sync to the
-    /// canonical chat. Returns whether that chat's preferences were touched.
+    /// Stores a privacy id mapping and carries early mute/pin/lock sync and
+    /// the favorite mark to the canonical chat. Returns whether that chat's
+    /// preferences were touched.
     pub fn put_lid(&self, lid: &str, pn: &str) -> Result<bool> {
         self.connection.execute(
             "INSERT INTO lids (lid, pn) VALUES (?1, ?2) ON CONFLICT(lid) DO UPDATE SET pn = excluded.pn",
             params![lid, pn],
         )?;
         self.merge_group_recipient(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
+        let favorite =
+            self.move_favorite(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
         self.connection.execute(
             "INSERT INTO chat_removals (chat, through) SELECT ?2, through FROM chat_removals WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through)",
@@ -761,7 +787,7 @@ impl Archive {
                 archive_updated_at = NULLIF(MAX(COALESCE(archive_updated_at, -1), COALESCE(excluded.archive_updated_at, -1)), -1)",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net"), pn],
         )?;
-        Ok(changed > 0)
+        Ok(changed > 0 || favorite)
     }
 
     pub fn lids(&self) -> Result<Vec<(String, String)>> {
@@ -1605,7 +1631,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }
@@ -1638,6 +1664,25 @@ pub(crate) mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn a_leave_outlives_a_group_info_refresh() {
+        let archive = Archive::in_memory().expect("opens");
+        let id = "1-2@g.us";
+        archive.ensure_chat(id, "Rust").expect("chat");
+        archive.set_left(id, true).expect("left");
+        assert!(archive.chat(id).expect("row").expect("chat").left);
+        // The phone's metadata rewrites `read_only` on every refresh, which is
+        // why the leave needs a field of its own.
+        archive
+            .set_group_info(id, Some("Rust"), &["other@s.whatsapp.net".into()], false)
+            .expect("info");
+        let row = archive.chat(id).expect("row").expect("chat");
+        assert!(row.left, "the leave is remembered");
+        assert!(!row.read_only, "the metadata is applied as it came");
+        archive.set_left(id, false).expect("rejoined");
+        assert!(!archive.chat(id).expect("row").expect("chat").left);
     }
 
     #[test]
@@ -1789,6 +1834,36 @@ pub(crate) mod tests {
                 .map(|m| m.id),
             Some("m1".into())
         );
+    }
+
+    #[test]
+    fn a_favorite_mark_survives_a_chat_update() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        archive.ensure_chat("2@s.whatsapp.net", "Bo").expect("chat");
+        assert!(!archive.chat(chat).expect("read").expect("exists").favorite);
+        archive
+            .set_favorite("2@s.whatsapp.net", true)
+            .expect("mark");
+        archive.set_favorite(chat, true).expect("mark");
+        assert_eq!(
+            archive
+                .chat(chat)
+                .expect("read")
+                .expect("exists")
+                .favorite_position,
+            1,
+            "a new favorite goes to the end"
+        );
+        // Pinning and renaming leave the mark alone.
+        archive.set_pinned(chat, true).expect("pin");
+        archive.ensure_chat(chat, "Ada L.").expect("rename");
+        let row = archive.chat(chat).expect("read").expect("exists");
+        assert!(row.favorite);
+        assert!(row.pinned);
+        archive.set_favorite(chat, false).expect("unmark");
+        assert!(!archive.chat(chat).expect("read").expect("exists").favorite);
     }
 
     #[test]

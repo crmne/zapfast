@@ -597,6 +597,70 @@ mod tests {
     }
 
     #[test]
+    fn leaving_is_offered_for_a_group_and_for_a_channel() {
+        for (index, leave, title, archive) in [
+            (
+                1usize,
+                "Leave group",
+                "Leave this group?",
+                "Leave group and archive",
+            ),
+            (
+                9usize,
+                "Leave channel",
+                "Leave this channel?",
+                "Leave channel and archive",
+            ),
+        ] {
+            let mut app = super::super::tests::app();
+            prepare(&mut app);
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            let mut tour = Tour::new(None, None);
+            let id = super::super::sample_ids()[index].to_owned();
+            app.open_chat = Some(id.clone());
+            app.dialog = Some(crate::model::Dialog::ChatInfo(id.clone()));
+            for _ in 0..3 {
+                frame(&mut app, &mut tour, &ctx, Vec::new());
+            }
+            // The controls are announced in the interface language, which
+            // follows the system when Settings carries no choice of its own.
+            let locale = app.locale;
+            let leave = crate::i18n::gettext(locale, leave).to_string();
+            let title = crate::i18n::gettext(locale, title).to_string();
+            let archive = crate::i18n::gettext(locale, archive).to_string();
+            assert!(tour.labels.contains_key(&leave), "chat info offers {leave}");
+            click(&mut app, &mut tour, &ctx, &leave);
+            assert!(
+                matches!(
+                    app.dialog,
+                    Some(crate::model::Dialog::ConfirmLeaveGroup(ref open)) if *open == id
+                ),
+                "the button opens the confirm dialog for {id}"
+            );
+            for _ in 0..3 {
+                frame(&mut app, &mut tour, &ctx, Vec::new());
+            }
+            assert!(tour.labels.contains_key(&title), "the dialog asks {title}");
+            assert!(
+                tour.labels.contains_key(&leave),
+                "the dialog offers {leave}"
+            );
+            assert!(
+                tour.labels.contains_key(&archive),
+                "the dialog offers archiving in the same step"
+            );
+            // Cancelling leaves the chat alone.
+            let cancel = crate::i18n::gettext(locale, "Cancel").to_string();
+            click(&mut app, &mut tour, &ctx, &cancel);
+            assert!(app.dialog.is_none(), "cancel closes the dialog");
+            let chat = app.chat(&id).expect("chat");
+            assert!(!chat.read_only, "cancelling does not leave the chat");
+            assert!(chat.can_leave(&app.our_ids()), "and it stays leaveable");
+        }
+    }
+
+    #[test]
     fn polls_are_created_and_voted_through_real_controls() {
         let mut app = super::super::tests::app();
         app.backend.record_demo_commands();

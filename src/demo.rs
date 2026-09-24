@@ -218,6 +218,17 @@ const SAMPLES: &[Sample] = &[
         locked: false,
         lines: &[(false, "Reminder: your appointment is on Tuesday at 9:30.")],
     },
+    Sample {
+        id: "120363055566677788@newsletter",
+        name: "Rust Weekly",
+        minutes_ago: 60 * 8,
+        unread: 0,
+        pinned: false,
+        muted: false,
+        archived: false,
+        locked: false,
+        lines: &[(false, "A new client build is out.")],
+    },
 ];
 
 fn media(mime: &str, size: u64, width: Option<u32>, height: Option<u32>) -> Media {
@@ -485,6 +496,9 @@ pub fn populate(app: &mut App) {
         let mut chat = Chat::new(sample.id.to_owned(), sample.name.to_owned());
         chat.last_activity = now - sample.minutes_ago * 60;
         chat.unread = sample.unread;
+        // Two favorites, in the phone's order rather than by recency.
+        chat.favorite = matches!(sample.name, "Ada Lovelace" | "Margaret Hamilton");
+        chat.favorite_position = u32::from(sample.name == "Ada Lovelace");
         // One chat carries the empty dot, so the sample shows both marks.
         chat.marked_unread = sample.name == "Grace Hopper";
         chat.pinned = sample.pinned;
@@ -1878,6 +1892,32 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
             }
             "unlink" => app.dialog = Some(Dialog::ConfirmUnlink),
+            "leave-group" => {
+                let group = SAMPLES[1].id.to_owned();
+                app.open_chat = Some(group.clone());
+                app.dialog = Some(Dialog::ConfirmLeaveGroup(group));
+            }
+            "left-group" => {
+                // The chat after the phone confirmed the leave.
+                let group = SAMPLES[1].id.to_owned();
+                let ours: Vec<String> = app.our_ids().into_iter().map(str::to_owned).collect();
+                if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == group) {
+                    chat.left = true;
+                    chat.read_only = true;
+                    chat.participants.retain(|id| !ours.contains(id));
+                }
+                app.open_chat = Some(group);
+            }
+            "leave-channel" => {
+                let channel = SAMPLES
+                    .iter()
+                    .find(|sample| sample.id.ends_with("@newsletter"))
+                    .expect("channel sample")
+                    .id
+                    .to_owned();
+                app.open_chat = Some(channel.clone());
+                app.dialog = Some(Dialog::ConfirmLeaveGroup(channel));
+            }
             "toasts" => {
                 app.toast("History loaded");
                 app.toast_error(
@@ -2115,6 +2155,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 );
             }
             "nosidebar" => app.sidebar_visible = false,
+            // A list wide enough for the whole chip row, which scrolls out of
+            // sight at the default width.
+            "wide" => app.settings.sidebar_width = 560.0,
             // The chat list collapsed to avatars with unread badges.
             "rail" => {
                 app.settings.collapse_chat_list = true;
@@ -2217,6 +2260,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "unread" => app.chat_filter = crate::model::ChatFilter::Unread,
             "private" => app.chat_filter = crate::model::ChatFilter::Private,
+            "favorites" => app.chat_filter = crate::model::ChatFilter::Favorites,
             "groups" => app.chat_filter = crate::model::ChatFilter::Groups,
             "picker" => app.picker = Some(crate::model::PickerTab::Emoji),
             "stickers" => sticker_sample(app, crate::model::StickerShelf::Recent, ""),
@@ -3441,6 +3485,7 @@ mod tests {
         let app = app();
         assert!(app.chats.len() >= 5);
         assert!(app.chats.iter().any(|chat| chat.is_group()));
+        assert!(app.chats.iter().any(|chat| chat.is_channel()));
         assert!(app.chats.iter().any(|chat| chat.archived));
         assert!(app.chats.iter().any(|chat| chat.pinned));
         let ada = app.conversations.get(sample_ids()[0]).expect("first chat");
@@ -3627,6 +3672,9 @@ mod tests {
             "info",
             "forward",
             "unlink",
+            "leave-group",
+            "left-group",
+            "leave-channel",
             "toasts",
             "delete-chat",
             "invite",
@@ -3639,6 +3687,7 @@ mod tests {
             "archived",
             "unread",
             "private",
+            "favorites",
             "groups",
             "offline",
             "syncing",
@@ -3657,6 +3706,7 @@ mod tests {
             "emoji-complete",
             "typers",
             "nosidebar",
+            "wide",
             "rail",
             "search",
             "staged",
@@ -4815,9 +4865,59 @@ mod tests {
     }
 
     #[test]
+    fn the_favorites_chip_lists_favorites() {
+        use crate::model::ChatFilter;
+        let mut app = app();
+        // Every chip has to be on screen to be clicked, and the row scrolls
+        // once the sidebar is too narrow for all of them.
+        app.settings.sidebar_width = 520.0;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        // Clicking the chip's own rect, so a translated label does not matter.
+        let click = |app: &mut App, filter: ChatFilter| {
+            let rect = ctx
+                .data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::filter_chip_id(filter)))
+                .expect("the chip is on screen");
+            let pos = rect.center();
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(app, &ctx, vec![egui::Event::PointerMoved(pos), press(true)]);
+            frame_with(app, &ctx, vec![press(false)]);
+            render(app, &ctx);
+        };
+        click(&mut app, ChatFilter::Favorites);
+        assert_eq!(app.chat_filter, ChatFilter::Favorites);
+        let favorites = app.visible_chats();
+        assert!(!favorites.is_empty(), "the sample has a favorite");
+        assert!(favorites.iter().all(|chat| chat.favorite));
+        let favorite = favorites[0].clone();
+        // The mark itself comes off the menu, and the chip follows it.
+        let mark = app.chat(&favorite.id).expect("the chat").favorite;
+        app.actions.push(crate::model::Action::SetFavorite(
+            favorite.id.clone(),
+            !mark,
+        ));
+        render(&mut app, &ctx);
+        assert!(!app.chat(&favorite.id).expect("the chat").favorite);
+        assert!(
+            app.visible_chats().iter().all(|chat| chat.favorite),
+            "an unmarked chat leaves the chip"
+        );
+    }
+
+    #[test]
     fn a_filter_chip_narrows_the_chat_list_and_a_second_click_clears_it() {
         use crate::model::ChatFilter;
         let mut app = app();
+        // Every chip has to be on screen to be clicked, and the row scrolls
+        // once the sidebar is too narrow for all of them.
+        app.settings.sidebar_width = 520.0;
         let ctx = egui::Context::default();
         app.attach(&ctx);
         render(&mut app, &ctx);
@@ -6368,6 +6468,7 @@ mod tests {
                 Stop::All,
                 Stop::Unread,
                 Stop::Private,
+                Stop::Favorites,
                 Stop::Groups,
                 Stop::Channels,
                 Stop::Archived,

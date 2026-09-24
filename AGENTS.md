@@ -49,6 +49,18 @@ protocol. These notes are for coding agents and new contributors.
   a disposable archive. Tests use fixtures and mock credentials only.
 - `src/model.rs` holds the app's own types. Views never touch a protobuf;
   the worker translates in `classify()` and `parse_conversation()`.
+- Favorite chats sync with the phone through the `favorites` app-state action
+  (RegularHigh), which carries the whole ordered list: `Event::FavoritesUpdate`
+  replaces ours and `send_app_state_action(&schemas::FAVORITES, ..)` writes it.
+  `archive/favorites.rs` keeps the list in order with each entry's JID as the
+  phone named it, plus a queue of changes made here; a phone list applies
+  (unless older than the newest applied) and the queue replays on top.
+  `backend/worker/favorite_chats.rs` sends one list at a time with backoff and
+  never before the phone's list is known: the first connection reads
+  RegularHigh once as a snapshot, and its completion on the same queue as the
+  replayed mutations means a phone without favorites. A blind write would
+  replace the phone's list. Channels are never favorites. The Favorites chip
+  follows the list order; pins stay global and first in every chip.
 - Interactive messages are parsed in `backend/worker/interactive.rs`. Views receive
   labels and local capabilities, never protocol option ids. `ReplyInteractive`
   carries only the archived message id and visible button/choice indices;

@@ -21,6 +21,7 @@ pub enum Stop {
     All,
     Unread,
     Private,
+    Favorites,
     Groups,
     Channels,
     Archived,
