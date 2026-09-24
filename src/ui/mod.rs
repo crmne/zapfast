@@ -148,11 +148,6 @@ fn focus_ring(app: &App, ctx: &egui::Context) {
     else {
         return;
     };
-    // The composer uses its own active caret state. A second green outline
-    // around the full pill makes the field feel heavier than the native UI.
-    if response.id == egui::Id::new("composer-text") {
-        return;
-    }
     // Keep text fields visibly active even when reached by clicking or
     // a shortcut. A caret alone is easy to lose in a large conversation.
     let custom = ctx

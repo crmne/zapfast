@@ -6118,24 +6118,22 @@ mod tests {
         let input = egui::Id::new("composer-text");
         ctx.memory_mut(|memory| memory.request_focus(input));
         frame_sized(&mut app, &ctx, 780.0, Vec::new());
-        let composer = ctx
-            .data(|data| data.get_temp::<egui::Rect>(crate::ui::composer_rect_id()))
+        let field = ctx
+            .data(|data| data.get_temp::<crate::theme::FocusOutline>(input.with("focus-outline")))
             .unwrap();
-        assert!(
-            composer.height() >= 52.0,
-            "composer height: {}",
-            composer.height()
-        );
+        let text = ctx.read_response(input).unwrap();
+        assert!(field.rect.contains_rect(text.rect));
+        assert!(field.rect.width() > text.rect.width());
         assert_eq!(
             ring(&ctx),
-            None,
-            "the composer keeps keyboard focus without the green ring"
+            Some(field.rect),
+            "input focus outlines the composer's rounded field"
         );
         assert_eq!(
             ctx.data(
                 |data| data.get_temp::<egui::LayerId>(crate::ui::focus_ring_id().with("layer"))
             ),
-            None
+            Some(text.layer_id)
         );
         frame_sized(&mut app, &ctx, 780.0, tab());
         frame_sized(&mut app, &ctx, 780.0, Vec::new());
@@ -6154,18 +6152,11 @@ mod tests {
             }
             if let Some(id) = ctx.memory(|memory| memory.focused()) {
                 let response = ctx.read_response(id).expect("focused target is rendered");
-                if id == input {
-                    assert!(
-                        ring(&ctx).is_none(),
-                        "composer should not show a focus ring"
-                    );
-                } else {
-                    assert!(
-                        ring(&ctx).is_some(),
-                        "missing outline for {id:?}: {:?}",
-                        response.rect
-                    );
-                }
+                assert!(
+                    ring(&ctx).is_some(),
+                    "missing outline for {id:?}: {:?}",
+                    response.rect
+                );
                 assert!(
                     response.interact_rect.is_positive(),
                     "focus is visible: {id:?} {:?} {:?}",

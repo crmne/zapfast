@@ -153,6 +153,18 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(14.0),
         palette.secondary,
     );
+    if app.settings.show_shortcut_hints {
+        ui.painter().text(
+            center + vec2(0.0, 56.0),
+            Align2::CENTER_CENTER,
+            super::keys::label(
+                crate::i18n::gettext(app.locale, "Ctrl+K to search · ? for keyboard shortcuts")
+                    .as_ref(),
+            ),
+            theme::regular(12.5),
+            palette.dim,
+        );
+    }
 }
 
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
@@ -873,17 +885,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 pending_strip(app, ui);
             }
             if app.recording.is_some() {
-                Frame::new()
-                    .fill(palette.surface)
-                    .corner_radius(CornerRadius::same(24))
-                    .shadow(egui::epaint::Shadow {
-                        offset: [0, 0],
-                        blur: 6,
-                        spread: 0,
-                        color: Color32::from_black_alpha(31),
-                    })
-                    .inner_margin(Margin::symmetric(8, 5))
-                    .show(ui, |ui| recording_strip(app, ui));
+                composer_pill(&palette).show(ui, |ui| recording_strip(app, ui));
                 return;
             }
             emoji_suggestions(app, ui, id);
@@ -920,7 +922,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .size()
                 .y;
             // Match the button to a one-line field. The field grows to six
-            // lines while the controls stay centered against the field.
+            // lines while the row stays bottom-aligned.
             let field_padding = 14.0;
             const COMPOSER_BUTTON_SIZE: f32 = 40.0;
             let button_width = COMPOSER_BUTTON_SIZE;
@@ -933,20 +935,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             // Keep the single-line composer at the desktop WhatsApp height;
             // multiline drafts can still grow up to the existing six-line cap.
             let row_height = (text_height + field_padding).max(button_width).max(42.0);
-            Frame::new()
-                .fill(palette.surface)
-                .corner_radius(CornerRadius::same(24))
-                .shadow(egui::epaint::Shadow {
-                    offset: [0, 0],
-                    blur: 6,
-                    spread: 0,
-                    color: Color32::from_black_alpha(31),
-                })
-                .inner_margin(Margin::symmetric(8, 5))
-                .show(ui, |ui| {
+            let pill = composer_pill(&palette).show(ui, |ui| {
             ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), row_height),
-                Layout::left_to_right(Align::Center),
+                Layout::left_to_right(Align::Max),
                 |ui| {
                 if app.editing.is_none() {
                     let tools = theme::icon_button(
@@ -962,7 +954,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         &crate::i18n::gettext(app.locale, "Attach"),
                     )
                     .tab_stop(Stop::Attach);
-                    composer_tools_menu(app, ui, chat, &tools);
+                    composer_tools_menu(app, chat, &tools);
                     let smile = theme::icon_button(
                         ui,
                         Icon::Smile,
@@ -1164,6 +1156,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             },
                     );
                 });
+            theme::focus_outline(ui, id, pill.response.rect, f32::from(COMPOSER_RADIUS));
             if (send_key || send_click)
                 && (!app.composer.trim().is_empty() || !app.pending.is_empty())
             {
@@ -1187,20 +1180,75 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 app.actions.push(Action::SendRecording);
                 app.focus_composer = true;
             }
+            if app.settings.show_shortcut_hints {
+                let hint_text = if enter_sends {
+                    crate::i18n::gettext(app.locale, "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
+                } else {
+                    crate::i18n::gettext(app.locale, "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
+                };
+                let hint = super::keys::label(hint_text.as_ref());
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    if theme::icon_button(
+                        ui,
+                        Icon::X,
+                        13.0,
+                        palette.dim,
+                        palette.secondary,
+                        crate::i18n::gettext(app.locale, "Hide shortcut hints (restore in Settings)").as_ref(),
+                    )
+                    .clicked()
+                    {
+                        app.actions.push(Action::HideShortcutHints);
+                    }
+                    theme::text(ui, &hint, theme::regular(11.0), palette.dim);
+                    // Open the shortcut list without consuming typed `?`.
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if theme::icon_button(
+                            ui,
+                            Icon::Keyboard,
+                            13.0,
+                            palette.dim,
+                            palette.secondary,
+                            &crate::i18n::gettext(app.locale, "All shortcuts ({})")
+                                .replace("{}", &super::keys::label("Ctrl+/")),
+                        )
+                        .clicked()
+                        {
+                            app.actions.push(Action::ShowDialog(Dialog::Shortcuts));
+                        }
+                    });
+                });
+            }
         });
     // Toasts sit above the composer so they never cover its buttons.
     ui.ctx()
         .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
 }
 
+/// Corner radius of the composer's rounded field.
+const COMPOSER_RADIUS: u8 = 24;
+
+/// The rounded field that holds the composer's controls, or the recorder.
+fn composer_pill(palette: &Palette) -> Frame {
+    Frame::new()
+        .fill(palette.surface)
+        .corner_radius(CornerRadius::same(COMPOSER_RADIUS))
+        .shadow(egui::epaint::Shadow {
+            offset: [0, 0],
+            blur: 6,
+            spread: 0,
+            color: Color32::from_black_alpha(31),
+        })
+        .inner_margin(Margin::symmetric(8, 5))
+}
+
 /// The plus menu beside the composer: send files or create a poll.
-fn composer_tools_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, plus: &egui::Response) {
+fn composer_tools_menu(app: &mut App, chat: &Chat, plus: &egui::Response) {
     let id = plus.id.with("composer-tools");
     let mut open = app.composer_tools_open;
     let picker_open = app.picker.is_some();
-    let keyboard_activate = ui.memory(|memory| memory.has_focus(plus.id))
-        && ui.input(|input| input.key_pressed(Key::Enter) || input.key_pressed(Key::Space));
-    if plus.clicked() || keyboard_activate {
+    if plus.clicked() {
         open = !open;
         if open && picker_open {
             app.actions.push(Action::ClosePicker);
