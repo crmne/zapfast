@@ -1212,9 +1212,13 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 let hover = palette
                     .surface_hover
                     .lerp_to_gamma(palette.accent_hover, ready_factor);
-                let icon = palette
-                    .dim
-                    .lerp_to_gamma(palette.on_accent, ready_factor);
+                let icon = if ready {
+                    // The filled send glyph follows the composer icon
+                    // contrast: white in dark mode and black in light mode.
+                    composer_icon
+                } else {
+                    palette.dim.lerp_to_gamma(palette.on_accent, ready_factor)
+                };
                 if !ready && app.editing.is_none() {
                     // An empty composer changes the send button to record.
                     if theme::circle_button_sized(
@@ -1240,7 +1244,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     let icon_kind = if app.editing.is_some() {
                         Icon::Check
                     } else {
-                        Icon::Send
+                        Icon::SendFilled
                     };
                     if theme::circle_button_sized(
                         ui,
@@ -1251,7 +1255,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             fill,
                             fill_hover: hover,
                             icon,
-                            hover_icon: (icon_kind == Icon::Send).then_some(Icon::SendFilled),
+                            hover_icon: None,
                             tooltip: None,
                         },
                         "Send",

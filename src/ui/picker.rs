@@ -56,13 +56,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         return;
     };
     let screen = ctx.content_rect();
-    let x = anchor
-        .left()
-        .clamp(screen.left() + 8.0, (screen.right() - WIDTH - 8.0).max(8.0));
-    let y = (anchor.top() - HEIGHT - 10.0).max(screen.top() + 8.0);
+    let outer_width = WIDTH + f32::from(FRAME_MARGIN) * 2.0;
+    let outer_height = HEIGHT + f32::from(FRAME_MARGIN) * 2.0;
+    // Keep the picker centered on the smiley button, like the desktop client,
+    // while clamping the full framed popup to the available screen.
+    let pos = place_picker(screen, Some(anchor), outer_width, outer_height);
     let motion = picker_motion;
     let area = egui::Area::new(egui::Id::new("picker"))
-        .fixed_pos(pos2(x, y))
+        .fixed_pos(pos)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             Frame::new()
@@ -230,7 +231,7 @@ fn rows_for(
 fn place_picker(screen: Rect, anchor: Option<Rect>, width: f32, height: f32) -> egui::Pos2 {
     let max_x = (screen.right() - width - 8.0).max(screen.left() + 8.0);
     let x = match anchor {
-        Some(anchor) => anchor.left().clamp(screen.left() + 8.0, max_x),
+        Some(anchor) => (anchor.center().x - width / 2.0).clamp(screen.left() + 8.0, max_x),
         None => (screen.center().x - width / 2.0).clamp(screen.left() + 8.0, max_x),
     };
     let y = match anchor {
