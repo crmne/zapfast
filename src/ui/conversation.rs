@@ -1263,10 +1263,12 @@ fn composer_tools_menu(app: &mut App, chat: &Chat, plus: &egui::Response) {
             .width(190.0)
             .frame(widgets::menu_frame(&app.palette))
             .show(|ui| {
-                if widgets::menu_item(ui, &app.palette, Some(Icon::Paperclip), "Send files") {
+                let send_files = crate::i18n::gettext(app.locale, "Send files");
+                if widgets::menu_item(ui, &app.palette, Some(Icon::Paperclip), &send_files) {
                     app.actions.push(Action::Attach);
                 }
-                if widgets::menu_item(ui, &app.palette, Some(Icon::ListChecks), "Create poll") {
+                let create_poll = crate::i18n::gettext(app.locale, "Create poll");
+                if widgets::menu_item(ui, &app.palette, Some(Icon::ListChecks), &create_poll) {
                     app.actions
                         .push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
                 }

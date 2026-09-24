@@ -3364,6 +3364,7 @@ impl App {
                     });
                 if let Some(text) = text {
                     self.editing = Some(id);
+                    self.composer_tools_open = false;
                     self.reply_to = None;
                     self.composer = text;
                     self.composer_mentions.clear();

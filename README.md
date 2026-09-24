@@ -83,7 +83,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   message text include readable labels. Windows NVDA navigation still needs
   platform verification; keyboard and screen-reader support is not complete.
   In the chat view, Tab cycles through the message input, send/voice button,
-  attachments, polls, emoji, profile, sidebar toggle, New chat, Settings, search,
+  the plus menu, emoji, profile, sidebar toggle, New chat, Settings, search,
   and chat filters, then returns to the input. Shift+Tab reverses that order;
   hidden controls are skipped. Messages, reactions and chat rows are not stops
   in this cycle; Alt+Up/Down switches conversations. Menus, dialogs and Settings
@@ -114,8 +114,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   seconds. Error messages stay above the composer until you dismiss them, and
   a button copies their text for a bug report. A repeated error replaces its
   earlier copy, and only the three newest are kept.
-- **Send attachments with captions.** Paste a picture, drop files, or use the
-  file picker. They stay in the composer until you send them or press Escape.
+- **Send attachments with captions.** Paste a picture, drop files, or choose
+  **Send files** from the plus menu. They stay in the composer until you send them or press Escape.
   Pasting a picture uses its image data without adding the source URL or HTML
   to your caption. Text-only clipboard contents still paste as text.
   MP3, M4A, AAC, and OGG files go as audio messages; other audio, such as
@@ -193,8 +193,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   retry error if they cannot finish; the menu disables Download while one is running.
   Cached attachment filenames use extensions of at most 16 ASCII letters, digits,
   or hyphens; invalid or empty extensions are saved as `.bin`.
-- **Polls.** Use the checklist button beside the paperclip to create a poll with
-  2–12 answers. Turn off **Allow multiple answers** for a single-choice poll.
+- **Polls.** Choose **Create poll** from the plus menu beside the message
+  field to create a poll with 2–12 answers. Turn off **Allow multiple
+  answers** for a single-choice poll.
   Click an answer in a poll to vote; click a selected answer again to remove
   it. Each option shows a result bar and a checkmark for your selection.
   **Show votes** lists participants and vote times, updating as votes arrive.

@@ -6254,6 +6254,108 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_plus_menu_sends_files_or_creates_a_poll_and_closes() {
+        let click = |app: &mut App, ctx: &egui::Context, pos: egui::Pos2| {
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(app, ctx, vec![egui::Event::PointerMoved(pos), press(true)]);
+            frame_with(app, ctx, vec![press(false)]);
+            render(app, ctx);
+        };
+        let plus = |ctx: &egui::Context| {
+            let id = crate::ui::focus::stops(ctx)
+                .into_iter()
+                .find(|(stop, _)| *stop == crate::ui::focus::Stop::Attach)
+                .map(|(_, id)| id)
+                .expect("the plus button is a tab stop");
+            (id, ctx.read_response(id).unwrap().rect.center())
+        };
+        // Row 0 sends files, row 1 creates a poll.
+        for row in [0.0, 1.0] {
+            let mut app = app();
+            app.settings.show_shortcut_hints = false;
+            let chat = app.open_chat.clone().unwrap();
+            app.backend.record_demo_commands();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let (id, center) = plus(&ctx);
+            click(&mut app, &ctx, center);
+            assert!(app.composer_tools_open, "the plus button opens the menu");
+            let menu = ctx
+                .memory(|memory| memory.area_rect(id.with("composer-tools")))
+                .expect("the menu is shown");
+            assert!(
+                menu.bottom() <= center.y,
+                "the menu opens above the composer"
+            );
+            let item = egui::pos2(
+                menu.center().x,
+                menu.top() + menu.height() * (1.0 + 2.0 * row) / 4.0,
+            );
+            click(&mut app, &ctx, item);
+            assert!(
+                !app.composer_tools_open,
+                "choosing an entry closes the menu"
+            );
+            let commands = app.backend.take_demo_commands();
+            let picked = commands.iter().any(
+                |command| matches!(command, crate::backend::Command::PickFiles(id) if *id == chat),
+            );
+            if row == 0.0 {
+                assert!(picked, "Send files opens the file picker");
+                assert_eq!(app.dialog, None);
+            } else {
+                assert!(!picked);
+                assert_eq!(app.dialog, Some(crate::model::Dialog::CreatePoll(chat)));
+            }
+        }
+    }
+
+    #[test]
+    fn the_plus_menu_closes_for_the_picker_and_is_hidden_while_editing() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.actions
+            .push(crate::model::Action::SetComposerTools(true));
+        render(&mut app, &ctx);
+        assert!(app.composer_tools_open);
+        app.actions.push(crate::model::Action::TogglePicker(
+            crate::model::PickerTab::Emoji,
+        ));
+        render(&mut app, &ctx);
+        assert!(!app.composer_tools_open, "the emoji picker closes the menu");
+        assert!(app.picker.is_some());
+        app.actions
+            .push(crate::model::Action::SetComposerTools(true));
+        render(&mut app, &ctx);
+        assert!(app.picker.is_none(), "the menu closes the emoji picker");
+        let own = app.conversations[app.open_chat.as_deref().unwrap()]
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.from_me && matches!(message.content, Content::Text { .. }))
+            .map(|message| message.id.clone())
+            .expect("an own text message to edit");
+        assert!(app.composer_tools_open);
+        app.actions.push(crate::model::Action::Edit(own));
+        render(&mut app, &ctx);
+        assert!(app.editing.is_some());
+        assert!(!app.composer_tools_open, "editing closes the menu");
+        assert!(
+            !crate::ui::focus::stops(&ctx)
+                .iter()
+                .any(|(stop, _)| *stop == crate::ui::focus::Stop::Attach),
+            "editing hides the plus button"
+        );
+    }
+
     fn focused_stop(ctx: &egui::Context) -> Option<crate::ui::focus::Stop> {
         let focused = ctx.memory(|memory| memory.focused());
         crate::ui::focus::stops(ctx)
