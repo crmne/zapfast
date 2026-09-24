@@ -5797,7 +5797,7 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
                 .circle_filled(dot.center(), 5.0, palette.danger.gamma_multiply(pulse));
             if theme::circle_button(
                 ui,
-                Icon::Trash,
+                Icon::Delete,
                 button,
                 palette.surface,
                 palette.surface_hover,
