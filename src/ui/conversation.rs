@@ -562,17 +562,20 @@ fn take_plain_key(ui: &mut egui::Ui, key: Key) -> bool {
 /// Slack-style emoji suggestions above the composer. The composer keeps
 /// focus, so ordinary typing continues refining the query.
 fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
+    let motion_id = field.with("emoji-suggestions-motion");
     let cursor = egui::TextEdit::load_state(ui.ctx(), field)
         .and_then(|state| state.cursor.char_range())
         .map(|range| range.primary.index.0)
         .unwrap_or_else(|| app.composer.chars().count());
     let Some((end, query)) = active_emoji(&app.composer, app.emoji_start, cursor) else {
         app.emoji_start = None;
+        ui_animation::popup_motion(ui.ctx(), motion_id, false);
         return;
     };
     let start = app.emoji_start.expect("checked above");
     let candidates = emoji_candidates(app, query);
     if candidates.is_empty() {
+        ui_animation::popup_motion(ui.ctx(), motion_id, false);
         return;
     }
 
@@ -588,7 +591,7 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
     let submit = take_plain_key(ui, Key::Enter) || take_plain_key(ui, Key::Tab);
     let mut picked = submit.then(|| candidates[app.emoji_selected].clone());
     let palette = app.palette;
-    let motion = ui_animation::popup_motion(ui.ctx(), field.with("emoji-suggestions-motion"), true);
+    let motion = ui_animation::popup_motion(ui.ctx(), motion_id, true);
 
     ui.add_space(4.0);
     let panel = Frame::new()
@@ -683,17 +686,20 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
 
 /// Group-member suggestions above the composer.
 fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id) {
+    let motion_id = field.with("mention-suggestions-motion");
     let cursor = egui::TextEdit::load_state(ui.ctx(), field)
         .and_then(|state| state.cursor.char_range())
         .map(|range| range.primary.index.0)
         .unwrap_or_else(|| app.composer.chars().count());
     let Some((end, query)) = active_mention(&app.composer, app.mention_start, cursor) else {
         app.mention_start = None;
+        ui_animation::popup_motion(ui.ctx(), motion_id, false);
         return;
     };
     let start = app.mention_start.expect("checked above");
     let candidates = app.mention_candidates(chat, query);
     if candidates.is_empty() {
+        ui_animation::popup_motion(ui.ctx(), motion_id, false);
         return;
     }
     let down = take_plain_key(ui, Key::ArrowDown);
@@ -708,8 +714,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     let submit = take_plain_key(ui, Key::Enter) || take_plain_key(ui, Key::Tab);
     let mut picked = submit.then(|| candidates[app.mention_selected].clone());
     let palette = app.palette;
-    let motion =
-        ui_animation::popup_motion(ui.ctx(), field.with("mention-suggestions-motion"), true);
+    let motion = ui_animation::popup_motion(ui.ctx(), motion_id, true);
 
     ui.add_space(4.0);
     let panel = Frame::new()
@@ -1237,7 +1242,20 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     } else {
                         Icon::Send
                     };
-                    if theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
+                    if theme::circle_button_sized(
+                        ui,
+                        icon_kind,
+                        button_width,
+                        button_width * 0.46,
+                        theme::CircleButtonColors {
+                            fill,
+                            fill_hover: hover,
+                            icon,
+                            hover_icon: (icon_kind == Icon::Send).then_some(Icon::SendFilled),
+                            tooltip: None,
+                        },
+                        "Send",
+                    )
                         .tab_stop(Stop::Send)
                         .clicked()
                     {

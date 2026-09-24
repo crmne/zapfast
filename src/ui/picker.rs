@@ -39,6 +39,15 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         reaction_picker(app, ctx);
         return;
     }
+    ui_animation::popup_motion(ctx, egui::Id::new("reaction-picker-motion"), false);
+    let picker_motion =
+        ui_animation::popup_motion(ctx, egui::Id::new("picker-motion"), app.picker.is_some());
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new("picker-motion-opacity"),
+            picker_motion.opacity,
+        )
+    });
     let Some(tab) = app.picker else {
         return;
     };
@@ -51,7 +60,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .left()
         .clamp(screen.left() + 8.0, (screen.right() - WIDTH - 8.0).max(8.0));
     let y = (anchor.top() - HEIGHT - 10.0).max(screen.top() + 8.0);
-    let motion = ui_animation::popup_motion(ctx, egui::Id::new("picker-motion"), true);
+    let motion = picker_motion;
     let area = egui::Area::new(egui::Id::new("picker"))
         .fixed_pos(pos2(x, y))
         .order(egui::Order::Foreground)
@@ -397,6 +406,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
         .and_then(|conversation| conversation.message(&message))
         .map(|message| (app.display_name(&message.sender), message.content.summary()));
     let motion = ui_animation::popup_motion(ctx, egui::Id::new("reaction-picker-motion"), true);
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("picker-motion-opacity"), motion.opacity));
     let area = egui::Area::new(egui::Id::new("reaction-picker"))
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
@@ -604,9 +614,14 @@ fn emoji_grid(
     scroll_salt: &'static str,
     recent_label: &'static str,
 ) -> Option<String> {
-    let newly_opened = app.picker_focus;
-    let search_active =
-        app.picker_focus || ui.memory(|memory| memory.has_focus(egui::Id::new(search_id)));
+    let animation_ready = ui.ctx().data(|data| {
+        data.get_temp::<f32>(egui::Id::new("picker-motion-opacity"))
+            .unwrap_or(1.0)
+            >= 0.99
+    });
+    let newly_opened = app.picker_focus && animation_ready;
+    let search_active = (app.picker_focus && animation_ready)
+        || ui.memory(|memory| memory.has_focus(egui::Id::new(search_id)));
     let movement = search_active
         .then(|| {
             [
@@ -627,7 +642,7 @@ fn emoji_grid(
         app.picker_search = search;
         app.emoji_selected = 0;
     }
-    if app.picker_focus {
+    if app.picker_focus && animation_ready {
         app.picker_focus = false;
         response.request_focus();
     }

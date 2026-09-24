@@ -70,20 +70,25 @@ pub fn whatsapp_bounce(t: f32) -> f32 {
 
 /// Animate a popup's opacity and scale from its stable id.
 pub fn popup_motion(ctx: &Context, id: Id, target: bool) -> PopupMotion {
-    let initialized = ctx.data(|data| {
-        data.get_temp::<bool>(id.with("popup-motion-initialized"))
-            .unwrap_or(false)
-    });
-    if !initialized {
-        ctx.data_mut(|data| {
-            data.insert_temp(id.with("popup-motion-initialized"), true);
+    let state_id = id.with("popup-motion-state");
+    let (target_changed, generation) =
+        ctx.data(|data| match data.get_temp::<(bool, u64)>(state_id) {
+            Some((previous, generation)) if previous == target => (false, generation),
+            Some((_, generation)) => (true, generation.saturating_add(1)),
+            None => (true, 0),
         });
-        // egui's first animate_value call returns its target immediately.
-        // Seed the popup at rest before asking for the real target so its
-        // first visible frame can actually animate in.
-        let _ = value(ctx, id, 0.0);
+    if target_changed {
+        ctx.data_mut(|data| data.insert_temp(state_id, (target, generation)));
     }
-    let progress = value(ctx, id, f32::from(target));
+    let motion_id = id.with(("popup-motion", generation));
+    if target_changed {
+        // egui's first animate_value call returns its target immediately.
+        // Seed each new generation at the opposite endpoint so both entering
+        // and leaving transitions have a visible first frame. A new
+        // generation is used on every reopen.
+        let _ = value(ctx, motion_id, f32::from(!target));
+    }
+    let progress = value(ctx, motion_id, f32::from(target));
     let opacity = whatsapp_ease(progress);
     let scale =
         WHATSAPP_POPUP_SCALE_START + (1.0 - WHATSAPP_POPUP_SCALE_START) * whatsapp_bounce(progress);
