@@ -18,6 +18,7 @@ pub mod image_preview;
 pub mod macos;
 pub mod markup;
 pub mod media_pause;
+pub mod memory;
 pub mod model;
 pub mod notify;
 pub mod paths;

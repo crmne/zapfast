@@ -1367,6 +1367,37 @@ struct View<'a> {
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
 }
 
+/// A row height to assume for a message that has not been laid out yet. Rows
+/// near the viewport are always measured, so this only shapes the scrollbar
+/// and the position of far-away rows until they come into range.
+fn estimated_advance(message: &Message, width: f32) -> f32 {
+    use crate::model::Content;
+    let text_rows = |text: &str| {
+        let per_row = (width / 7.5).max(8.0);
+        (text.chars().count() as f32 / per_row).ceil().max(1.0)
+    };
+    let caption_rows = |caption: &Option<String>| {
+        caption
+            .as_deref()
+            .map_or(0.0, |caption| text_rows(caption) * 19.0)
+    };
+    let body = match &message.content {
+        Content::Text { text, preview } => {
+            text_rows(text) * 19.0 + if preview.is_some() { 60.0 } else { 0.0 }
+        }
+        Content::Interactive { text, .. } => text_rows(text) * 19.0 + 60.0,
+        Content::Image { caption, .. } | Content::Video { caption, .. } => {
+            200.0 + caption_rows(caption)
+        }
+        Content::Document { caption, .. } => 70.0 + caption_rows(caption),
+        Content::Sticker { .. } => 140.0,
+        Content::Audio { .. } => 60.0,
+        _ => 40.0,
+    };
+    // Bubble padding, the sender line, and the row spacing.
+    40.0 + body
+}
+
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     // Check out the conversation while drawing rows and collecting actions.
@@ -1458,6 +1489,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // Do not animate programmatic scrolling. Pending animations can delay a
     // later request to reach the end.
     let mut edge_scrolled_up = false;
+    // Rows outside the viewport are skipped rather than laid out. Their height
+    // from an earlier frame keeps the scroll position honest, so a long
+    // history costs a few visible rows instead of every loaded one. Wrapping
+    // depends on the width, which invalidates every cached height.
+    let layout_width = ui.available_width();
+    if (conversation.heights_width - layout_width).abs() >= 1.0 {
+        conversation.heights.clear();
+        conversation.heights_width = layout_width;
+    }
+    let mut heights = std::mem::take(&mut conversation.heights);
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
@@ -1505,7 +1546,30 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     ui.spacing_mut().item_spacing.y = 3.0;
                     top_of_history(ui, &palette, &conversation, chat, &mut actions);
                     let mut previous: Option<&Message> = None;
+                    // Rows within a few viewports of the screen are laid out
+                    // and their height remembered. Rows further away cost only
+                    // an estimate, so a long history never lays out more than
+                    // the window it is about to show.
+                    let measure_margin = (viewport.height() * 3.0).max(600.0);
                     for message in &conversation.messages {
+                        let before = ui.cursor().top();
+                        let reach = match heights.get(&message.id).copied() {
+                            Some(reach) => reach,
+                            None => {
+                                let estimate = estimated_advance(message, layout_width);
+                                heights.insert(message.id.clone(), estimate);
+                                estimate
+                            }
+                        };
+                        let keep = view.anchor == Some(message.id.as_str())
+                            || divider.as_ref().is_some_and(|(id, ..)| id == &message.id);
+                        let near = before + reach >= viewport.top() - measure_margin
+                            && before <= viewport.bottom() + measure_margin;
+                        if !keep && !near {
+                            ui.add_space(reach);
+                            previous = Some(message);
+                            continue;
+                        }
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
                                 != crate::util::day_key(message.timestamp)
@@ -1610,6 +1674,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             response.scroll_to_me(Some(Align::Center));
                             anchored = true;
                         }
+                        heights.insert(message.id.clone(), ui.cursor().top() - before);
                         previous = Some(message);
                     }
                     if !typing.is_empty() {
@@ -1650,6 +1715,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let loading = conversation.loading_older;
     let fetching = conversation.fetching_phone;
     let exhausted = conversation.phone_exhausted;
+    conversation.heights = heights;
     app.conversations
         .insert(chat.id.clone(), std::mem::take(&mut conversation));
     app.at_bottom = at_bottom;

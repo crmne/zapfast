@@ -24,6 +24,9 @@ use crate::tray::{TrayCommand, TrayService};
 
 /// Initial and incremental message-page size.
 pub const PAGE: usize = 60;
+/// Loaded-message cap per conversation. Once a chat grows past this the oldest
+/// rows fall out; scrolling back up reads them from the archive again.
+const MAX_LOADED: usize = 1200;
 /// Minimum delay between phone history requests.
 const PHONE_COOLDOWN: Duration = Duration::from_secs(6);
 /// WhatsApp message-edit window.
@@ -76,6 +79,11 @@ pub struct Conversation {
     pub phone_misses: u32,
     /// Whether messages arrived after the latest phone request.
     pub phone_delivered: bool,
+    /// Height each row took last frame, so rows outside the viewport can be
+    /// skipped instead of laid out. Keyed by message id.
+    pub(crate) heights: HashMap<String, f32>,
+    /// Width the heights were measured at. Wrapping changes with it.
+    pub(crate) heights_width: f32,
 }
 
 impl Conversation {
@@ -126,6 +134,19 @@ impl Conversation {
 
     pub fn message(&self, id: &str) -> Option<&Message> {
         self.messages.iter().find(|message| message.id == id)
+    }
+
+    /// Drops the oldest loaded messages once the chat exceeds `max`, so an
+    /// intense conversation does not grow without bound. The archive still
+    /// holds them, so scrolling back up reads them again.
+    fn trim_oldest(&mut self, max: usize) {
+        if self.messages.len() <= max {
+            return;
+        }
+        let drop = self.messages.len() - max;
+        for message in self.messages.drain(..drop) {
+            self.heights.remove(&message.id);
+        }
     }
 }
 
@@ -1595,12 +1616,19 @@ impl App {
                     older,
                     complete,
                 } => {
+                    // Bound a busy chat: once it grows past the cap the oldest
+                    // rows fall out. Never while the reader is away from the
+                    // end, so nothing in view disappears under them.
+                    let at_end = self.at_bottom || self.open_chat.as_deref() != Some(chat.as_str());
                     let conversation = self.conversations.entry(chat.clone()).or_default();
                     let was_empty = conversation.messages.is_empty();
                     if older && !messages.is_empty() {
                         conversation.phone_delivered = true;
                     }
                     conversation.merge(messages, older);
+                    if !older && at_end {
+                        conversation.trim_oldest(MAX_LOADED);
+                    }
                     if older {
                         conversation.loading_older = false;
                         conversation.complete = complete;
@@ -2118,6 +2146,7 @@ impl App {
         conversation
             .messages
             .retain(|message| message.timestamp > through);
+        conversation.heights.clear();
         conversation.requested = true;
         conversation.complete = true;
         conversation.phone_exhausted = true;
@@ -4607,6 +4636,9 @@ impl App {
         self.apply_actions(ctx);
         // Release the image caches of everything that scrolled away.
         crate::image_cache::sweep(ctx);
+        // Hand freed heap pages back, so a busy spell does not leave the
+        // process at its high-water mark for the rest of the session.
+        crate::memory::trim_periodically();
         // Only fading info toasts animate. Errors wait for the reader.
         if self
             .toasts
@@ -6536,6 +6568,27 @@ mod tests {
             .expect("still present");
         assert_eq!(media.path, Some(relocated));
         assert_eq!(media.state, MediaState::Idle);
+    }
+
+    #[test]
+    fn a_busy_chat_drops_its_oldest_loaded_messages() {
+        let mut conversation = Conversation::default();
+        let chat = "fixture@s.whatsapp.net";
+        conversation.merge(
+            (0..MAX_LOADED as i64 + 50)
+                .map(|index| message(chat, &format!("m{index}"), index))
+                .collect(),
+            false,
+        );
+        conversation.trim_oldest(MAX_LOADED);
+        assert_eq!(conversation.messages.len(), MAX_LOADED);
+        // The newest rows survive; the oldest are gone and read again on scroll.
+        assert!(conversation.message("m49").is_none());
+        assert!(
+            conversation
+                .message(&format!("m{}", MAX_LOADED + 49))
+                .is_some()
+        );
     }
 
     #[test]
