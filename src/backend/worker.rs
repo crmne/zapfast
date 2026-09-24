@@ -50,6 +50,7 @@ use crate::model::{
     LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
 };
 use crate::paths::AppDirs;
+use crate::privacy::{self, PrivacyChoice, PrivacyKind};
 
 /// Delay after the last history chunk before sync is complete.
 const SYNC_QUIET: Duration = Duration::from_secs(20);
@@ -279,6 +280,30 @@ fn account_allows_receipts(
         settings.get_value(&PrivacyCategory::ReadReceipts),
         Some(PrivacyValue::All)
     )
+}
+
+/// Fetches the account privacy snapshot and hands it to the interface. A
+/// failed fetch is reported as such: the rows stay disabled rather than
+/// showing an invented value.
+async fn publish_account_privacy(client: &Client, commands: &mpsc::UnboundedSender<Command>) {
+    match client.fetch_privacy_settings().await {
+        Ok(settings) => {
+            let disabled = !account_allows_receipts(&settings);
+            let values = privacy::values_from_response(&settings);
+            let _ = commands.send(Command::AccountPrivacy {
+                values,
+                failed: false,
+            });
+            let _ = commands.send(Command::ReceiptsPrivacy { disabled });
+        }
+        Err(error) => {
+            log::debug!("privacy settings not fetched: {error}");
+            let _ = commands.send(Command::AccountPrivacy {
+                values: Vec::new(),
+                failed: true,
+            });
+        }
+    }
 }
 
 /// The library's persisted privacy value is refreshed during connection setup,
@@ -1623,6 +1648,30 @@ impl Worker {
         id.parse().ok()
     }
 
+    fn set_account_privacy(&self, kind: PrivacyKind, choice: PrivacyChoice) {
+        let Some((category, value)) = privacy::wire_set(kind, choice) else {
+            let _ = self.commands.send(Command::AccountPrivacyFailed { kind });
+            return;
+        };
+        let Some(client) = self.client.clone() else {
+            self.emit(Event::Error("Not connected to WhatsApp".into()));
+            let _ = self.commands.send(Command::AccountPrivacyFailed { kind });
+            return;
+        };
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            match client.set_privacy_setting(category, value).await {
+                Ok(_) => {
+                    let _ = commands.send(Command::AccountPrivacySaved { kind });
+                }
+                Err(error) => {
+                    log::debug!("privacy setting not written: {error}");
+                    let _ = commands.send(Command::AccountPrivacyFailed { kind });
+                }
+            }
+        });
+    }
+
     // --- names -----------------------------------------------------------
 
     fn contact_name(&self, id: &str) -> Option<String> {
@@ -1981,14 +2030,7 @@ impl Worker {
                         }
                     });
                     tokio::spawn(async move {
-                        // whatsapp-rust also enforces the account privacy setting.
-                        match client.fetch_privacy_settings().await {
-                            Ok(settings) => {
-                                let disabled = !account_allows_receipts(&settings);
-                                let _ = commands.send(Command::ReceiptsPrivacy { disabled });
-                            }
-                            Err(error) => log::debug!("privacy settings not fetched: {error}"),
-                        }
+                        publish_account_privacy(&client, &commands).await;
                         if let Some(me) = me {
                             match client
                                 .contacts()
@@ -3964,7 +4006,12 @@ impl Worker {
             Command::FetchOlder(chat) => self.fetch_older(chat),
             Command::LoadUntil { chat, id, before } => self.load_until(chat, id, before),
             Command::SearchMessages { query } => self.search_messages(query),
-            Command::SearchChatMessages { chat, query } => self.search_chat_messages(chat, query),
+            Command::SearchChatMessages {
+                chat,
+                query,
+                from,
+                until,
+            } => self.search_chat_messages(chat, query, from, until),
             Command::EnsureChat { chat, name } => {
                 let is_new = self.archive.chat(&chat).ok().flatten().is_none();
                 if let Err(error) = self.archive.ensure_chat(&chat, &name) {
@@ -4449,6 +4496,25 @@ impl Worker {
             }
             Command::ReceiptsPrivacy { disabled } => {
                 self.emit(Event::ReceiptsPrivacy { disabled });
+            }
+            Command::AccountPrivacy { values, failed } => {
+                self.emit(Event::AccountPrivacy { values, failed });
+            }
+            Command::FetchAccountPrivacy => {
+                if let Some(client) = self.client.clone() {
+                    let commands = self.commands.clone();
+                    tokio::spawn(async move {
+                        publish_account_privacy(&client, &commands).await;
+                    });
+                }
+            }
+            Command::SetAccountPrivacy { kind, choice } => self.set_account_privacy(kind, choice),
+            Command::AccountPrivacySaved { kind } => {
+                self.emit(Event::AccountPrivacySaved { kind });
+            }
+            Command::AccountPrivacyFailed { kind } => {
+                self.emit(Event::AccountPrivacyFailed { kind });
+                self.emit(Event::Error("Could not update privacy settings.".into()));
             }
             Command::SetOnline(online) => self.set_online(online),
             // Only meaningful while the archive cannot be opened.
@@ -5853,10 +5919,42 @@ impl Worker {
         }
     }
 
-    /// Answers the open chat's search bar with the ids of its matches.
-    fn search_chat_messages(&mut self, chat: ChatId, query: String) {
-        match self.archive.search_chat_messages(&chat, &query, 200) {
-            Ok(ids) => self.emit(Event::ChatHits { chat, query, ids }),
+    /// How many in-chat matches the pane lists. One more is asked for, so a
+    /// full page can be told apart from a truncated one.
+    const CHAT_SEARCH_LIMIT: usize = 80;
+
+    /// Answers the in-chat search with its matches.
+    fn search_chat_messages(
+        &mut self,
+        chat: ChatId,
+        query: String,
+        from: Option<i64>,
+        until: Option<i64>,
+    ) {
+        match self.archive.search_chat_messages(
+            &chat,
+            &query,
+            from,
+            until,
+            Self::CHAT_SEARCH_LIMIT + 1,
+        ) {
+            Ok(mut messages) => {
+                // The extra row is not shown: it is how the pane learns the
+                // archive held more, so it can say the list was cut.
+                let truncated = messages.len() > Self::CHAT_SEARCH_LIMIT;
+                messages.truncate(Self::CHAT_SEARCH_LIMIT);
+                for message in &mut messages {
+                    self.polish(message);
+                }
+                self.emit(Event::ChatHits {
+                    chat,
+                    query,
+                    from,
+                    until,
+                    messages,
+                    truncated,
+                });
+            }
             Err(error) => self.emit(Event::Error(format!("Could not search: {error}"))),
         }
     }

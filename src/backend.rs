@@ -228,10 +228,12 @@ pub enum Command {
     SearchMessages {
         query: String,
     },
-    /// Searches the messages of one chat, for its own search bar.
+    /// Searches one chat, optionally inside a Unix-second day range.
     SearchChatMessages {
         chat: ChatId,
         query: String,
+        from: Option<i64>,
+        until: Option<i64>,
     },
     /// Creates an archive chat before its first message is sent.
     EnsureChat {
@@ -615,6 +617,26 @@ pub enum Command {
     ReceiptsPrivacy {
         disabled: bool,
     },
+    /// Full account privacy snapshot, or a failed fetch.
+    AccountPrivacy {
+        values: Vec<(crate::privacy::PrivacyKind, crate::privacy::PrivacyChoice)>,
+        failed: bool,
+    },
+    /// Asks the phone for the account privacy snapshot again.
+    FetchAccountPrivacy,
+    /// Writes one account privacy category on the phone.
+    SetAccountPrivacy {
+        kind: crate::privacy::PrivacyKind,
+        choice: crate::privacy::PrivacyChoice,
+    },
+    /// A confirmed SET for one category.
+    AccountPrivacySaved {
+        kind: crate::privacy::PrivacyKind,
+    },
+    /// A failed SET; the interface restores the last snapshot.
+    AccountPrivacyFailed {
+        kind: crate::privacy::PrivacyKind,
+    },
     /// Internal: followed channels and whether each is muted on the server.
     ChannelMutes(Vec<(String, bool)>),
     /// Looks up the group behind an invite code without joining.
@@ -670,11 +692,17 @@ pub enum Event {
     Labels(Vec<crate::model::Label>),
     /// Unsent text stored for each chat, sent once at startup.
     Drafts(Vec<(ChatId, String)>),
-    /// Message ids in one chat matching a search, oldest first.
+    /// Messages in one chat matching a search, newest first, echoing the
+    /// query and range asked for so a stale answer can be told apart.
     ChatHits {
         chat: ChatId,
         query: String,
-        ids: Vec<String>,
+        from: Option<i64>,
+        until: Option<i64>,
+        messages: Vec<Message>,
+        /// Whether the archive held more matches than `messages` carries, so
+        /// the pane can say so instead of dropping them silently.
+        truncated: bool,
     },
     ChatUpdated(Box<Chat>),
     /// Chat messages in ascending order. `older` prepends them; `complete`
@@ -772,6 +800,19 @@ pub enum Event {
     /// Whether account privacy disables direct-chat read receipts.
     ReceiptsPrivacy {
         disabled: bool,
+    },
+    /// Account privacy snapshot from the phone, or a failed fetch.
+    AccountPrivacy {
+        values: Vec<(crate::privacy::PrivacyKind, crate::privacy::PrivacyChoice)>,
+        failed: bool,
+    },
+    /// A confirmed SET for one category.
+    AccountPrivacySaved {
+        kind: crate::privacy::PrivacyKind,
+    },
+    /// A failed SET.
+    AccountPrivacyFailed {
+        kind: crate::privacy::PrivacyKind,
     },
     /// How many chats this account may pin: more with WhatsApp Plus.
     PinLimit(usize),

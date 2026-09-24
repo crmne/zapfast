@@ -7,6 +7,7 @@ use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Stroke, Vec2, pos2,
 use crate::app::App;
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
+use crate::privacy::{PrivacyChoice, PrivacyKind};
 use crate::settings::{Settings, ThemeChoice, WallpaperColor};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
@@ -348,17 +349,6 @@ fn sections(app: &App) -> Vec<Section> {
         "When off, Enter adds a line and Ctrl+Enter sends.",
         |settings| &mut settings.enter_sends,
     );
-    let receipts_note = if app.account_receipts_off {
-        "Read receipts are disabled for your WhatsApp account. Direct chats will not send them. When this switch is on, groups still do. Read state syncs between your devices either way."
-    } else {
-        "Let people see when you read messages or play voice messages. Your WhatsApp privacy setting still applies. Read state syncs between your devices either way."
-    };
-    chats.toggle("Send read receipts", receipts_note, |settings| {
-        &mut settings.send_read_receipts
-    });
-    chats.toggle("Show when you are typing", "", |settings| {
-        &mut settings.send_typing
-    });
     chats.toggle(
         "Download attachments automatically",
         "Download non-sticker attachments up to 64 MiB when they enter view. Visible stickers also download automatically up to this limit. When off, click an attachment up to this limit to download it.",
@@ -441,6 +431,76 @@ fn sections(app: &App) -> Vec<Section> {
             ui.data_mut(|data| data.insert_temp(code_id, code));
         },
     );
+
+    let mut privacy = Section::new(translated(locale, "Privacy"));
+    let receipts_note = if app.account_receipts_off {
+        translated(
+            locale,
+            "Read receipts are off for your WhatsApp account (see Read receipts below). Direct chats will not send them. When this switch is on, groups still do. Read state syncs between your devices either way.",
+        )
+    } else {
+        translated(
+            locale,
+            "Let people see when you read messages or play voice messages here. The account setting below still applies. Read state syncs between your devices either way.",
+        )
+    };
+    privacy.toggle("Send read receipts", receipts_note, |settings| {
+        &mut settings.send_read_receipts
+    });
+    privacy.toggle("Show when you are typing", "", |settings| {
+        &mut settings.send_typing
+    });
+    // The account values live on the phone: they are shown once fetched and
+    // edited only while connected with a fresh snapshot.
+    let editable = app.is_connected() && app.account_privacy.editable();
+    let note = if app.account_privacy.fetch_failed {
+        Some(crate::i18n::gettext(
+            locale,
+            "Could not load your account privacy. It loads again when ZapFast reconnects.",
+        ))
+    } else if !app.is_connected() {
+        Some(crate::i18n::gettext(
+            locale,
+            "Connect to WhatsApp to see and change your account privacy.",
+        ))
+    } else if !app.account_privacy.loaded {
+        Some(crate::i18n::gettext(
+            locale,
+            "Loading your account privacy…",
+        ))
+    } else {
+        None
+    };
+    if let Some(note) = note {
+        privacy.block(Vec::new(), move |ui, _app| {
+            widgets::rich_text(ui, &note, theme::regular(12.5), palette.secondary);
+            ui.add_space(10.0);
+        });
+    }
+    for kind in PrivacyKind::ALL {
+        let Some(current) = app.account_privacy.get(kind) else {
+            continue;
+        };
+        let title = Text {
+            shown: kind.label(locale),
+            source: kind.label(Locale::English),
+        };
+        let mut description = Text {
+            shown: kind.hint(locale),
+            source: kind.hint(Locale::English),
+        };
+        // The people an Except list leaves out are chosen on the phone.
+        if current == PrivacyChoice::Except {
+            let note = translated(locale, "Change who is excluded on your phone.");
+            description = Text {
+                shown: format!("{} {}", description.shown, note.shown).into(),
+                source: format!("{} {}", description.source, note.source).into(),
+            };
+        }
+        privacy.row(title, description, move |ui, app| {
+            ui.add_enabled_ui(editable, |ui| privacy_control(ui, app, kind));
+        });
+    }
 
     let mut window = Section::new(translated(locale, "Window"));
     window.toggle(
@@ -629,6 +689,7 @@ fn sections(app: &App) -> Vec<Section> {
     vec![
         appearance,
         chats,
+        privacy,
         window,
         network,
         account_section,
@@ -1285,6 +1346,63 @@ fn sound_control(ui: &mut egui::Ui, app: &mut App, mention: bool) {
                 app.actions.push(Action::PickNotificationSound { mention });
             }
         });
+}
+
+/// One account privacy category's picker: what the phone holds, and the
+/// values it takes. While a write is in flight it is disabled, so a second
+/// pick cannot race the first.
+fn privacy_control(ui: &mut egui::Ui, app: &mut App, kind: PrivacyKind) {
+    let palette = app.palette;
+    let current = app.account_privacy.get(kind);
+    let locale = app.locale;
+    let selected = current.map_or(Cow::Borrowed("\u{2014}"), |choice| choice.label(locale));
+    let pending = app.account_privacy.pending(kind);
+    ui.add_enabled_ui(!pending, |ui| {
+        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+            let salt = format!("privacy_{}", kind.wire_name());
+            let response = egui::ComboBox::from_id_salt(salt)
+                .selected_text(" ")
+                .width(220.0_f32.min(ui.available_width()))
+                .show_ui(ui, |ui| {
+                    for choice in kind.choices() {
+                        if theme_option(
+                            ui,
+                            &palette,
+                            &choice.label(locale),
+                            current == Some(*choice),
+                        ) {
+                            app.actions.push(Action::SetAccountPrivacy {
+                                kind,
+                                choice: *choice,
+                            });
+                        }
+                    }
+                });
+            let rect = response.response.rect;
+            let text = widgets::line(
+                ui,
+                &selected,
+                theme::regular(14.0),
+                palette.text,
+                rect.width() - 36.0,
+                1,
+            );
+            text.paint(
+                ui,
+                egui::pos2(rect.left() + 8.0, rect.center().y - text.size().y / 2.0),
+                palette.text,
+            );
+            response.response.widget_info(|| {
+                let mut info = egui::WidgetInfo::labeled(
+                    egui::WidgetType::ComboBox,
+                    ui.is_enabled(),
+                    kind.label(locale),
+                );
+                info.current_text_value = Some(selected.to_string());
+                info
+            });
+        });
+    });
 }
 
 /// Theme filenames can contain emoji, so paint them through the shared line renderer.
