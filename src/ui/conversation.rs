@@ -1263,7 +1263,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         ui,
                         icon_kind,
                         button_width,
-                        button_width * 0.46,
+                        if app.editing.is_none() {
+                            24.0
+                        } else {
+                            button_width * 0.46
+                        },
                         theme::CircleButtonColors {
                             fill: button_fill,
                             fill_hover: button_hover,
