@@ -6454,6 +6454,49 @@ mod tests {
     }
 
     #[test]
+    fn brackets_are_text_in_the_composer_and_switch_chats_with_ctrl_shift() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let open = app.open_chat.clone().expect("the demo opens a chat");
+        // Plain and shifted brackets are text for the focused composer.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![
+                key(egui::Key::CloseBracket, egui::Modifiers::NONE),
+                egui::Event::Text("]".into()),
+                key(egui::Key::CloseCurlyBracket, egui::Modifiers::SHIFT),
+                egui::Event::Text("}".into()),
+            ],
+        );
+        assert_eq!(app.composer, "]}");
+        assert_eq!(app.open_chat.as_deref(), Some(open.as_str()));
+        // With Ctrl+Shift the same key steps to the next chat and the input
+        // keeps the focus, as Alt+Down does.
+        let next = {
+            let visible = app.visible_chats();
+            let at = visible
+                .iter()
+                .position(|chat| chat.id == open)
+                .expect("the open chat is listed");
+            visible[(at + 1) % visible.len()].id.clone()
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(
+                egui::Key::CloseCurlyBracket,
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            )],
+        );
+        assert_eq!(app.open_chat.as_deref(), Some(next.as_str()));
+        render(&mut app, &ctx);
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+    }
+
+    #[test]
     fn a_quote_bar_takes_the_quoted_senders_colour() {
         let mut app = app();
         apply_flags(&mut app, Some("quotes"));

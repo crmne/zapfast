@@ -127,11 +127,22 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     {
         actions.push(Action::SendRecording);
     }
-    // Alt+Up/Down switches chats without leaving the composer.
+    // Alt+Up/Down switches chats without leaving the composer, and so do
+    // Ctrl+Shift+[ and Ctrl+Shift+], WhatsApp's own keys. With Shift held,
+    // US-style layouts report the brackets as braces, so both spellings
+    // count; a layout with another character on the shifted key has Alt.
     let step = ctx.input_mut(|input| {
-        if input.consume_key(Modifiers::ALT, Key::ArrowDown) {
+        let brackets = Modifiers::COMMAND | Modifiers::SHIFT;
+        let mut pressed = |modifiers: Modifiers, keys: &[Key]| {
+            keys.iter().any(|key| input.consume_key(modifiers, *key))
+        };
+        if pressed(Modifiers::ALT, &[Key::ArrowDown])
+            || pressed(brackets, &[Key::CloseBracket, Key::CloseCurlyBracket])
+        {
             1
-        } else if input.consume_key(Modifiers::ALT, Key::ArrowUp) {
+        } else if pressed(Modifiers::ALT, &[Key::ArrowUp])
+            || pressed(brackets, &[Key::OpenBracket, Key::OpenCurlyBracket])
+        {
             -1
         } else {
             0
@@ -253,6 +264,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ),
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
+    ("Ctrl+Shift+[ / ]", "Previous / next chat, as in WhatsApp"),
     ("↑", "Edit the previous message (when the input is empty)"),
     ("Enter", "Send (Shift+Enter for a new line)"),
     (
@@ -470,5 +482,148 @@ mod tests {
         );
         output.textures_delta.clear();
         assert!(matches!(app.actions.as_slice(), [Action::CloseUpdate]));
+    }
+
+    fn app_with_chats(count: usize) -> (tempfile::TempDir, App, Vec<String>) {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let ids: Vec<String> = (0..count)
+            .map(|index| format!("49170000{index:04}@s.whatsapp.net"))
+            .collect();
+        for (index, id) in ids.iter().enumerate() {
+            let mut chat = Chat::new(id.clone(), format!("Chat {index:02}"));
+            chat.last_activity = 100 - index as i64;
+            app.chats.push(chat);
+        }
+        app.page = Page::Chats;
+        (root, app, ids)
+    }
+
+    /// Runs `handle` on one key press and reports whether the press was left
+    /// for the views, as every press that is not a shortcut must be.
+    fn press(app: &mut App, ctx: &egui::Context, key: Key, modifiers: Modifiers) -> bool {
+        let mut survived = false;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                handle(app, ui.ctx());
+                survived = ui.ctx().input(|input| {
+                    input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Key {
+                                key: found,
+                                pressed: true,
+                                ..
+                            } if *found == key
+                        )
+                    })
+                });
+            },
+        );
+        output.textures_delta.clear();
+        survived
+    }
+
+    /// The modifiers a real Ctrl+Shift press carries on Linux and Windows,
+    /// and a real Cmd+Shift press on macOS.
+    fn ctrl_shift() -> [Modifiers; 3] {
+        [
+            Modifiers::COMMAND | Modifiers::SHIFT,
+            Modifiers {
+                ctrl: true,
+                command: true,
+                shift: true,
+                ..Modifiers::NONE
+            },
+            Modifiers {
+                mac_cmd: true,
+                command: true,
+                shift: true,
+                ..Modifiers::NONE
+            },
+        ]
+    }
+
+    #[test]
+    fn bracket_shortcuts_step_to_the_previous_and_next_chat() {
+        let (_root, mut app, ids) = app_with_chats(3);
+        app.open_chat = Some(ids[1].clone());
+        let ctx = egui::Context::default();
+        // With Shift held, US-style layouts report the brackets as braces.
+        for modifiers in ctrl_shift() {
+            for (key, expected) in [
+                (Key::CloseBracket, &ids[2]),
+                (Key::CloseCurlyBracket, &ids[2]),
+                (Key::OpenBracket, &ids[0]),
+                (Key::OpenCurlyBracket, &ids[0]),
+            ] {
+                app.actions.clear();
+                app.scroll_chat_into_view = None;
+                let survived = press(&mut app, &ctx, key, modifiers);
+                assert!(!survived, "{key:?} with {modifiers:?} reached the views");
+                assert!(
+                    app.actions.contains(&Action::OpenChat(expected.clone())),
+                    "{key:?} with {modifiers:?} opens {expected}: {:?}",
+                    app.actions
+                );
+                assert_eq!(app.scroll_chat_into_view.as_ref(), Some(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn a_bracket_without_ctrl_and_shift_together_stays_typed() {
+        let (_root, mut app, ids) = app_with_chats(3);
+        app.open_chat = Some(ids[1].clone());
+        let ctx = egui::Context::default();
+        let typed = [
+            Modifiers::NONE,
+            Modifiers::SHIFT,
+            Modifiers::COMMAND,
+            Modifiers {
+                ctrl: true,
+                command: true,
+                ..Modifiers::NONE
+            },
+            Modifiers {
+                mac_cmd: true,
+                command: true,
+                ..Modifiers::NONE
+            },
+            Modifiers::ALT,
+            Modifiers::ALT | Modifiers::SHIFT,
+        ];
+        for modifiers in typed {
+            for key in [
+                Key::OpenBracket,
+                Key::OpenCurlyBracket,
+                Key::CloseBracket,
+                Key::CloseCurlyBracket,
+            ] {
+                app.actions.clear();
+                let survived = press(&mut app, &ctx, key, modifiers);
+                assert!(survived, "{key:?} with {modifiers:?} was consumed");
+                assert!(
+                    !app.actions
+                        .iter()
+                        .any(|action| matches!(action, Action::OpenChat(_))),
+                    "{key:?} with {modifiers:?} switched chats"
+                );
+            }
+        }
     }
 }

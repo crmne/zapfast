@@ -332,7 +332,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Keyboard shortcuts.** `Ctrl+K` or `Ctrl+Shift+F` searches your chats,
   `Ctrl+F` searches the open chat as in WhatsApp (`↑`/`↓` walk the results
   and Enter jumps to one; with no chat open it searches your chats, and in
-  Settings it searches the settings), `Alt+↑/↓` switches chats and
+  Settings it searches the settings), `Alt+↑/↓` or WhatsApp's
+  `Ctrl+Shift+[`/`Ctrl+Shift+]` switches chats and
   keeps the active chat visible in the list, `↑` in an empty input edits your
   previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
   message input, `Ctrl+N` opens New chat, `Ctrl+B` hides or shows the chat
