@@ -1007,6 +1007,8 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             "Pin to top",
             favorite_label.as_ref(),
             "Unarchive",
+            &crate::i18n::gettext(app.locale, "Leave group"),
+            &crate::i18n::gettext(app.locale, "Leave channel"),
             "Mute for 8 hours",
             "Mute for a week",
             "Mute indefinitely",
@@ -1322,6 +1324,20 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
     ) {
         app.actions
             .push(Action::SetArchived(chat.id.clone(), !chat.archived));
+    }
+    // Bound before the call so the translated text outlives the borrow.
+    let leave_label = if chat.is_channel() {
+        crate::i18n::gettext(app.locale, "Leave channel")
+    } else {
+        crate::i18n::gettext(app.locale, "Leave group")
+    };
+    if chat.can_leave(&app.our_ids())
+        && widgets::menu_item(ui, palette, Some(Icon::LogOut), leave_label.as_ref())
+    {
+        app.actions
+            .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
+                chat.id.clone(),
+            )));
     }
     let now = crate::util::now();
     if chat.muted(now) {

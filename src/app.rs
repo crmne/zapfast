@@ -853,6 +853,15 @@ impl App {
         );
     }
 
+    /// Every id a member list may name us by: the phone number and, before
+    /// the worker knows the pair, the privacy id.
+    pub fn our_ids(&self) -> Vec<&str> {
+        [self.me.as_deref(), self.me_lid.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
     /// Whether a message mentions us or replies to one of our messages. A
     /// mention may name us by phone number or by privacy id; the worker files
     /// both under the phone number once it knows the pair, and the raw token
@@ -2103,6 +2112,13 @@ impl App {
         // lock closes and clears everything it left behind.
         if chat.locked && !self.locked_folder_open() {
             self.hide_locked_chat(&chat.id);
+        }
+        // Leaving with "and archive" archives the chat once the phone agreed,
+        // so this is where the open conversation closes, not before. Only a
+        // chat that just became archived: a message arriving in one that was
+        // already archived does not close it.
+        if is_open && chat.archived && self.chat(&chat.id).is_none_or(|known| !known.archived) {
+            self.actions.push(Action::CloseChat);
         }
         match self.chats.iter_mut().find(|known| known.id == chat.id) {
             Some(existing) => *existing = chat,
@@ -3774,6 +3790,20 @@ impl App {
                     message,
                     emoji,
                 });
+            }
+            Action::LeaveGroup { chat, archive } => {
+                self.dialog = None;
+                let ours: Vec<String> = self.our_ids().into_iter().map(str::to_owned).collect();
+                if let Some(known) = self.chat_mut(&chat) {
+                    known.read_only = true;
+                    known.left = true;
+                    known.participants.retain(|id| !ours.contains(id));
+                }
+                // Archiving and closing the open conversation both wait for the
+                // phone: a refused leave rolls the mark back, and a chat that
+                // archived and closed itself would not come back. The
+                // confirmed update does both.
+                self.backend.send(Command::LeaveGroup { chat, archive });
             }
             Action::SetArchived(chat, archived) => {
                 if let Some(known) = self.chat_mut(&chat) {
@@ -5482,6 +5512,132 @@ mod tests {
         let chat = app.chat(&id).expect("chat");
         assert_eq!(chat.unread, 3);
         assert!(!chat.marked_unread);
+    }
+
+    #[test]
+    fn leaving_a_group_marks_it_read_only_and_can_archive() {
+        let mut app = app();
+        let me = "me@s.whatsapp.net";
+        app.me = Some(me.into());
+        let id = "1-2@g.us".to_owned();
+        let mut chat = Chat::new(id.clone(), "Rust".into());
+        chat.participants = vec![me.into(), "other@s.whatsapp.net".into()];
+        app.chats.push(chat);
+        app.open_chat = Some(id.clone());
+        app.dialog = Some(Dialog::ConfirmLeaveGroup(id.clone()));
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: false,
+            },
+            &ctx,
+        );
+        let chat = app.chat(&id).expect("chat");
+        assert!(chat.read_only);
+        assert!(!chat.participants.iter().any(|id| id == me));
+        assert!(!chat.archived);
+        assert_eq!(app.open_chat.as_deref(), Some(id.as_str()));
+        assert!(app.dialog.is_none());
+        // The chat no longer offers leave once we are out of it.
+        assert!(!chat.can_leave(&app.our_ids()));
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: true,
+            },
+            &ctx,
+        );
+        let chat = app.chat(&id).expect("chat");
+        assert!(!chat.archived, "the archive waits for the phone");
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some(id.as_str()),
+            "and the conversation stays open until then"
+        );
+        // The phone agreed, so the archive lands and the open chat closes.
+        let mut confirmed = chat.clone();
+        confirmed.archived = true;
+        app.handle_chat_updated(confirmed);
+        app.apply_actions(&ctx);
+        assert!(app.chat(&id).expect("chat").archived);
+        assert!(app.open_chat.is_none(), "the confirmed archive closes it");
+    }
+
+    #[test]
+    fn a_refused_leave_rolls_back_the_local_mark() {
+        let mut app = app();
+        let me = "me@s.whatsapp.net";
+        app.me = Some(me.into());
+        let id = "1-2@g.us".to_owned();
+        let mut chat = Chat::new(id.clone(), "Rust".into());
+        chat.participants = vec![me.into(), "other@s.whatsapp.net".into()];
+        app.chats.push(chat.clone());
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: false,
+            },
+            &ctx,
+        );
+        assert!(
+            app.chat(&id).expect("chat").read_only,
+            "the menu marks the chat at once"
+        );
+        // The worker could not reach the phone, so it sends the archive row
+        // back untouched. The mark has to go with it.
+        app.handle_chat_updated(chat);
+        let chat = app.chat(&id).expect("chat");
+        assert!(!chat.read_only, "the refused leave is rolled back");
+        assert!(!chat.left, "and so is the leave itself");
+        assert!(chat.participants.iter().any(|id| id == me));
+        assert!(chat.can_leave(&app.our_ids()), "and it can be tried again");
+    }
+
+    #[test]
+    fn leaving_a_channel_marks_it_read_only_and_can_archive() {
+        let mut app = app();
+        let id = "1@newsletter".to_owned();
+        let chat = Chat::new(id.clone(), "News".into());
+        app.chats.push(chat);
+        app.open_chat = Some(id.clone());
+        app.dialog = Some(Dialog::ConfirmLeaveGroup(id.clone()));
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: false,
+            },
+            &ctx,
+        );
+        let chat = app.chat(&id).expect("chat");
+        assert!(chat.read_only);
+        assert!(!chat.archived);
+        assert_eq!(app.open_chat.as_deref(), Some(id.as_str()));
+        assert!(app.dialog.is_none());
+        assert!(!chat.can_leave(&app.our_ids()));
+        app.apply(
+            Action::LeaveGroup {
+                chat: id.clone(),
+                archive: true,
+            },
+            &ctx,
+        );
+        let chat = app.chat(&id).expect("chat");
+        assert!(!chat.archived, "the archive waits for the phone");
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some(id.as_str()),
+            "and the conversation stays open until then"
+        );
+        // The phone agreed, so the archive lands and the open chat closes.
+        let mut confirmed = chat.clone();
+        confirmed.archived = true;
+        app.handle_chat_updated(confirmed);
+        app.apply_actions(&ctx);
+        assert!(app.chat(&id).expect("chat").archived);
+        assert!(app.open_chat.is_none(), "the confirmed archive closes it");
     }
 
     #[test]

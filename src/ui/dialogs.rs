@@ -30,6 +30,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::Shortcuts => 540.0,
                 Dialog::About => 380.0,
                 Dialog::ConfirmUnlink => 380.0,
+                Dialog::ConfirmLeaveGroup(_) => 380.0,
                 Dialog::PairWithPhone => 380.0,
                 Dialog::NewContact => 380.0,
                 Dialog::NewChat => 420.0,
@@ -64,6 +65,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::Shortcuts => shortcuts(app, ui),
                 Dialog::About => about(app, ui),
                 Dialog::ConfirmUnlink => confirm_unlink(app, ui),
+                Dialog::ConfirmLeaveGroup(id) => confirm_leave_group(app, ui, &id),
                 Dialog::PairWithPhone => pair_with_phone(app, ui),
                 Dialog::NewContact => new_contact(app, ui),
                 Dialog::NewChat => new_chat(app, ui),
@@ -1026,6 +1028,70 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+fn confirm_leave_group(app: &mut App, ui: &mut egui::Ui, id: &str) {
+    let palette = app.palette;
+    let chat = app.chat(id);
+    let archived = chat.is_some_and(|chat| chat.archived);
+    let channel = chat.is_some_and(crate::model::Chat::is_channel);
+    let locale = app.locale;
+    let question = if channel {
+        crate::i18n::gettext(locale, "Leave this channel?")
+    } else {
+        crate::i18n::gettext(locale, "Leave this group?")
+    };
+    title(ui, app, question.as_ref());
+    theme::paragraph(
+        ui,
+        crate::i18n::gettext(
+            locale,
+            "You will not receive new messages. The local history stays on this computer.",
+        ),
+        theme::regular(13.5),
+        palette.text,
+    );
+    ui.add_space(10.0);
+    let leave_label = if channel {
+        crate::i18n::gettext(locale, "Leave channel")
+    } else {
+        crate::i18n::gettext(locale, "Leave group")
+    };
+    if danger_button(ui, app, leave_label.as_ref()) {
+        app.actions.push(Action::LeaveGroup {
+            chat: id.to_owned(),
+            archive: false,
+        });
+    }
+    if !archived {
+        ui.add_space(4.0);
+        let archive_label = if channel {
+            crate::i18n::gettext(locale, "Leave channel and archive")
+        } else {
+            crate::i18n::gettext(locale, "Leave group and archive")
+        };
+        if theme::pill_button(ui, &palette, archive_label.as_ref(), false).clicked() {
+            app.actions.push(Action::LeaveGroup {
+                chat: id.to_owned(),
+                archive: true,
+            });
+        }
+    }
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::pill_button(
+                ui,
+                &palette,
+                crate::i18n::gettext(locale, "Cancel").as_ref(),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
 /// Why the number dialogs cannot act yet.
 const NUMBER_TOO_SHORT: &str = "Enter the whole number, starting with the country code";
 
@@ -1277,7 +1343,14 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
         .unwrap_or_else(|| crate::model::Chat::new(id.to_owned(), app.display_name(id)));
     let has_chat = app.chat(id).is_some();
     let name = app.chat_title(&chat);
-    title(ui, app, if chat.is_group() { "Group" } else { "Contact" });
+    let heading = if chat.is_group() {
+        crate::i18n::gettext(app.locale, "Group")
+    } else if chat.is_channel() {
+        crate::i18n::gettext(app.locale, "Channel")
+    } else {
+        crate::i18n::gettext(app.locale, "Contact")
+    };
+    title(ui, app, heading.as_ref());
     // Scale the photo and member list to fit the window.
     let window = ui.ctx().content_rect().height();
     let photo = (window * 0.34).clamp(120.0, 240.0);
@@ -1287,6 +1360,8 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
     // Saving or cancelling leaves the editor buffer checked out.
     let mut editing = app.contact_edit.take().filter(|_| editable);
     let mut saved = None;
+    let mut leave = false;
+    let can_leave = chat.can_leave(&app.our_ids());
     ui.vertical_centered(|ui| {
         super::widgets::avatar(ui, &palette, &name, id, photo, picture.as_deref());
         ui.add_space(6.0);
@@ -1396,6 +1471,17 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
                 theme::text(ui, status, theme::regular(12.5), palette.dim);
             }
         }
+        if can_leave {
+            ui.add_space(8.0);
+            let leave_label = if chat.is_channel() {
+                crate::i18n::gettext(app.locale, "Leave channel")
+            } else {
+                crate::i18n::gettext(app.locale, "Leave group")
+            };
+            if danger_button(ui, app, leave_label.as_ref()) {
+                leave = true;
+            }
+        }
     });
     if let Some((first, last)) = saved {
         editing = None;
@@ -1406,6 +1492,10 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
         });
     }
     app.contact_edit = editing;
+    if leave {
+        app.actions
+            .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(id.to_owned())));
+    }
     ui.add_space(8.0);
     if chat.is_group() && !chat.participants.is_empty() {
         let members = app.participant_list(&chat);
@@ -1606,6 +1696,13 @@ fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> bool {
     );
     let size = galley.size() + egui::vec2(36.0, 16.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    // Reachable and announced like every other button: the keyboard walks to
+    // it and AccessKit reads its label.
+    theme::reveal_focus(&response);
+    theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
     if ui.is_rect_visible(rect) {
         let fill = if response.hovered() {
             palette.danger.gamma_multiply(0.85)

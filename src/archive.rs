@@ -126,7 +126,7 @@ const CHAT_COLUMNS: &str =
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
                     c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known,
                     c.notification_sound, c.marked_unread,
-                    (SELECT f.position FROM favorites f WHERE f.chat = c.id)";
+                    (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -148,6 +148,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "lock_updated_at", "INTEGER"),
     ("chats", "archive_updated_at", "INTEGER"),
     ("chats", "notification_sound", "TEXT"),
+    ("chats", "left", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "group_subject_known", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "marked_unread", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "pending_unread", "INTEGER"),
@@ -203,6 +204,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         favorite_position: row
             .get::<_, Option<i64>>(21)?
             .map_or(0, |position| u32::try_from(position).unwrap_or(u32::MAX)),
+        left: row.get(22)?,
     })
 }
 
@@ -354,6 +356,18 @@ impl Archive {
                 serde_json::to_string(participants).unwrap_or_else(|_| "[]".into()),
                 read_only
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Records that we left a group or channel, or that we are back in it.
+    /// A durable mark of its own, because `read_only` also covers an
+    /// announcement group we are still a member of, and a later metadata
+    /// refresh rewrites it.
+    pub fn set_left(&self, id: &str, left: bool) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET left = ?2 WHERE id = ?1",
+            params![id, left],
         )?;
         Ok(())
     }
@@ -1650,6 +1664,25 @@ pub(crate) mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn a_leave_outlives_a_group_info_refresh() {
+        let archive = Archive::in_memory().expect("opens");
+        let id = "1-2@g.us";
+        archive.ensure_chat(id, "Rust").expect("chat");
+        archive.set_left(id, true).expect("left");
+        assert!(archive.chat(id).expect("row").expect("chat").left);
+        // The phone's metadata rewrites `read_only` on every refresh, which is
+        // why the leave needs a field of its own.
+        archive
+            .set_group_info(id, Some("Rust"), &["other@s.whatsapp.net".into()], false)
+            .expect("info");
+        let row = archive.chat(id).expect("row").expect("chat");
+        assert!(row.left, "the leave is remembered");
+        assert!(!row.read_only, "the metadata is applied as it came");
+        archive.set_left(id, false).expect("rejoined");
+        assert!(!archive.chat(id).expect("row").expect("chat").left);
     }
 
     #[test]

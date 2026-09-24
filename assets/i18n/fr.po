@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-24 10:44+0200\n"
+"POT-Creation-Date: 2026-09-24 11:15+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -159,20 +159,30 @@ msgstr "Verrouillés"
 msgid "No favorites yet"
 msgstr "Pas encore de favoris"
 
-#: src/ui/chats.rs:774 src/app.rs:1159
+#: src/ui/chats.rs:774 src/app.rs:1168
 msgid "Message yourself"
 msgstr "Envoyez-vous un message"
 
-#: src/ui/chats.rs:998 src/ui/chats.rs:1304 src/ui/picker.rs:1569
+#: src/ui/chats.rs:998 src/ui/chats.rs:1306 src/ui/picker.rs:1569
 msgid "Remove from favorites"
 msgstr "Retirer des favoris"
 
-#: src/ui/chats.rs:1000 src/ui/chats.rs:1306 src/ui/conversation.rs:3233
-#: src/ui/dialogs.rs:963 src/ui/picker.rs:1570
+#: src/ui/chats.rs:1000 src/ui/chats.rs:1308 src/ui/conversation.rs:3286
+#: src/ui/dialogs.rs:965 src/ui/picker.rs:1570
 msgid "Add to favorites"
 msgstr "Ajouter aux favoris"
 
-#: src/ui/chats.rs:1024 src/ui/labels.rs:172 src/ui/labels.rs:223
+#: src/ui/chats.rs:1010 src/ui/chats.rs:1332 src/ui/conversation.rs:302
+#: src/ui/dialogs.rs:1056 src/ui/dialogs.rs:1479
+msgid "Leave group"
+msgstr "Quitter le groupe"
+
+#: src/ui/chats.rs:1011 src/ui/chats.rs:1330 src/ui/conversation.rs:300
+#: src/ui/dialogs.rs:1054 src/ui/dialogs.rs:1477
+msgid "Leave channel"
+msgstr "Quitter la chaîne"
+
+#: src/ui/chats.rs:1026 src/ui/labels.rs:172 src/ui/labels.rs:223
 #: src/ui/labels.rs:260
 msgid "Labels"
 msgstr "Étiquettes"
@@ -181,15 +191,27 @@ msgstr "Étiquettes"
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K pour rechercher · ? pour les raccourcis clavier"
 
-#: src/ui/conversation.rs:1010
+#: src/ui/conversation.rs:841
+msgid "You left this channel"
+msgstr "Vous avez quitté cette chaîne"
+
+#: src/ui/conversation.rs:845
+msgid "Channels are read-only in ZapFast"
+msgstr "Les chaînes sont en lecture seule dans ZapFast"
+
+#: src/ui/conversation.rs:874
+msgid "You left this group"
+msgstr "Vous avez quitté ce groupe"
+
+#: src/ui/conversation.rs:1063
 msgid "Type a message"
 msgstr "Saisissez un message"
 
-#: src/ui/conversation.rs:1013
+#: src/ui/conversation.rs:1066
 msgid "Add a caption"
 msgstr "Ajouter une légende"
 
-#: src/ui/conversation.rs:1176
+#: src/ui/conversation.rs:1229
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -197,138 +219,173 @@ msgstr ""
 "Enter envoie · Shift+Enter pour une nouvelle ligne · *gras* _italique_ "
 "~barré~ · Ctrl+V colle une image"
 
-#: src/ui/conversation.rs:1178
+#: src/ui/conversation.rs:1231
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr "Ctrl+Enter envoie · *gras* _italique_ ~barré~ · Ctrl+V colle une image"
 
-#: src/ui/conversation.rs:1189
+#: src/ui/conversation.rs:1242
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Masquer les astuces de raccourcis (restaurer dans Paramètres)"
 
-#: src/ui/conversation.rs:1204
+#: src/ui/conversation.rs:1257
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Tous les raccourcis ({})"
 
-#: src/ui/conversation.rs:1226
+#: src/ui/conversation.rs:1279
 #, rust-format
 msgid "Voice message ({duration}) not sent"
 msgstr "Message vocal ({duration}) non envoyé"
 
-#: src/ui/conversation.rs:1228
+#: src/ui/conversation.rs:1281
 msgid "Discard voice message"
 msgstr "Supprimer le message vocal"
 
-#: src/ui/conversation.rs:1530
+#: src/ui/conversation.rs:1583
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} message non lu"
 msgstr[1] "{} messages non lus"
 
-#: src/ui/conversation.rs:2612 src/ui/conversation.rs:3242
+#: src/ui/conversation.rs:2665 src/ui/conversation.rs:3295
 msgid "Open in system player"
 msgstr "Ouvrir dans le lecteur du système"
 
-#: src/ui/conversation.rs:2613 src/ui/conversation.rs:3301
+#: src/ui/conversation.rs:2666 src/ui/conversation.rs:3354
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Infos du message"
 
-#: src/ui/conversation.rs:3516
+#: src/ui/conversation.rs:3569
 #, fuzzy
 msgid "Location"
 msgstr "Position en direct"
 
-#: src/ui/conversation.rs:3542
+#: src/ui/conversation.rs:3595
 msgid "Live location ended"
 msgstr "Position en direct terminée"
 
-#: src/ui/conversation.rs:3544 src/ui/conversation.rs:3688
+#: src/ui/conversation.rs:3597 src/ui/conversation.rs:3741
 msgid "Live location"
 msgstr "Position en direct"
 
-#: src/ui/conversation.rs:3554
+#: src/ui/conversation.rs:3607
 #, rust-format
 msgid "Updated {time}"
 msgstr "Mise à jour à {time}"
 
-#: src/ui/conversation.rs:3617
+#: src/ui/conversation.rs:3670
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} sticker"
 msgstr[1] "{} stickers"
 
-#: src/ui/conversation.rs:3630
+#: src/ui/conversation.rs:3683
 msgid "View stickers"
 msgstr "Voir les stickers"
 
-#: src/ui/conversation.rs:3696
+#: src/ui/conversation.rs:3749
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Ouvrez WhatsApp sur votre téléphone pour la suivre."
 
-#: src/ui/conversation.rs:4542
+#: src/ui/conversation.rs:4595
 msgid "Open in a map"
 msgstr "Ouvrir dans une carte"
 
-#: src/ui/conversation.rs:5086
+#: src/ui/conversation.rs:5139
 msgid "Pause"
 msgstr "Pause"
 
-#: src/ui/conversation.rs:5088 src/ui/settings.rs:1265
+#: src/ui/conversation.rs:5141 src/ui/settings.rs:1265
 msgid "Play"
 msgstr "Lire"
 
-#: src/ui/conversation.rs:5111
+#: src/ui/conversation.rs:5164
 msgid "Unmute"
 msgstr "Réactiver le son"
 
-#: src/ui/conversation.rs:5113
+#: src/ui/conversation.rs:5166
 msgid "Mute"
 msgstr "Couper le son"
 
-#: src/ui/dialogs.rs:789
+#: src/ui/dialogs.rs:791
 msgid "Sticker pack"
 msgstr "Pack de stickers"
 
-#: src/ui/dialogs.rs:794
+#: src/ui/dialogs.rs:796
 msgid "Downloading the pack…"
 msgstr "Téléchargement du pack…"
 
-#: src/ui/dialogs.rs:818
+#: src/ui/dialogs.rs:820
 msgid "Add to my stickers"
 msgstr "Ajouter à mes stickers"
 
-#: src/ui/dialogs.rs:825 src/ui/message_info.rs:28 src/ui/labels.rs:271
+#: src/ui/dialogs.rs:827 src/ui/message_info.rs:28 src/ui/labels.rs:271
 msgid "Close"
 msgstr "Fermer"
 
-#: src/ui/dialogs.rs:842
+#: src/ui/dialogs.rs:844
 msgid "Make a sticker"
 msgstr "Créer un sticker"
 
-#: src/ui/dialogs.rs:906
+#: src/ui/dialogs.rs:908
 msgid "Size"
 msgstr "Taille"
 
-#: src/ui/dialogs.rs:921
+#: src/ui/dialogs.rs:923
 msgid "Keep the transparent background"
 msgstr "Garder l’arrière-plan transparent"
 
-#: src/ui/dialogs.rs:938
+#: src/ui/dialogs.rs:940
 msgid "Emojis that describe it, like 😂 or ❤️"
 msgstr "Des emojis qui le décrivent, comme 😂 ou ❤️"
 
-#: src/ui/dialogs.rs:955
+#: src/ui/dialogs.rs:957
 msgid "Send"
 msgstr "Envoyer"
 
-#: src/ui/dialogs.rs:970 src/ui/settings.rs:1062
+#: src/ui/dialogs.rs:972 src/ui/dialogs.rs:1084 src/ui/settings.rs:1062
 msgid "Cancel"
 msgstr "Annuler"
 
-#: src/ui/dialogs.rs:1375
+#: src/ui/dialogs.rs:1038
+msgid "Leave this channel?"
+msgstr "Quitter cette chaîne ?"
+
+#: src/ui/dialogs.rs:1040
+msgid "Leave this group?"
+msgstr "Quitter ce groupe ?"
+
+#: src/ui/dialogs.rs:1047
+msgid ""
+"You will not receive new messages. The local history stays on this computer."
+msgstr ""
+"Vous ne recevrez plus de nouveaux messages. L'historique local reste sur cet "
+"ordinateur."
+
+#: src/ui/dialogs.rs:1067
+msgid "Leave channel and archive"
+msgstr "Quitter la chaîne et archiver"
+
+#: src/ui/dialogs.rs:1069
+msgid "Leave group and archive"
+msgstr "Quitter le groupe et archiver"
+
+#: src/ui/dialogs.rs:1347
+msgid "Group"
+msgstr "Groupe"
+
+#: src/ui/dialogs.rs:1349
+msgid "Channel"
+msgstr "Chaîne"
+
+#: src/ui/dialogs.rs:1351
+msgid "Contact"
+msgstr "Contact"
+
+#: src/ui/dialogs.rs:1450
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -581,25 +638,25 @@ msgstr[1] "{} restants"
 msgid "No one yet"
 msgstr "Personne pour l’instant"
 
-#: src/app.rs:1080
+#: src/app.rs:1089
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Une étiquette nommée « {name} » existe déjà."
 
-#: src/app.rs:1140
+#: src/app.rs:1149
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Vous)"
 
-#: src/app.rs:1141 src/app.rs:1160
+#: src/app.rs:1150 src/app.rs:1169
 msgid "You"
 msgstr "Vous"
 
-#: src/app.rs:2319
+#: src/app.rs:2335
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Non envoyé : ZapFast n’est pas connecté à WhatsApp."
 
-#: src/app.rs:2323
+#: src/app.rs:2339
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -607,20 +664,20 @@ msgstr ""
 "Non envoyé : le message auquel vous répondez n’est pas disponible sur cet "
 "ordinateur. Annulez la réponse pour l’envoyer sans citation."
 
-#: src/app.rs:3601
+#: src/app.rs:3617
 msgid "Added to favorites"
 msgstr "Ajouté aux favoris"
 
-#: src/app.rs:3676
+#: src/app.rs:3692
 msgid "Sending the sticker pack…"
 msgstr "Envoi du pack de stickers…"
 
-#: src/app.rs:3940 src/ui/labels.rs:294
+#: src/app.rs:3970 src/ui/labels.rs:294
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Vous avez {limit} étiquettes, le maximum que ZapFast conserve."
 
-#: src/app.rs:4452
+#: src/app.rs:4482
 msgid "This video opens in your system player"
 msgstr "Cette vidéo s'ouvre dans le lecteur du système"
 

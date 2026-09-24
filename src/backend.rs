@@ -502,6 +502,11 @@ pub enum Command {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    /// Leaves a group or channel. `archive` also hides the chat in Archived.
+    LeaveGroup {
+        chat: ChatId,
+        archive: bool,
+    },
     /// Deletes a chat on the phone, then here once the phone agreed.
     DeleteChat(ChatId),
     /// Whether the phone deleted a chat requested through `DeleteChat`.
@@ -598,6 +603,9 @@ pub enum Command {
         read_only: bool,
         ephemeral_expiration: Option<u32>,
         ephemeral_setting_timestamp: Option<i64>,
+        /// The chat's leave generation when this metadata was asked for. A
+        /// snapshot older than a confirmed leave cannot undo it.
+        leave_generation: u64,
     },
     /// Internal pairing-code result.
     PairCode {

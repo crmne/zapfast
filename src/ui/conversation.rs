@@ -293,6 +293,14 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     app.actions
                         .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
                 }
+                // The item and the width that has to hold it are measured from
+                // the same localized label: a translation wider than the
+                // English one would otherwise be clipped.
+                let leave_label = if chat.is_channel() {
+                    crate::i18n::gettext(app.locale, "Leave channel")
+                } else {
+                    crate::i18n::gettext(app.locale, "Leave group")
+                };
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let more = theme::icon_button(
                         ui,
@@ -308,6 +316,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             "Info",
                             "Pin to top",
                             "Unarchive",
+                            leave_label.as_ref(),
                             "Copy number",
                             "Close chat",
                         ],
@@ -344,6 +353,19 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .push(Action::SetArchived(chat.id.clone(), !chat.archived));
                             }
                             widgets::menu_separator(ui, &palette);
+                            if chat.can_leave(&app.our_ids())
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::LogOut),
+                                    leave_label.as_ref(),
+                                )
+                            {
+                                app.actions
+                                    .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
+                                        chat.id.clone(),
+                                    )));
+                            }
                             if let Some(phone) = chat.phone()
                                 && widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy number")
                             {
@@ -811,8 +833,22 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             }
             if !chat.can_send() {
                 if chat.kind == crate::model::ChatKind::Broadcast {
+                    // A channel we left says so; the rest are only read-only.
                     ui.vertical_centered(|ui| {
-                        theme::text(ui, "Channels are read-only in ZapFast", theme::regular(13.5), palette.secondary);
+                        theme::text(
+                            ui,
+                            if chat.left {
+                                crate::i18n::gettext(app.locale, "You left this channel")
+                            } else {
+                                crate::i18n::gettext(
+                                    app.locale,
+                                    "Channels are read-only in ZapFast",
+                                )
+                            }
+                            .as_ref(),
+                            theme::regular(13.5),
+                            palette.secondary,
+                        );
                     });
                     return;
                 }
@@ -824,18 +860,35 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 }
                 ui.vertical_centered(|ui| {
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        let width = 230.0;
-                        ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
-                        theme::text(ui, "Only", theme::regular(13.5), palette.secondary);
-                        theme::text(ui, "admins", theme::semibold(13.5), palette.accent);
+                    // A group we left says so instead of blaming the admins:
+                    // either we left it here, or the phone says we are no
+                    // longer a member.
+                    let ours = app.our_ids();
+                    let left = chat.left
+                        || (!ours.is_empty()
+                            && !chat.participants.is_empty()
+                            && !chat.lists_any(&ours));
+                    if left {
                         theme::text(
                             ui,
-                            "can send messages",
+                            crate::i18n::gettext(app.locale, "You left this group"),
                             theme::regular(13.5),
                             palette.secondary,
                         );
-                    });
+                    } else {
+                        ui.horizontal(|ui| {
+                            let width = 230.0;
+                            ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
+                            theme::text(ui, "Only", theme::regular(13.5), palette.secondary);
+                            theme::text(ui, "admins", theme::semibold(13.5), palette.accent);
+                            theme::text(
+                                ui,
+                                "can send messages",
+                                theme::regular(13.5),
+                                palette.secondary,
+                            );
+                        });
+                    }
                     ui.add_space(8.0);
                 });
                 return;

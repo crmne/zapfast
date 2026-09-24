@@ -24,7 +24,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Links to your phone.** Scan a QR code or link with your phone number.
   Recent history is copied to this computer after linking and stored here.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,
-  and message status. Search chats, saved messages, and contacts.
+  and message status. Search chats, saved messages, and contacts. Right-click a
+  group or a followed channel and choose **Leave group** or **Leave channel** to
+  leave it, with the option to archive it in the same step; the local history
+  stays on this computer and the chat keeps its messages.
   Filter the list to unread, private (one-to-one), favorites, or group chats
   with the chips under the search bar; a chip with unread chats shows how many
   it has. Right-click a chat and choose **Add to favorites** to mark it.
