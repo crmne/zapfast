@@ -555,7 +555,9 @@ macOS and Windows use the standard platform directories selected by the
 message archive, favorite stickers, caches, and window state from `fastsapp`
 (or the earlier `fastwhatsapp`) paths. Existing ZapFast directories take
 precedence and are never overwritten. Quit FastsApp before starting ZapFast;
-if an older copy is still running, the new launch brings its window forward.
+if an older copy is still running, the new launch brings its window forward. If
+a saved window position is outside the connected monitors, ZapFast centers the
+window automatically on the first frame.
 Your phone may keep showing the old linked-device name until you link again.
 
 On Linux and macOS, ZapFast restricts its configuration, state, and cache

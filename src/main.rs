@@ -283,6 +283,7 @@ fn main() -> eframe::Result<()> {
                     }
                     Ok(Box::new(Shell {
                         app: Some(app),
+                        window_recovery_checked: false,
                         update_receipt: creator_receipt,
                         slot: std::sync::Arc::clone(&creator_slot),
                         #[cfg(feature = "demo")]
@@ -433,8 +434,42 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
     }
 }
 
+/// Returns whether a restored window is completely outside its monitor.
+///
+/// Winit reports the window and monitor rectangles in virtual-desktop
+/// coordinates. Comparing against every connected monitor avoids treating a
+/// valid negative position on a secondary display as off-screen.
+fn window_overlaps_any_monitor(window: egui::Rect, monitors: &[egui::Rect]) -> bool {
+    monitors
+        .iter()
+        .any(|monitor| window.intersect(*monitor).area() > 0.0)
+}
+
+fn offscreen_window(frame: &eframe::Frame) -> Option<bool> {
+    let native_window = frame.winit_window()?.as_ref();
+    let position = native_window.outer_position().ok()?;
+    let size = native_window.outer_size();
+    let window_rect = egui::Rect::from_min_size(
+        egui::pos2(position.x as f32, position.y as f32),
+        egui::vec2(size.width as f32, size.height as f32),
+    );
+    let monitors: Vec<_> = native_window
+        .available_monitors()
+        .map(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            egui::Rect::from_min_size(
+                egui::pos2(position.x as f32, position.y as f32),
+                egui::vec2(size.width as f32, size.height as f32),
+            )
+        })
+        .collect();
+    Some(!window_overlaps_any_monitor(window_rect, &monitors))
+}
+
 /// eframe adapter that returns the long-lived [`app::App`] when a window closes.
 struct Shell {
+    window_recovery_checked: bool,
     update_receipt: Option<std::path::PathBuf>,
     app: Option<app::App>,
     slot: std::sync::Arc<std::sync::Mutex<Option<app::App>>>,
@@ -517,6 +552,15 @@ impl eframe::App for Shell {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.window_recovery_checked
+            && let Some(offscreen) = offscreen_window(_frame)
+        {
+            self.window_recovery_checked = true;
+            if offscreen && let Some(command) = egui::ViewportCommand::center_on_screen(ctx) {
+                log::warn!("restored window was off-screen; centering it on the monitor");
+                ctx.send_viewport_cmd(command);
+            }
+        }
         if let Some(app) = self.app.as_mut() {
             #[cfg(feature = "demo")]
             if let Some(tour) = self.tour.as_mut() {
@@ -658,6 +702,47 @@ mod log_filter_tests {
             default_log_filter(true),
             log::Level::Warn,
             "arboard::platform::linux"
+        ));
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn detects_window_completely_above_monitor() {
+        let rect = egui::Rect::from_min_size(egui::pos2(100.0, -500.0), egui::vec2(400.0, 300.0));
+        assert!(!window_overlaps_any_monitor(
+            rect,
+            &[egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1920.0, 1080.0),
+            )],
+        ));
+    }
+
+    #[test]
+    fn keeps_window_that_intersects_monitor() {
+        let rect = egui::Rect::from_min_size(egui::pos2(-100.0, 100.0), egui::vec2(400.0, 300.0));
+        assert!(window_overlaps_any_monitor(
+            rect,
+            &[egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1920.0, 1080.0),
+            )],
+        ));
+    }
+
+    #[test]
+    fn keeps_window_on_monitor_left_of_primary_display() {
+        let rect = egui::Rect::from_min_size(egui::pos2(-1600.0, 100.0), egui::vec2(800.0, 600.0));
+        assert!(window_overlaps_any_monitor(
+            rect,
+            &[egui::Rect::from_min_size(
+                egui::pos2(-1920.0, 0.0),
+                egui::vec2(1920.0, 1080.0),
+            )],
         ));
     }
 }
