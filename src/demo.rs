@@ -1579,6 +1579,25 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "poll-results" => poll_sample(app, true, true),
             "video" => video_sample(app, None),
             "video-playing" => video_sample(app, Some("demo-video")),
+            "shared-contact" => {
+                let chat = SAMPLES[0].id;
+                let now = crate::util::now();
+                app.conversations
+                    .entry(chat.into())
+                    .or_default()
+                    .messages
+                    .push(message(
+                        chat,
+                        "shared-contact",
+                        false,
+                        now,
+                        Content::Contact {
+                            display_name: "Contact from sender".into(),
+                            vcard: "BEGIN:VCARD\nVERSION:3.0\nFN:Jordan Rivera\nTEL;TYPE=CELL:+15550002222\nEND:VCARD".into(),
+                        },
+                    ));
+                app.open_chat = Some(chat.into());
+            }
             "note-playing" => video_sample(app, Some("demo-note")),
             "interactive" | "interactive-media" => {
                 interactive_sample(app, part == "interactive-media")
@@ -3782,6 +3801,7 @@ mod tests {
             "message-info-direct",
             "video",
             "video-playing",
+            "shared-contact",
             "note-playing",
             "empty",
             "rtl",

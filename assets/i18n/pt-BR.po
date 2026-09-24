@@ -1097,3 +1097,10 @@ msgstr "Igual ao visto por último"
 msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Silenciar chamadas desconhecidas"
+#: src/ui/conversation.rs
+msgid "Chat"
+msgstr "Conversar"
+
+#: src/ui/conversation.rs
+msgid "Add"
+msgstr "Adicionar"

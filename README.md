@@ -751,7 +751,8 @@ For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.
 
-Use `--demo-page interactive` for text and button messages, or
+Use `--demo-page shared-contact` for an offline shared-contact card with synthetic
+vCard data, or `--demo-page interactive` for text and button messages, or
 `--demo-page interactive-media` for messages with an image, and
 `--demo-page interactive-list` for a list message,
 `--demo-page interactive-list-dialog` for its grouped choice dialog, `--demo-page carousel`

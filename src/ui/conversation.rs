@@ -1545,6 +1545,7 @@ struct View<'a> {
     /// Resolves mention names without replacing our name with "You".
     mention_names: &'a dyn Fn(&str) -> String,
     avatars: &'a HashMap<String, Option<PathBuf>>,
+    contacts: &'a HashMap<String, crate::model::Contact>,
     now: i64,
     /// Animate media only while this window is active.
     animate: bool,
@@ -1637,6 +1638,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         names_or: &names_or,
         mention_names: &mention_names,
         avatars: &avatars,
+        contacts: &app.contacts,
         now: crate::util::now(),
         animate: app.window_focused,
         player: &app.player,
@@ -3651,6 +3653,55 @@ fn quote_mentions(view: &View<'_>, quoted: &crate::model::Quoted) -> Vec<markup:
         .collect()
 }
 
+fn shared_contact_details(vcard: &str, fallback_name: &str) -> Option<(String, String)> {
+    let mut name = None;
+    let mut phone = None;
+    let mut first_card: Vec<String> = Vec::new();
+    for line in vcard.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.starts_with([' ', '\t']) {
+            if let Some(previous) = first_card.last_mut() {
+                previous.push_str(line.trim_start());
+            }
+            continue;
+        }
+        if line.eq_ignore_ascii_case("END:VCARD") && !first_card.is_empty() {
+            break;
+        }
+        if line.eq_ignore_ascii_case("BEGIN:VCARD") {
+            if first_card.is_empty() {
+                first_card.push(line.to_owned());
+            }
+            continue;
+        }
+        if !first_card.is_empty() {
+            first_card.push(line.to_owned());
+        }
+    }
+    if first_card.is_empty() {
+        first_card.extend(vcard.lines().map(str::to_owned));
+    }
+    for line in first_card {
+        if line.starts_with("FN") {
+            name = line
+                .split_once(':')
+                .map(|(_, value)| value.trim().to_owned());
+        } else if line.starts_with("TEL") {
+            phone = line.split_once(':').map(|(_, value)| {
+                value
+                    .chars()
+                    .filter(char::is_ascii_digit)
+                    .collect::<String>()
+            });
+        }
+    }
+    let phone = phone.filter(|phone| phone.len() >= 7)?;
+    let name = name
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| fallback_name.to_owned());
+    Some((name, phone))
+}
+
 /// Draws a message body and returns optional footer space on its last line.
 fn content(
     ui: &mut egui::Ui,
@@ -3900,18 +3951,48 @@ fn content(
             let icon = |ui: &mut egui::Ui| {
                 theme::icon(ui, Icon::Contact, 18.0, palette.accent);
             };
+            let details = shared_contact_details(vcard, display_name);
             mirrored_row(ui, own, icon, |ui| {
                 ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    widgets::rich_text(ui, display_name, theme::medium(14.0), palette.text);
-                    let phone = vcard
-                        .lines()
-                        .find(|line| line.starts_with("TEL"))
-                        .and_then(|line| line.rsplit(':').next())
-                        .map(str::trim)
-                        .unwrap_or("");
+                    ui.spacing_mut().item_spacing.y = 5.0;
+                    let (name, phone) = details
+                        .as_ref()
+                        .map(|(name, phone)| (name.as_str(), phone.as_str()))
+                        .unwrap_or((display_name.as_str(), ""));
+                    widgets::rich_text(ui, name, theme::medium(14.0), palette.text);
                     if !phone.is_empty() {
-                        theme::text(ui, phone, theme::regular(12.5), palette.secondary);
+                        let id = format!("{phone}@s.whatsapp.net");
+                        ui.horizontal(|ui| {
+                            if theme::pill_button(
+                                ui,
+                                &palette,
+                                crate::i18n::gettext(view.locale, "Chat").as_ref(),
+                                true,
+                            )
+                            .clicked()
+                            {
+                                actions.push(Action::StartChat {
+                                    id: id.clone(),
+                                    name: name.to_owned(),
+                                });
+                            }
+                            if !view.contacts.contains_key(&id)
+                                && theme::pill_button(
+                                    ui,
+                                    &palette,
+                                    crate::i18n::gettext(view.locale, "Add").as_ref(),
+                                    false,
+                                )
+                                .clicked()
+                            {
+                                let (first, last) = crate::util::split_name(name);
+                                actions.push(Action::NewContact {
+                                    phone: phone.to_owned(),
+                                    first,
+                                    last,
+                                });
+                            }
+                        });
                     }
                 });
             });
@@ -6155,6 +6236,40 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_contact_prefers_vcard_name_and_extracts_telephone_without_displaying_it() {
+        assert_eq!(
+            shared_contact_details(
+                "BEGIN:VCARD\nVERSION:3.0\nFN:Alice Example\nTEL;TYPE=CELL:+1 (555) 010-1234\nEND:VCARD",
+                "Contact from sender",
+            ),
+            Some(("Alice Example".to_owned(), "15550101234".to_owned()))
+        );
+    }
+
+    #[test]
+    fn shared_contact_without_vcard_name_uses_message_name_and_rejects_missing_phone() {
+        assert_eq!(
+            shared_contact_details("BEGIN:VCARD\nTEL:1234567\nEND:VCARD", "Shared person"),
+            Some(("Shared person".to_owned(), "1234567".to_owned()))
+        );
+        assert_eq!(
+            shared_contact_details("BEGIN:VCARD\nFN:No phone\nEND:VCARD", "Fallback"),
+            None
+        );
+    }
+
+    #[test]
+    fn shared_contact_details_use_the_first_vcard_when_multiple_contacts_are_shared() {
+        assert_eq!(
+            shared_contact_details(
+                "BEGIN:VCARD\nFN:Alice\nTEL:+15550101234\nEND:VCARD\nBEGIN:VCARD\nFN:Bob\nTEL:+15550105678\nEND:VCARD",
+                "Several contacts",
+            ),
+            Some(("Alice".to_owned(), "15550101234".to_owned()))
+        );
+    }
 
     #[test]
     fn saved_attachments_suggest_a_plain_file_name() {

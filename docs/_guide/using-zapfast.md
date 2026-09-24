@@ -196,6 +196,11 @@ Click a message result to jump to it, or a contact to start a chat. Use
 `Alt+↑/↓`, or `Ctrl+Shift+[` and `Ctrl+Shift+]` as in WhatsApp, to switch chats
 without leaving the composer (Command instead of Ctrl on macOS).
 
+A shared contact message shows the name from its vCard, not the phone number.
+Use **Chat** to open a private conversation. If the person is not already in
+ZapFast's contacts, **Add** is also available and follows the contact-saving
+setting.
+
 The chips under the search bar narrow the list to **Unread**, **Private**
 (one-to-one chats), or **Groups**. A chip with unread chats shows how many it
 has. Click the active chip again, or **All**, to see every chat. The
