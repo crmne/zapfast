@@ -248,11 +248,18 @@ protocol. These notes are for coding agents and new contributors.
 - Platform-specific code belongs behind `cfg` blocks; a change for one
   platform must keep the other two compiling.
 
-Three egui pitfalls this code has already hit:
+egui pitfalls this code has already hit:
 
 - `consume_key(Modifiers::NONE, key)` also matches the key with Shift held
   (egui only insists on the modifiers you ask for), so the composer
   inspects the events itself to tell Enter from Shift+Enter.
+- `consume_key` matches the logical key, and with Shift held US-style
+  layouts report `[` and `]` as `{` and `}` (and `=` as `+`), so a Shift
+  shortcut binds both spellings: see the bracket and `Plus`/`Equals` rows in
+  `ui/keys.rs`. Layouts that put another character on the shifted key never
+  produce either spelling; `Alt+↑/↓` is the layout-independent way to switch
+  chats. A long label in `SHORTCUTS` widens the dialog's key column and
+  truncates the descriptions at the default window size.
 - `with_layout(..., Align::Center)` directly inside a vertical container
   claims the whole available height; wrap it in `ui.horizontal`.
 - `ui.horizontal` inside a right-aligned bubble lays out right to left;
