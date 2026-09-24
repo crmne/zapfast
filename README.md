@@ -243,7 +243,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   remain saved and resume automatically. New messages can still arrive.
 - **Runs in the background.** Closing the window keeps ZapFast linked in the
   system tray. Reopen it from the tray or by launching it again. Quit from the
-  tray or with `Ctrl+Q`, or disable this behavior in Settings.
+  tray or with `Ctrl+Q`, or disable this behavior in Settings. The window
+  reopens where you left it; on Windows and X11, one that would open on no
+  connected monitor (for example on a display that is now unplugged) moves to
+  the middle of the primary monitor.
 - **Start at login.** Turn on **Start at login** in Settings to start ZapFast in
   the tray when you log in, without opening a window. It adds
   `~/.config/autostart/zapfast.desktop` on Linux, a LaunchAgent in
@@ -569,9 +572,7 @@ macOS and Windows use the standard platform directories selected by the
 message archive, favorite stickers, caches, and window state from `fastsapp`
 (or the earlier `fastwhatsapp`) paths. Existing ZapFast directories take
 precedence and are never overwritten. Quit FastsApp before starting ZapFast;
-if an older copy is still running, the new launch brings its window forward. If
-a saved window position is outside the connected monitors, ZapFast centers the
-window automatically on the first frame.
+if an older copy is still running, the new launch brings its window forward.
 Your phone may keep showing the old linked-device name until you link again.
 
 On Linux and macOS, ZapFast restricts its configuration, state, and cache
