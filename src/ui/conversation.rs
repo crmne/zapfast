@@ -1250,15 +1250,24 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     } else {
                         Icon::SendFilled
                     };
+                    let (button_fill, button_hover, button_icon) = if app.editing.is_none() {
+                        if ui.visuals().dark_mode {
+                            (Color32::WHITE, Color32::from_gray(238), Color32::BLACK)
+                        } else {
+                            (Color32::BLACK, Color32::from_gray(32), Color32::WHITE)
+                        }
+                    } else {
+                        (fill, hover, icon)
+                    };
                     if theme::circle_button_sized(
                         ui,
                         icon_kind,
                         button_width,
                         button_width * 0.46,
                         theme::CircleButtonColors {
-                            fill,
-                            fill_hover: hover,
-                            icon,
+                            fill: button_fill,
+                            fill_hover: button_hover,
+                            icon: button_icon,
                             hover_icon: None,
                             tooltip: None,
                         },
