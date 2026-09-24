@@ -5758,13 +5758,23 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
         egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
-            if theme::circle_button(
+            let (send_fill, send_hover, send_icon) = if ui.visuals().dark_mode {
+                (Color32::WHITE, Color32::from_gray(238), Color32::BLACK)
+            } else {
+                (Color32::BLACK, Color32::from_gray(32), Color32::WHITE)
+            };
+            if theme::circle_button_sized(
                 ui,
-                Icon::Send,
+                Icon::SendFilled,
                 button,
-                palette.accent,
-                palette.accent_hover,
-                palette.on_accent,
+                24.0,
+                theme::CircleButtonColors {
+                    fill: send_fill,
+                    fill_hover: send_hover,
+                    icon: send_icon,
+                    hover_icon: None,
+                    tooltip: None,
+                },
                 "Send",
             )
             .clicked()
