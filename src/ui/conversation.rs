@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::animation;
-use crate::app::{App, Conversation};
+use crate::app::{App, Conversation, JumpHighlight};
 use crate::markup;
 use crate::model::{
     Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
@@ -1595,6 +1595,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let scroll_to_bottom =
         app.scroll_to_bottom && divider.as_ref().is_none_or(|(.., placed)| *placed);
     let app_pictures = app.settings.show_sender_pictures;
+    // The message a quote or search result jumped to flashes once in view.
+    let jump = app
+        .jump_highlight
+        .clone()
+        .filter(|jump| jump.chat == chat.id);
+    let jump_since = std::cell::Cell::new(jump.as_ref().and_then(|jump| jump.since));
+    let time = ui.input(|input| input.time);
     // Do not animate programmatic scrolling. Pending animations can delay a
     // later request to reach the end.
     let mut edge_scrolled_up = false;
@@ -1687,7 +1694,38 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 || previous.is_none_or(|previous| {
                                     previous.sender != message.sender || previous.from_me
                                 }));
+                        let flash = jump
+                            .as_ref()
+                            .filter(|jump| jump.message == message.id)
+                            .map(|_| (ui.painter().add(egui::Shape::Noop), ui.cursor().top()));
                         let response = bubble(ui, &view, message, show_sender, &mut actions);
+                        if let Some((slot, top)) = flash {
+                            if view.anchor == Some(message.id.as_str()) && response.is_some() {
+                                jump_since.set(Some(time));
+                            }
+                            let strength = jump_since
+                                .get()
+                                .map_or(0.0, |since| JumpHighlight::strength(time - since));
+                            if strength > 0.0 {
+                                // Behind the row, across the whole message
+                                // view, like WhatsApp's.
+                                let band = Rect::from_x_y_ranges(
+                                    viewport.x_range(),
+                                    top - 3.0..=ui.min_rect().bottom() + 3.0,
+                                );
+                                ui.painter().set(
+                                    slot,
+                                    egui::Shape::rect_filled(
+                                        band,
+                                        0.0,
+                                        palette.accent.gamma_multiply(0.22 * strength),
+                                    ),
+                                );
+                            }
+                            if jump_since.get().is_some() {
+                                ui.ctx().request_repaint();
+                            }
+                        }
                         if let (Some(selected), Some(response)) = (&selection, &response) {
                             if selected.contains(&message.id) {
                                 ui.painter().rect(
@@ -1766,13 +1804,37 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         app.scroll_to_bottom = false;
     }
     if divider_placed {
-        if let Some(divider) = app.unread_divider.as_mut() {
+        if let Some(divider) = app
+            .unread_divider
+            .as_mut()
+            .filter(|divider| divider.chat == chat.id)
+        {
             divider.placed = true;
         }
         app.scroll_to_bottom = false;
     }
+    if let Some(jump) = &mut app.jump_highlight
+        && jump.chat == chat.id
+    {
+        jump.since = jump_since.get();
+        if jump
+            .since
+            .is_some_and(|since| time - since > JumpHighlight::DURATION)
+        {
+            app.jump_highlight = None;
+        }
+    }
     if anchored {
         app.scroll_anchor = None;
+        // The message the reader jumped to wins over the unread divider,
+        // which would otherwise scroll away from it on the next frame.
+        if let Some(divider) = app
+            .unread_divider
+            .as_mut()
+            .filter(|divider| divider.chat == chat.id)
+        {
+            divider.placed = true;
+        }
     } else if let Some(anchor) = app.scroll_anchor.clone()
         && !loading
         && !fetching
@@ -2669,13 +2731,16 @@ fn bubble_frame(
 
     reaction_affordance(ui, view, message, &bubble, actions);
     // Read right-click from input because inner widgets own their responses.
-    // Open only when no floating layer covers the chat panel.
+    // Count only the part of the bubble inside the transcript's viewport: the
+    // chat header shares this layer, and a bubble scrolled under it is hidden
+    // there. Open only when no floating layer covers the chat panel.
+    let shown = bubble.rect.intersect(ui.clip_rect());
     let right_clicked = ui.input(|input| {
         input.pointer.secondary_clicked()
             && input
                 .pointer
                 .interact_pos()
-                .is_some_and(|pos| bubble.rect.contains(pos))
+                .is_some_and(|pos| shown.contains(pos))
     }) && ui
         .input(|input| input.pointer.interact_pos())
         .is_some_and(|pos| {
@@ -2690,11 +2755,9 @@ fn bubble_frame(
         &[
             "Delete for everyone",
             "Show in folder",
-            if crate::util::twelve_hour_clock() {
-                "Delivered Yesterday at 11:59 PM"
-            } else {
-                "Delivered Yesterday at 20:45"
-            },
+            "Copy message ID",
+            &crate::i18n::gettext(view.locale, "Open in system player"),
+            &crate::i18n::gettext(view.locale, "Message info"),
         ],
         true,
     )
@@ -2851,6 +2914,11 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
     })
 }
 
+/// Width of a quote's accent bar.
+const QUOTE_BAR: f32 = 4.0;
+/// Corner radius of a quote.
+const QUOTE_RADIUS: u8 = 6;
+
 fn quote_block(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -2860,50 +2928,67 @@ fn quote_block(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
-    let who = if view.me == Some(quoted.sender.as_str()) {
+    let mine = view.me == Some(quoted.sender.as_str());
+    let who = if mine {
         "You".to_owned()
     } else {
         (view.names_or)(&quoted.sender, quoted.sender_name.as_deref())
     };
     let summary = markup::plain(&quoted.summary, &quote_mentions(view, quoted));
+    // As in WhatsApp, the bar and name take the quoted sender's colour, the
+    // one their name has in groups, kept readable on this bubble.
+    let bubble = if message.from_me {
+        palette.bubble_out
+    } else {
+        palette.bubble_in
+    };
+    let tint = theme::readable_on(
+        bubble,
+        if mine {
+            palette.accent
+        } else {
+            palette.sender(crate::util::hue(&quoted.sender))
+        },
+        palette.text,
+        3.0,
+    );
     let response = Frame::new()
         .fill(palette.window.gamma_multiply(0.35))
-        .corner_radius(CornerRadius::same(6))
+        .corner_radius(CornerRadius::same(QUOTE_RADIUS))
         .inner_margin(Margin {
-            left: 8,
+            left: QUOTE_BAR as i8 + 7,
             right: 10,
             top: 5,
-            bottom: 5,
+            bottom: 6,
         })
         .show(ui, |ui| {
             // Include frame margins in the settled width. Use a bounded,
             // left-aligned layout because own bubbles inherit right-to-left flow.
-            let inner_width = (width - 18.0).max(0.0);
+            let inner_width = (width - QUOTE_BAR - 17.0).max(0.0);
             ui.allocate_ui_with_layout(
                 vec2(inner_width, 0.0),
                 Layout::top_down(Align::Min),
                 |ui| {
                     ui.set_width(inner_width);
-                    ui.horizontal(|ui| {
-                        let (bar, _) = ui.allocate_exact_size(vec2(3.0, 30.0), Sense::hover());
-                        ui.painter().rect_filled(bar, 2.0, palette.accent);
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 1.0;
-                            // Use the space beside the quote bar and gap.
-                            ui.set_width((width - 29.0).max(0.0));
-                            widgets::rich_text(ui, &who, theme::semibold(12.5), palette.accent);
-                            widgets::rich_text(
-                                ui,
-                                &summary,
-                                theme::regular(12.5),
-                                palette.secondary,
-                            );
-                        });
-                    });
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    widgets::rich_text(ui, &who, theme::semibold(12.5), tint);
+                    widgets::rich_text(ui, &summary, theme::regular(12.5), palette.secondary);
                 },
             );
         })
         .response;
+    // The bar runs the quote's full height along its rounded left edge.
+    let bar = Rect::from_min_size(response.rect.min, vec2(QUOTE_BAR, response.rect.height()));
+    ui.painter().rect_filled(
+        bar,
+        CornerRadius {
+            nw: QUOTE_RADIUS,
+            sw: QUOTE_RADIUS,
+            ne: 0,
+            se: 0,
+        },
+        tint,
+    );
     ui.ctx().data_mut(|data| {
         data.insert_temp(
             bubble_id(&view.chat.id, &message.id).with("quote"),
@@ -3348,17 +3433,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         speed_menu_row(ui, view, message, actions);
     }
     widgets::menu_separator(ui, &palette);
-    // Sent, delivered, and read times inform only; they are not actions.
-    widgets::menu_info(
-        ui,
-        &palette,
-        Icon::Check,
-        &format!(
-            "Sent {}",
-            crate::util::moment_stamp(view.locale, message.timestamp)
-        ),
-    );
-    // Delivery and read times, per member in a group, live in "Message info".
+    // The menu holds actions only. Sent, delivery, and read times, per member
+    // in a group, live in "Message info".
     if message.from_me
         && !matches!(message.content, Content::Revoked)
         && !matches!(
@@ -3377,8 +3453,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             message: message.id.clone(),
         }));
     }
-    // The id helps when looking a message up for a bug report. Clicking
-    // "Sent" used to copy it without saying so.
+    // The id helps when looking a message up for a bug report.
     if widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy message ID") {
         actions.push(Action::CopyText(message.id.clone()));
     }

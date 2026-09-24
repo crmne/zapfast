@@ -731,6 +731,8 @@ struct ParsedChat {
     id: String,
     name: Option<String>,
     unread: Option<u32>,
+    /// The phone's unread mark; `None` when the chunk omits it.
+    marked_unread: Option<bool>,
     /// `None` means the history chunk omitted archive metadata.
     archived: Option<bool>,
     pinned_at: Option<i64>,
@@ -1037,6 +1039,17 @@ impl Worker {
             .unwrap_or_else(|| "me".to_owned())
     }
 
+    /// Our identity for the interface, with the privacy id that mentions
+    /// of us may carry instead of the phone number.
+    fn me_event(&self) -> Event {
+        Event::Me {
+            id: self.me(),
+            lid: self.me_lid.clone(),
+            name: self.me_name.clone(),
+            about: self.me_about.clone(),
+        }
+    }
+
     fn is_me(&self, id: &str) -> bool {
         self.me_pn.as_deref() == Some(id) || self.me_lid.as_deref() == Some(id)
     }
@@ -1061,12 +1074,8 @@ impl Worker {
                 .map(|contact| (contact.id.clone(), contact))
                 .collect();
         }
-        if let Some(id) = self.me_pn.clone().or_else(|| self.me_lid.clone()) {
-            self.emit(Event::Me {
-                id,
-                name: self.me_name.clone(),
-                about: self.me_about.clone(),
-            });
+        if self.me_pn.is_some() || self.me_lid.is_some() {
+            self.emit(self.me_event());
         }
         self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
         self.emit_chats();
@@ -2155,15 +2164,12 @@ impl Worker {
                     } else {
                         let _ = self.archive.mark_read(&chat);
                     }
+                    let _ = self.archive.set_marked_unread(&chat, false);
                 } else {
+                    // Marked unread on another device: the empty dot, as the
+                    // phone shows it, with any real count kept.
                     let _ = self.archive.finish_read_sync(&chat, i64::MAX);
-                    let unread = self
-                        .archive
-                        .chat(&chat)
-                        .ok()
-                        .flatten()
-                        .map_or(1, |row| row.unread.max(1));
-                    let _ = self.archive.set_unread(&chat, unread);
+                    let _ = self.archive.set_marked_unread(&chat, true);
                 }
                 self.emit_chat(&chat);
             }
@@ -2216,20 +2222,12 @@ impl Worker {
             E::UserAboutUpdate(update) if self.is_me(&self.canonical(&update.jid)) => {
                 let _ = self.archive.set_meta("me_about", &update.status);
                 self.me_about = Some(update.status.clone()).filter(|about| !about.is_empty());
-                self.emit(Event::Me {
-                    id: self.me(),
-                    name: self.me_name.clone(),
-                    about: self.me_about.clone(),
-                });
+                self.emit(self.me_event());
             }
             E::SelfPushNameUpdated(update) => {
                 self.me_name = Some(update.new_name.clone());
                 let _ = self.archive.set_meta("me_name", &update.new_name);
-                self.emit(Event::Me {
-                    id: self.me(),
-                    name: self.me_name.clone(),
-                    about: self.me_about.clone(),
-                });
+                self.emit(self.me_event());
             }
             E::OfflineSyncCompleted(_) => self.emit_chats(),
             _ => {}
@@ -2301,11 +2299,7 @@ impl Worker {
             let _ = self.archive.set_meta("me_name", &name);
             self.me_name = Some(name);
         }
-        self.emit(Event::Me {
-            id: self.me(),
-            name: self.me_name.clone(),
-            about: self.me_about.clone(),
-        });
+        self.emit(self.me_event());
     }
 
     async fn on_logged_out(&mut self) {
@@ -3684,6 +3678,11 @@ impl Worker {
                     let _ = self.archive.set_unread(&id, unread);
                 }
             }
+            if (metadata || existing.is_none())
+                && let Some(marked) = chat.marked_unread
+            {
+                let _ = self.archive.history_marked_unread(&id, marked);
+            }
             filed.push((id, count, chat.more_on_phone));
         }
         self.pump_poll_votes();
@@ -3891,6 +3890,15 @@ impl Worker {
                 });
             }
             Command::MarkRead { chat, receipts } => self.mark_read(chat, receipts),
+            Command::MarkUnread(chat) => match self.archive.mark_unread(&chat) {
+                Ok(marked) => {
+                    self.emit_chat(&chat);
+                    if marked {
+                        self.pump_read_sync();
+                    }
+                }
+                Err(error) => self.emit(Event::Error(error.to_string())),
+            },
             Command::WatchReceipts(watch) => {
                 self.receipts_watch = watch;
                 self.emit_receipts();
@@ -3908,6 +3916,22 @@ impl Worker {
                 }
                 if success {
                     let _ = self.archive.finish_read_sync(&chat, through);
+                    self.pump_read_sync();
+                }
+            }
+            Command::UnreadSyncFinished {
+                chat,
+                marked_at,
+                success,
+            } => {
+                if !self
+                    .read_sync
+                    .finish_unread(&chat, marked_at, success, Instant::now())
+                {
+                    return;
+                }
+                if success {
+                    let _ = self.archive.finish_unread_sync(&chat, marked_at);
                     self.pump_read_sync();
                 }
             }
@@ -4129,13 +4153,9 @@ impl Worker {
                     self.fetch_avatar(me.clone(), false);
                     self.fetch_avatar(me, true);
                 }
-                self.emit(Event::Me {
-                    id: self.me(),
-                    name: self.me_name.clone(),
-                    about: self.me_about.clone(),
-                });
+                self.emit(self.me_event());
             }
-            Command::PickNotificationSound { group } => {
+            Command::PickNotificationSound { mention } => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
                 tokio::task::spawn_blocking(move || {
@@ -4144,7 +4164,7 @@ impl Worker {
                         .add_filter("Audio", &["wav", "mp3", "ogg", "oga"])
                         .pick_file()
                     {
-                        let _ = events.send(Event::NotificationSoundPicked { group, path });
+                        let _ = events.send(Event::NotificationSoundPicked { mention, path });
                         waker.wake();
                     }
                 });
@@ -4570,7 +4590,12 @@ impl Worker {
                     }
                     Err(_error) => log::warn!("could not fetch a sticker"),
                 }
-                self.emit_stickers();
+                // Recent is sorted by use, so each arrival lands mid-grid and
+                // shifts every tile after it. Publish the batch once, instead
+                // of reshuffling the open picker under the reader (#165).
+                if self.sticker_fetches.is_empty() {
+                    self.emit_stickers();
+                }
             }
             Command::MeInfo { about } => {
                 self.me_about = about;
@@ -4582,11 +4607,7 @@ impl Worker {
                         let _ = self.archive.set_meta("me_about", "");
                     }
                 }
-                self.emit(Event::Me {
-                    id: self.me(),
-                    name: self.me_name.clone(),
-                    about: self.me_about.clone(),
-                });
+                self.emit(self.me_event());
             }
             Command::React {
                 chat,
@@ -5096,7 +5117,9 @@ impl Worker {
         };
         let _ = self.archive.mark_read(&chat);
         self.emit_chat(&chat);
-        if row.unread == 0 {
+        // A chat marked unread with nothing pending still tells the phone it
+        // was read, which is what takes the phone's mark off.
+        if row.unread == 0 && !row.marked_unread {
             return;
         }
         let _ = self.archive.queue_read_sync(&chat);
@@ -5140,6 +5163,37 @@ impl Worker {
             });
             // Every read-state write uses regular_low. A queue of spawned tasks
             // would each retry the same broken collection before we can back off.
+            return;
+        }
+        // Reads go first: a chat read here and then marked unread again ends
+        // unread on the phone too.
+        for (chat, marked_at, through) in self.archive.pending_unreads().unwrap_or_default() {
+            let Some(jid) = Self::jid_of(&chat) else {
+                continue;
+            };
+            if !self
+                .read_sync
+                .start_unread(&chat, marked_at, Instant::now())
+            {
+                break;
+            }
+            let client = client.clone();
+            let commands = self.commands.clone();
+            tokio::spawn(async move {
+                let range = whatsapp_rust::message_range(through, None, Vec::new());
+                let result = client
+                    .chat_actions()
+                    .mark_chat_as_read(&jid, false, Some(range))
+                    .await;
+                if let Err(error) = &result {
+                    log::debug!("chat unread mark not synced: {error}");
+                }
+                let _ = commands.send(Command::UnreadSyncFinished {
+                    chat,
+                    marked_at,
+                    success: result.is_ok(),
+                });
+            });
             break;
         }
     }
@@ -5504,11 +5558,12 @@ impl Worker {
             let dir = dir.clone();
             let hash = sticker.hash;
             tokio::spawn(async move {
-                let result = async {
+                // The shelf waits for the whole batch, so none may hang.
+                let result = with_attachment_deadline(ATTACHMENT_TIMEOUT, async {
                     let path = dir.join(format!("{hash}.webp"));
                     let sticker = PhoneSticker(meta);
                     download_attachment(&client, &sticker, &dir, &path).await
-                }
+                })
                 .await;
                 let _ = commands.send(Command::StickerFetched { hash, result });
             });
@@ -6861,6 +6916,21 @@ async fn prepare_voice(
     })
 }
 
+/// The mimetype an attached audio file is sent under as an audio message,
+/// or `None` when phones cannot play it inline (WAV, FLAC, AIFF, WMA and the
+/// like), so it goes as a document and arrives as the original file (#162).
+/// WhatsApp's audio messages are MP3, AAC, M4A, AMR and OGG.
+fn whatsapp_audio_mime(mime: &str) -> Option<&'static str> {
+    match mime {
+        "audio/mpeg" | "audio/mp3" => Some("audio/mpeg"),
+        "audio/mp4" | "audio/m4a" | "audio/x-m4a" => Some("audio/mp4"),
+        "audio/aac" => Some("audio/aac"),
+        "audio/amr" => Some("audio/amr"),
+        "audio/ogg" => Some("audio/ogg"),
+        _ => None,
+    }
+}
+
 /// Uploads a file and builds its message. Images are encoded as JPEG.
 async fn prepare_media(
     client: &Client,
@@ -6952,7 +7022,8 @@ async fn prepare_media(
             file_name: file_name.map(str::to_owned),
         });
     }
-    if kind == "audio" {
+    if let Some(audio_mime) = whatsapp_audio_mime(mime) {
+        let mime_owned = audio_mime.to_owned();
         let upload = client
             .upload(bytes.clone(), MediaType::Audio, UploadOptions::default())
             .await
@@ -7532,6 +7603,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         id: conversation.id.clone(),
         name: non_empty(&conversation.display_name).or_else(|| non_empty(&conversation.name)),
         unread: conversation.unread_count,
+        marked_unread: conversation.marked_as_unread,
         archived: conversation.archived,
         pinned_at: conversation.pinned.map(|when| i64::from(when) * 1000),
         muted_until: conversation.mute_end_time.map(|end| {
@@ -7597,6 +7669,26 @@ fn ensure_message_secret(raw: Vec<u8>, secret: Option<&[u8]>) -> Vec<u8> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn only_phone_playable_audio_is_sent_as_an_audio_message() {
+        let sent_as = |name: &str| {
+            let mime = mime_guess2::from_path(name)
+                .first_or_octet_stream()
+                .to_string();
+            whatsapp_audio_mime(&mime)
+        };
+        assert_eq!(sent_as("song.mp3"), Some("audio/mpeg"));
+        assert_eq!(sent_as("memo.m4a"), Some("audio/mp4"));
+        assert_eq!(sent_as("clip.aac"), Some("audio/aac"));
+        assert_eq!(sent_as("note.ogg"), Some("audio/ogg"));
+        assert_eq!(sent_as("note.opus"), Some("audio/ogg"));
+        // These would arrive as an unplayable audio message converted on the
+        // phone, not as the file that was attached (#162).
+        for document in ["take.wav", "album.flac", "loop.aiff", "old.wma", "x.weba"] {
+            assert_eq!(sent_as(document), None, "{document}");
+        }
+    }
 
     #[tokio::test]
     async fn stalled_attachments_finish_with_a_retryable_error() {
@@ -10398,6 +10490,97 @@ mod receipt_tests {
         assert!(worker.read_sync.ready(Instant::now()));
     }
 
+    fn marked(worker: &Worker) -> bool {
+        worker.archive.chat(PEER).unwrap().unwrap().marked_unread
+    }
+
+    async fn phone_marks(worker: &mut Worker, read: bool) {
+        let event = wa_events::MarkChatAsReadUpdate::builder()
+            .jid(PEER.parse().unwrap())
+            .timestamp(whatsapp_rust::wacore::time::now_utc())
+            .from_full_sync(false)
+            .action(Box::new(wa::sync_action_value::MarkChatAsReadAction {
+                read: Some(read),
+                message_range: MessageField::none(),
+            }))
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::MarkChatAsReadUpdate(event)))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_chat_marked_unread_on_the_phone_shows_the_empty_dot() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(incoming("a", 100), None, None);
+        worker.mark_read(PEER.into(), false);
+        phone_marks(&mut worker, false).await;
+        assert!(marked(&worker));
+        assert_eq!(unread(&worker), 0, "the phone's mark invents no count");
+        assert!(
+            worker.archive.pending_reads().unwrap().is_empty(),
+            "the phone's newer mark replaces a read still waiting to go out"
+        );
+        phone_marks(&mut worker, true).await;
+        assert!(!marked(&worker), "a read on the phone takes the mark off");
+    }
+
+    #[tokio::test]
+    async fn a_chat_marked_unread_here_reaches_the_phone_and_opening_it_reads_it() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(incoming("a", 100), None, None);
+        worker.mark_read(PEER.into(), false);
+        worker.archive.finish_read_sync(PEER, i64::MAX).unwrap();
+        worker
+            .handle_command(Command::MarkUnread(PEER.into()))
+            .await;
+        assert!(marked(&worker));
+        let pending = worker.archive.pending_unreads().unwrap();
+        assert_eq!(pending.len(), 1, "the mark waits for the phone");
+        let (_, marked_at, through) = pending[0].clone();
+        assert_eq!(through, 100, "the mark covers the latest message");
+        assert!(
+            worker
+                .read_sync
+                .start_unread(PEER, marked_at, Instant::now())
+        );
+        worker
+            .handle_command(Command::UnreadSyncFinished {
+                chat: PEER.into(),
+                marked_at,
+                success: true,
+            })
+            .await;
+        assert!(worker.archive.pending_unreads().unwrap().is_empty());
+        // Opening the chat reads it, and the read goes to the phone even
+        // though no message was pending, since that clears the phone's mark.
+        worker.mark_read(PEER.into(), false);
+        assert!(!marked(&worker));
+        assert_eq!(worker.archive.pending_reads().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_chat_with_unread_messages_is_not_marked_again() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(incoming("a", 100), None, None);
+        assert_eq!(unread(&worker), 1);
+        worker
+            .handle_command(Command::MarkUnread(PEER.into()))
+            .await;
+        assert!(!marked(&worker), "a counted chat already reads as unread");
+        assert!(worker.archive.pending_unreads().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_history_snapshot_carries_the_phones_unread_mark() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let mut chunk = history(0);
+        chunk.chats[0].marked_unread = Some(true);
+        worker.apply_history(chunk, true);
+        assert!(marked(&worker));
+        assert_eq!(unread(&worker), 0);
+    }
+
     #[test]
     fn replying_on_the_phone_reads_only_preceding_messages() {
         let (mut worker, events, _inbox, _wa) = worker();
@@ -10964,6 +11147,7 @@ mod chat_removal_tests {
                 id: chat.to_owned(),
                 name: Some("Somebody".into()),
                 unread: None,
+                marked_unread: None,
                 archived: None,
                 pinned_at: None,
                 muted_until: None,

@@ -35,8 +35,9 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
 - **Uses consistent names.** Choose address-book names or public WhatsApp
   profile names for chats, mentions, replies, and notifications.
 - **Runs in the background.** Closing the window keeps ZapFast in the system
-  tray. Notifications can show the chat picture and open the chat. Supported
-  desktops show the unread count on the app icon in the taskbar or dock. Muting
+  tray. Notifications can show the chat picture and open the chat at the
+  message they announced. Supported desktops show the unread count on the app
+  icon in the taskbar or dock. Muting
   a chat also mutes it on your phone.
 - **Copies message text.** Select part of a message or copy across messages
   with the time, date, and sender included.

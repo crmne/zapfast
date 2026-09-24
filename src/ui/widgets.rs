@@ -260,6 +260,46 @@ pub fn badge(ui: &Ui, palette: &Palette, at: egui::Pos2, count: u32, muted: bool
     width
 }
 
+/// Empty unread reminder: the same round as a count badge, with no digit.
+pub fn unread_dot(ui: &Ui, palette: &Palette, at: egui::Pos2, muted: bool) -> f32 {
+    let fill = if muted { palette.dim } else { palette.accent };
+    ui.painter().circle_filled(at, 5.0, fill);
+    10.0
+}
+
+/// The unread mark beside a chat: a numbered badge while messages are pending,
+/// an empty dot for a chat marked unread by hand, nothing otherwise.
+pub fn unread_indicator(
+    ui: &Ui,
+    palette: &Palette,
+    at: egui::Pos2,
+    count: u32,
+    marked: bool,
+    muted: bool,
+) -> f32 {
+    if count > 0 {
+        badge(ui, palette, at, count, muted)
+    } else if marked {
+        unread_dot(ui, palette, at, muted)
+    } else {
+        0.0
+    }
+}
+
+/// The height of a dialog's scrolling body: it grows with the content until
+/// the whole dialog takes the window's height less a margin, up to a cap, and
+/// then scrolls. Poll results set the measure; give the scroll area this as
+/// both its maximum and its minimum scrolled height, so a modal does not
+/// shrink it to the space below its first, smaller position.
+pub fn dialog_scroll_height(ui: &Ui) -> f32 {
+    // What the dialog has laid out above the scroll area: its title, and
+    // anything else that stays in place.
+    let above = (ui.cursor().top() - ui.min_rect().top()).max(0.0);
+    (ui.ctx().content_rect().height() - 158.0 - above)
+        .min(592.0 - above)
+        .max(100.0)
+}
+
 /// Minimum width needed for menu labels.
 pub fn menu_width(ui: &Ui, labels: &[&str], icons: bool) -> f32 {
     let widest = labels
@@ -272,6 +312,62 @@ pub fn menu_width(ui: &Ui, labels: &[&str], icons: bool) -> f32 {
         })
         .fold(0.0, f32::max);
     widest + if icons { 26.0 } else { 0.0 } + 20.0 + 12.0
+}
+
+/// A context-menu entry that opens a submenu, drawn like the plain entries
+/// beside it, with a chevron.
+pub fn submenu<R>(
+    ui: &mut Ui,
+    palette: &Palette,
+    icon: Icon,
+    label: &str,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    let open = egui::Popup::is_id_open(
+        ui.ctx(),
+        egui::containers::menu::SubMenu::id_from_widget_id(response.id),
+    );
+    if ui.is_rect_visible(rect) {
+        if response.hovered() || open {
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(6), palette.surface_hover);
+        }
+        let icon_rect =
+            Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(16.0));
+        icon.image(palette.secondary, 16.0).paint_at(ui, icon_rect);
+        let chevron = Rect::from_center_size(
+            pos2(rect.right() - 16.0, rect.center().y),
+            Vec2::splat(14.0),
+        );
+        Icon::ChevronRight
+            .image(palette.secondary, 14.0)
+            .paint_at(ui, chevron);
+        let x = rect.left() + 36.0;
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            label.to_string(),
+            theme::regular(13.5),
+            palette.text,
+        );
+        job.wrap = egui::text::TextWrapping {
+            max_width: (chevron.left() - 6.0 - x).max(0.0),
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('\u{2026}'),
+        };
+        let galley = crate::bidi::layout_job(ui, job);
+        ui.painter().galley(
+            pos2(x, rect.center().y - galley.size().y / 2.0),
+            galley,
+            palette.text,
+        );
+    }
+    egui::containers::menu::SubMenu::new().show(ui, &response, add_contents)
 }
 
 pub fn menu_item(ui: &mut Ui, palette: &Palette, icon: Option<Icon>, label: &str) -> bool {
@@ -345,36 +441,6 @@ pub fn menu_item_enabled(
         response.on_hover_cursor(egui::CursorIcon::PointingHand);
     }
     clicked
-}
-
-/// A menu row that only informs: no hover, no pointer, not a button. It is
-/// set apart by its smaller type and dimmed icon; the text keeps full contrast.
-pub fn menu_info(ui: &mut Ui, palette: &Palette, icon: Icon, label: &str) {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
-    if !ui.is_rect_visible(rect) {
-        return;
-    }
-    let icon_rect =
-        Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(14.0));
-    icon.image(palette.dim, 14.0).paint_at(ui, icon_rect);
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        label.to_string(),
-        theme::regular(12.5),
-        palette.text,
-    );
-    job.wrap = egui::text::TextWrapping {
-        max_width: (rect.right() - 10.0 - (rect.left() + 36.0)).max(0.0),
-        max_rows: 1,
-        break_anywhere: true,
-        overflow_character: Some('\u{2026}'),
-    };
-    let galley = crate::bidi::layout_job(ui, job);
-    ui.painter().galley(
-        pos2(rect.left() + 36.0, rect.center().y - galley.size().y / 2.0),
-        galley,
-        palette.text,
-    );
 }
 
 pub fn menu_separator(ui: &mut Ui, palette: &Palette) {

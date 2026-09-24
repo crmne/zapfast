@@ -123,7 +123,7 @@ const CHAT_COLUMNS: &str =
     "c.id, c.name, c.kind, c.last_activity, c.unread, c.archived, c.pinned, c.muted_until,
                     m.from_me, m.sender_name, m.content, m.status, m.sender, c.participants, c.read_only,
                     c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known,
-                    c.notification_sound";
+                    c.notification_sound, c.marked_unread";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -146,6 +146,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "archive_updated_at", "INTEGER"),
     ("chats", "notification_sound", "TEXT"),
     ("chats", "group_subject_known", "INTEGER NOT NULL DEFAULT 0"),
+    ("chats", "marked_unread", "INTEGER NOT NULL DEFAULT 0"),
+    ("chats", "pending_unread", "INTEGER"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
@@ -178,6 +180,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         kind: kind_from_name(&kind),
         last_activity: row.get(3)?,
         unread: row.get(4)?,
+        marked_unread: row.get(20)?,
         archived: row.get(5)?,
         pinned: row.get(6)?,
         pinned_at: row.get(15)?,
@@ -460,7 +463,7 @@ impl Archive {
 
     pub fn mark_read(&self, id: &str) -> Result<()> {
         self.connection.execute(
-            "UPDATE chats SET unread = 0,
+            "UPDATE chats SET unread = 0, marked_unread = 0, pending_unread = NULL,
              read_through = MAX(COALESCE(read_through, 0), last_activity) WHERE id = ?1",
             params![id],
         )?;
@@ -545,10 +548,72 @@ impl Archive {
         Ok(unread.min(remaining))
     }
 
+    /// A count above zero replaces the empty unread mark. A zero count leaves
+    /// it alone: the mark is its own sync action.
     pub fn set_unread(&self, id: &str, unread: u32) -> Result<()> {
         self.connection.execute(
-            "UPDATE chats SET unread = ?2 WHERE id = ?1",
+            "UPDATE chats SET unread = ?2,
+             marked_unread = CASE WHEN ?2 > 0 THEN 0 ELSE marked_unread END
+             WHERE id = ?1",
             params![id, unread],
+        )?;
+        Ok(())
+    }
+
+    /// Marks a chat with nothing pending as unread, and queues the mark for
+    /// the phone and the other linked devices. A chat that counts unread
+    /// messages already reads as unread and is left alone. Returns whether the
+    /// mark was set.
+    pub fn mark_unread(&self, id: &str) -> Result<bool> {
+        // The queue holds when the mark was made, so a completion for an
+        // earlier mark cannot drop a newer one.
+        let at = jiff::Timestamp::now().as_millisecond();
+        Ok(self.connection.execute(
+            "UPDATE chats SET marked_unread = 1,
+             pending_unread = MAX(COALESCE(pending_unread, 0) + 1, ?2)
+             WHERE id = ?1 AND unread = 0",
+            params![id, at],
+        )? > 0)
+    }
+
+    /// The phone's own unread mark, from a sync action or a history snapshot.
+    /// It replaces a mark still waiting to reach the phone.
+    pub fn set_marked_unread(&self, id: &str, marked: bool) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET marked_unread = ?2, pending_unread = NULL WHERE id = ?1",
+            params![id, marked],
+        )?;
+        Ok(())
+    }
+
+    /// The unread mark in a history snapshot from the phone. A mark made here
+    /// and not sent yet is newer, so it stays.
+    pub fn history_marked_unread(&self, id: &str, marked: bool) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET marked_unread = ?2 WHERE id = ?1 AND pending_unread IS NULL",
+            params![id, marked],
+        )?;
+        Ok(())
+    }
+
+    /// Chats whose unread mark has not reached the phone yet: the chat, when
+    /// the mark was made, and the latest activity the mark covers.
+    pub fn pending_unreads(&self) -> Result<Vec<(String, i64, i64)>> {
+        self.connection
+            .prepare(
+                "SELECT id, pending_unread, last_activity FROM chats
+                 WHERE pending_unread IS NOT NULL",
+            )?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect()
+    }
+
+    /// The phone has the unread mark. A mark made again since then stays
+    /// queued.
+    pub fn finish_unread_sync(&self, id: &str, through: i64) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET pending_unread = NULL WHERE id = ?1 AND pending_unread <= ?2",
+            params![id, through],
         )?;
         Ok(())
     }
@@ -571,7 +636,7 @@ impl Archive {
 
     pub fn bump_unread(&self, id: &str) -> Result<()> {
         self.connection.execute(
-            "UPDATE chats SET unread = unread + 1 WHERE id = ?1",
+            "UPDATE chats SET unread = unread + 1, marked_unread = 0 WHERE id = ?1",
             params![id],
         )?;
         Ok(())
@@ -1185,7 +1250,8 @@ impl Archive {
     pub fn clear_chat(&self, chat: &str) -> Result<Removed> {
         let media = self.chat_media(chat)?;
         let existed = self.connection.execute(
-            "UPDATE chats SET unread = 0, read_through = NULL, pending_read = NULL
+            "UPDATE chats SET unread = 0, read_through = NULL, pending_read = NULL,
+                 marked_unread = 0, pending_unread = NULL
                  WHERE id = ?1",
             params![chat],
         )? > 0;
@@ -1697,6 +1763,7 @@ pub(crate) mod tests {
         assert_eq!(chats.len(), 1);
         assert!(chats[0].participants.is_empty());
         assert!(!chats[0].read_only);
+        assert!(!chats[0].marked_unread);
         assert!(!chats[0].locked, "the lock column migrates in unset");
         assert!(
             !chats[0].group_subject_known,
@@ -2671,6 +2738,54 @@ pub(crate) mod tests {
         assert_eq!(ids, vec!["m2", "m1"]);
         archive.mark_read(chat).expect("read");
         assert_eq!(archive.chat(chat).expect("chat").expect("exists").unread, 0);
+    }
+
+    #[test]
+    fn marked_unread_stays_a_dot_until_read_or_a_real_count() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "A").expect("chat");
+        archive.set_marked_unread(chat, true).expect("mark");
+        let row = archive.chat(chat).expect("chat").expect("exists");
+        assert!(row.marked_unread);
+        assert_eq!(row.unread, 0);
+        assert!(row.looks_unread());
+        // A zero snapshot from the phone must not clear the local reminder.
+        archive.set_unread(chat, 0).expect("keep");
+        assert!(
+            archive
+                .chat(chat)
+                .expect("chat")
+                .expect("exists")
+                .marked_unread,
+            "a zero snapshot must not clear the local reminder"
+        );
+        // A real count takes over, and the dot goes away.
+        archive.bump_unread(chat).expect("bump");
+        let row = archive.chat(chat).expect("chat").expect("exists");
+        assert_eq!(row.unread, 1);
+        assert!(!row.marked_unread);
+        archive.set_marked_unread(chat, true).expect("mark again");
+        archive.set_unread(chat, 4).expect("count");
+        let row = archive.chat(chat).expect("chat").expect("exists");
+        assert_eq!(row.unread, 4);
+        assert!(!row.marked_unread, "a counted chat drops the empty dot");
+        // Reading clears both.
+        archive
+            .set_marked_unread(chat, true)
+            .expect("mark once more");
+        archive.mark_read(chat).expect("read");
+        let row = archive.chat(chat).expect("chat").expect("exists");
+        assert_eq!(row.unread, 0);
+        assert!(!row.marked_unread);
+        assert!(!row.looks_unread());
+        // Clearing a chat reads it, so the mark and its queued sync go too.
+        assert!(archive.mark_unread(chat).expect("mark here"));
+        assert_eq!(archive.pending_unreads().expect("queue").len(), 1);
+        archive.clear_chat(chat).expect("clear");
+        let row = archive.chat(chat).expect("chat").expect("exists");
+        assert!(!row.marked_unread);
+        assert!(archive.pending_unreads().expect("queue").is_empty());
     }
 
     #[test]

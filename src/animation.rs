@@ -2,7 +2,8 @@
 //!
 //! Decoding runs off the UI thread. WebP, GIF, and H.264 MP4 decode in-process;
 //! other MP4 codecs use `ffmpeg` when available. Idle animations are removed
-//! from memory.
+//! from memory, and a paused one keeps only its first frame, the poster, until
+//! it plays.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
@@ -45,6 +46,13 @@ struct Playing {
     started: Instant,
     last_drawn: Instant,
     animating: bool,
+    /// Whether every frame is decoded. A paused animation decodes only its
+    /// poster: a picker full of animated stickers would otherwise hold more
+    /// frames than the budget, and each decode would evict a visible tile that
+    /// then decodes again, flickering endlessly (#165).
+    complete: bool,
+    /// A decode of every frame is running for this poster.
+    upgrading: bool,
 }
 
 enum Entry {
@@ -68,8 +76,9 @@ struct Animations {
 #[derive(Clone, Default)]
 struct Cache(Arc<Mutex<Animations>>);
 
-/// Result returned by a decoder thread.
-type Delivery = (PathBuf, Option<Decoded>);
+/// Result returned by a decoder thread, and whether it holds every frame
+/// rather than only the poster.
+type Delivery = (PathBuf, Option<Decoded>, bool);
 
 /// Decoded frames waiting for texture upload.
 #[derive(Clone, Default)]
@@ -117,8 +126,18 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
         std::mem::take(&mut *inbox.0.lock().unwrap_or_else(|p| p.into_inner()));
     let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
     let uploaded = !arrived.is_empty();
-    for (arrived_path, decoded) in arrived {
+    for (arrived_path, decoded, complete) in arrived {
         let entry = match decoded {
+            Some(_)
+                if !complete
+                    && matches!(
+                        animations.entries.get(&arrived_path),
+                        Some(Entry::Ready(playing)) if playing.complete
+                    ) =>
+            {
+                // Every frame is already here; a late poster adds nothing.
+                continue;
+            }
             Some(decoded) if !decoded.frames.is_empty() => {
                 let mut total = Duration::ZERO;
                 let frames = decoded
@@ -137,9 +156,20 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
                     started: Instant::now(),
                     last_drawn: Instant::now(),
                     animating: false,
+                    complete,
+                    upgrading: false,
                 })
             }
-            _ => Entry::Failed,
+            _ => match animations.entries.get_mut(&arrived_path) {
+                // A poster whose other frames failed stays a still picture
+                // instead of asking again on every frame.
+                Some(Entry::Ready(playing)) => {
+                    playing.upgrading = false;
+                    playing.complete = true;
+                    continue;
+                }
+                _ => Entry::Failed,
+            },
         };
         animations.entries.insert(arrived_path, entry);
     }
@@ -191,6 +221,19 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
                 playing.animating = false;
                 return Frame::Ready(playing.frames[0].0.clone());
             }
+            if !playing.complete {
+                // Keep showing the poster while the other frames decode.
+                if !playing.upgrading {
+                    match start_decode(ctx, &inbox, path, true) {
+                        Start::Started => playing.upgrading = true,
+                        Start::Busy => {
+                            ctx.request_repaint_after(Duration::from_millis(150));
+                        }
+                        Start::Failed => playing.complete = true,
+                    }
+                }
+                return Frame::Ready(playing.frames[0].0.clone());
+            }
             if !playing.animating {
                 playing.started = now;
                 playing.animating = true;
@@ -215,41 +258,65 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
         }
         Some(Entry::Decoding) => Frame::Pending,
         Some(Entry::Failed) => Frame::Unavailable,
-        None => {
-            if DECODING.load(std::sync::atomic::Ordering::Acquire) >= MAX_DECODERS {
+        None => match start_decode(ctx, &inbox, path, animate) {
+            Start::Started => {
+                animations
+                    .entries
+                    .insert(path.to_path_buf(), Entry::Decoding);
+                Frame::Pending
+            }
+            Start::Busy => {
                 // Retry shortly when all decoder slots are busy.
                 ctx.request_repaint_after(Duration::from_millis(150));
-                return Frame::Pending;
+                Frame::Pending
             }
-            DECODING.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-            let slot = DecodeSlot;
-            animations
-                .entries
-                .insert(path.to_path_buf(), Entry::Decoding);
-            let file = path.to_path_buf();
-            let ctx = ctx.clone();
-            let spawned = std::thread::Builder::new()
-                .name("animation-decode".into())
-                .spawn(move || {
-                    let _slot = slot;
-                    // Convert decoder panics to failed results.
-                    let decoded =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decode(&file)))
-                            .unwrap_or(None);
-                    inbox
-                        .0
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .push((file, decoded));
-                    ctx.request_repaint();
-                });
-            if spawned.is_err() {
+            Start::Failed => {
                 animations.entries.insert(path.to_path_buf(), Entry::Failed);
-                return Frame::Unavailable;
+                Frame::Unavailable
             }
-            Frame::Pending
-        }
+        },
     }
+}
+
+/// Whether a decoder thread could be started.
+enum Start {
+    Started,
+    /// Every decoder slot is taken; try again shortly.
+    Busy,
+    Failed,
+}
+
+/// Decodes `path` on a thread, every frame when `all` and otherwise only the
+/// poster, and delivers the result to `inbox`.
+fn start_decode(ctx: &egui::Context, inbox: &Inbox, path: &Path, all: bool) -> Start {
+    if DECODING.load(std::sync::atomic::Ordering::Acquire) >= MAX_DECODERS {
+        return Start::Busy;
+    }
+    DECODING.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    let slot = DecodeSlot;
+    let file = path.to_path_buf();
+    let ctx = ctx.clone();
+    let inbox = inbox.clone();
+    let limit = if all { MAX_FRAMES } else { 1 };
+    let spawned = std::thread::Builder::new()
+        .name("animation-decode".into())
+        .spawn(move || {
+            let _slot = slot;
+            // Convert decoder panics to failed results.
+            let decoded =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decode(&file, limit)))
+                    .unwrap_or(None);
+            inbox
+                .0
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push((file, decoded, all));
+            ctx.request_repaint();
+        });
+    if spawned.is_err() {
+        return Start::Failed;
+    }
+    Start::Started
 }
 
 /// MP4 playback is always available because H.264 decodes in-process.
@@ -270,23 +337,24 @@ fn ffmpeg_present() -> bool {
     })
 }
 
-fn decode(path: &Path) -> Option<Decoded> {
+/// Decodes up to `limit` frames.
+fn decode(path: &Path, limit: usize) -> Option<Decoded> {
     let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| extension.to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
-        "webp" | "gif" => decode_image(path, &extension),
-        _ => decode_video(path),
+        "webp" | "gif" => decode_image(path, &extension, limit),
+        _ => decode_video(path, limit),
     }
 }
 
 /// Decodes animated GIF with the `image` crate.
-fn decode_image(path: &Path, extension: &str) -> Option<Decoded> {
+fn decode_image(path: &Path, extension: &str, limit: usize) -> Option<Decoded> {
     use image::AnimationDecoder;
     if extension != "gif" {
-        return decode_webp(path);
+        return decode_webp(path, limit);
     }
     let file = std::fs::File::open(path).ok()?;
     let reader = std::io::BufReader::new(file);
@@ -294,7 +362,7 @@ fn decode_image(path: &Path, extension: &str) -> Option<Decoded> {
         .ok()?
         .into_frames();
     let mut decoded = Vec::new();
-    for frame in frames.take(MAX_FRAMES) {
+    for frame in frames.take(limit) {
         let frame = frame.ok()?;
         let (numerator, denominator) = frame.delay().numer_denom_ms();
         let delay = Duration::from_millis(u64::from(numerator / denominator.max(1)).max(20));
@@ -306,20 +374,25 @@ fn decode_image(path: &Path, extension: &str) -> Option<Decoded> {
 
 /// Decodes animated WebP with libwebp. It returns complete canvas frames,
 /// unlike the `image` decoder, which did not apply frame disposal correctly.
-fn decode_webp(path: &Path) -> Option<Decoded> {
+fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
     let bytes = std::fs::read(path).ok()?;
     let decoder = webp_animation::Decoder::new(&bytes).ok()?;
     let (width, height) = decoder.dimensions();
     let mut decoded = Vec::new();
     let mut previous = 0i64;
-    for frame in decoder.into_iter().take(MAX_FRAMES) {
+    // A second frame tells an animation from a still, even for a poster.
+    for frame in decoder.into_iter().take(limit.max(2)) {
         let image = image::RgbaImage::from_raw(width, height, frame.data().to_vec())?;
         let delay = (i64::from(frame.timestamp()) - previous).max(20) as u64;
         previous = i64::from(frame.timestamp());
         decoded.push((to_color_image(&image), Duration::from_millis(delay)));
     }
     // Single-frame files use the static-image path.
-    (decoded.len() > 1).then_some(Decoded { frames: decoded })
+    if decoded.len() < 2 {
+        return None;
+    }
+    decoded.truncate(limit);
+    Some(Decoded { frames: decoded })
 }
 
 fn to_color_image(image: &image::RgbaImage) -> ColorImage {
@@ -341,13 +414,13 @@ fn to_color_image(image: &image::RgbaImage) -> ColorImage {
 }
 
 /// Decodes MP4 to scaled RGBA frames with `ffmpeg`.
-fn decode_video(path: &Path) -> Option<Decoded> {
+fn decode_video(path: &Path, limit: usize) -> Option<Decoded> {
     // Decode WhatsApp's H.264 MP4s in-process and use ffmpeg for other codecs.
-    decode_mp4(path).or_else(|| decode_with_ffmpeg(path))
+    decode_mp4(path, limit).or_else(|| decode_with_ffmpeg(path, limit))
 }
 
 /// Decodes an MP4 video track in-process.
-fn decode_mp4(path: &Path) -> Option<Decoded> {
+fn decode_mp4(path: &Path, limit: usize) -> Option<Decoded> {
     let file = std::fs::File::open(path).ok()?;
     let size = file.metadata().ok()?.len();
     let mut mp4 = mp4::Mp4Reader::read_header(std::io::BufReader::new(file), size).ok()?;
@@ -373,7 +446,7 @@ fn decode_mp4(path: &Path) -> Option<Decoded> {
     push_annex_b(&mut parameters, &pps);
     let _ = decoder.decode(&parameters);
     for sample_id in 1..=count {
-        if frames.len() >= MAX_FRAMES {
+        if frames.len() >= limit {
             break;
         }
         let Ok(Some(sample)) = mp4.read_sample(track_id, sample_id) else {
@@ -393,7 +466,7 @@ fn decode_mp4(path: &Path) -> Option<Decoded> {
     }
     if let Ok(rest) = decoder.flush_remaining() {
         for yuv in &rest {
-            if frames.len() >= MAX_FRAMES {
+            if frames.len() >= limit {
                 break;
             }
             let delay = delays.pop_front().unwrap_or(Duration::from_millis(66));
@@ -405,8 +478,10 @@ fn decode_mp4(path: &Path) -> Option<Decoded> {
     (!frames.is_empty()).then_some(Decoded { frames })
 }
 
-/// Evicts animations until the resident frames fit the budget, sparing the
-/// one being drawn and preferring what the last sweep found idle.
+/// Trims animations until the resident frames fit the budget, sparing the
+/// one being drawn. What the last sweep found idle goes first; an animation
+/// drawn since only drops back to its poster, so a tile that is still on
+/// screen never flashes its placeholder, and posters go last.
 fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant) {
     let mut resident: usize = animations
         .entries
@@ -426,19 +501,32 @@ fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant) {
             .min_by_key(|(entry_path, entry)| match entry {
                 Entry::Ready(playing) => (
                     u8::from(!animations.idle.contains(*entry_path)),
+                    u8::from(playing.frames.len() == 1),
                     playing.last_drawn,
                 ),
-                _ => (1, now),
+                _ => (1, 1, now),
             })
-            .map(|(entry_path, entry)| match entry {
-                Entry::Ready(playing) => (entry_path.clone(), playing.frames.len()),
-                _ => (entry_path.clone(), 0),
-            });
-        let Some((victim, count)) = victim else {
+            .map(|(entry_path, _)| entry_path.clone());
+        let Some(victim) = victim else {
             break;
         };
-        animations.entries.remove(&victim);
-        resident -= count;
+        let idle = animations.idle.contains(&victim);
+        match animations.entries.get_mut(&victim) {
+            Some(Entry::Ready(playing)) if !idle && playing.frames.len() > 1 => {
+                resident -= playing.frames.len() - 1;
+                playing.frames.truncate(1);
+                playing.complete = false;
+                playing.upgrading = false;
+                playing.animating = false;
+            }
+            Some(Entry::Ready(playing)) => {
+                resident -= playing.frames.len();
+                animations.entries.remove(&victim);
+            }
+            _ => {
+                animations.entries.remove(&victim);
+            }
+        }
     }
 }
 
@@ -490,7 +578,7 @@ pub(crate) fn avcc_to_annex_b(out: &mut Vec<u8>, sample: &[u8]) {
     }
 }
 
-fn decode_with_ffmpeg(path: &Path) -> Option<Decoded> {
+fn decode_with_ffmpeg(path: &Path, limit: usize) -> Option<Decoded> {
     if !ffmpeg_present() {
         return None;
     }
@@ -542,7 +630,7 @@ fn decode_with_ffmpeg(path: &Path) -> Option<Decoded> {
     let mut frames = Vec::new();
     let delay = Duration::from_millis(1000 / u64::from(fps));
     let mut buffer = vec![0u8; frame_bytes];
-    while frames.len() < MAX_FRAMES {
+    while frames.len() < limit {
         if stdout.read_exact(&mut buffer).is_err() {
             break;
         }
@@ -621,7 +709,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         let path = dir.join("moving.webp");
         std::fs::write(&path, &webp).expect("writes");
-        let decoded = decode(&path).expect("decodes");
+        let decoded = decode(&path, MAX_FRAMES).expect("decodes");
         assert_eq!(decoded.frames.len(), 2);
         let second = &decoded.frames[1].0;
         let old = second.pixels[8 * second.width() + 8];
@@ -653,7 +741,7 @@ mod tests {
                 encoder.encode_frame(frame).expect("frame");
             }
         }
-        let decoded = decode(&path).expect("decodes");
+        let decoded = decode(&path, MAX_FRAMES).expect("decodes");
         assert_eq!(decoded.frames.len(), 2);
         assert_eq!(decoded.frames[0].1, Duration::from_millis(100));
         let _ = std::fs::remove_dir_all(dir);
@@ -685,7 +773,7 @@ mod tests {
             // Skip when this ffmpeg lacks the encoder.
             return;
         }
-        let decoded = decode(&path).expect("decodes");
+        let decoded = decode(&path, MAX_FRAMES).expect("decodes");
         // Five frames at 10 fps. The in-process path preserves their timing.
         assert_eq!(decoded.frames.len(), 5);
         assert_eq!(decoded.frames[0].1, Duration::from_millis(100));
@@ -701,7 +789,7 @@ mod tests {
         image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]))
             .save(&path)
             .expect("saves");
-        assert!(decode(&path).is_none());
+        assert!(decode(&path, MAX_FRAMES).is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -739,6 +827,8 @@ mod tests {
                     started: Instant::now() - Duration::from_secs(90),
                     last_drawn: Instant::now(),
                     animating: false,
+                    complete: true,
+                    upgrading: false,
                 }),
             );
         // Settle texture uploads before checking the paused frame itself.
@@ -812,6 +902,8 @@ mod tests {
                     // event-driven repaints it can go this long without a frame.
                     last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
                     animating: false,
+                    complete: true,
+                    upgrading: false,
                 }),
             );
         let mut output = ctx.run_ui(
@@ -873,6 +965,8 @@ mod tests {
                     started: Instant::now(),
                     last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
                     animating: false,
+                    complete: true,
+                    upgrading: false,
                 }),
             );
         cache(&ctx)
@@ -888,6 +982,8 @@ mod tests {
                     started: Instant::now(),
                     last_drawn: Instant::now(),
                     animating: false,
+                    complete: true,
+                    upgrading: false,
                 }),
             );
         let mut output = ctx.run_ui(
@@ -990,6 +1086,8 @@ mod tests {
                     started: Instant::now(),
                     last_drawn: Instant::now() - Duration::from_secs(1),
                     animating: false,
+                    complete: true,
+                    upgrading: false,
                 }),
             );
             // No sweep is due during this frame.
@@ -1007,6 +1105,7 @@ mod tests {
                     })
                     .collect(),
             }),
+            true,
         ));
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -1029,10 +1128,139 @@ mod tests {
             animations.entries.contains_key(&new),
             "the drawn animation stays"
         );
-        assert!(
-            !animations.entries.contains_key(&old),
-            "the budget holds without waiting for the next sweep"
+        // The old animation was drawn a second ago and may still be on
+        // screen, so it keeps its poster instead of flashing a placeholder.
+        let Some(Entry::Ready(old)) = animations.entries.get(&old) else {
+            panic!("a recently drawn animation keeps its poster");
+        };
+        assert_eq!(old.frames.len(), 1);
+        assert!(!old.complete, "it decodes again when it next plays");
+    }
+
+    /// An animated WebP of `count` 8x8 frames that all differ.
+    fn animated_webp(dir: &Path, name: &str, count: i32) -> PathBuf {
+        let mut encoder = webp_animation::Encoder::new((8, 8)).expect("encoder");
+        for index in 0..count {
+            let shade = (index * 255 / count) as u8;
+            let frame =
+                image::RgbaImage::from_pixel(8, 8, image::Rgba([shade, 0, 255 - shade, 255]));
+            encoder.add_frame(&frame, index * 40).expect("frame");
+        }
+        let webp = encoder.finalize(count * 40).expect("finalizes");
+        let path = dir.join(name);
+        std::fs::write(&path, &*webp).expect("writes");
+        path
+    }
+
+    /// Draws `paths` side by side, on screen, returning what each showed.
+    fn draw_all(ctx: &egui::Context, paths: &[PathBuf], animate: bool) -> Vec<Frame> {
+        let mut shown = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                ui.horizontal(|ui| {
+                    for path in paths {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                        shown.push(frame(ui, path, rect, animate));
+                    }
+                });
+            },
         );
+        output.textures_delta.clear();
+        shown
+    }
+
+    /// Draws until every path shows a frame, or panics after a few seconds.
+    fn settle(ctx: &egui::Context, paths: &[PathBuf], animate: bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !draw_all(ctx, paths, animate)
+            .iter()
+            .all(|shown| matches!(shown, Frame::Ready(_)))
+        {
+            assert!(Instant::now() < deadline, "the animations never settled");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn paused_stickers_beyond_the_frame_budget_stay_on_screen() {
+        // A sticker picker full of animated stickers holds more frames than
+        // the budget. Fully decoded, each arrival evicted a tile still on
+        // screen, which decoded again and evicted another: tiles flickered
+        // between the sticker and its placeholder for as long as the picker
+        // stayed open (#165).
+        let dir = std::env::temp_dir().join(format!("zapfast-budget-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let per_file = 80;
+        let paths: Vec<_> = (0..MAX_RESIDENT_FRAMES / per_file as usize + 2)
+            .map(|index| animated_webp(&dir, &format!("tile-{index}.webp"), per_file))
+            .collect();
+        let ctx = egui::Context::default();
+        settle(&ctx, &paths, false);
+        for _ in 0..30 {
+            let shown = draw_all(&ctx, &paths, false);
+            assert!(
+                shown.iter().all(|shown| matches!(shown, Frame::Ready(_))),
+                "a visible paused sticker fell back to its placeholder"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let store = cache(&ctx);
+        let animations = store.0.lock().expect("animation cache");
+        for path in &paths {
+            let Some(Entry::Ready(playing)) = animations.entries.get(path) else {
+                panic!("{} is not resident", path.display());
+            };
+            assert_eq!(playing.frames.len(), 1, "a paused sticker holds its poster");
+        }
+        drop(animations);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_poster_plays_every_frame_without_a_placeholder_in_between() {
+        let dir = std::env::temp_dir().join(format!("zapfast-poster-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let paths = vec![animated_webp(&dir, "hover.webp", 3)];
+        let ctx = egui::Context::default();
+        settle(&ctx, &paths, false);
+        let poster = match &draw_all(&ctx, &paths, false)[0] {
+            Frame::Ready(texture) => texture.id(),
+            _ => panic!("the poster is resident"),
+        };
+        // Hovering shows the poster until the other frames arrive.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let shown = draw_all(&ctx, &paths, true);
+            let Frame::Ready(texture) = &shown[0] else {
+                panic!("playing a poster showed a placeholder");
+            };
+            let complete = matches!(
+                cache(&ctx).0.lock().expect("cache").entries.get(&paths[0]),
+                Some(Entry::Ready(playing)) if playing.complete
+            );
+            if complete {
+                break;
+            }
+            assert_eq!(texture.id(), poster);
+            assert!(Instant::now() < deadline, "the other frames never arrived");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let store = cache(&ctx);
+        let animations = store.0.lock().expect("animation cache");
+        let Some(Entry::Ready(playing)) = animations.entries.get(&paths[0]) else {
+            panic!("the animation is resident");
+        };
+        assert_eq!(playing.frames.len(), 3);
+        drop(animations);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1078,6 +1306,8 @@ mod tests {
                         started: Instant::now(),
                         last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
                         animating: false,
+                        complete: true,
+                        upgrading: false,
                     }),
                 );
         }
@@ -1138,7 +1368,7 @@ mod probe {
             return;
         };
         let started = Instant::now();
-        let decoded = decode_mp4(Path::new(&path)).expect("decodes in-process");
+        let decoded = decode_mp4(Path::new(&path), MAX_FRAMES).expect("decodes in-process");
         eprintln!(
             "{} frames of {:?}, first delay {:?}, in {:?}",
             decoded.frames.len(),

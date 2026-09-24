@@ -1127,6 +1127,36 @@ mod tests {
             .last()
     }
 
+    #[tokio::test]
+    async fn the_recent_shelf_updates_once_its_batch_of_fetches_is_in() {
+        let (mut worker, _root, events, _commands) = sticker_worker();
+        worker.sticker_fetches = ["first", "second"].map(str::to_owned).into();
+        let listed = |events: &std::sync::mpsc::Receiver<Event>| {
+            events
+                .try_iter()
+                .filter(|event| matches!(event, Event::Stickers { .. }))
+                .count()
+        };
+        worker
+            .handle_command(Command::StickerFetched {
+                hash: "first".into(),
+                result: Err("offline".into()),
+            })
+            .await;
+        assert_eq!(
+            listed(&events),
+            0,
+            "the open grid is not reshuffled mid-batch"
+        );
+        worker
+            .handle_command(Command::StickerFetched {
+                hash: "second".into(),
+                result: Err("offline".into()),
+            })
+            .await;
+        assert_eq!(listed(&events), 1);
+    }
+
     /// Carmine's test: a sticker favorited on the phone never showed up. The
     /// phone favorites a sticker from its own tray, which ZapFast already has
     /// as one of the phone's recent stickers.

@@ -17,7 +17,7 @@ use crate::model::{
     Toast, ToastKind,
 };
 use crate::paths::AppDirs;
-use crate::settings::{Settings, ThemeChoice};
+use crate::settings::{NotificationSound, Settings, ThemeChoice};
 use crate::single_instance::{ControlCommand, Guard};
 use crate::theme::{self, Palette};
 use crate::tray::{TrayCommand, TrayService};
@@ -53,6 +53,9 @@ pub const INFO_TOAST_LIFETIME: Duration = Duration::from_millis(3200);
 const MAX_ERROR_TOASTS: usize = 3;
 /// Typing-state timeout when no stop event arrives.
 const TYPING_TIMEOUT: Duration = Duration::from_secs(12);
+/// How long other apps' media stays paused while the next voice message of a
+/// run downloads. A stalled download must not keep music paused for good.
+const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
 
 /// Loaded chat history and paging state.
 #[derive(Default)]
@@ -161,6 +164,8 @@ pub struct App {
     pub syncing: bool,
     pub sync_percent: Option<u32>,
     pub me: Option<String>,
+    /// Our privacy id (`@lid`), which mentions of us may carry instead.
+    pub me_lid: Option<String>,
     pub me_name: Option<String>,
     /// Account about text.
     pub me_about: Option<String>,
@@ -273,6 +278,12 @@ pub struct App {
     video_chat: Option<ChatId>,
     /// Video to play once its download finishes.
     video_wanted: Option<(ChatId, String)>,
+    /// Chat whose voice messages carry on into the next unheard one when a
+    /// clip ends. Leaving the chat, or playing a video, ends the run.
+    voice_chat: Option<ChatId>,
+    /// Next voice message of a run, playing once its download finishes, and
+    /// when the download began. Media stays paused for a short while meanwhile.
+    voice_wanted: Option<(ChatId, String, Instant)>,
     /// Active voice recorder.
     pub recording: Option<Recorder>,
     /// A voice message the worker refused, kept with its chat so it can be
@@ -378,8 +389,14 @@ pub struct App {
     pub at_bottom: bool,
     /// Message id to scroll into view.
     pub scroll_anchor: Option<String>,
+    /// A message reached from a quote or a search result, which flashes
+    /// once it is in view so the eye finds it.
+    pub jump_highlight: Option<JumpHighlight>,
     pub focus_composer: bool,
     pub focus_search: bool,
+    /// What the Settings page is filtered by.
+    pub settings_search: String,
+    pub focus_settings_search: bool,
     pub quit_requested: bool,
     pub window_focused: bool,
     /// Presence last reported to the backend.
@@ -397,12 +414,52 @@ pub struct App {
     pub wants_show: bool,
     /// Requests received from later launches.
     control_commands: Option<std::sync::Arc<std::sync::Mutex<Vec<ControlCommand>>>>,
-    /// Chat ids from clicked notifications.
-    notification_opens: std::sync::Arc<std::sync::Mutex<Vec<ChatId>>>,
+    /// Chats and messages from clicked notifications.
+    notification_opens: std::sync::Arc<std::sync::Mutex<Vec<crate::notify::NotificationTarget>>>,
     notifications: crate::notify::Notifications,
     /// Unread count on the taskbar icon, where the desktop reads it. `None`
     /// for demo and test runs, which must not touch the real taskbar.
     badge: Option<crate::notify::Badge>,
+}
+
+/// A message that flashes after a jump to it, as WhatsApp does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JumpHighlight {
+    pub chat: ChatId,
+    pub message: String,
+    /// When the message came into view, in egui's input time; `None` until
+    /// then.
+    pub since: Option<f64>,
+}
+
+impl JumpHighlight {
+    /// How long the flash lasts, in seconds.
+    pub const DURATION: f64 = 2.0;
+
+    pub fn new(chat: ChatId, message: String) -> Self {
+        Self {
+            chat,
+            message,
+            since: None,
+        }
+    }
+
+    /// The flash's strength `elapsed` seconds after the message came into
+    /// view: a quick rise, a hold, then a fade to nothing.
+    pub fn strength(elapsed: f64) -> f32 {
+        const RISE: f64 = 0.15;
+        const HOLD: f64 = 0.9;
+        let strength = if elapsed < 0.0 {
+            0.0
+        } else if elapsed < RISE {
+            elapsed / RISE
+        } else if elapsed < HOLD {
+            1.0
+        } else {
+            1.0 - (elapsed - HOLD) / (Self::DURATION - HOLD)
+        };
+        strength.clamp(0.0, 1.0) as f32
+    }
 }
 
 /// Attachment pending in the composer.
@@ -513,6 +570,7 @@ impl App {
             syncing: false,
             sync_percent: None,
             me: None,
+            me_lid: None,
             me_name: None,
             me_about: None,
             chats: Vec::new(),
@@ -580,6 +638,8 @@ impl App {
             video: crate::video::Player::new(waker.clone()),
             video_chat: None,
             video_wanted: None,
+            voice_chat: None,
+            voice_wanted: None,
             recording: None,
             media_hold: None,
             pauses_media: false,
@@ -645,8 +705,11 @@ impl App {
             scroll_to_bottom: true,
             at_bottom: true,
             scroll_anchor: None,
+            jump_highlight: None,
             focus_composer: false,
             focus_search: false,
+            settings_search: String::new(),
+            focus_settings_search: false,
             quit_requested: false,
             window_focused: false,
             reported_online: None,
@@ -725,16 +788,21 @@ impl App {
         }
     }
 
-    /// Opens chats from clicked notifications, creating a window when needed.
+    /// Opens the messages announced by clicked notifications, creating a
+    /// window when needed. The click carries the message, so the reader lands
+    /// on what the notification showed, not on the end of the chat.
     fn handle_notification_opens(&mut self) {
-        let opened: Vec<ChatId> = std::mem::take(
+        let opened: Vec<crate::notify::NotificationTarget> = std::mem::take(
             &mut *self
                 .notification_opens
                 .lock()
                 .unwrap_or_else(|p| p.into_inner()),
         );
-        for chat in opened {
-            self.actions.push(Action::OpenChat(chat));
+        for target in opened {
+            self.actions.push(Action::OpenMessage {
+                chat: target.chat,
+                message: target.message,
+            });
             self.actions.push(Action::ShowWindow);
         }
     }
@@ -772,20 +840,43 @@ impl App {
             .or_else(|| self.avatar(&sender))
             .or_else(|| self.cached_avatar(&sender));
         let waker = self.waker.clone();
-        let sound = match chat_sound {
-            Some(sound) => sound,
-            None if is_group => self.settings.group_sound.clone(),
-            None => self.settings.message_sound.clone(),
-        };
+        let for_us = is_group && self.addresses_us(message);
+        let sound = notification_sound(&self.settings, chat_sound, is_group, for_us);
         self.notifications.show(
             title,
             body,
             picture,
             sound,
-            chat_id.to_owned(),
+            crate::notify::NotificationTarget {
+                chat: chat_id.to_owned(),
+                message: message.id.clone(),
+            },
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
         );
+    }
+
+    /// Whether a message mentions us or replies to one of our messages. A
+    /// mention may name us by phone number or by privacy id; the worker files
+    /// both under the phone number once it knows the pair, and the raw token
+    /// keeps the privacy id recognisable before then.
+    fn addresses_us(&self, message: &Message) -> bool {
+        let ours: Vec<&str> = [self.me.as_deref(), self.me_lid.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
+        let is_us = |id: &str| ours.contains(&id);
+        let mentioned = message.mentions.iter().any(|mention| {
+            is_us(&mention.id)
+                || ours
+                    .iter()
+                    .any(|id| id.split('@').next() == Some(mention.user.as_str()))
+        });
+        mentioned
+            || message
+                .quoted
+                .as_ref()
+                .is_some_and(|quoted| is_us(&quoted.sender))
     }
 
     /// Initializes a newly created window.
@@ -1403,7 +1494,7 @@ impl App {
         self.chats
             .iter()
             .filter(|chat| {
-                !chat.archived && !chat.locked && chat.unread > 0 && filter.matches(chat)
+                !chat.archived && !chat.locked && chat.looks_unread() && filter.matches(chat)
             })
             .count()
     }
@@ -1488,8 +1579,14 @@ impl App {
         for event in self.backend.poll() {
             match event {
                 Event::Link(status) => self.handle_link(status),
-                Event::Me { id, name, about } => {
+                Event::Me {
+                    id,
+                    lid,
+                    name,
+                    about,
+                } => {
                     self.me = Some(id);
+                    self.me_lid = lid;
                     self.me_name = name;
                     self.me_about = about;
                 }
@@ -1805,12 +1902,12 @@ impl App {
                 Event::DownloadFolderPicked(path) => {
                     self.actions.push(Action::SetDownloadFolder(Some(path)));
                 }
-                Event::NotificationSoundPicked { group, path } => {
+                Event::NotificationSoundPicked { mention, path } => {
                     crate::notify::play_sound(crate::settings::NotificationSound::Custom(
                         path.clone(),
                     ));
                     self.actions.push(Action::SetNotificationSound {
-                        group,
+                        mention,
                         sound: crate::settings::NotificationSound::Custom(path),
                     });
                 }
@@ -2290,9 +2387,30 @@ impl App {
                         message: id.to_owned(),
                         path,
                     });
+                } else if self
+                    .voice_wanted
+                    .as_ref()
+                    .is_some_and(|(wanted_chat, wanted, _)| wanted_chat == chat && wanted == id)
+                {
+                    self.voice_wanted = None;
+                    // Leaving the chat ended the run, so a clip that lands
+                    // after that is not started.
+                    if self.open_chat.as_deref() == Some(chat) {
+                        self.actions.push(Action::PlayVoice {
+                            message: id.to_owned(),
+                            path,
+                        });
+                    }
                 }
             }
             Err(error) => {
+                if self
+                    .voice_wanted
+                    .as_ref()
+                    .is_some_and(|(wanted_chat, wanted, _)| wanted_chat == chat && wanted == id)
+                {
+                    self.voice_wanted = None;
+                }
                 // Show expired-file failures in the bubble, not as a toast.
                 let notice = if error.contains("403") || error.contains("404") {
                     "No longer available on WhatsApp's servers".to_owned()
@@ -2371,12 +2489,26 @@ impl App {
         self.notifications.clear(chat);
         if let Some(known) = self.chat_mut(chat) {
             known.unread = 0;
+            known.marked_unread = false;
         }
         // Clear local unread state regardless of receipt settings.
         self.backend.send(Command::MarkRead {
             chat: chat.to_owned(),
             receipts: self.settings.send_read_receipts,
         });
+    }
+
+    /// Reminds the reader about a chat with nothing pending. A chat that
+    /// already counts unread messages keeps its number instead.
+    fn mark_unread(&mut self, chat: &str) {
+        let Some(known) = self.chat_mut(chat) else {
+            return;
+        };
+        if known.unread > 0 {
+            return;
+        }
+        known.marked_unread = true;
+        self.backend.send(Command::MarkUnread(chat.to_owned()));
     }
 
     fn open_chat(&mut self, id: ChatId) {
@@ -2395,6 +2527,7 @@ impl App {
             self.reaction_anchor = None;
             self.composer_tools_open = false;
             self.emoji_jump = None;
+            self.jump_highlight = None;
             if let Some(previous) = self.open_chat.take() {
                 let draft = std::mem::take(&mut self.composer);
                 // Discard an unfinished edit instead of keeping it as a draft.
@@ -2432,6 +2565,9 @@ impl App {
             self.chat_search_index = 0;
             self.reply_to = None;
             self.editing = None;
+            // A run of voice messages belongs to the chat it started in.
+            self.voice_chat = None;
+            self.voice_wanted = None;
         }
         self.emoji_start = None;
         self.mention_start = None;
@@ -2448,7 +2584,10 @@ impl App {
         {
             self.fetch_older(&id);
         }
-        if self.chat(&id).is_some_and(|chat| chat.unread > 0) {
+        if self
+            .chat(&id)
+            .is_some_and(|chat| chat.unread > 0 || chat.marked_unread)
+        {
             self.mark_read(&id);
         }
         if self.settings.last_chat.as_deref() != Some(id.as_str()) {
@@ -2853,6 +2992,8 @@ impl App {
                 self.emoji_start = None;
                 self.mention_start = None;
                 if opens_chats {
+                    // Settings open unfiltered next time.
+                    self.settings_search.clear();
                     self.refocus_composer(ctx);
                 }
             }
@@ -2886,10 +3027,16 @@ impl App {
             }
             Action::OpenMessage { chat, message } => {
                 self.open_chat(chat.clone());
+                // A locked chat stays shut outside its folder, even for a
+                // notification clicked before the chat was locked.
+                if self.open_chat.as_deref() != Some(chat.as_str()) {
+                    return;
+                }
                 // Keep the search result, not the chat end, in view.
                 self.scroll_to_bottom = false;
                 self.at_bottom = false;
                 self.scroll_anchor = Some(message.clone());
+                self.jump_highlight = Some(JumpHighlight::new(chat.clone(), message.clone()));
                 let conversation = self.conversations.entry(chat.clone()).or_default();
                 if conversation.message(&message).is_none()
                     && !conversation.loading_older
@@ -2992,6 +3139,7 @@ impl App {
                 }
             }
             Action::MarkRead(chat) => self.mark_read(&chat),
+            Action::MarkUnread(chat) => self.mark_unread(&chat),
             Action::LoadOlder(chat) => self.load_older(&chat),
             Action::FetchOlder(chat) => self.fetch_older(&chat),
             Action::Download {
@@ -3276,6 +3424,8 @@ impl App {
             Action::PlayVoice { message, path } => self.play_voice(message, path),
             Action::PlayVideo { message, path } => self.play_video(message, path),
             Action::PlayVideoWhenDownloaded(message) => {
+                self.voice_chat = None;
+                self.voice_wanted = None;
                 self.video_wanted = self.open_chat.clone().map(|chat| (chat, message));
             }
             Action::SeekVideo { message, fraction } => self.video.seek(&message, fraction),
@@ -3285,6 +3435,11 @@ impl App {
                 path,
                 fraction,
             } => {
+                // One sound at a time, and the clip the reader picked wins
+                // over one a run is still fetching.
+                self.video.stop();
+                self.voice_wanted = None;
+                self.voice_chat = self.open_chat.clone();
                 if let Err(error) = self.player.seek(&message, &path, fraction) {
                     self.toast_error(error);
                 }
@@ -3840,6 +3995,11 @@ impl App {
                 self.emoji_start = None;
                 self.mention_start = None;
             }
+            Action::FocusSettingsSearch => {
+                self.page = Page::Settings;
+                self.focus_settings_search = true;
+            }
+            Action::SearchSettings(text) => self.settings_search = text,
             Action::FocusComposer => {
                 self.focus_search = false;
                 self.focus_composer = true;
@@ -3858,11 +4018,12 @@ impl App {
                     // Load older archive pages toward the target.
                     conversation.loading_older = true;
                     self.backend.send(Command::LoadUntil {
-                        chat,
+                        chat: chat.clone(),
                         id: id.clone(),
                         before: (oldest.timestamp, oldest.id.clone()),
                     });
                 }
+                self.jump_highlight = Some(JumpHighlight::new(chat, id.clone()));
                 self.scroll_anchor = Some(id);
             }
             Action::Search(text) => {
@@ -4004,16 +4165,17 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::SettingsChanged => self.mark_settings_dirty(),
-            Action::SetNotificationSound { group, sound } => {
-                if group {
-                    self.settings.group_sound = sound;
+            Action::SetNotificationSound { mention, sound } => {
+                if mention {
+                    self.settings.mention_sound = sound;
                 } else {
                     self.settings.message_sound = sound;
                 }
                 self.mark_settings_dirty();
             }
-            Action::PickNotificationSound { group } => {
-                self.backend.send(Command::PickNotificationSound { group });
+            Action::PickNotificationSound { mention } => {
+                self.backend
+                    .send(Command::PickNotificationSound { mention });
             }
             Action::PreviewSound(sound) => crate::notify::play_sound(sound),
             Action::PickDownloadFolder => self.backend.send(Command::PickDownloadFolder),
@@ -4213,13 +4375,26 @@ impl App {
     /// Pauses other apps' music while recording or playing audio, as the
     /// settings allow, and resumes it once neither needs quiet.
     fn hold_media(&mut self) {
-        let wanted = self.pauses_media
-            && (self.recording.is_some() && self.settings.pause_media_while_recording
-                || self.settings.pause_media_while_playing
-                    && (self.player.is_playing() || self.video.is_active() && !self.video.muted()));
+        let wanted = self.pauses_media && self.wants_quiet();
         if wanted != self.media_hold.is_some() {
             self.media_hold = wanted.then(crate::media_pause::hold);
         }
+    }
+
+    /// Whether recording or playback needs other apps' media paused now. A
+    /// run of voice messages keeps it paused while the next clip downloads, so
+    /// music does not resume and pause again between clips, but only for a
+    /// while.
+    fn wants_quiet(&self) -> bool {
+        let fetching_next = self
+            .voice_wanted
+            .as_ref()
+            .is_some_and(|(_, _, since)| since.elapsed() < VOICE_FETCH_HOLD);
+        self.recording.is_some() && self.settings.pause_media_while_recording
+            || self.settings.pause_media_while_playing
+                && (self.player.is_playing()
+                    || fetching_next
+                    || self.video.is_active() && !self.video.muted())
     }
 
     /// Keeps the backend following receipts for exactly the group message
@@ -4246,12 +4421,22 @@ impl App {
         if let Err(error) = self.player.poll() {
             self.toast_error(error);
         }
+        if let Some(finished) = self.player.take_finished() {
+            self.continue_voice(&finished);
+        }
         if let Some(error) = self.recording.as_ref().and_then(Recorder::failure) {
             self.recording = None;
             self.toast_error(format!("Could not record: {error}"));
         }
         if self.player.is_playing() || self.recording.is_some() {
             self.waker.wake_after(Duration::from_millis(40));
+        }
+        // Let the media hold lapse on time if the next clip never lands.
+        if let Some((_, _, since)) = &self.voice_wanted {
+            let left = VOICE_FETCH_HOLD.saturating_sub(since.elapsed());
+            if !left.is_zero() {
+                self.waker.wake_after(left);
+            }
         }
     }
 
@@ -4276,8 +4461,10 @@ impl App {
         let Some(chat) = self.open_chat.clone() else {
             return;
         };
-        // One sound at a time.
+        // One sound at a time; a video also ends a run of voice messages.
         self.player.stop();
+        self.voice_chat = None;
+        self.voice_wanted = None;
         let starting = self.video.message() != Some(message.as_str());
         self.video.toggle(&message, &path);
         self.video_chat = Some(chat.clone());
@@ -4294,6 +4481,8 @@ impl App {
     /// Plays or pauses audio and sends the first played receipt when needed.
     fn play_voice(&mut self, message: String, path: PathBuf) {
         self.video.stop();
+        self.voice_wanted = None;
+        self.voice_chat = self.open_chat.clone();
         if let Err(error) = self.player.toggle(&message, &path) {
             self.toast_error(error);
             return;
@@ -4326,6 +4515,71 @@ impl App {
             sender,
             receipts: self.settings.send_read_receipts,
         });
+    }
+
+    /// Starts the next unheard voice message after one plays to its end, as
+    /// the phone does. Only a clip that finished in the chat the reader is
+    /// still in carries on. A clip that is not downloaded yet is fetched first
+    /// and plays when it lands.
+    fn continue_voice(&mut self, finished: &str) {
+        let Some(chat) = self.open_chat.clone() else {
+            return;
+        };
+        if self.voice_chat.as_ref() != Some(&chat) {
+            return;
+        }
+        let Some(next) = self.next_voice_after(&chat, finished) else {
+            return;
+        };
+        match self
+            .conversations
+            .get(&chat)
+            .and_then(|conversation| conversation.message(&next))
+            .and_then(|message| message.content.media())
+            .and_then(|media| media.path.clone())
+        {
+            Some(path) => self.actions.push(Action::PlayVoice {
+                message: next,
+                path,
+            }),
+            None => {
+                self.voice_wanted = Some((chat.clone(), next.clone(), Instant::now()));
+                self.actions.push(Action::Download {
+                    card: None,
+                    chat,
+                    message: next,
+                });
+            }
+        }
+    }
+
+    /// The next voice message after `finished` that the reader has not heard
+    /// yet. As on the phone, the run goes through consecutive voice messages:
+    /// the reader's own and those already played here are passed over, and
+    /// anything else, an audio file included, ends it.
+    fn next_voice_after(&self, chat: &str, finished: &str) -> Option<String> {
+        let conversation = self.conversations.get(chat)?;
+        let position = conversation
+            .messages
+            .iter()
+            .position(|message| message.id == finished)?;
+        let voice_note = |message: &Message| {
+            matches!(
+                message.content,
+                Content::Audio {
+                    voice_note: true,
+                    ..
+                }
+            )
+        };
+        if !voice_note(&conversation.messages[position]) {
+            return None;
+        }
+        conversation.messages[position + 1..]
+            .iter()
+            .take_while(|message| voice_note(message))
+            .find(|message| !message.from_me && !self.played_told.contains(&message.id))
+            .map(|message| message.id.clone())
     }
 
     /// Stops and sends a recording unless it is under one second. With no
@@ -4769,6 +5023,24 @@ impl Delivery {
 /// Archived chats stay silent, direct and group alike, and speak up again once
 /// they are unarchived. Muted and locked chats give no signal that one arrived,
 /// and delayed reconnect backlogs are not news.
+/// The sound a notification plays. A chat's own sound wins, even for
+/// mentions, so a chat set to no sound stays silent. Otherwise a group message
+/// that mentions or answers us plays the mention sound, and other group
+/// messages stay silent while group sounds are off.
+fn notification_sound(
+    settings: &Settings,
+    chat_sound: Option<NotificationSound>,
+    is_group: bool,
+    for_us: bool,
+) -> NotificationSound {
+    match chat_sound {
+        Some(sound) => sound,
+        None if for_us => settings.mention_sound.clone(),
+        None if is_group && !settings.group_sounds => NotificationSound::None,
+        None => settings.message_sound.clone(),
+    }
+}
+
 fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
     if chat.archived || chat.unread == 0 || chat.muted(now) || chat.locked {
         return false;
@@ -4779,7 +5051,7 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ChatKind, Content};
+    use crate::model::{ChatKind, Content, Media, MediaState};
 
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
@@ -5181,6 +5453,35 @@ mod tests {
                 .any(|action| matches!(action, Action::OpenFile(path) if path == file.path())),
             "the external opener is queued instead"
         );
+    }
+
+    #[test]
+    fn marking_unread_uses_the_empty_dot_until_the_chat_opens() {
+        let mut app = app();
+        let id = "1@s.whatsapp.net".to_owned();
+        app.chats.push(Chat::new(id.clone(), "Ada".to_owned()));
+        app.mark_unread(&id);
+        let chat = app.chat(&id).expect("chat");
+        assert!(chat.marked_unread);
+        assert_eq!(chat.unread, 0);
+        assert!(chat.looks_unread());
+        app.open_chat(id.clone());
+        let chat = app.chat(&id).expect("chat");
+        assert!(!chat.marked_unread);
+        assert!(!chat.looks_unread());
+    }
+
+    #[test]
+    fn marking_unread_leaves_a_real_count_alone() {
+        let mut app = app();
+        let id = "1@s.whatsapp.net".to_owned();
+        let mut chat = Chat::new(id.clone(), "Ada".to_owned());
+        chat.unread = 3;
+        app.chats.push(chat);
+        app.mark_unread(&id);
+        let chat = app.chat(&id).expect("chat");
+        assert_eq!(chat.unread, 3);
+        assert!(!chat.marked_unread);
     }
 
     #[test]
@@ -5691,19 +5992,105 @@ mod tests {
     }
 
     #[test]
-    fn groups_and_chats_keep_their_own_notification_sound() {
-        use crate::settings::NotificationSound;
+    fn mentions_and_other_messages_keep_their_own_notification_sound() {
         let mut app = app();
         let ctx = egui::Context::default();
         app.apply(
             Action::SetNotificationSound {
-                group: true,
+                mention: true,
                 sound: NotificationSound::None,
             },
             &ctx,
         );
-        assert_eq!(app.settings.group_sound, NotificationSound::None);
+        assert_eq!(app.settings.mention_sound, NotificationSound::None);
         assert_eq!(app.settings.message_sound, NotificationSound::Receive);
+    }
+
+    #[test]
+    fn a_group_message_addresses_us_by_phone_number_privacy_id_or_reply() {
+        let mut app = app();
+        app.me = Some("15550001111@s.whatsapp.net".into());
+        app.me_lid = Some("98765@lid".into());
+        let group = "fixture@g.us";
+        let mention = |user: &str, id: &str| crate::model::MentionRef {
+            user: user.into(),
+            id: id.into(),
+        };
+        let mut plain = message(group, "plain", 1);
+        plain.sender = "15550002222@s.whatsapp.net".into();
+        assert!(!app.addresses_us(&plain));
+
+        let mut by_number = plain.clone();
+        by_number.mentions = vec![mention("15550001111", "15550001111@s.whatsapp.net")];
+        assert!(app.addresses_us(&by_number));
+
+        // Once the worker knows our pair, a privacy-id mention arrives under
+        // the phone number; before that, as the privacy id itself.
+        let mut by_privacy_id = plain.clone();
+        by_privacy_id.mentions = vec![mention("98765", "98765@lid")];
+        assert!(app.addresses_us(&by_privacy_id));
+        app.me_lid = None;
+        assert!(
+            !app.addresses_us(&by_privacy_id),
+            "an unknown privacy id is someone else"
+        );
+        app.me_lid = Some("98765@lid".into());
+
+        let mut someone_else = plain.clone();
+        someone_else.mentions = vec![mention("15550002222", "15550002222@s.whatsapp.net")];
+        assert!(!app.addresses_us(&someone_else));
+
+        let quote = |sender: &str| crate::model::Quoted {
+            id: "earlier".into(),
+            sender: sender.into(),
+            sender_name: None,
+            summary: "earlier".into(),
+            mentions: Vec::new(),
+        };
+        let mut reply = plain.clone();
+        reply.quoted = Some(quote("15550001111@s.whatsapp.net"));
+        assert!(app.addresses_us(&reply));
+        reply.quoted = Some(quote("98765@lid"));
+        assert!(app.addresses_us(&reply));
+        reply.quoted = Some(quote("15550002222@s.whatsapp.net"));
+        assert!(!app.addresses_us(&reply));
+    }
+
+    #[test]
+    fn mentions_sound_even_in_quiet_groups_and_chat_sounds_win() {
+        let mut settings = Settings::default();
+        let sound = |settings: &Settings, chat, group, for_us| {
+            notification_sound(settings, chat, group, for_us)
+        };
+        // Pidgin's model: the message sound everywhere, the alert when
+        // someone addresses us in a group.
+        assert_eq!(
+            sound(&settings, None, false, false),
+            NotificationSound::Receive
+        );
+        assert_eq!(
+            sound(&settings, None, true, false),
+            NotificationSound::Receive
+        );
+        assert_eq!(sound(&settings, None, true, true), NotificationSound::Alert);
+
+        settings.group_sounds = false;
+        assert_eq!(sound(&settings, None, true, false), NotificationSound::None);
+        assert_eq!(sound(&settings, None, true, true), NotificationSound::Alert);
+        assert_eq!(
+            sound(&settings, None, false, false),
+            NotificationSound::Receive,
+            "one-to-one chats are not groups"
+        );
+
+        // A chat's own sound covers every message in it, mentions included.
+        let custom = NotificationSound::Custom("/sounds/ding.wav".into());
+        assert_eq!(sound(&settings, Some(custom.clone()), true, false), custom);
+        assert_eq!(sound(&settings, Some(custom.clone()), true, true), custom);
+        assert_eq!(
+            sound(&settings, Some(NotificationSound::None), true, true),
+            NotificationSound::None
+        );
     }
 
     #[test]
@@ -5993,6 +6380,249 @@ mod tests {
             commands.try_recv().unwrap(),
             Command::MarkPlayed { receipts: true, .. }
         ));
+    }
+
+    #[test]
+    fn a_clicked_notification_leaves_a_locked_chat_shut() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        let mut locked = Chat::new(chat.into(), "Ada".into());
+        locked.locked = true;
+        app.chats = vec![locked];
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![message(chat, "secret", 1)], false);
+        app.notification_opens
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(crate::notify::NotificationTarget {
+                chat: chat.into(),
+                message: "secret".into(),
+            });
+
+        app.handle_notification_opens();
+        app.apply_actions(&ctx);
+
+        assert_eq!(app.open_chat, None);
+        assert_eq!(app.scroll_anchor, None);
+    }
+
+    #[test]
+    fn a_clicked_notification_opens_the_message_it_announced() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.chats = vec![Chat::new(chat.into(), "Ada".into())];
+        app.conversations.entry(chat.into()).or_default().merge(
+            vec![message(chat, "first", 1), message(chat, "second", 2)],
+            false,
+        );
+        app.notification_opens
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(crate::notify::NotificationTarget {
+                chat: chat.into(),
+                message: "second".into(),
+            });
+
+        app.handle_notification_opens();
+        app.apply_actions(&ctx);
+
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some(chat),
+            "the click opens its chat"
+        );
+        assert_eq!(
+            app.scroll_anchor.as_deref(),
+            Some("second"),
+            "and brings the announced message into view"
+        );
+    }
+
+    fn voice(chat: &str, id: &str, timestamp: i64, path: Option<&str>) -> Message {
+        let mut row = message(chat, id, timestamp);
+        row.content = Content::Audio {
+            media: Media {
+                mime: "audio/ogg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                path: path.map(PathBuf::from),
+                state: MediaState::Idle,
+            },
+            seconds: Some(3),
+            voice_note: true,
+            waveform: Vec::new(),
+        };
+        row
+    }
+
+    #[test]
+    fn a_finished_voice_message_carries_on_with_the_next_unplayed_one() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.chats = vec![Chat::new(chat.into(), "Ada".into())];
+        app.open_chat = Some(chat.into());
+        app.settings.pause_media_while_playing = true;
+        app.conversations.entry(chat.into()).or_default().merge(
+            vec![
+                voice(chat, "first", 1, Some("first.ogg")),
+                voice(chat, "second", 2, None),
+            ],
+            false,
+        );
+        app.played_told.insert("first".into());
+        app.voice_chat = Some(chat.into());
+
+        app.continue_voice("first");
+        assert_eq!(
+            app.voice_wanted
+                .as_ref()
+                .map(|(chat, id, _)| (chat.as_str(), id.as_str())),
+            Some((chat, "second")),
+            "a clip that is not downloaded yet is fetched first"
+        );
+        assert!(
+            app.wants_quiet(),
+            "music stays paused while the next clip downloads"
+        );
+        app.apply_actions(&ctx);
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::Download { message, .. } if message == "second"
+        ));
+
+        app.handle_media(chat, "second", None, Ok(PathBuf::from("second.ogg")));
+        assert!(
+            app.actions.iter().any(|action| matches!(
+                action,
+                Action::PlayVoice { message, .. } if message == "second"
+            )),
+            "the fetched clip plays when it lands"
+        );
+        assert!(app.voice_wanted.is_none());
+    }
+
+    #[test]
+    fn a_voice_run_goes_through_consecutive_unheard_voice_messages() {
+        let mut app = app();
+        let chat = "1@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        let mut own = voice(chat, "own", 2, None);
+        own.from_me = true;
+        let mut song = voice(chat, "song", 6, None);
+        if let Content::Audio { voice_note, .. } = &mut song.content {
+            *voice_note = false;
+        }
+        app.conversations.entry(chat.into()).or_default().merge(
+            vec![
+                voice(chat, "played", 1, None),
+                own,
+                voice(chat, "heard", 3, None),
+                voice(chat, "waiting", 4, None),
+                message(chat, "text", 5),
+                voice(chat, "after text", 6, None),
+                song,
+                voice(chat, "after song", 7, None),
+            ],
+            false,
+        );
+        app.played_told.insert("played".into());
+        app.played_told.insert("heard".into());
+
+        assert_eq!(
+            app.next_voice_after(chat, "played").as_deref(),
+            Some("waiting"),
+            "own voice messages and those already heard are passed over"
+        );
+        assert_eq!(
+            app.next_voice_after(chat, "waiting"),
+            None,
+            "a message in between ends the run"
+        );
+        assert_eq!(
+            app.next_voice_after(chat, "after text"),
+            None,
+            "an audio file ends the run"
+        );
+        assert_eq!(
+            app.next_voice_after(chat, "song"),
+            None,
+            "an audio file does not start one"
+        );
+    }
+
+    #[test]
+    fn leaving_the_chat_or_playing_a_video_ends_a_voice_run() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        let other = "2@s.whatsapp.net";
+        app.chats = vec![
+            Chat::new(chat.into(), "Ada".into()),
+            Chat::new(other.into(), "Bob".into()),
+        ];
+        app.conversations.entry(chat.into()).or_default().merge(
+            vec![
+                voice(chat, "first", 1, Some("first.ogg")),
+                voice(chat, "second", 2, Some("second.ogg")),
+                voice(chat, "third", 3, None),
+            ],
+            false,
+        );
+        app.open_chat = Some(chat.into());
+        app.voice_chat = Some(chat.into());
+        app.voice_wanted = Some((chat.into(), "third".into(), Instant::now()));
+
+        app.open_chat(other.into());
+        app.open_chat(chat.into());
+        assert!(app.voice_wanted.is_none(), "a pending clip is dropped");
+        app.continue_voice("first");
+        assert!(
+            app.actions.is_empty(),
+            "a clip from before does not carry on"
+        );
+        app.handle_media(chat, "third", None, Ok(PathBuf::from("third.ogg")));
+        assert!(app.actions.is_empty(), "nor does one that lands later");
+
+        app.voice_chat = Some(chat.into());
+        app.voice_wanted = Some((chat.into(), "third".into(), Instant::now()));
+        app.actions
+            .push(Action::PlayVideoWhenDownloaded("video".into()));
+        app.apply_actions(&ctx);
+        assert!(app.voice_wanted.is_none() && app.voice_chat.is_none());
+    }
+
+    #[test]
+    fn a_failed_download_ends_the_wait_for_the_next_voice_message() {
+        let mut app = app();
+        let chat = "1@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.settings.pause_media_while_playing = true;
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![voice(chat, "next", 1, None)], false);
+        app.voice_wanted = Some((chat.into(), "next".into(), Instant::now()));
+        app.handle_media(chat, "next", None, Err("404".into()));
+        assert!(app.voice_wanted.is_none());
+        assert!(!app.wants_quiet(), "music resumes");
+
+        app.voice_wanted = Some((
+            chat.into(),
+            "next".into(),
+            Instant::now() - VOICE_FETCH_HOLD,
+        ));
+        assert!(
+            !app.wants_quiet(),
+            "a download that takes too long does not keep music paused"
+        );
     }
 
     fn message(chat: &str, id: &str, timestamp: i64) -> Message {
@@ -6650,6 +7280,55 @@ mod tests {
     }
 
     #[test]
+    fn a_jump_flash_rises_holds_and_fades_out() {
+        assert_eq!(JumpHighlight::strength(-1.0), 0.0);
+        assert_eq!(JumpHighlight::strength(0.0), 0.0);
+        assert_eq!(JumpHighlight::strength(0.5), 1.0);
+        let fading = JumpHighlight::strength(1.5);
+        assert!(fading > 0.0 && fading < 1.0, "{fading}");
+        assert_eq!(JumpHighlight::strength(JumpHighlight::DURATION), 0.0);
+        assert_eq!(JumpHighlight::strength(10.0), 0.0);
+    }
+
+    #[test]
+    fn quotes_and_search_hits_flash_their_message_until_the_chat_changes() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let (ada, bob) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        for chat in [ada, bob] {
+            app.chats.push(Chat::new(chat.into(), "Chat".into()));
+            app.conversations.insert(
+                chat.into(),
+                Conversation {
+                    requested: true,
+                    complete: true,
+                    messages: vec![message(chat, "old", 10)],
+                    ..Default::default()
+                },
+            );
+        }
+        app.apply(
+            Action::OpenMessage {
+                chat: ada.into(),
+                message: "old".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.jump_highlight,
+            Some(JumpHighlight::new(ada.into(), "old".into()))
+        );
+        app.jump_highlight = None;
+        app.apply(Action::ScrollTo("old".into()), &ctx);
+        assert_eq!(
+            app.jump_highlight,
+            Some(JumpHighlight::new(ada.into(), "old".into()))
+        );
+        app.open_chat(bob.into());
+        assert_eq!(app.jump_highlight, None);
+    }
+
+    #[test]
     fn a_search_hit_opens_its_chat_at_the_message() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -6787,6 +7466,26 @@ mod tests {
             })
             .collect();
         assert_eq!(muted, ["1@newsletter", "2@newsletter"]);
+    }
+
+    #[test]
+    fn the_unread_chip_finds_a_chat_marked_unread_by_hand() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let mut marked = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        marked.marked_unread = true;
+        let read = Chat::new("2@s.whatsapp.net".into(), "Grace".into());
+        app.chats = vec![marked, read];
+        assert_eq!(app.unread_chats(ChatFilter::Unread), 1);
+        app.apply(Action::SetChatFilter(ChatFilter::Unread), &ctx);
+        let shown: Vec<&str> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.name.as_str())
+            .collect();
+        assert_eq!(shown, ["Ada"], "the chip finds the chat marked by hand");
+        // Nothing is pending, so the app badge stays at zero.
+        assert_eq!(app.unread_total(), 0);
     }
 
     #[test]

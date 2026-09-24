@@ -1,4 +1,7 @@
 //! Schedule private read-state writes, which all share one app-state collection.
+//!
+//! Both a read and an unread mark are `markChatAsRead` actions, so they share
+//! one queue and one backoff.
 
 use std::time::{Duration, Instant};
 
@@ -8,7 +11,8 @@ use crate::model::ChatId;
 /// The archive owns the durable queue; this only limits work on the connection.
 #[derive(Default)]
 pub(super) struct ReadSync {
-    in_flight: Option<(ChatId, i64)>,
+    /// Chat, position, and whether the write marks the chat read.
+    in_flight: Option<(ChatId, i64, bool)>,
     retry_at: Option<Instant>,
     failures: u32,
 }
@@ -19,19 +23,42 @@ impl ReadSync {
     }
 
     pub fn start(&mut self, chat: &str, through: i64, now: Instant) -> bool {
+        self.begin(chat, through, true, now)
+    }
+
+    /// Starts an unread mark, keyed by when the mark was made.
+    pub fn start_unread(&mut self, chat: &str, marked_at: i64, now: Instant) -> bool {
+        self.begin(chat, marked_at, false, now)
+    }
+
+    fn begin(&mut self, chat: &str, position: i64, read: bool, now: Instant) -> bool {
         if !self.ready(now) {
             return false;
         }
-        self.in_flight = Some((chat.to_owned(), through));
+        self.in_flight = Some((chat.to_owned(), position, read));
         true
     }
 
     /// Ignore a completion from a request which is no longer ours.
     pub fn finish(&mut self, chat: &str, through: i64, success: bool, now: Instant) -> bool {
+        self.end(chat, through, true, success, now)
+    }
+
+    pub fn finish_unread(
+        &mut self,
+        chat: &str,
+        marked_at: i64,
+        success: bool,
+        now: Instant,
+    ) -> bool {
+        self.end(chat, marked_at, false, success, now)
+    }
+
+    fn end(&mut self, chat: &str, position: i64, read: bool, success: bool, now: Instant) -> bool {
         if !self
             .in_flight
             .as_ref()
-            .is_some_and(|(active, position)| active == chat && *position == through)
+            .is_some_and(|(active, at, kind)| active == chat && *at == position && *kind == read)
         {
             return false;
         }
@@ -85,6 +112,17 @@ mod tests {
         assert!(!sync.finish("current", 100, true, now));
         assert!(!sync.ready(now));
         assert!(sync.finish("current", 200, true, now));
+        assert!(sync.ready(now));
+    }
+
+    #[test]
+    fn a_read_completion_cannot_release_an_unread_mark() {
+        let mut sync = ReadSync::default();
+        let now = Instant::now();
+        assert!(sync.start_unread("chat", 200, now));
+        assert!(!sync.start("chat", 200, now), "one write at a time");
+        assert!(!sync.finish("chat", 200, true, now));
+        assert!(sync.finish_unread("chat", 200, true, now));
         assert!(sync.ready(now));
     }
 }

@@ -279,11 +279,11 @@ impl WallpaperColor {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationSound {
-    /// Pidgin's message sound, the default for one-to-one chats.
+    /// Pidgin's message sound, the default for new messages.
     #[default]
     #[serde(alias = "chime")]
     Receive,
-    /// Pidgin's alert sound, the default for groups.
+    /// Pidgin's alert sound, the default for mentions and replies to us.
     #[serde(alias = "ripple")]
     Alert,
     /// Whatever the operating system plays for notifications.
@@ -351,10 +351,14 @@ pub struct Settings {
     pub keep_running_in_background: bool,
     /// Desktop notifications while away from the chat.
     pub notifications: bool,
-    /// Sound for notifications from one-to-one chats.
+    /// Sound for new messages, in one-to-one chats and groups alike.
     pub message_sound: NotificationSound,
-    /// Sound for notifications from groups.
-    pub group_sound: NotificationSound,
+    /// Sound for group messages that mention us or reply to one of ours, as
+    /// Pidgin alerts when someone says your name in a chat.
+    pub mention_sound: NotificationSound,
+    /// Play the message sound for ordinary group messages. Mentions and
+    /// replies to us sound either way.
+    pub group_sounds: bool,
     /// Folder for new downloads. `None` keeps them in the cache. Files
     /// already downloaded stay where they are when this changes.
     pub download_folder: Option<std::path::PathBuf>,
@@ -412,7 +416,8 @@ impl Default for Settings {
             keep_running_in_background: true,
             notifications: true,
             message_sound: NotificationSound::Receive,
-            group_sound: NotificationSound::Alert,
+            mention_sound: NotificationSound::Alert,
+            group_sounds: true,
             download_folder: None,
             proxy: String::new(),
             check_for_updates: true,
@@ -559,9 +564,20 @@ mod tests {
     #[test]
     fn earlier_bundled_sound_names_still_load() {
         let settings: Settings =
-            serde_json::from_str(r#"{"message_sound":"chime","group_sound":"ripple"}"#).unwrap();
+            serde_json::from_str(r#"{"message_sound":"chime","mention_sound":"ripple"}"#).unwrap();
         assert_eq!(settings.message_sound, NotificationSound::Receive);
-        assert_eq!(settings.group_sound, NotificationSound::Alert);
+        assert_eq!(settings.mention_sound, NotificationSound::Alert);
+    }
+
+    #[test]
+    fn the_former_group_sound_gives_way_to_mentions_and_quiet_groups() {
+        // Group sound used to play for every group message; it is dropped,
+        // and groups follow the message sound until they are silenced.
+        let settings: Settings =
+            serde_json::from_str(r#"{"message_sound":"system","group_sound":"none"}"#).unwrap();
+        assert_eq!(settings.message_sound, NotificationSound::System);
+        assert_eq!(settings.mention_sound, NotificationSound::Alert);
+        assert!(settings.group_sounds);
     }
 
     #[test]
@@ -599,7 +615,8 @@ mod tests {
             collapse_chat_list: true,
             interface_language: Some(crate::i18n::Locale::German),
             message_sound: NotificationSound::None,
-            group_sound: NotificationSound::Custom("/sounds/ding.wav".into()),
+            mention_sound: NotificationSound::Custom("/sounds/ding.wav".into()),
+            group_sounds: false,
             ..Settings::default()
         };
         settings.save(&path).expect("saves");

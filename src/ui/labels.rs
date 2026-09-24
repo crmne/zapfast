@@ -220,7 +220,7 @@ pub fn menu_chip(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 /// The labels a chat wears, as a submenu of the chat's context menu.
 pub fn chat_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette) {
     let locale = app.locale;
-    ui.menu_button(gettext(locale, "Labels"), |ui| {
+    widgets::submenu(ui, palette, Icon::Tag, &gettext(locale, "Labels"), |ui| {
         for label in &app.labels {
             let worn = app.chat_wears(chat, &label.id);
             let icon = if worn { Some(Icon::Check) } else { None };

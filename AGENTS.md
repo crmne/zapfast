@@ -109,7 +109,9 @@ protocol. These notes are for coding agents and new contributors.
   its C++ from source with the C++ compiler of the host; `nasm` is
   optional and only adds the SIMD paths (the AUR recipes leave it out,
   the build works without it). Frames become textures on the interface
-  thread and are dropped when unseen.
+  thread and are dropped when unseen. A paused animation decodes only its
+  first frame, the poster, and the rest once it plays: full decodes of a
+  picker's paused stickers overran the frame budget and evicted each other.
 - `src/video.rs` plays other videos inside their message, one at a time,
   with the same `mp4` and `openh264` pieces: a thread decodes from the
   keyframe before the start (openh264 must not flush after each packet or
@@ -173,7 +175,10 @@ protocol. These notes are for coding agents and new contributors.
   `Microphone` on a thread, keeping a loudness per 50 ms for the live bars.
   Linux needs ALSA headers to build (`libasound2-dev` on Debian,
   `alsa-lib` on Arch). `Action::PlayVoice/SeekVoice` drive the player from
-  the bubble; `StartRecording/CancelRecording/SendRecording` the
+  the bubble, and a clip that ends hands its message back
+  (`Player::take_finished`) so the app plays the next unheard voice message
+  of the same run (`App::next_voice_after`), keeping other apps' media paused
+  in between; `StartRecording/CancelRecording/SendRecording` the
   microphone from the composer (the send button is a microphone when there
   is nothing to send); `Command::SendVoice` normalizes
   (`voice::normalize`, quiet takes up to just under full scale, gain
@@ -205,8 +210,9 @@ protocol. These notes are for coding agents and new contributors.
   exists). `src/single_instance.rs` holds a loopback port so a second
   launch surfaces the first. `src/notify.rs` sends desktop notifications
   for `Event::Incoming` (live messages from others, not history) when the
-  reader is away from that chat. macOS has no title bar: the content runs
-  to the top. `src/macos.rs` keeps native application menus alive across window
+  reader is away from that chat; a click carries the chat and the message
+  id, so the reader lands on the announced message. macOS has no title bar:
+  the content runs to the top. `src/macos.rs` keeps native application menus alive across window
   recreation and aligns traffic lights with the chat header. Linking retains
   `ui::titlebar_strip`; other headers reserve horizontal space for the buttons.
 - Group delivery uses `archive::receipts`: save the recipients when filing an
@@ -244,7 +250,8 @@ Three egui pitfalls this code has already hit:
   double-click on either replies; the body keeps it for selecting the word.
 - `Popup::context_menu` opens on the *response's* right-click, which those
   inner widgets take for themselves; the bubble reads the right-click from
-  the input over its own rect and opens `Popup::menu` itself, so the menu
+  the input over the part of its rect inside the transcript viewport (the chat
+  header shares its layer) and opens `Popup::menu` itself, so the menu
   comes up anywhere on the message.
 
 ## Branches

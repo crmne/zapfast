@@ -183,6 +183,8 @@ pub enum Command {
         chat: ChatId,
         receipts: bool,
     },
+    /// Marks a chat with nothing pending as unread, here and on the phone.
+    MarkUnread(ChatId),
     /// Follows one of our group messages' receipts while "Message info" is
     /// open, or stops following with `None`.
     WatchReceipts(Option<(ChatId, String)>),
@@ -190,6 +192,13 @@ pub enum Command {
     ReadSyncFinished {
         chat: ChatId,
         through: i64,
+        success: bool,
+    },
+    /// Result of an unread mark sent to the other linked devices, keyed by
+    /// when the mark was made.
+    UnreadSyncFinished {
+        chat: ChatId,
+        marked_at: i64,
         success: bool,
     },
     /// Loads archived chat messages before an optional boundary.
@@ -353,7 +362,7 @@ pub enum Command {
     PickStickerArchive,
     /// Asks for an audio file to use as a notification sound.
     PickNotificationSound {
-        group: bool,
+        mention: bool,
     },
     /// Stores a chat's own notification sound.
     SetChatSound {
@@ -633,6 +642,8 @@ pub enum Event {
     /// Linked account identity.
     Me {
         id: String,
+        /// Our privacy id (`@lid`), when known.
+        lid: Option<String>,
         name: Option<String>,
         about: Option<String>,
     },
@@ -759,7 +770,7 @@ pub enum Event {
     DownloadFolderPicked(std::path::PathBuf),
     /// An audio file chosen as a notification sound.
     NotificationSoundPicked {
-        group: bool,
+        mention: bool,
         path: std::path::PathBuf,
     },
     /// The group behind an invite link.

@@ -446,7 +446,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
             palette.secondary,
         );
     }
-    let height = (ui.ctx().content_rect().height() - 230.0).clamp(100.0, 520.0);
+    let height = widgets::dialog_scroll_height(ui);
     let area = egui::ScrollArea::vertical()
         .id_salt(("poll-results", chat, id))
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
