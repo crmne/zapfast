@@ -4406,6 +4406,25 @@ impl Worker {
                     waker.wake();
                 });
             }
+            Command::PrepareClipboardImage(path) => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = image::open(&path)
+                        .map_err(|error| error.to_string())
+                        .map(|img| {
+                            let rgba = img.to_rgba8();
+                            let (width, height) = rgba.dimensions();
+                            crate::model::DecodedImage {
+                                width: width as usize,
+                                height: height as usize,
+                                bytes: rgba.into_raw(),
+                            }
+                        });
+                    let _ = events.send(Event::ClipboardImage(result));
+                    waker.wake();
+                });
+            }
             Command::PickStickerPicture => {
                 let commands = self.commands.clone();
                 tokio::task::spawn_blocking(move || {

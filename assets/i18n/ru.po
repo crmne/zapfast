@@ -1115,3 +1115,23 @@ msgstr "Как время посещения"
 msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Заглушать неизвестных абонентов"
+
+#: src/app.rs:5108
+msgid "Copied image"
+msgstr "Изображение скопировано"
+
+#: src/app.rs:5112 src/app.rs:5117
+msgid "Failed to copy image"
+msgstr "Не удалось скопировать изображение"
+
+#: src/ui/image_preview.rs:59 src/ui/image_preview.rs:155
+msgid "Copy image"
+msgstr "Копировать изображение"
+
+#: src/ui/image_preview.rs:156
+msgid "Save as…"
+msgstr "Сохранить как…"
+
+#: src/ui/image_preview.rs:158
+msgid "Open in another app"
+msgstr "Открыть в другом приложении"

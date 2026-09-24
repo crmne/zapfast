@@ -56,6 +56,24 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         app.actions
                             .push(Action::OpenFile(preview.path().to_owned()));
                     }
+                    let copy_hint = format!(
+                        "{} ({})",
+                        crate::i18n::gettext(app.locale, "Copy image"),
+                        super::keys::label("Ctrl+C"),
+                    );
+                    if theme::icon_button(
+                        ui,
+                        Icon::Copy,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        &copy_hint,
+                    )
+                    .clicked()
+                    {
+                        app.actions
+                            .push(Action::CopyImage(preview.path().to_owned()));
+                    }
                     ui.add_space(8.0);
                     // Right to left: zoom in, the current scale, zoom out.
                     if theme::icon_button(
@@ -131,7 +149,61 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                                 canvas.max(size),
                                 Layout::centered_and_justified(egui::Direction::TopDown),
                                 |ui| {
-                                    ui.add(image.fit_to_exact_size(size));
+                                    let image_response = ui.add(
+                                        image.fit_to_exact_size(size).sense(egui::Sense::click()),
+                                    );
+                                    let copy_label = crate::i18n::gettext(app.locale, "Copy image");
+                                    let save_label = crate::i18n::gettext(app.locale, "Save as…");
+                                    let open_label =
+                                        crate::i18n::gettext(app.locale, "Open in another app");
+                                    let menu_width = crate::ui::widgets::menu_width(
+                                        ui,
+                                        &[&copy_label, &save_label, &open_label],
+                                        true,
+                                    )
+                                    .max(180.0);
+                                    egui::Popup::context_menu(&image_response)
+                                        .width(menu_width)
+                                        .frame(crate::ui::widgets::menu_frame(&palette))
+                                        .show(|ui| {
+                                            if crate::ui::widgets::menu_item(
+                                                ui,
+                                                &palette,
+                                                Some(Icon::Copy),
+                                                &copy_label,
+                                            ) {
+                                                app.actions.push(Action::CopyImage(
+                                                    preview.path().to_owned(),
+                                                ));
+                                            }
+                                            if crate::ui::widgets::menu_item(
+                                                ui,
+                                                &palette,
+                                                Some(Icon::Download),
+                                                &save_label,
+                                            ) {
+                                                let name = preview
+                                                    .path()
+                                                    .file_name()
+                                                    .and_then(|name| name.to_str())
+                                                    .unwrap_or("image.png")
+                                                    .to_owned();
+                                                app.actions.push(Action::SaveAttachmentAs {
+                                                    path: preview.path().to_owned(),
+                                                    name,
+                                                });
+                                            }
+                                            if crate::ui::widgets::menu_item(
+                                                ui,
+                                                &palette,
+                                                Some(Icon::ExternalLink),
+                                                &open_label,
+                                            ) {
+                                                app.actions.push(Action::OpenFile(
+                                                    preview.path().to_owned(),
+                                                ));
+                                            }
+                                        });
                                 },
                             );
                         });

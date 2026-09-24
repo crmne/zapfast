@@ -1113,3 +1113,23 @@ msgstr "Wie „Zuletzt online“"
 msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Unbekannte Anrufer stummschalten"
+
+#: src/app.rs:5108
+msgid "Copied image"
+msgstr "Bild kopiert"
+
+#: src/app.rs:5112 src/app.rs:5117
+msgid "Failed to copy image"
+msgstr "Bild konnte nicht kopiert werden"
+
+#: src/ui/image_preview.rs:59 src/ui/image_preview.rs:155
+msgid "Copy image"
+msgstr "Bild kopieren"
+
+#: src/ui/image_preview.rs:156
+msgid "Save as…"
+msgstr "Speichern unter…"
+
+#: src/ui/image_preview.rs:158
+msgid "Open in another app"
+msgstr "In anderer App öffnen"

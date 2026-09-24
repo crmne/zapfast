@@ -1107,3 +1107,23 @@ msgstr "Come l'ultimo accesso"
 msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Silenzia chiamate sconosciute"
+
+#: src/app.rs:5108
+msgid "Copied image"
+msgstr "Immagine copiata"
+
+#: src/app.rs:5112 src/app.rs:5117
+msgid "Failed to copy image"
+msgstr "Impossibile copiare l'immagine"
+
+#: src/ui/image_preview.rs:59 src/ui/image_preview.rs:155
+msgid "Copy image"
+msgstr "Copia immagine"
+
+#: src/ui/image_preview.rs:156
+msgid "Save as…"
+msgstr "Salva con nome…"
+
+#: src/ui/image_preview.rs:158
+msgid "Open in another app"
+msgstr "Apri in un'altra app"

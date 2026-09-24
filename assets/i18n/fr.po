@@ -1111,3 +1111,23 @@ msgstr "Identique à Vu à"
 msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Mettre en silence les appels inconnus"
+
+#: src/app.rs:5108
+msgid "Copied image"
+msgstr "Image copiée"
+
+#: src/app.rs:5112 src/app.rs:5117
+msgid "Failed to copy image"
+msgstr "Impossible de copier l'image"
+
+#: src/ui/image_preview.rs:59 src/ui/image_preview.rs:155
+msgid "Copy image"
+msgstr "Copier l'image"
+
+#: src/ui/image_preview.rs:156
+msgid "Save as…"
+msgstr "Enregistrer sous…"
+
+#: src/ui/image_preview.rs:158
+msgid "Open in another app"
+msgstr "Ouvrir dans une autre application"

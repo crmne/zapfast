@@ -2041,6 +2041,9 @@ impl App {
                     self.actions.push(Action::StartChat { id, name });
                 }
                 Event::Info(message) => self.toast(message),
+                Event::ClipboardImage(result) => {
+                    self.handle_clipboard_image(result, write_clipboard_image);
+                }
                 Event::StickerPicture {
                     path,
                     width,
@@ -3378,6 +3381,9 @@ impl App {
             Action::CopyText(text) => {
                 ctx.copy_text(text);
                 self.toast("Copied");
+            }
+            Action::CopyImage(path) => {
+                self.backend.send(Command::PrepareClipboardImage(path));
             }
             Action::DismissToast(index) => {
                 if index < self.toasts.len() {
@@ -5089,6 +5095,26 @@ impl App {
     pub fn media_of(&self, chat: &str, id: &str) -> Option<&Media> {
         self.conversations.get(chat)?.message(id)?.content.media()
     }
+
+    fn handle_clipboard_image(
+        &mut self,
+        result: Result<crate::model::DecodedImage, String>,
+        writer: impl FnOnce(&crate::model::DecodedImage) -> Result<(), String>,
+    ) {
+        match result {
+            Ok(image) => match writer(&image) {
+                Ok(()) => self.toast(crate::i18n::gettext(self.locale, "Copied image")),
+                Err(error) => {
+                    log::warn!("failed to write image to clipboard: {error}");
+                    self.toast_error(crate::i18n::gettext(self.locale, "Failed to copy image"));
+                }
+            },
+            Err(error) => {
+                log::warn!("failed to decode image for clipboard: {error}");
+                self.toast_error(crate::i18n::gettext(self.locale, "Failed to copy image"));
+            }
+        }
+    }
 }
 
 /// Detects paste from the key release. egui consumes the press and emits a
@@ -5176,6 +5202,18 @@ fn clipboard_image() -> Option<(usize, usize, Vec<u8>)> {
     Some((image.width, image.height, image.bytes.into_owned()))
 }
 
+/// Writes decoded straight-alpha RGBA image bytes to the system clipboard.
+fn write_clipboard_image(image: &crate::model::DecodedImage) -> Result<(), String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
+    clipboard
+        .set_image(arboard::ImageData {
+            width: image.width,
+            height: image.height,
+            bytes: std::borrow::Cow::Borrowed(&image.bytes),
+        })
+        .map_err(|error| error.to_string())
+}
+
 impl Delivery {
     /// Whether an outgoing message is still pending.
     pub fn in_flight(self) -> bool {
@@ -5216,7 +5254,7 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ChatKind, Content, Media, MediaState};
+    use crate::model::{ChatKind, Content, Media, MediaState, ToastKind};
 
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
@@ -5597,6 +5635,67 @@ mod tests {
         app.apply(Action::CloseImagePreview, &ctx);
         assert!(app.image_preview.is_none());
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn copying_an_image_dispatches_background_decode() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let path = std::path::PathBuf::from("sample-photo.png");
+
+        app.apply(Action::CopyImage(path.clone()), &ctx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::PrepareClipboardImage(p)) if p == path
+        ));
+    }
+
+    #[test]
+    fn clipboard_image_event_preserves_pixels_and_toasts() {
+        let mut app = app();
+        let pixels = vec![
+            255, 0, 0, 255, // red
+            0, 255, 0, 255, // green
+            0, 0, 255, 255, // blue
+            255, 255, 0, 255, // yellow
+        ];
+        let decoded = crate::model::DecodedImage {
+            width: 2,
+            height: 2,
+            bytes: pixels.clone(),
+        };
+
+        let mut written = None;
+        app.handle_clipboard_image(Ok(decoded), |image| {
+            written = Some((image.width, image.height, image.bytes.clone()));
+            Ok(())
+        });
+
+        assert_eq!(written, Some((2, 2, pixels)));
+        assert_eq!(app.toasts.len(), 1);
+        assert_eq!(app.toasts[0].message, "Copied image");
+        assert_eq!(app.toasts[0].kind, ToastKind::Info);
+
+        // Failure during clipboard write surfaces an error toast.
+        app.toasts.clear();
+        let decoded_err = crate::model::DecodedImage {
+            width: 1,
+            height: 1,
+            bytes: vec![0; 4],
+        };
+        app.handle_clipboard_image(Ok(decoded_err), |_| Err("OS clipboard locked".into()));
+        assert_eq!(app.toasts.len(), 1);
+        assert_eq!(app.toasts[0].message, "Failed to copy image");
+        assert_eq!(app.toasts[0].kind, ToastKind::Error);
+
+        // Failure during background decoding also surfaces an error toast.
+        app.toasts.clear();
+        app.handle_clipboard_image(Err("Corrupt image data".into()), |_| unreachable!());
+        assert_eq!(app.toasts.len(), 1);
+        assert_eq!(app.toasts[0].message, "Failed to copy image");
+        assert_eq!(app.toasts[0].kind, ToastKind::Error);
     }
 
     #[test]

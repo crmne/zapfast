@@ -1105,3 +1105,23 @@ msgstr "Igual ao visto por último"
 msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Silenciar chamadas desconhecidas"
+
+#: src/app.rs:5108
+msgid "Copied image"
+msgstr "Imagem copiada"
+
+#: src/app.rs:5112 src/app.rs:5117
+msgid "Failed to copy image"
+msgstr "Falha ao copiar imagem"
+
+#: src/ui/image_preview.rs:59 src/ui/image_preview.rs:155
+msgid "Copy image"
+msgstr "Copiar imagem"
+
+#: src/ui/image_preview.rs:156
+msgid "Save as…"
+msgstr "Salvar como…"
+
+#: src/ui/image_preview.rs:158
+msgid "Open in another app"
+msgstr "Abrir em outro aplicativo"

@@ -1061,3 +1061,23 @@ msgstr ""
 msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr ""
+
+#: src/app.rs:5108
+msgid "Copied image"
+msgstr ""
+
+#: src/app.rs:5112 src/app.rs:5117
+msgid "Failed to copy image"
+msgstr ""
+
+#: src/ui/image_preview.rs:59 src/ui/image_preview.rs:155
+msgid "Copy image"
+msgstr ""
+
+#: src/ui/image_preview.rs:156
+msgid "Save as…"
+msgstr ""
+
+#: src/ui/image_preview.rs:158
+msgid "Open in another app"
+msgstr ""

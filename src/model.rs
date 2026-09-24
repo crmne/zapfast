@@ -822,6 +822,14 @@ pub enum MediaState {
     Failed(String),
 }
 
+/// Decoded straight-alpha RGBA image bytes ready for the clipboard.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodedImage {
+    pub width: usize,
+    pub height: usize,
+    pub bytes: Vec<u8>,
+}
+
 /// Contact names from app-state sync and message push names.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Contact {
@@ -1268,6 +1276,7 @@ pub enum Action {
     },
     OpenUrl(String),
     CopyText(String),
+    CopyImage(PathBuf),
     /// Closes the toast at this index. Only errors wait to be dismissed.
     DismissToast(usize),
     /// Starts a reply to a message in the open chat.
