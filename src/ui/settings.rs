@@ -368,6 +368,14 @@ fn sections(app: &App) -> Vec<Section> {
         |settings| &mut settings.show_sender_pictures,
     );
     chats.toggle(
+        translated(locale, "Highlight unread in muted chats"),
+        translated(
+            locale,
+            "Keep unread badges, dots, and timestamps highlighted with the accent colour when a chat is muted. When off, muted chats use a dimmed colour.",
+        ),
+        |settings| &mut settings.highlight_muted_unread,
+    );
+    chats.toggle(
         "Names from your address book",
         "Prefer saved contact names. When off, prefer public WhatsApp profile names. This applies throughout the app.",
         |settings| &mut settings.names_from_contacts,

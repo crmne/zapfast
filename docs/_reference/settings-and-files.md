@@ -48,6 +48,8 @@ Changes on the Settings page are saved to `settings.json` immediately:
   MiB when they enter view, or only when clicked. Visible stickers download
   automatically up to the same limit.
 - **Show sender pictures**: avatars next to group messages.
+- **Highlight unread in muted chats**: keep unread badges, dots, and timestamps
+  highlighted with the accent colour even when a chat is muted.
 - **Names from your address book**: use contact names everywhere. When off,
   prefer public profile names.
 - **Send read receipts**: the blue ticks others see.

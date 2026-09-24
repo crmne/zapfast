@@ -334,6 +334,9 @@ pub struct Settings {
     pub auto_download: bool,
     /// Show sender avatars outside groups too.
     pub show_sender_pictures: bool,
+    /// Keep unread badges, dots, and timestamps highlighted with the accent
+    /// colour on muted chats.
+    pub highlight_muted_unread: bool,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
     /// Colour selected in the wallpaper picker.
@@ -408,6 +411,7 @@ impl Default for Settings {
             send_typing: true,
             auto_download: true,
             show_sender_pictures: false,
+            highlight_muted_unread: false,
             show_wallpaper: true,
             wallpaper_color: WallpaperColor::default(),
             dark_wallpaper_color: WallpaperColor::Black,
@@ -597,6 +601,17 @@ mod tests {
             !parsed.collapse_chat_list,
             "hiding the list keeps removing it until asked otherwise"
         );
+        assert!(
+            !parsed.highlight_muted_unread,
+            "muted chats keep dimmed badges and stamps by default"
+        );
+    }
+
+    #[test]
+    fn muted_unread_highlight_can_be_enabled_in_settings() {
+        let parsed: Settings =
+            serde_json::from_str(r#"{"highlight_muted_unread": true}"#).expect("parses");
+        assert!(parsed.highlight_muted_unread);
     }
 
     #[test]
@@ -616,6 +631,7 @@ mod tests {
             enter_sends: false,
             voice_speed: 1.5,
             collapse_chat_list: true,
+            highlight_muted_unread: true,
             interface_language: Some(crate::i18n::Locale::German),
             message_sound: NotificationSound::None,
             mention_sound: NotificationSound::Custom("/sounds/ding.wav".into()),

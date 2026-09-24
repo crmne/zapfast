@@ -878,7 +878,8 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             String::new()
         };
         let unread = chat.looks_unread();
-        let stamp_color = if unread && !muted {
+        let highlighted = unread && (!muted || app.settings.highlight_muted_unread);
+        let stamp_color = if highlighted {
             palette.accent
         } else {
             palette.dim
@@ -911,7 +912,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 pos2(badge_right - 10.0, line_y + 8.0),
                 chat.unread,
                 chat.marked_unread,
-                muted,
+                muted && !app.settings.highlight_muted_unread,
             );
             badge_right -= width + 6.0;
         }
@@ -931,7 +932,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         }
         let mut x = left;
         let typing = app.typing_in(&chat.id);
-        let preview_color = if unread && !muted {
+        let preview_color = if highlighted {
             palette.secondary
         } else {
             palette.dim
@@ -1318,14 +1319,15 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
         if chat.looks_unread() {
             // Top right, clear of the disappearing-messages timer in the
             // bottom right corner. A muted chat's badge is dimmed, as in the
-            // full row.
+            // full row, unless the user chose to highlight it.
+            let muted = chat.muted(crate::util::now()) && !app.settings.highlight_muted_unread;
             widgets::unread_indicator(
                 ui,
                 &palette,
                 compact_badge_center(avatar_rect),
                 chat.unread,
                 chat.marked_unread,
-                chat.muted(crate::util::now()),
+                muted,
             );
         }
     }
