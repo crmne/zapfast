@@ -9,6 +9,7 @@ pub mod keys;
 pub mod labels;
 pub mod login;
 pub mod message_info;
+pub mod pane;
 pub mod picker;
 pub mod polls;
 pub mod settings;
@@ -38,6 +39,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.image_preview.is_none()
         && app.emoji_start.is_none()
         && app.mention_start.is_none()
+        // The day filter keeps egui's own order among its days.
+        && !app.chat_search_calendar
         && !egui::Popup::is_any_open(ctx);
     focus::begin(ctx, main_navigation);
     // The open chat's composer records its rect again below, if there is one.
@@ -60,6 +63,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         SidebarDisplayMode::CollapsedIconsOnly => chats::compact_show(app, ui),
         SidebarDisplayMode::Hidden => {}
     }
+    let search_overlay = pane::show(app, ui);
     egui::CentralPanel::default()
         .frame(central_frame(app))
         .show(ui, |ui| match app.page {
@@ -67,6 +71,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             Page::Chats => conversation::show(app, ui),
             Page::Wallpaper => settings::wallpaper_show(app, ui),
         });
+    if let Some(region) = search_overlay {
+        pane::show_overlay(app, ctx, region);
+    }
     focus::finish(ctx, main_navigation);
     update::show(app, ctx);
     picker::show(app, ctx);

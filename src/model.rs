@@ -306,6 +306,13 @@ impl Message {
     pub fn summary(&self) -> String {
         self.content.summary()
     }
+
+    /// The line of this message that contains `query`, for a search result's
+    /// preview. The archive matches the whole text, so a hit on a later line
+    /// would otherwise show a first line the query is nowhere in.
+    pub fn text_matching(&self, query: &str) -> Option<String> {
+        self.content.text_matching(query)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -574,6 +581,43 @@ impl Content {
         Self::Text {
             text: text.into(),
             preview: None,
+        }
+    }
+
+    /// The first line of the text the archive search looks at that contains
+    /// `query`, trimmed, or `None` when no line has it.
+    pub fn text_matching(&self, query: &str) -> Option<String> {
+        let needle = query.trim().to_lowercase();
+        if needle.is_empty() {
+            return None;
+        }
+        self.searchable_fields()
+            .into_iter()
+            .flat_map(str::lines)
+            .find(|line| line.to_lowercase().contains(&needle))
+            .map(|line| line.trim().to_owned())
+    }
+
+    /// The text fields the archive search matches (its `SEARCHED_TEXT`), so
+    /// a preview is built from the same set.
+    fn searchable_fields(&self) -> Vec<&str> {
+        match self {
+            Self::Text { text, .. } | Self::Interactive { text, .. } => vec![text],
+            Self::Image { caption, .. } | Self::Video { caption, .. } => {
+                caption.as_deref().into_iter().collect()
+            }
+            Self::Document {
+                file_name, caption, ..
+            } => std::iter::once(file_name.as_str())
+                .chain(caption.as_deref())
+                .collect(),
+            Self::StickerPack { name, caption, .. } => std::iter::once(name.as_str())
+                .chain(caption.as_deref())
+                .collect(),
+            Self::Poll { question, .. } => vec![question],
+            Self::Contact { display_name, .. } => vec![display_name],
+            Self::Location { name, .. } => name.as_deref().into_iter().collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -1097,14 +1141,14 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
-    /// Opens the search bar for the open chat.
+    /// Opens the search pane beside the open chat, or focuses its field.
     OpenChatSearch,
-    /// Closes it and drops the query.
+    /// Closes the pane and drops its query and day.
     CloseChatSearch,
-    /// Replaces the query of the open chat's search bar.
+    /// Replaces the query of the open chat's search.
     ChatSearch(String),
-    /// Moves to the next (`1`) or previous (`-1`) match in the open chat.
-    StepChatSearch(i32),
+    /// Restricts the in-chat search to a local calendar day.
+    SetChatSearchDay(Option<jiff::civil::Date>),
     CloseChat,
     SendText {
         chat: ChatId,
@@ -1399,6 +1443,11 @@ pub enum Action {
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
+    /// Writes one WhatsApp account privacy category on the phone.
+    SetAccountPrivacy {
+        kind: crate::privacy::PrivacyKind,
+        choice: crate::privacy::PrivacyChoice,
+    },
     /// Registers or removes the login entry that starts ZapFast in the tray.
     SetStartWithSystem(bool),
     /// Sets the sound for mentions and replies to us (`true`) or for
@@ -1467,6 +1516,50 @@ pub enum Action {
 #[cfg(test)]
 mod tests {
     use super::StickerCrop;
+
+    #[test]
+    fn a_preview_comes_from_the_line_the_query_matched() {
+        let text = super::Content::Text {
+            text: "first line\nsecond line with Zebra\nthird".into(),
+            preview: None,
+        };
+        assert_eq!(
+            text.text_matching("zebra").as_deref(),
+            Some("second line with Zebra"),
+            "the matching line, not the first one"
+        );
+        assert_eq!(
+            text.text_matching("First").as_deref(),
+            Some("first line"),
+            "case does not matter"
+        );
+        assert_eq!(text.text_matching("nowhere"), None);
+        assert_eq!(
+            text.text_matching("  "),
+            None,
+            "an empty query matches nothing"
+        );
+        // A caption is searched too, and previewed the same way.
+        let photo = super::Content::Image {
+            caption: Some("a photo of a Zebra".into()),
+            media: media(),
+        };
+        assert_eq!(
+            photo.text_matching("zebra").as_deref(),
+            Some("a photo of a Zebra")
+        );
+        // So is a file name, with no text of its own to show.
+        let file = super::Content::Document {
+            media: media(),
+            file_name: "Zebra report.pdf".into(),
+            caption: None,
+            pages: None,
+        };
+        assert_eq!(
+            file.text_matching("zebra").as_deref(),
+            Some("Zebra report.pdf")
+        );
+    }
 
     #[test]
     fn a_left_chat_stops_offering_leave_even_without_members() {

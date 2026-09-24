@@ -895,6 +895,9 @@ pub fn populate(app: &mut App) {
     if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == ada) {
         chat.unread = 0;
     }
+    // The privacy rows read like a linked account, so the sample shows them
+    // filled instead of disabled.
+    app.account_privacy = crate::privacy::Snapshot::demo();
     app.scroll_to_bottom = true;
     app.focus_composer = false;
 }
@@ -1480,6 +1483,32 @@ fn video_sample(app: &mut App, play: Option<&str>) {
             path,
         });
     }
+}
+
+/// The search pane over the sample chat with the most matches for
+/// `query`, listing them newest first as the archive would.
+fn chat_search_sample(app: &mut App, query: &str) {
+    let matches = |conversation: &crate::app::Conversation| -> Vec<crate::model::Message> {
+        conversation
+            .messages
+            .iter()
+            .rev()
+            .filter(|message| message.text_matching(query).is_some())
+            .cloned()
+            .collect()
+    };
+    let Some((chat, hits)) = app
+        .conversations
+        .iter()
+        .map(|(chat, conversation)| (chat.clone(), matches(conversation)))
+        .max_by_key(|(chat, hits)| (hits.len(), std::cmp::Reverse(chat.clone())))
+    else {
+        return;
+    };
+    app.open_chat = Some(chat);
+    app.chat_search_open = true;
+    app.chat_search = query.into();
+    app.chat_search_hits = hits;
 }
 
 /// Three local labels worn by some of the sample chats.
@@ -2257,6 +2286,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "labels-dialog" => {
                 labels_sample(app);
                 app.dialog = Some(Dialog::Labels);
+            }
+            "chat-search" => chat_search_sample(app, "engine"),
+            // Right-to-left previews with emoji.
+            "chat-search-rtl" => chat_search_sample(app, "שלום"),
+            // The same pane with the day filter open.
+            "chat-search-day" => {
+                chat_search_sample(app, "engine");
+                app.chat_search_day = app
+                    .chat_search_hits
+                    .first()
+                    .and_then(|hit| crate::util::day_key(hit.timestamp));
+                if let Some(day) = app.chat_search_day {
+                    app.chat_search_month = day;
+                    app.chat_search_hits
+                        .retain(|hit| crate::util::day_key(hit.timestamp) == Some(day));
+                }
+                app.chat_search_calendar = true;
             }
             "unread" => app.chat_filter = crate::model::ChatFilter::Unread,
             "private" => app.chat_filter = crate::model::ChatFilter::Private,
@@ -3685,6 +3731,9 @@ mod tests {
             "new-contact",
             "light",
             "archived",
+            "chat-search",
+            "chat-search-day",
+            "chat-search-rtl",
             "unread",
             "private",
             "favorites",
@@ -4825,6 +4874,110 @@ mod tests {
         render(&mut app, &ctx);
         assert!(app.reaction_target.is_none());
         assert!(!egui::Popup::is_id_open(&ctx, id.with("popup")));
+    }
+
+    #[test]
+    fn opening_settings_does_not_write_account_privacy() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        apply_flags(&mut app, Some("settings"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                crate::backend::Command::SetAccountPrivacy { .. }
+            )),
+            "opening Settings must not write privacy"
+        );
+    }
+
+    #[test]
+    fn set_account_privacy_enqueues_the_phone_write() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.actions.push(crate::model::Action::SetAccountPrivacy {
+            kind: crate::privacy::PrivacyKind::Profile,
+            choice: crate::privacy::PrivacyChoice::Nobody,
+        });
+        render(&mut app, &ctx);
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                crate::backend::Command::SetAccountPrivacy {
+                    kind: crate::privacy::PrivacyKind::Profile,
+                    choice: crate::privacy::PrivacyChoice::Nobody,
+                }
+            )),
+            "picking a value writes it to the phone"
+        );
+        // A second pick waits for the first, and an Except list is never
+        // written from here.
+        for choice in [
+            crate::privacy::PrivacyChoice::Everyone,
+            crate::privacy::PrivacyChoice::Except,
+        ] {
+            app.actions.push(crate::model::Action::SetAccountPrivacy {
+                kind: crate::privacy::PrivacyKind::Profile,
+                choice,
+            });
+        }
+        app.actions.push(crate::model::Action::SetAccountPrivacy {
+            kind: crate::privacy::PrivacyKind::About,
+            choice: crate::privacy::PrivacyChoice::Except,
+        });
+        render(&mut app, &ctx);
+        assert!(
+            !app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    crate::backend::Command::SetAccountPrivacy { .. }
+                )),
+            "nothing else is written"
+        );
+    }
+
+    #[test]
+    fn opening_settings_reads_account_privacy_again() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.actions
+            .push(crate::model::Action::Open(crate::model::Page::Settings));
+        render(&mut app, &ctx);
+        assert!(
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::FetchAccountPrivacy))
+        );
+    }
+
+    #[test]
+    fn account_privacy_fetch_fills_the_rows() {
+        let mut app = app();
+        app.account_privacy = crate::privacy::Snapshot::default();
+        app.account_privacy.apply_fetch(
+            vec![(
+                crate::privacy::PrivacyKind::LastSeen,
+                crate::privacy::PrivacyChoice::Nobody,
+            )],
+            false,
+        );
+        assert_eq!(
+            app.account_privacy
+                .get(crate::privacy::PrivacyKind::LastSeen),
+            Some(crate::privacy::PrivacyChoice::Nobody)
+        );
+        assert!(app.account_privacy.loaded);
     }
 
     #[test]
@@ -6460,6 +6613,7 @@ mod tests {
                 Stop::Attach,
                 Stop::Poll,
                 Stop::Emoji,
+                Stop::ChatSearch,
                 Stop::Profile,
                 Stop::Sidebar,
                 Stop::NewChat,
@@ -6541,7 +6695,15 @@ mod tests {
     #[test]
     fn main_tab_cycle_tracks_hidden_and_read_only_controls() {
         use crate::ui::focus::Stop;
-        for page in ["nosidebar", "rail", "empty", "channel", "search", "chat"] {
+        for page in [
+            "nosidebar",
+            "rail",
+            "empty",
+            "channel",
+            "search",
+            "chat",
+            "chat-search",
+        ] {
             let mut app = app();
             apply_flags(&mut app, Some(page));
             let ctx = egui::Context::default();
@@ -6570,6 +6732,7 @@ mod tests {
                         Stop::Attach,
                         Stop::Poll,
                         Stop::Emoji,
+                        Stop::ChatSearch,
                         Stop::Sidebar
                     ]
                 );

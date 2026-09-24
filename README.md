@@ -24,10 +24,19 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Links to your phone.** Scan a QR code or link with your phone number.
   Recent history is copied to this computer after linking and stored here.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,
-  and message status. Search chats, saved messages, and contacts. Right-click a
-  group or a followed channel and choose **Leave group** or **Leave channel** to
-  leave it, with the option to archive it in the same step; the local history
-  stays on this computer and the chat keeps its messages.
+  and message status. Search chats, saved messages, and contacts. The
+  **Search** icon in a chat's header (or **Ctrl+F**) opens a pane beside the
+  chat, as in WhatsApp Desktop, listing its matches newest first with the time
+  and the line that matched. The calendar narrows them to one day, or lists
+  that day's messages when the field is empty. Clicking a result, or reaching
+  it with the arrow keys and pressing Enter, brings it into view with a brief
+  flash; Escape closes the calendar, then the pane. The pane can be dragged
+  wider, and in a narrow window it lies over the conversation instead of
+  squeezing it. The newest 80 matches are listed, and the pane says when there
+  are more. Right-click a group or a followed channel and choose **Leave group**
+  or **Leave channel** to leave it, with the option to archive it in the same
+  step; the local history stays on this computer and the chat keeps its
+  messages.
   Filter the list to unread, private (one-to-one), favorites, or group chats
   with the chips under the search bar; a chip with unread chats shows how many
   it has. Right-click a chat and choose **Add to favorites** to mark it.
@@ -50,6 +59,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   an empty cached subject remains eligible for recovery.
   Typing indicators show other participants, excluding your own linked devices.
   Newsletter channels are read-only; publishing channel posts is not supported.
+- **Account privacy.** Settings, Privacy shows who can see your last seen,
+  online status, profile photo, and About, who can add you to groups, your
+  account read receipts, and whether unknown callers are silenced, and
+  changes them on your phone, so a change applies on every linked device. A
+  category set to **My contacts except** shows as such; the people it excludes
+  are chosen on the phone. The values are read when ZapFast connects and when
+  Settings opens; without a connection they cannot be changed.
 - **Read state across devices.** Reading a chat syncs its unread badge with
   your phone and other linked devices, including when read receipts are off.
   Replies from another device clear preceding unread messages. The read-receipt
@@ -294,9 +310,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
   `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` or `Ctrl+Shift+F` searches your chats,
-  `Ctrl+F` searches the open chat as in WhatsApp (Enter and Shift+Enter move
-  between matches; with no chat open it searches your chats, and in Settings it
-  searches the settings), `Alt+↑/↓` switches chats and
+  `Ctrl+F` searches the open chat as in WhatsApp (`↑`/`↓` walk the results
+  and Enter jumps to one; with no chat open it searches your chats, and in
+  Settings it searches the settings), `Alt+↑/↓` switches chats and
   keeps the active chat visible in the list, `↑` in an empty input edits your
   previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
   message input, `Ctrl+N` opens New chat, `Ctrl+B` hides or shows the chat

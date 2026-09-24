@@ -208,6 +208,65 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
     })
 }
 
+/// The columns [`searched_message`] reads, in its order.
+const SEARCH_COLUMNS: &str = "chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at";
+
+/// The lowercased text a search matches: text, captions, file names, poll
+/// questions, contact names and places, one per line.
+/// `Content::text_matching` previews from the same fields.
+const SEARCHED_TEXT: &str = "lower(
+    coalesce(json_extract(content, '$.text'), '') || char(10) ||
+    coalesce(json_extract(content, '$.caption'), '') || char(10) ||
+    coalesce(json_extract(content, '$.file_name'), '') || char(10) ||
+    coalesce(json_extract(content, '$.question'), '') || char(10) ||
+    coalesce(json_extract(content, '$.display_name'), '') || char(10) ||
+    coalesce(json_extract(content, '$.name'), '')
+)";
+
+/// A `LIKE` pattern that finds `needle` anywhere, with its wildcards taken
+/// as text, or `None` for a blank needle.
+fn search_pattern(needle: &str) -> Option<String> {
+    let needle = needle.trim();
+    (!needle.is_empty()).then(|| {
+        format!(
+            "%{}%",
+            needle
+                .to_lowercase()
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        )
+    })
+}
+
+/// A message from a row of [`SEARCH_COLUMNS`].
+fn searched_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
+    let content: String = row.get(6)?;
+    let quoted: Option<String> = row.get(8)?;
+    let reactions: String = row.get(9)?;
+    let mentions: String = row.get(12)?;
+    Ok(Message {
+        chat: row.get(0)?,
+        id: row.get(1)?,
+        sender: row.get(2)?,
+        sender_name: row.get(3)?,
+        from_me: row.get(4)?,
+        timestamp: row.get(5)?,
+        content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
+            what: "unreadable".into(),
+        }),
+        status: status_from_rank(row.get(7)?),
+        delivered_at: row.get(14)?,
+        read_at: row.get(15)?,
+        quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
+        reactions: serde_json::from_str(&reactions).unwrap_or_default(),
+        edited: row.get(10)?,
+        mentions: serde_json::from_str(&mentions).unwrap_or_default(),
+        forwarded: row.get(13)?,
+        thumbnail: row.get(11)?,
+    })
+}
+
 fn status_rank(status: Delivery) -> i64 {
     match status {
         Delivery::None => 0,
@@ -908,95 +967,60 @@ impl Archive {
         Ok(messages)
     }
 
-    /// Message ids in one chat whose visible text matches, oldest first so
-    /// next and previous walk forward in time. Same fields as the global
-    /// search, scoped to a single chat.
+    /// Searches one chat, optionally inside a Unix-second range (`from`
+    /// inclusive, `until` exclusive). Same fields as the global search.
+    ///
+    /// An empty needle matches everything in the range, so the day filter
+    /// works on its own. Newest first, the order the pane lists them in.
     pub fn search_chat_messages(
         &self,
         chat: &str,
         needle: &str,
+        from: Option<i64>,
+        until: Option<i64>,
         limit: usize,
-    ) -> Result<Vec<String>> {
-        let pattern = format!(
-            "%{}%",
-            needle
-                .to_lowercase()
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_")
-        );
-        let mut statement = self.connection.prepare(
-            "SELECT id
+    ) -> Result<Vec<Message>> {
+        // Concrete bounds rather than `?2 IS NULL OR ...`, so SQLite walks the
+        // `(chat, timestamp)` index over just the range.
+        let sql = format!(
+            "SELECT {SEARCH_COLUMNS}
              FROM messages
-             WHERE chat = ?1 AND json_valid(content) AND lower(
-                     coalesce(json_extract(content, '$.text'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.caption'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.file_name'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.question'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.display_name'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.name'), '')
-                 ) LIKE ?2 ESCAPE '\\'
-             ORDER BY timestamp ASC, rowid ASC
-             LIMIT ?3",
+             WHERE chat = ?1 AND timestamp >= ?2 AND timestamp < ?3
+             AND json_valid(content)
+             AND (?4 IS NULL OR {SEARCHED_TEXT} LIKE ?4 ESCAPE '\\')
+             ORDER BY timestamp DESC, rowid DESC
+             LIMIT ?5"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(
+            params![
+                chat,
+                from.unwrap_or(i64::MIN),
+                until.unwrap_or(i64::MAX),
+                search_pattern(needle),
+                limit as i64
+            ],
+            searched_message,
         )?;
-        let rows = statement.query_map(params![chat, pattern, limit as i64], |row| row.get(0))?;
         rows.collect()
     }
 
     /// Searches visible message text, filenames, polls, contacts, and places.
     /// ASCII matching is case-insensitive; other text follows SQLite behavior.
     pub fn search_messages(&self, needle: &str, limit: usize) -> Result<Vec<Message>> {
-        let pattern = format!(
-            "%{}%",
-            needle
-                .to_lowercase()
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_")
-        );
-        let mut statement = self.connection.prepare(
-            "SELECT chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
+        let sql = format!(
+            "SELECT {SEARCH_COLUMNS}
              FROM messages
-             WHERE json_valid(content) AND lower(
-                     coalesce(json_extract(content, '$.text'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.caption'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.file_name'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.question'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.display_name'), '') || char(10) ||
-                     coalesce(json_extract(content, '$.name'), '')
-                 ) LIKE ?1 ESCAPE '\\'
+             WHERE json_valid(content) AND {SEARCHED_TEXT} LIKE ?1 ESCAPE '\\'
              ORDER BY timestamp DESC, rowid DESC
-             LIMIT ?2",
+             LIMIT ?2"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(
+            params![search_pattern(needle), limit as i64],
+            searched_message,
         )?;
-        let rows = statement.query_map(params![pattern, limit as i64], |row| {
-            let chat: String = row.get(0)?;
-            let content: String = row.get(6)?;
-            let quoted: Option<String> = row.get(8)?;
-            let reactions: String = row.get(9)?;
-            let mentions: String = row.get(12)?;
-            Ok(Message {
-                id: row.get(1)?,
-                chat,
-                sender: row.get(2)?,
-                sender_name: row.get(3)?,
-                from_me: row.get(4)?,
-                timestamp: row.get(5)?,
-                content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
-                    what: "unreadable".into(),
-                }),
-                status: status_from_rank(row.get(7)?),
-                delivered_at: row.get(14)?,
-                read_at: row.get(15)?,
-                quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
-                reactions: serde_json::from_str(&reactions).unwrap_or_default(),
-                edited: row.get(10)?,
-                mentions: serde_json::from_str(&mentions).unwrap_or_default(),
-                forwarded: row.get(13)?,
-                thumbnail: row.get(11)?,
-            })
-        })?;
-        let messages: Vec<Message> = rows.collect::<Result<_>>()?;
-        Ok(messages)
+        rows.collect()
     }
 
     /// Returns messages from `from` through `before`, ascending and limited.
@@ -1707,33 +1731,49 @@ pub(crate) mod tests {
         ] {
             archive.insert_message(&message, None).expect("insert");
         }
-        // Only this chat, oldest first, so Enter walks forward in time.
+        fn ids(hits: Vec<Message>) -> Vec<String> {
+            hits.into_iter().map(|hit| hit.id).collect()
+        }
+        // Only this chat, newest first, the order the pane lists them in.
         assert_eq!(
-            archive
-                .search_chat_messages(chat, "engine", 50)
-                .expect("search"),
-            vec!["m1".to_owned(), "m3".to_owned()]
+            ids(archive
+                .search_chat_messages(chat, "engine", None, None, 50)
+                .expect("search")),
+            vec!["m3".to_owned(), "m1".to_owned()]
         );
-        // The limit keeps the oldest matches.
+        // The limit keeps the newest matches.
         assert_eq!(
-            archive
-                .search_chat_messages(chat, "engine", 1)
-                .expect("search"),
-            vec!["m1".to_owned()]
+            ids(archive
+                .search_chat_messages(chat, "engine", None, None, 1)
+                .expect("search")),
+            vec!["m3".to_owned()]
         );
         // A chat whose messages do not match has no hits.
         assert!(
             archive
-                .search_chat_messages(other, "nothing", 50)
+                .search_chat_messages(other, "nothing", None, None, 50)
                 .expect("search")
                 .is_empty()
         );
         // Wildcards are text, like the cross-chat search.
         assert!(
             archive
-                .search_chat_messages(chat, "%", 50)
+                .search_chat_messages(chat, "%", None, None, 50)
                 .expect("search")
                 .is_empty()
+        );
+        // A day range narrows it, and an empty query matches the whole day.
+        assert_eq!(
+            ids(archive
+                .search_chat_messages(chat, "engine", Some(25), Some(100), 50)
+                .expect("day")),
+            vec!["m3".to_owned()]
+        );
+        assert_eq!(
+            ids(archive
+                .search_chat_messages(chat, "", Some(25), Some(100), 50)
+                .expect("day only")),
+            vec!["m3".to_owned()]
         );
     }
 
