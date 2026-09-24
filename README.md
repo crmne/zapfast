@@ -261,11 +261,16 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   its outstanding notifications. On macOS, notifications use
   the installed ZapFast application's identity without an application chooser;
   unregistered development builds skip notifications if that identity is unavailable.
-  **Message sound** and **Group sound** in Settings choose Pidgin's classic
-  message sound (the default for one-to-one chats) or its alert (the default
-  for groups), the system's notification sound, no sound, or an audio file
-  (WAV, MP3, or OGG Vorbis) that ZapFast plays itself. **Notification sound** in a chat's right-click
-  menu gives that chat its own sound, stored in the encrypted archive.
+  Sounds follow Pidgin: **Message sound** plays for every new message, in
+  chats and groups alike, and **Mention sound** when someone in a group
+  mentions you or replies to one of your messages. Each can be Pidgin's classic
+  message sound (the default for messages), its alert (the default for
+  mentions), the system's notification sound, no sound, or an audio file
+  (WAV, MP3, or OGG Vorbis) that ZapFast plays itself. Turning off **Play
+  sounds for group messages** keeps group notifications silent unless they
+  mention or answer you. **Notification sound** in a chat's right-click menu
+  gives that chat its own sound for every message in it, mentions included,
+  stored in the encrypted archive.
 - **Unread count on the taskbar.** On Linux, ZapFast publishes the unread total
   through the Unity Launcher API, so KDE Plasma shows it as a badge on the
   taskbar icon, with **Show badges** enabled in the Task Manager settings. Other
@@ -283,7 +288,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` or `Ctrl+Shift+F` searches your chats,
   `Ctrl+F` searches the open chat as in WhatsApp (Enter and Shift+Enter move
-  between matches; with no chat open it searches your chats), `Alt+↑/↓` switches chats and
+  between matches; with no chat open it searches your chats, and in Settings it
+  searches the settings), `Alt+↑/↓` switches chats and
   keeps the active chat visible in the list, `↑` in an empty input edits your
   previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
   message input, `Ctrl+N` opens New chat, `Ctrl+B` hides or shows the chat
@@ -518,6 +524,14 @@ which restriction applies. Replies from other devices retain their quotes too.
 These screenshots use synthetic offline chats. See the
 [usage guide](https://zapfast.rocks/using-zapfast/#interactive-messages) for
 download behavior and the remaining limitations.
+### Finding a setting
+
+The search field at the top of **Settings** narrows the page to the settings
+whose name or description contains what you type, ignoring case and accents,
+and hides sections with nothing left. A match on a section's name keeps the
+whole section. Translated settings are found in the interface language and in
+English. `Ctrl+F` on the Settings page focuses the field, and `Esc` clears it.
+
 ### Interface language
 
 **Settings > Appearance > Language** chooses the interface language. **Auto**

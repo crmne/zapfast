@@ -56,9 +56,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # and the SQLite device store. The window handles shutdown instead of `signal`.
 # Includes upstream Business pairing (#1440), LockChatUpdate and snapshot replay
 # (#1507), the viewer's channel mute state (#1537), favorite and recent sticker
-# sync events (#1538), and boolean AB props (#1539). Device-store
+# sync events (#1538), boolean AB props (#1539), and favorite chats sync
+# (#1544). Device-store
 # compatibility retains the legacy created_at column.
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbf3568167b2ca76c0737543966400785fc9ca1c", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "215123065e63e0a7ddefadf0c53740c90467769d", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 # Opens the WhatsApp WebSocket through a proxy. Both crates are already
 # included through the Tokio transport at these versions.

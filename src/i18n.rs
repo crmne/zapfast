@@ -91,7 +91,15 @@ impl Locale {
 }
 
 /// The operating system's preferred locale, falling back to English.
+///
+/// Unit tests assert the English source strings, so the machine the suite runs
+/// on must not decide their outcome: a developer with a Portuguese Brazil
+/// system would otherwise see failures that the continuous integration, running
+/// in English, does not.
 pub fn detect() -> Locale {
+    if cfg!(test) {
+        return Locale::English;
+    }
     sys_locale::get_locale()
         .as_deref()
         .and_then(Locale::from_system)
@@ -151,6 +159,19 @@ mod tests {
         assert_eq!(Locale::from_system("en-US"), Some(Locale::English));
         assert_eq!(Locale::from_system("ja-JP"), None);
         assert_eq!(Locale::default(), Locale::English);
+    }
+
+    /// The suite asserts the English source strings, so the language of the
+    /// machine that runs it must not decide whether it passes, while an
+    /// explicit choice still wins over the detection.
+    #[test]
+    fn detection_is_english_under_test_and_a_choice_still_wins() {
+        assert_eq!(detect(), Locale::English);
+        assert_eq!(
+            resolve(Some(Locale::PortugueseBrazil)),
+            Locale::PortugueseBrazil
+        );
+        assert_eq!(resolve(None), Locale::English);
     }
 
     #[test]

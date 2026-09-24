@@ -1601,6 +1601,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "message-info" => message_info_sample(app, true),
             "message-info-unknown" => message_info_sample(app, false),
+            "message-info-partial" => {
+                message_info_sample(app, true);
+                // One reader, from receipts kept before the audience was.
+                if let Some(receipts) = &mut app.message_receipts {
+                    receipts.recipients.truncate(1);
+                    receipts.recipients[0].expected = false;
+                }
+            }
             "message-info-direct" => {
                 let chat = SAMPLES[0].id;
                 let c = app.conversations.get_mut(chat).unwrap();
@@ -1737,6 +1745,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            choice if choice.starts_with("settings-search=") => {
+                app.page = Page::Settings;
+                app.settings_search = choice["settings-search=".len()..].to_owned();
+            }
             "wallpaper" => app.page = Page::Wallpaper,
             "omarchy" | "omarchy-light" => {
                 let mut themes: Vec<_> = crate::theme::presets::themes().collect();
@@ -2949,6 +2961,38 @@ mod tests {
         }
     }
 
+    /// Message info grows with its content like poll results, so a short
+    /// list, the note about missing receipts included, shows without
+    /// scrolling.
+    #[test]
+    fn short_message_info_shows_in_full() {
+        for page in [
+            "message-info-partial",
+            "message-info-unknown",
+            "message-info-direct",
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some(page));
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let Some(Dialog::MessageInfo { chat, message }) = app.dialog.clone() else {
+                panic!("{page}: no message info");
+            };
+            let id = crate::ui::conversation::bubble_id(&chat, &message);
+            let viewport = ctx
+                .data(|data| data.get_temp::<egui::Rect>(id.with("message-info-viewport")))
+                .unwrap();
+            let content = ctx
+                .data(|data| data.get_temp::<egui::Vec2>(id.with("message-info-content")))
+                .unwrap();
+            assert!(
+                content.y <= viewport.height() + 0.5,
+                "{page}: content {content:?}, viewport {viewport:?}"
+            );
+        }
+    }
+
     #[test]
     fn list_dialog_dismissal_and_connection_changes_do_not_send_replies() {
         for state in ["escape", "disconnected", "pending", "edited", "removed"] {
@@ -3548,6 +3592,7 @@ mod tests {
             "poll-results",
             "message-info",
             "message-info-unknown",
+            "message-info-partial",
             "message-info-direct",
             "video",
             "video-playing",
@@ -4246,11 +4291,10 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// The sent row only informs; delivery and read times open from "Message
-    /// info". The message id is copied by a row that says so, not by clicking
-    /// "Sent".
+    /// The menu lists actions only: sent, delivery, and read times open from
+    /// "Message info", and the message id is copied by a row that says so.
     #[test]
-    fn message_status_rows_are_not_actions() {
+    fn message_menu_lists_actions_only() {
         use egui::accesskit::Role;
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
@@ -4266,10 +4310,15 @@ mod tests {
                 .unwrap_or_else(|| panic!("no {prefix} row"))
                 .clone()
         };
-        let (label, role, _) = find("Sent ");
-        assert_eq!(role, Role::Label, "{label} is information, not a button");
+        for status in ["Sent ", "Delivered ", "Read "] {
+            assert!(
+                nodes.iter().all(|(label, _, _)| !label.starts_with(status)),
+                "the menu has no {status}row"
+            );
+        }
         assert_eq!(find("Message info").1, Role::Button);
-        assert_eq!(find("Copy message ID").1, Role::Button);
+        let (_, role, copy) = find("Copy message ID");
+        assert_eq!(role, Role::Button);
 
         let click = |app: &mut App, pos: egui::Pos2| {
             let press = |pressed| egui::Event::PointerButton {
@@ -4281,20 +4330,6 @@ mod tests {
             accessible_nodes(app, &ctx, vec![egui::Event::PointerMoved(pos), press(true)]);
             accessible_nodes(app, &ctx, vec![press(false)]);
         };
-        click(&mut app, find("Sent ").2);
-        assert!(
-            app.toasts.iter().all(|toast| toast.message != "Copied"),
-            "clicking Sent copies nothing"
-        );
-
-        app.open_message_menu = Some("ada-link".into());
-        render(&mut app, &ctx);
-        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
-        let copy = nodes
-            .iter()
-            .find(|(label, _, _)| label == "Copy message ID")
-            .expect("the menu is open again")
-            .2;
         click(&mut app, copy);
         assert!(app.toasts.iter().any(|toast| toast.message == "Copied"));
     }
@@ -4580,6 +4615,60 @@ mod tests {
         assert!(
             app.reaction_target.is_none(),
             "the context menu does not open the reaction picker"
+        );
+    }
+
+    /// A message scrolled up under the chat header is hidden there, so a
+    /// right-click on the header does not open that message's menu.
+    #[test]
+    fn right_click_on_the_header_does_not_reach_a_message_under_it() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let viewport = app
+            .selection_view
+            .lock()
+            .unwrap()
+            .expect("the transcript was drawn");
+        let chat = app.open_chat.clone().expect("a chat is open");
+        let (id, bubble) = app.conversations[&chat]
+            .messages
+            .iter()
+            .map(|message| crate::ui::conversation::bubble_id(&chat, &message.id))
+            .find_map(|id| {
+                let rect = ctx.data(|data| data.get_temp::<egui::Rect>(id.with("rect")))?;
+                (rect.top() < viewport.top() - 8.0 && rect.bottom() > viewport.top() + 8.0)
+                    .then_some((id, rect))
+            })
+            .expect("a message runs under the header");
+        let right_click = |app: &mut App, pos: egui::Pos2| {
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(app, &ctx, vec![egui::Event::PointerMoved(pos), press(true)]);
+            frame_with(app, &ctx, vec![press(false)]);
+            frame_with(app, &ctx, Vec::new());
+        };
+        let hidden = egui::pos2(bubble.center().x, viewport.top() - 4.0);
+        assert!(bubble.contains(hidden));
+        right_click(&mut app, hidden);
+        assert!(
+            !egui::Popup::is_id_open(&ctx, id.with("popup")),
+            "the header's right-click opened the hidden message's menu"
+        );
+
+        // The visible part of the same message still opens it.
+        right_click(
+            &mut app,
+            egui::pos2(bubble.center().x, viewport.top() + 4.0),
+        );
+        assert!(
+            egui::Popup::is_id_open(&ctx, id.with("popup")),
+            "a right-click on the visible part opens the menu"
         );
     }
 

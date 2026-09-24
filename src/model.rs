@@ -1316,6 +1316,10 @@ pub enum Action {
     /// Focuses the chat-list search and leaves the open chat alone.
     FocusChatList,
     FocusSearch,
+    /// Focuses the search field on the Settings page.
+    FocusSettingsSearch,
+    /// Filters the Settings page to the rows matching this text.
+    SearchSettings(String),
     FocusComposer,
     HideShortcutHints,
     DismissChatLockHint,
@@ -1344,14 +1348,15 @@ pub enum Action {
     SettingsChanged,
     /// Registers or removes the login entry that starts ZapFast in the tray.
     SetStartWithSystem(bool),
-    /// Sets the notification sound for groups (`true`) or other chats.
+    /// Sets the sound for mentions and replies to us (`true`) or for
+    /// other new messages.
     SetNotificationSound {
-        group: bool,
+        mention: bool,
         sound: crate::settings::NotificationSound,
     },
     /// Asks for an audio file to use as a notification sound.
     PickNotificationSound {
-        group: bool,
+        mention: bool,
     },
     /// Sets a chat's own notification sound; `None` follows Settings.
     SetChatSound {
