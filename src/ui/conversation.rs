@@ -980,7 +980,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     .fill(Color32::TRANSPARENT)
                     .inner_margin(Margin::symmetric(8, 7))
                     .show(ui, |ui| {
-                        ui.set_width((field_width - 24.0).max(0.0));
+                        ui.set_width((field_width - 16.0).max(0.0));
                         // Grow from one to six lines, then scroll.
                         egui::ScrollArea::vertical()
                             .id_salt("composer-scroll")
