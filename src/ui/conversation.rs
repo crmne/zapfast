@@ -2650,13 +2650,16 @@ fn bubble_frame(
 
     reaction_affordance(ui, view, message, &bubble, actions);
     // Read right-click from input because inner widgets own their responses.
-    // Open only when no floating layer covers the chat panel.
+    // Count only the part of the bubble inside the transcript's viewport: the
+    // chat header shares this layer, and a bubble scrolled under it is hidden
+    // there. Open only when no floating layer covers the chat panel.
+    let shown = bubble.rect.intersect(ui.clip_rect());
     let right_clicked = ui.input(|input| {
         input.pointer.secondary_clicked()
             && input
                 .pointer
                 .interact_pos()
-                .is_some_and(|pos| bubble.rect.contains(pos))
+                .is_some_and(|pos| shown.contains(pos))
     }) && ui
         .input(|input| input.pointer.interact_pos())
         .is_some_and(|pos| {
@@ -2671,11 +2674,9 @@ fn bubble_frame(
         &[
             "Delete for everyone",
             "Show in folder",
-            if crate::util::twelve_hour_clock() {
-                "Delivered Yesterday at 11:59 PM"
-            } else {
-                "Delivered Yesterday at 20:45"
-            },
+            "Copy message ID",
+            &crate::i18n::gettext(view.locale, "Open in system player"),
+            &crate::i18n::gettext(view.locale, "Message info"),
         ],
         true,
     )
@@ -3351,17 +3352,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         speed_menu_row(ui, view, message, actions);
     }
     widgets::menu_separator(ui, &palette);
-    // Sent, delivered, and read times inform only; they are not actions.
-    widgets::menu_info(
-        ui,
-        &palette,
-        Icon::Check,
-        &format!(
-            "Sent {}",
-            crate::util::moment_stamp(view.locale, message.timestamp)
-        ),
-    );
-    // Delivery and read times, per member in a group, live in "Message info".
+    // The menu holds actions only. Sent, delivery, and read times, per member
+    // in a group, live in "Message info".
     if message.from_me
         && !matches!(message.content, Content::Revoked)
         && !matches!(
@@ -3380,8 +3372,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             message: message.id.clone(),
         }));
     }
-    // The id helps when looking a message up for a bug report. Clicking
-    // "Sent" used to copy it without saying so.
+    // The id helps when looking a message up for a bug report.
     if widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy message ID") {
         actions.push(Action::CopyText(message.id.clone()));
     }

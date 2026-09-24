@@ -94,6 +94,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CancelReply);
         } else if app.page == Page::Wallpaper {
             actions.push(Action::Open(Page::Settings));
+        } else if app.page == Page::Settings && !app.settings_search.is_empty() {
+            actions.push(Action::SearchSettings(String::new()));
         } else if app.page == Page::Settings {
             actions.push(Action::Open(Page::Chats));
         } else if search_focused || !app.search.is_empty() {
@@ -240,20 +242,23 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) {
     app.actions.extend(actions);
 }
 
-/// Ctrl+F searches the open chat, as in WhatsApp, and the chat list when
-/// no chat is open.
+/// Ctrl+F searches the open chat, as in WhatsApp, the chat list when no
+/// chat is open, and the settings on the Settings page.
 fn find_action(app: &App) -> Action {
-    if app.open_chat.is_some() && app.page == Page::Chats {
-        Action::OpenChatSearch
-    } else {
-        Action::FocusSearch
+    match app.page {
+        Page::Settings => Action::FocusSettingsSearch,
+        Page::Chats if app.open_chat.is_some() => Action::OpenChatSearch,
+        _ => Action::FocusSearch,
     }
 }
 
 /// Shortcuts shown in the help dialog.
 pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+K / Ctrl+Shift+F", "Search chats"),
-    ("Ctrl+F", "Search the open chat (Enter for the next match)"),
+    (
+        "Ctrl+F",
+        "Search the open chat (Enter for the next match) or the settings",
+    ),
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
     ("↑", "Edit the previous message (when the input is empty)"),
@@ -291,7 +296,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ctrl_f_searches_the_open_chat_or_else_the_list() {
+    fn ctrl_f_searches_the_open_chat_the_list_or_the_settings() {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::headless(
             crate::paths::AppDirs::under(root.path()),
@@ -303,7 +308,33 @@ mod tests {
         app.page = Page::Chats;
         assert!(matches!(find_action(&app), Action::OpenChatSearch));
         app.page = Page::Settings;
+        assert!(matches!(find_action(&app), Action::FocusSettingsSearch));
+        app.page = Page::Wallpaper;
         assert!(matches!(find_action(&app), Action::FocusSearch));
+    }
+
+    #[test]
+    fn escape_clears_the_settings_search_before_leaving_settings() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Settings;
+        app.settings_search = "sound".into();
+        let ctx = egui::Context::default();
+        escape(&mut app, &ctx);
+        assert!(
+            matches!(app.actions.as_slice(), [Action::SearchSettings(text)] if text.is_empty())
+        );
+        app.actions.clear();
+        app.settings_search.clear();
+        escape(&mut app, &ctx);
+        assert!(matches!(
+            app.actions.as_slice(),
+            [Action::Open(Page::Chats)]
+        ));
     }
 
     fn escape(app: &mut App, ctx: &egui::Context) {

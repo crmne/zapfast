@@ -286,6 +286,20 @@ pub fn unread_indicator(
     }
 }
 
+/// The height of a dialog's scrolling body: it grows with the content until
+/// the whole dialog takes the window's height less a margin, up to a cap, and
+/// then scrolls. Poll results set the measure; give the scroll area this as
+/// both its maximum and its minimum scrolled height, so a modal does not
+/// shrink it to the space below its first, smaller position.
+pub fn dialog_scroll_height(ui: &Ui) -> f32 {
+    // What the dialog has laid out above the scroll area: its title, and
+    // anything else that stays in place.
+    let above = (ui.cursor().top() - ui.min_rect().top()).max(0.0);
+    (ui.ctx().content_rect().height() - 158.0 - above)
+        .min(592.0 - above)
+        .max(100.0)
+}
+
 /// Minimum width needed for menu labels.
 pub fn menu_width(ui: &Ui, labels: &[&str], icons: bool) -> f32 {
     let widest = labels
@@ -427,36 +441,6 @@ pub fn menu_item_enabled(
         response.on_hover_cursor(egui::CursorIcon::PointingHand);
     }
     clicked
-}
-
-/// A menu row that only informs: no hover, no pointer, not a button. It is
-/// set apart by its smaller type and dimmed icon; the text keeps full contrast.
-pub fn menu_info(ui: &mut Ui, palette: &Palette, icon: Icon, label: &str) {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
-    if !ui.is_rect_visible(rect) {
-        return;
-    }
-    let icon_rect =
-        Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(14.0));
-    icon.image(palette.dim, 14.0).paint_at(ui, icon_rect);
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        label.to_string(),
-        theme::regular(12.5),
-        palette.text,
-    );
-    job.wrap = egui::text::TextWrapping {
-        max_width: (rect.right() - 10.0 - (rect.left() + 36.0)).max(0.0),
-        max_rows: 1,
-        break_anywhere: true,
-        overflow_character: Some('\u{2026}'),
-    };
-    let galley = crate::bidi::layout_job(ui, job);
-    ui.painter().galley(
-        pos2(rect.left() + 36.0, rect.center().y - galley.size().y / 2.0),
-        galley,
-        palette.text,
-    );
 }
 
 pub fn menu_separator(ui: &mut Ui, palette: &Palette) {

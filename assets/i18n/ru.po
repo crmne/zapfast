@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-24 00:50+0200\n"
+"POT-Creation-Date: 2026-09-24 10:10+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -136,7 +136,7 @@ msgstr "Ноябрь"
 msgid "December"
 msgstr "Декабрь"
 
-#: src/ui/chats.rs:112 src/ui/chats.rs:227 src/ui/settings.rs:169
+#: src/ui/chats.rs:112 src/ui/chats.rs:227 src/ui/settings.rs:345
 msgid "Chats"
 msgstr "Чаты"
 
@@ -152,9 +152,14 @@ msgstr "Архив"
 msgid "Locked"
 msgstr "Заблокированные"
 
-#: src/ui/chats.rs:766 src/app.rs:1131
+#: src/ui/chats.rs:766 src/app.rs:1159
 msgid "Message yourself"
 msgstr "Написать себе"
+
+#: src/ui/chats.rs:1008 src/ui/labels.rs:172 src/ui/labels.rs:223
+#: src/ui/labels.rs:260
+msgid "Labels"
+msgstr "Метки"
 
 #: src/ui/conversation.rs:161
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
@@ -262,10 +267,9 @@ msgstr "Открыть на карте"
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/ui/conversation.rs:5097
-#, fuzzy
+#: src/ui/conversation.rs:5097 src/ui/settings.rs:1265
 msgid "Play"
-msgstr "Прослушано"
+msgstr "Воспроизвести"
 
 #: src/ui/conversation.rs:5120
 msgid "Unmute"
@@ -311,7 +315,7 @@ msgstr "Эмодзи, которые его описывают, например
 msgid "Send"
 msgstr "Отправить"
 
-#: src/ui/dialogs.rs:970 src/ui/settings.rs:686
+#: src/ui/dialogs.rs:970 src/ui/settings.rs:1062
 msgid "Cancel"
 msgstr "Отмена"
 
@@ -323,27 +327,32 @@ msgstr[0] "{} участник"
 msgstr[1] "{} участника"
 msgstr[2] "{} участников"
 
-#: src/ui/settings.rs:40
+#: src/ui/settings.rs:224
 msgid "Settings"
 msgstr "Настройки"
 
-#: src/ui/settings.rs:44
+#: src/ui/settings.rs:241
+#, rust-format
+msgid "No settings match “{query}”."
+msgstr "Нет настроек, подходящих под «{query}»."
+
+#: src/ui/settings.rs:260
+msgid "Search settings"
+msgstr "Поиск в настройках"
+
+#: src/ui/settings.rs:278
 msgid "Appearance"
 msgstr "Внешний вид"
 
-#: src/ui/settings.rs:133
+#: src/ui/settings.rs:343
 msgid "Language"
 msgstr "Язык"
 
-#: src/ui/settings.rs:139 src/ui/settings.rs:148
-msgid "Auto"
-msgstr "Автоматически"
-
-#: src/ui/settings.rs:181
+#: src/ui/settings.rs:368
 msgid "Show labels as chips"
 msgstr "Показывать метки как чипы"
 
-#: src/ui/settings.rs:181
+#: src/ui/settings.rs:371
 msgid ""
 "Give each label its own chip, in a row under All, Unread and Groups. When "
 "off, they share one Labels chip."
@@ -351,11 +360,11 @@ msgstr ""
 "У каждой метки свой чип в ряду под «Все», «Непрочитанные» и «Группы». Если "
 "выключено, они собраны в один чип «Метки»."
 
-#: src/ui/settings.rs:192
+#: src/ui/settings.rs:401
 msgid "Pause music while recording"
 msgstr "Ставить музыку на паузу во время записи"
 
-#: src/ui/settings.rs:192
+#: src/ui/settings.rs:404
 msgid ""
 "Pause media players while you record a voice message and resume them "
 "afterwards."
@@ -363,11 +372,11 @@ msgstr ""
 "Ставить плееры на паузу во время записи голосового сообщения и продолжать "
 "после."
 
-#: src/ui/settings.rs:193
+#: src/ui/settings.rs:409
 msgid "Pause music while playing voice messages and videos"
 msgstr "Пауза музыки при голосовых и видео"
 
-#: src/ui/settings.rs:193
+#: src/ui/settings.rs:412
 msgid ""
 "Pause media players while a voice message, audio, or video plays with sound, "
 "and resume them when it stops."
@@ -375,77 +384,128 @@ msgstr ""
 "Ставить плееры на паузу, пока играет голосовое, аудио или видео со звуком, и "
 "продолжать после."
 
-#: src/ui/settings.rs:232
+#: src/ui/settings.rs:445 src/ui/settings.rs:1334
 msgid "Window"
 msgstr "Окно"
 
-#: src/ui/settings.rs:277
+#: src/ui/settings.rs:484 src/ui/settings.rs:1341
+msgid "Play sounds for group messages"
+msgstr "Звук для сообщений в группах"
+
+#: src/ui/settings.rs:487
+msgid ""
+"When off, group messages notify you silently. Mentions and replies to you "
+"still play the mention sound."
+msgstr ""
+"Если выключено, уведомления о сообщениях в группах приходят без звука. "
+"Упоминания и ответы вам по-прежнему воспроизводят звук упоминания."
+
+#: src/ui/settings.rs:524
 msgid "Network"
 msgstr "Сеть"
 
-#: src/ui/settings.rs:309
+#: src/ui/settings.rs:558 src/ui/settings.rs:1386 src/ui/settings.rs:1392
 msgid "Account"
 msgstr "Аккаунт"
 
-#: src/ui/settings.rs:313
-msgid "Files"
-msgstr "Файлы"
-
-#: src/ui/settings.rs:359 src/ui/settings.rs:620 src/ui/settings.rs:782
-msgid "About"
-msgstr "О программе"
-
-#: src/ui/settings.rs:440
-msgid "Add doodles"
-msgstr "Добавить рисунки"
-
-#: src/ui/settings.rs:444
-msgid "Show the default doodles over the selected colour."
-msgstr "Показывать стандартные рисунки поверх выбранного цвета."
-
-#: src/ui/settings.rs:589
-msgid "Change profile picture"
-msgstr "Изменить фото профиля"
-
-#: src/ui/settings.rs:612
+#: src/ui/settings.rs:561 src/ui/settings.rs:988
 msgid "Your name"
 msgstr "Ваше имя"
 
-#: src/ui/settings.rs:628
-msgid "Linked device"
-msgstr "Связанное устройство"
+#: src/ui/settings.rs:562 src/ui/settings.rs:619 src/ui/settings.rs:996
+#: src/ui/settings.rs:1158
+msgid "About"
+msgstr "О программе"
 
-#: src/ui/settings.rs:639
-msgid "Edit your name and About"
-msgstr "Изменить имя и сведения"
+#: src/ui/settings.rs:563 src/ui/settings.rs:965
+msgid "Change profile picture"
+msgstr "Изменить фото профиля"
 
-#: src/ui/settings.rs:656
+#: src/ui/settings.rs:564 src/ui/settings.rs:1032 src/ui/settings.rs:1388
 msgid "Unlink this computer"
 msgstr "Отвязать этот компьютер"
 
-#: src/ui/settings.rs:676
+#: src/ui/settings.rs:569
+msgid "Files"
+msgstr "Файлы"
+
+#: src/ui/settings.rs:623 src/ui/settings.rs:1147
+msgid "Keyboard shortcuts"
+msgstr "Сочетания клавиш"
+
+#: src/ui/settings.rs:624 src/ui/settings.rs:1169
+msgid "Source code"
+msgstr "Исходный код"
+
+#: src/ui/settings.rs:720 src/ui/settings.rs:729
+msgid "Auto"
+msgstr "Автоматически"
+
+#: src/ui/settings.rs:816
+msgid "Add doodles"
+msgstr "Добавить рисунки"
+
+#: src/ui/settings.rs:820
+msgid "Show the default doodles over the selected colour."
+msgstr "Показывать стандартные рисунки поверх выбранного цвета."
+
+#: src/ui/settings.rs:1004
+msgid "Linked device"
+msgstr "Связанное устройство"
+
+#: src/ui/settings.rs:1015
+msgid "Edit your name and About"
+msgstr "Изменить имя и сведения"
+
+#: src/ui/settings.rs:1052
 msgid "Save"
 msgstr "Сохранить"
 
-#: src/ui/settings.rs:750
+#: src/ui/settings.rs:1126
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "Нативный клиент WhatsApp на Rust, egui и whatsapp-rust."
 
-#: src/ui/settings.rs:761
+#: src/ui/settings.rs:1137
 #, rust-format
 msgid "Update to {version}"
 msgstr "Обновить до {version}"
 
-#: src/ui/settings.rs:771
-msgid "Keyboard shortcuts"
-msgstr "Сочетания клавиш"
+#: src/ui/settings.rs:1215
+msgid "Mention sound"
+msgstr "Звук упоминания"
 
-#: src/ui/settings.rs:793
-msgid "Source code"
-msgstr "Исходный код"
+#: src/ui/settings.rs:1218
+msgid "Played when someone mentions you or replies to you in a group."
+msgstr "Воспроизводится, когда вас упоминают или отвечают вам в группе."
+
+#: src/ui/settings.rs:1223
+msgid "Message sound"
+msgstr "Звук сообщения"
+
+#: src/ui/settings.rs:1224
+msgid "Played for new messages in chats and groups."
+msgstr "Воспроизводится для новых сообщений в чатах и группах."
+
+#: src/ui/settings.rs:1242
+msgid "Pidgin alert"
+msgstr "Сигнал Pidgin"
+
+#: src/ui/settings.rs:1243
+msgid "System default"
+msgstr "Системный"
+
+#. Translators: no notification sound.
+#: src/ui/settings.rs:1245
+msgctxt "sound"
+msgid "None"
+msgstr "Без звука"
+
+#: src/ui/settings.rs:1282
+msgid "Choose a file…"
+msgstr "Выбрать файл…"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:591
+#: src/ui/widgets.rs:647
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "Сделано с любовью: {name}"
@@ -514,25 +574,25 @@ msgstr[2] "ещё {}"
 msgid "No one yet"
 msgstr "Пока никто"
 
-#: src/app.rs:1052
+#: src/app.rs:1080
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Метка «{name}» уже есть."
 
-#: src/app.rs:1112
+#: src/app.rs:1140
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Вы)"
 
-#: src/app.rs:1113 src/app.rs:1132
+#: src/app.rs:1141 src/app.rs:1160
 msgid "You"
 msgstr "Вы"
 
-#: src/app.rs:2278
+#: src/app.rs:2312
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
 
-#: src/app.rs:2282
+#: src/app.rs:2316
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -540,20 +600,20 @@ msgstr ""
 "Не отправлено: сообщение, на которое вы отвечаете, недоступно на этом "
 "компьютере. Отмените ответ, чтобы отправить без цитаты."
 
-#: src/app.rs:3558
+#: src/app.rs:3594
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: src/app.rs:3633
+#: src/app.rs:3669
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:3889 src/ui/labels.rs:294
+#: src/app.rs:3925 src/ui/labels.rs:294
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
 
-#: src/app.rs:4395
+#: src/app.rs:4437
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
 
@@ -615,10 +675,6 @@ msgstr "Цвет"
 #: src/ui/labels.rs:149
 msgid "Manage labels"
 msgstr "Управление метками"
-
-#: src/ui/labels.rs:172 src/ui/labels.rs:223 src/ui/labels.rs:260
-msgid "Labels"
-msgstr "Метки"
 
 #: src/ui/labels.rs:192
 msgid "All chats"

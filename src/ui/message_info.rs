@@ -47,26 +47,42 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         );
         return;
     };
-    ui.add_space(8.0);
-    preview(ui, &palette, &message);
-    if crate::model::ChatKind::from_id(chat) != crate::model::ChatKind::Group {
-        direct(app, ui, &message);
-        return;
-    }
-    let Some(receipts) = app
-        .message_receipts
-        .clone()
-        .filter(|receipts| receipts.chat == chat && receipts.message == id)
-    else {
-        widgets::rich_text(
-            ui,
-            &gettext(locale, "Loading…"),
-            theme::regular(13.0),
-            palette.secondary,
-        );
-        return;
-    };
-    group(app, ui, &receipts);
+    // Everything below the title scrolls together, and only once the dialog
+    // is as tall as poll results can grow, so a short list shows in full.
+    let height = widgets::dialog_scroll_height(ui);
+    let area = egui::ScrollArea::vertical()
+        .id_salt(("message-info", chat, id))
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .max_height(height)
+        .min_scrolled_height(height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.add_space(8.0);
+            preview(ui, &palette, &message);
+            if crate::model::ChatKind::from_id(chat) != crate::model::ChatKind::Group {
+                direct(app, ui, &message);
+                return;
+            }
+            let Some(receipts) = app
+                .message_receipts
+                .clone()
+                .filter(|receipts| receipts.chat == chat && receipts.message == id)
+            else {
+                widgets::rich_text(
+                    ui,
+                    &gettext(locale, "Loading…"),
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+                return;
+            };
+            group(app, ui, &receipts);
+        });
+    let bubble = super::conversation::bubble_id(chat, id);
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(bubble.with("message-info-viewport"), area.inner_rect);
+        data.insert_temp(bubble.with("message-info-content"), area.content_size);
+    });
 }
 
 /// The message as its bubble shows it, shortened to a few lines.
@@ -195,51 +211,44 @@ fn group(app: &mut App, ui: &mut egui::Ui, receipts: &MessageReceipts) {
             &palette,
         );
     }
-    let height = (ui.ctx().content_rect().height() - 260.0).clamp(120.0, 460.0);
-    egui::ScrollArea::vertical()
-        .id_salt(("message-info", &receipts.chat, &receipts.message))
-        .max_height(height)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            let played = receipts.played();
-            if !played.is_empty() {
-                section(
-                    app,
-                    ui,
-                    &gettext(locale, "Played by"),
-                    palette.read,
-                    &played,
-                    |recipient| recipient.played_at,
-                );
-            }
-            section(
-                app,
-                ui,
-                &gettext(locale, "Read by"),
-                palette.read,
-                &receipts.read(),
-                |recipient| recipient.read_at,
-            );
-            section(
-                app,
-                ui,
-                &gettext(locale, "Delivered to"),
-                palette.secondary,
-                &receipts.delivered(),
-                |recipient| recipient.delivered_at,
-            );
-            let remaining = receipts.remaining();
-            if remaining > 0 {
-                ui.add_space(12.0);
-                theme::text(
-                    ui,
-                    ngettext(locale, "{} remaining", "{} remaining", remaining as u32)
-                        .replace("{}", &remaining.to_string()),
-                    theme::regular(13.0),
-                    palette.secondary,
-                );
-            }
-        });
+    let played = receipts.played();
+    if !played.is_empty() {
+        section(
+            app,
+            ui,
+            &gettext(locale, "Played by"),
+            palette.read,
+            &played,
+            |recipient| recipient.played_at,
+        );
+    }
+    section(
+        app,
+        ui,
+        &gettext(locale, "Read by"),
+        palette.read,
+        &receipts.read(),
+        |recipient| recipient.read_at,
+    );
+    section(
+        app,
+        ui,
+        &gettext(locale, "Delivered to"),
+        palette.secondary,
+        &receipts.delivered(),
+        |recipient| recipient.delivered_at,
+    );
+    let remaining = receipts.remaining();
+    if remaining > 0 {
+        ui.add_space(12.0);
+        theme::text(
+            ui,
+            ngettext(locale, "{} remaining", "{} remaining", remaining as u32)
+                .replace("{}", &remaining.to_string()),
+            theme::regular(13.0),
+            palette.secondary,
+        );
+    }
 }
 
 fn section(

@@ -1039,6 +1039,17 @@ impl Worker {
             .unwrap_or_else(|| "me".to_owned())
     }
 
+    /// Our identity for the interface, with the privacy id that mentions
+    /// of us may carry instead of the phone number.
+    fn me_event(&self) -> Event {
+        Event::Me {
+            id: self.me(),
+            lid: self.me_lid.clone(),
+            name: self.me_name.clone(),
+            about: self.me_about.clone(),
+        }
+    }
+
     fn is_me(&self, id: &str) -> bool {
         self.me_pn.as_deref() == Some(id) || self.me_lid.as_deref() == Some(id)
     }
@@ -1063,12 +1074,8 @@ impl Worker {
                 .map(|contact| (contact.id.clone(), contact))
                 .collect();
         }
-        if let Some(id) = self.me_pn.clone().or_else(|| self.me_lid.clone()) {
-            self.emit(Event::Me {
-                id,
-                name: self.me_name.clone(),
-                about: self.me_about.clone(),
-            });
+        if self.me_pn.is_some() || self.me_lid.is_some() {
+            self.emit(self.me_event());
         }
         self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
         self.emit_chats();
@@ -2215,20 +2222,12 @@ impl Worker {
             E::UserAboutUpdate(update) if self.is_me(&self.canonical(&update.jid)) => {
                 let _ = self.archive.set_meta("me_about", &update.status);
                 self.me_about = Some(update.status.clone()).filter(|about| !about.is_empty());
-                self.emit(Event::Me {
-                    id: self.me(),
-                    name: self.me_name.clone(),
-                    about: self.me_about.clone(),
-                });
+                self.emit(self.me_event());
             }
             E::SelfPushNameUpdated(update) => {
                 self.me_name = Some(update.new_name.clone());
                 let _ = self.archive.set_meta("me_name", &update.new_name);
-                self.emit(Event::Me {
-                    id: self.me(),
-                    name: self.me_name.clone(),
-                    about: self.me_about.clone(),
-                });
+                self.emit(self.me_event());
             }
             E::OfflineSyncCompleted(_) => self.emit_chats(),
             _ => {}
@@ -2300,11 +2299,7 @@ impl Worker {
             let _ = self.archive.set_meta("me_name", &name);
             self.me_name = Some(name);
         }
-        self.emit(Event::Me {
-            id: self.me(),
-            name: self.me_name.clone(),
-            about: self.me_about.clone(),
-        });
+        self.emit(self.me_event());
     }
 
     async fn on_logged_out(&mut self) {
@@ -4158,13 +4153,9 @@ impl Worker {
                     self.fetch_avatar(me.clone(), false);
                     self.fetch_avatar(me, true);
                 }
-                self.emit(Event::Me {
-                    id: self.me(),
-                    name: self.me_name.clone(),
-                    about: self.me_about.clone(),
-                });
+                self.emit(self.me_event());
             }
-            Command::PickNotificationSound { group } => {
+            Command::PickNotificationSound { mention } => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
                 tokio::task::spawn_blocking(move || {
@@ -4173,7 +4164,7 @@ impl Worker {
                         .add_filter("Audio", &["wav", "mp3", "ogg", "oga"])
                         .pick_file()
                     {
-                        let _ = events.send(Event::NotificationSoundPicked { group, path });
+                        let _ = events.send(Event::NotificationSoundPicked { mention, path });
                         waker.wake();
                     }
                 });
@@ -4616,11 +4607,7 @@ impl Worker {
                         let _ = self.archive.set_meta("me_about", "");
                     }
                 }
-                self.emit(Event::Me {
-                    id: self.me(),
-                    name: self.me_name.clone(),
-                    about: self.me_about.clone(),
-                });
+                self.emit(self.me_event());
             }
             Command::React {
                 chat,

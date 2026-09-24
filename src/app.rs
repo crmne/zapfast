@@ -17,7 +17,7 @@ use crate::model::{
     Toast, ToastKind,
 };
 use crate::paths::AppDirs;
-use crate::settings::{Settings, ThemeChoice};
+use crate::settings::{NotificationSound, Settings, ThemeChoice};
 use crate::single_instance::{ControlCommand, Guard};
 use crate::theme::{self, Palette};
 use crate::tray::{TrayCommand, TrayService};
@@ -185,6 +185,8 @@ pub struct App {
     pub syncing: bool,
     pub sync_percent: Option<u32>,
     pub me: Option<String>,
+    /// Our privacy id (`@lid`), which mentions of us may carry instead.
+    pub me_lid: Option<String>,
     pub me_name: Option<String>,
     /// Account about text.
     pub me_about: Option<String>,
@@ -411,6 +413,9 @@ pub struct App {
     pub jump_highlight: Option<JumpHighlight>,
     pub focus_composer: bool,
     pub focus_search: bool,
+    /// What the Settings page is filtered by.
+    pub settings_search: String,
+    pub focus_settings_search: bool,
     pub quit_requested: bool,
     pub window_focused: bool,
     /// Presence last reported to the backend.
@@ -584,6 +589,7 @@ impl App {
             syncing: false,
             sync_percent: None,
             me: None,
+            me_lid: None,
             me_name: None,
             me_about: None,
             chats: Vec::new(),
@@ -720,6 +726,8 @@ impl App {
             jump_highlight: None,
             focus_composer: false,
             focus_search: false,
+            settings_search: String::new(),
+            focus_settings_search: false,
             quit_requested: false,
             window_focused: false,
             reported_online: None,
@@ -850,11 +858,8 @@ impl App {
             .or_else(|| self.avatar(&sender))
             .or_else(|| self.cached_avatar(&sender));
         let waker = self.waker.clone();
-        let sound = match chat_sound {
-            Some(sound) => sound,
-            None if is_group => self.settings.group_sound.clone(),
-            None => self.settings.message_sound.clone(),
-        };
+        let for_us = is_group && self.addresses_us(message);
+        let sound = notification_sound(&self.settings, chat_sound, is_group, for_us);
         self.notifications.show(
             title,
             body,
@@ -867,6 +872,29 @@ impl App {
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
         );
+    }
+
+    /// Whether a message mentions us or replies to one of our messages. A
+    /// mention may name us by phone number or by privacy id; the worker files
+    /// both under the phone number once it knows the pair, and the raw token
+    /// keeps the privacy id recognisable before then.
+    fn addresses_us(&self, message: &Message) -> bool {
+        let ours: Vec<&str> = [self.me.as_deref(), self.me_lid.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
+        let is_us = |id: &str| ours.contains(&id);
+        let mentioned = message.mentions.iter().any(|mention| {
+            is_us(&mention.id)
+                || ours
+                    .iter()
+                    .any(|id| id.split('@').next() == Some(mention.user.as_str()))
+        });
+        mentioned
+            || message
+                .quoted
+                .as_ref()
+                .is_some_and(|quoted| is_us(&quoted.sender))
     }
 
     /// Initializes a newly created window.
@@ -1569,8 +1597,14 @@ impl App {
         for event in self.backend.poll() {
             match event {
                 Event::Link(status) => self.handle_link(status),
-                Event::Me { id, name, about } => {
+                Event::Me {
+                    id,
+                    lid,
+                    name,
+                    about,
+                } => {
                     self.me = Some(id);
+                    self.me_lid = lid;
                     self.me_name = name;
                     self.me_about = about;
                 }
@@ -1893,12 +1927,12 @@ impl App {
                 Event::DownloadFolderPicked(path) => {
                     self.actions.push(Action::SetDownloadFolder(Some(path)));
                 }
-                Event::NotificationSoundPicked { group, path } => {
+                Event::NotificationSoundPicked { mention, path } => {
                     crate::notify::play_sound(crate::settings::NotificationSound::Custom(
                         path.clone(),
                     ));
                     self.actions.push(Action::SetNotificationSound {
-                        group,
+                        mention,
                         sound: crate::settings::NotificationSound::Custom(path),
                     });
                 }
@@ -2983,6 +3017,8 @@ impl App {
                 self.emoji_start = None;
                 self.mention_start = None;
                 if opens_chats {
+                    // Settings open unfiltered next time.
+                    self.settings_search.clear();
                     self.refocus_composer(ctx);
                 }
             }
@@ -3973,6 +4009,11 @@ impl App {
                 self.emoji_start = None;
                 self.mention_start = None;
             }
+            Action::FocusSettingsSearch => {
+                self.page = Page::Settings;
+                self.focus_settings_search = true;
+            }
+            Action::SearchSettings(text) => self.settings_search = text,
             Action::FocusComposer => {
                 self.focus_search = false;
                 self.focus_composer = true;
@@ -4138,16 +4179,17 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::SettingsChanged => self.mark_settings_dirty(),
-            Action::SetNotificationSound { group, sound } => {
-                if group {
-                    self.settings.group_sound = sound;
+            Action::SetNotificationSound { mention, sound } => {
+                if mention {
+                    self.settings.mention_sound = sound;
                 } else {
                     self.settings.message_sound = sound;
                 }
                 self.mark_settings_dirty();
             }
-            Action::PickNotificationSound { group } => {
-                self.backend.send(Command::PickNotificationSound { group });
+            Action::PickNotificationSound { mention } => {
+                self.backend
+                    .send(Command::PickNotificationSound { mention });
             }
             Action::PreviewSound(sound) => crate::notify::play_sound(sound),
             Action::PickDownloadFolder => self.backend.send(Command::PickDownloadFolder),
@@ -4998,6 +5040,24 @@ impl Delivery {
 /// Archived chats stay silent, direct and group alike, and speak up again once
 /// they are unarchived. Muted and locked chats give no signal that one arrived,
 /// and delayed reconnect backlogs are not news.
+/// The sound a notification plays. A chat's own sound wins, even for
+/// mentions, so a chat set to no sound stays silent. Otherwise a group message
+/// that mentions or answers us plays the mention sound, and other group
+/// messages stay silent while group sounds are off.
+fn notification_sound(
+    settings: &Settings,
+    chat_sound: Option<NotificationSound>,
+    is_group: bool,
+    for_us: bool,
+) -> NotificationSound {
+    match chat_sound {
+        Some(sound) => sound,
+        None if for_us => settings.mention_sound.clone(),
+        None if is_group && !settings.group_sounds => NotificationSound::None,
+        None => settings.message_sound.clone(),
+    }
+}
+
 fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
     if chat.archived || chat.unread == 0 || chat.muted(now) || chat.locked {
         return false;
@@ -5949,19 +6009,105 @@ mod tests {
     }
 
     #[test]
-    fn groups_and_chats_keep_their_own_notification_sound() {
-        use crate::settings::NotificationSound;
+    fn mentions_and_other_messages_keep_their_own_notification_sound() {
         let mut app = app();
         let ctx = egui::Context::default();
         app.apply(
             Action::SetNotificationSound {
-                group: true,
+                mention: true,
                 sound: NotificationSound::None,
             },
             &ctx,
         );
-        assert_eq!(app.settings.group_sound, NotificationSound::None);
+        assert_eq!(app.settings.mention_sound, NotificationSound::None);
         assert_eq!(app.settings.message_sound, NotificationSound::Receive);
+    }
+
+    #[test]
+    fn a_group_message_addresses_us_by_phone_number_privacy_id_or_reply() {
+        let mut app = app();
+        app.me = Some("15550001111@s.whatsapp.net".into());
+        app.me_lid = Some("98765@lid".into());
+        let group = "fixture@g.us";
+        let mention = |user: &str, id: &str| crate::model::MentionRef {
+            user: user.into(),
+            id: id.into(),
+        };
+        let mut plain = message(group, "plain", 1);
+        plain.sender = "15550002222@s.whatsapp.net".into();
+        assert!(!app.addresses_us(&plain));
+
+        let mut by_number = plain.clone();
+        by_number.mentions = vec![mention("15550001111", "15550001111@s.whatsapp.net")];
+        assert!(app.addresses_us(&by_number));
+
+        // Once the worker knows our pair, a privacy-id mention arrives under
+        // the phone number; before that, as the privacy id itself.
+        let mut by_privacy_id = plain.clone();
+        by_privacy_id.mentions = vec![mention("98765", "98765@lid")];
+        assert!(app.addresses_us(&by_privacy_id));
+        app.me_lid = None;
+        assert!(
+            !app.addresses_us(&by_privacy_id),
+            "an unknown privacy id is someone else"
+        );
+        app.me_lid = Some("98765@lid".into());
+
+        let mut someone_else = plain.clone();
+        someone_else.mentions = vec![mention("15550002222", "15550002222@s.whatsapp.net")];
+        assert!(!app.addresses_us(&someone_else));
+
+        let quote = |sender: &str| crate::model::Quoted {
+            id: "earlier".into(),
+            sender: sender.into(),
+            sender_name: None,
+            summary: "earlier".into(),
+            mentions: Vec::new(),
+        };
+        let mut reply = plain.clone();
+        reply.quoted = Some(quote("15550001111@s.whatsapp.net"));
+        assert!(app.addresses_us(&reply));
+        reply.quoted = Some(quote("98765@lid"));
+        assert!(app.addresses_us(&reply));
+        reply.quoted = Some(quote("15550002222@s.whatsapp.net"));
+        assert!(!app.addresses_us(&reply));
+    }
+
+    #[test]
+    fn mentions_sound_even_in_quiet_groups_and_chat_sounds_win() {
+        let mut settings = Settings::default();
+        let sound = |settings: &Settings, chat, group, for_us| {
+            notification_sound(settings, chat, group, for_us)
+        };
+        // Pidgin's model: the message sound everywhere, the alert when
+        // someone addresses us in a group.
+        assert_eq!(
+            sound(&settings, None, false, false),
+            NotificationSound::Receive
+        );
+        assert_eq!(
+            sound(&settings, None, true, false),
+            NotificationSound::Receive
+        );
+        assert_eq!(sound(&settings, None, true, true), NotificationSound::Alert);
+
+        settings.group_sounds = false;
+        assert_eq!(sound(&settings, None, true, false), NotificationSound::None);
+        assert_eq!(sound(&settings, None, true, true), NotificationSound::Alert);
+        assert_eq!(
+            sound(&settings, None, false, false),
+            NotificationSound::Receive,
+            "one-to-one chats are not groups"
+        );
+
+        // A chat's own sound covers every message in it, mentions included.
+        let custom = NotificationSound::Custom("/sounds/ding.wav".into());
+        assert_eq!(sound(&settings, Some(custom.clone()), true, false), custom);
+        assert_eq!(sound(&settings, Some(custom.clone()), true, true), custom);
+        assert_eq!(
+            sound(&settings, Some(NotificationSound::None), true, true),
+            NotificationSound::None
+        );
     }
 
     #[test]

@@ -11,6 +11,7 @@ translation_template=$(mktemp)
 trap 'rm -f "$translation_template"' EXIT
 xgettext --language=Rust --from-code=UTF-8 \
     --keyword= --keyword=gettext:2 --keyword=ngettext:2,3 --keyword=pgettext:2c,3 \
+    --keyword=translated:2 \
     --add-comments=Translators: \
     --flag=ngettext:2:rust-format --flag=ngettext:3:rust-format \
     --package-name=ZapFast --copyright-holder='ZapFast contributors' \
