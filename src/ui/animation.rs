@@ -7,6 +7,16 @@ use egui::{Context, Id};
 /// Initial timing target for WhatsApp-like interface motion.
 pub const WHATSAPP_UI_DURATION: f32 = 0.150;
 
+/// Starting scale for a popup entering the interface.
+pub const WHATSAPP_POPUP_SCALE_START: f32 = 0.84;
+
+/// The visual state shared by menus, pickers, and inline suggestion panels.
+#[derive(Clone, Copy, Debug)]
+pub struct PopupMotion {
+    pub opacity: f32,
+    pub scale: f32,
+}
+
 /// CSS `cubic-bezier(.31,.94,.34,1)` evaluated at `t` in `0..=1`.
 ///
 /// CSS cubic Béziers use x as time, so solve the x component first and then
@@ -46,6 +56,30 @@ pub fn value(ctx: &Context, id: Id, target: f32) -> f32 {
     ctx.animate_value_with_time(id, target, WHATSAPP_UI_DURATION)
 }
 
+/// Ease a popup into place with a short ease-out-back overshoot.
+///
+/// The overshoot is intentionally small. It gives a menu the same soft
+/// landing as the web client without making text or icons visibly wobble.
+pub fn whatsapp_bounce(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let c1 = 1.70158;
+    let c3 = c1 + 1.0;
+    let x = t - 1.0;
+    1.0 + c3 * x * x * x + c1 * x * x
+}
+
+/// Animate a popup's opacity and scale from its stable id.
+pub fn popup_motion(ctx: &Context, id: Id, target: bool) -> PopupMotion {
+    let progress = value(ctx, id, f32::from(target));
+    let opacity = whatsapp_ease(progress);
+    let scale =
+        WHATSAPP_POPUP_SCALE_START + (1.0 - WHATSAPP_POPUP_SCALE_START) * whatsapp_bounce(progress);
+    if progress > 0.001 && progress < 0.999 {
+        settle_repaint(ctx);
+    }
+    PopupMotion { opacity, scale }
+}
+
 /// Keep a frame alive while a transition is expected to settle.
 pub fn settle_repaint(ctx: &Context) {
     ctx.request_repaint_after(Duration::from_millis(16));
@@ -70,5 +104,12 @@ mod tests {
     #[test]
     fn duration_is_the_initial_whatsapp_target() {
         assert!((WHATSAPP_UI_DURATION - 0.150).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn popup_bounce_starts_and_ends_at_the_resting_scale() {
+        assert_eq!(whatsapp_bounce(0.0), 0.0);
+        assert_eq!(whatsapp_bounce(1.0), 1.0);
+        assert!(whatsapp_bounce(0.5) > 1.0);
     }
 }

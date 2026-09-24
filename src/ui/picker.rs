@@ -51,6 +51,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .left()
         .clamp(screen.left() + 8.0, (screen.right() - WIDTH - 8.0).max(8.0));
     let y = (anchor.top() - HEIGHT - 10.0).max(screen.top() + 8.0);
+    let motion = ui_animation::popup_motion(ctx, egui::Id::new("picker-motion"), true);
     let area = egui::Area::new(egui::Id::new("picker"))
         .fixed_pos(pos2(x, y))
         .order(egui::Order::Foreground)
@@ -66,7 +67,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     spread: 0,
                     color: palette.shadow,
                 })
+                .multiply_with_opacity(motion.opacity)
                 .show(ui, |ui| {
+                    ui.set_opacity(motion.opacity);
                     ui.set_width(WIDTH);
                     ui.set_height(HEIGHT);
                     ui.spacing_mut().item_spacing.y = 6.0;
@@ -86,19 +89,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     });
                 });
         });
-    let progress = ui_animation::whatsapp_ease(ui_animation::value(
-        ctx,
-        egui::Id::new("picker-motion"),
-        1.0,
-    ));
-    if progress < 0.999 {
-        ui_animation::settle_repaint(ctx);
-    }
-    let scale = 0.94 + 0.06 * progress;
     let pivot = area.response.rect.center_bottom();
     ctx.transform_layer_shapes(
         area.response.layer_id,
-        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
     );
     // Close on outside clicks, except on the toggle button or a sticker menu.
     let rect = area.response.rect;
@@ -402,6 +396,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
         .get(&chat)
         .and_then(|conversation| conversation.message(&message))
         .map(|message| (app.display_name(&message.sender), message.content.summary()));
+    let motion = ui_animation::popup_motion(ctx, egui::Id::new("reaction-picker-motion"), true);
     let area = egui::Area::new(egui::Id::new("reaction-picker"))
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
@@ -422,7 +417,9 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                             spread: 0,
                             color: palette.shadow,
                         })
+                        .multiply_with_opacity(motion.opacity)
                         .show(ui, |ui| {
+                            ui.set_opacity(motion.opacity);
                             ui.set_width(width);
                             ui.set_height(HEIGHT);
                             ui.spacing_mut().item_spacing.y = 6.0;
@@ -508,6 +505,11 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                 },
             );
         });
+    let pivot = area.response.rect.center_bottom();
+    ctx.transform_layer_shapes(
+        area.response.layer_id,
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
+    );
     let rect = area.response.rect;
     ctx.data_mut(|data| data.insert_temp(egui::Id::new("reaction-picker-rect"), rect));
     let clicked_outside = ctx.input(|input| {

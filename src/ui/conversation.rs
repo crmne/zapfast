@@ -588,14 +588,7 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
     let submit = take_plain_key(ui, Key::Enter) || take_plain_key(ui, Key::Tab);
     let mut picked = submit.then(|| candidates[app.emoji_selected].clone());
     let palette = app.palette;
-    let motion = ui_animation::whatsapp_ease(ui_animation::value(
-        ui.ctx(),
-        field.with("emoji-suggestions-motion"),
-        1.0,
-    ));
-    if motion < 0.999 {
-        ui_animation::settle_repaint(ui.ctx());
-    }
+    let motion = ui_animation::popup_motion(ui.ctx(), field.with("emoji-suggestions-motion"), true);
 
     ui.add_space(4.0);
     let panel = Frame::new()
@@ -603,7 +596,9 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
         .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS + 2))
         .inner_margin(Margin::same(4))
+        .multiply_with_opacity(motion.opacity)
         .show(ui, |ui| {
+            ui.set_opacity(motion.opacity);
             let row_height = 36.0;
             ui.spacing_mut().item_spacing.y = 0.0;
             for (index, candidate) in candidates.iter().enumerate() {
@@ -672,11 +667,10 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
                 }
             }
         });
-    let scale = 0.96 + 0.04 * motion;
     let pivot = panel.response.rect.center_bottom();
     ui.ctx().transform_layer_shapes(
         panel.response.layer_id,
-        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
     );
     if let Some(candidate) = picked {
         app.actions.push(Action::InsertEmojiCompletion {
@@ -714,14 +708,8 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     let submit = take_plain_key(ui, Key::Enter) || take_plain_key(ui, Key::Tab);
     let mut picked = submit.then(|| candidates[app.mention_selected].clone());
     let palette = app.palette;
-    let motion = ui_animation::whatsapp_ease(ui_animation::value(
-        ui.ctx(),
-        field.with("mention-suggestions-motion"),
-        1.0,
-    ));
-    if motion < 0.999 {
-        ui_animation::settle_repaint(ui.ctx());
-    }
+    let motion =
+        ui_animation::popup_motion(ui.ctx(), field.with("mention-suggestions-motion"), true);
 
     ui.add_space(4.0);
     let panel = Frame::new()
@@ -729,7 +717,9 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
         .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS + 2))
         .inner_margin(Margin::same(4))
+        .multiply_with_opacity(motion.opacity)
         .show(ui, |ui| {
+            ui.set_opacity(motion.opacity);
             let row_height = 38.0;
             egui::ScrollArea::vertical()
                 .id_salt("mention-members")
@@ -806,11 +796,10 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
                     }
                 });
         });
-    let scale = 0.96 + 0.04 * motion;
     let pivot = panel.response.rect.center_bottom();
     ui.ctx().transform_layer_shapes(
         panel.response.layer_id,
-        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
     );
     if let Some((id, name)) = picked {
         app.actions.push(Action::InsertMention {
@@ -1304,11 +1293,7 @@ fn composer_tools_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, plus: &egu
             app.actions.push(Action::ClosePicker);
         }
     }
-    let progress =
-        ui_animation::whatsapp_ease(ui_animation::value(&ctx, id, if open { 1.0 } else { 0.0 }));
-    if progress > 0.001 && progress < 0.999 {
-        ui_animation::settle_repaint(&ctx);
-    }
+    let motion = ui_animation::popup_motion(&ctx, id, open);
     // Keep the popup interactive only while its target state is open. During
     // a closing transition, reopening it from the animated progress would
     // make outside clicks appear ineffective.
@@ -1319,8 +1304,9 @@ fn composer_tools_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, plus: &egu
             .open_bool(&mut draw_open)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .width(190.0)
-            .frame(widgets::menu_frame(&app.palette))
+            .frame(widgets::menu_frame(&app.palette).multiply_with_opacity(motion.opacity))
             .show(|ui| {
+                ui.set_opacity(motion.opacity);
                 if widgets::menu_item(ui, &app.palette, Some(Icon::Paperclip), "Send files") {
                     app.actions.push(Action::Attach);
                 }
@@ -1330,11 +1316,10 @@ fn composer_tools_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, plus: &egu
                 }
             });
         if let Some(menu) = menu {
-            let scale = (0.92 + 0.08 * progress).max(0.01);
             let pivot = menu.response.rect.center_bottom();
             ctx.transform_layer_shapes(
                 menu.response.layer_id,
-                egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+                egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - motion.scale), motion.scale),
             );
         }
     }
