@@ -5795,13 +5795,18 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
             let pulse = 0.55 + 0.45 * (elapsed.as_secs_f32() * 3.0).sin().abs();
             ui.painter()
                 .circle_filled(dot.center(), 5.0, palette.danger.gamma_multiply(pulse));
-            if theme::circle_button(
+            if theme::circle_button_sized(
                 ui,
                 Icon::Delete,
                 button,
-                palette.surface,
-                palette.surface_hover,
-                palette.secondary,
+                24.0,
+                theme::CircleButtonColors {
+                    fill: palette.surface,
+                    fill_hover: palette.surface_hover,
+                    icon: palette.secondary,
+                    hover_icon: None,
+                    tooltip: None,
+                },
                 "Discard",
             )
             .clicked()
