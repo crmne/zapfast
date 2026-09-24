@@ -384,7 +384,6 @@ pub enum Icon {
     Clock,
     Contact,
     Copy,
-    Delete,
     Download,
     Timer,
     Ellipsis,
@@ -404,8 +403,6 @@ pub enum Icon {
     Maximize,
     MessageCircle,
     Mic,
-    MicAlt,
-    MicAltFilled,
     Minimize,
     Minus,
     Monitor,
@@ -424,11 +421,9 @@ pub enum Icon {
     Reply,
     Search,
     Send,
-    SendFilled,
     Settings,
     Smartphone,
     Smile,
-    Smiley,
     SquarePen,
     Star,
     StarOff,
@@ -465,7 +460,6 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     Clock => "clock",
     Contact => "contact",
     Copy => "copy",
-    Delete => "delete",
     Download => "download",
     Timer => "timer",
     Ellipsis => "ellipsis",
@@ -485,8 +479,6 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     Maximize => "maximize-2",
     MessageCircle => "message-circle",
     Mic => "mic",
-    MicAlt => "mic-alt",
-    MicAltFilled => "mic-alt-filled",
     Minimize => "minimize-2",
     Minus => "minus",
     Monitor => "monitor",
@@ -505,11 +497,9 @@ const ICONS: &[(Icon, &str, &[u8])] = icons! {
     Reply => "reply",
     Search => "search",
     Send => "send",
-    SendFilled => "send-filled",
     Settings => "settings",
     Smartphone => "smartphone",
     Smile => "smile",
-    Smiley => "smiley",
     SquarePen => "square-pen",
     Star => "star",
     StarOff => "star-off",
@@ -627,79 +617,7 @@ pub fn icon_button(
     }
 }
 
-/// A fixed-size icon button with a rounded background on hover, press, or
-/// while it represents an open/selected control.
-pub fn icon_button_filled(
-    ui: &mut egui::Ui,
-    icon: Icon,
-    button_size: f32,
-    icon_size: f32,
-    colors: IconButtonColors,
-    selected: bool,
-    tooltip: &str,
-) -> Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(button_size), Sense::click());
-    reveal_focus(&response);
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
-    });
-    if ui.is_rect_visible(rect) {
-        let pressed = response.is_pointer_button_down_on();
-        let highlighted = selected || response.hovered() || response.has_focus();
-        let fill = if pressed {
-            colors.fill_pressed
-        } else if highlighted {
-            colors.fill_hover
-        } else {
-            colors.fill
-        };
-        ui.painter()
-            .circle_filled(rect.center(), button_size / 2.0, fill);
-        let tint = if pressed || highlighted {
-            colors.icon_hover
-        } else {
-            colors.icon
-        };
-        paint_icon(ui, icon, rect, icon_size, tint);
-    }
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    if tooltip.is_empty() {
-        response
-    } else if let Some(colors) = colors.tooltip {
-        colored_tooltip(response, tooltip, colors)
-    } else {
-        response.on_hover_text(tooltip)
-    }
-}
-
-/// Colors for [`icon_button_filled`].
-#[derive(Clone, Copy)]
-pub struct IconButtonColors {
-    pub icon: Color32,
-    pub icon_hover: Color32,
-    pub fill: Color32,
-    pub fill_hover: Color32,
-    pub fill_pressed: Color32,
-    pub tooltip: Option<TooltipColors>,
-}
-
-/// Colors used by a custom tooltip frame.
-#[derive(Clone, Copy)]
-pub struct TooltipColors {
-    pub fill: Color32,
-    pub text: Color32,
-}
-
 /// Round filled icon button.
-#[derive(Clone, Copy)]
-pub struct CircleButtonColors {
-    pub fill: Color32,
-    pub fill_hover: Color32,
-    pub icon: Color32,
-    pub hover_icon: Option<Icon>,
-    pub tooltip: Option<TooltipColors>,
-}
-
 pub fn circle_button(
     ui: &mut egui::Ui,
     icon: Icon,
@@ -709,34 +627,9 @@ pub fn circle_button(
     icon_color: Color32,
     tooltip: &str,
 ) -> Response {
-    circle_button_sized(
-        ui,
-        icon,
-        diameter,
-        diameter * 0.46,
-        CircleButtonColors {
-            fill,
-            fill_hover,
-            icon: icon_color,
-            hover_icon: None,
-            tooltip: None,
-        },
-        tooltip,
-    )
-}
-
-/// Round filled icon button with an explicit icon size.
-pub fn circle_button_sized(
-    ui: &mut egui::Ui,
-    icon: Icon,
-    diameter: f32,
-    icon_size: f32,
-    colors: CircleButtonColors,
-    tooltip: &str,
-) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click());
     reveal_focus(&response);
-    focus_outline_on_fill(ui, response.id, rect, diameter / 2.0, colors.fill);
+    focus_outline_on_fill(ui, response.id, rect, diameter / 2.0, fill);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
@@ -744,49 +637,18 @@ pub fn circle_button_sized(
         let hovered = response.hovered();
         let grow = if hovered { 1.05 } else { 1.0 };
         let radius = diameter / 2.0 * grow;
-        let fill = if hovered {
-            colors.fill_hover
-        } else {
-            colors.fill
-        };
+        let fill = if hovered { fill_hover } else { fill };
         ui.painter().circle_filled(rect.center(), radius, fill);
+        let icon_size = diameter * 0.46;
         let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
-        let icon = if hovered || response.is_pointer_button_down_on() {
-            colors.hover_icon.unwrap_or(icon)
-        } else {
-            icon
-        };
-        icon.image(colors.icon, icon_size).paint_at(ui, icon_rect);
+        icon.image(icon_color, icon_size).paint_at(ui, icon_rect);
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if tooltip.is_empty() {
         response
-    } else if let Some(colors) = colors.tooltip {
-        colored_tooltip(response, tooltip, colors)
     } else {
         response.on_hover_text(tooltip)
     }
-}
-
-/// Shows a tooltip with colors that remain legible in either theme.
-pub fn colored_tooltip(response: Response, text: &str, colors: TooltipColors) -> Response {
-    let mut tooltip = egui::Tooltip::for_enabled(&response);
-    tooltip.popup = tooltip.popup.frame(
-        egui::Frame::new()
-            .fill(colors.fill)
-            .corner_radius(CornerRadius::same(6))
-            .inner_margin(egui::Margin::symmetric(8, 4))
-            .shadow(egui::epaint::Shadow {
-                offset: [0, 2],
-                blur: 8,
-                spread: 0,
-                color: Color32::from_black_alpha(45),
-            }),
-    );
-    tooltip.show(|ui| {
-        ui.label(egui::RichText::new(text).color(colors.text));
-    });
-    response
 }
 
 /// Draws the app logo.

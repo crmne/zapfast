@@ -948,63 +948,31 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 vec2(ui.available_width(), row_height),
                 Layout::left_to_right(Align::Center),
                 |ui| {
-                let composer_icon = if palette.dark {
-                    Color32::WHITE
-                } else {
-                    Color32::BLACK
-                };
-                let tooltip = theme::TooltipColors {
-                    fill: if palette.dark {
-                        Color32::WHITE
-                    } else {
-                        Color32::from_rgb(0x20, 0x2c, 0x33)
-                    },
-                    text: if palette.dark {
-                        Color32::BLACK
-                    } else {
-                        Color32::WHITE
-                    },
-                };
-                let tools = theme::icon_button_filled(
-                    ui,
-                    Icon::Plus,
-                    COMPOSER_BUTTON_SIZE,
-                    24.0,
-                    theme::IconButtonColors {
-                        icon: composer_icon,
-                        icon_hover: composer_icon,
-                        fill: Color32::TRANSPARENT,
-                        fill_hover: palette.surface_hover,
-                        fill_pressed: palette.surface_active,
-                        tooltip: Some(tooltip),
-                    },
-                    app.composer_tools_open,
-                    "More message options",
-                )
-                .tab_stop(Stop::Attach);
                 if app.editing.is_none() {
-                    composer_tools_menu(app, ui, chat, &tools);
-                }
-                if app.editing.is_none() {
-                    let smiley_color = if app.picker.is_some() {
-                        palette.accent
-                    } else {
-                        composer_icon
-                    };
-                    let smile = theme::icon_button_filled(
+                    let tools = theme::icon_button(
                         ui,
-                        Icon::Smiley,
-                        COMPOSER_BUTTON_SIZE,
-                        24.0,
-                        theme::IconButtonColors {
-                            icon: composer_icon,
-                            icon_hover: smiley_color,
-                            fill: Color32::TRANSPARENT,
-                            fill_hover: palette.surface_hover,
-                            fill_pressed: palette.surface_active,
-                            tooltip: Some(tooltip),
+                        Icon::Plus,
+                        22.0,
+                        if app.composer_tools_open {
+                            palette.accent
+                        } else {
+                            palette.secondary
                         },
-                        app.picker.is_some(),
+                        palette.text,
+                        &crate::i18n::gettext(app.locale, "Attach"),
+                    )
+                    .tab_stop(Stop::Attach);
+                    composer_tools_menu(app, ui, chat, &tools);
+                    let smile = theme::icon_button(
+                        ui,
+                        Icon::Smile,
+                        22.0,
+                        if app.picker.is_some() {
+                            palette.accent
+                        } else {
+                            palette.secondary
+                        },
+                        palette.text,
                         "Emoji, GIFs, and stickers",
                     ).tab_stop(Stop::Emoji);
                     app.picker_anchor = Some(smile.rect);
@@ -1166,18 +1134,13 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 };
                 if !ready && app.editing.is_none() {
                     // An empty composer changes the send button to record.
-                    if theme::circle_button_sized(
+                    if theme::circle_button(
                         ui,
-                        Icon::MicAlt,
-                        COMPOSER_BUTTON_SIZE,
-                        24.0,
-                        theme::CircleButtonColors {
-                            fill,
-                            fill_hover: hover,
-                            icon: composer_icon,
-                            hover_icon: Some(Icon::MicAltFilled),
-                            tooltip: Some(tooltip),
-                        },
+                        Icon::Mic,
+                        button_width,
+                        fill,
+                        hover,
+                        palette.secondary,
                         "Record a voice message",
                     )
                     .tab_stop(Stop::Send)
@@ -1189,35 +1152,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     let icon_kind = if app.editing.is_some() {
                         Icon::Check
                     } else {
-                        Icon::SendFilled
+                        Icon::Send
                     };
-                    let (button_fill, button_hover, button_icon) = if app.editing.is_none() {
-                        if ui.visuals().dark_mode {
-                            (Color32::WHITE, Color32::from_gray(238), Color32::BLACK)
-                        } else {
-                            (Color32::BLACK, Color32::from_gray(32), Color32::WHITE)
-                        }
-                    } else {
-                        (fill, hover, icon)
-                    };
-                    if theme::circle_button_sized(
-                        ui,
-                        icon_kind,
-                        button_width,
-                        if app.editing.is_none() {
-                            24.0
-                        } else {
-                            button_width * 0.46
-                        },
-                        theme::CircleButtonColors {
-                            fill: button_fill,
-                            fill_hover: button_hover,
-                            icon: button_icon,
-                            hover_icon: None,
-                            tooltip: None,
-                        },
-                        "Send",
-                    )
+                    if theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
                         .tab_stop(Stop::Send)
                         .clicked()
                     {
@@ -5749,23 +5686,13 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
         egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
-            let (send_fill, send_hover, send_icon) = if ui.visuals().dark_mode {
-                (Color32::WHITE, Color32::from_gray(238), Color32::BLACK)
-            } else {
-                (Color32::BLACK, Color32::from_gray(32), Color32::WHITE)
-            };
-            if theme::circle_button_sized(
+            if theme::circle_button(
                 ui,
-                Icon::SendFilled,
+                Icon::Send,
                 button,
-                24.0,
-                theme::CircleButtonColors {
-                    fill: send_fill,
-                    fill_hover: send_hover,
-                    icon: send_icon,
-                    hover_icon: None,
-                    tooltip: None,
-                },
+                palette.accent,
+                palette.accent_hover,
+                palette.on_accent,
                 "Send",
             )
             .clicked()
@@ -5798,18 +5725,13 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
             let pulse = 0.55 + 0.45 * (elapsed.as_secs_f32() * 3.0).sin().abs();
             ui.painter()
                 .circle_filled(dot.center(), 5.0, palette.danger.gamma_multiply(pulse));
-            if theme::circle_button_sized(
+            if theme::circle_button(
                 ui,
-                Icon::Delete,
+                Icon::Trash,
                 button,
-                24.0,
-                theme::CircleButtonColors {
-                    fill: palette.surface,
-                    fill_hover: palette.surface_hover,
-                    icon: palette.secondary,
-                    hover_icon: None,
-                    tooltip: None,
-                },
+                palette.surface,
+                palette.surface_hover,
+                palette.secondary,
                 "Discard",
             )
             .clicked()
