@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::animation;
-use crate::app::{App, Conversation, JumpHighlight};
+use crate::app::{App, Conversation, JumpHighlight, RowHeight};
 use crate::markup;
 use crate::model::{
     Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
@@ -1368,12 +1368,14 @@ struct View<'a> {
 }
 
 /// A row height to assume for a message that has not been laid out yet. Rows
-/// near the viewport are always measured, so this only shapes the scrollbar
-/// and the position of far-away rows until they come into range.
-fn estimated_advance(message: &Message, width: f32) -> f32 {
-    use crate::model::Content;
+/// near the viewport are always measured, and a change in the height of a row
+/// above the viewport moves the scroll offset with it, so this only shapes the
+/// scrollbar until the reader scrolls near the row.
+fn estimated_height(message: &Message, width: f32, new_day: bool) -> f32 {
+    // Bubbles take at most 72% of the transcript, and 560 points.
+    let bubble = ((width * 0.72).min(560.0) - 20.0).max(40.0);
     let text_rows = |text: &str| {
-        let per_row = (width / 7.5).max(8.0);
+        let per_row = bubble / 7.5;
         (text.chars().count() as f32 / per_row).ceil().max(1.0)
     };
     let caption_rows = |caption: &Option<String>| {
@@ -1394,8 +1396,9 @@ fn estimated_advance(message: &Message, width: f32) -> f32 {
         Content::Audio { .. } => 60.0,
         _ => 40.0,
     };
-    // Bubble padding, the sender line, and the row spacing.
-    40.0 + body
+    // Bubble padding, the sender line, and the row spacing, plus the date
+    // chip above the first message of a day.
+    40.0 + body + if new_day { 36.0 } else { 0.0 }
 }
 
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
@@ -1489,16 +1492,37 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // Do not animate programmatic scrolling. Pending animations can delay a
     // later request to reach the end.
     let mut edge_scrolled_up = false;
-    // Rows outside the viewport are skipped rather than laid out. Their height
-    // from an earlier frame keeps the scroll position honest, so a long
-    // history costs a few visible rows instead of every loaded one. Wrapping
-    // depends on the width, which invalidates every cached height.
+    // Rows far from the viewport are skipped rather than laid out, keeping the
+    // height they last took (or an estimate), so a long history costs the rows
+    // near the screen instead of every loaded one. A jump to a message, the
+    // unread divider's first placement, and a text selection lay out every
+    // row: a jump needs exact positions, and egui drops a selection whose
+    // ends it does not see in a frame. Rows near the viewport are measured
+    // again each frame, so a width change or an image that loads corrects
+    // them before they come into view.
     let layout_width = ui.available_width();
-    if (conversation.heights_width - layout_width).abs() >= 1.0 {
-        conversation.heights.clear();
-        conversation.heights_width = layout_width;
+    let lay_out_all = view.anchor.is_some()
+        || divider.as_ref().is_some_and(|(.., placed)| !placed)
+        || ui
+            .ctx()
+            .plugin_opt::<egui::text_selection::LabelSelectionState>()
+            .is_some_and(|plugin| plugin.lock().has_selection());
+    let pass = ui.ctx().cumulative_pass_nr();
+    let redo = ui.ctx().current_pass_index() > 0;
+    let mut rows = std::mem::take(&mut conversation.rows);
+    // Forget rows that left the conversation, such as deleted messages.
+    if rows.len() > conversation.messages.len() * 2 + 64 {
+        let ids: HashSet<&str> = conversation
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        rows.retain(|id, _| ids.contains(id.as_str()));
     }
-    let mut heights = std::mem::take(&mut conversation.heights);
+    // How far rows entirely above the viewport grew this frame. The offset
+    // follows, so what the reader looks at stays put while rows scrolled past
+    // are measured for the first time.
+    let mut grew_above = 0.0;
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
@@ -1547,33 +1571,51 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     top_of_history(ui, &palette, &conversation, chat, &mut actions);
                     let mut previous: Option<&Message> = None;
                     // Rows within a few viewports of the screen are laid out
-                    // and their height remembered. Rows further away cost only
-                    // an estimate, so a long history never lays out more than
-                    // the window it is about to show.
-                    let measure_margin = (viewport.height() * 3.0).max(600.0);
+                    // and their height remembered, so scrolling finds them
+                    // measured before they show.
+                    let margin = (viewport.height() * 3.0).max(600.0);
                     for message in &conversation.messages {
                         let before = ui.cursor().top();
-                        let reach = match heights.get(&message.id).copied() {
-                            Some(reach) => reach,
-                            None => {
-                                let estimate = estimated_advance(message, layout_width);
-                                heights.insert(message.id.clone(), estimate);
-                                estimate
-                            }
-                        };
-                        let keep = view.anchor == Some(message.id.as_str())
-                            || divider.as_ref().is_some_and(|(id, ..)| id == &message.id);
-                        let near = before + reach >= viewport.top() - measure_margin
-                            && before <= viewport.bottom() + measure_margin;
-                        if !keep && !near {
-                            ui.add_space(reach);
-                            previous = Some(message);
-                            continue;
-                        }
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
                                 != crate::util::day_key(message.timestamp)
                         });
+                        let known = rows.get(&message.id).copied();
+                        let height = known.map_or_else(
+                            || estimated_height(message, layout_width, new_day),
+                            |row| row.height,
+                        );
+                        // A pass redone after the offset followed rows that
+                        // grew keeps to the rows it laid out before (and any
+                        // now on screen): measuring rows the shift brought
+                        // into range would move the view once more.
+                        let reach = if redo
+                            && known
+                                .and_then(|row| row.pass)
+                                .is_none_or(|last| last + 1 != pass)
+                        {
+                            0.0
+                        } else {
+                            margin
+                        };
+                        let near = before + height >= viewport.top() - reach
+                            && before <= viewport.bottom() + reach;
+                        if !lay_out_all && !near {
+                            ui.add_space(height);
+                            if known.is_none() {
+                                rows.insert(message.id.clone(), RowHeight { height, pass: None });
+                            }
+                            previous = Some(message);
+                            continue;
+                        }
+                        // A row laid out again after a skip still has the
+                        // rect it last had on screen, where other rows are
+                        // now. The bubble registers its click targets from
+                        // it, so drop it rather than let it take their clicks.
+                        if known.is_none_or(|row| row.pass.is_none_or(|last| last + 1 < pass)) {
+                            let id = bubble_id(&chat.id, &message.id).with("rect");
+                            ui.ctx().data_mut(|data| data.remove::<Rect>(id));
+                        }
                         if new_day {
                             ui.add_space(8.0);
                             ui.vertical_centered(|ui| {
@@ -1674,7 +1716,17 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             response.scroll_to_me(Some(Align::Center));
                             anchored = true;
                         }
-                        heights.insert(message.id.clone(), ui.cursor().top() - before);
+                        let measured = ui.cursor().top() - before;
+                        if before + height <= viewport.top() {
+                            grew_above += measured - height;
+                        }
+                        rows.insert(
+                            message.id.clone(),
+                            RowHeight {
+                                height: measured,
+                                pass: Some(pass),
+                            },
+                        );
                         previous = Some(message);
                     }
                     if !typing.is_empty() {
@@ -1715,7 +1767,18 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let loading = conversation.loading_older;
     let fetching = conversation.fetching_phone;
     let exhausted = conversation.phone_exhausted;
-    conversation.heights = heights;
+    conversation.rows = rows;
+    // Keep the rows on screen where they were when rows above them changed
+    // height, unless this frame scrolled on purpose (to the end, a jump, or
+    // the divider) or sticks to the end, where egui keeps the offset anyway.
+    // The pass is redone at the new offset, so the shift never shows.
+    if grew_above.abs() >= 0.5 && !lay_out_all && !scroll_to_bottom && !at_bottom {
+        let mut state = output.state;
+        state.offset.y = (state.offset.y + grew_above).max(0.0);
+        state.store(ui.ctx(), output.id);
+        ui.ctx()
+            .request_discard("transcript rows above the viewport changed height");
+    }
     app.conversations
         .insert(chat.id.clone(), std::mem::take(&mut conversation));
     app.at_bottom = at_bottom;
