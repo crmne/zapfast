@@ -5203,15 +5203,28 @@ fn clipboard_image() -> Option<(usize, usize, Vec<u8>)> {
 }
 
 /// Writes decoded straight-alpha RGBA image bytes to the system clipboard.
+///
+/// The handle stays open: on X11 the copying process serves the data, and
+/// dropping arboard's last handle leaves the image only to a clipboard
+/// manager, if there is one.
 fn write_clipboard_image(image: &crate::model::DecodedImage) -> Result<(), String> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
-    clipboard
-        .set_image(arboard::ImageData {
-            width: image.width,
-            height: image.height,
-            bytes: std::borrow::Cow::Borrowed(&image.bytes),
-        })
-        .map_err(|error| error.to_string())
+    thread_local! {
+        static CLIPBOARD: std::cell::RefCell<Option<arboard::Clipboard>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    CLIPBOARD.with_borrow_mut(|slot| {
+        let clipboard = match slot {
+            Some(clipboard) => clipboard,
+            None => slot.insert(arboard::Clipboard::new().map_err(|error| error.to_string())?),
+        };
+        clipboard
+            .set_image(arboard::ImageData {
+                width: image.width,
+                height: image.height,
+                bytes: std::borrow::Cow::Borrowed(&image.bytes),
+            })
+            .map_err(|error| error.to_string())
+    })
 }
 
 impl Delivery {

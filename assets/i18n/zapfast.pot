@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-25 09:54+0200\n"
+"POT-Creation-Date: 2026-09-25 09:56+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -697,31 +697,39 @@ msgstr ""
 msgid "You"
 msgstr ""
 
-#: src/app.rs:2431
+#: src/app.rs:2434
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr ""
 
-#: src/app.rs:2435
+#: src/app.rs:2438
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:3741
+#: src/app.rs:3747
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:3816
+#: src/app.rs:3822
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:4094 src/ui/labels.rs:294
+#: src/app.rs:4100 src/ui/labels.rs:294
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
-#: src/app.rs:4617
+#: src/app.rs:4623
 msgid "This video opens in your system player"
+msgstr ""
+
+#: src/app.rs:5106
+msgid "Copied image"
+msgstr ""
+
+#: src/app.rs:5109 src/app.rs:5114
+msgid "Failed to copy image"
 msgstr ""
 
 #: src/ui/labels.rs:68
@@ -1062,15 +1070,7 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr ""
 
-#: src/app.rs:5108
-msgid "Copied image"
-msgstr ""
-
-#: src/app.rs:5112 src/app.rs:5117
-msgid "Failed to copy image"
-msgstr ""
-
-#: src/ui/image_preview.rs:59 src/ui/image_preview.rs:155
+#: src/ui/image_preview.rs:61 src/ui/image_preview.rs:155
 msgid "Copy image"
 msgstr ""
 

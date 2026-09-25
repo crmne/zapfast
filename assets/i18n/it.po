@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-25 09:54+0200\n"
+"POT-Creation-Date: 2026-09-25 09:56+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -724,11 +724,11 @@ msgstr "{name} (Tu)"
 msgid "You"
 msgstr "Tu"
 
-#: src/app.rs:2431
+#: src/app.rs:2434
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Non inviato: ZapFast non è connesso a WhatsApp."
 
-#: src/app.rs:2435
+#: src/app.rs:2438
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -736,22 +736,30 @@ msgstr ""
 "Non inviato: il messaggio a cui stai rispondendo non è disponibile su questo "
 "computer. Annulla la risposta per inviare senza citazione."
 
-#: src/app.rs:3741
+#: src/app.rs:3747
 msgid "Added to favorites"
 msgstr "Aggiunto ai preferiti"
 
-#: src/app.rs:3816
+#: src/app.rs:3822
 msgid "Sending the sticker pack…"
 msgstr "Invio del pacchetto di sticker…"
 
-#: src/app.rs:4094 src/ui/labels.rs:294
+#: src/app.rs:4100 src/ui/labels.rs:294
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Hai {limit} etichette, il massimo che ZapFast conserva."
 
-#: src/app.rs:4617
+#: src/app.rs:4623
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"
+
+#: src/app.rs:5106
+msgid "Copied image"
+msgstr "Immagine copiata"
+
+#: src/app.rs:5109 src/app.rs:5114
+msgid "Failed to copy image"
+msgstr "Impossibile copiare l'immagine"
 
 #: src/ui/labels.rs:68
 msgctxt "label colour"
@@ -1108,15 +1116,7 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Silenzia chiamate sconosciute"
 
-#: src/app.rs:5108
-msgid "Copied image"
-msgstr "Immagine copiata"
-
-#: src/app.rs:5112 src/app.rs:5117
-msgid "Failed to copy image"
-msgstr "Impossibile copiare l'immagine"
-
-#: src/ui/image_preview.rs:59 src/ui/image_preview.rs:155
+#: src/ui/image_preview.rs:61 src/ui/image_preview.rs:155
 msgid "Copy image"
 msgstr "Copia immagine"
 
