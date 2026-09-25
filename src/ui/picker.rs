@@ -11,7 +11,7 @@ use egui::{
 
 use crate::app::App;
 use crate::i18n::gettext;
-use crate::model::{Action, PickerTab, StickerPack, StickerShelf};
+use crate::model::{Action, Dialog, PickerTab, StickerPack, StickerShelf};
 use crate::theme::{self, Icon, Palette};
 
 use super::conversation;
@@ -85,9 +85,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     });
                 });
         });
-    // Close on outside clicks, except on the toggle button or a sticker menu.
+    // Close on outside clicks, except on the toggle button, a sticker menu, or
+    // a dialog the picker opened.
     let rect = area.response.rect;
     let clicked_outside = !egui::Popup::is_any_open(ctx)
+        && app.dialog.is_none()
         && ctx.input(|input| {
             input.pointer.any_pressed()
                 && input
@@ -1266,7 +1268,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         ui.ctx()
                             .data_mut(|data| data.insert_temp(remove_pack_id(), remove.rect));
                         if remove.clicked() {
-                            delete_pack = Some(pack.dir.clone());
+                            delete_pack = Some((pack.name.clone(), pack.dir.clone()));
                         }
                         if !pack.stickers.is_empty()
                             && theme::icon_button(
@@ -1343,8 +1345,12 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             member,
         });
     }
-    if let Some(dir) = delete_pack {
-        app.actions.push(Action::DeleteStickerPack(dir));
+    if let Some((name, dir)) = delete_pack {
+        app.actions
+            .push(Action::ShowDialog(Dialog::ConfirmRemoveStickerPack {
+                name,
+                dir,
+            }));
     }
     if let Some(dir) = share_pack {
         app.actions.push(Action::ShareStickerPack(dir));
@@ -2014,8 +2020,11 @@ mod pack_tests {
         frame(&mut app, &ctx, click(trash.center()));
         assert!(
             app.actions
-                .contains(&Action::DeleteStickerPack(PathBuf::from("/packs/Futebol"))),
-            "the trash button removes the pack"
+                .contains(&Action::ShowDialog(Dialog::ConfirmRemoveStickerPack {
+                    name: "Futebol".to_owned(),
+                    dir: PathBuf::from("/packs/Futebol"),
+                })),
+            "the trash button asks before removing the pack"
         );
     }
 
