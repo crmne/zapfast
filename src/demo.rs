@@ -4505,7 +4505,7 @@ mod tests {
         }
         render(&mut app, &ctx);
 
-        assert_eq!(app.composer, "😉 <3");
+        assert_eq!(app.composer, "😉 ❤️");
     }
 
     #[test]
@@ -4543,7 +4543,8 @@ mod tests {
         app.attach(&ctx);
         render(&mut app, &ctx);
 
-        frame_with(&mut app, &ctx, vec![egui::Event::Text(":gri".into())]);
+        frame_with(&mut app, &ctx, vec![egui::Event::Text(":".into())]);
+        frame_with(&mut app, &ctx, vec![egui::Event::Text("gri".into())]);
         render(&mut app, &ctx);
 
         assert_eq!(app.composer, ":gri");
