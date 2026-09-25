@@ -1,11 +1,14 @@
 //! Emoji drawn by CoreText with the system's Apple Color Emoji.
 //!
 //! Apple Color Emoji joins flags, skin tones, and ZWJ sequences through an
-//! AAT `morx` table, which only CoreText applies.
+//! AAT `morx` table, which only CoreText applies. Some sequences, such as
+//! couples, become a zero-advance layer glyph under one normal glyph.
 
-use std::ptr::{null, null_mut};
+use std::ptr::{NonNull, null, null_mut};
 
-use objc2_core_foundation::{CFAttributedString, CFDictionary, CFString, CFType, CGFloat};
+use objc2_core_foundation::{
+    CFAttributedString, CFDictionary, CFRange, CFString, CFType, CGFloat, CGSize,
+};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGColorSpace, CGContext, CGImageAlphaInfo, CGImageByteOrderInfo,
     kCGColorSpaceSRGB,
@@ -16,9 +19,9 @@ use objc2_core_text::{CTFont, CTFontSymbolicTraits, CTLine, CTRun, kCTFontAttrib
 /// picture is scaled down rather than up.
 const SIZE: CGFloat = 144.0;
 
-/// Draws `cluster` as one colour glyph and returns its width, height, and
+/// Draws `cluster` as one colour picture and returns its width, height, and
 /// unpremultiplied RGBA rows. Returns `None` when CoreText does not join the
-/// cluster into one glyph, draws it with a font without colour glyphs, or
+/// cluster into one picture, draws it with a font without colour glyphs, or
 /// draws nothing.
 pub(super) fn render(cluster: &str) -> Option<(u32, u32, Vec<u8>)> {
     // SAFETY: every pointer passed to CoreText and CoreGraphics is null where
@@ -36,7 +39,7 @@ pub(super) fn render(cluster: &str) -> Option<(u32, u32, Vec<u8>)> {
             Some(attributes.as_opaque()),
         )?;
         let line = CTLine::with_attributed_string(&text);
-        if line.glyph_count() != 1 || !colour(&line) {
+        if !joined(&line) {
             return None;
         }
         // Emoji glyphs are square, so a square as wide as the advance holds
@@ -70,15 +73,17 @@ pub(super) fn render(cluster: &str) -> Option<(u32, u32, Vec<u8>)> {
     }
 }
 
-/// Whether the line's only run uses a font with colour glyphs, rather than a
-/// monochrome font CoreText substituted.
+/// Whether the line is one picture: a single run in a font with colour
+/// glyphs, rather than a monochrome font CoreText substituted, with exactly
+/// one glyph that advances. Zero-advance glyphs are layers drawn under it.
 ///
 /// # Safety
 ///
 /// `line` must be a valid line built from an attributed string.
-unsafe fn colour(line: &CTLine) -> bool {
+unsafe fn joined(line: &CTLine) -> bool {
     // SAFETY: a line's runs are `CTRun`s and a run's font attribute, when
-    // present, is a `CTFont`; both stay alive while `runs` is held.
+    // present, is a `CTFont`; both stay alive while `runs` is held. The
+    // advances buffer has room for every glyph of the run.
     unsafe {
         let runs = line.glyph_runs();
         if runs.count() != 1 {
@@ -90,8 +95,23 @@ unsafe fn colour(line: &CTLine) -> bool {
         let Some(font) = attributes.value(key.cast()).cast::<CTFont>().as_ref() else {
             return false;
         };
-        font.symbolic_traits()
+        if !font
+            .symbolic_traits()
             .contains(CTFontSymbolicTraits::ColorGlyphsTrait)
+        {
+            return false;
+        }
+        let count = usize::try_from(run.glyph_count()).unwrap_or(0);
+        let mut advances = vec![CGSize::new(0.0, 0.0); count];
+        let Some(buffer) = NonNull::new(advances.as_mut_ptr()) else {
+            return false;
+        };
+        run.advances(CFRange::new(0, 0), buffer);
+        advances
+            .iter()
+            .filter(|advance| advance.width != 0.0)
+            .count()
+            == 1
     }
 }
 

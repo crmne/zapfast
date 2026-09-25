@@ -119,7 +119,8 @@ protocol. These notes are for coding agents and new contributors.
   glyph at layout time and paints a picture of the emoji over it afterwards.
   On macOS CoreText (`emoji/macos.rs`) and on Windows DirectWrite
   (`emoji/windows.rs`) draw the system emoji font; a sequence counts as
-  joined only when the system lays it out as one glyph. Linux reads the
+  joined only when the system lays it out as one glyph that advances, with
+  any zero-advance glyphs drawn as layers under it. Linux reads the
   bitmaps of an installed Noto Color Emoji and resolves sequences through its
   GSUB ligatures. The bundled Noto is the fallback everywhere, and on macOS
   and Windows it loads only when the system cannot draw a sequence. Each form

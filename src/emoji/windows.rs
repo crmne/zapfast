@@ -47,10 +47,10 @@ thread_local! {
     static FACTORIES: Option<Factories> = factories().ok();
 }
 
-/// Draws `cluster` as one colour glyph and returns its width, height, and
+/// Draws `cluster` as one colour picture and returns its width, height, and
 /// unpremultiplied RGBA rows. Returns `None` when DirectWrite does not join
-/// the cluster into one glyph, draws it with a font without colour glyphs, or
-/// draws nothing.
+/// the cluster into one glyph that advances, draws it with a font without
+/// colour glyphs, or draws nothing. Zero-advance glyphs are layers under it.
 pub(super) fn render(cluster: &str) -> Option<(u32, u32, Vec<u8>)> {
     FACTORIES.with(|factories| draw(factories.as_ref()?, cluster).ok()?)
 }
@@ -194,8 +194,9 @@ fn to_rgba(pixels: &mut [u8]) {
     }
 }
 
-/// Counts the glyphs a layout draws, and notes a font without colour glyphs,
-/// which DirectWrite substitutes for a character Segoe UI Emoji lacks.
+/// Counts the glyphs a layout draws that advance, and notes a font without
+/// colour glyphs, which DirectWrite substitutes for a character Segoe UI
+/// Emoji lacks.
 #[implement(IDWriteTextRenderer)]
 #[derive(Default)]
 struct Counter {
@@ -218,7 +219,15 @@ impl IDWriteTextRenderer_Impl for Counter_Impl {
         let Some(run) = (unsafe { run.as_ref() }) else {
             return Ok(());
         };
-        self.glyphs.set(self.glyphs.get() + run.glyphCount);
+        let advancing = if run.glyphAdvances.is_null() {
+            run.glyphCount
+        } else {
+            // SAFETY: DirectWrite passes one advance for each glyph of the run.
+            let advances =
+                unsafe { std::slice::from_raw_parts(run.glyphAdvances, run.glyphCount as usize) };
+            advances.iter().filter(|advance| **advance != 0.0).count() as u32
+        };
+        self.glyphs.set(self.glyphs.get() + advancing);
         let colour = (*run.fontFace)
             .as_ref()
             .and_then(|face| face.cast::<IDWriteFontFace2>().ok())

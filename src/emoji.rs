@@ -82,7 +82,7 @@ fn native_available() -> bool {
 }
 
 /// A sequence as the system emoji font draws it, when the system joins it
-/// into one glyph.
+/// into one glyph that advances.
 #[cfg(any(target_os = "macos", windows))]
 fn native(chars: &[char]) -> Option<ColorImage> {
     let (width, height, rgba) = system::render(&chars.iter().collect::<String>())?;
@@ -799,10 +799,23 @@ mod native_tests {
         assert_ne!(system_picture("👨‍👩‍👧‍👦").pixels, system_picture("👨").pixels);
     }
 
+    /// Apple Color Emoji draws couples as a zero-advance layer under one
+    /// normal glyph.
     #[cfg(target_os = "macos")]
     #[test]
-    fn the_system_joins_flags() {
-        assert!(system::render("🇩🇪").is_some());
+    fn the_system_joins_flags_and_couples() {
+        for sequence in [
+            "🇩🇪",
+            "\u{1F469}\u{200D}\u{2764}\u{FE0F}\u{200D}\u{1F468}",
+            "\u{1F469}\u{200D}\u{2764}\u{FE0F}\u{200D}\u{1F48B}\u{200D}\u{1F468}",
+        ] {
+            assert!(
+                system::render(sequence).is_some(),
+                "{sequence} is not one system picture"
+            );
+        }
+        let couple = "\u{1F469}\u{200D}\u{2764}\u{FE0F}\u{200D}\u{1F468}";
+        assert_ne!(system_picture(couple).pixels, system_picture("👩").pixels);
     }
 
     /// Segoe UI Emoji has no country flags, so the bundled flag is used
