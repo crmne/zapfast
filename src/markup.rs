@@ -461,24 +461,19 @@ fn mention_at<'m>(text: &str, at: usize, mentions: &'m [Mention]) -> Option<(usi
 /// `egui::Ui` to lay out with: a message body that names a link is what
 /// decides whether a preview is worth reading.
 pub fn first_link(text: &str) -> Option<String> {
-    let mut at = 0;
-    while at < text.len() {
-        if !text.is_char_boundary(at) {
-            at += 1;
-            continue;
-        }
-        let at_boundary = at == 0
-            || !text[..at]
-                .chars()
-                .next_back()
-                .is_some_and(char::is_alphanumeric);
-        if at_boundary
-            && text.as_bytes()[at].is_ascii_alphanumeric()
-            && let Some((_end, url)) = link_at(text, at)
-        {
+    // Walk the text once, remembering only the character before the current
+    // position: a link can start where the byte before it is not
+    // alphanumeric. Slicing backwards for that character at every byte, as a
+    // literal transcription of the layout scan does, makes a long message
+    // quadratic, and a long message is scanned on every frame it is drawn.
+    let mut previous: Option<char> = None;
+    for (at, character) in text.char_indices() {
+        let starts_a_link = character.is_ascii_alphanumeric()
+            && previous.is_none_or(|before| !before.is_alphanumeric());
+        if starts_a_link && let Some((_end, url)) = link_at(text, at) {
             return Some(url);
         }
-        at += 1;
+        previous = Some(character);
     }
     None
 }

@@ -1705,9 +1705,17 @@ impl App {
     }
 
     /// Asks for the page behind a message's link, once per message.
+    ///
+    /// The message is recorded as asked for whether or not it has a link, so
+    /// the scan runs once per message and not once per frame: a long chat
+    /// draws its messages every frame, and a reader who must wait for the
+    /// scan to finish on each one notices the scroll lag.
     pub fn request_link_preview(&mut self, chat: &str, message: &Message) {
+        if !self.settings.link_previews {
+            return;
+        }
         let key = (chat.to_owned(), message.id.clone());
-        if self.link_previews.contains_key(&key) || !self.settings.link_previews {
+        if self.link_previews.contains_key(&key) || !self.link_preview_requests.insert(key) {
             return;
         }
         let Content::Text { text, preview } = &message.content else {
@@ -1722,13 +1730,11 @@ impl App {
         let Some(url) = crate::safety::preview_url(&url) else {
             return;
         };
-        if self.link_preview_requests.insert(key) {
-            self.backend.send(Command::FetchLinkPreview {
-                chat: chat.to_owned(),
-                message: message.id.clone(),
-                url,
-            });
-        }
+        self.backend.send(Command::FetchLinkPreview {
+            chat: chat.to_owned(),
+            message: message.id.clone(),
+            url,
+        });
     }
 
     /// Whether an outgoing message is still editable.
@@ -5477,17 +5483,42 @@ mod tests {
     #[test]
     fn a_link_without_a_preview_is_read_once_however_often_it_is_drawn() {
         let mut app = app();
-        let requests = preview_requests(&mut app);
-        assert_eq!(requests.len(), 1, "one request for the first frame");
-        assert_eq!(requests[0].2, "https://example.com/");
         let message = text_message("m1", "see https://example.com");
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let sent = |commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>| {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter(|command| matches!(command, Command::FetchLinkPreview { .. }))
+                .count()
+        };
+        app.request_link_preview("chat@example", &message);
+        assert_eq!(sent(&mut commands), 1, "the first frame asks once");
         for _ in 0..5 {
             app.request_link_preview("chat@example", &message);
         }
+        assert_eq!(sent(&mut commands), 0, "later frames ask for nothing");
         assert!(
             app.link_preview_requests
                 .contains(&("chat@example".into(), "m1".into())),
             "the message stays asked for, so a dead link is not retried"
+        );
+    }
+
+    /// A message with no link is recorded too, so the scan that looks for one
+    /// does not run again on every frame the message is drawn.
+    #[test]
+    fn a_message_with_no_link_is_scanned_once() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let message = text_message("m1", "just words");
+        for _ in 0..5 {
+            app.request_link_preview("chat@example", &message);
+        }
+        assert_eq!(app.link_preview_requests.len(), 1);
+        assert!(
+            !commands.try_recv().is_ok(),
+            "nothing is asked for a message with no link"
         );
     }
 
@@ -5503,18 +5534,21 @@ mod tests {
                 description: None,
             }),
         };
-        app.backend = Backend::recording().0;
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
         app.request_link_preview("chat@example", &message);
-        assert!(app.link_preview_requests.is_empty());
+        // WhatsApp's own card is the answer, so nothing is asked for.
+        assert!(!commands.try_recv().is_ok());
     }
 
     #[test]
     fn text_without_a_web_address_is_left_alone() {
         let mut app = app();
         let message = text_message("m1", "just words");
-        app.backend = Backend::recording().0;
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
         app.request_link_preview("chat@example", &message);
-        assert!(app.link_preview_requests.is_empty());
+        assert!(!commands.try_recv().is_ok());
     }
 
     #[test]
@@ -5530,7 +5564,8 @@ mod tests {
         let message = text_message("m1", "mail me at someone@example.com");
         app.backend = Backend::recording().0;
         app.request_link_preview("chat@example", &message);
-        assert!(app.link_preview_requests.is_empty());
+        // Asked once, and no command sent: WhatsApp's own card is the answer.
+        assert_eq!(app.link_preview_requests.len(), 1);
     }
 
     /// Demo and test runs share the machine with a linked ZapFast, whose real
