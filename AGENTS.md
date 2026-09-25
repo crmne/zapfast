@@ -116,8 +116,13 @@ protocol. These notes are for coding agents and new contributors.
   ships is named there as `lucide "name"` instead of copied.
 - `src/markup.rs` turns WhatsApp's text markup, links, and mentions into an
   egui `LayoutJob`; `src/emoji.rs` swaps every emoji for a placeholder
-  glyph at layout time and paints the desktop's colour emoji bitmap over
-  it afterwards (resolving sequences through the font's GSUB ligatures).
+  glyph at layout time and paints a picture of the emoji over it afterwards.
+  On macOS CoreText (`emoji/macos.rs`) and on Windows DirectWrite
+  (`emoji/windows.rs`) draw the system emoji font; a sequence counts as
+  joined only when the system lays it out as one glyph. Linux reads the
+  bitmaps of an installed Noto Color Emoji and resolves sequences through its
+  GSUB ligatures. The bundled Noto is the fallback everywhere, and on macOS
+  and Windows it loads only when the system cannot draw a sequence.
   Any text that can hold an emoji goes through `widgets::line` /
   `widgets::rich_text` or `markup::layout`, never a bare `Label`.
 - `src/animation.rs` plays animated stickers and GIFs: WebP/GIF frames
