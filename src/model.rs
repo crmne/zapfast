@@ -1155,6 +1155,20 @@ pub struct Toast {
     pub created: Instant,
 }
 
+/// A scroll request for the open chat's message list, from the keyboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scroll {
+    /// About one screen toward older messages.
+    PageUp,
+    /// About one screen toward newer messages.
+    PageDown,
+    /// The top of the loaded history.
+    Top,
+    /// The newest message, eased. `Action::ScrollToBottom` (Ctrl+End) jumps
+    /// there at once.
+    Bottom,
+}
+
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -1462,6 +1476,8 @@ pub enum Action {
     CloseLockedFolder,
     SetChatLockCode(Option<String>),
     ScrollToBottom,
+    /// Scrolls the open chat by about a page, or to the top of its history.
+    ScrollPage(Scroll),
     /// Scrolls the open chat to a message.
     ScrollTo(String),
     /// Updates chat-list search text.

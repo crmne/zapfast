@@ -3949,6 +3949,14 @@ mod tests {
         output.textures_delta.clear();
     }
 
+    /// Lets an eased key scroll's animation settle: tests advance time by the
+    /// predicted ~1/60s per frame, and the animation lasts up to 0.3s.
+    fn settle_key_scroll(app: &mut App, ctx: &egui::Context) {
+        for _ in 0..10 {
+            render(app, ctx);
+        }
+    }
+
     /// Resting the pointer on a chat row's cut-short preview shows the whole
     /// last message, sender first in a group; a preview that already fits
     /// shows nothing more, and neither does a row showing typing or a row
@@ -5631,6 +5639,619 @@ mod tests {
             ],
         );
         assert!(!app.scroll_to_bottom, "a wheel releases the pin");
+    }
+
+    #[test]
+    fn page_keys_scroll_the_open_chat_and_jump_to_its_ends() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        let when = crate::util::now();
+        let conversation = app.conversations.get_mut(&chat).expect("open chat");
+        for n in 0..60 {
+            conversation.messages.push(message(
+                &chat,
+                &format!("page-key-{n}"),
+                n % 2 == 0,
+                when - (60 - n),
+                Content::text(format!("Line {n}")),
+            ));
+        }
+        render(&mut app, &ctx);
+        assert!(app.at_bottom, "opens at the end");
+        // PgUp scrolls up by about a page and releases the pin to the end.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::PageUp, egui::Modifiers::NONE)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        assert!(!app.at_bottom, "PgUp leaves the end");
+        assert!(!app.scroll_to_bottom, "PgUp releases the pin");
+        // PgDn pages back down by the same amount.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::PageDown, egui::Modifiers::NONE)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        assert!(app.at_bottom, "PgDn returns to the end it paged from");
+        // Home reaches the top of the loaded history.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Home, egui::Modifiers::NONE)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        assert!(!app.at_bottom, "Home leaves the end");
+        // End returns to the newest message.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::End, egui::Modifiers::NONE)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        assert!(app.at_bottom, "End reaches the newest message");
+        // With text in the focused composer, Home moves the text cursor
+        // instead of scrolling.
+        app.composer = "draft".into();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Home, egui::Modifiers::NONE)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        assert!(app.at_bottom, "Home in a non-empty composer did not scroll");
+        assert_eq!(app.composer, "draft", "the composer text is unchanged");
+    }
+
+    /// Pushes `count` short synthetic messages onto the open sample chat so
+    /// its message list needs several pages to scroll through.
+    fn lengthen_chat(app: &mut App, chat: &str, count: i32, prefix: &str) {
+        let when = crate::util::now();
+        let conversation = app.conversations.get_mut(chat).expect("open chat");
+        for n in 0..count {
+            conversation.messages.push(message(
+                chat,
+                &format!("{prefix}-{n}"),
+                n % 2 == 0,
+                when - i64::from(count - n),
+                Content::text(format!("Line {n}")),
+            ));
+        }
+    }
+
+    /// Goes to the top and back to the end, so every row has been measured.
+    /// A page step also carries the offset along with rows above the
+    /// viewport that grow when first measured, so exact offset checks need
+    /// them measured first.
+    fn measure_all_rows(app: &mut App, ctx: &egui::Context) {
+        for end in [egui::Key::Home, egui::Key::End] {
+            frame_with(app, ctx, vec![key(end, egui::Modifiers::NONE)]);
+            settle_key_scroll(app, ctx);
+        }
+    }
+
+    /// The open chat's message list scroll offset and viewport height, as
+    /// stashed by `conversation::scroll_metrics_id`.
+    fn scroll_metrics(ctx: &egui::Context, chat: &str) -> (f32, f32) {
+        ctx.data(|data| data.get_temp(crate::ui::conversation::scroll_metrics_id(&chat.to_owned())))
+            .expect("the message list has drawn")
+    }
+
+    /// Inserts a voted poll at `index`, whose "Show votes" button is a real
+    /// focusable control inside its bubble's rect (a message bubble itself
+    /// uses `Sense::CLICK`, which egui never focuses).
+    fn insert_poll_message(app: &mut App, chat: &str, index: usize, id: &str, when: i64) {
+        let conversation = app.conversations.get_mut(chat).expect("open chat");
+        let poll = message(
+            chat,
+            id,
+            false,
+            when,
+            Content::Poll {
+                question: "Pizza tonight?".into(),
+                options: vec!["Yes".into(), "No".into()],
+                state: crate::model::PollState {
+                    voters: 1,
+                    ..Default::default()
+                },
+            },
+        );
+        conversation.messages.insert(index, poll);
+    }
+
+    /// Gives a poll's "Show votes" button keyboard focus, the way real Tab
+    /// navigation does (see `track_keyboard_focus` in `ui/mod.rs`).
+    fn focus_bubble(ctx: &egui::Context, chat: &str, message_id: &str) {
+        let target = crate::ui::conversation::bubble_id(chat, message_id).with("poll-results");
+        ctx.data_mut(|data| data.insert_temp(crate::theme::keyboard_focus_id(), true));
+        ctx.memory_mut(|memory| memory.request_focus(target));
+    }
+
+    #[test]
+    fn ctrl_end_reaches_the_bottom_despite_a_focused_message_bubble() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 25, "bubble-focus");
+        insert_poll_message(
+            &mut app,
+            &chat,
+            20,
+            "bubble-focus-poll",
+            crate::util::now() - 5,
+        );
+        render(&mut app, &ctx);
+        assert!(app.at_bottom, "opens at the end");
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::PageUp, egui::Modifiers::NONE)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        assert!(!app.at_bottom, "set up off the end");
+        // A message bubble keeps keyboard focus, as it would while reading
+        // older messages after Tab navigation.
+        focus_bubble(&ctx, &chat, "bubble-focus-poll");
+        render(&mut app, &ctx);
+        // Ctrl+End is explicit: it must still reach the bottom.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::End, egui::Modifiers::COMMAND)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        assert!(
+            app.at_bottom,
+            "Ctrl+End reached the end despite the focused bubble"
+        );
+    }
+
+    #[test]
+    fn plain_end_animates_to_the_bottom_despite_a_focused_message_bubble() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 25, "end-focus");
+        insert_poll_message(
+            &mut app,
+            &chat,
+            20,
+            "end-focus-poll",
+            crate::util::now() - 5,
+        );
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::PageUp, egui::Modifiers::NONE)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        assert!(!app.at_bottom, "set up off the end");
+        focus_bubble(&ctx, &chat, "end-focus-poll");
+        render(&mut app, &ctx);
+        // End does not depend on the keyboard-navigation guard at all, so it
+        // reaches the bottom despite the focused bubble, eased rather than
+        // instant.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::End, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+        assert!(!app.at_bottom, "End eases rather than jumping instantly");
+        settle_key_scroll(&mut app, &ctx);
+        assert!(
+            app.at_bottom,
+            "End reached the end despite the focused bubble"
+        );
+    }
+
+    #[test]
+    fn home_reaches_the_top_exactly_and_pgup_moves_about_a_page() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 60, "home-exact");
+        render(&mut app, &ctx);
+        measure_all_rows(&mut app, &ctx);
+        let (before, viewport_height) = scroll_metrics(&ctx, &chat);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::PageUp, egui::Modifiers::NONE)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        let (after_page_up, _) = scroll_metrics(&ctx, &chat);
+        let moved = before - after_page_up;
+        assert!(
+            (moved - viewport_height * 0.9).abs() < 2.0,
+            "PgUp moved {moved}, expected about {} of a {viewport_height} viewport",
+            viewport_height * 0.9
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Home, egui::Modifiers::NONE)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        let (after_home, _) = scroll_metrics(&ctx, &chat);
+        assert!(
+            after_home.abs() < 0.5,
+            "Home settled at {after_home}, not the top"
+        );
+    }
+
+    #[test]
+    fn pgup_eases_toward_its_target_instead_of_jumping() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 60, "pgup-anim");
+        render(&mut app, &ctx);
+        measure_all_rows(&mut app, &ctx);
+        let (before, viewport_height) = scroll_metrics(&ctx, &chat);
+        let target = before - viewport_height * 0.9;
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::PageUp, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+        let (soon, _) = scroll_metrics(&ctx, &chat);
+        assert!(
+            soon < before && soon > target,
+            "PgUp jumped straight to {soon} instead of easing from {before} toward {target}"
+        );
+        settle_key_scroll(&mut app, &ctx);
+        let (settled, _) = scroll_metrics(&ctx, &chat);
+        assert!(
+            (settled - target).abs() < 2.0,
+            "PgUp settled at {settled}, expected about {target}"
+        );
+    }
+
+    #[test]
+    fn a_wheel_event_stops_an_in_flight_key_scroll_animation() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 60, "wheel-stop");
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::PageUp, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+        // A wheel event interrupts the in-flight animation.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(800.0, 400.0)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -300.0),
+                    modifiers: egui::Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                },
+            ],
+        );
+        let (after_wheel, _) = scroll_metrics(&ctx, &chat);
+        // The wheel turns down, against PgUp. egui eases a wheel turn over a
+        // few frames, so the offset may keep moving down; a PgUp animation
+        // still in flight would pull it back up toward its target instead.
+        settle_key_scroll(&mut app, &ctx);
+        let (later, _) = scroll_metrics(&ctx, &chat);
+        assert!(
+            later >= after_wheel - 2.0,
+            "the PgUp animation kept pulling up ({after_wheel} -> {later}) after the wheel event"
+        );
+    }
+
+    #[test]
+    fn ctrl_end_during_a_pgup_animation_still_reaches_the_bottom() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 60, "redirect");
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::PageUp, egui::Modifiers::NONE)],
+        );
+        // Partway through the eased eighteen or so frames: enough progress to
+        // leave the end, but the PgUp animation is still under way.
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        assert!(!app.at_bottom, "PgUp is under way");
+        // An instant jump requested while the PgUp animation is in flight
+        // must still land exactly at the end, not be pulled back toward the
+        // PgUp target by the animation still in progress.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::End, egui::Modifiers::COMMAND)],
+        );
+        settle_key_scroll(&mut app, &ctx);
+        assert!(
+            app.at_bottom,
+            "Ctrl+End during the PgUp animation still reaches the end"
+        );
+    }
+
+    /// Presses a plain key, then lets one more frame run so the key scroll
+    /// it queued starts and moves part of the way.
+    fn press_and_step(app: &mut App, ctx: &egui::Context, key_pressed: egui::Key) {
+        frame_with(app, ctx, vec![key(key_pressed, egui::Modifiers::NONE)]);
+        render(app, ctx);
+    }
+
+    #[test]
+    fn home_during_an_end_animation_reaches_the_top_exactly() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 60, "end-home");
+        render(&mut app, &ctx);
+        press_and_step(&mut app, &ctx, egui::Key::PageUp);
+        settle_key_scroll(&mut app, &ctx);
+        press_and_step(&mut app, &ctx, egui::Key::End);
+        press_and_step(&mut app, &ctx, egui::Key::Home);
+        settle_key_scroll(&mut app, &ctx);
+        let (offset, _) = scroll_metrics(&ctx, &chat);
+        assert!(offset.abs() < 0.5, "Home settled at {offset}, not the top");
+    }
+
+    #[test]
+    fn home_during_a_pgdn_animation_reaches_the_top_exactly() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 60, "pgdn-home");
+        render(&mut app, &ctx);
+        for _ in 0..2 {
+            press_and_step(&mut app, &ctx, egui::Key::PageUp);
+            settle_key_scroll(&mut app, &ctx);
+        }
+        press_and_step(&mut app, &ctx, egui::Key::PageDown);
+        press_and_step(&mut app, &ctx, egui::Key::Home);
+        settle_key_scroll(&mut app, &ctx);
+        let (offset, _) = scroll_metrics(&ctx, &chat);
+        assert!(offset.abs() < 0.5, "Home settled at {offset}, not the top");
+    }
+
+    #[test]
+    fn end_includes_a_message_that_arrives_during_its_animation() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 60, "end-arrival");
+        render(&mut app, &ctx);
+        for _ in 0..2 {
+            press_and_step(&mut app, &ctx, egui::Key::PageUp);
+            settle_key_scroll(&mut app, &ctx);
+        }
+        press_and_step(&mut app, &ctx, egui::Key::End);
+        assert!(!app.at_bottom, "End is under way");
+        let tall = (0..30)
+            .map(|n| format!("Line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.conversations
+            .get_mut(&chat)
+            .expect("open chat")
+            .messages
+            .push(message(
+                &chat,
+                "end-arrival-tall",
+                false,
+                crate::util::now() + 1,
+                Content::text(tall),
+            ));
+        settle_key_scroll(&mut app, &ctx);
+        assert!(
+            app.at_bottom,
+            "End reached the bottom below the new message"
+        );
+        assert!(app.scroll_to_bottom, "End pins later messages to the end");
+    }
+
+    #[test]
+    fn ctrl_end_during_a_pgup_animation_jumps_at_once() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 60, "ctrl-end-now");
+        render(&mut app, &ctx);
+        press_and_step(&mut app, &ctx, egui::Key::PageUp);
+        render(&mut app, &ctx);
+        assert!(!app.at_bottom, "PgUp is under way");
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::End, egui::Modifiers::COMMAND)],
+        );
+        frame_with(&mut app, &ctx, Vec::new());
+        assert!(app.at_bottom, "Ctrl+End jumped to the end at once");
+        let (jumped, _) = scroll_metrics(&ctx, &chat);
+        for _ in 0..20 {
+            frame_with(&mut app, &ctx, Vec::new());
+            let (offset, _) = scroll_metrics(&ctx, &chat);
+            assert!(
+                offset >= jumped - 0.5 && app.at_bottom,
+                "the PgUp animation pulled the view back up ({jumped} -> {offset})"
+            );
+        }
+    }
+
+    /// Runs one frame with input events at an explicit input time.
+    fn frame_at(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>, time: f64) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+    }
+
+    /// Runs `frames` frames 1/60 s apart, each with `events`, and returns
+    /// the message list offset after each.
+    fn frames_at_60(
+        app: &mut App,
+        ctx: &egui::Context,
+        chat: &str,
+        time: &mut f64,
+        frames: usize,
+        events: &[egui::Event],
+    ) -> Vec<f32> {
+        (0..frames)
+            .map(|_| {
+                *time += 1.0 / 60.0;
+                frame_at(app, ctx, events.to_vec(), *time);
+                scroll_metrics(ctx, chat).0
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_held_pgup_moves_on_every_frame_and_stops_after_release() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 400, "held-pgup");
+        render(&mut app, &ctx);
+        let mut time = ctx.input(|input| input.time);
+        let held = [key(egui::Key::PageUp, egui::Modifiers::NONE)];
+        // A first run measures the rows the held key passes, so the second
+        // run's offsets carry no row-height compensation.
+        frames_at_60(&mut app, &ctx, &chat, &mut time, 20, &held);
+        frames_at_60(&mut app, &ctx, &chat, &mut time, 40, &[]);
+        let end = [key(egui::Key::End, egui::Modifiers::NONE)];
+        frames_at_60(&mut app, &ctx, &chat, &mut time, 1, &end);
+        frames_at_60(&mut app, &ctx, &chat, &mut time, 40, &[]);
+        assert!(app.at_bottom, "set up at the end");
+        let (before, viewport_height) = scroll_metrics(&ctx, &chat);
+        let offsets = frames_at_60(&mut app, &ctx, &chat, &mut time, 20, &held);
+        // The first frame only queues the key; each later one moves.
+        let mut previous = offsets[0];
+        let mut stalled = 0;
+        for (frame, &offset) in offsets.iter().enumerate().skip(1) {
+            if offset < previous - 0.5 {
+                stalled = 0;
+            } else {
+                stalled += 1;
+                assert!(
+                    stalled <= 1,
+                    "a held PgUp paused at frame {frame}: {offsets:?}"
+                );
+            }
+            previous = offset;
+        }
+        // After release it settles within the animation's longest duration.
+        let released = frames_at_60(&mut app, &ctx, &chat, &mut time, 40, &[]);
+        let settled = released[20];
+        assert!(
+            (released[39] - settled).abs() < 0.5,
+            "still moving after release: {released:?}"
+        );
+        let expected = before - 20.0 * viewport_height * 0.9;
+        assert!(
+            (settled - expected).abs() < 3.0,
+            "twenty PgUp presses settled at {settled}, expected about {expected}"
+        );
+    }
+
+    #[test]
+    fn a_wheel_turn_stops_home_before_its_next_step() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 400, "wheel-home");
+        render(&mut app, &ctx);
+        let mut time = ctx.input(|input| input.time);
+        // A held PgUp to the top and End back measure every row, so the
+        // offsets below carry no row-height compensation.
+        let held = [key(egui::Key::PageUp, egui::Modifiers::NONE)];
+        frames_at_60(&mut app, &ctx, &chat, &mut time, 80, &held);
+        let end = [key(egui::Key::End, egui::Modifiers::NONE)];
+        frames_at_60(&mut app, &ctx, &chat, &mut time, 1, &end);
+        frames_at_60(&mut app, &ctx, &chat, &mut time, 40, &[]);
+        assert!(app.at_bottom, "set up at the end");
+        let home = [key(egui::Key::Home, egui::Modifiers::NONE)];
+        frames_at_60(&mut app, &ctx, &chat, &mut time, 1, &home);
+        let under_way = frames_at_60(&mut app, &ctx, &chat, &mut time, 3, &[]);
+        let before = under_way[2];
+        assert!(before > 5000.0, "Home is far from the top: {before}");
+        let wheel = [
+            egui::Event::PointerMoved(egui::pos2(800.0, 400.0)),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -300.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            },
+        ];
+        let turned = frames_at_60(&mut app, &ctx, &chat, &mut time, 1, &wheel)[0];
+        // The wheel turns down, against Home: the offset may only grow.
+        assert!(
+            turned >= before - 0.5,
+            "Home still stepped on the wheel's frame ({before} -> {turned})"
+        );
+        let later = frames_at_60(&mut app, &ctx, &chat, &mut time, 30, &[]);
+        assert!(
+            later.iter().all(|&offset| offset >= turned - 0.5),
+            "Home kept stepping after the wheel: {later:?}"
+        );
+    }
+
+    #[test]
+    fn a_repeated_pgup_during_its_animation_adds_another_page() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        lengthen_chat(&mut app, &chat, 60, "pgup-repeat");
+        render(&mut app, &ctx);
+        measure_all_rows(&mut app, &ctx);
+        let (before, viewport_height) = scroll_metrics(&ctx, &chat);
+        press_and_step(&mut app, &ctx, egui::Key::PageUp);
+        press_and_step(&mut app, &ctx, egui::Key::PageUp);
+        settle_key_scroll(&mut app, &ctx);
+        let (settled, _) = scroll_metrics(&ctx, &chat);
+        let expected = before - viewport_height * 1.8;
+        assert!(
+            (settled - expected).abs() < 2.0,
+            "two PgUp presses settled at {settled}, expected about {expected}"
+        );
     }
 
     #[test]

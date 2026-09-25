@@ -13,8 +13,8 @@ use crate::i18n::Locale;
 use crate::image_preview::PreviewState;
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Label,
-    Media, MediaState, Message, Page, PickerTab, SidebarDisplayMode, StickerPack, StickerShelf,
-    Toast, ToastKind,
+    Media, MediaState, Message, Page, PickerTab, Scroll, SidebarDisplayMode, StickerPack,
+    StickerShelf, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{NotificationSound, Settings, ThemeChoice};
@@ -78,6 +78,54 @@ pub struct Conversation {
     /// The height each row last took, keyed by message id, so the transcript
     /// can skip rows far from the viewport instead of laying them out.
     pub(crate) rows: HashMap<String, RowHeight>,
+    /// The keyboard page, Home, or End scroll under way in the message list.
+    pub(crate) key_scroll: Option<KeyScroll>,
+}
+
+/// A keyboard scroll the message list eases through, one instant step per
+/// frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct KeyScroll {
+    pub kind: Scroll,
+    /// For PgUp/PgDn, the signed `scroll_with_delta` distance still to cover.
+    pub remaining: f32,
+    /// `ui.input().time` when it started.
+    start: f64,
+    duration: f32,
+    /// The eased progress already applied, from 0 to 1.
+    progress: f32,
+}
+
+impl KeyScroll {
+    pub fn new(kind: Scroll, remaining: f32, start: f64, duration: f32) -> Self {
+        Self {
+            kind,
+            remaining,
+            start,
+            duration,
+            progress: 0.0,
+        }
+    }
+
+    /// Advances the easing to `now` and returns the share of the distance
+    /// still to cover that this frame moves: all of it once time is up. A
+    /// pass redone in the same frame gets 0.
+    pub fn advance(&mut self, now: f64) -> f32 {
+        let t = ((now - self.start) / f64::from(self.duration)).clamp(0.0, 1.0) as f32;
+        if t >= 1.0 || self.progress >= 1.0 {
+            self.progress = 1.0;
+            return 1.0;
+        }
+        // Ease out: a scroll a held key restarts still moves at once.
+        let eased = egui::emath::easing::cubic_out(t);
+        let fraction = (eased - self.progress) / (1.0 - self.progress);
+        self.progress = eased;
+        fraction
+    }
+
+    pub fn done(&self) -> bool {
+        self.progress >= 1.0
+    }
 }
 
 /// A transcript row's height as last laid out or estimated.
@@ -410,6 +458,15 @@ pub struct App {
     pub update_arguments: Vec<String>,
     /// Whether to scroll the conversation to its newest message.
     pub scroll_to_bottom: bool,
+    /// One-shot: an explicit jump (Ctrl+End, or the return-to-bottom button)
+    /// must reach the bottom even while a message bubble retains keyboard
+    /// focus, unlike `scroll_to_bottom` set for other reasons (opening a
+    /// chat, sending a message), which still defers to that focus so it is
+    /// not pulled out from under a keyboard-navigating reader.
+    pub scroll_to_bottom_forced: bool,
+    /// A pending page-relative scroll for the open chat, consumed by its
+    /// message list on the next frame.
+    pub scroll_page: Option<Scroll>,
     /// Whether the conversation was at the bottom last frame.
     pub at_bottom: bool,
     /// Message id to scroll into view.
@@ -827,6 +884,8 @@ impl App {
             update_inspecting: false,
             update_arguments: Vec::new(),
             scroll_to_bottom: true,
+            scroll_to_bottom_forced: false,
+            scroll_page: None,
             at_bottom: true,
             scroll_anchor: None,
             jump_highlight: None,
@@ -2765,6 +2824,11 @@ impl App {
             // A run of voice messages belongs to the chat it started in.
             self.voice_chat = None;
             self.voice_wanted = None;
+            // A page request belongs to the chat it was pressed in.
+            self.scroll_page = None;
+            if let Some(conversation) = self.conversations.get_mut(&id) {
+                conversation.key_scroll = None;
+            }
         }
         self.emoji_start = None;
         self.mention_start = None;
@@ -4262,7 +4326,21 @@ impl App {
                 self.focus_search = false;
                 self.focus_composer = true;
             }
-            Action::ScrollToBottom => self.scroll_to_bottom = true,
+            Action::ScrollToBottom => {
+                self.scroll_to_bottom = true;
+                // Ctrl+End and the return-to-bottom button are explicit: they
+                // must win over a message bubble's retained keyboard focus.
+                self.scroll_to_bottom_forced = true;
+            }
+            Action::ScrollPage(scroll) => {
+                // Reaching the top releases stick-to-bottom, as the wheel and
+                // the edge-scroll drag do; reaching the bottom (paging down or
+                // End) lets it take over again, so it is left alone here.
+                if matches!(scroll, Scroll::PageUp | Scroll::Top) {
+                    self.scroll_to_bottom = false;
+                }
+                self.scroll_page = Some(scroll);
+            }
             Action::ScrollTo(id) => {
                 self.scroll_to_bottom = false;
                 let Some(chat) = self.open_chat.clone() else {

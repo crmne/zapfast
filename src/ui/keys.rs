@@ -3,7 +3,7 @@
 use egui::{Key, Modifiers};
 
 use crate::app::App;
-use crate::model::{Action, Chat, Dialog, Page};
+use crate::model::{Action, Chat, Dialog, Page, Scroll};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
     if app.image_preview.is_some() {
@@ -70,6 +70,36 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     let menu_open = egui::Popup::is_any_open(ctx);
     let search_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search")));
     let composer_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text")));
+    // PgUp/PgDn/Home/End scroll the open chat. PgUp/PgDn also work while the
+    // composer has focus, since egui's TextEdit does not handle them itself;
+    // Home/End keep moving the text cursor in a non-empty field, as ↑ keeps
+    // its normal meaning outside an empty composer.
+    if app.page == Page::Chats
+        && app.open_chat.is_some()
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && !menu_open
+    {
+        let home_end_allowed = !editing_text || (composer_focused && app.composer.is_empty());
+        ctx.input_mut(|input| {
+            if take_plain(input, Key::PageUp) {
+                actions.push(Action::ScrollPage(Scroll::PageUp));
+            }
+            if take_plain(input, Key::PageDown) {
+                actions.push(Action::ScrollPage(Scroll::PageDown));
+            }
+            if home_end_allowed {
+                if take_plain(input, Key::Home) {
+                    actions.push(Action::ScrollPage(Scroll::Top));
+                }
+                if take_plain(input, Key::End) {
+                    actions.push(Action::ScrollPage(Scroll::Bottom));
+                }
+            }
+        });
+    }
     let escape = (!menu_open || app.reaction_target.is_some())
         && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     if escape {
@@ -189,30 +219,36 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         && !app.show_update
         && app.recording.is_none()
         && !menu_open
-        && ctx.input_mut(|input| {
-            let mut taken = false;
-            input.events.retain(|event| {
-                if taken {
-                    return true;
-                }
-                let matches = matches!(
-                    event,
-                    egui::Event::Key {
-                        key: found,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } if *found == Key::ArrowUp && *modifiers == Modifiers::NONE
-                );
-                taken |= matches;
-                !matches
-            });
-            taken
-        });
+        && ctx.input_mut(|input| take_plain(input, Key::ArrowUp));
     if let Some(id) = edit_previous.then(|| app.previous_own_editable()).flatten() {
         actions.push(Action::Edit(id));
     }
     app.actions.extend(actions);
+}
+
+/// Removes this frame's first plain (unmodified) press of `key`, if any, and
+/// reports whether one was found. `consume_key` is unsuitable here: it also
+/// matches the key with Shift or Alt held, and a plain binding must leave
+/// those combinations, such as Shift+Home for text selection, alone.
+fn take_plain(input: &mut egui::InputState, key: Key) -> bool {
+    let mut taken = false;
+    input.events.retain(|event| {
+        if taken {
+            return true;
+        }
+        let matches = matches!(
+            event,
+            egui::Event::Key {
+                key: found,
+                pressed: true,
+                modifiers,
+                ..
+            } if *found == key && *modifiers == Modifiers::NONE
+        );
+        taken |= matches;
+        !matches
+    });
+    taken
 }
 
 /// Handles keys while the image preview is open. No chat shortcut runs, and
@@ -283,6 +319,11 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ),
     ("Ctrl+B", "Collapse or expand the chat list"),
     ("Ctrl+End", "Jump to the newest message"),
+    ("PgUp / PgDn", "Scroll the open chat by a page"),
+    (
+        "Home / End",
+        "Top / bottom of the open chat (when the input is empty)",
+    ),
     ("Ctrl+,", "Settings"),
     ("Ctrl++ / Ctrl+-", "Zoom in / out"),
     ("Ctrl+0", "Reset zoom"),
@@ -631,6 +672,82 @@ mod tests {
                     "{key:?} with {modifiers:?} switched chats"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn page_keys_scroll_the_open_chat_and_are_consumed() {
+        let (_root, mut app, ids) = app_with_chats(1);
+        app.open_chat = Some(ids[0].clone());
+        let ctx = egui::Context::default();
+        for (key, expected) in [
+            (Key::PageUp, Action::ScrollPage(Scroll::PageUp)),
+            (Key::PageDown, Action::ScrollPage(Scroll::PageDown)),
+            (Key::Home, Action::ScrollPage(Scroll::Top)),
+            (Key::End, Action::ScrollPage(Scroll::Bottom)),
+        ] {
+            app.actions.clear();
+            let survived = press(&mut app, &ctx, key, Modifiers::NONE);
+            assert!(!survived, "{key:?} reached the views");
+            assert_eq!(
+                app.actions,
+                [expected],
+                "{key:?} did not push the expected action"
+            );
+        }
+    }
+
+    #[test]
+    fn page_keys_leave_shift_and_ctrl_combinations_alone() {
+        let (_root, mut app, ids) = app_with_chats(1);
+        app.open_chat = Some(ids[0].clone());
+        let ctx = egui::Context::default();
+        for (key, modifiers) in [
+            (Key::Home, Modifiers::SHIFT),
+            (Key::PageUp, Modifiers::SHIFT),
+            (Key::Home, Modifiers::COMMAND),
+        ] {
+            app.actions.clear();
+            let survived = press(&mut app, &ctx, key, modifiers);
+            assert!(survived, "{key:?} with {modifiers:?} was consumed");
+            assert!(app.actions.is_empty(), "{key:?} with {modifiers:?} acted");
+        }
+        // Ctrl+End (Cmd+End on macOS) still jumps to the newest message.
+        app.actions.clear();
+        let survived = press(&mut app, &ctx, Key::End, Modifiers::COMMAND);
+        assert!(!survived);
+        assert_eq!(app.actions, [Action::ScrollToBottom]);
+    }
+
+    #[test]
+    fn page_keys_do_nothing_without_an_open_chat_a_dialog_or_off_the_chats_page() {
+        let (_root, mut app, ids) = app_with_chats(1);
+        let ctx = egui::Context::default();
+        let keys = [Key::PageUp, Key::PageDown, Key::Home, Key::End];
+        // No chat open.
+        for key in keys {
+            app.actions.clear();
+            assert!(
+                press(&mut app, &ctx, key, Modifiers::NONE),
+                "{key:?} survived with no chat open"
+            );
+            assert!(app.actions.is_empty());
+        }
+        app.open_chat = Some(ids[0].clone());
+        // A dialog is open.
+        app.dialog = Some(Dialog::Shortcuts);
+        for key in keys {
+            app.actions.clear();
+            assert!(press(&mut app, &ctx, key, Modifiers::NONE));
+            assert!(app.actions.is_empty());
+        }
+        app.dialog = None;
+        // Off the Chats page.
+        app.page = Page::Settings;
+        for key in keys {
+            app.actions.clear();
+            assert!(press(&mut app, &ctx, key, Modifiers::NONE));
+            assert!(app.actions.is_empty());
         }
     }
 }
