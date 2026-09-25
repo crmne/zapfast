@@ -642,6 +642,16 @@ pub enum Command {
     ChannelMutes(Vec<(String, bool)>),
     /// Looks up the group behind an invite code without joining.
     PreviewInvite(String),
+    /// Reads a page's own metadata for a link WhatsApp did not preview.
+    ///
+    /// The interface asks once per message it draws, and only for a message
+    /// that has no preview already, so this is a request for a card, never a
+    /// background crawl of a conversation.
+    FetchLinkPreview {
+        chat: ChatId,
+        message: String,
+        url: String,
+    },
     /// Joins the group behind an invite code.
     JoinInvite(String),
     /// Internal result of joining through an invite.
@@ -833,6 +843,12 @@ pub enum Event {
         path: std::path::PathBuf,
     },
     /// The group behind an invite link.
+    /// What the page at a message's link says about itself.
+    LinkPreview {
+        chat: ChatId,
+        message: String,
+        result: Result<crate::link_preview::Preview, String>,
+    },
     InvitePreview {
         code: String,
         result: Result<crate::model::InviteInfo, String>,

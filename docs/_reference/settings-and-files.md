@@ -59,6 +59,11 @@ name or description, in the interface language or in English.
   on macOS) sends.
 - **Download files automatically**: files up to 64 MiB, stickers included,
   download as they come into view. When off, click one to download it.
+- **Preview links**: read a page's own title, description, and picture for a
+  link WhatsApp sent without preview metadata, which happens when the sender
+  turned previews off on their phone. The page is fetched from this computer
+  and only the address the sender wrote is requested; the conversation is not
+  sent anywhere. When off, such links stay plain text.
 - **Pause other media while recording or playing**: pause music and videos in
   other apps while you record, or while a voice message, audio, or video plays
   with sound, and resume them afterwards. Linux and Windows only.
@@ -92,8 +97,8 @@ name or description, in the interface language or in English.
 - **Download updates automatically**: download and verify a new release in the
   background; restarting stays your choice. Package managers and Flatpak update
   ZapFast themselves.
-- **Proxy**: for WhatsApp, media, and updates. Empty uses `ALL_PROXY` or
-  `HTTPS_PROXY`.
+- **Proxy**: for WhatsApp, media, link previews, and updates. Empty uses
+  `ALL_PROXY` or `HTTPS_PROXY`.
 - **GIPHY API key**: for GIF search, unless the build includes one. Set
   `ZAPFAST_GIPHY_KEY` at compile time to include a default key. The earlier
   `FASTSAPP_GIPHY_KEY` remains a fallback for existing builds.

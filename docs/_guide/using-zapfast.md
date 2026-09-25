@@ -24,6 +24,22 @@ Editing uses the composer. Press Escape to cancel.
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 
+## Link previews
+
+A message carrying a web address shows a card under its text with the page's
+title, description, and picture, and clicking the card opens the address in
+your browser. WhatsApp usually sends that information with the message. When
+it does not, which is what happens when the sender turned previews off on
+their phone, ZapFast reads the page itself, the way the phone app does, and
+the card appears a moment after the message is drawn.
+
+The page is fetched from this computer and the only thing requested is the
+address the sender wrote; the conversation, the contact, and the message are
+never sent anywhere. **Settings > Chats > Preview links** turns this off, and
+those links then stay plain text. A page that takes too long, is too large, or
+says nothing about itself simply shows no card, and it is never asked for
+again.
+
 ## Stickers
 
 The sticker tab works like WhatsApp's: a row of tabs holds **Recent**

@@ -329,6 +329,13 @@ pub struct Settings {
     /// Download attachments when they enter view instead of on click.
     #[serde(alias = "auto_download_images")]
     pub auto_download: bool,
+    /// Read a page's own metadata for a link WhatsApp sent without a preview.
+    ///
+    /// The page is fetched from this machine and only the address the sender
+    /// wrote is requested; nothing about the conversation is sent. Off leaves
+    /// such links as plain text, which is what WhatsApp shows when the sender
+    /// disabled previews on their side.
+    pub link_previews: bool,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
     /// Colour selected in the wallpaper picker.
@@ -406,6 +413,7 @@ impl Default for Settings {
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
+            link_previews: true,
             show_wallpaper: true,
             wallpaper_color: WallpaperColor::default(),
             dark_wallpaper_color: WallpaperColor::Black,

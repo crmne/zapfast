@@ -455,6 +455,34 @@ fn mention_at<'m>(text: &str, at: usize, mentions: &'m [Mention]) -> Option<(usi
 }
 
 /// Parses a web or email address at `at` and returns its end and target.
+/// The first web address in `text`, normalised to an absolute URL.
+///
+/// This is the same scan the layout uses, exposed for callers that have no
+/// `egui::Ui` to lay out with: a message body that names a link is what
+/// decides whether a preview is worth reading.
+pub fn first_link(text: &str) -> Option<String> {
+    let mut at = 0;
+    while at < text.len() {
+        if !text.is_char_boundary(at) {
+            at += 1;
+            continue;
+        }
+        let at_boundary = at == 0
+            || !text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric);
+        if at_boundary
+            && text.as_bytes()[at].is_ascii_alphanumeric()
+            && let Some((_end, url)) = link_at(text, at)
+        {
+            return Some(url);
+        }
+        at += 1;
+    }
+    None
+}
+
 fn link_at(text: &str, at: usize) -> Option<(usize, String)> {
     let rest = &text[at..];
     let token_end = rest
@@ -661,6 +689,35 @@ const KNOWN_TLDS: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_first_web_address_is_found_without_a_ui() {
+        assert_eq!(
+            first_link("look at https://example.com/page now").as_deref(),
+            Some("https://example.com/page")
+        );
+        // A schemeless address is normalised the way the layout does it.
+        assert_eq!(
+            first_link("see example.com/page").as_deref(),
+            Some("https://example.com/page")
+        );
+        assert_eq!(
+            first_link("www.example.com").as_deref(),
+            Some("https://www.example.com")
+        );
+    }
+
+    #[test]
+    fn text_without_an_address_yields_nothing() {
+        assert_eq!(first_link("just some words"), None);
+        assert_eq!(first_link(""), None);
+        // A scheme glued to the front of a word is not one, so the host that
+        // follows the slashes is what the reader would click.
+        assert_eq!(
+            first_link("abchttp://example.com").as_deref(),
+            Some("https://example.com")
+        );
+    }
+
     use super::*;
 
     fn kinds(text: &str) -> Vec<(String, bool, bool, bool, bool)> {

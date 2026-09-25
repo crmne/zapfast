@@ -370,6 +370,13 @@ pub struct App {
     pub poll_draft: crate::model::PollDraft,
     pub poll_creating: bool,
     pub poll_voting: HashSet<(ChatId, String)>,
+    /// What the page at a message's link says about itself, for messages
+    /// WhatsApp sent without preview metadata. Keyed by chat and message like
+    /// every other per-message state.
+    pub link_previews: HashMap<(ChatId, String), crate::link_preview::Preview>,
+    /// Messages whose link is being fetched or has already been asked for, so
+    /// a page is read once per message however many frames draw it.
+    pub link_preview_requests: HashSet<(ChatId, String)>,
     pub interactive_sending: HashSet<(ChatId, String)>,
     /// Contact-name editor buffers.
     pub contact_edit: Option<(String, String)>,
@@ -800,6 +807,8 @@ impl App {
             poll_draft: Default::default(),
             poll_creating: false,
             poll_voting: HashSet::new(),
+            link_previews: HashMap::new(),
+            link_preview_requests: HashSet::new(),
             interactive_sending: HashSet::new(),
             contact_edit: None,
             new_contact_phone: String::new(),
@@ -1680,6 +1689,48 @@ impl App {
         None
     }
 
+    /// The fetched preview for a message, asking for it the first time.
+    ///
+    /// Only a text message that WhatsApp left without preview metadata and
+    /// that actually names a web address is worth a request, and each one is
+    /// asked for once: a message that never produced a preview is not asked
+    /// again, so a dead link cannot become a loop of fetches on every frame.
+    pub fn link_preview(
+        &self,
+        chat: &str,
+        message: &Message,
+    ) -> Option<&crate::link_preview::Preview> {
+        self.link_previews
+            .get(&(chat.to_owned(), message.id.clone()))
+    }
+
+    /// Asks for the page behind a message's link, once per message.
+    pub fn request_link_preview(&mut self, chat: &str, message: &Message) {
+        let key = (chat.to_owned(), message.id.clone());
+        if self.link_previews.contains_key(&key) || !self.settings.link_previews {
+            return;
+        }
+        let Content::Text { text, preview } = &message.content else {
+            return;
+        };
+        if preview.is_some() {
+            return;
+        }
+        let Some(url) = crate::markup::first_link(text) else {
+            return;
+        };
+        let Some(url) = crate::safety::preview_url(&url) else {
+            return;
+        };
+        if self.link_preview_requests.insert(key) {
+            self.backend.send(Command::FetchLinkPreview {
+                chat: chat.to_owned(),
+                message: message.id.clone(),
+                url,
+            });
+        }
+    }
+
     /// Whether an outgoing message is still editable.
     pub fn can_edit(&self, message: &Message) -> bool {
         message.from_me
@@ -2074,6 +2125,15 @@ impl App {
                         sound: crate::settings::NotificationSound::Custom(path),
                     });
                 }
+                Event::LinkPreview {
+                    chat,
+                    message,
+                    result,
+                } => {
+                    if let Ok(preview) = result {
+                        self.link_previews.insert((chat, message), preview);
+                    }
+                }
                 Event::InvitePreview { code, result } => {
                     use crate::model::InviteState;
                     if let Some(invite) = self.invite.as_mut().filter(|invite| invite.code == code)
@@ -2223,6 +2283,8 @@ impl App {
             }
             LinkStatus::LoggedOut => {
                 self.poll_voting.clear();
+                self.link_previews.clear();
+                self.link_preview_requests.clear();
                 self.interactive_sending.clear();
                 self.poll_creating = false;
                 self.poll_draft = Default::default();
@@ -5370,6 +5432,105 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    fn text_message(id: &str, text: &str) -> Message {
+        Message {
+            chat: "chat@example".into(),
+            id: id.into(),
+            sender: "chat@example".into(),
+            from_me: false,
+            timestamp: 0,
+            sender_name: None,
+            content: Content::Text {
+                text: text.into(),
+                preview: None,
+            },
+            status: Delivery::Sent,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        }
+    }
+
+    /// The commands a request produced, drained from the recording backend.
+    fn preview_requests(app: &mut App) -> Vec<(String, String, String)> {
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.request_link_preview(
+            "chat@example",
+            &text_message("m1", "see https://example.com"),
+        );
+        std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::FetchLinkPreview { chat, message, url } => Some((chat, message, url)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_link_without_a_preview_is_read_once_however_often_it_is_drawn() {
+        let mut app = app();
+        let requests = preview_requests(&mut app);
+        assert_eq!(requests.len(), 1, "one request for the first frame");
+        assert_eq!(requests[0].2, "https://example.com/");
+        let message = text_message("m1", "see https://example.com");
+        for _ in 0..5 {
+            app.request_link_preview("chat@example", &message);
+        }
+        assert!(
+            app.link_preview_requests
+                .contains(&("chat@example".into(), "m1".into())),
+            "the message stays asked for, so a dead link is not retried"
+        );
+    }
+
+    #[test]
+    fn a_message_whatsapp_already_previewed_is_never_fetched() {
+        let mut app = app();
+        let mut message = text_message("m1", "see https://example.com");
+        message.content = Content::Text {
+            text: "see https://example.com".into(),
+            preview: Some(crate::model::LinkPreview {
+                url: "https://example.com/".into(),
+                title: Some("From WhatsApp".into()),
+                description: None,
+            }),
+        };
+        app.backend = Backend::recording().0;
+        app.request_link_preview("chat@example", &message);
+        assert!(app.link_preview_requests.is_empty());
+    }
+
+    #[test]
+    fn text_without_a_web_address_is_left_alone() {
+        let mut app = app();
+        let message = text_message("m1", "just words");
+        app.backend = Backend::recording().0;
+        app.request_link_preview("chat@example", &message);
+        assert!(app.link_preview_requests.is_empty());
+    }
+
+    #[test]
+    fn turning_previews_off_asks_for_nothing() {
+        let mut app = app();
+        app.settings.link_previews = false;
+        assert!(preview_requests(&mut app).is_empty());
+    }
+
+    #[test]
+    fn a_non_web_address_is_never_requested() {
+        let mut app = app();
+        let message = text_message("m1", "mail me at someone@example.com");
+        app.backend = Backend::recording().0;
+        app.request_link_preview("chat@example", &message);
+        assert!(app.link_preview_requests.is_empty());
     }
 
     /// Demo and test runs share the machine with a linked ZapFast, whose real

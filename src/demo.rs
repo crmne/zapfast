@@ -783,6 +783,20 @@ pub fn populate(app: &mut App) {
     let group = SAMPLES[1].id;
     let group_base = app.chats[1].last_activity;
     let (jonas, mira, tom) = (group_members[0], group_members[1], group_members[2]);
+    // The page behind `group-bare-link`, as `link_preview::fetch` would leave
+    // it. The demo never reaches the network, so the card is filled in here.
+    app.link_previews.insert(
+        (group.to_owned(), "group-bare-link".to_owned()),
+        crate::link_preview::Preview {
+            url: "https://zapfast.rocks/using/".into(),
+            title: Some("Using ZapFast".into()),
+            description: Some(
+                "Writing, stickers, attachments, voice messages, and link previews.".into(),
+            ),
+            image_url: Some("https://zapfast.rocks/using/card.png".into()),
+            image: Some(sample_thumbnail(5)),
+        },
+    );
     let group_extra = vec![
         {
             let mut row = message(
@@ -860,6 +874,21 @@ pub fn populate(app: &mut App) {
                 options: vec!["Yes".into(), "Only if it's Neapolitan".into(), "No".into()],
             },
         ),
+        {
+            // A link the sender left unpreviewed, which is what the phone
+            // sends when previews are off on its side. The card under it is
+            // the one ZapFast reads for itself.
+            let mut row = message(
+                group,
+                "group-bare-link",
+                false,
+                group_base + 200,
+                Content::text("Slides from tonight: https://zapfast.rocks/talks/egui"),
+            );
+            row.sender = jonas.0.to_owned();
+            row.sender_name = Some(jonas.1.to_owned());
+            row
+        },
     ];
     app.conversations
         .get_mut(group)
@@ -1834,6 +1863,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 );
                 app.open_chat = Some(ME.into());
                 app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
+            // The chat carrying a link WhatsApp sent without a preview, so
+            // a screenshot can show the card ZapFast reads for itself.
+            "link-preview" => {
+                // Open the group chat, which carries the unpreviewed link,
+                // and leave it settled at the bottom of the conversation.
+                let id = SAMPLES[1].id;
+                app.open_chat = Some(id.into());
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,

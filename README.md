@@ -99,7 +99,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   a time, each starting once the one before it reached WhatsApp, so a picture
   cannot overtake the text that came before it.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
-  mentions, and link previews are supported. Links are clickable. Hebrew,
+  mentions, and link previews are supported. A link WhatsApp sent without
+  preview metadata, which is what a sender who turned previews off produces,
+  is read from the page itself and shown as a card, as on the phone; turn that
+  off with **Settings > Chats > Preview links**. Links are clickable. Hebrew,
   Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so
   numbers, punctuation, and embedded words stay in reading order and brackets
   face the right way. As in WhatsApp, a message whose first strong character is
@@ -601,7 +604,8 @@ copied messages keep WhatsApp's `[time, date] Name:` format.
 ### Proxy
 
 **Settings > System > Proxy** sends the WhatsApp connection, media, profile
-pictures, GIF search, Signal sticker imports, and update checks through a proxy. It accepts
+pictures, link previews, GIF search, Signal sticker imports, and update checks
+through a proxy. It accepts
 `socks5h://host:port` (the proxy resolves names, as Tor expects),
 `socks5://host:port`, and `http://host:port`, each with an optional
 `user:password@`. A bare `host:port` is an HTTP proxy. Changing it reconnects

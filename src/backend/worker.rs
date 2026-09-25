@@ -4700,6 +4700,29 @@ impl Worker {
                     waker.wake();
                 });
             }
+            Command::FetchLinkPreview { chat, message, url } => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                // Off the runtime: a page that never answers would otherwise
+                // hold a worker thread for the client's whole timeout.
+                tokio::task::spawn_blocking(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build();
+                    let result = match runtime {
+                        Ok(runtime) => runtime
+                            .block_on(crate::link_preview::fetch(&url))
+                            .ok_or_else(|| "the page said nothing about itself".to_owned()),
+                        Err(error) => Err(error.to_string()),
+                    };
+                    let _ = events.send(Event::LinkPreview {
+                        chat,
+                        message,
+                        result,
+                    });
+                    waker.wake();
+                });
+            }
             Command::JoinInvite(code) => {
                 let Some(client) = self.client.clone() else {
                     self.emit(Event::InviteJoined {

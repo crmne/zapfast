@@ -359,6 +359,14 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.auto_download,
     );
+    chats.toggle(
+        translated(locale, "Preview links"),
+        translated(
+            locale,
+            "Read a page's title and picture for links WhatsApp sent without a preview.",
+        ),
+        |settings| &mut settings.link_previews,
+    );
     // macOS has no public API to pause other apps' media.
     if crate::media_pause::SUPPORTED {
         chats.toggle(

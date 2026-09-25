@@ -1506,6 +1506,8 @@ struct View<'a> {
     connected: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
     interactive_pending: &'a HashSet<(ChatId, String)>,
+    /// Fetched previews for this chat, by message id.
+    link_previews: &'a HashMap<(ChatId, String), crate::link_preview::Preview>,
     anchor: Option<&'a str>,
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
@@ -1532,7 +1534,12 @@ struct View<'a> {
 /// near the viewport are always measured, and a change in the height of a row
 /// above the viewport moves the scroll offset with it, so this only shapes the
 /// scrollbar until the reader scrolls near the row.
-fn estimated_height(message: &Message, width: f32, new_day: bool) -> f32 {
+fn estimated_height(
+    message: &Message,
+    width: f32,
+    new_day: bool,
+    link_previews: &HashMap<(ChatId, String), crate::link_preview::Preview>,
+) -> f32 {
     // Bubbles take at most 72% of the transcript, and 560 points.
     let bubble = ((width * 0.72).min(560.0) - 20.0).max(40.0);
     let text_rows = |text: &str| {
@@ -1546,7 +1553,9 @@ fn estimated_height(message: &Message, width: f32, new_day: bool) -> f32 {
     };
     let body = match &message.content {
         Content::Text { text, preview } => {
-            text_rows(text) * 19.0 + if preview.is_some() { 60.0 } else { 0.0 }
+            let key = (message.chat.clone(), message.id.clone());
+            let card = preview.is_some() || link_previews.contains_key(&key);
+            text_rows(text) * 19.0 + if card { 60.0 } else { 0.0 }
         }
         Content::Interactive { text, .. } => text_rows(text) * 19.0 + 60.0,
         Content::Image { caption, .. } | Content::Video { caption, .. } => {
@@ -1588,6 +1597,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             avatars.insert(sender, picture);
         }
     }
+    // Ask for the page behind a link WhatsApp sent without a preview, once
+    // per message, before the view borrows the app.
+    if app.settings.link_previews {
+        for message in &conversation.messages {
+            app.request_link_preview(&chat.id, message);
+        }
+    }
     let names_or = |id: &str, hint: Option<&str>| app.display_name_or(id, hint);
     let mention_names = |id: &str| app.mention_name(id);
     let keyboard_navigation = std::cell::Cell::new(false);
@@ -1600,6 +1616,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         interactive_pending: &app.interactive_sending,
+        link_previews: &app.link_previews,
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
         } else {
@@ -1748,7 +1765,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         });
                         let known = rows.get(&message.id).copied();
                         let height = known.map_or_else(
-                            || estimated_height(message, layout_width, new_day),
+                            || estimated_height(message, layout_width, new_day, view.link_previews),
                             |row| row.height,
                         );
                         // A pass redone after the offset followed rows that
@@ -3008,7 +3025,12 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
     }
     let card = message.quoted.is_some()
         || match &message.content {
-            Content::Text { preview, .. } => preview.is_some(),
+            Content::Text { preview, .. } => {
+                preview.is_some()
+                    || view
+                        .link_previews
+                        .contains_key(&(message.chat.clone(), message.id.clone()))
+            }
             Content::Document { .. } | Content::Audio { .. } | Content::Poll { .. } => true,
             Content::Interactive { card, .. } => card.is_some(),
             // Videos without a poster use the file-row layout, except the
@@ -3813,10 +3835,11 @@ fn content(
             )
         }
         Content::Text { text, preview } => {
-            if let Some(preview) = preview {
-                preview_card(ui, view, message, preview, width, actions);
+            let card = preview_card_for(view, message, preview.as_ref());
+            if let Some(card) = &card {
+                preview_card(ui, view, message, card, width, actions);
             }
-            let span = (message.quoted.is_some() || preview.is_some()).then_some(width);
+            let span = (message.quoted.is_some() || card.is_some()).then_some(width);
             rich_body(ui, view, message, text, width, Some(reserve), span, actions)
         }
         Content::Image { caption, media } => {
@@ -4872,17 +4895,17 @@ fn preview_card(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
-    preview: &LinkPreview,
+    card: &PreviewCard<'_>,
     width: f32,
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
-    let thumbnail = message.thumbnail.as_deref();
-    let domain = preview
+    let thumbnail = card.image;
+    let domain = card
         .url
         .split("://")
         .nth(1)
-        .unwrap_or(&preview.url)
+        .unwrap_or(card.url)
         .split('/')
         .next()
         .unwrap_or_default()
@@ -4916,10 +4939,10 @@ fn preview_card(
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         ui.set_width(column);
-                        if let Some(title) = &preview.title {
+                        if let Some(title) = card.title {
                             widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
                         }
-                        if let Some(description) = &preview.description {
+                        if let Some(description) = card.description {
                             let line = widgets::line(
                                 ui,
                                 description,
@@ -4951,8 +4974,45 @@ fn preview_card(
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() {
-        actions.push(Action::OpenUrl(preview.url.clone()));
+        actions.push(Action::OpenUrl(card.url.to_owned()));
     }
+}
+
+/// What a text bubble's link card draws, whichever source filled it in.
+struct PreviewCard<'a> {
+    url: &'a str,
+    title: Option<&'a str>,
+    description: Option<&'a str>,
+    image: Option<&'a [u8]>,
+}
+
+/// The card for a text message, if it has one.
+///
+/// WhatsApp's own metadata wins: it is what the sender's phone resolved, and
+/// it is the only source for a message ZapFast did not fetch a page for. A
+/// page ZapFast read itself fills the gap when WhatsApp sent none.
+fn preview_card_for<'a>(
+    view: &'a View<'_>,
+    message: &'a Message,
+    preview: Option<&'a LinkPreview>,
+) -> Option<PreviewCard<'a>> {
+    if let Some(preview) = preview {
+        return Some(PreviewCard {
+            url: &preview.url,
+            title: preview.title.as_deref(),
+            description: preview.description.as_deref(),
+            image: message.thumbnail.as_deref(),
+        });
+    }
+    let fetched = view
+        .link_previews
+        .get(&(message.chat.clone(), message.id.clone()))?;
+    Some(PreviewCard {
+        url: &fetched.url,
+        title: fetched.title.as_deref(),
+        description: fetched.description.as_deref(),
+        image: fetched.image.as_deref(),
+    })
 }
 
 /// A location as a card: the map preview WhatsApp sent across the top, then

@@ -34,5 +34,10 @@ to WhatsApp's servers and, when you search for GIFs, GIPHY. It has no
 telemetry. It also asks `api.github.com` once a day whether a newer release
 exists; you can turn this off in Settings.
 
+A link a sender left without a preview makes ZapFast read that page once, from
+this computer, so the message can show a card as the phone app shows it. Only
+the address the sender wrote is requested, and never the conversation, the
+contact, or the message. **Settings > Chats > Preview links** turns this off.
+
 Unlinking from Settings tells the phone to forget the device and deletes
 the local archive and caches.
