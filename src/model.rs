@@ -3,7 +3,7 @@
 //! The backend translates protocol types into these models, keeping protobufs
 //! out of views and giving the archive a stable shape.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -570,6 +570,13 @@ impl PollDraft {
 /// WhatsApp's longest live location share, in seconds.
 pub const LIVE_LOCATION_LIMIT: i64 = 8 * 60 * 60;
 
+/// A photo or a playable video, as the in-app viewer album counts them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GalleryKind {
+    Photo,
+    Video,
+}
+
 impl Content {
     /// Whether a live location sent at `sent` has stopped by `now`: its
     /// sender ended it, or it has outlived the longest share.
@@ -726,6 +733,24 @@ impl Content {
         }
     }
 
+    /// Whether this message belongs in the viewer album, and as what.
+    ///
+    /// A GIF is not a video here: it plays inline as an animation, so it is
+    /// left out.
+    pub fn gallery_kind(&self) -> Option<GalleryKind> {
+        match self {
+            Self::Image { .. } => Some(GalleryKind::Photo),
+            Self::Video { gif: false, .. } => Some(GalleryKind::Video),
+            // WhatsApp leaves the type to the sender, so a photo or a clip
+            // sent as a file arrives as a document. It joins the album all the
+            // same, judged by its type and then by its extension.
+            Self::Document {
+                media, file_name, ..
+            } => gallery_mime(&media.mime).or_else(|| gallery_file(file_name)),
+            _ => None,
+        }
+    }
+
     /// Carries downloaded file paths over from `old` when rederiving content
     /// from the raw protobuf: the main attachment and each carousel card's image.
     pub fn keep_local_paths(&mut self, old: &Content) {
@@ -761,6 +786,52 @@ impl Content {
             } => card.image.as_mut(),
             _ => None,
         }
+    }
+}
+
+/// The viewer kind of a file on disk, from its name alone.
+pub(crate) fn gallery_kind_for_path(path: &Path) -> Option<GalleryKind> {
+    gallery_file(&path.file_name()?.to_string_lossy())
+}
+
+/// The viewer kind of an attachment, from its declared type. A GIF is an
+/// inline animation, not a clip, so it is left out, exactly as in
+/// [`gallery_file`].
+fn gallery_mime(mime: &str) -> Option<GalleryKind> {
+    let mime = mime
+        .split(';')
+        .next()
+        .unwrap_or(mime)
+        .trim()
+        .to_ascii_lowercase();
+    match mime.as_str() {
+        "image/jpeg" | "image/png" | "image/webp" | "image/bmp" | "image/tiff" => {
+            Some(GalleryKind::Photo)
+        }
+        "video/mp4" | "video/quicktime" | "video/webm" | "video/x-matroska" | "video/3gpp" => {
+            Some(GalleryKind::Video)
+        }
+        _ => None,
+    }
+}
+
+/// The viewer kind of a file, from its name. A GIF is an inline animation, not
+/// a clip, so it is left out.
+fn gallery_file(file_name: &str) -> Option<GalleryKind> {
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())?;
+    match ext.as_str() {
+        "jpg" | "jpeg" | "png" | "webp" | "bmp" | "tif" | "tiff" => Some(GalleryKind::Photo),
+        "mp4" | "m4v" | "mov" | "webm" | "mkv" | "3gp" | "3gpp" => Some(GalleryKind::Video),
+        // The MIME subtype of a clip whose name carried no extension, which is
+        // how `video/quicktime` and `video/x-matroska` were saved before the
+        // download named them `.mov` and `.mkv`. Those files are still on disk,
+        // and the album lists them by their declared type, so the viewer has to
+        // read them by name too.
+        "quicktime" | "x-matroska" => Some(GalleryKind::Video),
+        _ => None,
     }
 }
 
@@ -1258,7 +1329,19 @@ pub enum Action {
     /// extension and existence are checked here, and anything else opens
     /// externally; an image that then fails to decode shows a message with an
     /// Open externally button inside the preview.
-    PreviewImage(PathBuf),
+    PreviewImage {
+        path: PathBuf,
+        /// The chat whose album the viewer browses from here.
+        chat: ChatId,
+        /// The message this picture came from, so the album can be positioned.
+        message: String,
+    },
+    /// Moves the viewer to the next (`1`) or previous (`-1`) item of the album.
+    ViewerStep(i8),
+    /// Shows one item of the album the viewer already has, by message id.
+    ViewImage {
+        message: String,
+    },
     ZoomImageIn,
     /// Shows the previewed image at its original size.
     ImageActualSize,
@@ -1765,6 +1848,69 @@ mod tests {
             path: None,
             state: MediaState::Idle,
         }
+    }
+
+    /// WhatsApp leaves the type to the sender, so a photo or a clip attached
+    /// as a file arrives as a document. It joins the album all the same,
+    /// judged by its type and then by its extension.
+    #[test]
+    fn a_document_that_is_a_picture_or_a_clip_joins_the_album() {
+        use super::{Content, GalleryKind, Media, MediaState};
+        let document = |mime: &str, file_name: &str| Content::Document {
+            media: Media {
+                mime: mime.into(),
+                size: 1,
+                width: None,
+                height: None,
+                path: None,
+                state: MediaState::Idle,
+            },
+            file_name: file_name.into(),
+            caption: None,
+            pages: None,
+        };
+        // By its type first, parameters and all.
+        assert_eq!(
+            document("image/jpeg", "no-extension").gallery_kind(),
+            Some(GalleryKind::Photo)
+        );
+        assert_eq!(
+            document("video/mp4; codecs=avc1", "clip").gallery_kind(),
+            Some(GalleryKind::Video)
+        );
+        // Then by its extension, when the type says nothing.
+        assert_eq!(
+            document("application/octet-stream", "holiday.JPG").gallery_kind(),
+            Some(GalleryKind::Photo)
+        );
+        assert_eq!(
+            document("application/octet-stream", "clip.mkv").gallery_kind(),
+            Some(GalleryKind::Video)
+        );
+        // A document that is neither stays out of the album.
+        assert_eq!(
+            document("application/pdf", "notes.pdf").gallery_kind(),
+            None
+        );
+        // A GIF plays inline as an animation, so it is not a clip here.
+        assert_eq!(document("image/gif", "loop.gif").gallery_kind(), None);
+    }
+
+    /// The album lists a clip by its declared type, so a clip whose download
+    /// name carried the MIME subtype instead of an extension has to be read by
+    /// name too, or the viewer refuses a file the album just offered.
+    #[test]
+    fn the_mime_subtype_of_a_clip_names_it_for_the_viewer() {
+        use super::{GalleryKind, gallery_kind_for_path};
+        use std::path::Path;
+        assert_eq!(
+            gallery_kind_for_path(Path::new("chat-ABC.quicktime")),
+            Some(GalleryKind::Video)
+        );
+        assert_eq!(
+            gallery_kind_for_path(Path::new("chat-ABC.x-matroska")),
+            Some(GalleryKind::Video)
+        );
     }
 
     #[test]

@@ -1232,3 +1232,79 @@ msgstr "Сохранить как…"
 #: src/ui/image_preview.rs:158
 msgid "Open in another app"
 msgstr "Открыть в другом приложении"
+
+#: src/ui/image_preview.rs:173
+msgid "Image"
+msgstr "Изображение"
+
+#: src/ui/image_preview.rs:194
+msgid "Close preview (Esc)"
+msgstr "Закрыть просмотр (Esc)"
+
+#: src/ui/image_preview.rs:239
+msgid "Zoom in"
+msgstr "Увеличить"
+
+#: src/ui/image_preview.rs:249
+msgid "Fit"
+msgstr "Вписать"
+
+#: src/ui/image_preview.rs:250
+msgid "Show at original size"
+msgstr "Показать в исходном размере"
+
+#: src/ui/image_preview.rs:256
+msgid "Fit to the window (0)"
+msgstr "Вписать в окно (0)"
+
+#: src/ui/image_preview.rs:272
+msgid "Zoom out"
+msgstr "Уменьшить"
+
+#: src/ui/image_preview.rs:288
+msgid "Reply"
+msgstr "Ответить"
+
+#: src/ui/image_preview.rs:301
+msgid "React"
+msgstr "Реакция"
+
+#: src/ui/image_preview.rs:320
+msgid "Forward"
+msgstr "Переслать"
+
+#: src/ui/image_preview.rs:361 src/ui/image_preview.rs:563 src/ui/image_preview.rs:571 src/ui/image_preview.rs:642
+msgid "Download"
+msgstr "Скачать"
+
+#: src/ui/image_preview.rs:380
+msgid "Show in the chat"
+msgstr "Показать в чате"
+
+#: src/ui/image_preview.rs:502
+msgid "This image could not be displayed in ZapFast."
+msgstr "Не удалось показать это изображение в ZapFast."
+
+#: src/ui/image_preview.rs:507
+msgid "Open externally"
+msgstr "Открыть извне"
+
+#: src/ui/image_preview.rs:640
+msgid "Play or pause the video"
+msgstr "Воспроизвести или приостановить видео"
+
+#: src/ui/image_preview.rs:749
+msgid "Video"
+msgstr "Видео"
+
+#: src/ui/image_preview.rs:751
+msgid "Photo"
+msgstr "Фото"
+
+#: src/ui/image_preview.rs:847
+msgid "Previous (,)"
+msgstr "Предыдущее (,)"
+
+#: src/ui/image_preview.rs:853
+msgid "Next (.)"
+msgstr "Следующее (.)"

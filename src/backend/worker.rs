@@ -1118,6 +1118,14 @@ impl Worker {
         }
     }
 
+    /// Hands the chat's viewer album to the interface.
+    fn emit_chat_media(&mut self, chat: ChatId) {
+        match self.archive.gallery_media(&chat) {
+            Ok(items) => self.emit(Event::ChatMedia { chat, items }),
+            Err(error) => self.emit(Event::Error(error.to_string())),
+        }
+    }
+
     /// Resolves phone numbers in chat-row previews.
     fn polish_chat(&self, chat: &mut Chat) {
         if let Some(last) = chat.last.as_mut() {
@@ -4169,6 +4177,7 @@ impl Worker {
                 message,
             } => self.download_media(chat, message, card),
             Command::FetchAvatar { id, full } => self.fetch_avatar(id, full),
+            Command::LoadChatMedia { chat } => self.emit_chat_media(chat),
             Command::EditText {
                 chat,
                 id,
@@ -6920,6 +6929,13 @@ fn extension_for(mime: &str, file_name: Option<&str>) -> String {
         "image/webp" => "webp",
         "image/gif" => "gif",
         "video/mp4" => "mp4",
+        // The album and the viewer read a file's kind from its extension, so a
+        // type the album accepts has to land on an extension the viewer knows.
+        // Without these two, a clip of either type with no file name was saved
+        // as `.quicktime` or `.x-matroska`, and the viewer refused the file it
+        // had just written itself.
+        "video/quicktime" => "mov",
+        "video/x-matroska" => "mkv",
         "video/3gpp" => "3gp",
         "audio/ogg" => "ogg",
         "audio/mpeg" => "mp3",
@@ -8383,6 +8399,31 @@ mod tests {
         );
         assert_eq!(extension_for("audio/ogg; codecs=opus", None), "ogg");
         assert_eq!(extension_for("application/x-unknown", None), "x-unknown");
+    }
+
+    /// The album lists a clip by its declared type and the viewer opens it by
+    /// its name, so the name a download writes has to be one the viewer reads
+    /// as a clip, and a real extension rather than a MIME subtype. A
+    /// `video/quicktime` or `video/x-matroska` attachment with no file name was
+    /// saved as `.quicktime` or `.x-matroska`, which the viewer did not
+    /// recognize.
+    #[test]
+    fn every_clip_type_is_saved_under_a_name_the_viewer_reads() {
+        for (mime, extension) in [
+            ("video/mp4", "mp4"),
+            ("video/quicktime", "mov"),
+            ("video/webm", "webm"),
+            ("video/x-matroska", "mkv"),
+            ("video/3gpp", "3gp"),
+        ] {
+            assert_eq!(extension_for(mime, None), extension, "{mime}");
+            let name = format!("chat-ABC.{extension}");
+            assert_eq!(
+                crate::model::gallery_kind_for_path(std::path::Path::new(&name)),
+                Some(crate::model::GalleryKind::Video),
+                "{mime} is saved as {name}"
+            );
+        }
     }
 
     #[test]

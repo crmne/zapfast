@@ -2291,7 +2291,37 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // Shows the native image preview over the demo chat.
             "preview" => {
                 let (photo, _) = sample_files(app);
-                app.image_preview = Some(crate::image_preview::PreviewState::new(photo));
+                let chat = SAMPLES[0].id.to_owned();
+                app.viewer_media = app
+                    .conversations
+                    .get(&chat)
+                    .map(|conversation| {
+                        conversation
+                            .messages
+                            .iter()
+                            .filter_map(|message| {
+                                message.content.gallery_kind().map(|kind| {
+                                    crate::archive::ChatMedia {
+                                        id: message.id.clone(),
+                                        timestamp: message.timestamp,
+                                        video: kind == crate::model::GalleryKind::Video,
+                                        path: message
+                                            .content
+                                            .media()
+                                            .and_then(|media| media.path.clone()),
+                                        thumbnail: message.thumbnail.clone(),
+                                    }
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                app.viewer_media_chat = Some(chat.clone());
+                app.image_preview = Some(crate::image_preview::PreviewState::new(
+                    Some(photo),
+                    chat,
+                    "ada-photo".to_owned(),
+                ));
             }
             "compose-emoji" => {
                 app.composer = "Andiamo 😊 con due 👍🏽 e poi testo normale".to_owned();
@@ -4263,7 +4293,11 @@ mod tests {
         assert_eq!(app.composer, "draft");
 
         let (photo, _) = sample_files(&app);
-        app.actions.push(crate::model::Action::PreviewImage(photo));
+        app.actions.push(crate::model::Action::PreviewImage {
+            path: photo,
+            chat: crate::demo::SAMPLES[0].id.to_owned(),
+            message: "ada-photo".to_owned(),
+        });
         // Enter in the very frame the preview opens, before egui knows about
         // the modal layer.
         frame_with(
@@ -4298,6 +4332,57 @@ mod tests {
         assert_eq!(app.composer, "draft");
     }
 
+    /// "Show in the chat" closes the viewer and brings the message it was
+    /// showing into view. Closing alone left the chat where it was, so after
+    /// stepping back through the album the message the button names stayed out
+    /// of sight.
+    #[test]
+    fn showing_the_previewed_message_in_the_chat_scrolls_to_it() {
+        use egui::accesskit::Role;
+        let mut app = app();
+        // The demo page that opens the viewer over the sample chat's album:
+        // the header's message actions only exist when the viewer has an item.
+        apply_flags(&mut app, Some("preview"));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert!(app.image_preview.is_some(), "the viewer is open");
+        assert!(
+            !app.viewer_media.is_empty(),
+            "the album the actions belong to is loaded"
+        );
+
+        let at = accessible_nodes(&mut app, &ctx, Vec::new())
+            .into_iter()
+            .find(|(label, role, _)| label == "Show in the chat" && *role == Role::Button)
+            .map(|(_, _, centre)| centre)
+            .expect("the viewer offers Show in the chat");
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(at), press(true)],
+        );
+        frame_with(&mut app, &ctx, vec![press(false)]);
+        render(&mut app, &ctx);
+
+        assert!(app.image_preview.is_none(), "the viewer closes");
+        // The anchor itself is consumed by the frame that scrolls to it, so
+        // the highlight is what still names the message here.
+        let highlight = app
+            .jump_highlight
+            .as_ref()
+            .expect("the chat is brought to the message the viewer was showing");
+        assert_eq!(highlight.message, "ada-photo");
+        assert_eq!(highlight.chat, crate::demo::SAMPLES[0].id);
+    }
+
     /// Ctrl++ zooms the picture, not the whole interface, including when the
     /// layout needs Shift to type the plus.
     #[test]
@@ -4308,7 +4393,11 @@ mod tests {
         render(&mut app, &ctx);
         let interface_zoom = ctx.zoom_factor();
         let (photo, _) = sample_files(&app);
-        app.actions.push(crate::model::Action::PreviewImage(photo));
+        app.actions.push(crate::model::Action::PreviewImage {
+            path: photo,
+            chat: crate::demo::SAMPLES[0].id.to_owned(),
+            message: "ada-photo".to_owned(),
+        });
         render(&mut app, &ctx);
 
         let ctrl_shift = egui::Modifiers {
@@ -4320,7 +4409,15 @@ mod tests {
         // The picture decodes on a loader thread; wait until its fitted
         // scale is known so zooming starts from a settled size.
         let loaded = |app: &App| {
-            let path = app.image_preview.as_ref().unwrap().path().to_owned();
+            let Some(path) = app
+                .image_preview
+                .as_ref()
+                .unwrap()
+                .path()
+                .map(std::path::Path::to_owned)
+            else {
+                return false;
+            };
             matches!(
                 ctx.try_load_texture(
                     &crate::util::image_uri(&path),

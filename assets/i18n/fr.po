@@ -1231,3 +1231,79 @@ msgstr "Enregistrer sous…"
 #: src/ui/image_preview.rs:158
 msgid "Open in another app"
 msgstr "Ouvrir dans une autre application"
+
+#: src/ui/image_preview.rs:173
+msgid "Image"
+msgstr "Image"
+
+#: src/ui/image_preview.rs:194
+msgid "Close preview (Esc)"
+msgstr "Fermer l'aperçu (Échap)"
+
+#: src/ui/image_preview.rs:239
+msgid "Zoom in"
+msgstr "Zoom avant"
+
+#: src/ui/image_preview.rs:249
+msgid "Fit"
+msgstr "Ajuster"
+
+#: src/ui/image_preview.rs:250
+msgid "Show at original size"
+msgstr "Afficher à la taille d'origine"
+
+#: src/ui/image_preview.rs:256
+msgid "Fit to the window (0)"
+msgstr "Ajuster à la fenêtre (0)"
+
+#: src/ui/image_preview.rs:272
+msgid "Zoom out"
+msgstr "Zoom arrière"
+
+#: src/ui/image_preview.rs:288
+msgid "Reply"
+msgstr "Répondre"
+
+#: src/ui/image_preview.rs:301
+msgid "React"
+msgstr "Réagir"
+
+#: src/ui/image_preview.rs:320
+msgid "Forward"
+msgstr "Transférer"
+
+#: src/ui/image_preview.rs:361 src/ui/image_preview.rs:563 src/ui/image_preview.rs:571 src/ui/image_preview.rs:642
+msgid "Download"
+msgstr "Télécharger"
+
+#: src/ui/image_preview.rs:380
+msgid "Show in the chat"
+msgstr "Afficher dans la discussion"
+
+#: src/ui/image_preview.rs:502
+msgid "This image could not be displayed in ZapFast."
+msgstr "Cette image n'a pas pu être affichée dans ZapFast."
+
+#: src/ui/image_preview.rs:507
+msgid "Open externally"
+msgstr "Ouvrir en externe"
+
+#: src/ui/image_preview.rs:640
+msgid "Play or pause the video"
+msgstr "Lire ou mettre en pause la vidéo"
+
+#: src/ui/image_preview.rs:749
+msgid "Video"
+msgstr "Vidéo"
+
+#: src/ui/image_preview.rs:751
+msgid "Photo"
+msgstr "Photo"
+
+#: src/ui/image_preview.rs:847
+msgid "Previous (,)"
+msgstr "Précédent (,)"
+
+#: src/ui/image_preview.rs:853
+msgid "Next (.)"
+msgstr "Suivant (.)"

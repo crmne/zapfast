@@ -318,6 +318,12 @@ pub struct App {
     pauses_media: bool,
     /// Image currently shown in the native preview.
     pub image_preview: Option<PreviewState>,
+    /// Photos and playable videos of the open chat, oldest first, as the viewer
+    /// album lists them. Loaded when the viewer opens.
+    pub viewer_media: Vec<crate::archive::ChatMedia>,
+    /// Chat whose album `viewer_media` belongs to, so a late answer for another
+    /// chat is dropped instead of shown.
+    pub viewer_media_chat: Option<ChatId>,
     /// Voice messages with a sent played receipt.
     played_told: HashSet<String>,
     /// Message bodies registered for transcript copy formatting.
@@ -767,6 +773,8 @@ impl App {
             media_hold: None,
             pauses_media: false,
             image_preview: None,
+            viewer_media: Vec::new(),
+            viewer_media_chat: None,
             played_told: HashSet::new(),
             copy_rows: Default::default(),
             selection_view: Default::default(),
@@ -1757,6 +1765,13 @@ impl App {
                         }
                     }
                 }
+                Event::ChatMedia { chat, items } => {
+                    // An album for a chat the viewer has already left arrives
+                    // too late to matter.
+                    if self.viewer_media_chat.as_deref() == Some(chat.as_str()) {
+                        self.viewer_media = items;
+                    }
+                }
                 Event::ChatUpdated(chat) => self.handle_chat_updated(*chat),
                 Event::Messages {
                     chat,
@@ -2564,6 +2579,24 @@ impl App {
         card: Option<usize>,
         result: Result<PathBuf, String>,
     ) {
+        // The album can hold a message the transcript has not paged in, so its
+        // item is updated from here, before the transcript lookup below, which
+        // only the chat's own bubble needs.
+        if let Ok(path) = &result
+            && card.is_none()
+            && self.viewer_media_chat.as_deref() == Some(chat)
+        {
+            if let Some(item) = self.viewer_media.iter_mut().find(|item| item.id == id) {
+                item.path = Some(path.clone());
+            }
+            // The viewer may be showing that item, waiting for its file: give
+            // it the file too, or it keeps offering the download it just did.
+            if let Some(preview) = &mut self.image_preview
+                && preview.message() == id
+            {
+                preview.show_item(Some(path.clone()), id.to_owned());
+            }
+        }
         let Some(message) = self
             .conversations
             .get_mut(chat)
@@ -3365,33 +3398,53 @@ impl App {
                 chat,
                 message,
             } => {
-                let Some(media) = self
+                // The viewer browses the album the archive holds, which reaches
+                // older messages than the loaded transcript: the message may be
+                // absent from `conversations` and still be in the archive, where
+                // the worker reads the download keys. Only the state drawn in
+                // the chat needs the message here, so it is updated when it is
+                // present, and the command goes out either way.
+                if let Some(media) = self
                     .conversations
                     .get_mut(&chat)
                     .and_then(|conversation| conversation.message_mut(&message))
                     .and_then(|message| message.content.media_at_mut(card))
-                else {
-                    return;
-                };
-                if !media.is_within_download_limit() {
-                    media.state = MediaState::Failed(
-                        "This attachment is larger than the 64 MiB download limit".into(),
-                    );
-                    return;
+                {
+                    if !media.is_within_download_limit() {
+                        media.state = MediaState::Failed(
+                            "This attachment is larger than the 64 MiB download limit".into(),
+                        );
+                        return;
+                    }
+                    if matches!(media.state, MediaState::Downloading) {
+                        return;
+                    }
+                    media.state = MediaState::Downloading;
                 }
-                if matches!(media.state, MediaState::Downloading) {
-                    return;
-                }
-                media.state = MediaState::Downloading;
                 self.backend.send(Command::Download {
                     card,
                     chat,
                     message,
                 });
             }
-            Action::PreviewImage(path) => {
-                if crate::safety::can_preview_image(&path) && path.is_file() {
-                    self.image_preview = Some(PreviewState::new(path));
+            Action::PreviewImage {
+                path,
+                chat,
+                message,
+            } => {
+                if crate::image_preview::can_view(&path) && path.is_file() {
+                    // The viewer takes the screen: a clip playing in the chat
+                    // behind it would keep its sound over whatever opens here.
+                    if self.video.message() != Some(message.as_str()) {
+                        self.video.stop();
+                    }
+                    // The album is asked for as the viewer opens, so stepping
+                    // through it works from the first frame.
+                    self.viewer_media.clear();
+                    self.viewer_media_chat = Some(chat.clone());
+                    self.backend
+                        .send(Command::LoadChatMedia { chat: chat.clone() });
+                    self.image_preview = Some(PreviewState::new(Some(path), chat, message));
                     self.dialog = None;
                     self.picker = None;
                     // egui drops the focus of widgets behind a modal only from
@@ -3427,8 +3480,63 @@ impl App {
                 }
             }
             Action::CloseImagePreview => {
+                // The viewer owned the clip on screen, so leaving it releases
+                // the player: a clip that kept playing had its sound over the
+                // chat, and over the next picture opened from the strip.
+                self.video.stop();
                 self.image_preview = None;
+                self.viewer_media.clear();
+                self.viewer_media_chat = None;
                 self.refocus_composer(ctx);
+            }
+            Action::ViewImage { message } => {
+                if self.image_preview.is_none() {
+                    return;
+                }
+                let Some(item) = self
+                    .viewer_media
+                    .iter()
+                    .find(|item| item.id == message)
+                    .cloned()
+                else {
+                    return;
+                };
+                // Stepping away from a clip that was playing stops it.
+                if self.video.message() != Some(item.id.as_str()) {
+                    self.video.stop();
+                }
+                // An item whose file is not here yet is shown for what it is
+                // and offered for download. It is not shown as the picture
+                // that happens to be on screen: that would be another file
+                // under this item's name.
+                let path = item.path.clone();
+                if let Some(preview) = &mut self.image_preview {
+                    preview.show_item(path, item.id.clone());
+                }
+            }
+            Action::ViewerStep(step) => {
+                let Some(preview) = self.image_preview.as_ref() else {
+                    return;
+                };
+                let Some(index) = preview.position(&self.viewer_media) else {
+                    return;
+                };
+                let count = self.viewer_media.len() as i64;
+                if count == 0 {
+                    return;
+                }
+                let next = (index as i64 + i64::from(step)).rem_euclid(count) as usize;
+                let item = self.viewer_media[next].clone();
+                // Stepping away from a clip that was playing stops it, so its
+                // sound does not carry over a photo.
+                if self.video.message() != Some(item.id.as_str()) {
+                    self.video.stop();
+                }
+                // As above: a missing file keeps its own state.
+                let path = item.path.clone();
+                if let Some(preview) = &mut self.image_preview {
+                    preview.show_item(path, item.id.clone());
+                }
             }
             Action::OpenFile(path) => {
                 if crate::safety::can_open_attachment(&path) && path.is_file() {
@@ -5753,6 +5861,193 @@ mod tests {
         }
     }
 
+    /// A chat whose album holds `count` pictures.
+    fn app_with_album(count: usize) -> App {
+        let mut app = app();
+        let chat = "1@s.whatsapp.net".to_owned();
+        app.chats.push(Chat::new(chat.clone(), "Ada".into()));
+        app.viewer_media = (0..count)
+            .map(|index| crate::archive::ChatMedia {
+                id: format!("m{index}"),
+                timestamp: index as i64,
+                video: false,
+                path: Some(PathBuf::from(format!("/fixture/{index}.png"))),
+                thumbnail: None,
+            })
+            .collect();
+        app.viewer_media_chat = Some(chat);
+        app
+    }
+
+    /// Opens the viewer on one item of that album.
+    fn open_viewer(app: &mut App, index: usize) {
+        app.image_preview = Some(PreviewState::new(
+            Some(PathBuf::from(format!("/fixture/{index}.png"))),
+            "1@s.whatsapp.net".into(),
+            format!("m{index}"),
+        ));
+    }
+
+    #[test]
+    fn stepping_the_viewer_walks_the_album_and_wraps() {
+        let mut app = app_with_album(3);
+        let ctx = egui::Context::default();
+        open_viewer(&mut app, 0);
+        app.apply(Action::ViewerStep(1), &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().message(), "m1");
+        app.apply(Action::ViewerStep(1), &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().message(), "m2");
+        // Past the last one: back to the first.
+        app.apply(Action::ViewerStep(1), &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().message(), "m0");
+        app.apply(Action::ViewerStep(-1), &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().message(), "m2");
+    }
+
+    /// An album item whose attachment is not here yet keeps that state. It is
+    /// not shown as the picture that happens to be on screen: that would be
+    /// another file under this item's name.
+    #[test]
+    fn an_item_without_a_file_is_not_shown_as_another_one() {
+        let mut app = app_with_album(3);
+        let ctx = egui::Context::default();
+        app.viewer_media[2].path = None;
+        open_viewer(&mut app, 0);
+        app.apply(
+            Action::ViewImage {
+                message: "m2".into(),
+            },
+            &ctx,
+        );
+        let preview = app.image_preview.as_ref().unwrap();
+        assert_eq!(preview.message(), "m2", "the viewer moved to the item");
+        assert_eq!(preview.path(), None, "the previous picture is not reused");
+        // Stepping onto it says the same.
+        app.apply(Action::ViewerStep(-1), &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().message(), "m1");
+        app.apply(Action::ViewerStep(1), &ctx);
+        let preview = app.image_preview.as_ref().unwrap();
+        assert_eq!(preview.message(), "m2");
+        assert_eq!(preview.path(), None, "and stepping does not either");
+    }
+
+    /// An album item with no file is shown for what it is, and the viewer is
+    /// waiting on the download it offered. When the file lands, the viewer has
+    /// to be given it too, or it keeps offering the download it just did.
+    #[test]
+    fn a_download_gives_the_viewer_the_file_it_was_waiting_for() {
+        let mut app = app_with_album(3);
+        let ctx = egui::Context::default();
+        app.viewer_media[2].path = None;
+        open_viewer(&mut app, 0);
+        app.apply(
+            Action::ViewImage {
+                message: "m2".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), None);
+
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        events
+            .send(Event::Media {
+                card: None,
+                chat: "1@s.whatsapp.net".into(),
+                message: "m2".into(),
+                result: Ok(PathBuf::from("/fixture/2.png")),
+            })
+            .unwrap();
+        app.handle_events();
+
+        let preview = app.image_preview.as_ref().unwrap();
+        assert_eq!(preview.message(), "m2");
+        assert_eq!(
+            preview.path(),
+            Some(std::path::Path::new("/fixture/2.png")),
+            "the viewer takes the file that just arrived"
+        );
+        assert_eq!(
+            app.viewer_media[2].path.as_deref(),
+            Some(std::path::Path::new("/fixture/2.png")),
+            "and so does the album"
+        );
+    }
+
+    #[test]
+    fn stepping_does_nothing_without_an_album() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        open_viewer(&mut app, 0);
+        app.apply(Action::ViewerStep(1), &ctx);
+        assert_eq!(
+            app.image_preview.as_ref().unwrap().message(),
+            "m0",
+            "a picture opened on its own has nowhere to step"
+        );
+    }
+
+    #[test]
+    fn a_thumbnail_click_shows_that_item() {
+        let mut app = app_with_album(3);
+        let ctx = egui::Context::default();
+        open_viewer(&mut app, 0);
+        app.apply(
+            Action::ViewImage {
+                message: "m2".into(),
+            },
+            &ctx,
+        );
+        let preview = app.image_preview.as_ref().unwrap();
+        assert_eq!(preview.message(), "m2");
+        assert_eq!(preview.path(), Some(std::path::Path::new("/fixture/2.png")));
+        assert!(preview.is_fit(), "the picture opens fitted");
+        // An id the album does not hold leaves the viewer where it was.
+        app.apply(
+            Action::ViewImage {
+                message: "nope".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(app.image_preview.as_ref().unwrap().message(), "m2");
+    }
+
+    #[test]
+    fn closing_the_viewer_forgets_the_album() {
+        let mut app = app_with_album(3);
+        let ctx = egui::Context::default();
+        open_viewer(&mut app, 0);
+        app.apply(Action::CloseImagePreview, &ctx);
+        assert!(app.image_preview.is_none());
+        assert!(app.viewer_media.is_empty());
+        assert!(app.viewer_media_chat.is_none());
+    }
+
+    #[test]
+    fn an_album_answer_for_another_chat_is_dropped() {
+        let root = std::env::temp_dir().join(format!("zapfast-album-{}", std::process::id()));
+        let (mut app, events) = App::headless(AppDirs::under(&root), Settings::default());
+        app.viewer_media_chat = Some("1@s.whatsapp.net".into());
+        // An album for a chat the viewer has already left arrives too late.
+        events
+            .send(Event::ChatMedia {
+                chat: "2@s.whatsapp.net".into(),
+                items: Vec::new(),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(app.viewer_media_chat.as_deref() == Some("1@s.whatsapp.net"));
+        // Its own album lands.
+        events
+            .send(Event::ChatMedia {
+                chat: "1@s.whatsapp.net".into(),
+                items: Vec::new(),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(app.viewer_media.is_empty());
+    }
+
     #[test]
     fn image_preview_opens_zooms_fits_and_closes() {
         let ctx = egui::Context::default();
@@ -5760,9 +6055,16 @@ mod tests {
         let file = tempfile::NamedTempFile::with_suffix(".png").unwrap();
         std::fs::write(file.path(), b"not a real image").unwrap();
 
-        app.apply(Action::PreviewImage(file.path().to_owned()), &ctx);
+        app.apply(
+            Action::PreviewImage {
+                path: file.path().to_owned(),
+                chat: "1@s.whatsapp.net".into(),
+                message: "m1".into(),
+            },
+            &ctx,
+        );
         let preview = app.image_preview.as_ref().expect("preview opens");
-        assert_eq!(preview.path(), file.path());
+        assert_eq!(preview.path(), Some(file.path()));
         assert!(preview.is_fit());
 
         app.apply(Action::ZoomImageIn, &ctx);
@@ -5887,7 +6189,14 @@ mod tests {
         let file = tempfile::NamedTempFile::with_suffix(".heic").unwrap();
         std::fs::write(file.path(), b"not a real image").unwrap();
 
-        app.apply(Action::PreviewImage(file.path().to_owned()), &ctx);
+        app.apply(
+            Action::PreviewImage {
+                path: file.path().to_owned(),
+                chat: "1@s.whatsapp.net".into(),
+                message: "m1".into(),
+            },
+            &ctx,
+        );
 
         assert!(
             app.image_preview.is_none(),
@@ -7406,6 +7715,30 @@ mod tests {
                 card: None,
                 chat: chat.into(),
                 message: "picture".into(),
+            },
+            &ctx,
+        );
+        assert!(matches!(commands.try_recv(), Ok(Command::Download { .. })));
+    }
+
+    /// The viewer browses the album the archive holds, which reaches older
+    /// messages than the loaded transcript. Downloading one of those has to
+    /// reach the worker all the same: it reads the download keys from the
+    /// archive, so a message that is not in `conversations` is not a reason to
+    /// drop the request.
+    #[test]
+    fn a_download_for_a_message_outside_the_loaded_transcript_reaches_the_worker() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        let ctx = egui::Context::default();
+        assert!(!app.conversations.contains_key(chat));
+        app.apply(
+            Action::Download {
+                card: None,
+                chat: chat.into(),
+                message: "older-picture".into(),
             },
             &ctx,
         );

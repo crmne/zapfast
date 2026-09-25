@@ -1223,3 +1223,79 @@ msgstr "Guardar como…"
 #: src/ui/image_preview.rs:158
 msgid "Open in another app"
 msgstr "Abrir en otra aplicación"
+
+#: src/ui/image_preview.rs:173
+msgid "Image"
+msgstr "Imagen"
+
+#: src/ui/image_preview.rs:194
+msgid "Close preview (Esc)"
+msgstr "Cerrar la vista previa (Esc)"
+
+#: src/ui/image_preview.rs:239
+msgid "Zoom in"
+msgstr "Acercar"
+
+#: src/ui/image_preview.rs:249
+msgid "Fit"
+msgstr "Ajustar"
+
+#: src/ui/image_preview.rs:250
+msgid "Show at original size"
+msgstr "Ver al tamaño original"
+
+#: src/ui/image_preview.rs:256
+msgid "Fit to the window (0)"
+msgstr "Ajustar a la ventana (0)"
+
+#: src/ui/image_preview.rs:272
+msgid "Zoom out"
+msgstr "Alejar"
+
+#: src/ui/image_preview.rs:288
+msgid "Reply"
+msgstr "Responder"
+
+#: src/ui/image_preview.rs:301
+msgid "React"
+msgstr "Reaccionar"
+
+#: src/ui/image_preview.rs:320
+msgid "Forward"
+msgstr "Reenviar"
+
+#: src/ui/image_preview.rs:361 src/ui/image_preview.rs:563 src/ui/image_preview.rs:571 src/ui/image_preview.rs:642
+msgid "Download"
+msgstr "Descargar"
+
+#: src/ui/image_preview.rs:380
+msgid "Show in the chat"
+msgstr "Ver en el chat"
+
+#: src/ui/image_preview.rs:502
+msgid "This image could not be displayed in ZapFast."
+msgstr "Esta imagen no se pudo mostrar en ZapFast."
+
+#: src/ui/image_preview.rs:507
+msgid "Open externally"
+msgstr "Abrir externamente"
+
+#: src/ui/image_preview.rs:640
+msgid "Play or pause the video"
+msgstr "Reproducir o pausar el video"
+
+#: src/ui/image_preview.rs:749
+msgid "Video"
+msgstr "Vídeo"
+
+#: src/ui/image_preview.rs:751
+msgid "Photo"
+msgstr "Foto"
+
+#: src/ui/image_preview.rs:847
+msgid "Previous (,)"
+msgstr "Anterior (,)"
+
+#: src/ui/image_preview.rs:853
+msgid "Next (.)"
+msgstr "Siguiente (.)"
