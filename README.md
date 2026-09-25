@@ -262,6 +262,19 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   groups are read-only for non-admins. Clicking a `chat.whatsapp.com` invite
   link shows the group's name, size, and description, and joins it (or sends a
   join request when admins approve members) without leaving ZapFast.
+- **Calls.** Voice and video calls, one to one. The phone and camera buttons in
+a chat's header start one, and an incoming call takes over the window with the
+caller's name and **Accept** / **Decline**; the duration counts from the moment
+the two sides are really connected, not from the button press. A video call
+shows the peer's picture full-window with your own camera in the corner, and
+turning your camera off keeps the call and its audio running. The microphone,
+speaker, and camera a call uses are picked in the call's own controls and
+remembered for the next one, without changing your system's defaults. Finished
+calls are listed under **Calls** and appear in the chat they belong to, with how
+they ended: answered, missed, declined, busy, no answer, or a lost connection.
+The rotation a phone announces with its camera is applied, so a portrait caller
+stays portrait. Calls need PipeWire and, for video, a V4L2 camera; see
+[Calling](#calling).
 - **Presence.** See online, last-seen, and typing status, and send your typing
   status. Like WhatsApp Web, ZapFast shows you as online only while its window
   is focused, and goes offline ten seconds after you switch away or hide it to
@@ -352,7 +365,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 - Play videos in codecs other than H.264 in the app (they open in your system
   player).
-- Calls, status posts, communities, newsletters, and group administration.
+- Share your screen in a 1:1 call. The pinned whatsapp-rust revision carries
+  screen sharing for group calls only, so **Share screen** is shown disabled
+  rather than as a control that cannot work. OBS Virtual Camera stands in for
+  it; see [Calling](#calling).
+- Status posts, communities, newsletters, and group administration.
 - Submit interactive forms, payments, shopping flows, or carousel selections.
   Use these in WhatsApp Web or on your phone. Embedded videos and documents,
   and templates without readable text also need another client.
@@ -492,6 +509,55 @@ with `Ctrl+,`. The pencil opens **New chat**, with **Message yourself** and
 lets you message a new number without saving it. You
 can also open a group member's contact card. Saved names sync through WhatsApp
 to your phone and linked devices.
+
+### Calling
+
+The phone icon in a chat's header starts a voice call and the camera icon a
+video call. An incoming call takes over the window with the caller's name, a
+voice or video label, and **Accept** and **Decline**; accepting brings up the
+microphone and speaker, and for a video call the camera as well.
+
+An incoming call also raises a desktop notification with the caller's name, so a
+window that is hidden to the tray, or behind another program, does not hide the
+call; clicking it brings ZapFast up with the call waiting. A call in a chat you
+have muted, archived, or locked stays as quiet as a message in it.
+
+During a call the window shows the peer's picture (or the chat's picture for a
+voice call) with the call's length, and the controls along the bottom: mute,
+camera, speaker, **Microphone** / **Speaker** / **Camera** pickers, and the red
+hang-up button. Muting goes through whatsapp-rust's own mute, so the outgoing
+audio stops without restarting the recorder or renegotiating the call, and the
+peer is told. Turning the camera off stops the video direction and leaves the
+call and its audio running; so does a camera that is unplugged or claimed by
+another program. **Back to the chat** in the top-left corner of the call leaves
+the call running in a bar at the bottom of the window, with the call's length
+and **Return to the call**; only hanging up ends it. A call keeps running when
+the window is hidden to the tray.
+
+The pickers list what the machine really has, and the choices are saved and
+reused by the next call. They never change your system's default devices: the
+selection applies to ZapFast's own call media only. A device that is gone when a
+call starts (a headset switched off, a camera unplugged) falls back to the
+system default and the call screen says so, rather than opening a stream that
+can never deliver.
+
+Finished calls are recorded in the local archive, not in `settings.json`, and
+listed under **Calls** with their direction, whether they were voice or video,
+how long they lasted, and how they ended. The same record is shown inside the
+chat the call belongs to, with its length and the time it happened. Only a call
+that both sides answered has a length; a call that was rejected, missed, or
+never connected keeps the reason instead.
+
+Calls need PipeWire: ZapFast records through `pw-record` and plays through
+`pw-play`, which every current Linux desktop with PipeWire provides. Video calls
+additionally need a V4L2 capture device under `/dev/video*`. Any camera the
+kernel exposes appears in the picker, including **OBS Virtual Camera** once OBS
+Studio has started it, which is also the way to put anything OBS can capture
+into a call.
+
+Screenshots and recordings in this repository come from demo mode
+(`zapfast --demo`), which runs on synthetic conversations and never touches a
+real account.
 
 ### Locked chats
 
@@ -728,6 +794,10 @@ and its attachment and poll menu. `typing`, `mention`, and
 `emoji-complete` preview the multiline field and inline suggestions.
 Use `--demo-page chat-menu` to preview the compact chat context menu, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
+Use `--demo-page call` for the incoming-call screen, `call-active` for a voice
+call in progress, `call-video` for a video call with the peer's picture and your
+own camera, `calls` for the call history, and `call-entries` for the call
+entries inside a chat.
 `--demo-page video` shows a video and round video messages, and
 `video-playing` or `note-playing` starts one of them, silently.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and

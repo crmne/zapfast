@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-24 11:52+0200\n"
+"POT-Creation-Date: 2026-09-25 21:05+0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -140,87 +140,104 @@ msgstr "Ноябрь"
 msgid "December"
 msgstr "Декабрь"
 
-#: src/ui/chats.rs:112 src/ui/chats.rs:227 src/ui/settings.rs:346
+#: src/ui/chats.rs:112 src/ui/chats.rs:239 src/ui/settings.rs:346
 msgid "Chats"
 msgstr "Чаты"
 
-#: src/ui/chats.rs:169 src/ui/chats.rs:268 src/ui/pane.rs:169
+#: src/ui/chats.rs:137 src/ui/chats.rs:264 src/ui/calls.rs:78
+#, fuzzy
+msgid "Calls"
+msgstr "Звонки"
+
+#: src/ui/chats.rs:181 src/ui/chats.rs:292 src/ui/pane.rs:169
 msgid "Search"
 msgstr "Поиск"
 
-#: src/ui/chats.rs:370
+#: src/ui/chats.rs:394
 msgid "Archived"
 msgstr "Архив"
 
-#: src/ui/chats.rs:387
+#: src/ui/chats.rs:411
 msgid "Locked"
 msgstr "Заблокированные"
 
-#: src/ui/chats.rs:437
+#: src/ui/chats.rs:461
 msgid "No favorites yet"
 msgstr "Пока нет избранных"
 
-#: src/ui/chats.rs:774 src/app.rs:1201
+#: src/ui/chats.rs:798 src/app.rs:1265
 msgid "Message yourself"
 msgstr "Написать себе"
 
-#: src/ui/chats.rs:998 src/ui/chats.rs:1306 src/ui/picker.rs:1569
+#: src/ui/chats.rs:1022 src/ui/chats.rs:1330 src/ui/picker.rs:1569
 msgid "Remove from favorites"
 msgstr "Убрать из избранного"
 
-#: src/ui/chats.rs:1000 src/ui/chats.rs:1308 src/ui/conversation.rs:3450
+#: src/ui/chats.rs:1024 src/ui/chats.rs:1332 src/ui/conversation.rs:3680
 #: src/ui/dialogs.rs:965 src/ui/picker.rs:1570
 msgid "Add to favorites"
 msgstr "Добавить в избранное"
 
-#: src/ui/chats.rs:1010 src/ui/chats.rs:1332 src/ui/conversation.rs:228
+#: src/ui/chats.rs:1034 src/ui/chats.rs:1356 src/ui/conversation.rs:234
 #: src/ui/dialogs.rs:1056 src/ui/dialogs.rs:1479
 msgid "Leave group"
 msgstr "Покинуть группу"
 
-#: src/ui/chats.rs:1011 src/ui/chats.rs:1330 src/ui/conversation.rs:226
+#: src/ui/chats.rs:1035 src/ui/chats.rs:1354 src/ui/conversation.rs:232
 #: src/ui/dialogs.rs:1054 src/ui/dialogs.rs:1477
 msgid "Leave channel"
 msgstr "Покинуть канал"
 
-#: src/ui/chats.rs:1026 src/ui/labels.rs:172 src/ui/labels.rs:223
+#: src/ui/chats.rs:1050 src/ui/labels.rs:172 src/ui/labels.rs:223
 #: src/ui/labels.rs:260
 msgid "Labels"
 msgstr "Метки"
 
-#: src/ui/conversation.rs:87
+#: src/ui/conversation.rs:90
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K для поиска · ? для сочетаний клавиш"
 
-#: src/ui/conversation.rs:307 src/ui/pane.rs:133
+#: src/ui/conversation.rs:315 src/ui/call.rs:558
+msgid "Hang up"
+msgstr ""
+
+#: src/ui/conversation.rs:322
+msgid "Voice call"
+msgstr ""
+
+#: src/ui/conversation.rs:341
+msgid "Video call"
+msgstr ""
+
+#: src/ui/conversation.rs:358 src/ui/pane.rs:133
 msgid "Search messages"
 msgstr "Поиск сообщений"
 
-#: src/ui/conversation.rs:799
+#: src/ui/conversation.rs:850
 msgid "You left this channel"
 msgstr "Вы покинули этот канал"
 
-#: src/ui/conversation.rs:803
+#: src/ui/conversation.rs:854
 msgid "Channels are read-only in ZapFast"
 msgstr "Каналы в ZapFast доступны только для чтения"
 
-#: src/ui/conversation.rs:832
+#: src/ui/conversation.rs:883
 msgid "You left this group"
 msgstr "Вы покинули эту группу"
 
-#: src/ui/conversation.rs:958
+#: src/ui/conversation.rs:1029
 msgid "Attach"
 msgstr "Прикрепить"
 
-#: src/ui/conversation.rs:1022
+#: src/ui/conversation.rs:1109
 msgid "Type a message"
 msgstr "Введите сообщение"
 
-#: src/ui/conversation.rs:1025
+#: src/ui/conversation.rs:1112
 msgid "Add a caption"
 msgstr "Добавить подпись"
 
-#: src/ui/conversation.rs:1191
+#: src/ui/conversation.rs:1307
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -228,39 +245,39 @@ msgstr ""
 "Enter отправляет · Shift+Enter для новой строки · *жирный* _курсив_ "
 "~зачёркнутый~ · Ctrl+V вставляет изображение"
 
-#: src/ui/conversation.rs:1193
+#: src/ui/conversation.rs:1309
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Ctrl+Enter отправляет · *жирный* _курсив_ ~зачёркнутый~ · Ctrl+V вставляет "
 "изображение"
 
-#: src/ui/conversation.rs:1204
+#: src/ui/conversation.rs:1320
 msgid "Hide shortcut hints (restore in Settings)"
 msgstr "Скрыть подсказки сочетаний клавиш (восстановить в настройках)"
 
-#: src/ui/conversation.rs:1219
+#: src/ui/conversation.rs:1335
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Все сочетания клавиш ({})"
 
-#: src/ui/conversation.rs:1292
+#: src/ui/conversation.rs:1441
 msgid "Send files"
 msgstr "Отправить файлы"
 
-#: src/ui/conversation.rs:1296
+#: src/ui/conversation.rs:1445
 msgid "Create poll"
 msgstr "Создать опрос"
 
-#: src/ui/conversation.rs:1314
+#: src/ui/conversation.rs:1463
 #, rust-format
 msgid "Voice message ({duration}) not sent"
 msgstr "Голосовое сообщение ({duration}) не отправлено"
 
-#: src/ui/conversation.rs:1316
+#: src/ui/conversation.rs:1465
 msgid "Discard voice message"
 msgstr "Удалить голосовое сообщение"
 
-#: src/ui/conversation.rs:1724
+#: src/ui/conversation.rs:1945
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
@@ -268,34 +285,34 @@ msgstr[0] "{} непрочитанное сообщение"
 msgstr[1] "{} непрочитанных сообщения"
 msgstr[2] "{} непрочитанных сообщений"
 
-#: src/ui/conversation.rs:2829 src/ui/conversation.rs:3459
+#: src/ui/conversation.rs:3059 src/ui/conversation.rs:3689
 msgid "Open in system player"
 msgstr "Открыть в системном плеере"
 
-#: src/ui/conversation.rs:2830 src/ui/conversation.rs:3518
+#: src/ui/conversation.rs:3060 src/ui/conversation.rs:3748
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Данные сообщения"
 
-#: src/ui/conversation.rs:3733
+#: src/ui/conversation.rs:3963
 #, fuzzy
 msgid "Location"
 msgstr "Геоданные в реальном времени"
 
-#: src/ui/conversation.rs:3759
+#: src/ui/conversation.rs:3989
 msgid "Live location ended"
 msgstr "Трансляция геоданных завершена"
 
-#: src/ui/conversation.rs:3761 src/ui/conversation.rs:3905
+#: src/ui/conversation.rs:3991 src/ui/conversation.rs:4135
 msgid "Live location"
 msgstr "Геоданные в реальном времени"
 
-#: src/ui/conversation.rs:3771
+#: src/ui/conversation.rs:4001
 #, rust-format
 msgid "Updated {time}"
 msgstr "Обновлено в {time}"
 
-#: src/ui/conversation.rs:3834
+#: src/ui/conversation.rs:4064
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
@@ -303,31 +320,31 @@ msgstr[0] "{} стикер"
 msgstr[1] "{} стикера"
 msgstr[2] "{} стикеров"
 
-#: src/ui/conversation.rs:3847
+#: src/ui/conversation.rs:4077
 msgid "View stickers"
 msgstr "Посмотреть стикеры"
 
-#: src/ui/conversation.rs:3913
+#: src/ui/conversation.rs:4143
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Откройте WhatsApp на телефоне, чтобы следить за ними."
 
-#: src/ui/conversation.rs:4759
+#: src/ui/conversation.rs:4989
 msgid "Open in a map"
 msgstr "Открыть на карте"
 
-#: src/ui/conversation.rs:5303
+#: src/ui/conversation.rs:5548
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/ui/conversation.rs:5305 src/ui/settings.rs:1326
+#: src/ui/conversation.rs:5550 src/ui/settings.rs:1326
 msgid "Play"
 msgstr "Воспроизвести"
 
-#: src/ui/conversation.rs:5328
+#: src/ui/conversation.rs:5573 src/ui/call.rs:453
 msgid "Unmute"
 msgstr "Включить звук"
 
-#: src/ui/conversation.rs:5330
+#: src/ui/conversation.rs:5575 src/ui/call.rs:455
 msgid "Mute"
 msgstr "Выключить звук"
 
@@ -637,6 +654,219 @@ msgstr "Без звука"
 msgid "Choose a file…"
 msgstr "Выбрать файл…"
 
+#: src/ui/call.rs:185
+#, fuzzy
+msgid "Back to the chat"
+msgstr "Отправить этот набор в чат"
+
+#: src/ui/call.rs:254 src/ui/call.rs:255
+msgid "Return to the call"
+msgstr ""
+
+#: src/ui/call.rs:269
+#, fuzzy
+msgid "Calling…"
+msgstr "Загрузка…"
+
+#: src/ui/call.rs:271
+#, fuzzy
+msgid "Ringing…"
+msgstr "Загрузка…"
+
+#: src/ui/call.rs:274 src/ui/call.rs:282
+msgid "Connected"
+msgstr ""
+
+#: src/ui/call.rs:276
+#, fuzzy
+msgid "Connecting…"
+msgstr "Загрузка…"
+
+#: src/ui/call.rs:288 src/ui/call.rs:299
+msgid "Call ended"
+msgstr ""
+
+#: src/ui/call.rs:289 src/ui/call.rs:763
+msgid "Incoming call"
+msgstr ""
+
+#: src/ui/call.rs:300
+msgid "Missed call"
+msgstr ""
+
+#: src/ui/call.rs:301 src/ui/calls.rs:213
+msgid "Declined"
+msgstr ""
+
+#: src/ui/call.rs:302 src/ui/calls.rs:214
+msgid "Busy"
+msgstr ""
+
+#: src/ui/call.rs:303 src/ui/calls.rs:215
+msgid "Could not connect"
+msgstr ""
+
+#: src/ui/call.rs:304 src/ui/calls.rs:216
+msgid "No answer"
+msgstr ""
+
+#: src/ui/call.rs:307 src/ui/calls.rs:217
+msgid "Connection lost"
+msgstr ""
+
+#: src/ui/call.rs:309
+msgid "The call could not be established"
+msgstr ""
+
+#: src/ui/call.rs:313
+msgid "Answered on another device"
+msgstr ""
+
+#: src/ui/call.rs:316
+msgid "Declined on another device"
+msgstr ""
+
+#: src/ui/call.rs:349
+msgid "Waiting for video…"
+msgstr ""
+
+#: src/ui/call.rs:386
+msgid "No audio is arriving from this call"
+msgstr ""
+
+#: src/ui/call.rs:388
+msgid "This call's audio cannot be decoded"
+msgstr ""
+
+#: src/ui/call.rs:391
+msgid "This call's audio is not authenticating"
+msgstr ""
+
+#: src/ui/call.rs:395
+msgid "This call's audio is arriving in an unexpected format"
+msgstr ""
+
+#: src/ui/call.rs:399
+msgid "This call's audio is being rejected by the decoder"
+msgstr ""
+
+#: src/ui/call.rs:402
+msgid "This call's audio format keeps changing"
+msgstr ""
+
+#: src/ui/call.rs:405
+msgid "The peer's audio stopped"
+msgstr ""
+
+#: src/ui/call.rs:418
+#, rust-format
+msgid "Microphone “{name}” is not available; using the system default"
+msgstr ""
+
+#: src/ui/call.rs:422
+#, rust-format
+msgid "Speaker “{name}” is not available; using the system default"
+msgstr ""
+
+#: src/ui/call.rs:424
+#, rust-format
+msgid "Camera “{name}” is not available"
+msgstr ""
+
+#: src/ui/call.rs:480
+msgid "Start video"
+msgstr ""
+
+#: src/ui/call.rs:482
+msgid "Turn the camera off"
+msgstr ""
+
+#: src/ui/call.rs:484
+msgid "Turn the camera on"
+msgstr ""
+
+#: src/ui/call.rs:513
+#, fuzzy
+msgid "Share your screen"
+msgstr "Создайте свои"
+
+#: src/ui/call.rs:520
+msgid ""
+"1:1 screen sharing is not available in the whatsapp-rust revision this app "
+"uses; an OBS virtual camera can be selected as a camera instead"
+msgstr ""
+
+#: src/ui/call.rs:536
+#, fuzzy
+msgid "Speaker and devices"
+msgstr "Связанное устройство"
+
+#: src/ui/call.rs:623
+msgid "Default device"
+msgstr ""
+
+#: src/ui/call.rs:651
+msgid "Microphone"
+msgstr ""
+
+#: src/ui/call.rs:661
+msgid "Speaker"
+msgstr ""
+
+#: src/ui/call.rs:672
+msgid "Camera"
+msgstr ""
+
+#: src/ui/call.rs:776 src/ui/calls.rs:200 src/app.rs:3102
+msgid "Incoming video call"
+msgstr ""
+
+#: src/ui/call.rs:778 src/ui/calls.rs:194 src/app.rs:3104
+msgid "Incoming voice call"
+msgstr ""
+
+#: src/ui/call.rs:789
+msgid "Accept"
+msgstr ""
+
+#: src/ui/call.rs:803
+#, fuzzy
+msgid "Decline"
+msgstr "В сети"
+
+#: src/ui/calls.rs:30
+#, fuzzy
+msgid "No calls yet"
+msgstr "Пока нет избранных"
+
+#: src/ui/calls.rs:33
+msgid "Calls you make and take with ZapFast are listed here."
+msgstr ""
+
+#: src/ui/calls.rs:69
+msgid "Back to chats"
+msgstr ""
+
+#: src/ui/calls.rs:136
+msgid "Call back"
+msgstr ""
+
+#: src/ui/calls.rs:152
+msgid "Call back with video"
+msgstr ""
+
+#: src/ui/calls.rs:191
+msgid "Outgoing voice call"
+msgstr ""
+
+#: src/ui/calls.rs:197
+msgid "Outgoing video call"
+msgstr ""
+
+#: src/ui/calls.rs:212
+msgid "Missed"
+msgstr ""
+
 #. Translators: {name} is replaced by the author's name, shown as a link.
 #: src/ui/widgets.rs:633
 #, rust-format
@@ -707,25 +937,25 @@ msgstr[2] "ещё {}"
 msgid "No one yet"
 msgstr "Пока никто"
 
-#: src/app.rs:1122
+#: src/app.rs:1186
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Метка «{name}» уже есть."
 
-#: src/app.rs:1182
+#: src/app.rs:1246
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Вы)"
 
-#: src/app.rs:1183 src/app.rs:1202
+#: src/app.rs:1247 src/app.rs:1266
 msgid "You"
 msgstr "Вы"
 
-#: src/app.rs:2427
+#: src/app.rs:2524
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
 
-#: src/app.rs:2431
+#: src/app.rs:2528
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -733,20 +963,20 @@ msgstr ""
 "Не отправлено: сообщение, на которое вы отвечаете, недоступно на этом "
 "компьютере. Отмените ответ, чтобы отправить без цитаты."
 
-#: src/app.rs:3730
+#: src/app.rs:3990
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: src/app.rs:3805
+#: src/app.rs:4065
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:4083 src/ui/labels.rs:294
+#: src/app.rs:4343 src/ui/labels.rs:294
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
 
-#: src/app.rs:4606
+#: src/app.rs:4866
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
 
