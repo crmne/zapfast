@@ -4473,6 +4473,84 @@ mod tests {
     }
 
     #[test]
+    fn a_typed_emoticon_becomes_its_emoji_in_the_composer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+
+        frame_with(&mut app, &ctx, vec![egui::Event::Text("oi".into())]);
+        frame_with(&mut app, &ctx, vec![egui::Event::Text(" ".into())]);
+        frame_with(&mut app, &ctx, vec![egui::Event::Text(":-".into())]);
+        assert_eq!(app.composer, "oi :-", "an unfinished emoticon stays text");
+        frame_with(&mut app, &ctx, vec![egui::Event::Text(")".into())]);
+        render(&mut app, &ctx);
+
+        assert_eq!(app.composer, "oi 😄");
+        assert!(
+            app.emoji_start.is_none(),
+            "the emoji list does not open over a finished emoticon"
+        );
+    }
+
+    #[test]
+    fn a_smiley_keeps_typing_after_it() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+
+        for text in [";", "-", ")", " ", "<", "3"] {
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(text.into())]);
+        }
+        render(&mut app, &ctx);
+
+        assert_eq!(app.composer, "😉 <3");
+    }
+
+    #[test]
+    fn times_and_words_are_not_turned_into_emoji() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+
+        for text in ["12", ":", "3", "0", " ", "x", "=", "3"] {
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(text.into())]);
+        }
+        render(&mut app, &ctx);
+
+        assert_eq!(app.composer, "12:30 x=3");
+    }
+
+    #[test]
+    fn a_pasted_emoticon_is_left_as_typed() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+
+        frame_with(&mut app, &ctx, vec![egui::Event::Paste(":-) e :-(".into())]);
+        render(&mut app, &ctx);
+
+        assert_eq!(app.composer, ":-) e :-(");
+    }
+
+    #[test]
+    fn the_colon_shortcode_still_completes() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+
+        frame_with(&mut app, &ctx, vec![egui::Event::Text(":gri".into())]);
+        render(&mut app, &ctx);
+
+        assert_eq!(app.composer, ":gri");
+        assert!(app.emoji_start.is_some());
+    }
+
+    #[test]
     fn configured_send_shortcut_bypasses_emoji_autocomplete() {
         let mut app = app();
         let ctx = egui::Context::default();

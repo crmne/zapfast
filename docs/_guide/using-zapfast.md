@@ -14,7 +14,10 @@ to make Enter add a line and send with Ctrl+Enter (Command+Enter on macOS).
 like WhatsApp, and a message of nothing but emoji shows large.
 Mentions in a group are written with `@`; the smiley opens emoji
 (searchable), GIFs, and stickers, including the stickers used on the
-phone.
+phone. A smiley you already know becomes its emoji while you type it:
+`:-)` gives 😄, `;)` gives 😉, `8-D` gives 😎, and `<3` gives ❤️.
+The conversion happens on the character that finishes the sequence, so
+`12:30` and `x=3` are left as typed, and so is a pasted `:-)`.
 
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
 check when it was sent, delivered, and read. The reaction row has a **+** that

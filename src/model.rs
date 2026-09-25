@@ -1331,6 +1331,12 @@ pub enum Action {
         start: usize,
         end: usize,
     },
+    /// Replaces a typed emoticon with the emoji it stands for.
+    ReplaceEmoticon {
+        emoji: String,
+        start: usize,
+        end: usize,
+    },
     CloseEmojiSuggestions,
     /// Replaces the active `@` query with a selected group member.
     InsertMention {

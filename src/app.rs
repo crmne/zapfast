@@ -3799,6 +3799,20 @@ impl App {
                 }
                 self.emoji_start = None;
             }
+            Action::ReplaceEmoticon { emoji, start, end } => {
+                if start < end
+                    && self.composer.is_char_boundary(start)
+                    && self.composer.is_char_boundary(end)
+                {
+                    self.composer.replace_range(start..end, &emoji);
+                    let cursor = self.composer[..start].chars().count() + emoji.chars().count();
+                    self.set_composer_cursor(ctx, cursor);
+                    self.remember_emoji(&emoji);
+                    self.focus_composer = true;
+                }
+                self.emoji_start = None;
+                self.mention_start = None;
+            }
             Action::CloseEmojiSuggestions => {
                 self.emoji_start = None;
                 self.focus_composer = true;

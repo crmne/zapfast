@@ -854,14 +854,22 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             let id = egui::Id::new("composer-text");
             let has_focus = ui.memory(|memory| memory.has_focus(id));
             let enter_sends = app.settings.enter_sends;
-            let (typed_colon, typed_at) = ui.input(|input| {
+            let (typed_colon, typed_at, typed_text) = ui.input(|input| {
                 let typed = |needle: &str| {
                     input
                         .events
                         .iter()
                         .any(|event| matches!(event, egui::Event::Text(text) if text == needle))
                 };
-                (has_focus && typed(":"), has_focus && typed("@"))
+                let any_text = input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Text(_)));
+                (
+                    has_focus && typed(":"),
+                    has_focus && typed("@"),
+                    has_focus && any_text,
+                )
             });
             if !app.pending.is_empty() {
                 pending_strip(app, ui);
@@ -1111,7 +1119,21 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                         .cursor_range
                                         .map(|range| range.primary.index.0)
                                         .unwrap_or_else(|| app.composer.chars().count());
-                                    if typed_colon
+                                    // A finished emoticon becomes its emoji
+                                    // before anything else reads the text, so
+                                    // `:)` never opens the `:query` list.
+                                    if typed_text
+                                        && let Some((start, end, emoji)) =
+                                            crate::emoticon::match_before(&app.composer, cursor)
+                                    {
+                                        app.emoji_start = None;
+                                        app.mention_start = None;
+                                        app.actions.push(Action::ReplaceEmoticon {
+                                            emoji: emoji.to_owned(),
+                                            start,
+                                            end,
+                                        });
+                                    } else if typed_colon
                                         && let Some(at) = standalone_trigger(
                                             &app.composer,
                                             cursor,

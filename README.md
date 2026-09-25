@@ -188,6 +188,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   unsent text survives closing ZapFast and restarting. Open menus, dialogs, and unfinished actions
   are dismissed first. Type `:name` to autocomplete
   an emoji without leaving the composer, or `@` in a group to mention a member.
+  Type a smiley you already know, such as `:-)`, `;)`, `8-D`, or `<3`, and it
+  becomes its emoji on the character that finishes it, so a message keeps the
+  look the phone gives it. Only typing converts: a pasted `:-)` stays the text
+  it was, and a sequence that reads as something else, the `:3` of `12:30` or
+  the `=3` of `x=3`, is left alone.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
   delivered, or read. Replies can be text, attachments, voice messages,
   stickers, or GIFs. A reply never goes out without its quote: if the

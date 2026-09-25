@@ -120,6 +120,13 @@ protocol. These notes are for coding agents and new contributors.
   it afterwards (resolving sequences through the font's GSUB ligatures).
   Any text that can hold an emoji goes through `widgets::line` /
   `widgets::rich_text` or `markup::layout`, never a bare `Label`.
+- `src/emoticon.rs` is the table that turns a typed emoticon into its emoji
+  (`:-)` to 😄, `8-D` to 😎, `<3` to ❤️). The composer offers it only for
+  `egui::Event::Text`, so a paste keeps its characters, and only when the
+  longest sequence ending at the cursor stands on its own: a digit in front
+  belongs to something else (`12:3` is a time). Spellings ordinary text uses
+  (`=3`, `o/`, `DX`, `d:`, `x_x`) are left out of the table on purpose.
+  `Action::ReplaceEmoticon` does the replacement, so the view only reads.
 - `src/animation.rs` plays animated stickers and GIFs: WebP/GIF frames
   decode in-process, and so do MP4s (the `mp4` crate demuxes, `openh264`
   decodes the H.264 WhatsApp uses, samples converted from AVCC to Annex
