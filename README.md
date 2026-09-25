@@ -343,7 +343,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Settings it searches the settings), `Alt+↑/↓` or WhatsApp's
   `Ctrl+Shift+[`/`Ctrl+Shift+]` switches chats and
   keeps the active chat visible in the list, `↑` in an empty input edits your
-  previous message, `Esc` cancels the current action, `Ctrl+L` focuses the
+  previous message, `PgUp`/`PgDn` scroll the open chat by about a page,
+  `Home`/`End` jump to the top or newest message of the open chat (when the
+  input is empty), `Esc` cancels the current action, `Ctrl+L` focuses the
   message input, `Ctrl+N` opens New chat, `Ctrl+B` collapses or expands the
   chat list, and `?` (outside text fields) or
   `Ctrl+/` opens Keyboard shortcuts (use Command instead of Ctrl on macOS).

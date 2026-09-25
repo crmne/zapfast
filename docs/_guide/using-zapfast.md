@@ -195,7 +195,9 @@ The search bar finds chats by name, number, or latest message; searches all
 messages stored on this computer; and finds contacts without an existing chat.
 Click a message result to jump to it, or a contact to start a chat. Use
 `Alt+↑/↓`, or `Ctrl+Shift+[` and `Ctrl+Shift+]` as in WhatsApp, to switch chats
-without leaving the composer (Command instead of Ctrl on macOS).
+without leaving the composer (Command instead of Ctrl on macOS). Within an open
+chat, `PgUp`/`PgDn` scroll by about a page, and `Home`/`End` jump to the top or
+the newest message (when the input is empty).
 
 A shared contact message shows the name from its vCard. When the card names a
 WhatsApp account, **Chat** opens a private conversation with it and, if the
