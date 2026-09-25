@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{Event, Key, Modifiers};
+use egui::{Event, Key, Modifiers, Vec2, vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenTarget {
@@ -80,6 +80,34 @@ pub fn zoomed_size(width: f32, height: f32, zoom: f32) -> (f32, f32) {
     (width * zoom, height * zoom)
 }
 
+/// Scroll offset that brings the picture point at `from` to `to` once the
+/// picture is resized from `old` to `new`, both points relative to the
+/// viewport's top left. With `from == to` the pixel under the pointer stays
+/// under it while zooming. The preview centres the picture in content of
+/// `viewport.max(size)`, so that is the layout inverted here; the result is
+/// clamped to the range the scroll area allows, which keeps a picture
+/// narrower or shorter than the viewport centred on that axis.
+pub fn anchored_offset(
+    viewport: Vec2,
+    old: Vec2,
+    new: Vec2,
+    offset: Vec2,
+    from: Vec2,
+    to: Vec2,
+) -> Vec2 {
+    let axis = |d: usize| {
+        let origin = |size: f32| (viewport[d].max(size) - size) / 2.0;
+        let fraction = if old[d] > 0.0 {
+            (offset[d] + from[d] - origin(old[d])) / old[d]
+        } else {
+            0.5
+        };
+        let limit = viewport[d].max(new[d]) - viewport[d];
+        (origin(new[d]) + fraction * new[d] - to[d]).clamp(0.0, limit)
+    };
+    vec2(axis(0), axis(1))
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreviewState {
     path: PathBuf,
@@ -93,7 +121,7 @@ pub struct PreviewState {
 impl PreviewState {
     const MIN_ZOOM: f32 = 0.25;
     const MAX_ZOOM: f32 = 4.0;
-    const ZOOM_STEP: f32 = 1.25;
+    pub const ZOOM_STEP: f32 = 1.25;
 
     pub fn new(path: PathBuf) -> Self {
         Self {
@@ -129,13 +157,30 @@ impl PreviewState {
     }
 
     pub fn zoom_in(&mut self) {
-        self.zoom = (self.scale() * Self::ZOOM_STEP).min(Self::MAX_ZOOM);
-        self.fit = false;
+        self.zoom_by(Self::ZOOM_STEP);
     }
 
     pub fn zoom_out(&mut self) {
-        self.zoom = (self.scale() / Self::ZOOM_STEP).max(Self::MIN_ZOOM);
-        self.fit = false;
+        self.zoom_by(1.0 / Self::ZOOM_STEP);
+    }
+
+    /// Scales what is on screen by `factor` within the zoom limits. The
+    /// limits never reverse the direction: a picture fitted below the
+    /// minimum does not grow when zoomed out, so it stays fitted.
+    pub fn zoom_by(&mut self, factor: f32) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let scale = self.scale();
+        let zoom = if factor > 1.0 {
+            (scale * factor).min(Self::MAX_ZOOM).max(scale)
+        } else {
+            (scale * factor).max(Self::MIN_ZOOM).min(scale)
+        };
+        if zoom != scale {
+            self.zoom = zoom;
+            self.fit = false;
+        }
     }
 
     pub fn fit(&mut self) {
@@ -282,5 +327,36 @@ mod tests {
         preview.fit();
         assert!(preview.is_fit());
         assert_eq!(preview.zoom(), 1.0);
+    }
+
+    #[test]
+    fn zooming_at_the_limits_never_goes_the_wrong_way() {
+        let mut preview = PreviewState::new(PathBuf::from("photo.png"));
+        preview.set_fit_scale(0.1);
+        preview.zoom_by(0.8);
+        assert_eq!(preview.scale(), 0.1, "a tiny fit must not jump up");
+        assert!(preview.is_fit());
+        preview.zoom_by(1.1);
+        assert!((preview.zoom() - 0.11).abs() < 1e-6);
+
+        preview.actual_size();
+        preview.zoom_by(3.9);
+        preview.zoom_by(1.1);
+        assert_eq!(preview.zoom(), 4.0);
+        preview.zoom_by(0.001);
+        assert_eq!(preview.zoom(), 0.25);
+    }
+
+    #[test]
+    fn a_picture_smaller_than_the_viewport_stays_centred() {
+        let offset = anchored_offset(
+            vec2(800.0, 600.0),
+            vec2(1600.0, 1200.0),
+            vec2(400.0, 300.0),
+            vec2(500.0, 400.0),
+            vec2(10.0, 20.0),
+            vec2(10.0, 20.0),
+        );
+        assert_eq!(offset, Vec2::ZERO);
     }
 }

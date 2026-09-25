@@ -5159,6 +5159,12 @@ impl App {
         });
     }
 
+    /// Whether the latest wheel input came in points (a trackpad), which the
+    /// image preview pans with instead of zooming.
+    pub fn scroll_from_trackpad(&self) -> bool {
+        self.scroll_from_trackpad
+    }
+
     pub fn save_state(&mut self) {
         if self.settings_dirty {
             self.save_settings();

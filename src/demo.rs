@@ -4304,12 +4304,8 @@ mod tests {
     fn zoom_shortcuts_zoom_the_previewed_image_only() {
         let mut app = app();
         let ctx = egui::Context::default();
-        app.attach(&ctx);
-        render(&mut app, &ctx);
+        let fitted = open_sample_preview(&mut app, &ctx);
         let interface_zoom = ctx.zoom_factor();
-        let (photo, _) = sample_files(&app);
-        app.actions.push(crate::model::Action::PreviewImage(photo));
-        render(&mut app, &ctx);
 
         let ctrl_shift = egui::Modifiers {
             ctrl: true,
@@ -4317,28 +4313,6 @@ mod tests {
             command: !cfg!(target_os = "macos"),
             ..Default::default()
         };
-        // The picture decodes on a loader thread; wait until its fitted
-        // scale is known so zooming starts from a settled size.
-        let loaded = |app: &App| {
-            let path = app.image_preview.as_ref().unwrap().path().to_owned();
-            matches!(
-                ctx.try_load_texture(
-                    &crate::util::image_uri(&path),
-                    egui::TextureOptions::default(),
-                    egui::SizeHint::default(),
-                ),
-                Ok(egui::load::TexturePoll::Ready { .. })
-            )
-        };
-        for _ in 0..200 {
-            render(&mut app, &ctx);
-            if loaded(&app) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        render(&mut app, &ctx);
-        let fitted = app.image_preview.as_ref().unwrap().scale();
         frame_with(&mut app, &ctx, vec![key(egui::Key::Equals, ctrl_shift)]);
         render(&mut app, &ctx);
         let first = app.image_preview.as_ref().unwrap().zoom();
@@ -4361,6 +4335,321 @@ mod tests {
         render(&mut app, &ctx);
         assert!(app.image_preview.as_ref().unwrap().is_fit());
         assert_eq!(ctx.zoom_factor(), interface_zoom);
+    }
+
+    /// Opens the sample photo in the preview and waits for it to decode, so
+    /// input meets a settled, fitted picture. Returns the fitted scale.
+    fn open_sample_preview(app: &mut App, ctx: &egui::Context) -> f32 {
+        app.attach(ctx);
+        render(app, ctx);
+        let (photo, _) = sample_files(app);
+        let uri = crate::util::image_uri(&photo);
+        app.actions.push(crate::model::Action::PreviewImage(photo));
+        for _ in 0..200 {
+            render(app, ctx);
+            if matches!(
+                ctx.try_load_texture(
+                    &uri,
+                    egui::TextureOptions::default(),
+                    egui::SizeHint::default(),
+                ),
+                Ok(egui::load::TexturePoll::Ready { .. })
+            ) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        render(app, ctx);
+        app.image_preview.as_ref().unwrap().scale()
+    }
+
+    /// Runs one frame and returns where the preview drew its picture.
+    fn preview_frame(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::Rect {
+        picture_rect(&frame_sized(app, ctx, 780.0, events))
+    }
+
+    /// The largest textured shape: the chat behind shows the same file smaller.
+    fn picture_rect(shapes: &[egui::epaint::ClippedShape]) -> egui::Rect {
+        shapes
+            .iter()
+            .filter(|clipped| clipped.shape.texture_id() != egui::TextureId::default())
+            .map(|clipped| clipped.shape.visual_bounding_rect())
+            .max_by(|a, b| a.area().total_cmp(&b.area()))
+            .expect("the preview draws its picture")
+    }
+
+    /// Moves the pointer to `pos` and turns the wheel with `modifiers` held;
+    /// egui smooths the notch over several frames, so this runs until it has
+    /// all arrived.
+    fn wheel_at(
+        app: &mut App,
+        ctx: &egui::Context,
+        pos: egui::Pos2,
+        unit: egui::MouseWheelUnit,
+        delta: f32,
+        modifiers: egui::Modifiers,
+    ) {
+        preview_frame(
+            app,
+            ctx,
+            vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::PointerMoved(pos),
+                egui::Event::MouseWheel {
+                    unit,
+                    delta: egui::vec2(0.0, delta),
+                    modifiers,
+                    phase: egui::TouchPhase::Move,
+                },
+            ],
+        );
+        for _ in 0..40 {
+            preview_frame(app, ctx, vec![]);
+        }
+    }
+
+    fn primary(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn double_click_at(app: &mut App, ctx: &egui::Context, pos: egui::Pos2) {
+        preview_frame(
+            app,
+            ctx,
+            vec![egui::Event::PointerMoved(pos), primary(pos, true)],
+        );
+        preview_frame(app, ctx, vec![primary(pos, false)]);
+        preview_frame(app, ctx, vec![primary(pos, true)]);
+        preview_frame(app, ctx, vec![primary(pos, false)]);
+        render(app, ctx);
+    }
+
+    /// One notch of the mouse wheel zooms like the + button and the opposite
+    /// notch undoes it, also with Ctrl/Cmd held, which egui turns into its own
+    /// steeper zoom curve. The interface keeps its own zoom.
+    #[test]
+    fn a_wheel_notch_zooms_the_previewed_image_like_the_zoom_buttons() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let fitted = open_sample_preview(&mut app, &ctx);
+        let interface_zoom = ctx.zoom_factor();
+        let picture = preview_frame(&mut app, &ctx, vec![]);
+        for modifiers in [egui::Modifiers::NONE, egui::Modifiers::COMMAND] {
+            for (notch, expected) in [(1.0, fitted * 1.25), (-1.0, fitted)] {
+                wheel_at(
+                    &mut app,
+                    &ctx,
+                    picture.center(),
+                    egui::MouseWheelUnit::Line,
+                    notch,
+                    modifiers,
+                );
+                let scale = app.image_preview.as_ref().unwrap().scale();
+                assert!(
+                    (scale - expected).abs() < 1e-4,
+                    "{modifiers:?} notch {notch}: {scale}, not {expected}"
+                );
+            }
+        }
+        assert_eq!(ctx.zoom_factor(), interface_zoom);
+    }
+
+    /// egui keeps zooming a Ctrl/Cmd+wheel notch after the key comes up, so
+    /// letting go early must still leave exactly one step.
+    #[test]
+    fn releasing_ctrl_mid_notch_still_zooms_one_step() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let fitted = open_sample_preview(&mut app, &ctx);
+        let centre = preview_frame(&mut app, &ctx, vec![]).center();
+        preview_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+                egui::Event::PointerMoved(centre),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: egui::vec2(0.0, 1.0),
+                    modifiers: egui::Modifiers::COMMAND,
+                    phase: egui::TouchPhase::Move,
+                },
+            ],
+        );
+        for _ in 0..3 {
+            preview_frame(&mut app, &ctx, vec![]);
+        }
+        preview_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
+        );
+        for _ in 0..40 {
+            preview_frame(&mut app, &ctx, vec![]);
+        }
+        let scale = app.image_preview.as_ref().unwrap().scale();
+        assert!(
+            (scale - fitted * 1.25).abs() < 1e-4,
+            "{scale}, not {}",
+            fitted * 1.25
+        );
+    }
+
+    /// A pinch follows the fingers, even with Ctrl/Cmd held.
+    #[test]
+    fn a_pinch_zooms_the_previewed_image_by_its_own_factor() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let fitted = open_sample_preview(&mut app, &ctx);
+        let centre = preview_frame(&mut app, &ctx, vec![]).center();
+        preview_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+                egui::Event::PointerMoved(centre),
+                egui::Event::Zoom(1.2),
+            ],
+        );
+        let scale = app.image_preview.as_ref().unwrap().scale();
+        assert!(
+            (scale - fitted * 1.2).abs() < 1e-4,
+            "{scale}, not {}",
+            fitted * 1.2
+        );
+    }
+
+    /// macOS and Wayland report trackpad scrolling in points; a two-finger
+    /// scroll moves a picture larger than the area.
+    #[test]
+    fn a_trackpad_scroll_moves_the_previewed_image_instead_of_zooming() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        open_sample_preview(&mut app, &ctx);
+        app.actions.push(crate::model::Action::ImageActualSize);
+        render(&mut app, &ctx);
+        let before = preview_frame(&mut app, &ctx, vec![]);
+        wheel_at(
+            &mut app,
+            &ctx,
+            before.center(),
+            egui::MouseWheelUnit::Point,
+            -60.0,
+            egui::Modifiers::NONE,
+        );
+        let after = preview_frame(&mut app, &ctx, vec![]);
+        assert!(
+            before.top() - after.top() > 30.0,
+            "{before:?} did not scroll to {after:?}"
+        );
+        let preview = app.image_preview.as_ref().unwrap();
+        assert!(!preview.is_fit());
+        assert_eq!(preview.zoom(), 1.0);
+    }
+
+    /// Zooming with the wheel keeps the picture point under the pointer in
+    /// place, as laid out on screen.
+    #[test]
+    fn wheel_zoom_keeps_the_pointed_at_pixel_under_the_pointer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        open_sample_preview(&mut app, &ctx);
+        // A fitted picture fills the area's height, centred: its centre is
+        // the area's.
+        let pointer = preview_frame(&mut app, &ctx, vec![]).center() + egui::vec2(-200.0, -150.0);
+        // Larger than the area both ways, so each axis can scroll.
+        app.actions.push(crate::model::Action::ImageActualSize);
+        app.actions.push(crate::model::Action::ZoomImageIn);
+        render(&mut app, &ctx);
+        let before = preview_frame(&mut app, &ctx, vec![]);
+        let spot = (pointer - before.min) / before.size();
+        wheel_at(
+            &mut app,
+            &ctx,
+            pointer,
+            egui::MouseWheelUnit::Line,
+            1.0,
+            egui::Modifiers::NONE,
+        );
+        let after = preview_frame(&mut app, &ctx, vec![]);
+        assert!(after.width() > before.width() * 1.2, "the wheel zoomed");
+        let drift = after.min + spot * after.size() - pointer;
+        assert!(drift.length() < 1.5, "the pixel drifted by {drift:?}");
+    }
+
+    /// A picture larger than the area follows a mouse drag.
+    #[test]
+    fn dragging_moves_a_zoomed_picture() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        open_sample_preview(&mut app, &ctx);
+        let start = preview_frame(&mut app, &ctx, vec![]).center();
+        app.actions.push(crate::model::Action::ImageActualSize);
+        render(&mut app, &ctx);
+        let before = preview_frame(&mut app, &ctx, vec![]);
+        preview_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(start), primary(start, true)],
+        );
+        let end = start - egui::vec2(0.0, 150.0);
+        for step in 1..=10 {
+            let pos = start - egui::vec2(0.0, 15.0 * step as f32);
+            preview_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
+        }
+        preview_frame(&mut app, &ctx, vec![primary(end, false)]);
+        let after = preview_frame(&mut app, &ctx, vec![]);
+        assert!(
+            before.top() - after.top() > 100.0,
+            "{before:?} did not follow the drag to {after:?}"
+        );
+    }
+
+    /// Double-clicking switches between fitting and the original size, as
+    /// the header's Fit/% control does.
+    #[test]
+    fn double_clicking_the_picture_toggles_fit_and_original_size() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        open_sample_preview(&mut app, &ctx);
+        let centre = preview_frame(&mut app, &ctx, vec![]).center();
+        double_click_at(&mut app, &ctx, centre);
+        let preview = app.image_preview.as_ref().unwrap();
+        assert!(!preview.is_fit());
+        assert_eq!(preview.zoom(), 1.0);
+        // Frames are 1/60 s apart: wait out egui's triple-click window
+        // (twice the double-click delay) so the next two clicks are a
+        // double click of their own.
+        for _ in 0..14 {
+            render(&mut app, &ctx);
+        }
+        double_click_at(&mut app, &ctx, centre);
+        assert!(app.image_preview.as_ref().unwrap().is_fit());
+    }
+
+    /// The original size opens with the double-clicked point in the middle
+    /// of the area rather than wherever the top left lands.
+    #[test]
+    fn double_click_centres_the_clicked_point_at_original_size() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        open_sample_preview(&mut app, &ctx);
+        // Fitted, the picture spans the area's height, centred.
+        let fitted = preview_frame(&mut app, &ctx, vec![]);
+        let spot = egui::vec2(0.5, 0.4);
+        double_click_at(&mut app, &ctx, fitted.min + spot * fitted.size());
+        let actual = preview_frame(&mut app, &ctx, vec![]);
+        let clicked = actual.min + spot * actual.size();
+        assert!(
+            (clicked - fitted.center()).length() < 1.5,
+            "{clicked:?} is not the centre {:?}",
+            fitted.center()
+        );
     }
 
     #[test]
