@@ -1,8 +1,11 @@
-//! Color emoji from the desktop's bitmap emoji font, with a bundled fallback.
+//! Color emoji in the desktop's own style, with a bundled fallback.
 //!
 //! Layout replaces each emoji sequence with a transparent placeholder, then
-//! paints the bitmap over it. The font's ligature table resolves flags, skin
-//! tones, and joined sequences.
+//! paints a picture of it over the placeholder. On macOS CoreText draws the
+//! picture with the system emoji font. Elsewhere the picture comes from the
+//! bitmap emoji font, whose ligature table resolves flags, skin tones, and
+//! joined sequences. The bundled Noto Color Emoji is the fallback on every
+//! system.
 
 use std::collections::HashMap;
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -35,22 +38,106 @@ struct Font {
 
 static FONT: OnceLock<Option<Font>> = OnceLock::new();
 
-/// Noto Color Emoji supplies bitmap glyphs on systems such as Windows whose
-/// installed emoji font uses an outline colour format this renderer cannot
-/// rasterize. macOS uses it too: Apple Color Emoji joins flags, skin tones,
-/// and ZWJ sequences through an AAT `morx` table rather than GSUB ligatures,
-/// so every sequence would fall back to its first part, and the 190 MB font
-/// would stay in memory for nothing.
+/// Noto Color Emoji supplies bitmap glyphs when the system cannot draw a
+/// sequence: on macOS only when CoreText fails, so the 190 MB font is read
+/// only then, on Windows always, because Segoe UI Emoji uses an outline
+/// colour format this reader cannot rasterize, and on Linux when no installed
+/// copy is found.
 const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
 
-/// Whether a color emoji font is available.
+/// Whether color emoji can be drawn.
 pub fn available() -> bool {
-    font().is_some()
+    native_available() || font().is_some()
 }
 
-/// Loads the emoji font before the first frame needs it.
+/// Prepares the emoji drawing before the first frame needs it.
 pub fn warm_up() {
-    let _ = font();
+    if !native_available() {
+        let _ = font();
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+use self::macos as system;
+
+/// Whether the system draws colour emoji, probed once.
+#[cfg(target_os = "macos")]
+fn native_available() -> bool {
+    static NATIVE: OnceLock<bool> = OnceLock::new();
+    *NATIVE.get_or_init(|| {
+        let works = native("\u{1F600}").is_some();
+        log::info!("system colour emoji: {works}");
+        works
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_available() -> bool {
+    false
+}
+
+/// A cluster as the system emoji font draws it, joined the way the system
+/// joins it, with the same fallback as the bundled font.
+#[cfg(target_os = "macos")]
+fn native(cluster: &str) -> Option<ColorImage> {
+    let chars: Vec<char> = cluster.chars().collect();
+    let (width, height, rgba) = resolve(&chars, |part| {
+        system::render(&part.iter().collect::<String>())
+    })?;
+    scaled(&image::RgbaImage::from_raw(width, height, rgba)?)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native(_cluster: &str) -> Option<ColorImage> {
+    None
+}
+
+/// Tries a sequence, then the sequence without U+FE0F, then its known leading
+/// part, so an unsupported joined sequence still shows its first emoji.
+fn resolve<T>(cluster: &[char], mut attempt: impl FnMut(&[char]) -> Option<T>) -> Option<T> {
+    if let Some(found) = attempt(cluster) {
+        return Some(found);
+    }
+    let mut stripped: Vec<char> = cluster
+        .iter()
+        .copied()
+        .filter(|character| *character != '\u{FE0F}')
+        .collect();
+    if stripped.len() != cluster.len()
+        && let Some(found) = attempt(&stripped)
+    {
+        return Some(found);
+    }
+    while stripped.len() > 1 {
+        stripped.pop();
+        while stripped.last().is_some_and(|c| *c == '\u{200D}') {
+            stripped.pop();
+        }
+        if let Some(found) = attempt(&stripped) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// An emoji picture at the cached texture width.
+fn scaled(rgba: &image::RgbaImage) -> Option<ColorImage> {
+    if rgba.width() == 0 || rgba.height() == 0 {
+        return None;
+    }
+    let height = (TEXTURE_WIDTH * rgba.height() / rgba.width()).max(1);
+    let resized = image::imageops::resize(
+        rgba,
+        TEXTURE_WIDTH,
+        height,
+        image::imageops::FilterType::Triangle,
+    );
+    Some(ColorImage::from_rgba_unmultiplied(
+        [TEXTURE_WIDTH as usize, height as usize],
+        resized.as_raw(),
+    ))
 }
 
 fn font() -> Option<&'static Font> {
@@ -83,8 +170,9 @@ fn load_bytes(bytes: Vec<u8>, index: u32, source: &str) -> Option<Font> {
     })
 }
 
-/// Desktop color emoji font and selected face. macOS and Windows always use
-/// the bundled font, so an installed copy cannot change the result there.
+/// Desktop color emoji font and selected face. macOS draws with the system
+/// instead and Windows uses the bundled font, so an installed copy cannot
+/// change the result there.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn find() -> Option<(PathBuf, u32)> {
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -201,7 +289,7 @@ impl Font {
     /// Resolves a sequence to its final glyph through font ligatures.
     fn glyph(&self, font: &FontRef<'_>, cluster: &[char]) -> Option<GlyphId> {
         let charmap = font.charmap();
-        let sequence = |chars: &[char]| -> Option<u32> {
+        resolve(cluster, |chars| {
             let glyphs: Vec<u32> = chars
                 .iter()
                 .map(|character| charmap.map(*character as u32).map(|glyph| glyph.to_u32()))
@@ -210,31 +298,8 @@ impl Font {
                 [single] => Some(*single),
                 _ => self.ligatures.get(&glyphs).copied(),
             }
-        };
-        if let Some(glyph) = sequence(cluster) {
-            return Some(GlyphId::new(glyph));
-        }
-        let mut stripped: Vec<char> = cluster
-            .iter()
-            .copied()
-            .filter(|character| *character != '\u{FE0F}')
-            .collect();
-        if stripped.len() != cluster.len()
-            && let Some(glyph) = sequence(&stripped)
-        {
-            return Some(GlyphId::new(glyph));
-        }
-        // Fall back to the known part of an unsupported joined sequence.
-        while stripped.len() > 1 {
-            stripped.pop();
-            while stripped.last().is_some_and(|c| *c == '\u{200D}') {
-                stripped.pop();
-            }
-            if let Some(glyph) = sequence(&stripped) {
-                return Some(GlyphId::new(glyph));
-            }
-        }
-        None
+        })
+        .map(GlyphId::new)
     }
 
     fn image(&self, font: &FontRef<'_>, glyph: GlyphId) -> Option<ColorImage> {
@@ -256,20 +321,7 @@ impl Font {
             }
             BitmapData::Mask(_) => return None,
         };
-        if rgba.width() == 0 || rgba.height() == 0 {
-            return None;
-        }
-        let height = (TEXTURE_WIDTH * rgba.height() / rgba.width()).max(1);
-        let resized = image::imageops::resize(
-            &rgba,
-            TEXTURE_WIDTH,
-            height,
-            image::imageops::FilterType::Triangle,
-        );
-        Some(ColorImage::from_rgba_unmultiplied(
-            [TEXTURE_WIDTH as usize, height as usize],
-            resized.as_raw(),
-        ))
+        scaled(&rgba)
     }
 }
 
@@ -289,15 +341,20 @@ fn texture(ctx: &egui::Context, cluster: &str) -> Option<TextureHandle> {
     if let Some(known) = map.get(cluster) {
         return known.clone();
     }
-    let handle = font().and_then(|font| {
-        let font_ref = font.font_ref()?;
-        let chars: Vec<char> = cluster.chars().collect();
-        let glyph = font.glyph(&font_ref, &chars)?;
-        let image = font.image(&font_ref, glyph)?;
-        Some(ctx.load_texture(format!("emoji-{cluster}"), image, TextureOptions::LINEAR))
-    });
+    let handle = native(cluster)
+        .or_else(|| bundled(cluster))
+        .map(|image| ctx.load_texture(format!("emoji-{cluster}"), image, TextureOptions::LINEAR));
     map.insert(cluster.to_owned(), handle.clone());
     handle
+}
+
+/// A cluster from the bitmap emoji font, loaded on first use.
+fn bundled(cluster: &str) -> Option<ColorImage> {
+    let font = font()?;
+    let font_ref = font.font_ref()?;
+    let chars: Vec<char> = cluster.chars().collect();
+    let glyph = font.glyph(&font_ref, &chars)?;
+    font.image(&font_ref, glyph)
 }
 
 /// Plain text or one emoji sequence.
@@ -676,6 +733,55 @@ mod tests {
         let glyph = font.glyph(&font_ref, &['😀']).expect("glyph");
         let image = font.image(&font_ref, glyph).expect("picture");
         assert_eq!(image.size[0], TEXTURE_WIDTH as usize);
+    }
+}
+
+/// The system's own drawing, on the systems that have one.
+#[cfg(all(test, target_os = "macos"))]
+mod native_tests {
+    use super::*;
+
+    fn picture(cluster: &str) -> ColorImage {
+        native(cluster).unwrap_or_else(|| panic!("{cluster} has no system picture"))
+    }
+
+    #[test]
+    fn the_system_draws_colour_emoji() {
+        assert!(native_available());
+        let image = picture("\u{1F600}");
+        assert_eq!(image.size[0], TEXTURE_WIDTH as usize);
+        assert!(
+            image
+                .pixels
+                .iter()
+                .any(|pixel| pixel.a() > 0 && pixel.r() != pixel.g() && pixel.g() != pixel.b())
+        );
+    }
+
+    #[test]
+    fn the_system_joins_sequences_into_one_glyph() {
+        for sequence in ["👨‍👩‍👧‍👦", "🇩🇪", "👍🏽"] {
+            assert!(
+                system::render(sequence).is_some(),
+                "{sequence} is not one system glyph"
+            );
+        }
+        assert_ne!(picture("👨‍👩‍👧‍👦").pixels, picture("👨").pixels);
+    }
+
+    #[test]
+    fn an_unjoinable_sequence_shows_its_first_part() {
+        assert!(system::render("😀\u{200D}😀").is_none());
+        assert_eq!(picture("😀\u{200D}😀").pixels, picture("😀").pixels);
+    }
+
+    #[test]
+    fn the_system_style_differs_from_the_bundled_font() {
+        let font = load_bytes(BUNDLED.to_vec(), 0, "test font").expect("bundled font");
+        let font_ref = font.font_ref().expect("font face");
+        let glyph = font.glyph(&font_ref, &['\u{1F600}']).expect("glyph");
+        let bundled = font.image(&font_ref, glyph).expect("picture");
+        assert_ne!(picture("\u{1F600}").pixels, bundled.pixels);
     }
 }
 
