@@ -350,6 +350,133 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
     }
 }
 
+/// Installs a Win32 subclass that applies Windows' suggested rectangle during
+/// caption drags across monitors with different DPI settings.
+///
+/// winit's `WM_DPICHANGED` monitor-nudge logic can return a caption-dragged
+/// window to its previous monitor and repeatedly grow it (winit#4600). Windows
+/// supplies the correct outer rectangle in `lParam`; apply it while winit is
+/// positioning the window. These notifications arrive synchronously in the
+/// window procedure, so the event-loop message hook cannot handle them.
+#[cfg(target_os = "windows")]
+fn install_windows_dpi_drag_workaround(window: &winit::window::Window) -> bool {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::Shell::SetWindowSubclass;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = window.window_handle() else {
+        return false;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return false;
+    };
+    let hwnd = handle.hwnd.get() as HWND;
+
+    // SAFETY: this runs on winit's window thread, and the subclass procedure
+    // forwards every message it does not handle to the existing window proc.
+    unsafe {
+        SetWindowSubclass(
+            hwnd,
+            Some(windows_dpi_drag_subclass),
+            WINDOWS_DPI_DRAG_SUBCLASS_ID,
+            0,
+        ) != 0
+    }
+}
+
+#[cfg(target_os = "windows")]
+const WINDOWS_DPI_DRAG_SUBCLASS_ID: usize = 0x5a46_4153;
+
+#[cfg(target_os = "windows")]
+thread_local! {
+    static WINDOWS_CAPTION_DRAG: std::cell::Cell<windows_sys::Win32::Foundation::HWND> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+    static WINDOWS_DPI_SUGGESTED_RECT: std::cell::Cell<Option<(windows_sys::Win32::Foundation::HWND, windows_sys::Win32::Foundation::RECT)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn windows_dpi_drag_subclass(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+    message: u32,
+    wparam: windows_sys::Win32::Foundation::WPARAM,
+    lparam: windows_sys::Win32::Foundation::LPARAM,
+    _subclass_id: usize,
+    _reference_data: usize,
+) -> windows_sys::Win32::Foundation::LRESULT {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HTCAPTION, SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_NCDESTROY,
+        WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_WINDOWPOSCHANGING,
+    };
+
+    let caption_dragging = || WINDOWS_CAPTION_DRAG.with(|active| active.get() == hwnd);
+    match message {
+        WM_NCLBUTTONDOWN if wparam == HTCAPTION as usize => {
+            WINDOWS_CAPTION_DRAG.with(|active| active.set(hwnd));
+        }
+        WM_DPICHANGED if caption_dragging() && lparam != 0 => {
+            // SAFETY: Windows supplies a RECT through lParam for WM_DPICHANGED.
+            let suggested = unsafe { *(lparam as *const RECT) };
+            let previous_suggestion =
+                WINDOWS_DPI_SUGGESTED_RECT.with(|rect| rect.replace(Some((hwnd, suggested))));
+            // SAFETY: forward to winit so it tracks the native move loop,
+            // updates its scale factor and sends the corresponding egui input.
+            // Its SetWindowPos call is corrected in WM_WINDOWPOSCHANGING below,
+            // before an intermediate position can trigger another DPI change.
+            let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+            WINDOWS_DPI_SUGGESTED_RECT.with(|rect| rect.set(previous_suggestion));
+            return result;
+        }
+        WM_WINDOWPOSCHANGING if lparam != 0 => {
+            let suggested = WINDOWS_DPI_SUGGESTED_RECT.with(std::cell::Cell::get);
+            if let Some((target, rect)) = suggested
+                && target == hwnd
+            {
+                // SAFETY: Windows supplies a mutable WINDOWPOS through lParam.
+                let window_pos = unsafe { &mut *(lparam as *mut WINDOWPOS) };
+                if window_pos.flags & (SWP_NOMOVE | SWP_NOSIZE) == 0 {
+                    window_pos.x = rect.left;
+                    window_pos.y = rect.top;
+                    window_pos.cx = rect.right - rect.left;
+                    window_pos.cy = rect.bottom - rect.top;
+                }
+            }
+        }
+        WM_EXITSIZEMOVE | WM_NCLBUTTONUP => {
+            // Let winit finish its move/size cleanup before clearing our marker.
+            // SAFETY: forwards this window message to the existing procedure.
+            let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+            WINDOWS_CAPTION_DRAG.with(|active| {
+                if active.get() == hwnd {
+                    active.set(std::ptr::null_mut());
+                }
+            });
+            return result;
+        }
+        WM_NCDESTROY => {
+            WINDOWS_CAPTION_DRAG.with(|active| {
+                if active.get() == hwnd {
+                    active.set(std::ptr::null_mut());
+                }
+            });
+            // SAFETY: this removes the current subclass from the live window.
+            unsafe {
+                RemoveWindowSubclass(
+                    hwnd,
+                    Some(windows_dpi_drag_subclass),
+                    WINDOWS_DPI_DRAG_SUBCLASS_ID,
+                );
+            }
+        }
+        _ => {}
+    }
+
+    // SAFETY: all unhandled messages continue through the existing window proc.
+    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+}
+
 /// eframe adapter holding the long-lived [`app::App`] for one window; it goes
 /// back to the shell when the window closes.
 struct Shell {
@@ -436,6 +563,12 @@ impl eframe::App for Shell {
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if !std::mem::replace(&mut self.window_recovery_checked, true) {
+            #[cfg(target_os = "windows")]
+            if let Some(window) = frame.winit_window()
+                && !install_windows_dpi_drag_workaround(window)
+            {
+                log::warn!("could not install the Windows DPI drag workaround");
+            }
             fastframe_shell::window::recover_offscreen(ctx, frame);
         }
         let app = &mut *self.app;
