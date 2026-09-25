@@ -70,7 +70,7 @@ use self::windows as system;
 fn native_available() -> bool {
     static NATIVE: OnceLock<bool> = OnceLock::new();
     *NATIVE.get_or_init(|| {
-        let works = native("\u{1F600}").is_some();
+        let works = native(&['\u{1F600}']).is_some();
         log::info!("system colour emoji: {works}");
         works
     })
@@ -81,48 +81,56 @@ fn native_available() -> bool {
     false
 }
 
-/// A cluster as the system emoji font draws it, joined the way the system
-/// joins it, with the same fallback as the bundled font.
+/// A sequence as the system emoji font draws it, when the system joins it
+/// into one glyph.
 #[cfg(any(target_os = "macos", windows))]
-fn native(cluster: &str) -> Option<ColorImage> {
-    let chars: Vec<char> = cluster.chars().collect();
-    let (width, height, rgba) = resolve(&chars, |part| {
-        system::render(&part.iter().collect::<String>())
-    })?;
+fn native(chars: &[char]) -> Option<ColorImage> {
+    let (width, height, rgba) = system::render(&chars.iter().collect::<String>())?;
     scaled(&image::RgbaImage::from_raw(width, height, rgba)?)
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
-fn native(_cluster: &str) -> Option<ColorImage> {
+fn native(_chars: &[char]) -> Option<ColorImage> {
     None
 }
 
-/// Tries a sequence, then the sequence without U+FE0F, then its known leading
-/// part, so an unsupported joined sequence still shows its first emoji.
-fn resolve<T>(cluster: &[char], mut attempt: impl FnMut(&[char]) -> Option<T>) -> Option<T> {
-    if let Some(found) = attempt(cluster) {
-        return Some(found);
-    }
+/// A cluster from the system, else from the bitmap emoji font.
+fn picture(cluster: &str) -> Option<ColorImage> {
+    let chars: Vec<char> = cluster.chars().collect();
+    first(&chars, &[&native, &bundled])
+}
+
+/// Looks up exactly one form of a sequence.
+type Source<'a, T> = &'a dyn Fn(&[char]) -> Option<T>;
+
+/// The first source that has the cluster. Every source is tried for a form
+/// before a shorter form, so an exact picture always wins over a part.
+fn first<T>(cluster: &[char], sources: &[Source<'_, T>]) -> Option<T> {
+    candidates(cluster)
+        .iter()
+        .find_map(|form| sources.iter().find_map(|source| source(form)))
+}
+
+/// A sequence, then the sequence without U+FE0F, then its leading parts, so
+/// an unsupported joined sequence still shows its first emoji.
+fn candidates(cluster: &[char]) -> Vec<Vec<char>> {
+    let mut forms = vec![cluster.to_vec()];
     let mut stripped: Vec<char> = cluster
         .iter()
         .copied()
         .filter(|character| *character != '\u{FE0F}')
         .collect();
-    if stripped.len() != cluster.len()
-        && let Some(found) = attempt(&stripped)
-    {
-        return Some(found);
+    if stripped.len() != cluster.len() {
+        forms.push(stripped.clone());
     }
     while stripped.len() > 1 {
         stripped.pop();
         while stripped.last().is_some_and(|c| *c == '\u{200D}') {
             stripped.pop();
         }
-        if let Some(found) = attempt(&stripped) {
-            return Some(found);
-        }
+        forms.push(stripped.clone());
     }
-    None
+    forms
 }
 
 /// An emoji picture at the cached texture width.
@@ -289,20 +297,17 @@ impl Font {
         FontRef::from_index(&self.bytes, self.index).ok()
     }
 
-    /// Resolves a sequence to its final glyph through font ligatures.
-    fn glyph(&self, font: &FontRef<'_>, cluster: &[char]) -> Option<GlyphId> {
+    /// The glyph for exactly this sequence, through font ligatures.
+    fn glyph(&self, font: &FontRef<'_>, chars: &[char]) -> Option<GlyphId> {
         let charmap = font.charmap();
-        resolve(cluster, |chars| {
-            let glyphs: Vec<u32> = chars
-                .iter()
-                .map(|character| charmap.map(*character as u32).map(|glyph| glyph.to_u32()))
-                .collect::<Option<_>>()?;
-            match glyphs.as_slice() {
-                [single] => Some(*single),
-                _ => self.ligatures.get(&glyphs).copied(),
-            }
-        })
-        .map(GlyphId::new)
+        let glyphs: Vec<u32> = chars
+            .iter()
+            .map(|character| charmap.map(*character as u32).map(|glyph| glyph.to_u32()))
+            .collect::<Option<_>>()?;
+        match glyphs.as_slice() {
+            [single] => Some(GlyphId::new(*single)),
+            _ => self.ligatures.get(&glyphs).copied().map(GlyphId::new),
+        }
     }
 
     fn image(&self, font: &FontRef<'_>, glyph: GlyphId) -> Option<ColorImage> {
@@ -344,19 +349,17 @@ fn texture(ctx: &egui::Context, cluster: &str) -> Option<TextureHandle> {
     if let Some(known) = map.get(cluster) {
         return known.clone();
     }
-    let handle = native(cluster)
-        .or_else(|| bundled(cluster))
+    let handle = picture(cluster)
         .map(|image| ctx.load_texture(format!("emoji-{cluster}"), image, TextureOptions::LINEAR));
     map.insert(cluster.to_owned(), handle.clone());
     handle
 }
 
-/// A cluster from the bitmap emoji font, loaded on first use.
-fn bundled(cluster: &str) -> Option<ColorImage> {
+/// A sequence from the bitmap emoji font, loaded on first use.
+fn bundled(chars: &[char]) -> Option<ColorImage> {
     let font = font()?;
     let font_ref = font.font_ref()?;
-    let chars: Vec<char> = cluster.chars().collect();
-    let glyph = font.glyph(&font_ref, &chars)?;
+    let glyph = font.glyph(&font_ref, chars)?;
     font.image(&font_ref, glyph)
 }
 
@@ -620,6 +623,21 @@ mod tests {
     }
 
     #[test]
+    fn every_source_is_tried_before_a_sequence_loses_parts() {
+        let native_prefix = |chars: &[char]| (chars == ['a']).then_some("native a");
+        let bundled_full = |chars: &[char]| (chars == ['a', 'b']).then_some("bundled ab");
+        let bundled_prefix = |chars: &[char]| (chars == ['a']).then_some("bundled a");
+        assert_eq!(
+            first(&['a', 'b'], &[&native_prefix, &bundled_full]),
+            Some("bundled ab")
+        );
+        assert_eq!(
+            first(&['a', 'b'], &[&native_prefix, &bundled_prefix]),
+            Some("native a")
+        );
+    }
+
+    #[test]
     fn an_editor_job_keeps_the_text_and_places_the_emoji() {
         let format = egui::TextFormat::simple(egui::FontId::proportional(14.0), Color32::WHITE);
         let text = "hi 😊 and 👍🏽!";
@@ -744,14 +762,23 @@ mod tests {
 mod native_tests {
     use super::*;
 
-    fn picture(cluster: &str) -> ColorImage {
-        native(cluster).unwrap_or_else(|| panic!("{cluster} has no system picture"))
+    fn system_picture(cluster: &str) -> ColorImage {
+        let chars: Vec<char> = cluster.chars().collect();
+        native(&chars).unwrap_or_else(|| panic!("{cluster} has no system picture"))
+    }
+
+    fn bundled_picture(cluster: &str) -> ColorImage {
+        let font = load_bytes(BUNDLED.to_vec(), 0, "test font").expect("bundled font");
+        let font_ref = font.font_ref().expect("font face");
+        let chars: Vec<char> = cluster.chars().collect();
+        let glyph = font.glyph(&font_ref, &chars).expect("glyph");
+        font.image(&font_ref, glyph).expect("picture")
     }
 
     #[test]
     fn the_system_draws_colour_emoji() {
         assert!(native_available());
-        let image = picture("\u{1F600}");
+        let image = system_picture("\u{1F600}");
         assert_eq!(image.size[0], TEXTURE_WIDTH as usize);
         assert!(
             image
@@ -763,28 +790,43 @@ mod native_tests {
 
     #[test]
     fn the_system_joins_sequences_into_one_glyph() {
-        for sequence in ["👨‍👩‍👧‍👦", "🇩🇪", "👍🏽"] {
+        for sequence in ["👨‍👩‍👧‍👦", "👍🏽"] {
             assert!(
                 system::render(sequence).is_some(),
                 "{sequence} is not one system glyph"
             );
         }
-        assert_ne!(picture("👨‍👩‍👧‍👦").pixels, picture("👨").pixels);
+        assert_ne!(system_picture("👨‍👩‍👧‍👦").pixels, system_picture("👨").pixels);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_system_joins_flags() {
+        assert!(system::render("🇩🇪").is_some());
+    }
+
+    /// Segoe UI Emoji has no country flags, so the bundled flag is used
+    /// rather than one regional indicator letter.
+    #[cfg(windows)]
+    #[test]
+    fn flags_come_from_the_bundled_font() {
+        let flag = picture("🇩🇪").expect("flag picture");
+        assert_eq!(flag.pixels, bundled_picture("🇩🇪").pixels);
     }
 
     #[test]
     fn an_unjoinable_sequence_shows_its_first_part() {
         assert!(system::render("😀\u{200D}😀").is_none());
-        assert_eq!(picture("😀\u{200D}😀").pixels, picture("😀").pixels);
+        let joined = picture("😀\u{200D}😀").expect("picture");
+        assert_eq!(joined.pixels, system_picture("😀").pixels);
     }
 
     #[test]
     fn the_system_style_differs_from_the_bundled_font() {
-        let font = load_bytes(BUNDLED.to_vec(), 0, "test font").expect("bundled font");
-        let font_ref = font.font_ref().expect("font face");
-        let glyph = font.glyph(&font_ref, &['\u{1F600}']).expect("glyph");
-        let bundled = font.image(&font_ref, glyph).expect("picture");
-        assert_ne!(picture("\u{1F600}").pixels, bundled.pixels);
+        assert_ne!(
+            system_picture("\u{1F600}").pixels,
+            bundled_picture("\u{1F600}").pixels
+        );
     }
 }
 
