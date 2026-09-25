@@ -5978,7 +5978,9 @@ impl Worker {
             message: id,
             result,
         });
-        if for_picker {
+        // Listing the shelves scans the archive; one pass per batch keeps
+        // a send queued behind many picker downloads from waiting on each.
+        if for_picker && self.sticker_downloads.is_empty() {
             self.emit_stickers();
         }
     }

@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS messages (
     PRIMARY KEY (chat, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat, timestamp);
+CREATE INDEX IF NOT EXISTS messages_stickers ON messages (from_me, timestamp)
+    WHERE json_extract(content, '$.kind') = 'sticker';
 CREATE TABLE IF NOT EXISTS contacts (
     id TEXT PRIMARY KEY,
     full_name TEXT,

@@ -1187,6 +1187,32 @@ mod tests {
         assert_eq!(listed(&events), 1);
     }
 
+    /// Opening the picker downloads many chat stickers at once; the shelves
+    /// are listed once the batch is in, not once per sticker.
+    #[tokio::test]
+    async fn the_shelves_update_once_their_batch_of_downloads_is_in() {
+        let (mut worker, _root, events, _commands) = sticker_worker();
+        let chat = "a@s.whatsapp.net".to_owned();
+        worker.sticker_downloads = [(chat.clone(), "1".into()), (chat.clone(), "2".into())].into();
+        let listed = |events: &std::sync::mpsc::Receiver<Event>| {
+            events
+                .try_iter()
+                .filter(|event| matches!(event, Event::Stickers { .. }))
+                .count()
+        };
+        for (id, expected) in [("1", 0), ("2", 1)] {
+            worker
+                .handle_command(Command::Downloaded {
+                    card: None,
+                    chat: chat.clone(),
+                    id: id.into(),
+                    result: Err("offline".into()),
+                })
+                .await;
+            assert_eq!(listed(&events), expected, "after download {id}");
+        }
+    }
+
     /// Archives a sticker someone sent in `chat`, with its file on disk.
     fn receive_sticker(
         worker: &Worker,
