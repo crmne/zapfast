@@ -82,11 +82,37 @@ fn native_available() -> bool {
 }
 
 /// A sequence as the system emoji font draws it, when the system joins it
-/// into one glyph that advances.
+/// into one glyph that advances, framed like the bundled font's bitmaps.
 #[cfg(any(target_os = "macos", windows))]
 fn native(chars: &[char]) -> Option<ColorImage> {
+    framed(&canvas(chars)?, cell()?)
+}
+
+/// The system's premultiplied drawing of a sequence. Every canvas has the same
+/// size and pen position, so pictures of different sequences line up.
+#[cfg(any(target_os = "macos", windows))]
+fn canvas(chars: &[char]) -> Option<image::RgbaImage> {
     let (width, height, rgba) = system::render(&chars.iter().collect::<String>())?;
-    scaled(&image::RgbaImage::from_raw(width, height, rgba)?)
+    image::RgbaImage::from_raw(width, height, rgba)
+}
+
+/// The part of a system canvas that corresponds to the bundled font's cell,
+/// found once by placing the system's grinning face where Noto's is.
+#[cfg(any(target_os = "macos", windows))]
+fn cell() -> Option<Area> {
+    static CELL: OnceLock<Option<Area>> = OnceLock::new();
+    *CELL.get_or_init(|| {
+        let ink = ink(&canvas(&['\u{1F600}'])?)?;
+        let scale = (ink.right - ink.left) as f32 / NOTO_INK_WIDTH;
+        let left = ink.left - (NOTO_INK_LEFT * scale).round() as i64;
+        let top = ink.top - (NOTO_INK_TOP * scale).round() as i64;
+        Some(Area {
+            left,
+            top,
+            right: left + (NOTO_CELL_WIDTH * scale).round() as i64,
+            bottom: top + (NOTO_CELL_HEIGHT * scale).round() as i64,
+        })
+    })
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -133,8 +159,78 @@ fn candidates(cluster: &[char]) -> Vec<Vec<char>> {
     forms
 }
 
-/// An emoji picture at the cached texture width.
+/// Noto's grinning face, measured from the bundled font: a 136 by 128 cell
+/// whose ink starts 9 pixels from the left and 7 from the top, 117 wide.
+const NOTO_CELL_WIDTH: f32 = 136.0;
+const NOTO_CELL_HEIGHT: f32 = 128.0;
+const NOTO_INK_LEFT: f32 = 9.0;
+const NOTO_INK_TOP: f32 = 7.0;
+const NOTO_INK_WIDTH: f32 = 117.0;
+
+/// A rectangle of pixels; `right` and `bottom` are exclusive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Area {
+    left: i64,
+    top: i64,
+    right: i64,
+    bottom: i64,
+}
+
+/// The rectangle holding every pixel that is not fully transparent.
+fn ink(rgba: &image::RgbaImage) -> Option<Area> {
+    let mut area: Option<Area> = None;
+    for (x, y, pixel) in rgba.enumerate_pixels() {
+        if pixel.0[3] == 0 {
+            continue;
+        }
+        let (x, y) = (i64::from(x), i64::from(y));
+        let found = area.get_or_insert(Area {
+            left: x,
+            top: y,
+            right: x + 1,
+            bottom: y + 1,
+        });
+        found.left = found.left.min(x);
+        found.top = found.top.min(y);
+        found.right = found.right.max(x + 1);
+        found.bottom = found.bottom.max(y + 1);
+    }
+    area
+}
+
+/// Cuts the cell out of a premultiplied canvas, grown to any ink outside it
+/// so nothing is clipped, and scales it to the texture width.
+fn framed(canvas: &image::RgbaImage, cell: Area) -> Option<ColorImage> {
+    let ink = ink(canvas)?;
+    let left = cell.left.min(ink.left).max(0);
+    let top = cell.top.min(ink.top).max(0);
+    let right = cell.right.max(ink.right).min(i64::from(canvas.width()));
+    let bottom = cell.bottom.max(ink.bottom).min(i64::from(canvas.height()));
+    let cropped = image::imageops::crop_imm(
+        canvas,
+        u32::try_from(left).ok()?,
+        u32::try_from(top).ok()?,
+        u32::try_from(right - left).ok()?,
+        u32::try_from(bottom - top).ok()?,
+    )
+    .to_image();
+    premultiplied_scaled(&cropped)
+}
+
+/// A premultiplied picture at the cached texture width. Resampling
+/// premultiplied pixels keeps transparent neighbours from darkening edges.
+fn premultiplied_scaled(rgba: &image::RgbaImage) -> Option<ColorImage> {
+    let (size, resized) = resized(rgba)?;
+    Some(ColorImage::from_rgba_premultiplied(size, resized.as_raw()))
+}
+
+/// An unpremultiplied picture at the cached texture width.
 fn scaled(rgba: &image::RgbaImage) -> Option<ColorImage> {
+    let (size, resized) = resized(rgba)?;
+    Some(ColorImage::from_rgba_unmultiplied(size, resized.as_raw()))
+}
+
+fn resized(rgba: &image::RgbaImage) -> Option<([usize; 2], image::RgbaImage)> {
     if rgba.width() == 0 || rgba.height() == 0 {
         return None;
     }
@@ -145,10 +241,7 @@ fn scaled(rgba: &image::RgbaImage) -> Option<ColorImage> {
         height,
         image::imageops::FilterType::Triangle,
     );
-    Some(ColorImage::from_rgba_unmultiplied(
-        [TEXTURE_WIDTH as usize, height as usize],
-        resized.as_raw(),
-    ))
+    Some(([TEXTURE_WIDTH as usize, height as usize], resized))
 }
 
 fn font() -> Option<&'static Font> {
@@ -620,6 +713,26 @@ mod tests {
                 .iter()
                 .any(|pixel| { pixel.a() > 0 && pixel.r() != pixel.g() && pixel.g() != pixel.b() })
         );
+    }
+
+    /// Resampling premultiplied pixels keeps a soft edge beside transparent
+    /// black its own colour instead of darkening it.
+    #[test]
+    fn scaling_keeps_edge_colours() {
+        let half_red = image::Rgba([128, 0, 0, 128]);
+        let side = TEXTURE_WIDTH * 2;
+        let canvas = image::RgbaImage::from_fn(side, side, |x, _| {
+            if x < side / 2 {
+                half_red
+            } else {
+                image::Rgba([0, 0, 0, 0])
+            }
+        });
+        let image = premultiplied_scaled(&canvas).expect("picture");
+        for pixel in image.pixels.iter().filter(|pixel| pixel.a() > 0) {
+            let [red, green, blue, _] = pixel.to_srgba_unmultiplied();
+            assert!(red >= 250 && green == 0 && blue == 0, "{pixel:?} darkened");
+        }
     }
 
     #[test]

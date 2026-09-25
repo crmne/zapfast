@@ -16,8 +16,8 @@ use windows::Win32::Graphics::Direct2D::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_GLYPH_RUN, DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_MATRIX,
-    DWRITE_MEASURING_MODE, DWRITE_STRIKETHROUGH, DWRITE_TEXT_METRICS, DWRITE_UNDERLINE,
+    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_GLYPH_RUN, DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_LINE_METRICS,
+    DWRITE_MATRIX, DWRITE_MEASURING_MODE, DWRITE_STRIKETHROUGH, DWRITE_UNDERLINE,
     DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory, IDWriteFactory, IDWriteFontFace2,
     IDWriteInlineObject, IDWritePixelSnapping_Impl, IDWriteTextRenderer, IDWriteTextRenderer_Impl,
 };
@@ -36,6 +36,13 @@ use windows_numerics::Vector2;
 /// picture is scaled down rather than up.
 const SIZE: f32 = 144.0;
 
+/// Canvas side, two ems, and where the pen starts, in pixels from the top
+/// left. Every sequence is drawn at the same place, and no ink, overhangs
+/// included, reaches the edge.
+const CANVAS: u32 = 288;
+const PEN_X: f32 = 72.0;
+const BASELINE: f32 = 202.0;
+
 struct Factories {
     d2d: ID2D1Factory,
     write: IDWriteFactory,
@@ -47,10 +54,11 @@ thread_local! {
     static FACTORIES: Option<Factories> = factories().ok();
 }
 
-/// Draws `cluster` as one colour picture and returns its width, height, and
-/// unpremultiplied RGBA rows. Returns `None` when DirectWrite does not join
-/// the cluster into one glyph that advances, draws it with a font without
-/// colour glyphs, or draws nothing. Zero-advance glyphs are layers under it.
+/// Draws `cluster` as one colour picture on a fixed canvas and returns its
+/// width, height, and premultiplied RGBA rows. Returns `None` when
+/// DirectWrite does not join the cluster into one glyph that advances or
+/// draws it with a font without colour glyphs. Zero-advance glyphs are layers
+/// under it.
 pub(super) fn render(cluster: &str) -> Option<(u32, u32, Vec<u8>)> {
     FACTORIES.with(|factories| draw(factories.as_ref()?, cluster).ok()?)
 }
@@ -94,24 +102,14 @@ fn draw(factories: &Factories, cluster: &str) -> Result<Option<(u32, u32, Vec<u8
         if counter.glyphs.get() != 1 || counter.monochrome.get() {
             return Ok(None);
         }
-        // Emoji glyphs are square, so a square as wide as the advance holds
-        // the picture, centred vertically on the glyph's ink.
-        let mut metrics = DWRITE_TEXT_METRICS::default();
-        layout.GetMetrics(&mut metrics)?;
-        let side = metrics.width.ceil() as u32;
-        if side == 0 {
-            return Ok(None);
-        }
-        // Overhangs are measured from the layout box, so fit it to the line.
-        layout.SetMaxWidth(metrics.width)?;
-        layout.SetMaxHeight(metrics.height)?;
-        let overhang = layout.GetOverhangMetrics()?;
-        let ink_middle = (metrics.height + overhang.bottom - overhang.top) / 2.0;
-        let top = side as f32 / 2.0 - ink_middle;
+        let mut lines = [DWRITE_LINE_METRICS::default()];
+        let mut count = 0;
+        layout.GetLineMetrics(Some(&mut lines), &mut count)?;
+        let top = BASELINE - lines[0].baseline;
 
         let bitmap = factories.wic.CreateBitmap(
-            side,
-            side,
+            CANVAS,
+            CANVAS,
             &GUID_WICPixelFormat32bppPBGRA,
             WICBitmapCacheOnLoad,
         )?;
@@ -139,7 +137,7 @@ fn draw(factories: &Factories, cluster: &str) -> Result<Option<(u32, u32, Vec<u8
         // No colour clears to transparent black.
         target.Clear(None);
         target.DrawTextLayout(
-            Vector2 { X: 0.0, Y: top },
+            Vector2 { X: PEN_X, Y: top },
             &layout,
             &brush,
             D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
@@ -149,8 +147,8 @@ fn draw(factories: &Factories, cluster: &str) -> Result<Option<(u32, u32, Vec<u8
         let area = WICRect {
             X: 0,
             Y: 0,
-            Width: side as i32,
-            Height: side as i32,
+            Width: CANVAS as i32,
+            Height: CANVAS as i32,
         };
         let lock = bitmap.Lock(&area, WICBitmapLockRead.0 as u32)?;
         let stride = lock.GetStride()? as usize;
@@ -161,36 +159,22 @@ fn draw(factories: &Factories, cluster: &str) -> Result<Option<(u32, u32, Vec<u8
             return Ok(None);
         }
         let source = std::slice::from_raw_parts(data, size as usize);
-        let row = side as usize * 4;
-        let mut pixels = Vec::with_capacity(row * side as usize);
-        for line in source.chunks(stride).take(side as usize) {
+        let row = CANVAS as usize * 4;
+        let mut pixels = Vec::with_capacity(row * CANVAS as usize);
+        for line in source.chunks(stride).take(CANVAS as usize) {
             let Some(line) = line.get(..row) else {
                 return Ok(None);
             };
             pixels.extend_from_slice(line);
         }
         drop(lock);
-        if pixels.len() != row * side as usize
-            || pixels.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 0)
-        {
+        if pixels.len() != row * CANVAS as usize {
             return Ok(None);
         }
-        to_rgba(&mut pixels);
-        Ok(Some((side, side, pixels)))
-    }
-}
-
-/// Turns premultiplied BGRA into unpremultiplied RGBA.
-fn to_rgba(pixels: &mut [u8]) {
-    for pixel in pixels.as_chunks_mut::<4>().0 {
-        pixel.swap(0, 2);
-        let alpha = u16::from(pixel[3]);
-        if alpha == 0 {
-            continue;
+        for pixel in pixels.as_chunks_mut::<4>().0 {
+            pixel.swap(0, 2);
         }
-        for channel in &mut pixel[..3] {
-            *channel = ((u16::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
-        }
+        Ok(Some((CANVAS, CANVAS, pixels)))
     }
 }
 
