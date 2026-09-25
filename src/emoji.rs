@@ -1,11 +1,11 @@
 //! Color emoji in the desktop's own style, with a bundled fallback.
 //!
 //! Layout replaces each emoji sequence with a transparent placeholder, then
-//! paints a picture of it over the placeholder. On macOS CoreText draws the
-//! picture with the system emoji font. Elsewhere the picture comes from the
-//! bitmap emoji font, whose ligature table resolves flags, skin tones, and
-//! joined sequences. The bundled Noto Color Emoji is the fallback on every
-//! system.
+//! paints a picture of it over the placeholder. On macOS CoreText and on
+//! Windows DirectWrite draw the picture with the system emoji font. Elsewhere
+//! the picture comes from the bitmap emoji font, whose ligature table resolves
+//! flags, skin tones, and joined sequences. The bundled Noto Color Emoji is the
+//! fallback on every system.
 
 use std::collections::HashMap;
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -39,9 +39,8 @@ struct Font {
 static FONT: OnceLock<Option<Font>> = OnceLock::new();
 
 /// Noto Color Emoji supplies bitmap glyphs when the system cannot draw a
-/// sequence: on macOS only when CoreText fails, so the 190 MB font is read
-/// only then, on Windows always, because Segoe UI Emoji uses an outline
-/// colour format this reader cannot rasterize, and on Linux when no installed
+/// sequence: on macOS and Windows only when CoreText or DirectWrite fails, so
+/// its 10 MB are copied and parsed only then, and on Linux when no installed
 /// copy is found.
 const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
 
@@ -61,9 +60,13 @@ pub fn warm_up() {
 mod macos;
 #[cfg(target_os = "macos")]
 use self::macos as system;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use self::windows as system;
 
 /// Whether the system draws colour emoji, probed once.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn native_available() -> bool {
     static NATIVE: OnceLock<bool> = OnceLock::new();
     *NATIVE.get_or_init(|| {
@@ -73,14 +76,14 @@ fn native_available() -> bool {
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn native_available() -> bool {
     false
 }
 
 /// A cluster as the system emoji font draws it, joined the way the system
 /// joins it, with the same fallback as the bundled font.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn native(cluster: &str) -> Option<ColorImage> {
     let chars: Vec<char> = cluster.chars().collect();
     let (width, height, rgba) = resolve(&chars, |part| {
@@ -89,7 +92,7 @@ fn native(cluster: &str) -> Option<ColorImage> {
     scaled(&image::RgbaImage::from_raw(width, height, rgba)?)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn native(_cluster: &str) -> Option<ColorImage> {
     None
 }
@@ -170,9 +173,9 @@ fn load_bytes(bytes: Vec<u8>, index: u32, source: &str) -> Option<Font> {
     })
 }
 
-/// Desktop color emoji font and selected face. macOS draws with the system
-/// instead and Windows uses the bundled font, so an installed copy cannot
-/// change the result there.
+/// Desktop color emoji font and selected face. macOS and Windows draw with
+/// the system instead and fall back to the bundled font, so an installed copy
+/// cannot change the result there.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn find() -> Option<(PathBuf, u32)> {
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -737,7 +740,7 @@ mod tests {
 }
 
 /// The system's own drawing, on the systems that have one.
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "macos", windows)))]
 mod native_tests {
     use super::*;
 

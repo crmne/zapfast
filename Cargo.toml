@@ -201,7 +201,12 @@ winrt-notification = { package = "tauri-winrt-notification", version = "0.7.3" }
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Registry"] }
 # Pauses other apps' media through the system media transport controls while
 # recording or playing voice messages. The same version cpal already uses.
-windows = { version = "0.62", features = ["Media_Control", "Foundation_Collections"] }
+# Draws emoji with Segoe UI Emoji through DirectWrite and Direct2D.
+windows = { version = "0.62", features = ["Media_Control", "Foundation_Collections", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_DirectWrite", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Imaging", "Win32_System_Com"] }
+# The COM interface support and vector type the emoji renderer needs. Already
+# in the tree through windows.
+windows-core = "0.62"
+windows-numerics = "0.3"
 
 # The icon and version information Windows shows for the executable.
 [target.'cfg(windows)'.build-dependencies]
