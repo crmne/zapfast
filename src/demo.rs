@@ -1593,7 +1593,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         now,
                         Content::Contact {
                             display_name: "Contact from sender".into(),
-                            vcard: "BEGIN:VCARD\nVERSION:3.0\nFN:Jordan Rivera\nTEL;TYPE=CELL:+15550002222\nEND:VCARD".into(),
+                            vcard: "BEGIN:VCARD\nVERSION:3.0\nFN:Jordan Rivera\nTEL;TYPE=CELL;waid=15550002222:+1 555-000-2222\nEND:VCARD".into(),
                         },
                     ));
                 app.open_chat = Some(chat.into());

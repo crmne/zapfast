@@ -3679,10 +3679,37 @@ fn vcard_tel_preference(property: &str) -> Option<u8> {
     best
 }
 
-fn shared_contact_details(vcard: &str, fallback_name: &str) -> Option<(String, String)> {
+/// The first card of a shared contact, as the bubble uses it.
+#[derive(Debug, PartialEq)]
+struct SharedContact {
+    name: String,
+    /// The telephone number as the card writes it.
+    number: String,
+    /// The WhatsApp account behind the number, in digits: the `waid`
+    /// parameter WhatsApp adds, or a number written in international form.
+    /// A local number without a country code cannot name one.
+    account: Option<String>,
+}
+
+fn vcard_tel_account(property: &str, value: &str) -> Option<String> {
+    let digits = |text: &str| {
+        text.chars()
+            .filter(char::is_ascii_digit)
+            .collect::<String>()
+    };
+    let waid = property.split(';').skip(1).find_map(|parameter| {
+        let (name, value) = parameter.split_once('=')?;
+        name.eq_ignore_ascii_case("WAID")
+            .then(|| digits(value.trim_matches('"')))
+    });
+    waid.or_else(|| value.trim().starts_with('+').then(|| digits(value)))
+        .filter(|account| account.len() >= 7)
+}
+
+fn shared_contact_details(vcard: &str, fallback_name: &str) -> Option<SharedContact> {
     let mut name = None;
     let mut first_phone = None;
-    let mut preferred_phone: Option<(u8, String)> = None;
+    let mut preferred_phone: Option<(u8, (String, Option<String>))> = None;
     let mut first_card: Vec<String> = Vec::new();
     for line in vcard.lines() {
         let line = line.trim_end_matches('\r');
@@ -3717,13 +3744,11 @@ fn shared_contact_details(vcard: &str, fallback_name: &str) -> Option<(String, S
         if property_name.eq_ignore_ascii_case("FN") {
             name = Some(value.trim().to_owned());
         } else if property_name.eq_ignore_ascii_case("TEL") {
-            let phone = value
-                .chars()
-                .filter(char::is_ascii_digit)
-                .collect::<String>();
-            if phone.len() < 7 {
+            let number = value.trim().to_owned();
+            if number.chars().filter(char::is_ascii_digit).count() < 7 {
                 continue;
             }
+            let phone = (number, vcard_tel_account(property, value));
             if let Some(rank) = vcard_tel_preference(property) {
                 let replace = preferred_phone
                     .as_ref()
@@ -3736,11 +3761,15 @@ fn shared_contact_details(vcard: &str, fallback_name: &str) -> Option<(String, S
             }
         }
     }
-    let phone = preferred_phone.map(|(_, phone)| phone).or(first_phone)?;
+    let (number, account) = preferred_phone.map(|(_, phone)| phone).or(first_phone)?;
     let name = name
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| fallback_name.to_owned());
-    Some((name, phone))
+    Some(SharedContact {
+        name,
+        number,
+        account,
+    })
 }
 
 /// Draws a message body and returns optional footer space on its last line.
@@ -3996,44 +4025,59 @@ fn content(
             mirrored_row(ui, own, icon, |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 5.0;
-                    let (name, phone) = details
+                    let name = details
                         .as_ref()
-                        .map(|(name, phone)| (name.as_str(), phone.as_str()))
-                        .unwrap_or((display_name.as_str(), ""));
+                        .map_or(display_name.as_str(), |contact| contact.name.as_str());
                     widgets::rich_text(ui, name, theme::medium(14.0), palette.text);
-                    if !phone.is_empty() {
-                        let id = format!("{phone}@s.whatsapp.net");
-                        ui.horizontal(|ui| {
-                            if theme::pill_button(
-                                ui,
-                                &palette,
-                                crate::i18n::gettext(view.locale, "Chat").as_ref(),
-                                true,
-                            )
-                            .clicked()
-                            {
-                                actions.push(Action::StartChat {
-                                    id: id.clone(),
-                                    name: name.to_owned(),
-                                });
-                            }
-                            if !view.contacts.contains_key(&id)
-                                && theme::pill_button(
+                    match details.as_ref() {
+                        Some(SharedContact {
+                            account: Some(account),
+                            ..
+                        }) => {
+                            let id = format!("{account}@s.whatsapp.net");
+                            ui.horizontal(|ui| {
+                                if theme::pill_button(
                                     ui,
                                     &palette,
-                                    crate::i18n::gettext(view.locale, "Add").as_ref(),
-                                    false,
+                                    crate::i18n::gettext(view.locale, "Chat").as_ref(),
+                                    true,
                                 )
                                 .clicked()
-                            {
-                                let (first, last) = crate::util::split_name(name);
-                                actions.push(Action::NewContact {
-                                    phone: phone.to_owned(),
-                                    first,
-                                    last,
-                                });
-                            }
-                        });
+                                {
+                                    actions.push(Action::StartChat {
+                                        id: id.clone(),
+                                        name: name.to_owned(),
+                                    });
+                                }
+                                if !view.contacts.contains_key(&id)
+                                    && theme::pill_button(
+                                        ui,
+                                        &palette,
+                                        crate::i18n::gettext(view.locale, "Add").as_ref(),
+                                        false,
+                                    )
+                                    .clicked()
+                                {
+                                    let (first, last) = crate::util::split_name(name);
+                                    actions.push(Action::NewContact {
+                                        phone: account.clone(),
+                                        first,
+                                        last,
+                                    });
+                                }
+                            });
+                        }
+                        // Without an account there is nothing to open, so
+                        // the number stays readable, as it was.
+                        Some(contact) => {
+                            theme::text(
+                                ui,
+                                &contact.number,
+                                theme::regular(12.5),
+                                palette.secondary,
+                            );
+                        }
+                        None => {}
                     }
                 });
             });
@@ -6278,14 +6322,22 @@ fn chat_of(chat: &ChatId) -> &str {
 mod tests {
     use super::*;
 
+    fn contact(name: &str, number: &str, account: Option<&str>) -> Option<SharedContact> {
+        Some(SharedContact {
+            name: name.to_owned(),
+            number: number.to_owned(),
+            account: account.map(str::to_owned),
+        })
+    }
+
     #[test]
     fn shared_contact_accepts_case_insensitive_vcard_property_names() {
         assert_eq!(
             shared_contact_details(
-                "BEGIN:VCARD\nversion:3.0\nitem1.fn:Case-insensitive name\nitem1.tel;type=cell:1234567\nEND:VCARD",
+                "BEGIN:VCARD\nversion:3.0\nitem1.fn:Case-insensitive name\nitem1.tel;type=cell;waid=1234567:+1 234567\nEND:VCARD",
                 "Fallback",
             ),
-            Some(("Case-insensitive name".to_owned(), "1234567".to_owned()))
+            contact("Case-insensitive name", "+1 234567", Some("1234567"))
         );
     }
 
@@ -6293,10 +6345,10 @@ mod tests {
     fn shared_contact_uses_first_valid_telephone_when_multiple_are_present() {
         assert_eq!(
             shared_contact_details(
-                "BEGIN:VCARD\nFN:Two numbers\nTEL;TYPE=HOME:1111111\nTEL;TYPE=CELL:2222222\nEND:VCARD",
+                "BEGIN:VCARD\nFN:Two numbers\nTEL;TYPE=HOME:+1111111\nTEL;TYPE=CELL:+2222222\nEND:VCARD",
                 "Fallback",
             ),
-            Some(("Two numbers".to_owned(), "1111111".to_owned()))
+            contact("Two numbers", "+1111111", Some("1111111"))
         );
     }
 
@@ -6304,29 +6356,41 @@ mod tests {
     fn shared_contact_prefers_lowest_vcard_tel_preference() {
         assert_eq!(
             shared_contact_details(
-                "BEGIN:VCARD\nFN:Preferred number\nTEL;TYPE=HOME:1111111\nitem1.TEL;TYPE=CELL;PREF=2:2222222\nTEL;TYPE=WORK;PREF=1:3333333\nEND:VCARD",
+                "BEGIN:VCARD\nFN:Preferred number\nTEL;TYPE=HOME:+1111111\nitem1.TEL;TYPE=CELL;PREF=2:+2222222\nTEL;TYPE=WORK;PREF=1:+3333333\nEND:VCARD",
                 "Fallback",
             ),
-            Some(("Preferred number".to_owned(), "3333333".to_owned()))
+            contact("Preferred number", "+3333333", Some("3333333"))
         );
     }
 
     #[test]
-    fn shared_contact_prefers_vcard_name_and_extracts_telephone_without_displaying_it() {
+    fn shared_contact_prefers_vcard_name_and_reads_the_account_from_waid() {
         assert_eq!(
             shared_contact_details(
-                "BEGIN:VCARD\nVERSION:3.0\nFN:Alice Example\nTEL;TYPE=CELL:+1 (555) 010-1234\nEND:VCARD",
+                "BEGIN:VCARD\nVERSION:3.0\nFN:Alice Example\nitem1.TEL;waid=15550101234:+1 (555) 010-1234\nEND:VCARD",
                 "Contact from sender",
             ),
-            Some(("Alice Example".to_owned(), "15550101234".to_owned()))
+            contact("Alice Example", "+1 (555) 010-1234", Some("15550101234"))
+        );
+    }
+
+    #[test]
+    fn a_local_number_names_no_account_and_stays_readable() {
+        // Without a country code the digits are not a WhatsApp account.
+        assert_eq!(
+            shared_contact_details(
+                "BEGIN:VCARD\nFN:Local\nTEL;TYPE=CELL:0171 1234567\nEND:VCARD",
+                "Fallback",
+            ),
+            contact("Local", "0171 1234567", None)
         );
     }
 
     #[test]
     fn shared_contact_without_vcard_name_uses_message_name_and_rejects_missing_phone() {
         assert_eq!(
-            shared_contact_details("BEGIN:VCARD\nTEL:1234567\nEND:VCARD", "Shared person"),
-            Some(("Shared person".to_owned(), "1234567".to_owned()))
+            shared_contact_details("BEGIN:VCARD\nTEL:+1234567\nEND:VCARD", "Shared person"),
+            contact("Shared person", "+1234567", Some("1234567"))
         );
         assert_eq!(
             shared_contact_details("BEGIN:VCARD\nFN:No phone\nEND:VCARD", "Fallback"),
@@ -6341,7 +6405,7 @@ mod tests {
                 "BEGIN:VCARD\nFN:Alice\nTEL:+15550101234\nEND:VCARD\nBEGIN:VCARD\nFN:Bob\nTEL:+15550105678\nEND:VCARD",
                 "Several contacts",
             ),
-            Some(("Alice".to_owned(), "15550101234".to_owned()))
+            contact("Alice", "+15550101234", Some("15550101234"))
         );
     }
 
