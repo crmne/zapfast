@@ -39,9 +39,9 @@ struct Font {
 static FONT: OnceLock<Option<Font>> = OnceLock::new();
 
 /// Noto Color Emoji supplies bitmap glyphs when the system cannot draw a
-/// sequence: on macOS and Windows only when CoreText or DirectWrite fails, so
-/// its 10 MB are copied and parsed only then, and on Linux when no installed
-/// copy is found.
+/// sequence: on macOS only when CoreText fails, so its 10 MB are copied and
+/// parsed only then; on Windows for flags, which Segoe UI Emoji lacks; and on
+/// Linux when no installed copy is found.
 const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
 
 /// Whether color emoji can be drawn.
@@ -50,8 +50,13 @@ pub fn available() -> bool {
 }
 
 /// Prepares the emoji drawing before the first frame needs it.
+///
+/// Windows draws every flag from the bundled font, so it loads here rather
+/// than inside the first frame that shows one. macOS keeps it lazy: only
+/// sequences newer than the system, or that it cannot join, need it.
 pub fn warm_up() {
-    if !native_available() {
+    let native = native_available();
+    if cfg!(windows) || !native {
         let _ = font();
     }
 }
@@ -938,6 +943,17 @@ mod native_tests {
     fn flags_come_from_the_bundled_font() {
         let flag = picture("🇩🇪").expect("flag picture");
         assert_eq!(flag.pixels, bundled_picture("🇩🇪").pixels);
+    }
+
+    /// Segoe UI Emoji draws a subdivision flag as a plain black flag, so the
+    /// bundled Scotland flag is used.
+    #[cfg(windows)]
+    #[test]
+    fn subdivision_flags_come_from_the_bundled_font() {
+        let scotland = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}";
+        assert!(system::render(scotland).is_none());
+        let flag = picture(scotland).expect("flag picture");
+        assert_eq!(flag.pixels, bundled_picture(scotland).pixels);
     }
 
     #[test]

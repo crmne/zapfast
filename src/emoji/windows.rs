@@ -58,8 +58,15 @@ thread_local! {
 /// width, height, and premultiplied RGBA rows. Returns `None` when
 /// DirectWrite does not join the cluster into one glyph that advances or
 /// draws it with a font without colour glyphs. Zero-advance glyphs are layers
-/// under it.
+/// under it. Also `None` for subdivision flags: Segoe UI Emoji has none and
+/// draws their tag characters as nothing over a plain black flag.
 pub(super) fn render(cluster: &str) -> Option<(u32, u32, Vec<u8>)> {
+    if cluster
+        .chars()
+        .any(|character| ('\u{E0020}'..='\u{E007F}').contains(&character))
+    {
+        return None;
+    }
     FACTORIES.with(|factories| draw(factories.as_ref()?, cluster).ok()?)
 }
 

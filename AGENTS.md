@@ -122,10 +122,13 @@ protocol. These notes are for coding agents and new contributors.
   joined only when the system lays it out as one glyph that advances, with
   any zero-advance glyphs drawn as layers under it. Linux reads the
   bitmaps of an installed Noto Color Emoji and resolves sequences through its
-  GSUB ligatures. The bundled Noto is the fallback everywhere, and on macOS
-  and Windows it loads only when the system cannot draw a sequence. Each form
-  of a sequence is tried in both before a part is dropped, so Windows shows
-  Noto's flags rather than one regional indicator letter.
+  GSUB ligatures. The bundled Noto is the fallback everywhere. On macOS it
+  loads only when the system cannot draw a sequence; Windows loads it at start
+  because Segoe UI Emoji has no flags, and subdivision flags skip DirectWrite.
+  Each form of a sequence is tried in both before a part is dropped, so
+  Windows shows Noto's flags rather than one regional indicator letter.
+  System pictures are cut to Noto's cell (measured from its grinning face)
+  and resampled premultiplied, so both sources look the same size.
   Any text that can hold an emoji goes through `widgets::line` /
   `widgets::rich_text` or `markup::layout`, never a bare `Label`.
 - `src/animation.rs` plays animated stickers and GIFs: WebP/GIF frames
