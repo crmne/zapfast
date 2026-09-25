@@ -149,6 +149,9 @@ fn now_millis() -> i64 {
 /// How many recent sticker messages to search for a sticker's references.
 const REFERENCE_SEARCH: usize = 2000;
 
+/// How many stickers others sent the Received shelf holds.
+const RECEIVED_SHELF: usize = 200;
+
 /// Archive marker: favorites the phone synced before ZapFast followed them
 /// have been replayed.
 pub(super) const FAVORITES_RECOVERED: &str = "favorite_stickers_recovered_v1";
@@ -288,10 +291,29 @@ async fn push_favorite(client: &Client, push: FavoritePush) -> Result<Vec<u8>, S
     Ok(encoded)
 }
 
+/// A chat sticker's content hash, so copies from different messages count
+/// once, or its path when the message carries no hash.
+fn archived_hash(sticker: &crate::archive::ArchivedSticker) -> String {
+    sticker
+        .raw
+        .as_deref()
+        .and_then(|raw| wa::Message::decode_from_slice(raw).ok())
+        .and_then(|message| {
+            let base = message.get_base_message();
+            let sticker = base.sticker_message.as_option()?;
+            sticker_hash(
+                sticker.file_sha256.as_deref(),
+                sticker.file_enc_sha256.as_deref(),
+            )
+        })
+        .unwrap_or_else(|| sticker.path.display().to_string())
+}
+
 impl Worker {
-    /// Sends the picker its lists: saved stickers, packs, and Recent, which
-    /// holds the phone's recent stickers and the ones we sent, newest first,
-    /// minus those removed from Recent since their last use.
+    /// Sends the picker its lists: saved stickers, packs, Recent, which holds
+    /// the phone's recent stickers and the ones we sent, newest first, minus
+    /// those removed from Recent since their last use, and Received, the
+    /// stickers others sent that are neither in Recent nor in Favorites.
     pub(super) fn emit_stickers(&mut self) {
         let removed = self.archive.removed_recent_stickers().unwrap_or_default();
         let hidden = |hash: &str, used: i64| removed.get(hash).is_some_and(|at| *at >= used);
@@ -308,22 +330,10 @@ impl Worker {
                 }
             }
         }
-        match self.archive.recent_stickers(80) {
+        match self.archive.recent_stickers(80, true) {
             Ok(rows) => {
                 for sticker in rows {
-                    let hash = sticker
-                        .raw
-                        .as_deref()
-                        .and_then(|raw| wa::Message::decode_from_slice(raw).ok())
-                        .and_then(|message| {
-                            let base = message.get_base_message();
-                            let sticker = base.sticker_message.as_option()?;
-                            sticker_hash(
-                                sticker.file_sha256.as_deref(),
-                                sticker.file_enc_sha256.as_deref(),
-                            )
-                        })
-                        .unwrap_or_else(|| sticker.path.display().to_string());
+                    let hash = archived_hash(&sticker);
                     if !hidden(&hash, sticker.last_used) && seen.insert(hash.clone()) {
                         list.push((sticker.last_used, sticker.path, hash));
                     }
@@ -339,9 +349,32 @@ impl Worker {
         let favorites = self.saved_stickers();
         let packs = self.sticker_packs();
         let recent: Vec<PathBuf> = list.into_iter().map(|(_, path, _)| path).collect();
+        // Favorites are named after their content hash.
+        seen.extend(
+            favorites
+                .iter()
+                .filter_map(|path| Some(path.file_stem()?.to_string_lossy().into_owned())),
+        );
+        // Lock state is unreliable until the authenticated replay completes.
+        let received: Vec<PathBuf> = if !self.privacy_ready {
+            Vec::new()
+        } else {
+            match self.archive.recent_stickers(RECEIVED_SHELF, false) {
+                Ok(rows) => rows
+                    .into_iter()
+                    .filter(|sticker| seen.insert(archived_hash(sticker)))
+                    .map(|sticker| sticker.path)
+                    .collect(),
+                Err(error) => {
+                    log::warn!("could not list received stickers: {error}");
+                    Vec::new()
+                }
+            }
+        };
         let listed: Vec<PathBuf> = favorites
             .iter()
             .chain(&recent)
+            .chain(&received)
             .chain(packs.iter().flat_map(|pack| &pack.stickers))
             .cloned()
             .collect();
@@ -350,6 +383,7 @@ impl Worker {
             favorites,
             packs,
             recent,
+            received,
             emojis,
         });
     }
@@ -709,7 +743,7 @@ impl Worker {
                     .filter_map(|sticker| sticker.path),
             );
         }
-        if let Ok(rows) = self.archive.recent_stickers(REFERENCE_SEARCH) {
+        if let Ok(rows) = self.archive.recent_stickers(REFERENCE_SEARCH, true) {
             candidates.extend(rows.into_iter().filter_map(|sticker| {
                 let raw = sticker.raw.as_deref()?;
                 let message = wa::Message::decode_from_slice(raw).ok()?;
@@ -1148,6 +1182,59 @@ mod tests {
             })
             .await;
         assert_eq!(listed(&events), 1);
+    }
+
+    #[test]
+    fn a_received_sticker_is_listed_once_and_not_when_it_is_a_favorite() {
+        use crate::model::{Content, Media, MediaState};
+        let (mut worker, root, events, _commands) = sticker_worker();
+        let chat = "a@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "A").expect("chat");
+        let receive = |worker: &Worker, id: &str, at: i64, bytes: &[u8]| {
+            use sha2::{Digest, Sha256};
+            let path = root.path().join(format!("{id}.webp"));
+            std::fs::write(&path, bytes).expect("writes");
+            let mut message = crate::archive::tests::message(chat, id, at, false);
+            message.content = Content::Sticker {
+                media: Media {
+                    mime: "image/webp".into(),
+                    size: bytes.len() as u64,
+                    width: Some(512),
+                    height: Some(512),
+                    path: Some(path.clone()),
+                    state: MediaState::Idle,
+                },
+                animated: false,
+            };
+            let raw = wa::Message {
+                sticker_message: MessageField::some(wa::message::StickerMessage {
+                    file_sha256: Some(Sha256::digest(bytes).to_vec()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+            .encode_to_vec();
+            worker
+                .archive
+                .insert_message(&message, Some(&raw))
+                .expect("inserted");
+            path
+        };
+        let duck = sticker_bytes("a duck sent twice");
+        let newest = receive(&worker, "duck-2", 20, &duck);
+        receive(&worker, "duck-1", 10, &duck);
+        let star = sticker_bytes("already a favorite");
+        let starred = receive(&worker, "star", 30, &star);
+        crate::backend::sticker_store::save(&worker.dirs.saved_sticker_dir(), &starred)
+            .expect("saves");
+
+        worker.emit_stickers();
+
+        let received = events.try_iter().find_map(|event| match event {
+            Event::Stickers { received, .. } => Some(received),
+            _ => None,
+        });
+        assert_eq!(received, Some(vec![newest]));
     }
 
     /// Carmine's test: a sticker favorited on the phone never showed up. The

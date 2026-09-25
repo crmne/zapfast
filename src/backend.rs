@@ -775,12 +775,13 @@ pub enum Event {
     /// A shared sticker pack, ready to view, with its publisher; or why it
     /// could not be opened.
     StickerPackPreview(Result<(StickerPack, String), String>),
-    /// Favorite stickers, packs, and recent stickers for the picker, with
-    /// the emojis each sticker is tagged with.
+    /// Favorite stickers, packs, recent stickers, and stickers others sent,
+    /// for the picker, with the emojis each sticker is tagged with.
     Stickers {
         favorites: Vec<PathBuf>,
         packs: Vec<StickerPack>,
         recent: Vec<PathBuf>,
+        received: Vec<PathBuf>,
         emojis: std::collections::HashMap<PathBuf, Vec<String>>,
     },
     Media {

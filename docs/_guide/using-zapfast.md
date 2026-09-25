@@ -28,10 +28,15 @@ on its text still selects the word.
 
 The sticker tab works like WhatsApp's: a row of tabs holds **Recent**
 (the clock), **Favorites** (the star), each of your packs, and **+** for
-adding more. Click a sticker to send it. Animated stickers play on hover.
+adding more. ZapFast adds **Received** (the speech bubble) after Favorites.
+Click a sticker to send it. Animated stickers play on hover.
 
 **Recent** holds the stickers you sent, not the ones you received.
 Right-click one to take it out of Recent here and on your phone.
+
+**Received** holds the stickers people sent you that are already
+downloaded, newest first, each once. Stickers already in Recent or
+Favorites, and stickers from locked chats, stay out of it.
 
 Right-click a sticker in a chat or the picker to add it to your
 **Favorites**. Favorites stay in sync with your phone: a sticker you favorite

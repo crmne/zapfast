@@ -1066,10 +1066,14 @@ struct StickerChoices {
     pack: Option<(PathBuf, PathBuf, bool)>,
 }
 
-/// The tab strip, as in WhatsApp: Recent, Favorites, every pack, then the
+/// The tab strip: Recent, Favorites, and Received, then every pack and the
 /// page for adding stickers.
 fn shelf_entries(packs: &[StickerPack]) -> Vec<StickerShelf> {
-    let mut shelves = vec![StickerShelf::Recent, StickerShelf::Favorites];
+    let mut shelves = vec![
+        StickerShelf::Recent,
+        StickerShelf::Favorites,
+        StickerShelf::Received,
+    ];
     shelves.extend(
         packs
             .iter()
@@ -1123,6 +1127,7 @@ fn shelf_strip(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         let icon = match &shelf {
                             StickerShelf::Recent => Some(Icon::Clock),
                             StickerShelf::Favorites => Some(Icon::Star),
+                            StickerShelf::Received => Some(Icon::MessageCircle),
                             StickerShelf::Add => Some(Icon::Plus),
                             StickerShelf::Pack(_) => None,
                         };
@@ -1147,6 +1152,7 @@ fn shelf_strip(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     let tip = match (&shelf, pack) {
                         (StickerShelf::Recent, _) => gettext(locale, "Recent"),
                         (StickerShelf::Favorites, _) => gettext(locale, "Favorites"),
+                        (StickerShelf::Received, _) => gettext(locale, "Received"),
                         (StickerShelf::Add, _) => gettext(locale, "Add stickers"),
                         (StickerShelf::Pack(_), Some(pack)) => pack.name.clone().into(),
                         (StickerShelf::Pack(_), None) => "".into(),
@@ -1212,6 +1218,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 recent: &app.stickers,
                 favorites: &app.stickers_saved,
                 packs: &app.sticker_packs,
+                received: &app.stickers_received,
                 emojis: &app.sticker_emojis,
             },
             &query,
@@ -1247,6 +1254,11 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     locale,
                     "Right-click any sticker to add it to your favorites. They stay in sync with your phone.",
                 ),
+            ),
+            StickerShelf::Received if app.stickers_received.is_empty() => shelf_hint(
+                ui,
+                palette,
+                &gettext(locale, "Stickers people send you appear here."),
             ),
             StickerShelf::Pack(_) => {
                 let Some(pack) = app.selected_pack().cloned() else {
@@ -1308,11 +1320,11 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         });
                 }
             }
-            StickerShelf::Recent | StickerShelf::Favorites => {
-                let (stickers, kind) = if shelf == StickerShelf::Recent {
-                    (&app.stickers, Shelf::Recent)
-                } else {
-                    (&app.stickers_saved, Shelf::Favorites)
+            StickerShelf::Recent | StickerShelf::Favorites | StickerShelf::Received => {
+                let (stickers, kind) = match shelf {
+                    StickerShelf::Recent => (&app.stickers, Shelf::Recent),
+                    StickerShelf::Favorites => (&app.stickers_saved, Shelf::Favorites),
+                    _ => (&app.stickers_received, Shelf::Pack),
                 };
                 egui::ScrollArea::vertical()
                     .id_salt(("sticker-shelf", &shelf))
@@ -1917,13 +1929,14 @@ mod pack_tests {
     }
 
     #[test]
-    fn the_strip_holds_recent_favorites_every_pack_then_add() {
+    fn the_strip_holds_recent_favorites_received_every_pack_then_add() {
         let packs = vec![pack("Bom dia", true), pack("Frogs", false)];
         assert_eq!(
             shelf_entries(&packs),
             vec![
                 StickerShelf::Recent,
                 StickerShelf::Favorites,
+                StickerShelf::Received,
                 StickerShelf::Pack(PathBuf::from("/packs/Bom dia")),
                 StickerShelf::Pack(PathBuf::from("/packs/Frogs")),
                 StickerShelf::Add,

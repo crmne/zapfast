@@ -1072,19 +1072,23 @@ impl Archive {
         rows.collect()
     }
 
-    /// Returns downloaded stickers we sent, newest first. Received stickers
-    /// stay out of Recent, as in WhatsApp's own apps.
-    pub fn recent_stickers(&self, limit: usize) -> Result<Vec<ArchivedSticker>> {
+    /// Returns downloaded stickers we sent (`from_me`) or received, newest
+    /// first. Received stickers stay out of Recent, as in WhatsApp's own apps,
+    /// and get their own shelf, which leaves out locked chats so a sticker
+    /// cannot hint at who is behind the lock.
+    pub fn recent_stickers(&self, limit: usize, from_me: bool) -> Result<Vec<ArchivedSticker>> {
         let mut statement = self.connection.prepare(
             "SELECT json_extract(content, '$.media.path') AS path, MAX(timestamp), raw
              FROM messages
              WHERE json_extract(content, '$.kind') = 'sticker' AND path IS NOT NULL
-               AND from_me = 1
+               AND from_me = ?2
+               AND (from_me OR NOT EXISTS (
+                   SELECT 1 FROM chats WHERE chats.id = messages.chat AND chats.locked))
              GROUP BY path
              ORDER BY 2 DESC
              LIMIT ?1",
         )?;
-        let rows = statement.query_map(params![limit as i64], |row| {
+        let rows = statement.query_map(params![limit as i64, from_me], |row| {
             Ok(ArchivedSticker {
                 last_used: row.get(1)?,
                 path: std::path::PathBuf::from(row.get::<_, String>(0)?),
@@ -3150,7 +3154,7 @@ mod sticker_tests {
             vec![("a@s.whatsapp.net".to_owned(), "s1".to_owned())]
         );
         // Exclude missing local files.
-        assert!(archive.recent_stickers(10).expect("lists").is_empty());
+        assert!(archive.recent_stickers(10, true).expect("lists").is_empty());
     }
 
     #[test]
@@ -3176,7 +3180,7 @@ mod sticker_tests {
             .insert_message(&unfetched, Some(b"raw"))
             .expect("inserted");
         let recent: Vec<_> = archive
-            .recent_stickers(10)
+            .recent_stickers(10, true)
             .expect("lists")
             .into_iter()
             .map(|sticker| sticker.path.display().to_string())
@@ -3186,6 +3190,61 @@ mod sticker_tests {
             archive.stickers_without_file(10).expect("lists").is_empty(),
             "a received sticker is not fetched for Recent"
         );
+    }
+
+    #[test]
+    fn received_stickers_have_their_own_list() {
+        let dir = tempfile::tempdir().expect("temp");
+        let file = |name: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"webp").expect("writes");
+            path.display().to_string()
+        };
+        let (sent, received) = (file("sent.webp"), file("received.webp"));
+        let archive = Archive::in_memory().expect("opens");
+        archive.ensure_chat("a@s.whatsapp.net", "A").expect("chat");
+        archive
+            .insert_message(&sticker("a@s.whatsapp.net", "s1", 10, Some(&sent)), None)
+            .expect("inserted");
+        let mut theirs = sticker("a@s.whatsapp.net", "s2", 20, Some(&received));
+        theirs.from_me = false;
+        archive.insert_message(&theirs, None).expect("inserted");
+        let listed: Vec<_> = archive
+            .recent_stickers(10, false)
+            .expect("lists")
+            .into_iter()
+            .map(|sticker| sticker.path.display().to_string())
+            .collect();
+        assert_eq!(listed, vec![received]);
+    }
+
+    #[test]
+    fn a_sticker_received_in_a_locked_chat_is_not_listed() {
+        let dir = tempfile::tempdir().expect("temp");
+        let file = |name: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"webp").expect("writes");
+            path.display().to_string()
+        };
+        let (open, hidden) = (file("open.webp"), file("hidden.webp"));
+        let archive = Archive::in_memory().expect("opens");
+        for (chat, id, path) in [
+            ("a@s.whatsapp.net", "s1", &open),
+            ("b@s.whatsapp.net", "s2", &hidden),
+        ] {
+            archive.ensure_chat(chat, "A").expect("chat");
+            let mut theirs = sticker(chat, id, 10, Some(path));
+            theirs.from_me = false;
+            archive.insert_message(&theirs, None).expect("inserted");
+        }
+        archive.set_locked("b@s.whatsapp.net", true).expect("locks");
+        let listed: Vec<_> = archive
+            .recent_stickers(10, false)
+            .expect("lists")
+            .into_iter()
+            .map(|sticker| sticker.path.display().to_string())
+            .collect();
+        assert_eq!(listed, vec![open]);
     }
 }
 

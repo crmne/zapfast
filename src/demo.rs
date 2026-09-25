@@ -969,6 +969,7 @@ fn sticker_sample(app: &mut App, shelf: crate::model::StickerShelf, search: &str
     app.picker = Some(crate::model::PickerTab::Stickers);
     app.stickers = set("😂🐸🎉👋😎🚀🥳🙏🔥");
     app.stickers_saved = set("❤😍🤣🐱");
+    app.stickers_received = set("🐶🌮🎈🦄");
     let ducks = set("🦆🐤🐣🐥🦢🪿");
     let local = set("☕🌅🌻");
     app.sticker_packs = vec![
@@ -989,6 +990,7 @@ fn sticker_sample(app: &mut App, shelf: crate::model::StickerShelf, search: &str
         .stickers
         .iter()
         .chain(&app.stickers_saved)
+        .chain(&app.stickers_received)
         .chain(app.sticker_packs.iter().flat_map(|pack| &pack.stickers))
         .filter_map(|path| {
             let emojis = crate::sticker_meta::emojis(&std::fs::read(path).ok()?);
@@ -2351,6 +2353,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "picker" => app.picker = Some(crate::model::PickerTab::Emoji),
             "stickers" => sticker_sample(app, crate::model::StickerShelf::Recent, ""),
             "sticker-favorites" => sticker_sample(app, crate::model::StickerShelf::Favorites, ""),
+            "sticker-received" => sticker_sample(app, crate::model::StickerShelf::Received, ""),
             "sticker-pack" => {
                 let pack =
                     crate::model::StickerShelf::Pack(app.dirs.media_cache_dir().join("Ducks"));
@@ -3845,6 +3848,7 @@ mod tests {
             "picker",
             "stickers",
             "sticker-favorites",
+            "sticker-received",
             "sticker-pack",
             "sticker-search",
             "sticker-animated",

@@ -255,10 +255,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   choose it. GIF search needs a free GIPHY API key unless the build includes
   one.
 - **Sticker packs.** A tab strip like WhatsApp's holds Recent, Favorites, and
-  every pack. Search stickers by emoji, by a word that names one, or by pack
-  name. Import a pack from a `signal.art` link or `.wastickers` file, or make
-  your own packs from any sticker with a right-click. Open WhatsApp sticker
-  packs shared in a chat and add them, or send any of your packs as one.
+  every pack. ZapFast adds a Received tab (the speech bubble) with the
+  stickers people sent you that are already downloaded, newest first, each
+  once, leaving out locked chats. Search stickers by emoji, by a word that
+  names one, or by pack name. Import a pack from a `signal.art` link or
+  `.wastickers` file, or make your own packs from any sticker with a
+  right-click. Open WhatsApp sticker packs shared in a chat and add them, or
+  send any of your packs as one.
   Turn any picture into a sticker: crop it square, keep its transparent
   background, and tag it with emojis.
   Animated packs remain animated. Packs are stored as WebP files on your

@@ -890,6 +890,8 @@ pub enum StickerShelf {
     #[default]
     Recent,
     Favorites,
+    /// Stickers others sent us, newest first.
+    Received,
     /// One pack, by its folder.
     Pack(PathBuf),
     /// Importing packs, starting one, or making a sticker.

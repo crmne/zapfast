@@ -41,10 +41,12 @@ pub struct Library<'a> {
     pub recent: &'a [PathBuf],
     pub favorites: &'a [PathBuf],
     pub packs: &'a [StickerPack],
+    pub received: &'a [PathBuf],
     pub emojis: &'a HashMap<PathBuf, Vec<String>>,
 }
 
-/// Stickers matching `query`, favorites and recent ones first, each once.
+/// Stickers matching `query`, favorites and recent ones first, received ones
+/// last, each once.
 pub fn search(library: &Library<'_>, query: &str) -> Vec<PathBuf> {
     let query = query.trim();
     if query.is_empty() {
@@ -83,7 +85,8 @@ pub fn search(library: &Library<'_>, query: &str) -> Vec<PathBuf> {
         .favorites
         .iter()
         .chain(library.recent)
-        .chain(library.packs.iter().flat_map(|pack| &pack.stickers));
+        .chain(library.packs.iter().flat_map(|pack| &pack.stickers))
+        .chain(library.received);
     for path in everything {
         if tagged(path) && seen.insert(path.clone()) {
             found.push(path.clone());
@@ -120,6 +123,7 @@ mod tests {
             ("/fav/love.webp", vec!["❤️", "😍"]),
             ("/packs/Ducks/1.webp", vec!["🦆", "😂"]),
             ("/recent/frog.webp", vec!["🐸"]),
+            ("/received/cat.webp", vec!["🐱"]),
         ]
         .into_iter()
         .map(|(path, emojis)| {
@@ -141,11 +145,13 @@ mod tests {
             pack("Ducks", &["/packs/Ducks/1.webp", "/packs/Ducks/2.webp"]),
             pack("Bom dia", &["/packs/Bom dia/1.webp"]),
         ];
+        let received = [PathBuf::from("/received/cat.webp")];
         search(
             &Library {
                 recent: &recent,
                 favorites: &favorites,
                 packs: &packs,
+                received: &received,
                 emojis: &emojis,
             },
             query,
@@ -179,5 +185,10 @@ mod tests {
         assert_eq!(library_search("bom"), vec!["/packs/Bom dia/1.webp"]);
         assert!(library_search("   ").is_empty());
         assert!(library_search("zzzz").is_empty());
+    }
+
+    #[test]
+    fn a_sticker_only_in_received_is_found() {
+        assert_eq!(library_search("🐱"), vec!["/received/cat.webp"]);
     }
 }

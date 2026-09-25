@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-25 14:45+0200\n"
+"POT-Creation-Date: 2026-09-25 14:38+0000\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -28,7 +28,7 @@ msgstr "Non lus"
 msgid "Private"
 msgstr "Privés"
 
-#: src/model.rs:76 src/ui/picker.rs:1149
+#: src/model.rs:76 src/ui/picker.rs:1154
 msgid "Favorites"
 msgstr "Favoris"
 
@@ -159,16 +159,16 @@ msgstr "Verrouillés"
 msgid "No favorites yet"
 msgstr "Pas encore de favoris"
 
-#: src/ui/chats.rs:772 src/app.rs:1288
+#: src/ui/chats.rs:772 src/app.rs:1291
 msgid "Message yourself"
 msgstr "Envoyez-vous un message"
 
-#: src/ui/chats.rs:1013 src/ui/chats.rs:1371 src/ui/picker.rs:1569
+#: src/ui/chats.rs:1013 src/ui/chats.rs:1371 src/ui/picker.rs:1581
 msgid "Remove from favorites"
 msgstr "Retirer des favoris"
 
 #: src/ui/chats.rs:1015 src/ui/chats.rs:1373 src/ui/conversation.rs:3530
-#: src/ui/dialogs.rs:977 src/ui/picker.rs:1570
+#: src/ui/dialogs.rs:977 src/ui/picker.rs:1582
 msgid "Add to favorites"
 msgstr "Ajouter aux favoris"
 
@@ -845,25 +845,25 @@ msgstr[1] "{} restants"
 msgid "No one yet"
 msgstr "Personne pour l’instant"
 
-#: src/app.rs:1209
+#: src/app.rs:1212
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Une étiquette nommée « {name} » existe déjà."
 
-#: src/app.rs:1269
+#: src/app.rs:1272
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Vous)"
 
-#: src/app.rs:1270 src/app.rs:1289
+#: src/app.rs:1273 src/app.rs:1292
 msgid "You"
 msgstr "Vous"
 
-#: src/app.rs:2513
+#: src/app.rs:2518
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Non envoyé : ZapFast n’est pas connecté à WhatsApp."
 
-#: src/app.rs:2517
+#: src/app.rs:2522
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -871,28 +871,28 @@ msgstr ""
 "Non envoyé : le message auquel vous répondez n’est pas disponible sur cet "
 "ordinateur. Annulez la réponse pour l’envoyer sans citation."
 
-#: src/app.rs:3835
+#: src/app.rs:3840
 msgid "Added to favorites"
 msgstr "Ajouté aux favoris"
 
-#: src/app.rs:3910
+#: src/app.rs:3915
 msgid "Sending the sticker pack…"
 msgstr "Envoi du pack de stickers…"
 
-#: src/app.rs:4195 src/ui/labels.rs:237
+#: src/app.rs:4200 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Vous avez {limit} étiquettes, le maximum que ZapFast conserve."
 
-#: src/app.rs:4718
+#: src/app.rs:4723
 msgid "This video opens in your system player"
 msgstr "Cette vidéo s'ouvre dans le lecteur du système"
 
-#: src/app.rs:5201
+#: src/app.rs:5206
 msgid "Copied image"
 msgstr "Image copiée"
 
-#: src/app.rs:5204 src/app.rs:5209
+#: src/app.rs:5209 src/app.rs:5214
 msgid "Failed to copy image"
 msgstr "Impossible de copier l'image"
 
@@ -1002,31 +1002,35 @@ msgstr "Renommer ou changer la couleur"
 msgid "Delete this label. Its chats keep their messages."
 msgstr "Supprimer cette étiquette. Ses discussions gardent leurs messages."
 
-#: src/ui/picker.rs:1148
+#: src/ui/picker.rs:1153
 msgid "Recent"
 msgstr "Récents"
 
-#: src/ui/picker.rs:1150
+#: src/ui/picker.rs:1155
+msgid "Received"
+msgstr "Reçus"
+
+#: src/ui/picker.rs:1156
 msgid "Add stickers"
 msgstr "Ajouter des stickers"
 
-#: src/ui/picker.rs:1185
+#: src/ui/picker.rs:1191
 msgid "Search by emoji, word, or pack"
 msgstr "Rechercher par emoji, mot ou pack"
 
-#: src/ui/picker.rs:1223
+#: src/ui/picker.rs:1230
 msgid "No stickers match your search."
 msgstr "Aucun sticker ne correspond à votre recherche."
 
-#: src/ui/picker.rs:1237
+#: src/ui/picker.rs:1244
 msgid "Loading your stickers…"
 msgstr "Chargement de vos stickers…"
 
-#: src/ui/picker.rs:1239
+#: src/ui/picker.rs:1246
 msgid "Stickers you send appear here."
 msgstr "Les stickers que vous envoyez s’affichent ici."
 
-#: src/ui/picker.rs:1248
+#: src/ui/picker.rs:1255
 msgid ""
 "Right-click any sticker to add it to your favorites. They stay in sync with "
 "your phone."
@@ -1034,36 +1038,40 @@ msgstr ""
 "Faites un clic droit sur un sticker pour l’ajouter à vos favoris. Ils "
 "restent synchronisés avec votre téléphone."
 
-#: src/ui/picker.rs:1264
+#: src/ui/picker.rs:1261
+msgid "Stickers people send you appear here."
+msgstr "Les stickers que vous recevez s’affichent ici."
+
+#: src/ui/picker.rs:1276
 msgid "Remove this pack"
 msgstr "Supprimer ce pack"
 
-#: src/ui/picker.rs:1278
+#: src/ui/picker.rs:1290
 msgid "Send this pack to the chat"
 msgstr "Envoyer ce pack dans la discussion"
 
-#: src/ui/picker.rs:1292
+#: src/ui/picker.rs:1304
 msgid "Nothing here yet. Right-click any sticker to add it to this pack."
 msgstr ""
 "Rien pour l’instant. Faites un clic droit sur un sticker pour l’ajouter à ce "
 "pack."
 
-#: src/ui/picker.rs:1365
+#: src/ui/picker.rs:1377
 msgid "Import a pack"
 msgstr "Importer un pack"
 
-#: src/ui/picker.rs:1373
+#: src/ui/picker.rs:1385
 msgid ""
 "Paste a signal.art link from signalstickers.org, or open a .wastickers file."
 msgstr ""
 "Collez un lien signal.art depuis signalstickers.org ou ouvrez un "
 "fichier .wastickers."
 
-#: src/ui/picker.rs:1383
+#: src/ui/picker.rs:1395
 msgid "Make your own"
 msgstr "Créez les vôtres"
 
-#: src/ui/picker.rs:1391
+#: src/ui/picker.rs:1403
 msgid ""
 "Start a pack, then right-click any sticker to add it. Or turn a picture into "
 "a sticker."
@@ -1071,39 +1079,39 @@ msgstr ""
 "Créez un pack, puis faites un clic droit sur un sticker pour l’y ajouter. Ou "
 "transformez une image en sticker."
 
-#: src/ui/picker.rs:1403
+#: src/ui/picker.rs:1415
 msgid "Make a sticker from a picture…"
 msgstr "Créer un sticker à partir d’une image…"
 
-#: src/ui/picker.rs:1418
+#: src/ui/picker.rs:1430
 msgid "Create pack"
 msgstr "Créer le pack"
 
-#: src/ui/picker.rs:1429
+#: src/ui/picker.rs:1441
 msgid "New pack…"
 msgstr "Nouveau pack…"
 
-#: src/ui/picker.rs:1462
+#: src/ui/picker.rs:1474
 msgid "Find packs"
 msgstr "Trouver des packs"
 
-#: src/ui/picker.rs:1463
+#: src/ui/picker.rs:1475
 msgid "Open file"
 msgstr "Ouvrir un fichier"
 
-#: src/ui/picker.rs:1478
+#: src/ui/picker.rs:1490
 msgid "Paste a signal.art link"
 msgstr "Collez un lien signal.art"
 
-#: src/ui/picker.rs:1506
+#: src/ui/picker.rs:1518
 msgid "Browse signalstickers.org"
 msgstr "Parcourir signalstickers.org"
 
-#: src/ui/picker.rs:1522
+#: src/ui/picker.rs:1534
 msgid "Importing the pack…"
 msgstr "Importation du pack…"
 
-#: src/ui/picker.rs:1571
+#: src/ui/picker.rs:1583
 msgid "Remove from recents"
 msgstr "Retirer des récents"
 

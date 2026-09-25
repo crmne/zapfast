@@ -330,6 +330,8 @@ pub struct App {
     pub gif_pending: bool,
     pub gif_error: Option<GifError>,
     pub stickers: Vec<PathBuf>,
+    /// Downloaded stickers others sent, newest first.
+    pub stickers_received: Vec<PathBuf>,
     /// Favorite stickers, newest first.
     pub stickers_saved: Vec<PathBuf>,
     /// Imported sticker packs, newest first.
@@ -775,6 +777,7 @@ impl App {
             gif_pending: false,
             gif_error: None,
             stickers: Vec::new(),
+            stickers_received: Vec::new(),
             stickers_saved: Vec::new(),
             sticker_packs: Vec::new(),
             stickers_pending: false,
@@ -1949,11 +1952,13 @@ impl App {
                     favorites,
                     packs,
                     recent,
+                    received,
                     emojis,
                 } => {
                     self.stickers_saved = favorites;
                     self.sticker_packs = packs;
                     self.stickers = recent;
+                    self.stickers_received = received;
                     self.sticker_emojis = emojis;
                     // Show a pack made here as soon as it exists. Packs list
                     // newest first, so the first match is the new one.
@@ -5468,6 +5473,7 @@ mod tests {
             favorites: Vec::new(),
             packs,
             recent: Vec::new(),
+            received: Vec::new(),
             emojis: std::collections::HashMap::new(),
         }
     }
