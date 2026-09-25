@@ -44,6 +44,12 @@ Changes on the Settings page are saved to `settings.json` immediately. The
 search field at the top (`Ctrl+F`, Command+F on macOS) finds a setting by its
 name or description, in the interface language or in English.
 
+The first visit after a release that added settings tags each one of them
+**(New)** in red, in your interface language, so a new choice is noticed
+instead of scrolled past. The tag lasts that visit only, and the release it
+belonged to is remembered in `settings.json`, so the page looks as it always
+did from then on.
+
 **Appearance**
 
 - **Theme**: dark, light, follow the system, or a local JSON palette from the

@@ -17,6 +17,62 @@ use super::widgets;
 /// The settings search field, which Ctrl+F focuses on this page.
 pub const SEARCH_ID: &str = "settings-search";
 
+/// A setting a release added, and the release that added it. The row wears a
+/// red `(New)` tag the first time this page is opened after that release, so
+/// a new choice is noticed instead of scrolled past. Titles are the English
+/// source the search already keys on, so a translation cannot break the match.
+const NEW_ROWS: &[(&str, &str)] = &[
+    ("Wallpaper", "0.16.0"),
+    ("Language", "0.16.0"),
+    ("Start at login", "0.16.0"),
+    ("Proxy", "0.16.0"),
+    ("Message sound", "0.16.0"),
+    ("Mention sound", "0.16.0"),
+    ("Play sounds for group messages", "0.16.0"),
+];
+
+/// Whether `version` is a later release than `other`. Only the dotted
+/// numbers count, and a pre-release suffix is dropped, so `0.16.0-rc.1` reads
+/// as `0.16.0` and never sorts after the release it leads to.
+fn version_is_newer(version: &str, other: &str) -> bool {
+    let numbers = |text: &str| -> Vec<u64> {
+        text.split(['-', '+'])
+            .next()
+            .unwrap_or_default()
+            .split('.')
+            .map(|part| part.parse().unwrap_or_default())
+            .collect()
+    };
+    let (version, other) = (numbers(version), numbers(other));
+    let length = version.len().max(other.len());
+    (0..length)
+        .map(|at| {
+            (
+                version.get(at).copied().unwrap_or(0),
+                other.get(at).copied().unwrap_or(0),
+            )
+        })
+        .find(|(new, old)| new != old)
+        .is_some_and(|(new, old)| new > old)
+}
+
+/// The `(New)` tag for a row, or `None` when the reader has already seen this
+/// release's tags or the row is not one of the settings a release added.
+fn new_tag_for(source: &str, app: &App) -> Option<String> {
+    let (_, since) = NEW_ROWS.iter().find(|(title, _)| *title == source)?;
+    let current = env!("CARGO_PKG_VERSION");
+    // A row from a release this build predates is not new to it, and a row
+    // the reader has already seen the tag for stays quiet.
+    if !app.new_settings_tags
+        || version_is_newer(since, current)
+        || !app.settings.shows_new_tags(current)
+    {
+        return None;
+    }
+    let seen = app.settings.new_tags_version.as_deref().unwrap_or_default();
+    version_is_newer(since, seen).then(|| crate::i18n::gettext(app.locale, "New").into_owned())
+}
+
 /// A settings string with its English source, so the search finds a
 /// translated setting by either wording.
 #[derive(Clone, Debug, Default)]
@@ -173,16 +229,25 @@ impl Section {
         let palette = app.palette;
         section(ui, &palette, &title.shown, |ui| {
             for (row, control) in entries {
+                let new_label = new_tag_for(&row.title.source, app);
                 match control {
                     Control::Row(control) => widgets::setting_row(
                         ui,
                         &palette,
                         &row.title.shown,
                         &row.description.shown,
+                        new_label.as_deref(),
                         |ui| control(ui, app),
                     ),
                     Control::Toggle(field) => {
-                        toggle(ui, app, &row.title.shown, &row.description.shown, field);
+                        toggle(
+                            ui,
+                            app,
+                            &row.title.shown,
+                            &row.description.shown,
+                            new_label.as_deref(),
+                            field,
+                        );
                     }
                     Control::Block(draw) => draw(ui, app),
                 }
@@ -1277,12 +1342,13 @@ fn toggle(
     app: &mut App,
     label: &str,
     description: &str,
+    new_label: Option<&str>,
     field: impl Fn(&mut crate::settings::Settings) -> &mut bool,
 ) {
     let palette = app.palette;
     let mut value = *field(&mut app.settings);
     let mut changed = false;
-    widgets::setting_row(ui, &palette, label, description, |ui| {
+    widgets::setting_row(ui, &palette, label, description, new_label, |ui| {
         let response = widgets::switch(ui, &palette, &mut value);
         theme::reveal_focus(&response);
         response.widget_info(|| {
@@ -1520,6 +1586,86 @@ mod tests {
         assert_eq!(rows.len(), 3);
         let rows = titles(window(Locale::German), &Filter::new("benachrichtigungen"));
         assert_eq!(rows.len(), 3);
+    }
+
+    #[test]
+    fn only_the_dotted_numbers_decide_which_release_is_newer() {
+        assert!(version_is_newer("0.17.0", "0.16.5"));
+        assert!(version_is_newer("0.16.5", "0.16.4"));
+        assert!(!version_is_newer("0.16.5", "0.16.5"));
+        assert!(!version_is_newer("0.16.4", "0.16.5"));
+        // A missing component counts as zero, so 0.17 is 0.17.0.
+        assert!(version_is_newer("0.17", "0.16.9"));
+        assert!(!version_is_newer("0.16", "0.16.0"));
+        // A release candidate reads as its final version.
+        assert!(!version_is_newer("0.16.0-rc.1", "0.16.0"));
+        assert!(version_is_newer("0.16.1-rc.1", "0.16.0"));
+    }
+
+    /// Every title in `NEW_ROWS` must be a row this page really draws, or
+    /// the tag would point at nothing.
+    #[test]
+    fn every_tagged_title_is_a_row_of_this_page() {
+        let mut app = crate::app::App::headless(
+            crate::paths::AppDirs::under(&std::env::temp_dir().join("zapfast-new-rows")),
+            Settings::default(),
+        )
+        .0;
+        app.page = Page::Settings;
+        // "Start at login" is only drawn once the platform has been asked
+        // whether it can, which a headless app has not.
+        app.start_with_system = Some(false);
+        let shown: Vec<String> = sections(&app)
+            .into_iter()
+            .flat_map(|section| {
+                let (_, rows) = section.visible(&Filter::new(""));
+                rows.into_iter()
+                    .map(|(row, _)| row.title.source.into_owned())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for (title, since) in NEW_ROWS {
+            assert!(
+                shown.iter().any(|row| row == title),
+                "{title:?} is not a row"
+            );
+            assert!(
+                !version_is_newer(since, env!("CARGO_PKG_VERSION")),
+                "{title:?} claims a release this build predates"
+            );
+        }
+    }
+
+    /// The tag names the setting, in the reader's language, and only while
+    /// the visit is the first after a release.
+    #[test]
+    fn the_tag_appears_once_and_is_translated() {
+        let mut app = crate::app::App::headless(
+            crate::paths::AppDirs::under(&std::env::temp_dir().join("zapfast-new-tag")),
+            Settings::default(),
+        )
+        .0;
+        let current = env!("CARGO_PKG_VERSION");
+
+        // Nothing is tagged before the page opens after an update.
+        assert_eq!(new_tag_for("Proxy", &app), None);
+        app.new_settings_tags = true;
+        assert_eq!(new_tag_for("Proxy", &app).as_deref(), Some("New"));
+        app.locale = Locale::PortugueseBrazil;
+        assert_eq!(
+            new_tag_for("Proxy", &app).as_deref(),
+            Some("Novo"),
+            "the tag is translated"
+        );
+        // A row that no release added stays untagged, tags or not.
+        assert_eq!(new_tag_for("Theme", &app), None);
+        // The tags last one visit: the app drops them when the page closes,
+        // and the release is recorded so the next visit stays quiet.
+        app.settings.claim_new_tags(current);
+        app.new_settings_tags = false;
+        assert_eq!(new_tag_for("Proxy", &app), None);
+        app.new_settings_tags = true;
+        assert_eq!(new_tag_for("Proxy", &app), None, "already seen");
     }
 
     #[test]

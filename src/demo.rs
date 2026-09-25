@@ -1837,6 +1837,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            "settings-new" => {
+                app.page = Page::Settings;
+                // A release that added settings, seen for the first time.
+                app.new_settings_tags = true;
+            }
             choice if choice.starts_with("settings-search=") => {
                 app.page = Page::Settings;
                 app.settings_search = choice["settings-search=".len()..].to_owned();
@@ -3792,6 +3797,7 @@ mod tests {
             "rtl",
             "disappearing",
             "settings",
+            "settings-new",
             "settings-search=Notifications",
             "settings-search=System",
             "wallpaper",

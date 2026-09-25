@@ -587,6 +587,17 @@ and hides sections with nothing left. A match on a section's name keeps the
 whole section. Translated settings are found in the interface language and in
 English. `Ctrl+F` on the Settings page focuses the field, and `Esc` clears it.
 
+### What a release added
+
+The first time you open **Settings** after an update that brought new
+settings, each setting the release added carries a red **(New)** tag beside
+its name, so a new choice is noticed instead of scrolled past. The tag names
+the setting in your interface language, and it lasts that one visit: the next
+time you open Settings, and every time after, the page looks as it always
+did. Nothing is sent anywhere to know it was seen; ZapFast records only the
+release it last showed the tags for, in the same settings file as everything
+else.
+
 ### Interface language
 
 **Settings > Appearance > Language** chooses the interface language. **Auto**

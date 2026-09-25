@@ -73,7 +73,7 @@ struct Cli {
     #[arg(long, requires = "demo")]
     demo_macos: bool,
 
-    /// Demo view: `chat`, `empty`, `settings`, `login`,
+    /// Demo view: `chat`, `empty`, `settings`, `settings-new`, `login`,
     /// `pair`, `shortcuts`, `about`, `info`, `mention`, `light`, or a comma-separated
     /// mix such as `chat,light`.
     #[cfg(feature = "demo")]

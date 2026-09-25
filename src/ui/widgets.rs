@@ -647,18 +647,47 @@ pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> bo
     clicked
 }
 
-/// Labeled settings row.
+/// Labeled settings row. `new_label` paints the red `(New)` tag beside the
+/// title of a setting this release added, and is `None` for every other row.
 pub fn setting_row(
     ui: &mut Ui,
     palette: &Palette,
     label: &str,
     description: &str,
+    new_label: Option<&str>,
     control: impl FnOnce(&mut Ui),
 ) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - 260.0).max(120.0));
-            rich_text(ui, label, theme::medium(14.0), palette.text);
+            // The tag shares the title's line, so the two are laid out
+            // together and the title gives up the width the tag needs. A row
+            // with no tag keeps the single line it always had, so nothing
+            // else on the page moves.
+            let title_label = |ui: &mut egui::Ui, width: f32| {
+                let title = line(ui, label, theme::medium(14.0), palette.text, width, 1);
+                let (rect, _) = ui.allocate_exact_size(title.size(), Sense::hover());
+                if ui.is_rect_visible(rect) {
+                    title.paint(ui, rect.min, palette.text);
+                }
+            };
+            match new_label {
+                Some(tag) => {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let tag_width = ui
+                            .painter()
+                            .layout_no_wrap(tag.to_owned(), theme::bold(11.0), palette.on_accent)
+                            .size()
+                            .x
+                            + 16.0;
+                        let width = (ui.available_width() - tag_width).max(40.0);
+                        title_label(ui, width);
+                        new_tag(ui, palette, tag);
+                    });
+                }
+                None => title_label(ui, ui.available_width()),
+            }
             if !description.is_empty() {
                 let description = line(
                     ui,
@@ -688,6 +717,27 @@ pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color3
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
     ui.painter().add(egui::Shape::mesh(mesh));
+}
+
+/// The red `(New)` tag that points at a setting a release just added.
+pub fn new_tag(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), theme::bold(11.0), palette.on_accent);
+    let size = galley.size() + vec2(16.0, 6.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter()
+            .rect_filled(rect, rect.height() / 2.0, palette.danger);
+        ui.painter().galley(
+            rect.center() - galley.size() / 2.0,
+            galley,
+            palette.on_accent,
+        );
+    }
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), label));
+    response
 }
 
 /// Small pill label used for date separators and pinned markers.

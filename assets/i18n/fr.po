@@ -429,6 +429,10 @@ msgstr[1] "{} membres"
 msgid "Settings"
 msgstr "Paramètres"
 
+#: src/ui/settings.rs:52
+msgid "New"
+msgstr "Nouveau"
+
 #: src/ui/settings.rs:241
 #, rust-format
 msgid "No settings match “{query}”."

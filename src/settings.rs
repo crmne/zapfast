@@ -389,6 +389,10 @@ pub struct Settings {
     pub chat_lock_code_hash: Option<String>,
     /// The one-time locked-chat code hint has been opened.
     pub chat_lock_hint_dismissed: bool,
+    /// The release whose `(New)` tags were last shown in Settings. A newer
+    /// release tags the options it added, once, on the next visit.
+    #[serde(default)]
+    pub new_tags_version: Option<String>,
 }
 
 impl Default for Settings {
@@ -431,6 +435,7 @@ impl Default for Settings {
             chat_lock_code: None,
             chat_lock_code_hash: None,
             chat_lock_hint_dismissed: false,
+            new_tags_version: None,
         }
     }
 }
@@ -443,6 +448,23 @@ pub const BUILT_IN_GIPHY_KEY: Option<&str> = match option_env!("ZAPFAST_GIPHY_KE
 };
 
 impl Settings {
+    /// Whether Settings should tag the options this release added with
+    /// `(New)`. Seeing the running version retires the tags, so they come
+    /// back only when a later release adds options of its own.
+    pub fn shows_new_tags(&self, current: &str) -> bool {
+        self.new_tags_version.as_deref() != Some(current)
+    }
+
+    /// Whether this visit to Settings is the first after `current` shipped,
+    /// recording the release so the tags are shown once and never again.
+    pub fn claim_new_tags(&mut self, current: &str) -> bool {
+        if !self.shows_new_tags(current) {
+            return false;
+        }
+        self.new_tags_version = Some(current.to_owned());
+        true
+    }
+
     pub fn wallpaper_color_for(&self, dark: bool) -> WallpaperColor {
         if dark {
             self.dark_wallpaper_color
@@ -606,6 +628,42 @@ mod tests {
         assert!(parsed.show_wallpaper);
         assert_eq!(parsed.wallpaper_color, WallpaperColor::Beige);
         assert!(parsed.pause_other_media);
+    }
+
+    #[test]
+    fn the_new_tags_are_claimed_once_per_release() {
+        let mut settings = Settings::default();
+        assert!(
+            settings.shows_new_tags("0.17.0"),
+            "a fresh install has seen nothing"
+        );
+        assert!(
+            settings.claim_new_tags("0.17.0"),
+            "the first visit claims them"
+        );
+        assert!(!settings.shows_new_tags("0.17.0"));
+        assert!(
+            !settings.claim_new_tags("0.17.0"),
+            "a second visit stays quiet"
+        );
+        assert!(
+            settings.shows_new_tags("0.18.0"),
+            "the next release brings them back"
+        );
+        assert!(settings.claim_new_tags("0.18.0"));
+    }
+
+    #[test]
+    fn the_claimed_release_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut settings = Settings::default();
+        settings.claim_new_tags("0.17.0");
+        settings.save(&path).unwrap();
+
+        let loaded = Settings::load(&path);
+        assert!(!loaded.shows_new_tags("0.17.0"));
+        assert!(loaded.shows_new_tags("0.18.0"));
     }
 
     fn load_from(contents: &str) -> (Settings, serde_json::Value) {

@@ -422,6 +422,10 @@ pub struct App {
     /// What the Settings page is filtered by.
     pub settings_search: String,
     pub focus_settings_search: bool,
+    /// Whether this visit to Settings tags the rows a release added. Set
+    /// when the page opens for the first time after an update, and dropped
+    /// when it closes, so the tags last one visit.
+    pub new_settings_tags: bool,
     pub quit_requested: bool,
     pub window_focused: bool,
     /// Presence last reported to the backend.
@@ -834,6 +838,7 @@ impl App {
             focus_search: false,
             settings_search: String::new(),
             focus_settings_search: false,
+            new_settings_tags: false,
             quit_requested: false,
             window_focused: false,
             reported_online: None,
@@ -3195,8 +3200,18 @@ impl App {
                 let opens_chats = page == Page::Chats;
                 // Privacy can change on the phone at any time, and nothing
                 // announces it: read it again whenever Settings opens.
-                if page == Page::Settings && self.page != Page::Settings && self.is_connected() {
-                    self.backend.send(Command::FetchAccountPrivacy);
+                if page == Page::Settings && self.page != Page::Settings {
+                    if self.is_connected() {
+                        self.backend.send(Command::FetchAccountPrivacy);
+                    }
+                    // A release that added settings points them out on the
+                    // first visit after the update, and only on that one.
+                    if self.settings.claim_new_tags(env!("CARGO_PKG_VERSION")) {
+                        self.new_settings_tags = true;
+                        self.mark_settings_dirty();
+                    }
+                } else if page != Page::Settings {
+                    self.new_settings_tags = false;
                 }
                 self.page = page;
                 self.dialog = None;
@@ -5377,6 +5392,42 @@ mod tests {
     #[test]
     fn demo_and_test_runs_do_not_publish_a_taskbar_badge() {
         assert!(app().badge.is_none());
+    }
+
+    /// A release that added settings points them out on the first visit to
+    /// Settings after the update, and never again.
+    #[test]
+    fn the_first_settings_visit_after_a_release_tags_what_it_added() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let current = env!("CARGO_PKG_VERSION");
+
+        app.apply(Action::Open(Page::Settings), &ctx);
+        assert!(app.new_settings_tags, "the first visit tags the new rows");
+        assert_eq!(app.settings.new_tags_version.as_deref(), Some(current));
+        assert!(app.settings_dirty, "the release is recorded so it is saved");
+
+        app.apply(Action::Open(Page::Chats), &ctx);
+        assert!(
+            !app.new_settings_tags,
+            "the tags do not follow the reader out"
+        );
+
+        app.apply(Action::Open(Page::Settings), &ctx);
+        assert!(!app.new_settings_tags, "a second visit stays quiet");
+    }
+
+    /// Reopening Settings from inside it, or with the shortcut, is the same
+    /// visit: the tags must not come back.
+    #[test]
+    fn reopening_settings_from_settings_is_not_a_new_visit() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.new_settings_tags = true;
+
+        app.apply(Action::Open(Page::Settings), &ctx);
+
+        assert!(app.new_settings_tags);
     }
 
     #[test]
