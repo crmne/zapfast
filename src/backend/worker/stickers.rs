@@ -359,11 +359,14 @@ impl Worker {
         let received: Vec<PathBuf> = if !self.privacy_ready {
             Vec::new()
         } else {
-            match self.archive.recent_stickers(RECEIVED_SHELF, false) {
+            // ponytail: a fixed 4x headroom for duplicates and exclusions; page
+            // the query if an archive ever repeats more than that.
+            match self.archive.recent_stickers(RECEIVED_SHELF * 4, false) {
                 Ok(rows) => rows
                     .into_iter()
                     .filter(|sticker| seen.insert(archived_hash(sticker)))
                     .map(|sticker| sticker.path)
+                    .take(RECEIVED_SHELF)
                     .collect(),
                 Err(error) => {
                     log::warn!("could not list received stickers: {error}");
@@ -1184,57 +1187,96 @@ mod tests {
         assert_eq!(listed(&events), 1);
     }
 
+    /// Archives a sticker someone sent in `chat`, with its file on disk.
+    fn receive_sticker(
+        worker: &Worker,
+        root: &Path,
+        chat: &str,
+        id: &str,
+        at: i64,
+        bytes: &[u8],
+    ) -> PathBuf {
+        use crate::model::{Content, Media, MediaState};
+        use sha2::{Digest, Sha256};
+        let path = root.join(format!("{id}.webp"));
+        std::fs::write(&path, bytes).expect("writes");
+        let mut message = crate::archive::tests::message(chat, id, at, false);
+        message.content = Content::Sticker {
+            media: Media {
+                mime: "image/webp".into(),
+                size: bytes.len() as u64,
+                width: Some(512),
+                height: Some(512),
+                path: Some(path.clone()),
+                state: MediaState::Idle,
+            },
+            animated: false,
+        };
+        let raw = wa::Message {
+            sticker_message: MessageField::some(wa::message::StickerMessage {
+                file_sha256: Some(Sha256::digest(bytes).to_vec()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        worker
+            .archive
+            .insert_message(&message, Some(&raw))
+            .expect("inserted");
+        path
+    }
+
+    fn received_listed(events: &std::sync::mpsc::Receiver<Event>) -> Option<Vec<PathBuf>> {
+        events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Stickers { received, .. } => Some(received),
+                _ => None,
+            })
+            .last()
+    }
+
     #[test]
     fn a_received_sticker_is_listed_once_and_not_when_it_is_a_favorite() {
-        use crate::model::{Content, Media, MediaState};
         let (mut worker, root, events, _commands) = sticker_worker();
         let chat = "a@s.whatsapp.net";
         worker.archive.ensure_chat(chat, "A").expect("chat");
-        let receive = |worker: &Worker, id: &str, at: i64, bytes: &[u8]| {
-            use sha2::{Digest, Sha256};
-            let path = root.path().join(format!("{id}.webp"));
-            std::fs::write(&path, bytes).expect("writes");
-            let mut message = crate::archive::tests::message(chat, id, at, false);
-            message.content = Content::Sticker {
-                media: Media {
-                    mime: "image/webp".into(),
-                    size: bytes.len() as u64,
-                    width: Some(512),
-                    height: Some(512),
-                    path: Some(path.clone()),
-                    state: MediaState::Idle,
-                },
-                animated: false,
-            };
-            let raw = wa::Message {
-                sticker_message: MessageField::some(wa::message::StickerMessage {
-                    file_sha256: Some(Sha256::digest(bytes).to_vec()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }
-            .encode_to_vec();
-            worker
-                .archive
-                .insert_message(&message, Some(&raw))
-                .expect("inserted");
-            path
-        };
         let duck = sticker_bytes("a duck sent twice");
-        let newest = receive(&worker, "duck-2", 20, &duck);
-        receive(&worker, "duck-1", 10, &duck);
+        let newest = receive_sticker(&worker, root.path(), chat, "duck-2", 20, &duck);
+        receive_sticker(&worker, root.path(), chat, "duck-1", 10, &duck);
         let star = sticker_bytes("already a favorite");
-        let starred = receive(&worker, "star", 30, &star);
+        let starred = receive_sticker(&worker, root.path(), chat, "star", 30, &star);
         crate::backend::sticker_store::save(&worker.dirs.saved_sticker_dir(), &starred)
             .expect("saves");
 
         worker.emit_stickers();
 
-        let received = events.try_iter().find_map(|event| match event {
-            Event::Stickers { received, .. } => Some(received),
-            _ => None,
-        });
-        assert_eq!(received, Some(vec![newest]));
+        assert_eq!(received_listed(&events), Some(vec![newest]));
+    }
+
+    /// A picker opened while lock state was unknown got an empty Received
+    /// shelf; it fills once private content is shown, without reopening.
+    #[test]
+    fn received_stickers_arrive_once_private_content_is_shown() {
+        let (mut worker, root, events, _commands) = sticker_worker();
+        let chat = "a@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "A").expect("chat");
+        let duck = receive_sticker(
+            &worker,
+            root.path(),
+            chat,
+            "duck",
+            10,
+            &sticker_bytes("duck"),
+        );
+        worker.privacy_ready = false;
+        worker.emit_stickers();
+        assert_eq!(received_listed(&events), Some(Vec::new()));
+
+        worker.reveal_private_content();
+
+        assert_eq!(received_listed(&events), Some(vec![duck]));
     }
 
     /// Carmine's test: a sticker favorited on the phone never showed up. The

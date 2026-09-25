@@ -1660,6 +1660,8 @@ impl Worker {
         self.privacy_ready = true;
         self.load_state();
         self.emit(Event::Syncing(self.syncing));
+        // The picker may have been sent an empty Received shelf meanwhile.
+        self.emit_stickers();
         // Answer the reads made while content was withheld, now that the
         // chat list they belong to has been sent.
         for page in std::mem::take(&mut self.withheld_pages) {
