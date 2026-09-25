@@ -166,13 +166,19 @@ fn candidates(cluster: &[char]) -> Vec<Vec<char>> {
 
 /// Noto's grinning face, measured from the bundled font: a 136 by 128 cell
 /// whose ink starts 9 pixels from the left and 7 from the top, 117 wide.
+#[cfg(any(target_os = "macos", windows))]
 const NOTO_CELL_WIDTH: f32 = 136.0;
+#[cfg(any(target_os = "macos", windows))]
 const NOTO_CELL_HEIGHT: f32 = 128.0;
+#[cfg(any(target_os = "macos", windows))]
 const NOTO_INK_LEFT: f32 = 9.0;
+#[cfg(any(target_os = "macos", windows))]
 const NOTO_INK_TOP: f32 = 7.0;
+#[cfg(any(target_os = "macos", windows))]
 const NOTO_INK_WIDTH: f32 = 117.0;
 
 /// A rectangle of pixels; `right` and `bottom` are exclusive.
+#[cfg(any(target_os = "macos", windows))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Area {
     left: i64,
@@ -182,6 +188,7 @@ struct Area {
 }
 
 /// The rectangle holding every pixel that is not fully transparent.
+#[cfg(any(target_os = "macos", windows))]
 fn ink(rgba: &image::RgbaImage) -> Option<Area> {
     let mut area: Option<Area> = None;
     for (x, y, pixel) in rgba.enumerate_pixels() {
@@ -205,6 +212,7 @@ fn ink(rgba: &image::RgbaImage) -> Option<Area> {
 
 /// Cuts the cell out of a premultiplied canvas, grown to any ink outside it
 /// so nothing is clipped, and scales it to the texture width.
+#[cfg(any(target_os = "macos", windows))]
 fn framed(canvas: &image::RgbaImage, cell: Area) -> Option<ColorImage> {
     let ink = ink(canvas)?;
     let left = cell.left.min(ink.left).max(0);
@@ -224,6 +232,7 @@ fn framed(canvas: &image::RgbaImage, cell: Area) -> Option<ColorImage> {
 
 /// A premultiplied picture at the cached texture width. Resampling
 /// premultiplied pixels keeps transparent neighbours from darkening edges.
+#[cfg(any(target_os = "macos", windows))]
 fn premultiplied_scaled(rgba: &image::RgbaImage) -> Option<ColorImage> {
     let (size, resized) = resized(rgba)?;
     Some(ColorImage::from_rgba_premultiplied(size, resized.as_raw()))
@@ -722,6 +731,7 @@ mod tests {
 
     /// Resampling premultiplied pixels keeps a soft edge beside transparent
     /// black its own colour instead of darkening it.
+    #[cfg(any(target_os = "macos", windows))]
     #[test]
     fn scaling_keeps_edge_colours() {
         let half_red = image::Rgba([128, 0, 0, 128]);
