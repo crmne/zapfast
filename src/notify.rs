@@ -76,6 +76,17 @@ enum Stop {
     Release,
 }
 
+/// What a notification still to be shown was told meanwhile: `None` when its
+/// chat was read (don't show it), else whether it may wait for a click. A
+/// notification released in a burst before it appeared is still shown.
+fn before_showing(cancelled: &mut tokio::sync::oneshot::Receiver<Stop>) -> Option<bool> {
+    match cancelled.try_recv() {
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty) => Some(true),
+        Ok(Stop::Release) => Some(false),
+        Ok(Stop::Close) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => None,
+    }
+}
+
 /// Cancellation is registered before delivery starts, so reading a chat while
 /// its notification is still being delivered cannot leave a stale notification.
 #[derive(Default)]
@@ -235,12 +246,9 @@ fn deliver(
     wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<Stop>,
 ) {
-    if !matches!(
-        cancelled.try_recv(),
-        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ) {
+    let Some(may_wait) = before_showing(&mut cancelled) else {
         return;
-    }
+    };
     let mut notification = notify_rust::Notification::new();
     notification
         .appname("ZapFast")
@@ -256,6 +264,10 @@ fn deliver(
     }
     match notification.show() {
         Ok(handle) => {
+            if !may_wait {
+                // Shown, and left to the desktop: the handle does not close it.
+                return;
+            }
             let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -300,10 +312,8 @@ fn deliver(
     wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<Stop>,
 ) {
-    if matches!(
-        cancelled.try_recv(),
-        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ) && let Err(error) = windows::show(title, body, picture, system_sound, target, opened, wake)
+    if before_showing(&mut cancelled).is_some()
+        && let Err(error) = windows::show(title, body, picture, system_sound, target, opened, wake)
     {
         log::debug!("no Windows notification: {error}");
     }
@@ -326,10 +336,7 @@ fn deliver(
     if !macos_application_ready() {
         return;
     }
-    if !matches!(
-        cancelled.try_recv(),
-        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ) {
+    if before_showing(&mut cancelled).is_none() {
         return;
     }
     let mut notification = notify_rust::Notification::new();
@@ -418,6 +425,23 @@ mod tests {
         assert_eq!(newest.try_recv(), Ok(Stop::Close));
         assert_eq!(waiting[3].try_recv(), Ok(Stop::Close));
         assert_eq!(waiting[1].try_recv(), Err(TryRecvError::Empty));
+    }
+
+    /// A burst past the limit releases notifications that have not appeared
+    /// yet: they are still shown, only not waited on. A read chat's are not.
+    #[test]
+    fn a_notification_released_before_it_appears_is_still_shown() {
+        let mut notifications = Notifications::default();
+        let mut first = notifications.register("a");
+        let mut read = notifications.register("b");
+        let _waiting: Vec<_> = (0..WAITING_LIMIT - 1)
+            .map(|index| notifications.register(&format!("chat {index}")))
+            .collect();
+        notifications.clear("b");
+        assert_eq!(before_showing(&mut first), Some(false));
+        assert_eq!(before_showing(&mut read), None);
+        let mut fresh = notifications.register("c");
+        assert_eq!(before_showing(&mut fresh), Some(true));
     }
 
     #[test]
