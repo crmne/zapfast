@@ -8,8 +8,8 @@ companion device, and has no browser engine. In our Linux test, it opens in
 under a second and uses about 200 MB of idle RAM, compared with 1.13 GB for
 WhatsApp Web and its Chromium processes. [See the measurements](https://zapfast.rocks/benchmarks/).
 
-ZapFast is a sibling of [Spotifast](https://spotifast.rocks),
-with the same native UI for a different service.
+**Want Spotify just as fast and native?** [Spotifast](https://spotifast.rocks)
+is ZapFast's sibling: the same native interface, for Spotify.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
