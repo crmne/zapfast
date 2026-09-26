@@ -1260,6 +1260,8 @@ pub enum Action {
     /// Open externally button inside the preview.
     PreviewImage(PathBuf),
     ZoomImageIn,
+    /// Scales the previewed image by a factor, as the wheel or a pinch asks.
+    ZoomImageBy(f32),
     /// Shows the previewed image at its original size.
     ImageActualSize,
     ZoomImageOut,

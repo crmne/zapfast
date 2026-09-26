@@ -3403,6 +3403,11 @@ impl App {
                     self.actions.push(Action::OpenFile(path));
                 }
             }
+            Action::ZoomImageBy(factor) => {
+                if let Some(preview) = &mut self.image_preview {
+                    preview.zoom_by(factor);
+                }
+            }
             Action::ZoomImageIn => {
                 if let Some(preview) = &mut self.image_preview {
                     preview.zoom_in();

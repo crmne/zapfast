@@ -133,8 +133,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             let image = crate::ui::widgets::file_image(ui, preview.path());
             match image.load_for_size(ctx, canvas) {
                 Ok(egui::load::TexturePoll::Ready { texture }) => {
-                    let mut size =
-                        display_size(texture.size, canvas, preview.is_fit(), preview.zoom());
+                    let size = display_size(texture.size, canvas, preview.is_fit(), preview.zoom());
                     if preview.is_fit()
                         && texture.size.x > 0.0
                         && let Some(state) = &mut app.image_preview
@@ -144,28 +143,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     let scroll_id =
                         ui.make_persistent_id(egui::IdSalt::new("image-preview-scroll"));
                     let trackpad = app.scroll_from_trackpad();
-                    // Zoomed before the scroll area lays out, and its stored offset
-                    // moved to keep the pointed-at pixel still: egui loads that
-                    // state when the area begins, so both land in this frame.
-                    if let Some((factor, pointer)) = zoom_input(ui, area, trackpad)
-                        && let Some(state) = &mut app.image_preview
-                    {
-                        state.zoom_by(factor);
-                        let zoomed =
-                            display_size(texture.size, canvas, state.is_fit(), state.zoom());
-                        let mut scroll =
-                            egui::scroll_area::State::load(ctx, scroll_id).unwrap_or_default();
-                        scroll.offset = crate::image_preview::anchored_offset(
-                            canvas,
-                            size,
-                            zoomed,
-                            scroll.offset,
-                            pointer,
-                            pointer,
-                        );
-                        scroll.store(ctx, scroll_id);
-                        size = zoomed;
-                    }
+                    // Read before the scroll area, which would otherwise take the
+                    // wheel. The zoom itself is applied by `App` after the frame.
+                    let zoom = zoom_input(ui, area, trackpad).and_then(|(factor, pointer)| {
+                        let mut next = app.image_preview.clone()?;
+                        next.zoom_by(factor);
+                        let zoomed = display_size(texture.size, canvas, next.is_fit(), next.zoom());
+                        Some((factor, pointer, zoomed))
+                    });
                     let output = egui::ScrollArea::both()
                         .id_salt("image-preview-scroll")
                         .auto_shrink([false, false])
@@ -243,6 +228,22 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                             )
                             .inner
                         });
+                    // Stored after the scroll area, which clamps its offset to
+                    // this frame's size; the next frame lays out the zoomed size
+                    // with the pointed-at pixel still under the pointer.
+                    if let Some((factor, pointer, zoomed)) = zoom {
+                        let mut scroll = output.state;
+                        scroll.offset = crate::image_preview::anchored_offset(
+                            canvas,
+                            size,
+                            zoomed,
+                            output.state.offset,
+                            pointer,
+                            pointer,
+                        );
+                        scroll.store(ctx, scroll_id);
+                        app.actions.push(Action::ZoomImageBy(factor));
+                    }
                     // The header's Fit/% toggle. The original size opens with the
                     // double-clicked point in the middle: the offset is stored for
                     // the next frame, which lays out the new size.
@@ -292,7 +293,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Zoom factor the wheel or a pinch asks for over the picture, with the
+/// Zoom factor the wheel or a pinch asks for over the preview area, with the
 /// anchor point relative to the picture area. Each wheel notch is one header
 /// zoom step. A plain mouse wheel zooms instead of scrolling, so its delta is
 /// taken from the scroll area. Windows and X11 report touchpads as wheel
