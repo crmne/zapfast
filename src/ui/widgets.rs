@@ -51,6 +51,10 @@ pub fn line(
     width: f32,
     max_rows: usize,
 ) -> Line {
+    let single = text.lines().next().unwrap_or_default();
+    if max_rows == 1 && single.chars().any(bidi::is_strong_rtl) {
+        return rtl_line(ui, text, single, font, color, width);
+    }
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = width;
     job.wrap.max_rows = max_rows;
@@ -59,7 +63,6 @@ pub fn line(
     job.wrap.overflow_character = Some('…');
     let mut placements = Vec::new();
     let format = egui::TextFormat::simple(font, color);
-    let single = text.lines().next().unwrap_or_default();
     emoji::append(
         ui,
         &mut job,
@@ -68,6 +71,60 @@ pub fn line(
         &format,
     );
     let galley = bidi::layout_job(ui, job);
+    Line {
+        galley,
+        placements,
+        accessible_text: text.to_owned(),
+    }
+}
+
+/// One line of text holding right-to-left script, cut to `width` by its
+/// logical end. egui cuts a line in the order it lays glyphs out, which for
+/// Arabic and Hebrew is already the visual one, so its ellipsis replaced a
+/// letter mid-line and the reordered line overflowed its width (#72). The
+/// longest start of the text that fits beside an ellipsis is laid out
+/// whole instead, so the ellipsis ends the text as a reader expects.
+fn rtl_line(
+    ui: &Ui,
+    text: &str,
+    single: &str,
+    font: egui::FontId,
+    color: Color32,
+    width: f32,
+) -> Line {
+    let format = egui::TextFormat::simple(font, color);
+    let layout = |shown: &str| {
+        let mut job = egui::text::LayoutJob::default();
+        job.wrap.max_width = f32::INFINITY;
+        job.wrap.max_rows = 1;
+        let mut placements = Vec::new();
+        emoji::append(ui, &mut job, &mut placements, shown, &format);
+        (bidi::layout_job(ui, job), placements)
+    };
+    let (mut galley, mut placements) = layout(single);
+    if galley.size().x > width {
+        let ends: Vec<usize> = single
+            .char_indices()
+            .map(|(at, _)| at)
+            .skip(1)
+            .chain(std::iter::once(single.len()))
+            .collect();
+        // Longest prefix, in characters, that fits with the ellipsis.
+        let (mut low, mut high) = (0, ends.len());
+        let mut best = layout("…");
+        while low < high {
+            let middle = (low + high).div_ceil(2);
+            let shown = format!("{}…", single[..ends[middle - 1]].trim_end());
+            let candidate = layout(&shown);
+            if candidate.0.size().x <= width {
+                best = candidate;
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        (galley, placements) = best;
+    }
     Line {
         galley,
         placements,
@@ -984,6 +1041,58 @@ mod tests {
 
     /// A raised frame lies on its edge: one point higher, under its fill, in
     /// the palette's raised-edge colour, with the bubble's lift shadow.
+    /// A line of Arabic cut to its width ends with the ellipsis where the
+    /// text ends (its left, in a right-to-left line), inside the width, with
+    /// whole words before it (#72).
+    #[test]
+    fn a_cut_right_to_left_line_stays_in_its_width_and_ends_in_an_ellipsis() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for text in [
+                "المنصب بتاعك مش هو اللي بيحدد قيمتك في الحياة يا صاحبي",
+                "39: المنصب بتاعك مش هو اللي بيحدد قيمتك في الحياة",
+            ] {
+                let line = line(
+                    ui,
+                    text,
+                    egui::FontId::proportional(13.0),
+                    Color32::WHITE,
+                    150.0,
+                    1,
+                );
+                let galley = &line.galley;
+                assert_eq!(galley.rows.len(), 1, "{text}");
+                assert!(galley.size().x <= 150.0, "{text}: {}", galley.size().x);
+                let shown = galley.text();
+                assert!(shown.ends_with('…'), "{shown}");
+                let kept = shown.trim_end_matches('…');
+                assert!(text.starts_with(kept), "the start is kept: {shown}");
+                // The ellipsis is drawn leftmost: the text ends on the left.
+                let row = &galley.rows[0];
+                let mark = row.glyphs.iter().find(|glyph| glyph.chr == '…').unwrap();
+                assert!(
+                    row.glyphs
+                        .iter()
+                        .filter(|glyph| bidi::is_strong_rtl(glyph.chr))
+                        .all(|glyph| glyph.pos.x > mark.pos.x),
+                    "{shown}"
+                );
+                assert_eq!(line.accessible_text, text);
+            }
+            // A line that fits is left alone.
+            let short = line(
+                ui,
+                "مرحبا",
+                egui::FontId::proportional(13.0),
+                Color32::WHITE,
+                150.0,
+                1,
+            );
+            assert_eq!(short.galley.text(), "مرحبا");
+        });
+        output.textures_delta.clear();
+    }
+
     #[test]
     fn a_raised_frame_draws_its_edge_under_its_fill() {
         let palette = Palette::dark();

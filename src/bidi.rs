@@ -659,7 +659,7 @@ fn repack_glyph_vertices(row: &mut egui::epaint::text::Row) {
     row.visuals.glyph_vertex_range = range.start..range.start + glyph_len;
 }
 
-fn is_strong_rtl(c: char) -> bool {
+pub(crate) fn is_strong_rtl(c: char) -> bool {
     matches!(
         CodePointMapData::<BidiClass>::new().get(c),
         BidiClass::RightToLeft | BidiClass::ArabicLetter
