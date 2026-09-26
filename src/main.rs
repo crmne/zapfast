@@ -359,10 +359,10 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
 /// positioning the window. These notifications arrive synchronously in the
 /// window procedure, so the event-loop message hook cannot handle them.
 #[cfg(target_os = "windows")]
-fn install_windows_dpi_drag_workaround(window: &winit::window::Window) -> bool {
+fn install_windows_dpi_drag_workaround(window: &impl raw_window_handle::HasWindowHandle) -> bool {
+    use raw_window_handle::RawWindowHandle;
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::Shell::SetWindowSubclass;
-    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     let Ok(handle) = window.window_handle() else {
         return false;
@@ -407,8 +407,8 @@ unsafe extern "system" fn windows_dpi_drag_subclass(
     use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HTCAPTION, SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_NCDESTROY,
-        WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_WINDOWPOSCHANGING,
+        HTCAPTION, WINDOWPOS, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_NCDESTROY, WM_NCLBUTTONDOWN,
+        WM_NCLBUTTONUP, WM_WINDOWPOSCHANGING,
     };
 
     let caption_dragging = || WINDOWS_CAPTION_DRAG.with(|active| active.get() == hwnd);
@@ -436,12 +436,7 @@ unsafe extern "system" fn windows_dpi_drag_subclass(
             {
                 // SAFETY: Windows supplies a mutable WINDOWPOS through lParam.
                 let window_pos = unsafe { &mut *(lparam as *mut WINDOWPOS) };
-                if window_pos.flags & (SWP_NOMOVE | SWP_NOSIZE) == 0 {
-                    window_pos.x = rect.left;
-                    window_pos.y = rect.top;
-                    window_pos.cx = rect.right - rect.left;
-                    window_pos.cy = rect.bottom - rect.top;
-                }
+                apply_windows_dpi_suggested_rect(window_pos, rect);
             }
         }
         WM_EXITSIZEMOVE | WM_NCLBUTTONUP => {
@@ -475,6 +470,55 @@ unsafe extern "system" fn windows_dpi_drag_subclass(
 
     // SAFETY: all unhandled messages continue through the existing window proc.
     unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+}
+
+#[cfg(target_os = "windows")]
+fn apply_windows_dpi_suggested_rect(
+    window_pos: &mut windows_sys::Win32::UI::WindowsAndMessaging::WINDOWPOS,
+    rect: windows_sys::Win32::Foundation::RECT,
+) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SWP_NOMOVE, SWP_NOSIZE};
+
+    if window_pos.flags & SWP_NOMOVE == 0 {
+        window_pos.x = rect.left;
+        window_pos.y = rect.top;
+    }
+    if window_pos.flags & SWP_NOSIZE == 0 {
+        window_pos.cx = rect.right - rect.left;
+        window_pos.cy = rect.bottom - rect.top;
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+#[test]
+fn dpi_suggestion_respects_independent_move_and_size_flags() {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS};
+
+    let suggested = RECT {
+        left: 100,
+        top: 200,
+        right: 500,
+        bottom: 700,
+    };
+    for (flags, expected) in [
+        (0, (100, 200, 400, 500)),
+        (SWP_NOMOVE, (1, 2, 400, 500)),
+        (SWP_NOSIZE, (100, 200, 3, 4)),
+        (SWP_NOMOVE | SWP_NOSIZE, (1, 2, 3, 4)),
+    ] {
+        let mut pos = WINDOWPOS {
+            hwnd: std::ptr::null_mut(),
+            hwndInsertAfter: std::ptr::null_mut(),
+            x: 1,
+            y: 2,
+            cx: 3,
+            cy: 4,
+            flags,
+        };
+        apply_windows_dpi_suggested_rect(&mut pos, suggested);
+        assert_eq!((pos.x, pos.y, pos.cx, pos.cy), expected, "flags: {flags}");
+    }
 }
 
 /// eframe adapter holding the long-lived [`app::App`] for one window; it goes

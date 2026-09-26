@@ -194,22 +194,12 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 windows-native-keyring-store = { version = "1.1", default-features = false }
 winrt-notification = { package = "tauri-winrt-notification", version = "0.7.3" }
 # Registry/locale APIs and the Win32 DPI drag workaround.
-windows-sys = {
-    version = "0.60",
-    features = [
-        "Win32_Foundation",
-        "Win32_Globalization",
-        "Win32_System_Registry",
-        "Win32_UI_Shell",
-        "Win32_UI_Shell_Common",
-        "Win32_UI_WindowsAndMessaging",
-    ],
-}
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 # Pauses other apps' media through the system media transport controls while
 # recording or playing voice messages. The same version cpal already uses.
 windows = { version = "0.62", features = ["Media_Control", "Foundation_Collections"] }
-# Windows window subclass for the mixed-DPI caption-drag workaround.
-winit = { version = "0.30.13", default-features = false }
+# Accesses the native window handle for the mixed-DPI caption-drag workaround.
+raw-window-handle = "0.6"
 
 # The icon and version information Windows shows for the executable.
 [target.'cfg(windows)'.build-dependencies]
