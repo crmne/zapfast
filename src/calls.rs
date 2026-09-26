@@ -2009,11 +2009,18 @@ mod tests {
             assert!(listed.microphones.is_empty());
             assert!(listed.speakers.is_empty());
         }
-        assert_eq!(
-            listed.cameras.is_empty(),
-            !super::capabilities().camera,
-            "the camera list follows the camera capability"
-        );
+        // The camera list follows the capability, and says nothing about the machine: a platform
+        // with a capture backend lists what it found, which is nothing on a machine with no camera.
+        if !super::capabilities().camera {
+            assert!(listed.cameras.is_empty());
+        }
+        for device in &listed.cameras {
+            assert!(!device.id.is_empty(), "a camera is named by its node");
+            assert!(
+                !device.label.is_empty(),
+                "a camera is labelled for the picker"
+            );
+        }
     }
 
     fn snapshot(phase: CallPhase, camera_on: bool) -> CallUpdate {
