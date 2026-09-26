@@ -1782,12 +1782,6 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
     }
 }
 
-/// Stable id of the confirm button in a destructive dialog, used by
-/// interaction tests.
-pub fn danger_button_id() -> egui::Id {
-    egui::Id::new("dialog-danger-button")
-}
-
 /// A filled button for a destructive action.
 fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> bool {
     let palette = app.palette;
@@ -1805,9 +1799,6 @@ fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> bool {
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
-    // Store the rect for interaction tests.
-    ui.ctx()
-        .data_mut(|data| data.insert_temp(danger_button_id(), rect));
     if ui.is_rect_visible(rect) {
         let fill = if response.hovered() {
             palette.danger.gamma_multiply(0.85)

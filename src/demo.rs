@@ -5943,6 +5943,7 @@ mod tests {
                 })
             );
             let ctx = egui::Context::default();
+            ctx.enable_accesskit();
             app.attach(&ctx);
             render(&mut app, &ctx);
             // Laying the dialog out must not delete the message.
@@ -5953,10 +5954,13 @@ mod tests {
                 "{page}: the message survives an open dialog"
             );
 
-            let rect = ctx
-                .data(|data| data.get_temp::<egui::Rect>(crate::ui::dialogs::danger_button_id()))
+            let pos = accessible_nodes(&mut app, &ctx, Vec::new())
+                .into_iter()
+                .find(|(label, role, _)| {
+                    label == "Delete" && *role == egui::accesskit::Role::Button
+                })
+                .map(|(_, _, centre)| centre)
                 .expect("the confirm button is on screen");
-            let pos = rect.center();
             let press = |pressed| egui::Event::PointerButton {
                 pos,
                 button: egui::PointerButton::Primary,
