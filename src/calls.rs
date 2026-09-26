@@ -12,7 +12,6 @@
 //! units decode back to `egui` images with the `openh264` decoder `crate::video` already uses.
 //! Frames cross to the UI through [`VideoTick`]; no decode work happens on the UI thread.
 
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
@@ -391,29 +390,12 @@ fn preview_size(capture: (usize, usize)) -> (usize, usize) {
     fit_even((capture.0 as u32, capture.1 as u32), bounds)
 }
 
-/// The capture format a V4L2 node reports, as `(width, height)`.
+/// The capture format a camera reports, as `(width, height)`, straight from the driver.
 ///
-/// `v4l2-ctl --get-fmt-video` prints the format the node is set to right now, which is the size the
-/// driver delivers before anything scales it. A node that will not answer, which is every metadata
-/// node, leaves the default.
+/// A node that will not answer, which is every metadata node, leaves the default, so the encoder
+/// runs at the budget's own shape.
 fn native_format(device: &str) -> Option<(u32, u32)> {
-    let output = std::process::Command::new("v4l2-ctl")
-        .args(["-d", device, "--get-fmt-video"])
-        .output()
-        .ok()?;
-    parse_native_format(&String::from_utf8_lossy(&output.stdout))
-}
-
-/// The `Width/Height` line of a `--get-fmt-video` reply, as `(width, height)`.
-///
-/// Kept apart from the process that produces the text so the shape it reads is testable without a
-/// camera: the reply is a human-readable table, and only this one line matters.
-fn parse_native_format(text: &str) -> Option<(u32, u32)> {
-    let line = text
-        .lines()
-        .find(|line| line.trim_start().starts_with("Width/Height"))?;
-    let (width, height) = line.split_once(':')?.1.trim().split_once('/')?;
-    Some((width.trim().parse().ok()?, height.trim().parse().ok()?))
+    crate::camera::current_size(device)
 }
 
 /// Whether an offer announces video.
@@ -462,8 +444,8 @@ pub fn capabilities() -> CallCapabilities {
         // builds. Whether this machine has a microphone at all is asked when a call is placed,
         // because that is a fact about the machine rather than about the platform.
         voice: true,
-        video: cfg!(target_os = "linux"),
-        camera: cfg!(target_os = "linux"),
+        video: crate::camera::available(),
+        camera: crate::camera::available(),
         screen_share: false,
     }
 }
@@ -507,59 +489,22 @@ fn audio_devices(found: Vec<(String, String)>) -> Vec<AudioDevice> {
         .collect()
 }
 
-/// Lists V4L2 capture nodes through `v4l2-ctl`.
+/// Lists the cameras the platform reports.
 ///
-/// A camera exposes several nodes and only one of them captures: the metadata node reports
-/// `Video Capture` but enumerates no pixel format, and handing it to the encoder produces nothing.
-/// Nodes without a format are therefore dropped.
+/// The nodes come from the camera module, which asks each one what it is instead of parsing the
+/// output of an external tool, so a machine without `v4l2-ctl` still offers its camera. A camera
+/// exposes several nodes and only one of them captures: the metadata node reports capture but
+/// enumerates no usable format, and the module drops it.
 fn cameras() -> Vec<CameraDevice> {
-    let Ok(output) = std::process::Command::new("v4l2-ctl")
-        .arg("--list-devices")
-        .output()
-    else {
-        log::warn!("[CALL] v4l2-ctl is unavailable; no camera can be offered");
-        return Vec::new();
-    };
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut found: Vec<CameraDevice> = Vec::new();
-    let mut label = String::new();
-    for line in text.lines() {
-        if line.starts_with(|c: char| !c.is_whitespace()) {
-            label = line.trim_end_matches(':').trim().to_owned();
-            continue;
-        }
-        let node = line.trim();
-        if !node.starts_with("/dev/video") || !captures(node) {
-            continue;
-        }
-        let name = if label.is_empty() {
-            node.to_owned()
-        } else {
-            label.clone()
-        };
-        // One entry per camera: the sibling node would otherwise look like a second camera.
-        if found.iter().any(|known| known.label == name) {
-            continue;
-        }
-        found.push(CameraDevice {
-            id: node.to_owned(),
-            label: name,
-        });
-    }
-    found
+    crate::camera::cameras()
+        .into_iter()
+        .map(|(id, label)| CameraDevice { id, label })
+        .collect()
 }
 
-/// Whether a node enumerates at least one pixel format, which is what makes it a capture node.
+/// Whether a node can deliver frames, which is what makes it a capture node.
 fn captures(node: &str) -> bool {
-    let Ok(output) = std::process::Command::new("v4l2-ctl")
-        .args(["-d", node, "--list-formats"])
-        .output()
-    else {
-        return false;
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .any(|line| line.trim_start().starts_with("[0]:"))
+    crate::camera::is_capture(node)
 }
 
 // ---------------------------------------------------------------------------
@@ -607,26 +552,22 @@ pub enum VideoTick {
     Remote(Arc<ColorImage>),
 }
 
-/// What the capture thread is told to do. A device change starts a fresh thread instead, because a
-/// running encoder carries state the new device's stream cannot inherit.
-enum CameraCmd {
-    Stop,
-}
-
-/// The camera side of the call: `ffmpeg` captures YUV 4:2:0 at a fixed size, so the encoder and the
-/// preview both have a known layout, and the frames the engine wants are complete H.264 Annex-B
-/// access units led by an access-unit delimiter.
+/// The camera side of the call: the camera module reads YUV 4:2:0 at a fixed size, so the encoder
+/// and the preview both have a known layout, and the frames the engine wants are complete H.264
+/// Annex-B access units led by an access-unit delimiter.
+///
+/// A device change starts a fresh thread rather than telling this one to switch: a running encoder
+/// carries state the new device's stream cannot inherit.
 struct CameraCapture {
-    control: async_channel::Sender<CameraCmd>,
     timed: async_channel::Receiver<TimedVideoFrame>,
-    /// Cleared when the capture thread ends, however it ends, so a camera that stopped delivering
-    /// reads as off rather than as a camera the peer is still being sent frames from.
+    /// Cleared when the camera is no longer wanted, and read by the capture loop between reads, so
+    /// a stopped camera ends without waiting for a frame that may never come.
     running: Arc<AtomicBool>,
-    /// The capture child, shared with the thread that reads it. The read is a blocking
-    /// `read_exact` on the child's stdout, so ending it without a frame means killing the process,
-    /// which closes that pipe and returns the thread. Without this, a camera or `ffmpeg` that
-    /// stalled while holding the device would keep the read, and the process, alive past
-    /// [`VideoPipeline::shutdown`], and the next call would race it for the node.
+    /// The capture child, shared with the camera module that owns it. On the fallback path the
+    /// read is a blocking `read_exact` on the child's stdout, so ending it without a frame means
+    /// killing the process, which closes that pipe and returns the thread. Without this, a camera
+    /// or `ffmpeg` that stalled while holding the device would keep the read, and the process,
+    /// alive past [`VideoPipeline::shutdown`], and the next call would race it for the node.
     child: Arc<std::sync::Mutex<Option<std::process::Child>>>,
 }
 
@@ -638,12 +579,12 @@ impl CameraCapture {
         let Some(device) = device else {
             return Err(anyhow!("no camera is available"));
         };
-        // A node that enumerates no pixel format is not a capture device (a metadata node, or one
-        // v4l2-ctl cannot open); starting on it would leave the peer with an empty video stream.
+        // A node that enumerates no pixel format is not a capture device (a metadata node beside a
+        // camera reports capture but lists nothing); starting on it would leave the peer with an
+        // empty video stream.
         if !captures(&device) {
             return Err(anyhow!("{device} is not a usable camera"));
         }
-        let (control, commands) = async_channel::bounded::<CameraCmd>(4);
         let (frames, timed) = async_channel::bounded::<TimedVideoFrame>(4);
         let running = Arc::new(AtomicBool::new(true));
         let child = Arc::new(std::sync::Mutex::new(None));
@@ -654,22 +595,21 @@ impl CameraCapture {
             .name("zapfast-camera".to_owned())
             .spawn(move || {
                 let _alive = alive;
-                capture(Some(device), commands, frames, ticks, slot, stopping);
+                capture(Some(device), frames, ticks, slot, stopping);
             })
             .context("camera thread could not be started")?;
         Ok(Self {
-            control,
             timed,
             running,
             child,
         })
     }
 
-    /// Ends the camera. No frame has to arrive for the thread to stop: the child is killed, and its
-    /// closed stdout is what unblocks a read that is waiting for one.
+    /// Ends the camera. No frame has to arrive for the thread to stop: the flag is cleared, which
+    /// is what the capture loop reads between reads, and the child, if there is one, is killed so a
+    /// read waiting on its stdout returns.
     fn stop(&self) {
         self.running.store(false, Ordering::Relaxed);
-        let _ = self.control.try_send(CameraCmd::Stop);
         kill_camera_child(&self.child);
     }
 
@@ -680,9 +620,7 @@ impl CameraCapture {
 
 impl Drop for CameraCapture {
     fn drop(&mut self) {
-        self.running.store(false, Ordering::Relaxed);
-        let _ = self.control.try_send(CameraCmd::Stop);
-        kill_camera_child(&self.child);
+        self.stop();
     }
 }
 
@@ -829,7 +767,6 @@ impl VideoPipeline {
 /// stalled consumer drops a frame instead of stalling the camera.
 fn capture(
     device: Option<String>,
-    commands: async_channel::Receiver<CameraCmd>,
     timed: async_channel::Sender<TimedVideoFrame>,
     ticks: async_channel::Sender<VideoTick>,
     child: Arc<std::sync::Mutex<Option<std::process::Child>>>,
@@ -843,9 +780,20 @@ fn capture(
         log::warn!("[CALL] no camera is available");
         return;
     };
-    // The camera's own shape decides the frame the encoder runs at, read from the driver before
-    // anything is scaled: a portrait camera is encoded portrait.
-    let size = capture_size(native_format(&device));
+    // The camera's own shape decides the frame the encoder runs at: the driver is offered the
+    // capture budget and the encoder is built for whatever it grants, so a portrait camera is
+    // encoded portrait and nothing is scaled or cropped.
+    let budget = capture_size(native_format(&device));
+    // The node is read first and `ffmpeg` only fills in, so a camera that is readable directly
+    // never starts a process.
+    let mut source = match crate::camera::Source::open(&device, budget, child) {
+        Ok(source) => source,
+        Err(error) => {
+            log::error!("[CALL] camera capture could not start: {error}");
+            return;
+        }
+    };
+    let size = source.size();
     let config = EncoderConfig::new()
         .profile(Profile::Baseline)
         .bitrate(BitRate::from_bps(VIDEO_BITRATE))
@@ -856,49 +804,37 @@ fn capture(
         Ok(encoder) => encoder,
         Err(error) => {
             log::error!("[CALL] camera encoder could not start: {error}");
+            source.stop();
+            source.reap();
             ticks.close();
             return;
         }
     };
 
     capture_frames(
-        &device,
+        &mut source,
         size,
-        &CaptureControl {
-            commands: &commands,
-            child: &child,
-            stopping: &stopping,
-        },
+        &stopping,
         &timed,
         &ticks,
         &mut encoder,
         Instant::now(),
     );
-}
-
-/// What a frame loop needs to outlive a single frame: the stop channel, and the child and flag
-/// shared with whoever can end the camera.
-///
-/// Grouped so the loop takes one handle for its lifetime state instead of a widening argument list.
-struct CaptureControl<'a> {
-    /// Tells the reader to stop between frames.
-    commands: &'a async_channel::Receiver<CameraCmd>,
-    /// The child, killed by a stop so a read blocked on its stdout returns.
-    child: &'a std::sync::Mutex<Option<std::process::Child>>,
-    /// Cleared when the camera is no longer wanted, including before the child exists.
-    stopping: &'a AtomicBool,
+    // Whatever ended the loop, the source is done with and its child, if it started one, is reaped
+    // rather than left for the next call to race.
+    source.reap();
 }
 
 /// Reads frames from one camera until the call stops it, encoding and previewing each one.
 ///
-/// Separate from [`capture`] because the encoder is built once per camera session and the reader
-/// owns the child process: a device change starts a new thread with a new encoder rather than
-/// handing a mid-stream encoder to another device's frames. `size` is the frame the camera's own
-/// format says it will deliver, scaled into the capture budget with its aspect intact.
+/// Separate from [`capture`] because the encoder is built once per camera session and the source
+/// owns the device: a device change starts a new thread with a new encoder rather than handing a
+/// mid-stream encoder to another device's frames. `size` is what the source delivers, which is the
+/// size the driver granted, so nothing here scales or crops.
 fn capture_frames(
-    device: &str,
+    source: &mut crate::camera::Source,
     size: (usize, usize),
-    control: &CaptureControl<'_>,
+    stopping: &AtomicBool,
     timed: &async_channel::Sender<TimedVideoFrame>,
     ticks: &async_channel::Sender<VideoTick>,
     encoder: &mut openh264::encoder::Encoder,
@@ -907,118 +843,66 @@ fn capture_frames(
     let (width, height) = size;
     let (luma_len, chroma_len) = (width * height, width * height / 4);
     let mut bytes = vec![0u8; luma_len + chroma_len * 2];
-    {
-        log::info!("[CALL] camera enabled device={device} size={width}x{height}");
-        // The scale keeps the camera's aspect and the pad to the same size only squares off the
-        // rounding a subsampled format needs; nothing is cropped and nothing is stretched.
-        let filter = format!(
-            "scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p"
-        );
-        let mut child = match std::process::Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "v4l2",
-                "-i",
-                device,
-                "-vf",
-                &filter,
-                "-r",
-                "15",
-                "-pix_fmt",
-                "yuv420p",
-                "-f",
-                "rawvideo",
-                "-",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(error) => {
-                log::error!("[CALL] camera capture could not start: {error}");
-                return;
-            }
-        };
-        let Some(stdout) = child.stdout.take() else {
-            let _ = child.kill();
-            let _ = child.wait();
-            return;
-        };
-        // Hand the child to the shared slot before the first read, so from here a stop can end a
-        // read that would otherwise wait for a frame forever. A stop that already ran is honoured
-        // now, which closes the gap between `spawn` and the slot being filled.
-        *control
-            .child
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(child);
-        if !control.stopping.load(Ordering::Relaxed) {
-            kill_camera_child(control.child);
+    log::info!("[CALL] camera enabled size={width}x{height}");
+    loop {
+        // Checked before each read, not only between them: a read returns every poll window even
+        // when the camera has no frame for it, so a stop is honoured while the device is held.
+        if !stopping.load(Ordering::Relaxed) {
+            source.stop();
             log::info!("[CALL] camera disabled");
             return;
         }
-        let mut reader = std::io::BufReader::new(stdout);
-        loop {
-            if let Err(error) = std::io::Read::read_exact(&mut reader, &mut bytes) {
-                log::warn!("[CALL] camera stopped delivering frames: {error}");
-                break;
+        match source.read(&mut bytes) {
+            crate::camera::Read::Frame => {}
+            // Nothing this poll: go round and re-check whether the camera is still wanted.
+            crate::camera::Read::Idle => continue,
+            crate::camera::Read::Ended => {
+                log::warn!("[CALL] the camera stopped delivering frames");
+                return;
             }
-            match control.commands.try_recv() {
-                Ok(CameraCmd::Stop) | Err(async_channel::TryRecvError::Closed) => {
-                    kill_camera_child(control.child);
-                    log::info!("[CALL] camera disabled");
-                    return;
-                }
-                Err(async_channel::TryRecvError::Empty) => {}
-            }
-
-            let luma = &bytes[..luma_len];
-            let chroma_u = &bytes[luma_len..luma_len + chroma_len];
-            let chroma_v = &bytes[luma_len + chroma_len..];
-            let planes = Yuv420 {
-                y: luma,
-                u: chroma_u,
-                v: chroma_v,
-                size,
-            };
-            match encoder.encode(&planes) {
-                Ok(stream) => {
-                    // One access unit per encoded frame, led by an access-unit delimiter so the
-                    // peer's depacketizer sees the boundaries an encoder would have produced.
-                    let mut unit = vec![0x00, 0x00, 0x00, 0x01, 0x09, 0xF0];
-                    stream.write_vec(&mut unit);
-                    let elapsed = started.elapsed().as_micros() as u64;
-                    let timestamp = (elapsed * 90 / 1000) as u32;
-                    // A full queue means the wire is behind: dropping is the documented answer for
-                    // video, and the next frame carries the picture forward anyway.
-                    let _ = timed.try_send(
-                        TimedVideoFrame::builder()
-                            .data(unit)
-                            .timestamp(timestamp)
-                            .build(),
-                    );
-                }
-                Err(error) => log::warn!("[CALL] camera frame could not be encoded: {error}"),
-            }
-
-            let image = crate::video::rgb_image(
-                luma,
-                chroma_u,
-                chroma_v,
-                (width, width / 2, width / 2),
-                (width, height),
-                preview_size(size),
-                // Our own frames arrive upright from the camera: there is no rotation to undo, and
-                // none is announced either.
-                0,
-            );
-            let _ = ticks.try_send(VideoTick::Local(Arc::new(image)));
         }
-        kill_camera_child(control.child);
+
+        let luma = &bytes[..luma_len];
+        let chroma_u = &bytes[luma_len..luma_len + chroma_len];
+        let chroma_v = &bytes[luma_len + chroma_len..];
+        let planes = Yuv420 {
+            y: luma,
+            u: chroma_u,
+            v: chroma_v,
+            size,
+        };
+        match encoder.encode(&planes) {
+            Ok(stream) => {
+                // One access unit per encoded frame, led by an access-unit delimiter so the
+                // peer's depacketizer sees the boundaries an encoder would have produced.
+                let mut unit = vec![0x00, 0x00, 0x00, 0x01, 0x09, 0xF0];
+                stream.write_vec(&mut unit);
+                let elapsed = started.elapsed().as_micros() as u64;
+                let timestamp = (elapsed * 90 / 1000) as u32;
+                // A full queue means the wire is behind: dropping is the documented answer for
+                // video, and the next frame carries the picture forward anyway.
+                let _ = timed.try_send(
+                    TimedVideoFrame::builder()
+                        .data(unit)
+                        .timestamp(timestamp)
+                        .build(),
+                );
+            }
+            Err(error) => log::warn!("[CALL] camera frame could not be encoded: {error}"),
+        }
+
+        let image = crate::video::rgb_image(
+            luma,
+            chroma_u,
+            chroma_v,
+            (width, width / 2, width / 2),
+            (width, height),
+            preview_size(size),
+            // Our own frames arrive upright from the camera: there is no rotation to undo, and
+            // none is announced either.
+            0,
+        );
+        let _ = ticks.try_send(VideoTick::Local(Arc::new(image)));
     }
 }
 
@@ -2323,12 +2207,11 @@ mod tests {
     }
 
     #[test]
-    fn a_cameras_own_format_is_read_from_the_drivers_reply() {
-        let reply =
-            "Format Video Capture:\n\tWidth/Height      : 1280/720\n\tPixel Format      : 'MJPG'\n";
-        assert_eq!(parse_native_format(reply), Some((1280, 720)));
-        let missing = "VIDIOC_G_FMT: failed: Invalid argument\n";
-        assert_eq!(parse_native_format(missing), None);
+    fn a_camera_that_cannot_be_opened_is_refused() {
+        // The camera module decides how to read a device and says when it cannot; a call built on a
+        // device that is not a camera would otherwise start with no picture and no reason shown.
+        let child = Arc::new(std::sync::Mutex::new(None));
+        assert!(crate::camera::Source::open("/dev/null", (640, 360), child).is_err());
     }
 
     #[test]
@@ -2692,6 +2575,7 @@ mod tests {
     #[test]
     fn killing_the_camera_child_ends_a_blocked_read() {
         use std::io::Read as _;
+        use std::process::Stdio;
         // A long-lived child stands in for a camera or `ffmpeg` that stalled while holding the
         // device: the capture thread would be parked in a blocking read on its stdout.
         let mut child = std::process::Command::new("sleep")
