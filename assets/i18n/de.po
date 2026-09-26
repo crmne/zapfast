@@ -1231,3 +1231,35 @@ msgstr "Speichern unter…"
 #: src/ui/image_preview.rs:158
 msgid "Open in another app"
 msgstr "In anderer App öffnen"
+
+#: src/ui/settings.rs:363
+msgid "Download older history in the background"
+msgstr "Älteren Verlauf im Hintergrund laden"
+
+#: src/ui/settings.rs:366
+msgid "Slowly fetch older messages and their files, up to 64 MiB each, so scrolling up does not hit WhatsApp's rate limit. The phone is asked for one chat every twenty seconds, and files that fail are tried again for thirty days."
+msgstr "Holt nach und nach ältere Nachrichten und ihre Dateien, jeweils bis zu 64 MiB, damit das Hochscrollen nicht an WhatsApps Ratenlimit stößt. Das Telefon wird alle zwanzig Sekunden nach einem Chat gefragt, und fehlgeschlagene Dateien werden dreißig Tage lang erneut versucht."
+
+#: src/settings.rs:76
+msgid "Off"
+msgstr "Aus"
+
+#: src/settings.rs:77
+msgid "Current chat"
+msgstr "Aktueller Chat"
+
+#: src/settings.rs:78
+msgid "Recent and pinned"
+msgstr "Neueste und angeheftete"
+
+#: src/settings.rs:85
+msgid "Do not fetch older messages in the background."
+msgstr "Ältere Nachrichten nicht im Hintergrund laden."
+
+#: src/settings.rs:87
+msgid "Fetch older messages and files for the open chat only."
+msgstr "Ältere Nachrichten und Dateien nur für den geöffneten Chat laden."
+
+#: src/settings.rs:91
+msgid "Fetch older history for pinned chats and the ten most recent ones."
+msgstr "Ältere Verläufe für angeheftete Chats und die zehn neuesten laden."

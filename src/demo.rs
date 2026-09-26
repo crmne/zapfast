@@ -238,7 +238,7 @@ fn media(mime: &str, size: u64, width: Option<u32>, height: Option<u32>) -> Medi
         width,
         height,
         path: None,
-        state: Default::default(),
+        ..Default::default()
     }
 }
 

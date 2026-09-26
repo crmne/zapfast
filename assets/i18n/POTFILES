@@ -12,3 +12,4 @@ src/ui/picker.rs
 src/ui/pane.rs
 src/privacy.rs
 src/ui/image_preview.rs
+src/settings.rs

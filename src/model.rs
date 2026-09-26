@@ -726,11 +726,18 @@ impl Content {
         }
     }
 
-    /// Carries downloaded file paths over from `old` when rederiving content
-    /// from the raw protobuf: the main attachment and each carousel card's image.
+    /// Carries what the row already knew about its files over from `old` when
+    /// rederiving content from the raw protobuf: the main attachment, an
+    /// interactive card's image, and each carousel card's image.
+    ///
+    /// The path alone is not enough. A duplicate delivery or a history replay
+    /// reclassifies the same message, and a fresh classification has no retry
+    /// bookkeeping: dropping it would forget the backoff and open a new
+    /// thirty-day window, so the background would try a file it had already
+    /// given up on.
     pub fn keep_local_paths(&mut self, old: &Content) {
         if let (Some(new), Some(old)) = (self.media_mut(), old.media()) {
-            new.path = old.path.clone();
+            new.keep_file_state(old);
         }
         if let (
             Self::Interactive {
@@ -743,7 +750,7 @@ impl Content {
         {
             for (new, old) in new.carousel.iter_mut().zip(&old.carousel) {
                 if let (Some(new), Some(old)) = (&mut new.image, &old.image) {
-                    new.path = old.path.clone();
+                    new.keep_file_state(old);
                 }
             }
         }
@@ -790,7 +797,7 @@ pub(crate) const ATTACHMENT_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 
 /// Attachment metadata, download state, and optional local file. Download keys
 /// remain in the archive's raw message.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Media {
     pub mime: String,
     pub size: u64,
@@ -799,9 +806,96 @@ pub struct Media {
     /// Decrypted downloaded file.
     #[serde(default)]
     pub path: Option<PathBuf>,
+    /// First failed download, in Unix seconds. The background gives up
+    /// thirty days later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_from: Option<i64>,
+    /// When the background tries this file again, in Unix seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<i64>,
+    /// Failed attempts since `retry_from`, which set the backoff.
+    #[serde(default, skip_serializing_if = "u32_is_zero")]
+    pub retry_fails: u32,
     /// Non-persisted download state.
     #[serde(skip)]
     pub state: MediaState,
+}
+
+fn u32_is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+/// The background gives up this long after a file's first failed download.
+pub const MEDIA_RETRY_TTL_SECS: i64 = 30 * 24 * 60 * 60;
+/// Shown on a file the background is still trying to fetch.
+pub const MEDIA_STILL_TRYING: &str =
+    "We are still trying to get this file automatically. Click to retry manually.";
+/// Shown on a file whose download window has passed.
+pub const MEDIA_NO_LONGER: &str = "No longer available on WhatsApp's servers";
+
+/// Delay before the next background attempt: 30 s doubling to 15 min, then
+/// an hour.
+pub fn media_retry_delay_secs(fails: u32) -> i64 {
+    match fails {
+        0 | 1 => 30,
+        2 => 60,
+        3 => 120,
+        4 => 240,
+        5 => 480,
+        6 => 900,
+        _ => 3600,
+    }
+}
+
+/// The line a failed download shows: still trying, or given up.
+pub fn media_retry_notice(retry_from: i64, now: i64) -> &'static str {
+    if now.saturating_sub(retry_from) >= MEDIA_RETRY_TTL_SECS {
+        MEDIA_NO_LONGER
+    } else {
+        MEDIA_STILL_TRYING
+    }
+}
+
+impl Media {
+    /// Where this attachment's local file is, and how the background is
+    /// retrying it, taken from an earlier copy of the same attachment.
+    pub fn keep_file_state(&mut self, old: &Media) {
+        self.path = old.path.clone();
+        self.retry_from = old.retry_from;
+        self.retry_at = old.retry_at;
+        self.retry_fails = old.retry_fails;
+    }
+
+    /// Forgets the failure window once the file is here.
+    pub fn clear_retry(&mut self) {
+        self.retry_from = None;
+        self.retry_at = None;
+        self.retry_fails = 0;
+    }
+
+    /// Records a failed attempt and when the next one is due. `reset` starts
+    /// a new window, as a click on the bubble does.
+    pub fn schedule_retry(&mut self, now: i64, reset: bool) {
+        let from = if reset {
+            now
+        } else {
+            self.retry_from.unwrap_or(now)
+        };
+        let fails = if reset {
+            1
+        } else {
+            self.retry_fails.saturating_add(1)
+        };
+        self.retry_from = Some(from);
+        self.retry_fails = fails;
+        self.retry_at = Some(now.saturating_add(media_retry_delay_secs(fails)));
+    }
+
+    /// Whether the file's thirty-day window has passed.
+    pub fn retry_given_up(&self, now: i64) -> bool {
+        self.retry_from
+            .is_some_and(|from| now.saturating_sub(from) >= MEDIA_RETRY_TTL_SECS)
+    }
 }
 
 impl Media {
@@ -1475,6 +1569,7 @@ pub enum Action {
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),
     SetWallpaperDoodles(bool),
+    SetHistoryPrefetch(crate::settings::HistoryPrefetch),
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
@@ -1708,10 +1803,8 @@ mod tests {
         let image = |path: Option<&str>| Media {
             mime: "image/jpeg".into(),
             size: 1,
-            width: None,
-            height: None,
             path: path.map(PathBuf::from),
-            state: MediaState::Idle,
+            ..Default::default()
         };
         let content = |main: Option<&str>, cards: [Option<&str>; 2]| Content::Interactive {
             text: String::new(),
@@ -1760,11 +1853,38 @@ mod tests {
         Media {
             mime: "image/jpeg".into(),
             size: 1,
-            width: None,
-            height: None,
-            path: None,
-            state: MediaState::Idle,
+            ..Default::default()
         }
+    }
+
+    /// The delay table and the window the notice follows. A manual reset opens
+    /// a fresh window and is covered by the archive tests; these two are the
+    /// pure functions behind both.
+    #[test]
+    fn the_retry_delay_grows_then_holds_and_the_window_closes_at_thirty_days() {
+        use super::{
+            MEDIA_NO_LONGER, MEDIA_RETRY_TTL_SECS, MEDIA_STILL_TRYING, media_retry_delay_secs,
+            media_retry_notice,
+        };
+        assert_eq!(media_retry_delay_secs(0), 30);
+        assert_eq!(media_retry_delay_secs(1), 30);
+        assert_eq!(media_retry_delay_secs(2), 60);
+        assert_eq!(media_retry_delay_secs(3), 120);
+        assert_eq!(media_retry_delay_secs(4), 240);
+        assert_eq!(media_retry_delay_secs(5), 480);
+        assert_eq!(media_retry_delay_secs(6), 900);
+        assert_eq!(media_retry_delay_secs(7), 3600);
+        assert_eq!(
+            media_retry_delay_secs(99),
+            3600,
+            "an hour is as far apart as the attempts get"
+        );
+        // The notice follows the window, not the number of attempts.
+        assert_eq!(
+            media_retry_notice(0, MEDIA_RETRY_TTL_SECS - 1),
+            MEDIA_STILL_TRYING
+        );
+        assert_eq!(media_retry_notice(0, MEDIA_RETRY_TTL_SECS), MEDIA_NO_LONGER);
     }
 
     #[test]

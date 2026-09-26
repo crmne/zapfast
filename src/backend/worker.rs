@@ -41,6 +41,7 @@ mod interactive;
 mod link_watch;
 mod poll_history;
 mod polls;
+mod prefetch;
 mod stickers;
 
 use super::{Command, Event, LinkStatus, Refusal, Unsent, Waker, read_sync::ReadSync};
@@ -48,7 +49,8 @@ use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
     ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    LIVE_LOCATION_LIMIT, LinkPreview, MEDIA_STILL_TRYING, Media, MentionRef, Message, Quoted,
+    Reaction,
 };
 use crate::paths::AppDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
@@ -271,6 +273,14 @@ fn spawn_pin_limit_check(
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     });
+}
+
+/// Unix seconds, for the retry window a failed download carries.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn account_allows_receipts(
@@ -499,6 +509,7 @@ pub async fn run(
         online_changed: Instant::now(),
         online_sent: None,
         pending_older: HashMap::new(),
+        stale_older: HashMap::new(),
         older_warned: HashSet::new(),
         pending_avatars: HashMap::new(),
         sticker_fetches: HashSet::new(),
@@ -516,6 +527,8 @@ pub async fn run(
         poll_decrypting: 0,
         poll_history: Default::default(),
         poll_sending: HashSet::new(),
+        prefetch: prefetch::State::default(),
+        prefetch_older: HashSet::new(),
         interactive_sending: HashMap::new(),
         receipts_watch: None,
         receipts_pruned: Instant::now(),
@@ -576,6 +589,7 @@ pub async fn run(
                 worker.pump_favorite_chats();
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
+                worker.pump_prefetch();
                 worker.prune_waiting_receipts();
             }
         }
@@ -712,6 +726,10 @@ struct Worker {
     receipts_pruned: Instant,
     /// Notices a link that stays open after a sleep but carries nothing.
     link_watch: link_watch::LinkWatch,
+    /// Serial background phone-history and attachment prefetch.
+    prefetch: prefetch::State,
+    /// Phone-history requests started by prefetch, not by a reader scrolling.
+    prefetch_older: HashSet<ChatId>,
     dirs: AppDirs,
     events: std::sync::mpsc::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
@@ -757,6 +775,13 @@ struct Worker {
     online_sent: Option<bool>,
     /// Pending phone-history request time and boundary by chat.
     pending_older: HashMap<ChatId, (Instant, super::PageKey)>,
+    /// Background phone-history requests that timed out and whose answer may
+    /// still arrive, with the moment the mark was made. The mark outlives the
+    /// request it stands for, so a late background page is not mistaken for the
+    /// answer the reader is waiting for, and the reader's own request keeps its
+    /// place in `pending_older`. It lasts one patience: an answer that never
+    /// arrives must not keep the reader's next page quiet for good.
+    stale_older: HashMap<ChatId, Instant>,
     /// Chats already notified about a phone-history timeout.
     older_warned: HashSet<ChatId>,
     /// Deferred profile-picture requests and retry counts.
@@ -1019,6 +1044,9 @@ impl Worker {
         match self.archive.remove_chat_through(chat, through, true) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
+                self.prefetch_older.remove(chat);
+                self.stale_older.remove(chat);
+                self.prefetch.forget_chat(chat);
                 if delete_media {
                     self.drop_cached_media(&removed.media);
                 }
@@ -1049,6 +1077,9 @@ impl Worker {
         match self.archive.remove_chat_through(chat, through, false) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
+                self.prefetch_older.remove(chat);
+                self.stale_older.remove(chat);
+                self.prefetch.forget_chat(chat);
                 if delete_media {
                     self.drop_cached_media(&removed.media);
                 }
@@ -1137,6 +1168,10 @@ impl Worker {
     fn set_status(&mut self, status: LinkStatus) {
         if self.status != status {
             log::info!("link: {}", status.log_label());
+            if matches!(status, LinkStatus::Connected) {
+                // The phone may have history for us again.
+                self.prefetch.on_connected();
+            }
             self.status = status.clone();
             self.emit(Event::Link(status));
         }
@@ -2516,6 +2551,9 @@ impl Worker {
         self.poll_sending.clear();
         self.interactive_sending.clear();
         self.poll_history = Default::default();
+        self.prefetch.reset_session();
+        self.prefetch_older.clear();
+        self.stale_older.clear();
         self.forward_queue = None;
         self.pending_older.clear();
         self.pending_avatars.clear();
@@ -3397,12 +3435,16 @@ impl Worker {
             let sender = message.sender.clone();
             self.remember_push_name(&sender, push_name);
         }
-        let is_new = self
-            .archive
-            .message(&chat, &message.id)
-            .ok()
-            .flatten()
-            .is_none();
+        let existing = self.archive.message(&chat, &message.id).ok().flatten();
+        let is_new = existing.is_none();
+        let mut message = message;
+        // A duplicate delivery or a history replay reclassifies the same
+        // message. Carry what the row already knew about its files over, or
+        // the insert below replaces the content with a fresh classification
+        // that has no downloaded path and no retry bookkeeping.
+        if let Some(existing) = &existing {
+            message.content.keep_local_paths(&existing.content);
+        }
         if let Err(error) = self.archive.insert_message(&message, raw.as_deref()) {
             log::warn!("could not store a message: {error}");
             return;
@@ -3897,34 +3939,70 @@ impl Worker {
     fn answer_older(&mut self, filed: Vec<(ChatId, usize, Option<bool>)>) {
         for (chat, count, more_on_phone) in filed {
             let more = count > 0 && more_on_phone != Some(false);
+            // The phone answers history requests in the order it was asked, and
+            // a background request that timed out keeps its mark until its
+            // answer arrives. So while that mark is here, the chunk in hand is
+            // its answer, not the one the reader is waiting for: it stays quiet
+            // and the reader's request keeps its place in `pending_older`, so
+            // its own answer is not mistaken for a late one.
+            // A mark whose answer never came must not keep the reader's page
+            // quiet for good. Past one more patience the page in hand is the
+            // one the reader asked for, and it shows.
+            let stale = self
+                .stale_older
+                .remove(&chat)
+                .is_some_and(|marked| marked.elapsed() < PHONE_PATIENCE);
+            if stale {
+                self.emit(Event::OlderFetched {
+                    chat,
+                    more,
+                    silent: true,
+                });
+                continue;
+            }
             let Some((_, (before_time, before_id))) = self.pending_older.remove(&chat) else {
-                // Late responses are already archived; tell the app to page again.
-                self.emit(Event::OlderFetched { chat, more });
+                // The request is no longer pending: it timed out before the
+                // phone answered, and the answer is already archived. Tell the
+                // app to page again. A background request stays quiet, but one
+                // the reader made has to show, or the scroll-up that asked for
+                // it shows nothing at all.
+                let silent = self.prefetch_older.remove(&chat);
+                self.emit(Event::OlderFetched { chat, more, silent });
                 continue;
             };
-            match self
-                .archive
-                .messages(&chat, Some((before_time, &before_id)), 500)
-            {
-                Ok(mut messages) => {
-                    for message in &mut messages {
-                        self.polish(message);
+            // A background request fills the archive without moving the view.
+            let silent = self.prefetch_older.remove(&chat);
+            self.prefetch.finish_history(&chat, more, Instant::now());
+            if !silent {
+                match self
+                    .archive
+                    .messages(&chat, Some((before_time, &before_id)), 500)
+                {
+                    Ok(mut messages) => {
+                        for message in &mut messages {
+                            self.polish(message);
+                        }
+                        self.emit(Event::Messages {
+                            chat: chat.clone(),
+                            messages,
+                            older: true,
+                            complete: false,
+                        })
                     }
-                    self.emit(Event::Messages {
-                        chat: chat.clone(),
-                        messages,
-                        older: true,
-                        complete: false,
-                    })
+                    Err(error) => log::warn!("could not read older messages: {error}"),
                 }
-                Err(error) => log::warn!("could not read older messages: {error}"),
             }
-            self.emit(Event::OlderFetched { chat, more });
+            self.emit(Event::OlderFetched { chat, more, silent });
         }
     }
 
     /// Times out unanswered phone-history requests.
     fn expire_older_requests(&mut self) {
+        // A mark stands for a background answer still on its way. One patience
+        // after its request timed out, that answer is not coming, and the mark
+        // would only swallow the next page for the chat.
+        self.stale_older
+            .retain(|_, marked| marked.elapsed() < PHONE_PATIENCE);
         let expired: Vec<ChatId> = self
             .pending_older
             .iter()
@@ -3933,12 +4011,21 @@ impl Worker {
             .collect();
         for chat in expired {
             self.pending_older.remove(&chat);
+            // The mark moves to `stale_older` rather than going away: the
+            // answer may still arrive, and it is what tells a late background
+            // page from a late page the reader is waiting for.
+            let silent = self.prefetch_older.remove(&chat);
+            if silent {
+                self.stale_older.insert(chat.clone(), Instant::now());
+            }
+            self.prefetch.fail_history(&chat, Instant::now());
             self.emit(Event::OlderFetched {
                 chat: chat.clone(),
                 more: true,
+                silent,
             });
             // Report the timeout once per chat; later retries back off silently.
-            if self.older_warned.insert(chat) {
+            if !silent && self.older_warned.insert(chat) {
                 self.emit(Event::Error(
                     "Your phone did not send older messages. Check that it is online".to_owned(),
                 ));
@@ -3946,14 +4033,32 @@ impl Worker {
         }
     }
 
-    fn fetch_older(&mut self, chat: ChatId) {
+    /// Asks the phone for messages before the archive's earliest one.
+    /// `background` marks the request as prefetch: it never moves the view,
+    /// it waits for the phone to be free, and its failures stay quiet.
+    /// Returns whether the request was sent.
+    fn fetch_older(&mut self, chat: ChatId, background: bool) -> bool {
         if self.pending_older.contains_key(&chat) {
-            return;
+            // A request for this chat is already in flight. A manual one
+            // promotes it: the reader is waiting for the answer now, so the
+            // prefetch's silence is dropped and the completion reaches the app
+            // instead of leaving it in the fetching state for good.
+            if !background {
+                self.prefetch_older.remove(&chat);
+            }
+            return false;
+        }
+        if background && !self.pending_older.is_empty() {
+            return false;
         }
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             // Offline requests retry after reconnection; the banner shows state.
-            self.emit(Event::OlderFetched { chat, more: true });
-            return;
+            self.emit(Event::OlderFetched {
+                chat,
+                more: true,
+                silent: background,
+            });
+            return false;
         };
         // Chats without messages request history from the current time.
         let (id, from_me, timestamp) = match self.archive.oldest(&chat) {
@@ -3962,6 +4067,13 @@ impl Worker {
         };
         self.pending_older
             .insert(chat.clone(), (Instant::now(), (timestamp, id.clone())));
+        if background {
+            self.prefetch_older.insert(chat.clone());
+        } else {
+            // The reader is waiting for this one, so an answer to it must
+            // show, whatever a background request for the same chat left here.
+            self.prefetch_older.remove(&chat);
+        }
         let commands = self.commands.clone();
         tokio::spawn(async move {
             if let Err(error) = client
@@ -3977,6 +4089,75 @@ impl Worker {
                 });
             }
         });
+        true
+    }
+
+    /// Fills the archive and the disk slowly: one phone-history request every
+    /// twenty seconds and one attachment every three, so a reader scrolling up
+    /// does not run into the phone's rate limit.
+    fn pump_prefetch(&mut self) {
+        if !self.status.is_connected()
+            || self.prefetch.mode == crate::settings::HistoryPrefetch::Off
+        {
+            return;
+        }
+        let now = Instant::now();
+        let chats = match self.archive.chats() {
+            Ok(chats) => chats,
+            Err(error) => {
+                log::warn!("prefetch chats: {error}");
+                return;
+            }
+        };
+        let targets =
+            prefetch::targets(&chats, self.prefetch.mode, self.prefetch.focused.as_deref());
+        if self.prefetch.next_media_ready(now) {
+            'media: for chat in &targets {
+                match self
+                    .archive
+                    .undownloaded_media(chat, prefetch::MEDIA_MAX, unix_now(), 8)
+                {
+                    Ok(items) => {
+                        for (id, card) in items {
+                            if self.prefetch.skip_media(chat, &id, card) {
+                                continue;
+                            }
+                            if self.downloads.contains(&(chat.clone(), id.clone(), card)) {
+                                // The reader's own download of this attachment
+                                // is already running. Marking it as the
+                                // prefetch's would make its completion read as
+                                // a background one, which releases the slot
+                                // without opening a fresh retry window.
+                                continue;
+                            }
+                            self.prefetch.start_media(chat.clone(), id.clone(), card);
+                            if !self.download_media(chat.clone(), id.clone(), card) {
+                                // The failure is already recorded: the
+                                // synchronous paths in `download_media` report
+                                // through `downloaded`, which holds the retry
+                                // and its backoff. Recording it again here
+                                // would advance the backoff twice. Every
+                                // remaining item would fail the same way, so
+                                // this pass stops instead of walking the rest.
+                                break 'media;
+                            }
+                            break 'media;
+                        }
+                    }
+                    Err(error) => log::warn!("prefetch media: {error}"),
+                }
+            }
+        }
+        let Some(chat) = self.prefetch.next_history(
+            now,
+            !self.pending_older.is_empty() || self.poll_history.in_flight(),
+            &targets,
+        ) else {
+            return;
+        };
+        if self.fetch_older(chat.clone(), true) {
+            self.prefetch.start_history(chat);
+        }
     }
 
     // --- commands --------------------------------------------------------
@@ -4136,7 +4317,17 @@ impl Worker {
                 }
             }
             Command::LoadChat { chat, before } => self.load_chat(chat, before),
-            Command::FetchOlder(chat) => self.fetch_older(chat),
+            Command::FetchOlder(chat) => {
+                self.prefetch_older.remove(&chat);
+                let _ = self.fetch_older(chat, false);
+            }
+            Command::SetHistoryPrefetch {
+                mode,
+                focused,
+                auto_download,
+            } => {
+                self.prefetch.configure(mode, focused, auto_download);
+            }
             Command::LoadUntil { chat, id, before } => self.load_until(chat, id, before),
             Command::SearchMessages { query } => self.search_messages(query),
             Command::SearchChatMessages {
@@ -4167,7 +4358,9 @@ impl Worker {
                 card,
                 chat,
                 message,
-            } => self.download_media(chat, message, card),
+            } => {
+                let _ = self.download_media(chat, message, card);
+            }
             Command::FetchAvatar { id, full } => self.fetch_avatar(id, full),
             Command::EditText {
                 chat,
@@ -5074,9 +5267,33 @@ impl Worker {
             }
             Command::Shutdown => {}
             Command::OlderFailed { chat, error } => {
+                // A background request that timed out and fails late is its own
+                // failure: the reader's newer request keeps its place, and
+                // nothing is shown for a request nobody made.
+                if self
+                    .stale_older
+                    .remove(&chat)
+                    .is_some_and(|marked| marked.elapsed() < PHONE_PATIENCE)
+                {
+                    self.prefetch.fail_history(&chat, Instant::now());
+                    self.emit(Event::OlderFetched {
+                        chat,
+                        more: true,
+                        silent: true,
+                    });
+                    return;
+                }
                 self.pending_older.remove(&chat);
-                self.emit(Event::OlderFetched { chat, more: true });
-                self.emit(Event::Error(error));
+                let silent = self.prefetch_older.remove(&chat);
+                self.prefetch.fail_history(&chat, Instant::now());
+                self.emit(Event::OlderFetched {
+                    chat,
+                    more: true,
+                    silent,
+                });
+                if !silent {
+                    self.emit(Event::Error(error));
+                }
             }
             Command::GroupInfoFailed { chat, permanent } => {
                 self.handle_failed_group(chat, permanent);
@@ -5748,17 +5965,20 @@ impl Worker {
         }
     }
 
-    fn download(&mut self, chat: ChatId, id: String) {
-        self.download_media(chat, id, None);
+    /// Downloads the message's attachment. Returns whether the download
+    /// started: a request already in flight, a missing connection or a message
+    /// with no file answers `false`, and reports itself through `downloaded`.
+    fn download(&mut self, chat: ChatId, id: String) -> bool {
+        self.download_media(chat, id, None)
     }
 
-    fn download_media(&mut self, chat: ChatId, id: String, card: Option<usize>) {
+    fn download_media(&mut self, chat: ChatId, id: String, card: Option<usize>) -> bool {
         if !self.downloads.insert((chat.clone(), id.clone(), card)) {
-            return;
+            return false;
         }
         let Some(client) = self.client.clone() else {
             self.downloaded(chat, id, card, Err("Not connected to WhatsApp".to_owned()));
-            return;
+            return false;
         };
         let raw = self.archive.raw(&chat, &id).ok().flatten();
         let Some(message) = raw.and_then(|raw| wa::Message::decode_from_slice(&raw).ok()) else {
@@ -5768,7 +5988,7 @@ impl Worker {
                 card,
                 Err("Attachment download keys are missing".to_owned()),
             );
-            return;
+            return false;
         };
         let original = message.get_base_message();
         let base = match interactive::image_at(original, card) {
@@ -5784,7 +6004,7 @@ impl Worker {
                     card,
                     Err("This card has no downloadable image".to_owned()),
                 );
-                return;
+                return false;
             }
         };
         let (downloadable, mime, file_name): (Box<dyn Downloadable>, String, Option<String>) =
@@ -5829,11 +6049,11 @@ impl Worker {
                     card,
                     Err("This message has no downloadable file".to_owned()),
                 );
-                return;
+                return false;
             };
         if attachment_is_too_large(downloadable.file_length()) {
             self.downloaded(chat, id, card, Err(ATTACHMENT_LIMIT_ERROR.to_owned()));
-            return;
+            return false;
         }
         // Keep metadata needed for one media re-upload request and retry.
         let media_key = base
@@ -5955,6 +6175,7 @@ impl Worker {
                 result,
             });
         });
+        true
     }
 
     /// Files the result and releases any picker request that started it.
@@ -5965,9 +6186,28 @@ impl Worker {
         card: Option<usize>,
         result: Result<PathBuf, String>,
     ) {
-        if let Ok(path) = &result {
-            let _ = self.archive.put_media_path_at(&chat, &id, card, Some(path));
-        }
+        // A failed download is due again after a backoff; a click on the
+        // bubble opens a fresh thirty-day window. Every attachment carries its
+        // own retry, a carousel card's picture included: without the record
+        // the pump would try the card again on every three-second pass.
+        let background = self.prefetch.finish_media(&chat, &id, card, Instant::now());
+        let result = match result {
+            Ok(path) => {
+                let _ = self
+                    .archive
+                    .put_media_path_at(&chat, &id, card, Some(path.as_path()));
+                Ok(path)
+            }
+            Err(_) => {
+                let notice = self
+                    .archive
+                    .set_media_retry(&chat, &id, card, unix_now(), !background)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| MEDIA_STILL_TRYING.to_owned());
+                Err(notice)
+            }
+        };
         self.downloads.remove(&(chat.clone(), id.clone(), card));
         let for_picker = self.sticker_downloads.remove(&(chat.clone(), id.clone()));
         self.emit(Event::Media {
@@ -6026,7 +6266,7 @@ impl Worker {
             Ok(list) => {
                 for (chat, id) in list {
                     if self.sticker_downloads.insert((chat.clone(), id.clone())) {
-                        self.download(chat, id);
+                        let _ = self.download(chat, id);
                     }
                 }
             }
@@ -6956,8 +7196,7 @@ fn media(
         size: size.unwrap_or(0),
         width,
         height,
-        path: None,
-        state: Default::default(),
+        ..Default::default()
     }
 }
 
@@ -8205,6 +8444,124 @@ fn ensure_message_secret(raw: Vec<u8>, secret: Option<&[u8]>) -> Vec<u8> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    /// The phone answers older-history requests in the order it was asked. A
+    /// background request that timed out keeps its mark, so when the reader
+    /// asks for the same history and the phone answers the background request
+    /// first, that page is not mistaken for the reader's own: it stays quiet,
+    /// the reader's request keeps its place, and its own answer is the one that
+    /// moves the view.
+    #[test]
+    fn a_timed_out_background_page_does_not_steal_the_readers_answer() {
+        const CHAT: &str = "fixture@s.whatsapp.net";
+        let (mut worker, mut events, _commands, _wa) = receipt_tests::worker();
+        worker.archive.ensure_chat(CHAT, "Demo").unwrap();
+        let drained = |events: &mut std::sync::mpsc::Receiver<Event>| -> Vec<Event> {
+            std::iter::from_fn(|| events.try_recv().ok()).collect()
+        };
+        // The background asked for older history, its request timed out, and
+        // its answer is still on its way.
+        worker.stale_older.insert(CHAT.to_owned(), Instant::now());
+        // The reader scrolls up while that answer is in flight.
+        worker
+            .pending_older
+            .insert(CHAT.to_owned(), (Instant::now(), (0, "oldest".to_owned())));
+        worker.answer_older(vec![(CHAT.to_owned(), 3, Some(true))]);
+        let first = drained(&mut events);
+        assert!(
+            first
+                .iter()
+                .any(|event| matches!(event, Event::OlderFetched { silent: true, .. })),
+            "the timed-out background page stays quiet: {first:?}"
+        );
+        assert!(
+            worker.pending_older.contains_key(CHAT),
+            "the reader's request keeps its place"
+        );
+        assert!(
+            !worker.stale_older.contains_key(CHAT),
+            "the background mark is spent"
+        );
+        // The reader's own answer is the one that moves the view.
+        worker.answer_older(vec![(CHAT.to_owned(), 3, Some(true))]);
+        let second = drained(&mut events);
+        assert!(
+            second
+                .iter()
+                .any(|event| matches!(event, Event::OlderFetched { silent: false, .. })),
+            "the reader's answer shows: {second:?}"
+        );
+        assert!(!worker.pending_older.contains_key(CHAT));
+    }
+
+    /// A mark whose answer never came is spent one patience later: the page in
+    /// hand is the reader's, so the scroll-up shows it instead of waiting for
+    /// another timeout. The sweep drops it, so the map cannot grow with chats
+    /// nobody will answer again.
+    #[test]
+    fn a_mark_past_its_patience_does_not_swallow_the_readers_page() {
+        const CHAT: &str = "fixture@s.whatsapp.net";
+        let (mut worker, mut events, _commands, _wa) = receipt_tests::worker();
+        worker.archive.ensure_chat(CHAT, "Demo").unwrap();
+        let drained = |events: &mut std::sync::mpsc::Receiver<Event>| -> Vec<Event> {
+            std::iter::from_fn(|| events.try_recv().ok()).collect()
+        };
+        let long_ago = Instant::now() - PHONE_PATIENCE - Duration::from_secs(1);
+        worker.stale_older.insert(CHAT.to_owned(), long_ago);
+        worker
+            .pending_older
+            .insert(CHAT.to_owned(), (Instant::now(), (0, "oldest".to_owned())));
+        worker.answer_older(vec![(CHAT.to_owned(), 3, Some(true))]);
+        let first = drained(&mut events);
+        assert!(
+            first
+                .iter()
+                .any(|event| matches!(event, Event::OlderFetched { silent: false, .. })),
+            "the reader's page shows: {first:?}"
+        );
+        assert!(!worker.pending_older.contains_key(CHAT));
+        assert!(!worker.stale_older.contains_key(CHAT), "the mark is spent");
+
+        // The sweep is what keeps the map bounded: a mark nobody answers is
+        // gone one patience after its request timed out.
+        worker.stale_older.insert(CHAT.to_owned(), long_ago);
+        worker.expire_older_requests();
+        assert!(!worker.stale_older.contains_key(CHAT));
+    }
+
+    /// A background request that timed out and fails late is its own failure:
+    /// the reader's newer request keeps its place, and nothing is shown for a
+    /// request nobody made.
+    #[tokio::test]
+    async fn a_late_background_failure_keeps_the_readers_request() {
+        const CHAT: &str = "fixture@s.whatsapp.net";
+        let (mut worker, events, _commands, _wa) = receipt_tests::worker();
+        worker.archive.ensure_chat(CHAT, "Demo").unwrap();
+        worker.stale_older.insert(CHAT.to_owned(), Instant::now());
+        worker
+            .pending_older
+            .insert(CHAT.to_owned(), (Instant::now(), (0, "oldest".to_owned())));
+        worker
+            .handle_command(Command::OlderFailed {
+                chat: CHAT.to_owned(),
+                error: "fixture failure".to_owned(),
+            })
+            .await;
+        let seen: Vec<Event> = std::iter::from_fn(|| events.try_recv().ok()).collect();
+        assert!(
+            worker.pending_older.contains_key(CHAT),
+            "the reader's request keeps its place"
+        );
+        assert!(
+            seen.iter()
+                .any(|event| matches!(event, Event::OlderFetched { silent: true, .. })),
+            "the failure stays quiet: {seen:?}"
+        );
+        assert!(
+            !seen.iter().any(|event| matches!(event, Event::Error(_))),
+            "nothing is shown for a request nobody made"
+        );
+    }
 
     #[test]
     fn only_phone_playable_audio_is_sent_as_an_audio_message() {
@@ -10056,6 +10413,7 @@ mod receipt_tests {
             online_changed: Instant::now(),
             online_sent: None,
             pending_older: HashMap::new(),
+            stale_older: HashMap::new(),
             older_warned: HashSet::new(),
             pending_avatars: HashMap::new(),
             sticker_fetches: HashSet::new(),
@@ -10073,6 +10431,8 @@ mod receipt_tests {
             poll_decrypting: 0,
             poll_history: Default::default(),
             poll_sending: HashSet::new(),
+            prefetch: prefetch::State::default(),
+            prefetch_older: HashSet::new(),
             interactive_sending: HashMap::new(),
             receipts_watch: None,
             receipts_pruned: Instant::now(),
@@ -10876,6 +11236,115 @@ mod receipt_tests {
             status: Delivery::None,
             ..own_message(id, timestamp)
         }
+    }
+
+    /// A duplicate delivery reclassifies the same message, and a fresh
+    /// classification has no retry bookkeeping. Replacing the row with it
+    /// would forget the backoff and open a new thirty-day window, so the
+    /// background would keep trying a file it had already given up on.
+    #[tokio::test]
+    async fn a_duplicate_delivery_keeps_the_retry_the_row_had() {
+        use crate::model::Media;
+        let (mut worker, _events, _inbox, _wa) = receipt_tests::worker();
+        let mut picture = incoming("photo", 100);
+        picture.content = Content::Image {
+            media: Media {
+                mime: "image/jpeg".into(),
+                size: 10,
+                ..Default::default()
+            },
+            caption: None,
+        };
+        worker.store_message(picture.clone(), None, None);
+        let chat = PEER.to_owned();
+        worker
+            .archive
+            .set_media_retry(&chat, "photo", None, 1_000, false)
+            .expect("retry")
+            .expect("row");
+
+        // The same message arrives again, as history replay or a redelivery.
+        worker.store_message(picture, None, None);
+
+        let stored = worker
+            .archive
+            .message(&chat, "photo")
+            .expect("read")
+            .expect("row");
+        let Some(media) = stored.content.media() else {
+            panic!("the picture is still a picture");
+        };
+        assert_eq!(media.retry_from, Some(1_000), "the window is the same one");
+        assert_eq!(media.retry_fails, 1, "the failed attempt is not forgotten");
+        // And it is still due only after its backoff, not at once.
+        assert!(
+            worker
+                .archive
+                .undownloaded_media(&chat, 64 * 1024 * 1024, 1_010, 8)
+                .expect("listed")
+                .is_empty(),
+            "the backoff still holds"
+        );
+        let due = 1_000 + crate::model::media_retry_delay_secs(1);
+        assert_eq!(
+            worker
+                .archive
+                .undownloaded_media(&chat, 64 * 1024 * 1024, due, 8)
+                .expect("listed")
+                .len(),
+            1,
+            "and it comes back when it is due"
+        );
+    }
+
+    /// A failed carousel download gets the same retry bookkeeping as the
+    /// message's own file: the pump backs off the card instead of trying it
+    /// again on every three-second pass.
+    #[tokio::test]
+    async fn a_failed_carousel_download_is_due_again_after_its_backoff() {
+        use crate::model::Media;
+        let (mut worker, _events, _inbox, _wa) = receipt_tests::worker();
+        let mut card = incoming("carousel", 100);
+        card.content = Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                carousel: vec![crate::model::InteractiveCard {
+                    image: Some(Media {
+                        mime: "image/jpeg".into(),
+                        size: 10,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })),
+        };
+        worker.store_message(card, None, None);
+        let chat = PEER.to_owned();
+        let now = unix_now();
+        worker.downloaded(
+            chat.clone(),
+            "carousel".to_owned(),
+            Some(0),
+            Err("the phone refused it".into()),
+        );
+        assert!(
+            worker
+                .archive
+                .undownloaded_media(&chat, 64 * 1024 * 1024, now, 8)
+                .expect("listed")
+                .is_empty(),
+            "the failed card is held back by its backoff"
+        );
+        let due = now + crate::model::media_retry_delay_secs(1);
+        assert!(
+            worker
+                .archive
+                .undownloaded_media(&chat, 64 * 1024 * 1024, due, 8)
+                .expect("listed")
+                .contains(&("carousel".to_owned(), Some(0))),
+            "and is due again when the backoff passes"
+        );
     }
 
     #[test]

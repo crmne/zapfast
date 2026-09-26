@@ -174,6 +174,14 @@ protocol. These notes are for coding agents and new contributors.
   "... · click to retry". Copied text is refined by
   `transcript::refine`: emoji placeholders map back through each row's
   `placements`.
+- `src/backend/worker/prefetch.rs` schedules the background history and
+  attachment prefetch from the 5 s tick: one phone request every 20 s and
+  one attachment every 3 s, so a reader scrolling up does not hit the
+  phone's rate limit. A prefetch request waits while any other is in
+  flight, never re-emits messages the archive already holds, and keeps its
+  timeout quiet. A failed attachment download is due again after a backoff
+  (30 s doubling to 15 min, then hourly) until thirty days pass; a click
+  on the bubble opens a new window.
 - History sync can bring a chat with a name and no messages at all; a
   history request for such a chat is anchored at the present with an
   empty message id (`worker::fetch_older`), and the app asks the phone

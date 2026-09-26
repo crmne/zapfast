@@ -3385,6 +3385,24 @@ fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> 
     list
 }
 
+/// A failed attachment's notice, wrapped to the media's width and centred
+/// where its icon is. The notice is a sentence now rather than a fixed label,
+/// so it wraps instead of running past the bubble.
+fn paint_media_notice(ui: &egui::Ui, rect: Rect, notice: &str, color: Color32, offset: f32) {
+    let galley = ui.painter().layout(
+        notice.to_owned(),
+        theme::regular(11.5),
+        color,
+        (rect.width() - 16.0).max(0.0),
+    );
+    let top = rect.center() + vec2(0.0, offset);
+    ui.painter().galley(
+        pos2(top.x - galley.size().x / 2.0, top.y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+}
+
 fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
     let palette = view.palette;
     let chat = &view.chat.id;
@@ -4513,15 +4531,9 @@ fn carousel_picture(
                 .circle_filled(disc.center(), 21.0, Color32::from_black_alpha(130));
             match &media.state {
                 MediaState::Downloading => theme::paint_spinner(ui, disc, 20.0, Color32::WHITE),
-                MediaState::Failed(_) => {
+                MediaState::Failed(notice) => {
                     theme::paint_icon(ui, Icon::CircleAlert, disc, 20.0, Color32::WHITE);
-                    ui.painter().text(
-                        rect.center() + vec2(0.0, 34.0),
-                        Align2::CENTER_CENTER,
-                        "Download failed. Click to retry.",
-                        theme::regular(11.5),
-                        Color32::WHITE,
-                    );
+                    paint_media_notice(ui, rect, notice, Color32::WHITE, 34.0);
                 }
                 MediaState::Idle => {
                     theme::paint_icon(ui, Icon::Download, disc, 20.0, Color32::WHITE)
@@ -4539,8 +4551,8 @@ fn carousel_picture(
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let clicked = response.clicked();
-    if let MediaState::Failed(error) = &media.state {
-        response.on_hover_text(format!("{error} · Click to retry"));
+    if let MediaState::Failed(notice) = &media.state {
+        response.on_hover_text(notice.clone());
     }
     if let Some(path) = &media.path {
         if clicked {
@@ -5248,17 +5260,11 @@ fn picture(
                     .circle_filled(disc.center(), 22.0, Color32::from_black_alpha(120));
                 theme::paint_spinner(ui, disc, 22.0, Color32::WHITE);
             }
-            MediaState::Failed(_) => {
+            MediaState::Failed(notice) => {
                 ui.painter()
                     .circle_filled(disc.center(), 22.0, Color32::from_black_alpha(120));
                 theme::paint_icon(ui, Icon::CircleAlert, disc, 22.0, palette.danger);
-                ui.painter().text(
-                    rect.center() + vec2(0.0, 34.0),
-                    Align2::CENTER_CENTER,
-                    "Download failed. Click to retry.",
-                    theme::regular(11.5),
-                    Color32::WHITE,
-                );
+                paint_media_notice(ui, rect, notice, Color32::WHITE, 34.0);
             }
             MediaState::Idle => {
                 ui.painter()
@@ -5857,7 +5863,7 @@ fn attachment(
                     ui.set_width((card - 70.0).max(0.0));
                     widgets::rich_text(ui, title, theme::medium(14.0), palette.text);
                     let detail = match &media.state {
-                        MediaState::Failed(error) => format!("{error}. Click to retry."),
+                        MediaState::Failed(notice) => notice.clone(),
                         _ => detail.to_owned(),
                     };
                     theme::text(ui, detail, theme::regular(12.0), palette.secondary);
@@ -6083,7 +6089,7 @@ fn voice_player(
                         .unwrap_or_else(|| crate::util::bytes(media.size)),
                 };
                 let text = match &media.state {
-                    MediaState::Failed(error) => format!("{error}. Click to retry."),
+                    MediaState::Failed(notice) => notice.clone(),
                     _ => shown,
                 };
                 theme::text(ui, text, theme::regular(11.5), palette.secondary);
@@ -6421,8 +6427,7 @@ mod tests {
             size: 1,
             width: w,
             height: h,
-            path: None,
-            state: MediaState::Idle,
+            ..Default::default()
         }
     }
 

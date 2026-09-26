@@ -167,6 +167,18 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   and the chat only leaves this computer once the phone has confirmed. Chats
   you delete or clear on the phone disappear here as well, and history that
   was already on its way does not bring them back.
+- **Older history in the background.** **Settings > Chats > Download older
+  history in the background** fills the archive and the disk while you read:
+  one phone request every twenty seconds and one attachment every three, so
+  scrolling up does not run into the phone's rate limit. **Off** is the
+  default and fetches nothing in the background, **Current chat** covers only
+  the open one, and **Recent and pinned** covers every pinned chat and the ten
+  most recently active ones. The open chat goes first. A chat the phone says
+  it has no more of is left alone until the link reconnects, and a background
+  request never moves the view or interrupts one you asked for. A file that
+  fails to download is tried again with a growing delay (30 seconds, doubling
+  to 15 minutes, then hourly) for thirty days; the bubble says what is
+  happening and clicking it opens a fresh window.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
   in the chat. The speed chip cycles between 1x, 1.5x, and 2x, and the
   message menu offers 1x, 1.25x, 1.5x, 1.75x, and 2x, keeping the speaker's
