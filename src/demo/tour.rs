@@ -831,6 +831,46 @@ mod tests {
         frame(app, tour, ctx, Vec::new());
     }
 
+    /// The starred panel lists the message itself, and the open chat knows
+    /// which messages are starred, which is what its footer paints from.
+    #[test]
+    fn the_starred_list_shows_the_message_and_the_mark() {
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        let chat = app.open_chat.clone().expect("a chat is open");
+        let source = app.conversations[&chat]
+            .messages
+            .first()
+            .expect("the chat has messages")
+            .clone();
+        let body = source.content.full_summary();
+        // The star reaches the open chat: this is what the footer paints from.
+        app.stars
+            .insert(chat.clone(), [source.id.clone()].into_iter().collect());
+        app.show_starred = true;
+        app.starred = vec![crate::archive::Starred {
+            message: source.clone(),
+            starred_at: crate::util::now(),
+        }];
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        assert!(
+            tour.labels.contains_key("Starred"),
+            "the header names the panel"
+        );
+        assert!(
+            tour.labels.contains_key(&body),
+            "the row shows the starred message itself"
+        );
+        assert!(
+            app.stars[&chat].contains(&source.id),
+            "the open chat knows which messages are starred"
+        );
+    }
+
     #[test]
     fn the_chat_search_pane_lists_hits_and_opens_one() {
         let mut app = super::super::tests::app();

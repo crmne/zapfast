@@ -17,8 +17,10 @@ mod labels;
 pub use labels::{DEFAULT_COLOR, LABEL_LIMIT, NAME_LIMIT};
 mod polls;
 mod receipts;
+mod stars;
 mod stickers;
 pub use polls::PollVote;
+pub use stars::Starred;
 pub use stickers::FavoriteSticker;
 
 /// Outcome of deleting or clearing a chat.
@@ -52,6 +54,44 @@ pub struct Archive {
 }
 
 pub type Result<T> = std::result::Result<T, rusqlite::Error>;
+
+/// The message columns every whole-message read selects, in the order
+/// [`message_from_row`] expects. One list, so a read cannot quietly drop a
+/// field.
+const MESSAGE_COLUMNS: &str = "sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at";
+
+/// Reads one whole message from a row whose message columns start at `offset`.
+fn message_from_row(
+    row: &rusqlite::Row<'_>,
+    offset: usize,
+    chat: &str,
+    id: &str,
+) -> Result<Message> {
+    let content: String = row.get(offset + 4)?;
+    let quoted: Option<String> = row.get(offset + 6)?;
+    let reactions: String = row.get(offset + 7)?;
+    let mentions: String = row.get(offset + 10)?;
+    Ok(Message {
+        id: id.to_owned(),
+        chat: chat.to_owned(),
+        sender: row.get(offset)?,
+        sender_name: row.get(offset + 1)?,
+        from_me: row.get(offset + 2)?,
+        timestamp: row.get(offset + 3)?,
+        content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
+            what: "unreadable".into(),
+        }),
+        status: status_from_rank(row.get(offset + 5)?),
+        delivered_at: row.get(offset + 12)?,
+        read_at: row.get(offset + 13)?,
+        quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
+        reactions: serde_json::from_str(&reactions).unwrap_or_default(),
+        edited: row.get(offset + 8)?,
+        mentions: serde_json::from_str(&mentions).unwrap_or_default(),
+        forwarded: row.get(offset + 11)?,
+        thumbnail: row.get(offset + 9)?,
+    })
+}
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS chats (
@@ -341,6 +381,7 @@ impl Archive {
         connection.execute_batch(drafts::SCHEMA)?;
         connection.execute_batch(stickers::SCHEMA)?;
         connection.execute_batch(favorites::SCHEMA)?;
+        connection.execute_batch(stars::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -927,41 +968,19 @@ impl Archive {
         before: Option<(i64, &str)>,
         limit: usize,
     ) -> Result<Vec<Message>> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT id, {MESSAGE_COLUMNS}
              FROM messages
              WHERE chat = ?1 AND (timestamp < ?2 OR (timestamp = ?2 AND rowid <
                  (SELECT rowid FROM messages WHERE chat = ?1 AND id = ?3)))
              ORDER BY timestamp DESC, rowid DESC
-             LIMIT ?4",
-        )?;
+             LIMIT ?4"
+        ))?;
         let (before_time, before_id) = before.unwrap_or((i64::MAX, ""));
         let rows =
             statement.query_map(params![chat, before_time, before_id, limit as i64], |row| {
-                let content: String = row.get(5)?;
-                let quoted: Option<String> = row.get(7)?;
-                let reactions: String = row.get(8)?;
-                let mentions: String = row.get(11)?;
-                Ok(Message {
-                    id: row.get(0)?,
-                    chat: chat.to_owned(),
-                    sender: row.get(1)?,
-                    sender_name: row.get(2)?,
-                    from_me: row.get(3)?,
-                    timestamp: row.get(4)?,
-                    content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
-                        what: "unreadable".into(),
-                    }),
-                    status: status_from_rank(row.get(6)?),
-                    delivered_at: row.get(13)?,
-                    read_at: row.get(14)?,
-                    quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
-                    reactions: serde_json::from_str(&reactions).unwrap_or_default(),
-                    edited: row.get(9)?,
-                    mentions: serde_json::from_str(&mentions).unwrap_or_default(),
-                    forwarded: row.get(12)?,
-                    thumbnail: row.get(10)?,
-                })
+                let id: String = row.get(0)?;
+                message_from_row(row, 1, chat, &id)
             })?;
         let mut messages: Vec<Message> = rows.collect::<Result<_>>()?;
         messages.reverse();
@@ -1386,37 +1405,11 @@ impl Archive {
     }
 
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
-        let mut statement = self.connection.prepare(
-            "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
-             FROM messages WHERE chat = ?1 AND id = ?2",
-        )?;
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages WHERE chat = ?1 AND id = ?2"
+        ))?;
         statement
-            .query_row(params![chat, id], |row| {
-                let content: String = row.get(4)?;
-                let quoted: Option<String> = row.get(6)?;
-                let reactions: String = row.get(7)?;
-                let mentions: String = row.get(10)?;
-                Ok(Message {
-                    id: id.to_owned(),
-                    chat: chat.to_owned(),
-                    sender: row.get(0)?,
-                    sender_name: row.get(1)?,
-                    from_me: row.get(2)?,
-                    timestamp: row.get(3)?,
-                    content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
-                        what: "unreadable".into(),
-                    }),
-                    status: status_from_rank(row.get(5)?),
-                    delivered_at: row.get(12)?,
-                    read_at: row.get(13)?,
-                    quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
-                    reactions: serde_json::from_str(&reactions).unwrap_or_default(),
-                    edited: row.get(8)?,
-                    mentions: serde_json::from_str(&mentions).unwrap_or_default(),
-                    forwarded: row.get(11)?,
-                    thumbnail: row.get(9)?,
-                })
-            })
+            .query_row(params![chat, id], |row| message_from_row(row, 0, chat, id))
             .optional()
     }
 
@@ -1689,6 +1682,85 @@ pub(crate) mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn starring_a_message_survives_a_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fixture.db");
+        let key = [7; 32];
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+            archive
+                .insert_message(&message("1@s.whatsapp.net", "m1", 100, false), None)
+                .unwrap();
+            archive.star("1@s.whatsapp.net", "m1", 500).unwrap();
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert!(
+            archive
+                .starred_ids("1@s.whatsapp.net")
+                .unwrap()
+                .contains("m1")
+        );
+        let list = archive.starred(50).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].starred_at, 500);
+        assert_eq!(list[0].message.content.full_summary(), "message m1");
+        archive.unstar("1@s.whatsapp.net", "m1").unwrap();
+        assert!(archive.starred(50).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_deleted_message_leaves_the_starred_list() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        archive
+            .insert_message(&message("1@s.whatsapp.net", "m1", 100, false), None)
+            .unwrap();
+        archive.star("1@s.whatsapp.net", "m1", 500).unwrap();
+        assert_eq!(archive.starred(50).unwrap().len(), 1);
+        assert!(archive.delete_message("1@s.whatsapp.net", "m1").unwrap());
+        assert!(
+            archive.starred(50).unwrap().is_empty(),
+            "the list hides a message deleted here"
+        );
+    }
+
+    #[test]
+    fn starred_messages_come_back_newest_star_first() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        for (id, at) in [("old", 100), ("new", 900)] {
+            archive
+                .insert_message(&message("1@s.whatsapp.net", id, 50, false), None)
+                .unwrap();
+            archive.star("1@s.whatsapp.net", id, at).unwrap();
+        }
+        let list = archive.starred(50).unwrap();
+        let ids: Vec<&str> = list.iter().map(|entry| entry.message.id.as_str()).collect();
+        assert_eq!(ids, vec!["new", "old"]);
+    }
+
+    #[test]
+    fn a_starred_message_keeps_its_whole_text() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        let mut written = message("1@s.whatsapp.net", "m1", 100, false);
+        written.content = Content::text("first line\nsecond line");
+        archive.insert_message(&written, None).unwrap();
+        archive.star("1@s.whatsapp.net", "m1", 500).unwrap();
+        let list = archive.starred(50).unwrap();
+        assert_eq!(
+            list[0].message.content.full_summary(),
+            "first line\nsecond line",
+            "the list draws the message as written, not only its first line"
+        );
+        assert_eq!(
+            list[0].message.timestamp, 100,
+            "the bubble can show the message's time"
+        );
     }
 
     /// `left` reads like a SQL keyword, so this pins down that it is usable as

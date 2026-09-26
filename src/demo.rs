@@ -1554,6 +1554,26 @@ fn labels_sample(app: &mut App) {
     }
 }
 
+/// Sample stars, and the left panel that lists them. `menu` keeps one row's
+/// own context menu open, so a screenshot and a layout test can see it.
+fn starred_sample(app: &mut App, menu: Option<&str>) {
+    let chat = SAMPLES[0].id.to_owned();
+    let starred = app.conversations[&chat]
+        .messages
+        .iter()
+        .find(|row| row.id == "ada-link")
+        .cloned()
+        .expect("the sample link message");
+    app.stars
+        .insert(chat.clone(), [starred.id.clone()].into_iter().collect());
+    app.starred = vec![crate::archive::Starred {
+        message: starred,
+        starred_at: crate::util::now(),
+    }];
+    app.show_starred = true;
+    app.open_list_menu = menu.map(|id| (chat, id.to_owned()));
+}
+
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -2412,6 +2432,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     row.read_at = Some(row.timestamp + 60 * 60 * 7);
                 }
             }
+            "starred" => starred_sample(app, None),
+            "star-menu" => starred_sample(app, Some("ada-link")),
             "react-picker" => {
                 let chat = SAMPLES[0].id.to_owned();
                 app.reaction_target = Some((chat, "ada-link".into()));
@@ -3870,6 +3892,8 @@ mod tests {
             "gifs",
             "gifs-badkey",
             "react-menu",
+            "starred",
+            "star-menu",
             "react-picker",
             "react-picker-empty",
             "react-custom",
@@ -4652,6 +4676,84 @@ mod tests {
         frame_with(&mut app, &ctx, Vec::new());
         assert_eq!(selected(&app), None, "Escape ends the selection");
         assert_eq!(app.open_chat, Some(chat), "and leaves the chat open");
+    }
+
+    /// Where a label landed in the last frame, read from the shapes egui
+    /// still holds for this pass.
+    fn painted_label_center(ctx: &egui::Context, needle: &str) -> Option<egui::Pos2> {
+        let mut found = None;
+        let layers: Vec<_> = ctx.memory(|memory| memory.layer_ids().collect());
+        for layer in layers {
+            let transform = ctx.layer_transform_to_global(layer).unwrap_or_default();
+            ctx.graphics(|graphics| {
+                if let Some(list) = graphics.get(layer) {
+                    for clipped in list.all_entries() {
+                        if let egui::Shape::Text(text) = &clipped.shape
+                            && text.galley.text() == needle
+                        {
+                            let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                            found = Some(transform * rect.center());
+                        }
+                    }
+                }
+            });
+        }
+        found
+    }
+
+    #[test]
+    fn the_bubble_menu_stars_the_message() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        apply_flags(&mut app, Some("react-menu"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut pos = None;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 2400.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                    pos = painted_label_center(&ctx, "Star");
+                },
+            );
+            output.textures_delta.clear();
+        }
+        let pos = pos.expect("Star is on the bubble menu");
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_sized(
+            &mut app,
+            &ctx,
+            2400.0,
+            vec![egui::Event::PointerMoved(pos), button(true)],
+        );
+        frame_sized(&mut app, &ctx, 2400.0, vec![button(false)]);
+        let chat = sample_ids()[0].to_owned();
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                crate::backend::Command::SetStar {
+                    chat: starred_chat,
+                    message: starred_message,
+                    starred: true,
+                } if starred_chat == &chat && starred_message == "ada-link"
+            )),
+            "the bubble menu sends SetStar for that message: {commands:?}"
+        );
     }
 
     /// One frame with AccessKit on; returns (label, role, centre) per node.

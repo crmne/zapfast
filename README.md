@@ -98,6 +98,14 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   in their original order, or Escape cancels. A batch goes out one message at
   a time, each starting once the one before it reached WhatsApp, so a picture
   cannot overtake the text that came before it.
+- **Starred messages.** Right-click a message and choose **Star** to keep it,
+  and a small star then shows in the message's corner beside its time. The
+  star button in the chat-list header opens **Starred**, a panel that lists
+  every starred message, newest star first. Each row is drawn as the message
+  looks in its chat, with the chat's name and the moment it was starred.
+  Clicking a row opens that chat at the message, and right-clicking it offers
+  the chat's own menu, so **Reply**, **Edit**, **Select**, and **Unstar** work
+  from the list too.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew,
   Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so

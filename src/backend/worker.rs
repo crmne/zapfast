@@ -69,6 +69,8 @@ const THUMBNAIL_SIDE: u32 = 96;
 const PROFILE_PICTURE_SIDE: u32 = 640;
 /// Sticker download batch size for the picker.
 const STICKER_FETCH_LIMIT: usize = 40;
+/// How many starred messages the list shows.
+const STARRED_LIMIT: usize = 200;
 const ATTACHMENT_LIMIT_ERROR: &str = "This attachment is larger than the 64 MiB download limit";
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -986,6 +988,53 @@ impl Worker {
         });
     }
 
+    /// Stars or unstars one message for every linked device.
+    fn set_star(&mut self, chat: ChatId, id: String, starred: bool) {
+        let commands = self.commands.clone();
+        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
+            // The batch counts every attempt, so a refusal it never heard
+            // about would leave its toast open. Report it like any other.
+            let _ = commands.send(Command::Starred {
+                chat,
+                message: id,
+                starred,
+                result: Err("Not connected to WhatsApp".to_owned()),
+            });
+            return;
+        };
+        let Ok(Some(target)) = self.archive.message(&chat, &id) else {
+            let _ = commands.send(Command::Starred {
+                chat,
+                message: id,
+                starred,
+                result: Err("This message is not on this computer".to_owned()),
+            });
+            return;
+        };
+        let from_me = target.from_me;
+        let participant = (jid.is_group() && !from_me)
+            .then(|| target.sender.clone())
+            .and_then(|sender| Self::jid_of(&sender));
+        tokio::spawn(async move {
+            let actions = client.chat_actions();
+            let result = if starred {
+                actions
+                    .star_message(&jid, participant.as_ref(), &id, from_me)
+                    .await
+            } else {
+                actions
+                    .unstar_message(&jid, participant.as_ref(), &id, from_me)
+                    .await
+            };
+            let _ = commands.send(Command::Starred {
+                chat,
+                message: id,
+                starred,
+                result: result.map_err(|error| error.to_string()),
+            });
+        });
+    }
+
     /// Deletes attachment files that belonged to a removed chat. Only the
     /// app's own media cache is touched; anything the user saved elsewhere
     /// stays where it is.
@@ -1108,6 +1157,14 @@ impl Worker {
             Ok(Some(_)) => self.emit_labels(),
             Ok(None) => log::info!("label not created: full, empty, or taken"),
             Err(error) => log::warn!("could not create label: {error}"),
+        }
+    }
+
+    /// Hands the starred list to the interface.
+    fn emit_starred(&mut self) {
+        match self.archive.starred(STARRED_LIMIT) {
+            Ok(list) => self.emit(Event::StarredList(list)),
+            Err(error) => self.emit(Event::Error(error.to_string())),
         }
     }
 
@@ -4145,6 +4202,38 @@ impl Worker {
                 from,
                 until,
             } => self.search_chat_messages(chat, query, from, until),
+            Command::LoadStarred => self.emit_starred(),
+            Command::SetStar {
+                chat,
+                message,
+                starred,
+            } => self.set_star(chat, message, starred),
+            Command::Starred {
+                chat,
+                message,
+                starred,
+                result,
+            } => {
+                if let Err(error) = &result {
+                    self.emit(Event::Error(error.clone()));
+                } else {
+                    // Only a confirmed star reaches the archive, so the list
+                    // never claims something WhatsApp refused.
+                    let written = if starred {
+                        self.archive.star(&chat, &message, crate::util::now())
+                    } else {
+                        self.archive.unstar(&chat, &message)
+                    };
+                    match written {
+                        Ok(()) => self.emit(Event::StarChanged {
+                            chat,
+                            message,
+                            starred,
+                        }),
+                        Err(error) => self.emit(Event::Error(error.to_string())),
+                    }
+                }
+            }
             Command::EnsureChat { chat, name } => {
                 let is_new = self.archive.chat(&chat).ok().flatten().is_none();
                 if let Err(error) = self.archive.ensure_chat(&chat, &name) {
@@ -5730,6 +5819,14 @@ impl Worker {
 
     fn load_chat(&mut self, chat: ChatId, before: Option<super::PageKey>) {
         self.send_page(&chat, before.clone());
+        if before.is_none()
+            && let Ok(ids) = self.archive.starred_ids(&chat)
+        {
+            self.emit(Event::Stars {
+                chat: chat.clone(),
+                ids: ids.into_iter().collect(),
+            });
+        }
         if before.is_none() && ChatKind::from_id(&chat) == ChatKind::Group {
             // Force group metadata when opening a group.
             self.request_group_info(&chat, false);

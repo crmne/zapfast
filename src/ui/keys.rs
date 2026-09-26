@@ -85,6 +85,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             // Taken here, the key never reaches the selection bar, and
             // would otherwise fall through to closing the chat.
             actions.push(Action::CancelSelection);
+        } else if app.show_starred {
+            actions.push(Action::ToggleStarred);
         } else if app.chat_search_visible() && app.chat_search_calendar {
             // The day filter first, then the pane it hangs from.
             app.chat_search_calendar = false;
