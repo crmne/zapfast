@@ -814,6 +814,43 @@ impl Media {
     }
 }
 
+/// Counts and sizes of the attachments the archive has downloaded, for the
+/// storage row in Settings. Sizes are the ones WhatsApp declared for each
+/// file, so an attachment that was never fetched is not counted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StorageStats {
+    pub messages: u64,
+    pub images: u64,
+    pub image_bytes: u64,
+    pub videos: u64,
+    pub video_bytes: u64,
+    pub stickers_gifs: u64,
+    pub sticker_gif_bytes: u64,
+    pub other: u64,
+    pub other_bytes: u64,
+}
+
+impl StorageStats {
+    /// Every downloaded byte the archive knows about.
+    pub fn bytes_total(self) -> u64 {
+        self.image_bytes
+            .saturating_add(self.video_bytes)
+            .saturating_add(self.sticker_gif_bytes)
+            .saturating_add(self.other_bytes)
+    }
+
+    /// Filled width for `bytes` out of `total` on a track of `track` pixels.
+    /// Empty when there is nothing to measure, so an empty archive draws no
+    /// bar instead of dividing by zero.
+    pub fn bar_width(bytes: u64, total: u64, track: f32) -> f32 {
+        if total == 0 || track <= 0.0 {
+            0.0
+        } else {
+            track * (bytes as f32 / total as f32)
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum MediaState {
     #[default]
@@ -1550,7 +1587,16 @@ pub enum Action {
 
 #[cfg(test)]
 mod tests {
-    use super::StickerCrop;
+    use super::{StickerCrop, StorageStats};
+
+    /// An archive with nothing downloaded draws no bar instead of dividing
+    /// by zero.
+    #[test]
+    fn a_storage_bar_is_empty_when_there_is_nothing_to_measure() {
+        assert_eq!(StorageStats::bar_width(0, 0, 100.0), 0.0);
+        assert_eq!(StorageStats::bar_width(50, 0, 100.0), 0.0);
+        assert_eq!(StorageStats::bar_width(50, 100, 200.0), 100.0);
+    }
 
     #[test]
     fn a_preview_comes_from_the_line_the_query_matched() {

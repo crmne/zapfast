@@ -14,7 +14,7 @@ use crate::image_preview::PreviewState;
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Label,
     Media, MediaState, Message, Page, PickerTab, SidebarDisplayMode, StickerPack, StickerShelf,
-    Toast, ToastKind,
+    StorageStats, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{NotificationSound, Settings, ThemeChoice};
@@ -228,6 +228,12 @@ pub struct App {
     pub chat_search_calendar: bool,
     /// Whether the pane's field should take focus.
     pub focus_chat_search: bool,
+    /// Counts and sizes of the downloaded attachments, for Settings.
+    pub storage_stats: StorageStats,
+    /// When [`Self::storage_stats`] was read, so a stale one is asked again.
+    pub(crate) storage_stats_at: Option<Instant>,
+    /// Whether a reading is already on its way to the worker.
+    pub(crate) storage_stats_asked: bool,
     /// Whether the locked-chats folder is open.
     pub locked_folder: bool,
     /// The verifier authenticated for this window session, never the code.
@@ -720,6 +726,9 @@ impl App {
             chat_search_month: crate::util::today(),
             chat_search_calendar: false,
             focus_chat_search: false,
+            storage_stats: StorageStats::default(),
+            storage_stats_at: None,
+            storage_stats_asked: false,
             locked_folder: false,
             chat_lock_session: None,
             chat_lock_entry: String::new(),
@@ -1835,6 +1844,11 @@ impl App {
                             })
                             .collect();
                     }
+                }
+                Event::StorageStats(stats) => {
+                    self.storage_stats = stats;
+                    self.storage_stats_at = Some(Instant::now());
+                    self.storage_stats_asked = false;
                 }
                 Event::Incoming { chat, message } => self.maybe_notify(&chat, &message),
                 Event::Picked { chat, paths } => {

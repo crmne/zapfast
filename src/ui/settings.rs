@@ -1,12 +1,14 @@
 //! The settings page.
 
 use std::borrow::Cow;
+use std::time::Duration;
 
-use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Stroke, Vec2, pos2, vec2};
+use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
 use crate::app::App;
+use crate::backend::Command;
 use crate::i18n::Locale;
-use crate::model::{Action, Dialog, Page};
+use crate::model::{Action, Dialog, Page, StorageStats};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
 use crate::settings::{Settings, ThemeChoice, WallpaperColor};
 use crate::theme::{self, Icon, Palette};
@@ -193,6 +195,7 @@ impl Section {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    request_storage_stats(app);
     if theme::macos_chrome(ui.ctx()) {
         super::banner(app, ui);
     }
@@ -678,6 +681,19 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
+    files.block(
+        vec![
+            translated(locale, "Storage used"),
+            translated(locale, "Downloads"),
+            translated(locale, "Space"),
+            translated(locale, "Pictures"),
+            translated(locale, "Videos"),
+            translated(locale, "Stickers and GIFs"),
+            translated(locale, "Other"),
+            translated(locale, "Messages"),
+        ],
+        |ui, app| storage_usage(ui, app),
+    );
     let log = app.dirs.log_file();
     files.row(
         translated(locale, "Log"),
@@ -1010,6 +1026,145 @@ fn wallpaper_color_button(
 }
 
 /// A titled group of settings on a rounded card.
+/// How long a reading of the archive's downloaded size stays fresh.
+const STORAGE_STATS_TTL: Duration = Duration::from_secs(60);
+
+/// Asks the worker for the downloaded size when the last answer is old, so a
+/// page left open follows a download instead of freezing its first reading.
+fn request_storage_stats(app: &mut App) {
+    let stale = app
+        .storage_stats_at
+        .is_none_or(|at| at.elapsed() >= STORAGE_STATS_TTL);
+    if stale && !app.storage_stats_asked {
+        app.backend.send(Command::StorageStats);
+        app.storage_stats_asked = true;
+    }
+}
+
+/// The space the downloaded attachments take, split by kind.
+fn storage_usage(ui: &mut egui::Ui, app: &App) {
+    let palette = app.palette;
+    let stats = app.storage_stats;
+    let total = stats.bytes_total();
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(app.locale, "Storage used"),
+            theme::medium(14.0),
+            palette.text,
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            theme::text(
+                ui,
+                crate::util::bytes(total),
+                theme::semibold(14.0),
+                palette.text,
+            );
+        });
+    });
+    ui.add_space(2.0);
+    let hint = widgets::line(
+        ui,
+        &crate::i18n::gettext(
+            app.locale,
+            "Space taken by pictures, videos, stickers, and GIFs already on this computer.",
+        ),
+        theme::regular(12.5),
+        palette.secondary,
+        ui.available_width(),
+        usize::MAX,
+    );
+    let (rect, _) = ui.allocate_exact_size(hint.size(), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        hint.paint(ui, rect.min, palette.secondary);
+    }
+    ui.add_space(4.0);
+    widgets::rich_text(
+        ui,
+        &crate::i18n::ngettext(
+            app.locale,
+            "{} message",
+            "{} messages",
+            u32::try_from(stats.messages).unwrap_or(u32::MAX),
+        )
+        .replace("{}", &stats.messages.to_string()),
+        theme::regular(12.5),
+        palette.secondary,
+    );
+    ui.add_space(10.0);
+    storage_bar_row(
+        ui,
+        &palette,
+        &crate::i18n::gettext(app.locale, "Images"),
+        stats.images,
+        stats.image_bytes,
+        total,
+    );
+    storage_bar_row(
+        ui,
+        &palette,
+        &crate::i18n::gettext(app.locale, "Videos"),
+        stats.videos,
+        stats.video_bytes,
+        total,
+    );
+    storage_bar_row(
+        ui,
+        &palette,
+        &crate::i18n::gettext(app.locale, "Stickers and GIFs"),
+        stats.stickers_gifs,
+        stats.sticker_gif_bytes,
+        total,
+    );
+    if stats.other_bytes > 0 {
+        storage_bar_row(
+            ui,
+            &palette,
+            &crate::i18n::gettext(app.locale, "Other"),
+            stats.other,
+            stats.other_bytes,
+            total,
+        );
+    }
+}
+
+/// One labelled bar: the kind, how many files and how much they weigh, and
+/// the share of the total they take.
+fn storage_bar_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    label: &str,
+    count: u64,
+    bytes: u64,
+    total: u64,
+) {
+    ui.horizontal(|ui| {
+        theme::text(ui, label, theme::medium(14.0), palette.text);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            theme::text(
+                ui,
+                format!("{count} · {}", crate::util::bytes(bytes)),
+                theme::regular(12.5),
+                palette.secondary,
+            );
+        });
+    });
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter()
+            .rect_filled(rect, rect.height() / 2.0, palette.outline);
+        let width = StorageStats::bar_width(bytes, total, rect.width());
+        if width > 0.5 {
+            ui.painter().rect_filled(
+                Rect::from_min_size(rect.min, vec2(width, rect.height())),
+                rect.height() / 2.0,
+                palette.accent,
+            );
+        }
+    }
+    ui.add_space(8.0);
+}
+
 fn section(
     ui: &mut egui::Ui,
     palette: &Palette,

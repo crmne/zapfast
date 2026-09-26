@@ -48,7 +48,7 @@ use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
     ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction, StorageStats,
 };
 use crate::paths::AppDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
@@ -4145,6 +4145,13 @@ impl Worker {
                 from,
                 until,
             } => self.search_chat_messages(chat, query, from, until),
+            Command::StorageStats => match self.archive.storage_stats() {
+                Ok(stats) => self.emit(Event::StorageStats(stats)),
+                Err(error) => {
+                    log::warn!("could not read the storage stats: {error}");
+                    self.emit(Event::StorageStats(StorageStats::default()));
+                }
+            },
             Command::EnsureChat { chat, name } => {
                 let is_new = self.archive.chat(&chat).ok().flatten().is_none();
                 if let Err(error) = self.archive.ensure_chat(&chat, &name) {

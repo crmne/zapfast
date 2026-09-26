@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message};
+use crate::model::{
+    Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message, StorageStats,
+};
 
 mod drafts;
 mod encryption;
@@ -1024,6 +1026,49 @@ impl Archive {
         rows.collect()
     }
 
+    /// Counts every archived message and sums the size of the attachments
+    /// that have a local file, split by kind. GIFs (`kind=video` with
+    /// `gif=1`) share the sticker bucket. The weight comes from the sizes
+    /// WhatsApp declared and the archive persisted, not from `stat` on disk,
+    /// so a file the user deleted by hand is still counted.
+    pub fn storage_stats(&self) -> Result<StorageStats> {
+        self.connection.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN kind = 'image' AND has_path THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'image' AND has_path THEN size ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'video' AND NOT is_gif AND has_path THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'video' AND NOT is_gif AND has_path THEN size ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN (kind = 'sticker' OR is_gif) AND has_path THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN (kind = 'sticker' OR is_gif) AND has_path THEN size ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN has_path AND kind NOT IN ('image', 'video', 'sticker') THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN has_path AND kind NOT IN ('image', 'video', 'sticker') THEN size ELSE 0 END), 0)
+             FROM (
+                SELECT
+                    json_extract(content, '$.kind') AS kind,
+                    json_extract(content, '$.gif') = 1 AS is_gif,
+                    json_extract(content, '$.media.path') IS NOT NULL
+                        AND json_extract(content, '$.media.path') != '' AS has_path,
+                    CAST(COALESCE(json_extract(content, '$.media.size'), 0) AS INTEGER) AS size
+                FROM messages
+             )",
+            [],
+            |row| {
+                Ok(StorageStats {
+                    messages: row.get::<_, i64>(0)?.max(0) as u64,
+                    images: row.get::<_, i64>(1)?.max(0) as u64,
+                    image_bytes: row.get::<_, i64>(2)?.max(0) as u64,
+                    videos: row.get::<_, i64>(3)?.max(0) as u64,
+                    video_bytes: row.get::<_, i64>(4)?.max(0) as u64,
+                    stickers_gifs: row.get::<_, i64>(5)?.max(0) as u64,
+                    sticker_gif_bytes: row.get::<_, i64>(6)?.max(0) as u64,
+                    other: row.get::<_, i64>(7)?.max(0) as u64,
+                    other_bytes: row.get::<_, i64>(8)?.max(0) as u64,
+                })
+            },
+        )
+    }
+
     /// Returns messages from `from` through `before`, ascending and limited.
     pub fn messages_range(
         &self,
@@ -1855,6 +1900,136 @@ pub(crate) mod tests {
                 .expect("day only")),
             vec!["m3".to_owned()]
         );
+    }
+
+    fn media(size: u64, path: Option<&str>) -> crate::model::Media {
+        crate::model::Media {
+            mime: "application/octet-stream".into(),
+            size,
+            width: None,
+            height: None,
+            path: path.map(std::path::PathBuf::from),
+            state: crate::model::MediaState::Idle,
+        }
+    }
+
+    /// Only attachments with a local file count, GIFs land in the sticker
+    /// bucket, and a text-only archive reports zeroes instead of a null sum.
+    #[test]
+    fn storage_stats_count_downloaded_media_and_all_messages() {
+        let archive = Archive::in_memory().expect("opens");
+        archive
+            .ensure_chat("1@s.whatsapp.net", "Ada")
+            .expect("chat");
+        let chat = "1@s.whatsapp.net";
+        let rows = vec![
+            {
+                let mut row = message(chat, "t1", 1, false);
+                row.content = Content::text("hello");
+                row
+            },
+            {
+                let mut row = message(chat, "i1", 2, false);
+                row.content = Content::Image {
+                    caption: None,
+                    media: media(100, Some("/i1.jpg")),
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "i2", 3, false);
+                row.content = Content::Image {
+                    caption: None,
+                    media: media(50, None),
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "i3", 4, false);
+                row.content = Content::Image {
+                    caption: None,
+                    media: media(999, Some("")),
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "v1", 5, false);
+                row.content = Content::Video {
+                    caption: None,
+                    media: media(1000, Some("/v1.mp4")),
+                    seconds: Some(1),
+                    gif: false,
+                    note: false,
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "g1", 6, false);
+                row.content = Content::Video {
+                    caption: None,
+                    media: media(200, Some("/g1.mp4")),
+                    seconds: Some(1),
+                    gif: true,
+                    note: false,
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "s1", 7, false);
+                row.content = Content::Sticker {
+                    media: media(30, Some("/s1.webp")),
+                    animated: false,
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "s2", 8, false);
+                row.content = Content::Sticker {
+                    media: media(30, None),
+                    animated: false,
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "a1", 9, false);
+                row.content = Content::Audio {
+                    media: media(80, Some("/a1.ogg")),
+                    seconds: Some(1),
+                    voice_note: true,
+                    waveform: Vec::new(),
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "d1", 10, false);
+                row.content = Content::Document {
+                    media: media(40, Some("/d1.pdf")),
+                    file_name: "d.pdf".into(),
+                    caption: None,
+                    pages: None,
+                };
+                row
+            },
+        ];
+        for row in &rows {
+            archive.insert_message(row, None).expect("inserted");
+        }
+        let empty = Archive::in_memory().expect("opens");
+        assert_eq!(
+            empty.storage_stats().expect("empty"),
+            StorageStats::default()
+        );
+        let stats = archive.storage_stats().expect("stats");
+        assert_eq!(stats.messages, 10, "the count includes text messages");
+        assert_eq!(stats.images, 1, "an image without a file is not counted");
+        assert_eq!(stats.image_bytes, 100);
+        assert_eq!(stats.videos, 1, "a GIF is not a video here");
+        assert_eq!(stats.video_bytes, 1000);
+        assert_eq!(stats.stickers_gifs, 2);
+        assert_eq!(stats.sticker_gif_bytes, 230);
+        assert_eq!(stats.other, 2);
+        assert_eq!(stats.other_bytes, 120);
+        assert_eq!(stats.bytes_total(), 1450);
     }
 
     #[test]

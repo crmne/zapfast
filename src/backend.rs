@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::model::{Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack};
+use crate::model::{
+    Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack, StorageStats,
+};
 use crate::paths::AppDirs;
 
 // Re-exported so the picker can detect pasted Signal pack links.
@@ -234,6 +236,8 @@ pub enum Command {
         from: Option<i64>,
         until: Option<i64>,
     },
+    /// Counts and sizes of the downloaded attachments, for Settings.
+    StorageStats,
     /// Creates an archive chat before its first message is sent.
     EnsureChat {
         chat: ChatId,
@@ -705,6 +709,8 @@ pub enum Event {
         /// the pane can say so instead of dropping them silently.
         truncated: bool,
     },
+    /// Counts and sizes of the downloaded attachments.
+    StorageStats(StorageStats),
     ChatUpdated(Box<Chat>),
     /// Chat messages in ascending order. `older` prepends them; `complete`
     /// means the archive has no earlier rows.

@@ -358,8 +358,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Local storage.** Messages, contacts and sticker metadata are stored in a
   SQLCipher-encrypted archive, unlocked automatically through your OS keyring.
   Existing plaintext archives are migrated on first use. Attachments remain
-  ordinary files in the cache directory. Unlinking deletes both and removes this device from
-  your phone.
+  ordinary files in the cache directory. **Settings, Files** shows how much
+  space those attachments take, split into photos, videos, stickers and GIFs,
+  and other files, with the number of archived messages. Unlinking deletes both
+  and removes this device from your phone.
 
 ## What it does not do yet
 
