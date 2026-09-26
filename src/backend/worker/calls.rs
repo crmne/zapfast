@@ -17,7 +17,7 @@ use whatsapp_rust::voip::{CallEvent, KeyframeUrgency};
 /// The call this worker owns: its state, and the channels the tasks around it feed.
 ///
 /// Dropped the moment the call reaches a terminal phase, which is what releases the media tasks,
-/// the `pw-record`/`pw-play` children and the camera thread.
+/// the microphone and speaker streams and the camera thread.
 pub(super) struct CallRuntime {
     pub(super) call: Call,
     /// Media-plane events, and the signal that the media task finished.
@@ -547,9 +547,9 @@ impl Worker {
         if let Some(runtime) = self.call.as_ref() {
             runtime.call.log_media_stats();
         }
-        // Discovery launches `pw-dump`, `v4l2-ctl` and a format probe per node, so it runs on a
-        // blocking thread rather than on the worker's async loop: a slow or stuck helper must not
-        // hold up message handling or the active call's own events.
+        // Discovery opens every audio device to name it and runs `v4l2-ctl` with a format probe per
+        // camera node, so it runs on a blocking thread rather than on the worker's async loop: a
+        // slow device or a stuck helper must not hold up message handling or the call's own events.
         let devices = tokio::task::spawn_blocking(calls::devices)
             .await
             .unwrap_or_default();

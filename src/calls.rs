@@ -1,10 +1,11 @@
 //! 1:1 WhatsApp calling: signaling, media, audio devices, camera, and state.
 //!
-//! The audio path keeps the shape that already works: `pw-record` produces 960-sample mono i16
-//! frames (60 ms at 16 kHz) that the engine reads as its `AudioSource`, and frames the engine
-//! writes to its `AudioSink` go to `pw-play`. What is new is that each direction sits behind a
-//! *stable* channel, so changing the input or output device respawns the child process without the
-//! engine ever seeing a port close.
+//! Audio goes through rodio, the same layer the rest of the app plays and records with, so a call
+//! opens the platform's own audio API on every platform it ships for rather than shelling out to
+//! `pw-record` and `pw-play`. The engine's 16 kHz mono frames meet whatever rate and channel count a
+//! device wants inside [`crate::call_audio`], and each direction sits behind a *stable* channel, so
+//! changing the input or output device replaces only the stream behind it without the engine ever
+//! seeing a port close.
 //!
 //! Video is H.264 Annex-B both ways, because that is what the library transports: it never touches
 //! pixels. Capture encodes with the `openh264` encoder the app already links, and the peer's access
@@ -18,8 +19,6 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow};
 use egui::ColorImage;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, Command};
 
 use crate::model::{CallDirection, CallMedia, CallRecord, CallStatus};
 use whatsapp_rust::prelude::{Client, Jid};
@@ -27,27 +26,6 @@ use whatsapp_rust::types::call::{CallAction, IncomingCall};
 use whatsapp_rust::voip::{
     CallEvent, CallHandle, TimedVideoFrame, VideoFrame, VideoSink, VideoSource,
 };
-
-/// The engine's audio clock: 16 kHz mono, one 60 ms frame per 960 samples.
-pub const RATE: u32 = 16_000;
-const FRAME_SAMPLES: usize = 960;
-const FRAME_BYTES: usize = FRAME_SAMPLES * 2;
-/// How many 20 ms slices the engine may queue for the speaker before it sheds them.
-///
-/// The engine writes one 20 ms slice every 20 ms and drops the frame when this channel is full
-/// (`Output::Playout` is a `try_send`, deliberately: a stalled sink must never stall the media
-/// loop), so whatever is here is the burst the speaker may absorb before the peer's voice starts
-/// breaking up. Three hundred milliseconds is chosen to sit above the engine's own jitter cushion
-/// (about 150 ms) rather than under it; a sink that lags for longer than this is restarted, not
-/// buffered further.
-const SPEAKER_QUEUE: usize = 16;
-/// How long one slice may take to reach `pw-play` before the stream is treated as wedged.
-///
-/// A write that never returns is not a slow consumer to catch up with: the pump stops draining, the
-/// engine sheds every later slice, and the peer is silent for the rest of the call. Half a second
-/// is far above anything a healthy `pw-play` needs for 640 bytes and far below the point where
-/// waiting has any value.
-const SPEAKER_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// The pixel budget one camera session encodes within: a landscape frame at most 640 by 360, a
 /// portrait one at most 360 by 640.
@@ -457,12 +435,13 @@ pub fn is_offer(action: &CallAction) -> bool {
 
 /// What calling can actually do on the platform this build runs on.
 ///
-/// The media backend is PipeWire, V4L2 and `ffmpeg`, and none of the three exists on macOS or
-/// Windows. On those platforms a call cannot open a microphone, so offering the button would only
-/// lead to a call that fails on its first frame. The interface asks this instead, and a platform
-/// without the backend does not offer the feature: the chat header shows no call buttons and the
-/// call screen is never entered. `cfg!` rather than `#[cfg]` keeps every arm type-checked on every
-/// platform, so a platform that gains the backend cannot drift out of sync with the interface.
+/// Voice goes through rodio, which opens the platform's own audio API wherever the app builds, so
+/// voice is offered everywhere. Video is V4L2 camera capture with an `ffmpeg` fallback, which is
+/// Linux only as it stands, and offering the camera button elsewhere would only lead to a call that
+/// fails on its first frame. The interface asks this, and a platform without a backend for a
+/// feature does not offer it: the chat header shows no camera button and the camera picker is never
+/// reached. `cfg!` rather than `#[cfg]` keeps every arm type-checked on every platform, so a
+/// platform that gains a backend cannot drift out of sync with the interface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CallCapabilities {
     /// One-to-one voice calls: a microphone and a speaker.
@@ -479,7 +458,10 @@ pub struct CallCapabilities {
 /// What the media backend behind [`CallPhase`] can do on this platform.
 pub fn capabilities() -> CallCapabilities {
     CallCapabilities {
-        voice: cfg!(target_os = "linux"),
+        // rodio opens PipeWire, CoreAudio or WASAPI, so a call can carry voice wherever the app
+        // builds. Whether this machine has a microphone at all is asked when a call is placed,
+        // because that is a fact about the machine rather than about the platform.
+        voice: true,
         video: cfg!(target_os = "linux"),
         camera: cfg!(target_os = "linux"),
         screen_share: false,
@@ -492,19 +474,20 @@ pub fn capabilities() -> CallCapabilities {
 
 /// Lists microphones, speakers and cameras for the call screen.
 ///
-/// `pw-dump` is PipeWire's own JSON view, so the names it prints are the names `pw-record` and
-/// `pw-play` accept as `--target`. Monitor nodes (a sink's own loopback) are dropped: they are
-/// outputs, not microphones, and offering one would let a call record itself.
+/// The microphones and the speakers come from rodio, the same layer a call opens them through, so
+/// a picker offers what a call can actually take and the names it reports are what the saved
+/// setting holds. On a platform whose call backend is not built, the lists are empty rather than a
+/// list nothing can use, and the pickers are never reached.
 pub fn devices() -> DeviceList {
     let capable = capabilities();
     DeviceList {
         microphones: if capable.voice {
-            audio_nodes("Audio/Source")
+            audio_devices(crate::call_audio::microphones())
         } else {
             Vec::new()
         },
         speakers: if capable.voice {
-            audio_nodes("Audio/Sink")
+            audio_devices(crate::call_audio::speakers())
         } else {
             Vec::new()
         },
@@ -516,50 +499,12 @@ pub fn devices() -> DeviceList {
     }
 }
 
-fn audio_nodes(class: &str) -> Vec<AudioDevice> {
-    let Ok(output) = std::process::Command::new("pw-dump").output() else {
-        log::warn!("[CALL] pw-dump is unavailable; only the default device can be offered");
-        return Vec::new();
-    };
-    let Ok(nodes) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
-        log::warn!("[CALL] pw-dump did not return JSON; only the default device can be offered");
-        return Vec::new();
-    };
-    let Some(nodes) = nodes.as_array() else {
-        return Vec::new();
-    };
-    let mut found: Vec<AudioDevice> = Vec::new();
-    for node in nodes {
-        if node.get("type").and_then(|value| value.as_str()) != Some("PipeWire:Interface:Node") {
-            continue;
-        }
-        let Some(props) = node.pointer("/info/props") else {
-            continue;
-        };
-        if props.get("media.class").and_then(|value| value.as_str()) != Some(class) {
-            continue;
-        }
-        let Some(id) = props.get("node.name").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        if id.ends_with(".monitor") || id.contains("bluez_capture_internal") {
-            continue;
-        }
-        let label = props
-            .get("node.description")
-            .and_then(|value| value.as_str())
-            .filter(|description| !description.is_empty())
-            .unwrap_or(id);
-        if found.iter().any(|known| known.id == id) {
-            continue;
-        }
-        found.push(AudioDevice {
-            id: id.to_owned(),
-            label: label.to_owned(),
-        });
-    }
-    found.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.id.cmp(&b.id)));
+/// Wraps the names rodio reports as the call screen's device entries.
+fn audio_devices(found: Vec<(String, String)>) -> Vec<AudioDevice> {
     found
+        .into_iter()
+        .map(|(id, label)| AudioDevice { id, label })
+        .collect()
 }
 
 /// Lists V4L2 capture nodes through `v4l2-ctl`.
@@ -618,63 +563,21 @@ fn captures(node: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Audio: stable channels with swappable children
+// Audio
 // ---------------------------------------------------------------------------
 
-/// The microphone side: a `pw-record` child feeding a channel the engine owns.
+/// The engine's audio clock, and the microphone and the speaker the engine talks to.
 ///
-/// The channel is created once and handed to the engine once. A device change kills the child and
-/// starts another bound to the new target, still writing into that same channel, so nothing about
-/// the call's codec or stream state is rebuilt for a device switch.
-struct AudioInput {
-    /// Asks the pump to restart on another target; dropping it stops the pump.
-    swap: Option<async_channel::Sender<Option<String>>>,
-    /// Set when the pump gave up on the selected target and reopened on the system default.
-    fell_back: async_channel::Receiver<()>,
-}
+/// Both live in [`crate::call_audio`], which opens them through rodio the way the rest of the app
+/// already plays and records: the platform's own audio API on every platform it ships for, with no
+/// `pw-record` or `pw-play` needed for a call to exist. A device change replaces only the reader or
+/// the writer behind the engine's channel, so nothing about the call's codec or stream state is
+/// rebuilt for it.
+pub use crate::call_audio::{AudioInput, AudioOutput, RATE};
 
-impl AudioInput {
-    fn spawn(target: Option<String>) -> Result<(Self, async_channel::Receiver<Vec<i16>>)> {
-        let (out, rx) = async_channel::bounded::<Vec<i16>>(4);
-        let (swap, swaps) = async_channel::bounded::<Option<String>>(1);
-        let (fell, fell_back) = async_channel::bounded::<()>(1);
-        tokio::spawn(mic_pump(out, swaps, fell, target.clone()));
-        Ok((
-            Self {
-                swap: Some(swap),
-                fell_back,
-            },
-            rx,
-        ))
-    }
-
-    /// Rebinds the microphone, keeping the engine's channel alive.
-    fn bind(&self, target: Option<String>) {
-        if let Some(swap) = &self.swap {
-            let _ = swap.try_send(target);
-        }
-    }
-
-    /// Stops the child: dropping the swap sender is the pump's stop signal.
-    fn stop(&mut self) {
-        self.swap = None;
-    }
-}
-
-/// The first of the PipeWire helpers a call needs that `path` does not hold.
-///
-/// The pumps behind the microphone and the speaker retry a helper that will not start, which is the
-/// right answer to a device that vanished mid-call and the wrong one before a call exists: without
-/// this check a machine with no `pw-record` would ring the peer, connect, and carry silence both
-/// ways with nothing on screen to explain it. So the helpers are looked for first, and their absence
-/// fails the call with something the reader can act on instead of a call that looks healthy.
-fn missing_audio_tool(path: Option<&std::ffi::OsStr>) -> Option<&'static str> {
-    let Some(path) = path else {
-        return Some("pw-record");
-    };
-    ["pw-record", "pw-play"]
-        .into_iter()
-        .find(|tool| !std::env::split_paths(path).any(|dir| dir.join(tool).is_file()))
+/// What a call still cannot open on this machine, if anything.
+fn missing_audio_device() -> Option<&'static str> {
+    crate::call_audio::unavailable()
 }
 
 /// Whether a requested video path really came up.
@@ -689,251 +592,6 @@ fn require_video(requested: bool, pipeline: bool) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-async fn mic_pump(
-    out: async_channel::Sender<Vec<i16>>,
-    swaps: async_channel::Receiver<Option<String>>,
-    fell: async_channel::Sender<()>,
-    initial: Option<String>,
-) {
-    let mut target = initial;
-    loop {
-        let mut child = match record(&target) {
-            Ok(child) => child,
-            Err(error) => {
-                log::error!("[CALL] microphone stream failed: {error}");
-                // A closed microphone port is documented as *not* ending the call, so retry
-                // rather than leaving the peer in silence for the rest of it.
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                continue;
-            }
-        };
-        let Some(mut stdout) = child.stdout.take() else {
-            let _ = child.kill().await;
-            return;
-        };
-        let mut bytes = vec![0u8; FRAME_BYTES];
-        // Whether this child ever fed the engine, and whether it was replaced on purpose: a stream
-        // that delivered nothing and was not swapped out was bound to a device that is gone.
-        let mut delivered = false;
-        let mut swapped = false;
-        loop {
-            tokio::select! {
-                read = stdout.read_exact(&mut bytes) => {
-                    if read.is_err() {
-                        break;
-                    }
-                    let mut frame = Vec::with_capacity(FRAME_SAMPLES);
-                    for chunk in bytes.as_chunks::<2>().0 {
-                        frame.push(i16::from_le_bytes(*chunk));
-                    }
-                    if out.send(frame).await.is_err() {
-                        // The engine dropped its port: the call is over.
-                        let _ = child.kill().await;
-                        return;
-                    }
-                    delivered = true;
-                }
-                requested = swaps.recv() => {
-                    match requested {
-                        Ok(next) => {
-                            log::info!("[CALL] microphone device changed to {next:?}");
-                            target = next;
-                        }
-                        Err(_) => {
-                            let _ = child.kill().await;
-                            let _ = child.wait().await;
-                            return;
-                        }
-                    }
-                    swapped = true;
-                    break;
-                }
-            }
-        }
-        let _ = child.kill().await;
-        let _ = child.wait().await;
-        // A headset switched off leaves `pw-record` exiting at once: reopen on the system default
-        // so the peer hears the call rather than silence, and let the call say what moved.
-        if !delivered && !swapped && target.is_some() {
-            log::warn!("[CALL] microphone {target:?} delivered nothing; using the default input");
-            target = None;
-            let _ = fell.try_send(());
-        }
-    }
-}
-
-fn record(target: &Option<String>) -> Result<Child> {
-    let mut command = Command::new("pw-record");
-    command.args([
-        "--raw",
-        "--format",
-        "s16",
-        "--rate",
-        &RATE.to_string(),
-        "--channels",
-        "1",
-    ]);
-    if let Some(target) = target {
-        command.args(["--target", target]);
-    }
-    command
-        .arg("-")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .context("pw-record could not be started")
-}
-
-/// The speaker side: the engine's frames written to a `pw-play` child.
-struct AudioOutput {
-    swap: Option<async_channel::Sender<Option<String>>>,
-    /// Set when the pump gave up on the selected target and reopened on the system default.
-    fell_back: async_channel::Receiver<()>,
-}
-
-impl AudioOutput {
-    fn spawn(target: Option<String>) -> Result<(Self, async_channel::Sender<Vec<i16>>)> {
-        let (tx, rx) = async_channel::bounded::<Vec<i16>>(SPEAKER_QUEUE);
-        let (swap, swaps) = async_channel::bounded::<Option<String>>(1);
-        let (fell, fell_back) = async_channel::bounded::<()>(1);
-        tokio::spawn(play_pump(rx, swaps, fell, target.clone()));
-        Ok((
-            Self {
-                swap: Some(swap),
-                fell_back,
-            },
-            tx,
-        ))
-    }
-
-    fn bind(&self, target: Option<String>) {
-        if let Some(swap) = &self.swap {
-            let _ = swap.try_send(target);
-        }
-    }
-
-    fn stop(&mut self) {
-        self.swap = None;
-    }
-}
-
-async fn play_pump(
-    rx: async_channel::Receiver<Vec<i16>>,
-    swaps: async_channel::Receiver<Option<String>>,
-    fell: async_channel::Sender<()>,
-    initial: Option<String>,
-) {
-    let mut target = initial;
-    loop {
-        let mut child = match play(&target) {
-            Ok(child) => child,
-            Err(error) => {
-                log::error!("[CALL] speaker stream failed: {error}");
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                continue;
-            }
-        };
-        let Some(mut stdin) = child.stdin.take() else {
-            let _ = child.kill().await;
-            return;
-        };
-        let mut finished = false;
-        let mut delivered = false;
-        let mut swapped = false;
-        let mut wedged = false;
-        loop {
-            tokio::select! {
-                frame = rx.recv() => {
-                    match frame {
-                        Ok(frame) => {
-                            let mut bytes = Vec::with_capacity(frame.len() * 2);
-                            for sample in frame {
-                                bytes.extend_from_slice(&sample.to_le_bytes());
-                            }
-                            // Bounded, because an unbounded write on a child that stopped reading is
-                            // silence for the rest of the call rather than a slow frame.
-                            match tokio::time::timeout(SPEAKER_WRITE_TIMEOUT, stdin.write_all(&bytes))
-                                .await
-                            {
-                                Ok(Ok(())) => delivered = true,
-                                Ok(Err(_)) => break,
-                                Err(_) => {
-                                    wedged = true;
-                                    break;
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            finished = true;
-                            break;
-                        }
-                    }
-                }
-                requested = swaps.recv() => {
-                    match requested {
-                        Ok(next) => {
-                            log::info!("[CALL] speaker device changed to {next:?}");
-                            target = next;
-                        }
-                        Err(_) => finished = true,
-                    }
-                    swapped = true;
-                    break;
-                }
-            }
-        }
-        let _ = child.kill().await;
-        let _ = child.wait().await;
-        if finished {
-            return;
-        }
-        if wedged {
-            log::warn!("[CALL] the speaker stopped accepting audio; restarting the stream");
-            // What is queued is already older than the restart, and playing it afterwards would
-            // only add delay to the call. The engine's channel refills at its own pace.
-            while rx.try_recv().is_ok() {}
-            if delivered {
-                // A stream that played frames was merely stalled, so it keeps the device the user
-                // picked rather than being demoted to the system default over one bad moment.
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                continue;
-            }
-        }
-        // A sink that accepted no audio was pointing at a device that is gone: reopen on the
-        // system default instead of retrying a target that will never take a frame.
-        if !delivered && !swapped && target.is_some() {
-            log::warn!("[CALL] speaker {target:?} accepted nothing; using the default output");
-            target = None;
-            let _ = fell.try_send(());
-        }
-    }
-}
-
-fn play(target: &Option<String>) -> Result<Child> {
-    let mut command = Command::new("pw-play");
-    command.args([
-        "--raw",
-        "--format",
-        "s16",
-        "--rate",
-        &RATE.to_string(),
-        "--channels",
-        "1",
-    ]);
-    if let Some(target) = target {
-        command.args(["--target", target]);
-    }
-    command
-        .arg("-")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .context("pw-play could not be started")
 }
 
 // ---------------------------------------------------------------------------
@@ -1527,10 +1185,8 @@ impl Call {
         if !capabilities().voice {
             return Err(anyhow!("calling is not available on this platform yet"));
         }
-        if let Some(tool) = missing_audio_tool(std::env::var_os("PATH").as_deref()) {
-            return Err(anyhow!(
-                "{tool} was not found; a call records and plays through PipeWire"
-            ));
+        if let Some(missing) = missing_audio_device() {
+            return Err(anyhow!("no {missing} is available; a call needs one"));
         }
         // Video first: a camera or encoder that will not start refuses the call before any stream
         // exists and before the peer is rung, because a video call must not silently become voice.
@@ -1542,8 +1198,8 @@ impl Call {
             }
         }
         require_video(video, pipe.is_some())?;
-        let (mic, mic_rx) = AudioInput::spawn(microphone.clone())?;
-        let (output, output_tx) = AudioOutput::spawn(speaker.clone())?;
+        let (mic, mic_rx) = AudioInput::spawn(microphone.clone());
+        let (output, output_tx) = AudioOutput::spawn(speaker.clone());
 
         let voip = client.voip();
         let builder = voip.call(&peer).audio(mic_rx, output_tx);
@@ -1811,10 +1467,8 @@ impl Call {
         if !capabilities().voice {
             return Err(anyhow!("calling is not available on this platform yet"));
         }
-        if let Some(tool) = missing_audio_tool(std::env::var_os("PATH").as_deref()) {
-            return Err(anyhow!(
-                "{tool} was not found; a call records and plays through PipeWire"
-            ));
+        if let Some(missing) = missing_audio_device() {
+            return Err(anyhow!("no {missing} is available; a call needs one"));
         }
         // The same rule as placing a call: a video offer that cannot start video is not accepted as
         // something else behind the user's back. Nothing has been sent yet, so the call stays
@@ -1827,8 +1481,8 @@ impl Call {
             }
         }
         require_video(self.video, pipe.is_some())?;
-        let (mic, mic_rx) = AudioInput::spawn(microphone.clone())?;
-        let (output, output_tx) = AudioOutput::spawn(speaker.clone())?;
+        let (mic, mic_rx) = AudioInput::spawn(microphone.clone());
+        let (output, output_tx) = AudioOutput::spawn(speaker.clone());
 
         let voip = client.voip();
         let builder = voip.accept(&incoming).audio(mic_rx, output_tx);
@@ -2451,27 +2105,30 @@ mod tests {
         }
     }
 
+    /// The pickers and the backend agree: a platform that can carry voice lists the devices rodio
+    /// reports, and a platform that cannot lists none rather than a list nothing can open.
     #[test]
-    fn a_call_without_the_pipewire_helpers_is_refused_before_it_rings() {
-        let empty = tempfile::tempdir().expect("a temporary directory");
-        let path = std::env::join_paths([empty.path()]).expect("a path");
-        assert_eq!(
-            missing_audio_tool(Some(path.as_os_str())),
-            Some("pw-record"),
-            "an empty PATH has neither helper"
-        );
-        assert_eq!(
-            missing_audio_tool(None),
-            Some("pw-record"),
-            "no PATH at all is not a machine to record on"
-        );
-        for tool in ["pw-record", "pw-play"] {
-            std::fs::write(empty.path().join(tool), b"").expect("a helper");
+    fn the_audio_pickers_follow_the_voice_capability() {
+        let listed = super::devices();
+        if super::capabilities().voice {
+            for device in listed.microphones.iter().chain(&listed.speakers) {
+                assert!(
+                    !device.id.is_empty(),
+                    "a device is named by what rodio reports"
+                );
+                assert!(
+                    !device.label.is_empty(),
+                    "a device is labelled for the picker"
+                );
+            }
+        } else {
+            assert!(listed.microphones.is_empty());
+            assert!(listed.speakers.is_empty());
         }
         assert_eq!(
-            missing_audio_tool(Some(path.as_os_str())),
-            None,
-            "both helpers present is a machine that can carry a call"
+            listed.cameras.is_empty(),
+            !super::capabilities().camera,
+            "the camera list follows the camera capability"
         );
     }
 
@@ -2562,7 +2219,7 @@ mod tests {
         assert_eq!(resolved.camera.as_deref(), Some("/dev/video0"));
         assert!(
             resolved.lost_devices.is_empty(),
-            "pw-dump failing says nothing about the devices"
+            "a device list that could not be read says nothing about the devices"
         );
     }
 
@@ -3071,31 +2728,21 @@ mod platform_tests {
     use super::*;
 
     /// The compile-time platform is what the interface is told, so a build for macOS or Windows
-    /// cannot offer a call whose backend would fail to open a microphone.
+    /// cannot offer a camera whose backend would fail to open one.
     #[test]
     fn calling_is_offered_only_where_the_media_backend_runs() {
         let capable = capabilities();
+        assert!(
+            capable.voice,
+            "rodio carries voice on every platform the app builds for"
+        );
         let linux = cfg!(target_os = "linux");
-        assert_eq!(capable.voice, linux, "voice needs the PipeWire backend");
         assert_eq!(capable.video, linux, "video needs V4L2 and ffmpeg");
         assert_eq!(capable.camera, linux, "a camera list is V4L2's");
         assert!(
             !capable.screen_share,
             "one-to-one screen sharing is not in the pinned protocol library"
         );
-    }
-
-    /// What the pickers are shown agrees with what the backend can open: a platform that cannot
-    /// record offers no microphone and no speaker, rather than a list nothing can use.
-    #[test]
-    fn a_platform_without_the_backend_offers_no_devices() {
-        if capabilities().voice {
-            return;
-        }
-        let list = devices();
-        assert!(list.microphones.is_empty());
-        assert!(list.speakers.is_empty());
-        assert!(list.cameras.is_empty());
     }
 }
 
