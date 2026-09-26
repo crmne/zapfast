@@ -116,8 +116,21 @@ protocol. These notes are for coding agents and new contributors.
   ships is named there as `lucide "name"` instead of copied.
 - `src/markup.rs` turns WhatsApp's text markup, links, and mentions into an
   egui `LayoutJob`; `src/emoji.rs` swaps every emoji for a placeholder
-  glyph at layout time and paints the desktop's colour emoji bitmap over
-  it afterwards (resolving sequences through the font's GSUB ligatures).
+  glyph at layout time and paints a picture of the emoji over it afterwards.
+  On macOS CoreText (`emoji/macos.rs`) and on Windows DirectWrite
+  (`emoji/windows.rs`) draw the system emoji font; a sequence counts as
+  joined only when the system lays it out as one glyph that advances, with
+  any zero-advance glyphs drawn as layers under it. Windows 11 builds family
+  sequences from overlapping parts, so there a sequence with U+200D also
+  counts when its parts advance no further than one emoji. Linux reads the
+  bitmaps of an installed Noto Color Emoji and resolves sequences through its
+  GSUB ligatures. The bundled Noto is the fallback everywhere. On macOS it
+  loads only when the system cannot draw a sequence; Windows loads it at start
+  because Segoe UI Emoji has no flags, and subdivision flags skip DirectWrite.
+  Each form of a sequence is tried in both before a part is dropped, so
+  Windows shows Noto's flags rather than one regional indicator letter.
+  System pictures are cut to Noto's cell (measured from its grinning face)
+  and resampled premultiplied, so both sources look the same size.
   Any text that can hold an emoji goes through `widgets::line` /
   `widgets::rich_text` or `markup::layout`, never a bare `Label`.
 - `src/animation.rs` plays animated stickers and GIFs: WebP/GIF frames
