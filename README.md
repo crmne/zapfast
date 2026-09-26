@@ -347,12 +347,14 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   mention or answer you. **Notification sound** in a chat's right-click menu
   gives that chat its own sound for every message in it, mentions included,
   stored in the encrypted archive.
-- **Unread count on the taskbar.** On Linux, ZapFast publishes the unread total
-  through the Unity Launcher API, so KDE Plasma shows it as a badge on the
-  taskbar icon, with **Show badges** enabled in the Task Manager settings. Other
-  launchers that implement the same API, such as GNOME's Dash to Dock or Dash to
-  Panel and the Plank dock, show it too. Clearing chats lowers the count, and
-  zero removes it.
+- **Unread count on the taskbar.** Linux desktops that implement the Unity
+  Launcher API show the unread total on the app icon; KDE Plasma needs **Show
+  badges** enabled in Task Manager. On Windows, ZapFast overlays a compact count
+  on its taskbar button while the window is open, showing `99+` above 99. Windows
+  must be using its regular taskbar icon size for overlays to appear. The count
+  covers unread messages in unarchived, unmuted, and unlocked
+  chats, not toasts kept in Windows notification history. Reading messages
+  lowers the count, and zero removes the overlay.
 - **Update notices.** ZapFast checks GitHub once a day and shows a download
   link when a newer release is available. You can turn this off in Settings.
 - **Themes.** Light, dark, follow the system, or a local JSON palette. Native

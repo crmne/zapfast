@@ -250,10 +250,13 @@ Closing the window keeps ZapFast linked in the tray. Click the tray icon or
 launch the app again to reopen it. Launchers that support the Unity Launcher API
 show the unread count as a badge on the app icon: KDE Plasma's taskbar, with
 **Show badges** enabled in the Task Manager settings, and GNOME's Dash to Dock
-or Dash to Panel. On Linux and Windows, notifications show the chat picture
-and open the chat at the message they announced when clicked. Muted chats do not
-send notifications, and archived chats stay quiet until you unarchive them. You
-can change both settings.
+or Dash to Panel. Windows overlays a compact unread-message count on ZapFast's
+taskbar button while the window is open, using `99+` above 99. Windows must use
+its regular taskbar icon size for overlays to appear. The count
+does not count toasts remaining in Windows notification history. On Linux and
+Windows, notifications show the chat picture and open the chat at the message
+they announced when clicked. Muted chats do not send notifications, and
+archived chats stay quiet until you unarchive them. You can change both settings.
 
 Press `Ctrl+/` or click the keyboard button under the composer to list all
 shortcuts.

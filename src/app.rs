@@ -4758,6 +4758,13 @@ impl App {
         }
     }
 
+    /// The unread total for the Windows taskbar overlay, which the window
+    /// applies itself; `None` in demo and test runs.
+    #[cfg(target_os = "windows")]
+    pub fn taskbar_badge_count(&self) -> Option<u32> {
+        self.badge.as_ref()?.count()
+    }
+
     /// Pauses other apps' music while recording or playing audio, as the
     /// settings allow, and resumes it once neither needs quiet.
     fn hold_media(&mut self) {
@@ -5535,7 +5542,10 @@ mod tests {
     /// taskbar badge they must not overwrite.
     #[test]
     fn demo_and_test_runs_do_not_publish_a_taskbar_badge() {
-        assert!(app().badge.is_none());
+        let app = app();
+        assert!(app.badge.is_none());
+        #[cfg(target_os = "windows")]
+        assert!(app.taskbar_badge_count().is_none());
     }
 
     #[test]

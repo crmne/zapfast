@@ -11,18 +11,22 @@ use std::sync::{Arc, Mutex};
 #[cfg(target_os = "linux")]
 mod badge;
 #[cfg(target_os = "windows")]
+mod badge_windows;
+#[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "linux")]
 pub use badge::Badge;
+#[cfg(target_os = "windows")]
+pub use badge_windows::{Badge, Taskbar};
 
-/// A no-op taskbar badge where the desktop has no Unity Launcher API.
-#[cfg(not(target_os = "linux"))]
+/// A no-op taskbar badge on platforms without a taskbar badge implementation.
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 #[derive(Default)]
 pub struct Badge;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 impl Badge {
-    /// Does nothing; no desktop here reads a taskbar badge.
+    /// Does nothing; no supported desktop here reads a taskbar badge.
     pub fn set(&mut self, _count: u32) {}
 }
 
