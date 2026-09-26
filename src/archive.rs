@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message};
 
+mod calls;
 mod drafts;
 mod encryption;
 mod favorites;
@@ -349,6 +350,7 @@ impl Archive {
         connection.execute_batch(drafts::SCHEMA)?;
         connection.execute_batch(stickers::SCHEMA)?;
         connection.execute_batch(favorites::SCHEMA)?;
+        connection.execute_batch(calls::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -844,6 +846,9 @@ impl Archive {
         self.merge_group_recipient(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
         let favorite =
             self.move_favorite(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
+        // The call log follows the chat onto its phone number, so a call made before the mapping
+        // was known is filed where the chat now lives.
+        self.move_calls(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
         self.connection.execute(
             "INSERT INTO chat_removals (chat, through) SELECT ?2, through FROM chat_removals WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through)",

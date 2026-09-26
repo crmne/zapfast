@@ -4,6 +4,7 @@
 //! work. Commands and events cross channels, and events wake the UI.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -312,6 +313,41 @@ pub enum Command {
         chat: ChatId,
         samples: Vec<f32>,
         quoting: Option<String>,
+    },
+    /// Places a 1:1 call, offering video from the first frame when asked.
+    StartCall {
+        chat: ChatId,
+        video: bool,
+    },
+    /// Answers the ringing incoming call with the real `<accept>`.
+    AnswerCall,
+    /// Declines the ringing incoming call with the real `<reject>`.
+    DeclineCall,
+    /// Ends the current call.
+    HangupCall,
+    /// Mutes or unmutes the current call's microphone through the engine.
+    SetCallMuted(bool),
+    /// Turns the current call's camera on or off.
+    SetCallCamera(bool),
+    /// Rebinds the current call's microphone; `None` is the system default.
+    SetCallMicrophone(Option<String>),
+    /// Rebinds the current call's speaker; `None` is the system default.
+    SetCallSpeaker(Option<String>),
+    /// Switches the current call's camera node.
+    SetCallCameraDevice(Option<String>),
+    /// Lists the microphones, speakers and cameras the call screen offers.
+    RefreshCallDevices,
+    /// The devices a call should open with: the ones last picked, as the settings hold them.
+    SetCallDevices {
+        microphone: Option<String>,
+        speaker: Option<String>,
+        camera: Option<String>,
+    },
+    /// Reads the whole call log, for the Calls view.
+    LoadCalls,
+    /// Reads one chat's call log, for the entries inside the conversation.
+    LoadChatCalls {
+        chat: ChatId,
     },
     /// Sends a played receipt for a voice message.
     MarkPlayed {
@@ -888,6 +924,24 @@ pub enum Event {
     ContactReady {
         id: String,
         name: Option<String>,
+    },
+    /// The current call changed state. The UI renders this and nothing else.
+    Call(Box<crate::calls::CallUpdate>),
+    /// The devices the call screen can offer.
+    CallDevices(Box<crate::calls::DeviceList>),
+    /// The whole call log, newest first.
+    CallLog(Box<Vec<crate::model::CallRecord>>),
+    /// One chat's calls, newest first, for the entries inside the conversation.
+    ChatCalls {
+        chat: ChatId,
+        calls: Box<Vec<crate::model::CallRecord>>,
+    },
+    /// One call reached its end and was written to the log.
+    CallLogged(Box<crate::model::CallRecord>),
+    /// One video frame for the call screen: our own preview, the peer's picture, or both.
+    CallVideo {
+        local: Option<Arc<egui::ColorImage>>,
+        remote: Option<Arc<egui::ColorImage>>,
     },
     /// Informational toast message.
     Info(String),

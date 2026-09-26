@@ -1,10 +1,64 @@
 ---
 title: Using ZapFast
-description: Send messages and use attachments, interactive messages, voice messages, and keyboard shortcuts.
+description: Send messages, use attachments, interactive messages, and voice messages, make voice and video calls, and learn the keyboard shortcuts.
 redirect_from:
   - /using-fastsapp/
 nav_order: 3
 ---
+
+## Calling
+
+The phone icon in a chat's header starts a voice call: the chat takes over the
+window, and the call's length only starts counting once the other side has
+really answered. The camera icon starts a video call instead. A call you are
+receiving takes over the window by itself, whoever you were writing to, with the
+caller's name and picture, a line saying whether it is a voice or a video call,
+and **Accept** and **Decline**. Names come from your address book or the public
+profile name, exactly as they do in the chat list. A desktop notification with
+the caller's name goes out as well, so a window hidden in the tray or behind
+another program does not hide the call; clicking it brings ZapFast up with the
+call waiting. A chat you have muted, archived, or locked keeps its calls as
+quiet as its messages.
+
+Along the bottom of a call are the controls: mute, camera, the speaker button
+that opens the device pickers, and the red button that hangs up. Mute goes
+through the calling library's own mute, so the other side is told and the audio
+stream is not restarted. **Microphone**, **Speaker**, and **Camera** list the
+devices this computer really has; picking one applies to ZapFast's call and
+never to your system defaults, and the choice is remembered for the next call. A
+device that has gone away since it was picked — a headset switched off, a camera
+unplugged — falls back to the system default and the call screen says so.
+
+Turning the camera off leaves the call and its audio running; so does a camera
+that stops delivering, which is reported rather than ending the call. A video
+call shows the other side's picture as large as it fits without stretching it,
+with your own camera in the corner. If their phone announces a rotation, it is
+applied, so a phone held upright stays upright here.
+
+**Back to the chat** in the top-left corner of a call puts you back in the
+conversation with the call still running in a bar at the bottom of the window,
+showing its length and a **Return to the call** button. Hanging up is the only
+thing that ends a call. If you close the window to the tray, the call keeps
+running there.
+
+When a call is over, both sides' outcomes are recorded in the local archive:
+the **Calls** view in the sidebar lists every call with its direction, how long
+it lasted, and how it ended, and the same entry appears in its chat with the
+time. A call that was not answered has no length, because there was no call to
+measure.
+
+Calling needs PipeWire: ZapFast records through `pw-record` and plays through
+`pw-play`, which the current Linux desktops provide. Video calls additionally
+need a V4L2 camera under `/dev/video*`. Any camera the kernel exposes works,
+including **OBS Virtual Camera** once OBS Studio has started it — start the
+virtual camera in OBS, open a call's **Camera** picker, and choose it. That is
+also how to show a window or a slide deck on a call: capture it in OBS and send
+the virtual camera.
+
+Sharing your screen directly from ZapFast is not available: the whatsapp-rust
+revision it uses carries screen sharing for group calls only, so **Share
+screen** is shown disabled rather than as a control that cannot work. OBS
+Virtual Camera covers the same ground on Linux.
 
 ## Writing
 

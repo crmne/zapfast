@@ -55,6 +55,17 @@ const TYPING_TIMEOUT: Duration = Duration::from_secs(12);
 /// How long other apps' media stays paused while the next voice message of a
 /// run downloads. A stalled download must not keep music paused for good.
 const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
+/// How long a finished call's outcome stays on screen before the surface goes away.
+const CALL_FAREWELL: Duration = Duration::from_secs(4);
+
+/// Orders a call log newest first, with the call id breaking a tie so the order is stable.
+fn sort_calls(calls: &mut [crate::model::CallRecord]) {
+    calls.sort_by(|a, b| {
+        b.started_at
+            .cmp(&a.started_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+}
 
 /// Loaded chat history and paging state.
 #[derive(Default)]
@@ -78,6 +89,8 @@ pub struct Conversation {
     /// The height each row last took, keyed by message id, so the transcript
     /// can skip rows far from the viewport instead of laying them out.
     pub(crate) rows: HashMap<String, RowHeight>,
+    /// This chat's calls, newest first, drawn among the messages by time.
+    pub calls: Vec<crate::model::CallRecord>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
 }
@@ -499,6 +512,30 @@ pub struct App {
     pub window_focused: bool,
     /// Presence last reported to the backend.
     reported_online: Option<bool>,
+    /// The live call, or the outcome of the one that just ended.
+    pub call: Option<crate::calls::CallUpdate>,
+    /// When a finished call's surface should disappear.
+    call_surface_until: Option<Instant>,
+    /// The microphones, speakers and cameras the call screen offers.
+    pub call_devices: crate::calls::DeviceList,
+    /// Whether the call screen shows its device pickers.
+    pub call_devices_open: bool,
+    /// Whether the full call screen is put aside so a chat can be read while the call runs. The call
+    /// itself is untouched; the surface is what moves, and a bar offers the way back.
+    pub call_surface_hidden: bool,
+    /// The generation of an incoming call the desktop was told about, so its notification can be
+    /// taken back when the call is answered or given up.
+    call_notified: Option<u64>,
+    /// The call log, newest first, as the Calls view shows it.
+    pub call_log: Vec<crate::model::CallRecord>,
+    /// Whether the log has been read at least once, so an empty view can say which empty it is.
+    pub call_log_loaded: bool,
+    /// The newest local camera preview and peer picture for the call screen.
+    pub call_local_frame: Option<std::sync::Arc<egui::ColorImage>>,
+    pub call_remote_frame: Option<std::sync::Arc<egui::ColorImage>>,
+    /// Set when a call event or a video frame arrived, so the frame is drawn now instead of when
+    /// something else happens to ask for a repaint.
+    call_repaint: bool,
     /// Whether ZapFast starts at login, when this installation supports it.
     pub start_with_system: Option<bool>,
     /// Cross-thread window repaint handle.
@@ -706,6 +743,14 @@ impl App {
         app.backend.send(Command::SetDownloadFolder(
             app.settings.download_folder.clone(),
         ));
+        // The call devices the last session used, so a call opened now starts on them.
+        app.backend.send(Command::SetCallDevices {
+            microphone: app.settings.call_microphone.clone(),
+            speaker: app.settings.call_speaker.clone(),
+            camera: app.settings.call_camera.clone(),
+        });
+        // The call log, so the Calls view has something to show the moment it is opened.
+        app.backend.send(Command::LoadCalls);
         if crate::autostart::supported() {
             app.start_with_system = Some(crate::autostart::enabled());
         }
@@ -920,6 +965,17 @@ impl App {
             quit_requested: false,
             window_focused: false,
             reported_online: None,
+            call: None,
+            call_surface_until: None,
+            call_devices: crate::calls::DeviceList::default(),
+            call_devices_open: true,
+            call_surface_hidden: false,
+            call_notified: None,
+            call_log: Vec::new(),
+            call_log_loaded: false,
+            call_local_frame: None,
+            call_remote_frame: None,
+            call_repaint: false,
             start_with_system: None,
             waker,
             tray: None,
@@ -1013,10 +1069,14 @@ impl App {
                 .unwrap_or_else(|p| p.into_inner()),
         );
         for target in opened {
-            self.actions.push(Action::OpenMessage {
-                chat: target.chat,
-                message: target.message,
-            });
+            // A call notification carries no message: bringing the window up is enough, since the
+            // call surface is drawn over whatever is open and is waiting for Accept or Decline.
+            if let Some(message) = target.message {
+                self.actions.push(Action::OpenMessage {
+                    chat: target.chat,
+                    message,
+                });
+            }
             self.actions.push(Action::ShowWindow);
         }
     }
@@ -1063,7 +1123,7 @@ impl App {
             sound,
             crate::notify::NotificationTarget {
                 chat: chat_id.to_owned(),
-                message: message.id.clone(),
+                message: Some(message.id.clone()),
             },
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
@@ -1407,6 +1467,18 @@ impl App {
     }
 
     fn person_name(&self, id: &str, hint: Option<&str>) -> String {
+        self.known_name(id, hint)
+            .unwrap_or_else(|| match crate::model::phone_of(id) {
+                Some(digits) => crate::util::phone(digits),
+                None => "Unknown".to_owned(),
+            })
+    }
+
+    /// What a chat is known by, or nothing at all when only a number is left.
+    ///
+    /// Split out of [`Self::person_name`] for the call surfaces, which must not answer a stranger
+    /// with their own number the way a chat title may.
+    fn known_name(&self, id: &str, hint: Option<&str>) -> Option<String> {
         let contact = self.contacts.get(id);
         let present = |name: Option<&str>| name.filter(|name| !name.is_empty()).map(str::to_owned);
         let saved = present(contact.and_then(|contact| contact.full_name.as_deref()));
@@ -1414,17 +1486,62 @@ impl App {
             .or_else(|| present(hint));
         // Saved names first, as WhatsApp does; a profile name wears a tilde.
         if let Some(name) = saved.or_else(|| called.map(|name| format!("~{name}"))) {
-            return name;
+            return Some(name);
         }
         if let Some(chat) = self.chat(id)
             && !chat.name.is_empty()
             && !chat.name.chars().all(|c| c.is_ascii_digit())
         {
-            return chat.name.clone();
+            return Some(chat.name.clone());
         }
-        match crate::model::phone_of(id) {
-            Some(digits) => crate::util::phone(digits),
-            None => "Unknown".to_owned(),
+        None
+    }
+
+    /// Whether a chat has to stay unnamed right now: it is locked and its folder is closed, so a name,
+    /// a photo, or a number drawn from it is the disclosure the lock is there to prevent.
+    pub fn chat_is_private(&self, id: &str) -> bool {
+        self.chat(id).is_some_and(|chat| chat.locked) && !self.locked_folder_open()
+    }
+
+    /// The name a call shows for the other side.
+    ///
+    /// Not [`Self::display_name`]: that ends at the phone number, and a call screen or a desktop
+    /// notification that prints an unknown caller's number says more about them than WhatsApp does.
+    /// A locked chat says nothing until the folder is open.
+    pub fn call_name(&self, id: &str) -> String {
+        if self.chat_is_private(id) {
+            return crate::i18n::gettext(self.locale, "Locked chat").into_owned();
+        }
+        self.known_name(id, None)
+            .unwrap_or_else(|| crate::i18n::gettext(self.locale, "Unknown caller").into_owned())
+    }
+
+    /// The picture a call may show for the other side: none while the chat is locked, because a
+    /// contact photo is the same disclosure the name is.
+    pub fn call_avatar(&mut self, id: &str) -> Option<std::path::PathBuf> {
+        if self.chat_is_private(id) {
+            return None;
+        }
+        self.avatar(id)
+    }
+
+    /// Whether the live call belongs to a chat the lock is hiding right now.
+    fn call_is_private(&self) -> bool {
+        self.call
+            .as_ref()
+            .is_some_and(|call| self.chat_is_private(&call.chat))
+    }
+
+    /// Puts a live call back behind the bar when its chat is locked and the folder closes.
+    ///
+    /// The locked state is otherwise only applied when a call update arrives, so a call opened
+    /// while the folder was open would keep painting full-window after it closed. The frames are
+    /// dropped as well, so no remote picture lingers for the redacted bar to lift.
+    fn hide_private_call(&mut self) {
+        if self.call_is_private() {
+            self.call_surface_hidden = true;
+            self.call_local_frame = None;
+            self.call_remote_frame = None;
         }
     }
 
@@ -1830,6 +1947,22 @@ impl App {
                 Event::Labels(labels) => {
                     self.labels = labels;
                     self.prune_labels();
+                }
+                Event::Call(update) => self.handle_call_update(*update),
+                Event::CallDevices(devices) => self.call_devices = *devices,
+                Event::CallLog(calls) => self.apply_call_log(*calls),
+                Event::ChatCalls { chat, calls } => {
+                    self.conversations.entry(chat).or_default().calls = *calls;
+                }
+                Event::CallLogged(record) => self.call_logged(*record),
+                Event::CallVideo { local, remote } => {
+                    if let Some(image) = local {
+                        self.call_local_frame = Some(image);
+                    }
+                    if let Some(image) = remote {
+                        self.call_remote_frame = Some(image);
+                    }
+                    self.call_repaint = true;
                 }
                 Event::Drafts(drafts) => {
                     // Unsent text stored by an earlier session. Text typed in
@@ -2417,6 +2550,9 @@ impl App {
         {
             self.hide_locked_chat(&id);
         }
+        // The lock is applied again: a live call in a locked chat goes back behind the bar now,
+        // rather than waiting for the next update that may never come.
+        self.hide_private_call();
     }
 
     fn clear_chat_lock_entry(&mut self) {
@@ -2437,6 +2573,20 @@ impl App {
         self.show_archived = false;
         self.page = Page::Chats;
         self.sidebar_visible = true;
+    }
+
+    /// Files a call that just ended, so the Calls view and the chat it belongs to both show it
+    /// without asking the backend again.
+    fn call_logged(&mut self, record: crate::model::CallRecord) {
+        if !self.call_log.iter().any(|known| known.id == record.id) {
+            self.call_log.push(record.clone());
+            sort_calls(&mut self.call_log);
+        }
+        let conversation = self.conversations.entry(record.chat.clone()).or_default();
+        if !conversation.calls.iter().any(|known| known.id == record.id) {
+            conversation.calls.push(record);
+            sort_calls(&mut conversation.calls);
+        }
     }
 
     /// Empties a chat that stays listed. Search hits and anything pointing at
@@ -2753,6 +2903,26 @@ impl App {
         }
     }
 
+    /// Replaces the call log and rebuilds the per-chat entries already loaded.
+    ///
+    /// A privacy-id mapping can move a call from an @lid onto its phone number, so a chat that was
+    /// opened before the mapping keeps a call row under an id the locked-chat filter no longer
+    /// recognizes unless its entries are rebuilt from the refreshed log.
+    fn apply_call_log(&mut self, calls: Vec<crate::model::CallRecord>) {
+        self.call_log = calls;
+        self.call_log_loaded = true;
+        for (chat, conversation) in self.conversations.iter_mut() {
+            if conversation.requested {
+                conversation.calls = self
+                    .call_log
+                    .iter()
+                    .filter(|record| &record.chat == chat)
+                    .cloned()
+                    .collect();
+            }
+        }
+    }
+
     fn ensure_loaded(&mut self, chat: &str) {
         let conversation = self.conversations.entry(chat.to_owned()).or_default();
         if !conversation.requested {
@@ -2760,6 +2930,11 @@ impl App {
             self.backend.send(Command::LoadChat {
                 chat: chat.to_owned(),
                 before: None,
+            });
+            // This chat's calls come with its messages, so a call row sits among them rather than
+            // arriving a moment later.
+            self.backend.send(Command::LoadChatCalls {
+                chat: chat.to_owned(),
             });
         }
     }
@@ -3143,8 +3318,132 @@ impl App {
         self.at_bottom = true;
     }
 
+    /// Applies one call state from the backend.
+    ///
+    /// A finished call keeps its surface for a moment so the outcome can be read, then goes away
+    /// on its own; the backend drops the media the instant the call ends, so nothing here holds a
+    /// process or a task open.
+    fn handle_call_update(&mut self, update: crate::calls::CallUpdate) {
+        if self
+            .call
+            .as_ref()
+            .is_some_and(|current| current.generation > update.generation)
+        {
+            return;
+        }
+        // A call we have already announced and that is no longer ringing has been picked up or
+        // given up, so its notification goes away instead of sitting there asking for an answer.
+        if update.phase != crate::calls::CallPhase::Incoming
+            && self.call_notified == Some(update.generation)
+        {
+            self.call_notified = None;
+            self.notifications.clear(&update.chat);
+        }
+        let finished = !update.phase.is_live();
+        if finished {
+            if self.call.is_none() {
+                // Nothing was drawn for this call, so there is nothing to take down.
+                return;
+            }
+            self.call_local_frame = None;
+            self.call_remote_frame = None;
+            self.call_surface_until = Some(Instant::now() + CALL_FAREWELL);
+            // How a call ended is the whole reason the surface lingers, but a locked chat still says
+            // nothing: with the folder closed the four-second farewell stays behind the bar instead
+            // of covering the window and announcing that a hidden chat had a call.
+            self.call_surface_hidden = self.chat_is_private(&update.chat);
+        } else {
+            self.call_surface_until = None;
+            // A call that has just begun takes the screen. Only a call the reader deliberately
+            // stepped away from stays behind the bar, and a call in a locked chat stays behind it
+            // too: that folder hides its chats everywhere else, so its caller waits in the bar with
+            // the folder's own name until the code opens it, rather than covering the window with a
+            // locked contact.
+            if self
+                .call
+                .as_ref()
+                .is_none_or(|current| !current.phase.is_live())
+            {
+                self.call_surface_hidden = self.chat_is_private(&update.chat);
+            }
+        }
+        let ringing = update.phase == crate::calls::CallPhase::Incoming
+            && self
+                .call
+                .as_ref()
+                .is_none_or(|current| current.generation != update.generation);
+        self.call = Some(update);
+        self.call_repaint = true;
+        if ringing && let Some(call) = self.call.clone() {
+            self.notify_incoming_call(&call);
+        }
+    }
+
+    /// Tells the desktop a call is waiting.
+    ///
+    /// The window may be hidden in the tray, and the reader may be in another chat with the window
+    /// behind something else; a call that only exists inside ZapFast's own surface would go unseen
+    /// until they happened to look. The click only brings the window up, because the call surface is
+    /// drawn over whatever is open and is already waiting for Accept or Decline.
+    fn notify_incoming_call(&mut self, call: &crate::calls::CallUpdate) {
+        if !self.settings.notifications {
+            return;
+        }
+        let now = crate::util::now();
+        // The chat's own rules, read before anything is borrowed from it: a call in a chat that is
+        // muted, archived, or locked stays as quiet as a message in one.
+        let Some(chat_sound) = self.chat(&call.chat).and_then(|chat| {
+            call_notification_eligible(chat, now).then(|| chat.notification_sound.clone())
+        }) else {
+            return;
+        };
+        // The call's own name, not the chat's title: a stranger who calls is an unknown caller here,
+        // never a phone number on a lock screen.
+        let title = self.call_name(&call.chat);
+        let body = if call.video {
+            crate::i18n::gettext(self.locale, "Incoming video call")
+        } else {
+            crate::i18n::gettext(self.locale, "Incoming voice call")
+        };
+        let picture = self.call_avatar(&call.chat);
+        // A call is not a mention and not a group message, so it uses the chat's own sound when it
+        // has one and the ordinary message sound otherwise.
+        let sound = notification_sound(&self.settings, chat_sound, false, false);
+        let waker = self.waker.clone();
+        self.call_notified = Some(call.generation);
+        self.notifications.show(
+            title,
+            body.into_owned(),
+            picture,
+            sound,
+            crate::notify::NotificationTarget {
+                chat: call.chat.clone(),
+                message: None,
+            },
+            std::sync::Arc::clone(&self.notification_opens),
+            move || waker.wake(),
+        );
+    }
+
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
+        if self.call_surface_until.is_some_and(|until| now >= until) {
+            self.call_surface_until = None;
+            self.call = None;
+            self.call_local_frame = None;
+            self.call_remote_frame = None;
+        }
+        if let Some(call) = &self.call {
+            // The duration changes every second, and a video call repaints from its frames; asking
+            // here keeps a muted, idle voice call's timer honest either way.
+            if call.phase.is_live() {
+                ctx.request_repaint_after(Duration::from_millis(500));
+            }
+        }
+        if self.call_repaint {
+            self.call_repaint = false;
+            ctx.request_repaint();
+        }
         if self.composing
             && let Some(last) = self.last_keystroke
             && now.duration_since(last) > COMPOSING_TIMEOUT
@@ -3372,6 +3671,27 @@ impl App {
                 self.apply(Action::Open(page), ctx);
             }
             Action::OpenChat(id) => self.open_chat(id),
+            Action::ShowCalls => {
+                self.page = Page::Calls;
+                // Read again on the way in: another window, or an earlier session, may have added
+                // to the log since this one last looked.
+                self.backend.send(Command::LoadCalls);
+            }
+            Action::CallBack { chat, video } => {
+                self.backend.send(Command::StartCall { chat, video });
+            }
+            Action::OpenCallChat(id) => self.open_chat(id),
+            Action::LeaveCallSurface => self.call_surface_hidden = true,
+            // Returning to a locked chat's call cannot lift the redaction on its own: the bar
+            // already says "Locked chat", and showing it outside the authenticated folder would
+            // reveal the contact the lock hides. Ask for the code instead of doing nothing.
+            Action::ReturnToCall => {
+                if self.call_is_private() {
+                    self.apply(Action::OpenLockedFolder, ctx);
+                } else {
+                    self.call_surface_hidden = false;
+                }
+            }
             Action::StartChat { id, name } => {
                 if self.chat(&id).is_none() {
                     self.chats.push(Chat::new(id.clone(), name.clone()));
@@ -3431,6 +3751,34 @@ impl App {
                         before: (oldest.timestamp, oldest.id.clone()),
                     });
                 }
+            }
+            Action::StartCall(chat) => {
+                self.backend.send(Command::StartCall { chat, video: false });
+            }
+            Action::StartVideoCall(chat) => {
+                self.backend.send(Command::StartCall { chat, video: true });
+            }
+            Action::AnswerCall => self.backend.send(Command::AnswerCall),
+            Action::DeclineCall => self.backend.send(Command::DeclineCall),
+            Action::HangupCall => self.backend.send(Command::HangupCall),
+            Action::SetCallMuted(muted) => self.backend.send(Command::SetCallMuted(muted)),
+            Action::SetCallCamera(on) => self.backend.send(Command::SetCallCamera(on)),
+            Action::SetCallMicrophone(device) => {
+                // Picked here means preferred from now on, so it is written to the settings the
+                // same moment the live call is rebound.
+                self.settings.call_microphone = device.clone();
+                self.mark_settings_dirty();
+                self.backend.send(Command::SetCallMicrophone(device));
+            }
+            Action::SetCallSpeaker(device) => {
+                self.settings.call_speaker = device.clone();
+                self.mark_settings_dirty();
+                self.backend.send(Command::SetCallSpeaker(device));
+            }
+            Action::SetCallCameraDevice(device) => {
+                self.settings.call_camera = device.clone();
+                self.mark_settings_dirty();
+                self.backend.send(Command::SetCallCameraDevice(device));
             }
             Action::CloseChat => {
                 if let Some(chat) = self.open_chat.take() {
@@ -5585,10 +5933,16 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
     now - message_at <= 60
 }
 
+/// Whether a call in this chat may raise a notification: the same quiet rules as a message, without
+/// the unread one, since a call often arrives in a chat where nothing is unread.
+fn call_notification_eligible(chat: &Chat, now: i64) -> bool {
+    !chat.archived && !chat.muted(now) && !chat.locked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ChatKind, Content, Media, MediaState, ToastKind};
+    use crate::model::{ChatKind, Contact, Content, Media, MediaState, ToastKind};
 
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
@@ -5639,6 +5993,57 @@ mod tests {
         assert!(app.badge.is_none());
         #[cfg(target_os = "windows")]
         assert!(app.taskbar_badge_count().is_none());
+    }
+
+    #[test]
+    fn a_call_does_not_answer_a_stranger_with_their_own_number() {
+        let mut app = app();
+        let id = "15551234567@s.whatsapp.net";
+        app.chats.push(Chat::new(id.into(), String::new()));
+        // The chat list may still show the number, because the reader opened that chat.
+        assert_eq!(
+            app.chat_title(&app.chats[0].clone()),
+            crate::util::phone("15551234567")
+        );
+        // The call surface says no more than it knows: a number is not a name there.
+        assert_eq!(app.call_name(id), "Unknown caller");
+        // A saved contact is named, and so is the call.
+        app.contacts.insert(
+            id.into(),
+            Contact {
+                id: id.into(),
+                full_name: Some("Ada".into()),
+                push_name: None,
+            },
+        );
+        assert_eq!(app.call_name(id), "Ada");
+    }
+
+    #[test]
+    fn a_locked_chat_says_nothing_on_a_call_until_its_folder_opens() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let id = "15551234567@s.whatsapp.net";
+        let mut chat = Chat::new(id.into(), "Ada".into());
+        chat.locked = true;
+        app.chats.push(chat);
+        app.contacts.insert(
+            id.into(),
+            Contact {
+                id: id.into(),
+                full_name: Some("Ada".into()),
+                push_name: None,
+            },
+        );
+        assert!(app.chat_is_private(id));
+        assert_eq!(app.call_name(id), "Locked chat");
+        assert!(app.call_avatar(id).is_none(), "no photo either");
+        // The code opens the folder, and the call may name the chat again.
+        app.settings.set_chat_lock_code(Some("test-code"));
+        app.apply(Action::UnlockLockedFolder("test-code".into()), &ctx);
+        assert!(app.locked_folder_open());
+        assert!(!app.chat_is_private(id));
+        assert_eq!(app.call_name(id), "Ada");
     }
 
     #[test]
@@ -7386,7 +7791,7 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner())
             .push(crate::notify::NotificationTarget {
                 chat: chat.into(),
-                message: "secret".into(),
+                message: Some("secret".into()),
             });
 
         app.handle_notification_opens();
@@ -7411,7 +7816,7 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner())
             .push(crate::notify::NotificationTarget {
                 chat: chat.into(),
-                message: "second".into(),
+                message: Some("second".into()),
             });
 
         app.handle_notification_opens();
@@ -9366,6 +9771,207 @@ mod tests {
         assert_eq!(app.display_name("42@lid"), "~Bob");
         app.me = Some("42@lid".into());
         assert_eq!(app.display_name("42@lid"), "You");
+    }
+
+    #[test]
+    fn a_call_in_a_muted_chat_is_not_announced() {
+        // The same quiet rules a message follows: a muted, archived, or locked chat does not get to
+        // pull the reader away from whatever they are doing.
+        let now = crate::util::now();
+        let mut chat = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        assert!(call_notification_eligible(&chat, now));
+        chat.muted_until = Some(now + 3600);
+        assert!(!call_notification_eligible(&chat, now));
+        chat.muted_until = None;
+        chat.archived = true;
+        assert!(!call_notification_eligible(&chat, now));
+        chat.archived = false;
+        chat.locked = true;
+        assert!(!call_notification_eligible(&chat, now));
+        // A call arrives in a chat with nothing unread in it, which is why this is not the message
+        // rule: the unread count is zero here and the call still counts.
+        chat.locked = false;
+        chat.unread = 0;
+        assert!(call_notification_eligible(&chat, now));
+        assert!(
+            !notification_eligible(&chat, now, now),
+            "the message rule would have suppressed it"
+        );
+    }
+
+    #[test]
+    fn a_call_that_is_answered_stops_being_announced() {
+        let mut app = app();
+        // A call the desktop was told about, answered a moment later.
+        app.call_notified = Some(4);
+        app.handle_call_update(incoming_call(4, crate::calls::CallPhase::Incoming));
+        assert_eq!(app.call_notified, Some(4), "still ringing, still announced");
+        app.handle_call_update(incoming_call(4, crate::calls::CallPhase::Active));
+        assert_eq!(app.call_notified, None, "the notification is taken back");
+        assert!(app.call.is_some(), "the call itself is untouched");
+    }
+
+    #[test]
+    fn a_call_that_ends_leaves_the_surface_saying_how_it_ended() {
+        let mut app = app();
+        assert!(!app.call_surface_hidden);
+        app.handle_call_update(incoming_call(9, crate::calls::CallPhase::Incoming));
+        // Stepping away from a ringing call, then the caller giving up.
+        app.call_surface_hidden = true;
+        let mut ended = incoming_call(9, crate::calls::CallPhase::Failed);
+        ended.outcome = Some(crate::calls::CallOutcome::NoAnswer);
+        app.handle_call_update(ended);
+        assert!(
+            !app.call_surface_hidden,
+            "a call that ended is never left behind the bar"
+        );
+        assert!(
+            app.call_surface_until.is_some(),
+            "the farewell is on screen"
+        );
+    }
+
+    #[test]
+    fn a_locked_chats_farewell_stays_behind_the_bar() {
+        let mut app = app();
+        let id = "1@s.whatsapp.net";
+        let mut chat = Chat::new(id.into(), "Fixture".into());
+        chat.locked = true;
+        app.chats.push(chat);
+        assert!(app.chat_is_private(id), "the folder is closed");
+        app.handle_call_update(call_for(id, 1, crate::calls::CallPhase::Incoming));
+        assert!(app.call_surface_hidden, "a locked caller waits in the bar");
+        let mut ended = call_for(id, 1, crate::calls::CallPhase::Failed);
+        ended.outcome = Some(crate::calls::CallOutcome::NoAnswer);
+        app.handle_call_update(ended);
+        assert!(
+            app.call_surface_hidden,
+            "the farewell must not cover the window with a hidden chat's call"
+        );
+        assert!(
+            app.call_surface_until.is_some(),
+            "the farewell is still shown"
+        );
+    }
+
+    #[test]
+    fn closing_the_locked_folder_hides_a_live_call_again() {
+        let mut app = app();
+        let id = "1@s.whatsapp.net";
+        let mut chat = Chat::new(id.into(), "Fixture".into());
+        chat.locked = true;
+        app.chats.push(chat);
+        app.settings.set_chat_lock_code(Some("fixture-code"));
+        app.enter_locked_folder();
+        assert!(app.locked_folder_open(), "the folder is authenticated");
+        app.handle_call_update(call_for(id, 1, crate::calls::CallPhase::Active));
+        assert!(!app.call_surface_hidden, "the folder lets the call show");
+        app.call_remote_frame = Some(std::sync::Arc::new(egui::ColorImage::example()));
+        app.close_locked_folder();
+        assert!(
+            app.call_surface_hidden,
+            "the lock sends the live call back to the bar"
+        );
+        assert!(app.call_remote_frame.is_none(), "no remote picture lingers");
+    }
+
+    #[test]
+    fn returning_to_a_locked_call_cannot_lift_the_redaction() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let id = "1@s.whatsapp.net";
+        let mut chat = Chat::new(id.into(), "Fixture".into());
+        chat.locked = true;
+        app.chats.push(chat);
+        app.call = Some(call_for(id, 1, crate::calls::CallPhase::Active));
+        // The call of a closed locked chat is already behind the bar; returning to it must not
+        // lift that without the code.
+        app.call_surface_hidden = true;
+        app.apply(Action::ReturnToCall, &ctx);
+        assert!(
+            app.call_surface_hidden,
+            "a locked call needs the folder to show"
+        );
+        assert_eq!(
+            app.dialog,
+            Some(Dialog::UnlockLockedChats),
+            "returning to a locked call asks for the code"
+        );
+        app.chats[0].locked = false;
+        app.dialog = None;
+        app.apply(Action::ReturnToCall, &ctx);
+        assert!(
+            !app.call_surface_hidden,
+            "an ordinary call returns as before"
+        );
+    }
+
+    #[test]
+    fn a_call_log_refresh_moves_a_chat_entry_off_a_stale_privacy_id() {
+        let mut app = app();
+        let lid = "12345@lid";
+        let pn = "15551234567@s.whatsapp.net";
+        // A chat opened before the mapping arrived, with its call filed under the privacy id.
+        let opened = app.conversations.entry(lid.to_owned()).or_default();
+        opened.requested = true;
+        opened.calls.push(call_record("call-1", lid));
+        app.conversations
+            .entry(pn.to_owned())
+            .or_default()
+            .requested = true;
+        // The mapping is learned and the log is refreshed: the call now lives under the number.
+        app.apply_call_log(vec![call_record("call-1", pn)]);
+        assert!(
+            app.conversations[lid].calls.is_empty(),
+            "the stale privacy id keeps no call row"
+        );
+        assert_eq!(app.conversations[pn].calls.len(), 1);
+        assert_eq!(app.conversations[pn].calls[0].chat, pn);
+    }
+
+    fn call_record(id: &str, chat: &str) -> crate::model::CallRecord {
+        crate::model::CallRecord {
+            id: id.to_owned(),
+            chat: chat.to_owned(),
+            started_at: 100,
+            ended_at: 160,
+            direction: crate::model::CallDirection::Outgoing,
+            media: crate::model::CallMedia::Voice,
+            status: crate::model::CallStatus::Answered,
+            duration: 60,
+        }
+    }
+
+    /// An incoming call for a specific chat, as the backend would publish it.
+    fn call_for(
+        chat: &str,
+        generation: u64,
+        phase: crate::calls::CallPhase,
+    ) -> crate::calls::CallUpdate {
+        let mut update = incoming_call(generation, phase);
+        update.chat = chat.to_owned();
+        update
+    }
+
+    /// The generation of an incoming call, as the backend would publish it.
+    fn incoming_call(generation: u64, phase: crate::calls::CallPhase) -> crate::calls::CallUpdate {
+        crate::calls::CallUpdate {
+            generation,
+            chat: "1@s.whatsapp.net".to_owned(),
+            direction: crate::model::CallDirection::Incoming,
+            video: false,
+            phase,
+            started: None,
+            muted: false,
+            camera_on: false,
+            remote_video: false,
+            outcome: None,
+            peer_audio: None,
+            lost_devices: Vec::new(),
+            microphone: None,
+            speaker: None,
+            camera: None,
+        }
     }
 }
 

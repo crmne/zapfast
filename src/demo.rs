@@ -6,6 +6,8 @@ use std::collections::HashMap;
 
 use crate::app::{App, Conversation, Presence};
 use crate::backend::LinkStatus;
+use crate::calls::{CallPhase, CallUpdate};
+use crate::model::CallDirection;
 use crate::model::{
     Chat, Contact, Content, Delivery, Dialog, LinkPreview, Media, MentionRef, Message, Page,
     Quoted, Reaction,
@@ -571,6 +573,12 @@ pub fn populate(app: &mut App) {
         app.conversations.insert(sample.id.to_owned(), conversation);
         app.chats.push(chat);
     }
+
+    // The call log, so the Calls view has something to show. The entries *inside* a conversation are
+    // left out of the sample chats on purpose: an entry changes a transcript's height, and the
+    // transcript tests measure a chat no call happened in. A flag puts them in one chat instead.
+    app.call_log = demo_calls();
+    app.call_log_loaded = true;
 
     plant_avatars(app);
     // Cover every supported bubble type in the first chat.
@@ -1874,6 +1882,25 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.settings_search = choice["settings-search=".len()..].to_owned();
             }
             "wallpaper" => app.page = Page::Wallpaper,
+            // The call log, with the shapes a list has to survive: an answered call, a missed one,
+            // a cancellation, and one that never connected. Synthetic, offline, no real numbers.
+            "calls" => app.page = Page::Calls,
+            // The call surface itself: the incoming call waiting to be answered, and a call that
+            // has been up for a few minutes, in voice and with video.
+            "call" => call_sample(app, true, false),
+            "call-active" => call_sample(app, false, false),
+            "call-video" => call_sample(app, false, true),
+            "call-entries" => {
+                // Every call in the log, in the one chat the sample opens. Synthetic, and the only
+                // place the transcript carries call entries at all.
+                let chat = app
+                    .chats
+                    .iter()
+                    .find(|chat| !chat.is_group())
+                    .map_or_else(|| ME.to_owned(), |chat| chat.id.clone());
+                app.conversations.entry(chat.clone()).or_default().calls = app.call_log.clone();
+                app.open_chat = Some(chat);
+            }
             "wallpaper-image" => wallpaper_image_sample(app),
             "omarchy" | "omarchy-light" => {
                 let mut themes: Vec<_> = crate::theme::presets().collect();
@@ -2570,6 +2597,157 @@ fn sample_qr() -> String {
 /// Names of all sample chats.
 pub fn sample_ids() -> Vec<&'static str> {
     SAMPLES.iter().map(|sample| sample.id).collect()
+}
+
+/// Puts a synthetic call on screen, for the call previews and their layout test.
+///
+/// Demo mode has no engine, no peer, and no camera, so the surface is handed the same snapshot a
+/// real call publishes, filled in by hand: an invented call id, one of the sample chats, and a
+/// picture that is plainly a test pattern rather than anybody's room. `incoming` is the call
+/// waiting to be accepted; otherwise the call is one that has been up for a few minutes.
+pub fn call_sample(app: &mut App, incoming: bool, video: bool) {
+    let chat = SAMPLES[0].id;
+    app.call = Some(CallUpdate {
+        generation: 1,
+        chat: chat.to_owned(),
+        direction: if incoming {
+            CallDirection::Incoming
+        } else {
+            CallDirection::Outgoing
+        },
+        video,
+        phase: if incoming {
+            CallPhase::Incoming
+        } else {
+            CallPhase::Active
+        },
+        // A call already up for three minutes and forty-one seconds, so the previews show the
+        // duration the way a real one counts it.
+        started: (!incoming)
+            .then(|| std::time::Instant::now() - std::time::Duration::from_secs(221)),
+        muted: false,
+        camera_on: video,
+        remote_video: video && !incoming,
+        outcome: None,
+        peer_audio: None,
+        lost_devices: Vec::new(),
+        microphone: None,
+        speaker: None,
+        camera: None,
+    });
+    if video && !incoming {
+        app.call_remote_frame = Some(std::sync::Arc::new(test_pattern(1280, 720, false)));
+        app.call_local_frame = Some(std::sync::Arc::new(test_pattern(640, 360, true)));
+    }
+}
+
+/// A frame of colour bars, which no camera produces and no person is in.
+fn test_pattern(width: usize, height: usize, arms: bool) -> egui::ColorImage {
+    let bars = [
+        egui::Color32::from_rgb(214, 214, 214),
+        egui::Color32::from_rgb(214, 214, 0),
+        egui::Color32::from_rgb(0, 214, 214),
+        egui::Color32::from_rgb(0, 214, 0),
+        egui::Color32::from_rgb(214, 0, 214),
+        egui::Color32::from_rgb(214, 0, 0),
+        egui::Color32::from_rgb(0, 0, 214),
+    ];
+    let mut pixels = Vec::with_capacity(width * height);
+    for y in 0..height {
+        for x in 0..width {
+            // A dark band across the middle keeps the two ends distinguishable, and the preview's
+            // arms make it obvious which corner is the small one.
+            let band = (y * 10 / height.max(1)).is_multiple_of(2);
+            let arm = arms
+                && ((x < width / 12 || x + 1 > width - width / 12)
+                    || (y < height / 4
+                        && (x as f32 - width as f32 / 2.0).abs() < height as f32 / 8.0));
+            let colour = bars[(x * bars.len() / width.max(1)).min(bars.len() - 1)];
+            pixels.push(if arm {
+                egui::Color32::from_gray(245)
+            } else if band {
+                colour
+            } else {
+                egui::Color32::from_rgb(colour.r() / 3, colour.g() / 3, colour.b() / 3)
+            });
+        }
+    }
+    egui::ColorImage::new([width, height], pixels)
+}
+
+/// Synthetic call records for the Calls view and the transcript entries.
+///
+/// Invented, offline, and dated relative to now: a demo must never carry a real call log, and the
+/// four shapes here are the ones a list has to survive (answered, missed, declined, never
+/// connected).
+pub fn demo_calls() -> Vec<crate::model::CallRecord> {
+    use crate::model::{CallDirection, CallMedia, CallRecord, CallStatus};
+    let now = crate::util::now();
+    let ada = SAMPLES[0].id;
+    let group = SAMPLES[2].id;
+    let call = |id: &str,
+                chat: &str,
+                minutes_ago: i64,
+                duration: u64,
+                direction: CallDirection,
+                media: CallMedia,
+                status: CallStatus| CallRecord {
+        id: id.to_owned(),
+        chat: chat.to_owned(),
+        started_at: now - minutes_ago * 60,
+        ended_at: now - minutes_ago * 60 + duration as i64,
+        direction,
+        media,
+        status,
+        duration,
+    };
+    vec![
+        call(
+            "demo-call-1",
+            ada,
+            12,
+            221,
+            CallDirection::Outgoing,
+            CallMedia::Voice,
+            CallStatus::Answered,
+        ),
+        call(
+            "demo-call-2",
+            ada,
+            95,
+            0,
+            CallDirection::Incoming,
+            CallMedia::Video,
+            CallStatus::Missed,
+        ),
+        call(
+            "demo-call-3",
+            group,
+            240,
+            0,
+            CallDirection::Outgoing,
+            CallMedia::Voice,
+            CallStatus::NoAnswer,
+        ),
+        call(
+            "demo-call-4",
+            group,
+            1500,
+            82,
+            CallDirection::Incoming,
+            CallMedia::Video,
+            CallStatus::Answered,
+        ),
+        call(
+            "demo-call-5",
+            ada,
+            4300,
+            0,
+            CallDirection::Outgoing,
+            CallMedia::Voice,
+            CallStatus::Declined,
+        ),
+    ]
 }
 
 #[allow(dead_code)]
@@ -3961,6 +4139,12 @@ mod tests {
             "react-picker-empty",
             "react-custom",
             "react-other",
+            "calls",
+            "call-entries",
+            "call",
+            "call-active",
+            "call-video",
+            "call-video,light",
         ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
@@ -9778,5 +9962,60 @@ mod picture_edge_tests {
             let shown = chat_with_picture(2, height as f32);
             assert!(!shown.is_empty(), "the chat shows its end ({height} tall)");
         }
+    }
+}
+
+/// The call surface's previews: what they hand it, and the picture they hand it with.
+#[cfg(test)]
+mod call_preview_tests {
+    use super::tests::app;
+    use super::*;
+
+    #[test]
+    fn the_call_previews_hand_the_surface_a_live_call() {
+        let mut screen = app();
+        call_sample(&mut screen, true, false);
+        let incoming = screen.call.clone().expect("a call is on screen");
+        assert_eq!(incoming.phase, CallPhase::Incoming);
+        assert_eq!(incoming.direction, CallDirection::Incoming);
+        assert!(incoming.phase.is_live(), "a ringing call is still a call");
+        assert!(
+            !incoming.video,
+            "the ringing preview is the voice one, so the two do not read alike"
+        );
+
+        let mut screen = app();
+        call_sample(&mut screen, false, true);
+        let live = screen.call.clone().expect("a call is on screen");
+        assert_eq!(live.phase, CallPhase::Active);
+        assert_eq!(live.direction, CallDirection::Outgoing);
+        assert!(
+            live.started.is_some(),
+            "the duration has something to count from"
+        );
+        assert!(live.remote_video && live.camera_on);
+        assert!(
+            screen.call_remote_frame.is_some() && screen.call_local_frame.is_some(),
+            "a video preview has both pictures"
+        );
+        assert_eq!(
+            screen.call_remote_frame.as_ref().map(|frame| frame.size),
+            Some([1280, 720]),
+            "the peer's picture keeps the shape a landscape camera sends"
+        );
+    }
+
+    #[test]
+    fn the_test_pattern_is_a_frame_of_the_size_asked_for() {
+        let frame = test_pattern(64, 48, false);
+        assert_eq!(frame.size, [64, 48]);
+        assert_eq!(frame.pixels.len(), 64 * 48);
+        assert!(
+            frame.pixels.iter().any(|pixel| pixel.r() != pixel.g()),
+            "the bars are more than one colour, so the preview is not a flat block"
+        );
+        let preview = test_pattern(32, 24, true);
+        assert_eq!(preview.size, [32, 24]);
+        assert_eq!(preview.pixels.len(), 32 * 24);
     }
 }

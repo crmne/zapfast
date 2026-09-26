@@ -30,13 +30,15 @@ impl Badge {
     pub fn set(&mut self, _count: u32) {}
 }
 
-/// Chat and message a clicked notification opens. The message id travels with
-/// the click, so the reader lands on what was announced instead of on the end
-/// of the chat.
+/// What a clicked notification opens: the chat, and the message it announced.
+///
+/// The message id travels with the click, so the reader lands on what was announced instead of on
+/// the end of the chat. An incoming call has no message to land on, so its target carries `None`
+/// and the click only has to bring the window up, where the call is already on screen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NotificationTarget {
     pub chat: String,
-    pub message: String,
+    pub message: Option<String>,
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -477,7 +479,7 @@ mod tests {
             NotificationSound::System,
             NotificationTarget {
                 chat: "test".into(),
-                message: "test-message".into(),
+                message: Some("test-message".into()),
             },
             Default::default(),
             || {},

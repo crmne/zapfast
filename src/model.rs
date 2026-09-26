@@ -879,8 +879,78 @@ impl Contact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Page {
     Chats,
+    Calls,
     Settings,
     Wallpaper,
+}
+
+/// Which side of a call this account was on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallDirection {
+    Incoming,
+    Outgoing,
+}
+
+/// What a call carried. A voice call that was upgraded mid-call counts as video: it did carry it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallMedia {
+    Voice,
+    Video,
+}
+
+/// What became of a call, as the call log stores it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallStatus {
+    /// The two sides were connected, so the record's length is real.
+    Answered,
+    /// Another of this account's devices took the call. This device never connected, so the
+    /// record's length is not the call's: it is shown as its own outcome, not as an answered call.
+    AnsweredElsewhere,
+    /// An incoming call nobody here picked up.
+    Missed,
+    /// The peer rejected it, or we did.
+    Declined,
+    /// The peer's phone was already on a call.
+    Busy,
+    /// It never came up, and not for any of the reasons above.
+    Failed,
+    /// Outgoing, and nobody answered before the call gave up.
+    NoAnswer,
+    /// The media plane went away under a call that was up.
+    ConnectionLost,
+}
+
+impl CallStatus {
+    /// Whether the two sides ever talked, which is what makes a record's length meaningful.
+    pub fn connected(self) -> bool {
+        matches!(self, Self::Answered)
+    }
+
+    /// Whether this is a call the user missed, which the list tints differently.
+    pub fn missed(self) -> bool {
+        matches!(self, Self::Missed)
+    }
+}
+
+/// One finished 1:1 call, as stored and shown.
+///
+/// Every field comes from the call itself: the peer's signaling and the media plane decide the
+/// status, and the times are this computer's clock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallRecord {
+    /// The WhatsApp call id, which is what keeps one call to one row.
+    pub id: String,
+    /// The canonical chat the call belongs to.
+    pub chat: ChatId,
+    /// Unix seconds the call was placed or received.
+    pub started_at: i64,
+    /// Unix seconds the call reached its end.
+    pub ended_at: i64,
+    pub direction: CallDirection,
+    pub media: CallMedia,
+    pub status: CallStatus,
+    /// Seconds the two sides were connected; zero when they never were.
+    pub duration: u64,
 }
 
 /// The tabs of the picker above the composer.
@@ -1206,6 +1276,39 @@ pub enum Action {
     /// Opens settings, or closes them when they are already showing.
     ToggleSettings,
     OpenChat(ChatId),
+    /// Starts a 1:1 voice call with the chat.
+    StartCall(ChatId),
+    /// Starts a 1:1 video call with the chat.
+    StartVideoCall(ChatId),
+    /// Answers the ringing incoming call.
+    AnswerCall,
+    /// Declines the ringing incoming call.
+    DeclineCall,
+    /// Ends the current call.
+    HangupCall,
+    /// Mutes or unmutes the current call's microphone.
+    SetCallMuted(bool),
+    /// Turns the current call's camera on or off.
+    SetCallCamera(bool),
+    /// Rebinds the current call's microphone; `None` is the system default.
+    SetCallMicrophone(Option<String>),
+    /// Rebinds the current call's speaker; `None` is the system default.
+    SetCallSpeaker(Option<String>),
+    /// Switches the current call's camera node.
+    SetCallCameraDevice(Option<String>),
+    /// Opens the call log.
+    ShowCalls,
+    /// Calls a chat again from the log: voice or video.
+    CallBack {
+        chat: ChatId,
+        video: bool,
+    },
+    /// Opens the chat a logged call belongs to.
+    OpenCallChat(ChatId),
+    /// Steps away from the full call screen without ending the call.
+    LeaveCallSurface,
+    /// Opens the full call screen again.
+    ReturnToCall,
     /// Creates and opens a chat for a contact without one.
     StartChat {
         id: ChatId,

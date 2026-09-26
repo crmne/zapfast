@@ -410,6 +410,14 @@ pub struct Settings {
     pub chat_lock_code_hash: Option<String>,
     /// The one-time locked-chat code hint has been opened.
     pub chat_lock_hint_dismissed: bool,
+    /// Microphone the next 1:1 call records from, as a PipeWire node name.
+    /// `None` follows the system default. Recorded like every other preference, and only ever
+    /// applied to ZapFast's own call: the system's default device is never changed.
+    pub call_microphone: Option<String>,
+    /// Speaker the next 1:1 call plays through, as a PipeWire node name.
+    pub call_speaker: Option<String>,
+    /// Camera the next video call captures from, as a V4L2 capture node.
+    pub call_camera: Option<String>,
 }
 
 impl Default for Settings {
@@ -454,6 +462,9 @@ impl Default for Settings {
             chat_lock_code: None,
             chat_lock_code_hash: None,
             chat_lock_hint_dismissed: false,
+            call_microphone: None,
+            call_speaker: None,
+            call_camera: None,
         }
     }
 }
@@ -628,6 +639,30 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_devices_a_call_used_come_back_after_a_restart() {
+        let picked = Settings {
+            call_microphone: Some("alsa_input.usb-Generic_USB_Headset-00.analog-mono".into()),
+            call_speaker: Some("bluez_output.AC_12_34_56.1".into()),
+            call_camera: Some("/dev/video2".into()),
+            ..Settings::default()
+        };
+        let text = serde_json::to_string(&picked).expect("settings serialize");
+        let loaded: Settings = serde_json::from_str(&text).expect("settings load");
+        assert_eq!(loaded.call_microphone, picked.call_microphone);
+        assert_eq!(loaded.call_speaker, picked.call_speaker);
+        assert_eq!(loaded.call_camera, picked.call_camera);
+    }
+
+    #[test]
+    fn a_call_with_no_device_picked_follows_the_system_default() {
+        // A file written before calls could choose devices loads with every choice unset.
+        let loaded: Settings = serde_json::from_str("{}").expect("settings load");
+        assert_eq!(loaded.call_microphone, None);
+        assert_eq!(loaded.call_speaker, None);
+        assert_eq!(loaded.call_camera, None);
+    }
 
     #[test]
     fn earlier_bundled_sound_names_still_load() {

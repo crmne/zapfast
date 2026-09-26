@@ -13,8 +13,8 @@ use crate::animation;
 use crate::app::{App, Conversation, JumpHighlight, KeyScroll, RowHeight};
 use crate::markup;
 use crate::model::{
-    Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
-    PickerTab, Scroll,
+    Action, CallRecord, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState,
+    Message, PickerTab, Scroll,
 };
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
@@ -24,6 +24,9 @@ use super::widgets;
 
 /// Group-message avatar size.
 const SENDER_AVATAR: f32 = 28.0;
+/// How much room one call entry takes in the transcript, spacing included. Fixed, so an entry far
+/// from the viewport can be skipped by exactly the space it would have taken.
+const CALL_ENTRY_HEIGHT: f32 = 30.0;
 const BODY_SIZE: f32 = 14.5;
 /// Extra space above the first message of a run from one side.
 const RUN_GAP: f32 = 5.0;
@@ -120,7 +123,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 ui.set_min_height(HEADER_ROW);
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
-                let right_controls = 72.0;
+                // The call buttons reflect the backend's own state: this chat's call is the one
+                // the worker owns, and nothing about it is inferred here.
+                let call_here = app.call.as_ref().is_some_and(|call| call.chat == chat.id);
+                let right_controls = 108.0;
                 // Treat the avatar, name, and subtitle as one info button.
                 let block = ui
                     .scope(|ui| {
@@ -305,6 +311,63 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 app.actions.push(Action::CloseChat);
                             }
                         });
+                    // A call is one to one, and it needs the platform's media backend: a group, a
+                    // channel or a broadcast list has no phone or camera button here, and neither
+                    // has any chat on a platform whose backend cannot open a microphone, where a
+                    // call would fail on its first frame. The worker refuses those JIDs whatever
+                    // this header offers, so nothing can be started behind the interface's back
+                    // either. A live call still offers its hang-up button, which can only exist
+                    // where the backend does.
+                    let calls_here = crate::calls::capabilities();
+                    if chat.kind == crate::model::ChatKind::Direct
+                        && (calls_here.voice || call_here)
+                    {
+                        // While this chat is the one on a call, the phone button ends it;
+                        // otherwise the pair starts a voice or a video call. A call in another
+                        // chat is refused by the worker rather than hidden here.
+                        let (call_tooltip, call_icon, call_fill, call) = if call_here {
+                            (
+                                crate::i18n::gettext(app.locale, "Hang up").into_owned(),
+                                Icon::Phone,
+                                palette.danger,
+                                Action::HangupCall,
+                            )
+                        } else {
+                            (
+                                crate::i18n::gettext(app.locale, "Voice call").into_owned(),
+                                Icon::Phone,
+                                palette.secondary,
+                                Action::StartCall(chat.id.clone()),
+                            )
+                        };
+                        if theme::icon_button(
+                            ui,
+                            call_icon,
+                            18.0,
+                            call_fill,
+                            palette.text,
+                            &call_tooltip,
+                        )
+                        .clicked()
+                        {
+                            app.actions.push(call);
+                        }
+                        if !call_here && calls_here.video {
+                            let tip = crate::i18n::gettext(app.locale, "Video call");
+                            if theme::icon_button(
+                                ui,
+                                Icon::Video,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                &tip,
+                            )
+                            .clicked()
+                            {
+                                app.actions.push(Action::StartVideoCall(chat.id.clone()));
+                            }
+                        }
+                    }
                     let searching = app.chat_search_open;
                     let tip = format!(
                         "{} ({})",
@@ -1630,6 +1693,57 @@ struct View<'a> {
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
 }
 
+/// One call entry in the transcript, drawn where it falls among the messages.
+///
+/// A call is not a bubble and does not pretend to be one: it is a line with the icon, what the call
+/// was, and how it ended, centred like the day chips. The full detail (when it started, which way
+/// it went, how long it lasted) is on the tooltip rather than in a dialog of its own.
+fn call_entry(app: &App, ui: &mut egui::Ui, palette: &Palette, record: &CallRecord) {
+    let locale = app.locale;
+    let missed = record.status.missed();
+    let tint = if missed {
+        palette.danger
+    } else {
+        palette.accent
+    };
+    let line = format!(
+        "{} · {}",
+        super::calls::direction_and_media(locale, record),
+        super::calls::outcome(locale, record)
+    );
+    let detail = format!(
+        "{}\n{}",
+        line,
+        crate::util::chat_stamp(locale, record.started_at)
+    );
+    ui.add_space(2.0);
+    let response = ui.vertical_centered(|ui| {
+        Frame::new()
+            .fill(palette.surface)
+            .corner_radius(CornerRadius::same(theme::RADIUS))
+            .inner_margin(Margin::symmetric(10, 5))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    theme::icon(
+                        ui,
+                        if record.media == crate::model::CallMedia::Video {
+                            Icon::Video
+                        } else {
+                            Icon::Phone
+                        },
+                        13.0,
+                        tint,
+                    );
+                    ui.add_space(4.0);
+                    theme::text(ui, &line, theme::medium(12.0), palette.secondary);
+                });
+            })
+            .response
+    });
+    response.inner.on_hover_text(detail);
+    ui.add_space(2.0);
+}
+
 /// A row height to assume for a message that has not been laid out yet. Rows
 /// near the viewport are always measured, and a change in the height of a row
 /// above the viewport moves the scroll offset with it, so this only shapes the
@@ -1879,11 +1993,32 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     ui.spacing_mut().item_spacing.y = 3.0;
                     top_of_history(ui, &palette, &conversation, chat, &mut actions);
                     let mut previous: Option<&Message> = None;
+                    // This chat's calls take their place among its messages by time. The list is
+                    // newest first, so it is walked from the end and each call is drawn just before
+                    // the first message that came after it. An entry is one fixed height, which is
+                    // what lets a row far from the viewport be skipped by exactly the space it
+                    // would have taken.
+                    let calls = &conversation.calls;
+                    let mut next_call = calls.len();
                     // Rows within a few viewports of the screen are laid out
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
                     let margin = (viewport.height() * 3.0).max(600.0);
+                    let call_near = |at: f32| {
+                        lay_out_all
+                            || (at + CALL_ENTRY_HEIGHT >= viewport.top() - margin
+                                && at <= viewport.bottom() + margin)
+                    };
                     for message in &conversation.messages {
+                        while next_call > 0 && calls[next_call - 1].started_at <= message.timestamp
+                        {
+                            next_call -= 1;
+                            if call_near(ui.cursor().top()) {
+                                call_entry(app, ui, &palette, &calls[next_call]);
+                            } else {
+                                ui.add_space(CALL_ENTRY_HEIGHT);
+                            }
+                        }
                         let before = ui.cursor().top();
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
@@ -2048,6 +2183,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             },
                         );
                         previous = Some(message);
+                    }
+                    // Calls newer than the last message belong at the end of the transcript.
+                    while next_call > 0 {
+                        next_call -= 1;
+                        if call_near(ui.cursor().top()) {
+                            call_entry(app, ui, &palette, &calls[next_call]);
+                        } else {
+                            ui.add_space(CALL_ENTRY_HEIGHT);
+                        }
                     }
                     if !typing.is_empty() {
                         typing_bubble(ui, &view, &typing);
