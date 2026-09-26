@@ -340,7 +340,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   installed and portable builds register this identity in the current user's registry.
   On Linux and Windows, clicking a notification opens the chat at the message
   it announced. On Linux, reading the chat here or on another device dismisses
-  its outstanding notifications. On macOS, notifications use
+  its outstanding notifications. Linux keeps this link for the 32 most recent
+  notifications: older ones stay on the desktop, but clicking them or reading
+  their chat no longer reaches them. On macOS, notifications use
   the installed ZapFast application's identity without an application chooser;
   unregistered development builds skip notifications if that identity is unavailable.
   Sounds follow Pidgin: **Message sound** plays for every new message, in
