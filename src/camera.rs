@@ -1062,6 +1062,10 @@ mod tests {
 
     /// Opens this machine's real camera and counts frames.
     /// `cargo test --lib -- --ignored --nocapture camera::tests::hardware`
+    ///
+    /// Linux only, because the direct path is: a platform without a capture backend has no source
+    /// to open here at all, which is exactly what the check inside asserts.
+    #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "opens this machine's real camera"]
     fn hardware_reads_frames_from_the_camera() {
