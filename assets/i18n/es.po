@@ -257,7 +257,7 @@ msgstr "Mensaje de voz ({duration}) no enviado"
 msgid "Discard voice message"
 msgstr "Descartar mensaje de voz"
 
-#: src/ui/conversation.rs:1802
+#: src/ui/conversation.rs:1802 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"

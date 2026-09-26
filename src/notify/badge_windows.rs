@@ -2,13 +2,20 @@
 
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{HWND, RPC_E_CHANGED_MODE};
+use crate::i18n::Locale;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RPC_E_CHANGED_MODE, WPARAM};
+use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoUninitialize,
 };
-use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
-use windows::Win32::UI::WindowsAndMessaging::{CreateIcon, DestroyIcon, HICON};
+use windows::Win32::UI::Shell::{
+    DefSubclassProc, ITaskbarList3, RemoveWindowSubclass, SetWindowSubclass, TaskbarList,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateIcon, DestroyIcon, HICON, RegisterWindowMessageW, WM_NCDESTROY,
+};
 use windows::core::PCWSTR;
 
 const ICON_SIZE: usize = 16;
@@ -49,9 +56,35 @@ pub struct Taskbar {
     list: Option<ITaskbarList3>,
     _com: Option<ComGuard>,
     schedule: Schedule,
+    /// Whether the hook for a recreated taskbar button has been installed,
+    /// or failed to be; it is tried once per window.
+    hook_tried: bool,
 }
 
 impl Taskbar {
+    /// Shows `count` on `window`'s taskbar button, watching for Explorer to
+    /// recreate the button so the overlay can be put back. Returns when to try
+    /// again after a failure.
+    pub fn show(
+        &mut self,
+        window: &impl HasWindowHandle,
+        count: u32,
+        locale: Locale,
+    ) -> Option<Instant> {
+        let handle = window.window_handle().ok()?;
+        let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+            return None;
+        };
+        let hwnd = handle.hwnd.get();
+        if !std::mem::replace(&mut self.hook_tried, true) && !install_hook(hwnd) {
+            log::debug!("could not watch for a recreated taskbar button");
+        }
+        if RECREATED.with(|marker| marker.replace(0) == hwnd) {
+            self.reset();
+        }
+        self.update(hwnd, count, locale)
+    }
+
     /// Forgets the applied overlay, as when Explorer recreates the button.
     pub fn reset(&mut self) {
         self.list = None;
@@ -60,12 +93,12 @@ impl Taskbar {
 
     /// Shows `count` on the window's button when it differs from what is shown
     /// and no retry is pending. Returns when to try again after a failure.
-    pub fn update(&mut self, hwnd: isize, count: u32) -> Option<Instant> {
+    pub fn update(&mut self, hwnd: isize, count: u32, locale: Locale) -> Option<Instant> {
         let now = Instant::now();
         if !self.schedule.due(count, now) {
             return None;
         }
-        match self.apply(hwnd, count) {
+        match self.apply(hwnd, count, locale) {
             Ok(()) => {
                 self.schedule.succeeded(count);
                 None
@@ -82,7 +115,7 @@ impl Taskbar {
         }
     }
 
-    fn apply(&mut self, hwnd: isize, count: u32) -> windows::core::Result<()> {
+    fn apply(&mut self, hwnd: isize, count: u32, locale: Locale) -> windows::core::Result<()> {
         let list = match &self.list {
             Some(list) => list,
             None => {
@@ -98,7 +131,7 @@ impl Taskbar {
                 self.list.insert(list)
             }
         };
-        apply_overlay(list, HWND(hwnd as *mut std::ffi::c_void), count)
+        apply_overlay(list, HWND(hwnd as *mut std::ffi::c_void), count, locale)
     }
 }
 
@@ -173,7 +206,12 @@ impl Schedule {
 }
 
 /// Uses the taskbar's overlay API, which also updates pinned and grouped buttons.
-fn apply_overlay(list: &ITaskbarList3, hwnd: HWND, count: u32) -> windows::core::Result<()> {
+fn apply_overlay(
+    list: &ITaskbarList3,
+    hwnd: HWND,
+    count: u32,
+    locale: Locale,
+) -> windows::core::Result<()> {
     if count == 0 {
         // SAFETY: a null icon removes this window's overlay.
         return unsafe { list.SetOverlayIcon(hwnd, HICON::default(), PCWSTR::null()) };
@@ -200,7 +238,7 @@ fn apply_overlay(list: &ITaskbarList3, hwnd: HWND, count: u32) -> windows::core:
             pixels.as_ptr(),
         )?
     };
-    let description: Vec<u16> = description(count)
+    let description: Vec<u16> = description(count, locale)
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
@@ -213,11 +251,63 @@ fn apply_overlay(list: &ITaskbarList3, hwnd: HWND, count: u32) -> windows::core:
 }
 
 /// The accessible text of the overlay.
-fn description(count: u32) -> String {
-    match count {
-        1 => "1 unread message".to_owned(),
-        _ => format!("{count} unread messages"),
+fn description(count: u32, locale: Locale) -> String {
+    crate::i18n::ngettext(locale, "{} unread message", "{} unread messages", count)
+        .replace("{}", &count.to_string())
+}
+
+thread_local! {
+    /// The window whose taskbar button Explorer recreated, set by the
+    /// subclass and taken by the next [`Taskbar::show`].
+    static RECREATED: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
+}
+
+const SUBCLASS_ID: usize = 0x5a46_5442;
+
+fn button_created_message() -> u32 {
+    static MESSAGE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MESSAGE.get_or_init(|| {
+        // SAFETY: RegisterWindowMessageW reads this static null-terminated string.
+        unsafe { RegisterWindowMessageW(windows::core::w!("TaskbarButtonCreated")) }
+    })
+}
+
+fn install_hook(hwnd: isize) -> bool {
+    if button_created_message() == 0 {
+        return false;
     }
+    // SAFETY: this runs on the window thread; the subclass is removed on WM_NCDESTROY.
+    unsafe {
+        SetWindowSubclass(
+            HWND(hwnd as *mut std::ffi::c_void),
+            Some(subclass),
+            SUBCLASS_ID,
+            0,
+        )
+        .as_bool()
+    }
+}
+
+unsafe extern "system" fn subclass(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _subclass_id: usize,
+    _reference_data: usize,
+) -> LRESULT {
+    if message == button_created_message() {
+        RECREATED.with(|marker| marker.set(hwnd.0 as isize));
+        // SAFETY: the live window needs a repaint to reapply its overlay.
+        let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
+    } else if message == WM_NCDESTROY {
+        // SAFETY: this removes our subclass before the window is destroyed.
+        unsafe {
+            let _ = RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS_ID);
+        };
+    }
+    // SAFETY: all messages continue through the window's existing procedure.
+    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
 }
 
 fn label(count: u32) -> Option<String> {
@@ -410,8 +500,8 @@ mod tests {
 
     #[test]
     fn description_agrees_with_the_count() {
-        assert_eq!(description(1), "1 unread message");
-        assert_eq!(description(3), "3 unread messages");
+        assert_eq!(description(1, Locale::English), "1 unread message");
+        assert_eq!(description(3, Locale::English), "3 unread messages");
     }
 
     #[test]

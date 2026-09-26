@@ -282,8 +282,6 @@ fn main() -> eframe::Result<()> {
                         update_receipt: receipt,
                         #[cfg(target_os = "windows")]
                         taskbar: Default::default(),
-                        #[cfg(target_os = "windows")]
-                        taskbar_hook_tried: false,
                         #[cfg(feature = "demo")]
                         shot,
                         #[cfg(feature = "demo")]
@@ -364,10 +362,6 @@ struct Shell {
     /// This window's unread overlay on its taskbar button.
     #[cfg(target_os = "windows")]
     taskbar: zapfast::notify::Taskbar,
-    /// Whether the hook for a recreated taskbar button has been installed,
-    /// or failed to be; it is tried once per window.
-    #[cfg(target_os = "windows")]
-    taskbar_hook_tried: bool,
     #[cfg(feature = "demo")]
     shot: Option<Shot>,
     #[cfg(feature = "demo")]
@@ -456,14 +450,10 @@ impl eframe::App for Shell {
         }
         app.background_frame(ctx);
         #[cfg(target_os = "windows")]
-        if let Some(window) = frame.winit_window() {
-            update_windows_taskbar_badge(
-                app,
-                window,
-                ctx,
-                &mut self.taskbar,
-                &mut self.taskbar_hook_tried,
-            );
+        if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count())
+            && let Some(at) = self.taskbar.show(window, count, app.locale)
+        {
+            ctx.request_repaint_after(at.saturating_duration_since(std::time::Instant::now()));
         }
         // The chat header is 60 points and zooms; the linking screen keeps
         // AppKit's own 28-point strip.
@@ -515,109 +505,6 @@ impl eframe::App for Shell {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.app.save_state();
     }
-}
-
-#[cfg(target_os = "windows")]
-fn update_windows_taskbar_badge(
-    app: &mut app::App,
-    window: &impl raw_window_handle::HasWindowHandle,
-    ctx: &egui::Context,
-    taskbar: &mut zapfast::notify::Taskbar,
-    hook_tried: &mut bool,
-) {
-    use raw_window_handle::RawWindowHandle;
-
-    let Some(count) = app.taskbar_badge_count() else {
-        return;
-    };
-    let Ok(handle) = window.window_handle() else {
-        return;
-    };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        return;
-    };
-    let hwnd = handle.hwnd.get();
-    if !std::mem::replace(hook_tried, true) && !install_windows_taskbar_hook(hwnd) {
-        log::debug!("could not watch for a recreated taskbar button");
-    }
-    if WINDOWS_TASKBAR_RECREATED.with(|marker| marker.replace(0) == hwnd) {
-        taskbar.reset();
-    }
-    if let Some(at) = taskbar.update(hwnd, count) {
-        ctx.request_repaint_after(at.saturating_duration_since(std::time::Instant::now()));
-    }
-}
-
-#[cfg(target_os = "windows")]
-thread_local! {
-    static WINDOWS_TASKBAR_RECREATED: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(target_os = "windows")]
-const WINDOWS_TASKBAR_SUBCLASS_ID: usize = 0x5a46_5442;
-
-#[cfg(target_os = "windows")]
-fn windows_taskbar_button_created_message() -> u32 {
-    static MESSAGE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *MESSAGE.get_or_init(|| {
-        // SAFETY: RegisterWindowMessageW reads this static null-terminated string.
-        unsafe {
-            windows::Win32::UI::WindowsAndMessaging::RegisterWindowMessageW(windows::core::w!(
-                "TaskbarButtonCreated"
-            ))
-        }
-    })
-}
-
-#[cfg(target_os = "windows")]
-fn install_windows_taskbar_hook(hwnd: isize) -> bool {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::SetWindowSubclass;
-
-    if windows_taskbar_button_created_message() == 0 {
-        return false;
-    }
-    // SAFETY: this runs on the window thread; the subclass is removed on WM_NCDESTROY.
-    unsafe {
-        SetWindowSubclass(
-            HWND(hwnd as *mut std::ffi::c_void),
-            Some(windows_taskbar_subclass),
-            WINDOWS_TASKBAR_SUBCLASS_ID,
-            0,
-        )
-        .as_bool()
-    }
-}
-
-#[cfg(target_os = "windows")]
-unsafe extern "system" fn windows_taskbar_subclass(
-    hwnd: windows::Win32::Foundation::HWND,
-    message: u32,
-    wparam: windows::Win32::Foundation::WPARAM,
-    lparam: windows::Win32::Foundation::LPARAM,
-    _subclass_id: usize,
-    _reference_data: usize,
-) -> windows::Win32::Foundation::LRESULT {
-    use windows::Win32::Graphics::Gdi::InvalidateRect;
-    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
-    use windows::Win32::UI::WindowsAndMessaging::WM_NCDESTROY;
-
-    if message == windows_taskbar_button_created_message() {
-        WINDOWS_TASKBAR_RECREATED.with(|marker| marker.set(hwnd.0 as isize));
-        // SAFETY: the live window needs a repaint to reapply its overlay.
-        let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
-    } else if message == WM_NCDESTROY {
-        // SAFETY: this removes our subclass before the window is destroyed.
-        unsafe {
-            let _ = RemoveWindowSubclass(
-                hwnd,
-                Some(windows_taskbar_subclass),
-                WINDOWS_TASKBAR_SUBCLASS_ID,
-            );
-        };
-    }
-    // SAFETY: all messages continue through the window's existing procedure.
-    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
 }
 
 fn app_icon() -> egui::IconData {
