@@ -1,7 +1,9 @@
 //! Emoji drawn by DirectWrite and Direct2D with the system's Segoe UI Emoji.
 //!
 //! Segoe UI Emoji keeps its colours in COLR layers, which Direct2D draws when
-//! it is asked to use colour fonts.
+//! it is asked to use colour fonts. On Windows 11 it builds family sequences
+//! from several overlapping part glyphs that together take the width of one
+//! emoji.
 
 use std::cell::Cell;
 use std::ffi::c_void;
@@ -19,7 +21,8 @@ use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_WEIGHT_NORMAL, DWRITE_GLYPH_RUN, DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_LINE_METRICS,
     DWRITE_MATRIX, DWRITE_MEASURING_MODE, DWRITE_STRIKETHROUGH, DWRITE_UNDERLINE,
     DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory, IDWriteFactory, IDWriteFontFace2,
-    IDWriteInlineObject, IDWritePixelSnapping_Impl, IDWriteTextRenderer, IDWriteTextRenderer_Impl,
+    IDWriteInlineObject, IDWritePixelSnapping_Impl, IDWriteTextLayout, IDWriteTextRenderer,
+    IDWriteTextRenderer_Impl,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Imaging::{
@@ -47,6 +50,8 @@ struct Factories {
     d2d: ID2D1Factory,
     write: IDWriteFactory,
     wic: IWICImagingFactory,
+    /// How far one emoji, the grinning face, advances.
+    emoji_advance: f32,
 }
 
 thread_local! {
@@ -56,9 +61,8 @@ thread_local! {
 
 /// Draws `cluster` as one colour picture on a fixed canvas and returns its
 /// width, height, and premultiplied RGBA rows. Returns `None` when
-/// DirectWrite does not join the cluster into one glyph that advances or
-/// draws it with a font without colour glyphs. Zero-advance glyphs are layers
-/// under it. Also `None` for subdivision flags: Segoe UI Emoji has none and
+/// DirectWrite does not draw the cluster as one picture (see [`joined`]) or
+/// draws it with a font without colour glyphs. Also `None` for subdivision flags: Segoe UI Emoji has none and
 /// draws their tag characters as nothing over a plain black flag.
 pub(super) fn render(cluster: &str) -> Option<(u32, u32, Vec<u8>)> {
     if cluster
@@ -77,20 +81,26 @@ fn factories() -> Result<Factories> {
         // it; a new one is single-threaded, like the one winit's OLE drag and
         // drop sets up.
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let write: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+        let text: Vec<u16> = "\u{1F600}".encode_utf16().collect();
+        let (_, counter) = laid_out(&write, &text)?;
         Ok(Factories {
             d2d: D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?,
-            write: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?,
+            write,
             wic: CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?,
+            emoji_advance: counter.advance.get(),
         })
     }
 }
 
-fn draw(factories: &Factories, cluster: &str) -> Result<Option<(u32, u32, Vec<u8>)>> {
-    let text: Vec<u16> = cluster.encode_utf16().collect();
-    // SAFETY: every pointer passed points to a live local, and the locked
-    // bitmap memory is read only while `lock` is held, within its size.
+/// Lays `text` out in Segoe UI Emoji and counts what the layout draws.
+fn laid_out(
+    write: &IDWriteFactory,
+    text: &[u16],
+) -> Result<(IDWriteTextLayout, ComObject<Counter>)> {
+    // SAFETY: every pointer passed points to a live local.
     unsafe {
-        let format = factories.write.CreateTextFormat(
+        let format = write.CreateTextFormat(
             w!("Segoe UI Emoji"),
             None,
             DWRITE_FONT_WEIGHT_NORMAL,
@@ -100,15 +110,40 @@ fn draw(factories: &Factories, cluster: &str) -> Result<Option<(u32, u32, Vec<u8
             w!("en-us"),
         )?;
         format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
-        let layout = factories
-            .write
-            .CreateTextLayout(&text, &format, SIZE * 8.0, SIZE * 8.0)?;
+        let layout = write.CreateTextLayout(text, &format, SIZE * 8.0, SIZE * 8.0)?;
         let counter = ComObject::new(Counter::default());
         let renderer: IDWriteTextRenderer = counter.to_interface();
         layout.Draw(None, &renderer, 0.0, 0.0)?;
-        if counter.glyphs.get() != 1 || counter.monochrome.get() {
-            return Ok(None);
-        }
+        Ok((layout, counter))
+    }
+}
+
+/// Whether the glyphs DirectWrite drew form one picture: exactly one glyph
+/// that advances, with any zero-advance glyphs as layers under it, or, for a
+/// sequence joined with U+200D, parts that together advance no further than
+/// one emoji. Unjoined parts each take a whole emoji's width, and a flag
+/// Segoe UI Emoji lacks shows as two letters, which has no U+200D.
+fn joined(advancing: u32, advance: f32, zwj: bool, emoji_advance: f32) -> bool {
+    advancing == 1 || (zwj && advancing > 1 && advance <= emoji_advance * 1.01)
+}
+
+fn draw(factories: &Factories, cluster: &str) -> Result<Option<(u32, u32, Vec<u8>)>> {
+    let text: Vec<u16> = cluster.encode_utf16().collect();
+    let (layout, counter) = laid_out(&factories.write, &text)?;
+    let zwj = cluster.contains('\u{200D}');
+    if counter.monochrome.get()
+        || !joined(
+            counter.glyphs.get(),
+            counter.advance.get(),
+            zwj,
+            factories.emoji_advance,
+        )
+    {
+        return Ok(None);
+    }
+    // SAFETY: every pointer passed points to a live local, and the locked
+    // bitmap memory is read only while `lock` is held, within its size.
+    unsafe {
         let mut lines = [DWRITE_LINE_METRICS::default()];
         let mut count = 0;
         layout.GetLineMetrics(Some(&mut lines), &mut count)?;
@@ -185,13 +220,14 @@ fn draw(factories: &Factories, cluster: &str) -> Result<Option<(u32, u32, Vec<u8
     }
 }
 
-/// Counts the glyphs a layout draws that advance, and notes a font without
-/// colour glyphs, which DirectWrite substitutes for a character Segoe UI
-/// Emoji lacks.
+/// Counts the glyphs a layout draws that advance and how far they advance,
+/// and notes a font without colour glyphs, which DirectWrite substitutes for
+/// a character Segoe UI Emoji lacks.
 #[implement(IDWriteTextRenderer)]
 #[derive(Default)]
 struct Counter {
     glyphs: Cell<u32>,
+    advance: Cell<f32>,
     monochrome: Cell<bool>,
 }
 
@@ -210,15 +246,19 @@ impl IDWriteTextRenderer_Impl for Counter_Impl {
         let Some(run) = (unsafe { run.as_ref() }) else {
             return Ok(());
         };
-        let advancing = if run.glyphAdvances.is_null() {
-            run.glyphCount
+        let (advancing, advance) = if run.glyphAdvances.is_null() {
+            (run.glyphCount, f32::INFINITY)
         } else {
             // SAFETY: DirectWrite passes one advance for each glyph of the run.
             let advances =
                 unsafe { std::slice::from_raw_parts(run.glyphAdvances, run.glyphCount as usize) };
-            advances.iter().filter(|advance| **advance != 0.0).count() as u32
+            (
+                advances.iter().filter(|advance| **advance != 0.0).count() as u32,
+                advances.iter().sum(),
+            )
         };
         self.glyphs.set(self.glyphs.get() + advancing);
+        self.advance.set(self.advance.get() + advance);
         let colour = (*run.fontFace)
             .as_ref()
             .and_then(|face| face.cast::<IDWriteFontFace2>().ok())
@@ -289,5 +329,26 @@ impl IDWritePixelSnapping_Impl for Counter_Impl {
 
     fn GetPixelsPerDip(&self, _context: *const c_void) -> Result<f32> {
         Ok(1.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::joined;
+
+    /// Advances Segoe UI Emoji reported on Windows Server 2025 at 144 pixels.
+    const EMOJI: f32 = 197.71875;
+
+    #[test]
+    fn a_family_built_from_parts_is_one_picture() {
+        assert!(joined(2, 98.78906 + 81.63281, true, EMOJI));
+        assert!(joined(1, EMOJI, true, EMOJI));
+    }
+
+    #[test]
+    fn side_by_side_parts_are_not_one_picture() {
+        assert!(!joined(2, EMOJI * 2.0, true, EMOJI));
+        assert!(!joined(2, 79.171875 + 60.046875, false, EMOJI));
+        assert!(!joined(0, 0.0, false, EMOJI));
     }
 }

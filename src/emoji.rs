@@ -87,7 +87,7 @@ fn native_available() -> bool {
 }
 
 /// A sequence as the system emoji font draws it, when the system joins it
-/// into one glyph that advances, framed like the bundled font's bitmaps.
+/// into one picture, framed like the bundled font's bitmaps.
 #[cfg(any(target_os = "macos", windows))]
 fn native(chars: &[char]) -> Option<ColorImage> {
     framed(&canvas(chars)?, cell()?)
