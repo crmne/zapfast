@@ -9,7 +9,9 @@ under a second and uses about 200 MB of idle RAM, compared with 1.13 GB for
 WhatsApp Web and its Chromium processes. [See the measurements](https://zapfast.rocks/benchmarks/).
 
 **Want Spotify just as fast and native?** [Spotifast](https://spotifast.rocks)
-is ZapFast's sibling: the same native interface, for Spotify.
+is ZapFast's sibling: the same native interface, for Spotify. Both are built
+on [fastframe](https://github.com/crmne/fastframe), the shared foundation for
+native Rust apps built with egui.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">

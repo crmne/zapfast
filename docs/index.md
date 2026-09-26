@@ -47,7 +47,7 @@ features:
     link_text: Read the source
 ---
 
-<p class="sibling"><strong>Want Spotify just as fast and native?</strong> <a href="https://spotifast.rocks">Spotifast</a> is ZapFast's sibling: the same native interface, for Spotify.</p>
+<p class="sibling"><strong>Want Spotify just as fast and native?</strong> <a href="https://spotifast.rocks">Spotifast</a> is ZapFast's sibling: the same native interface, for Spotify. Both are built on <a href="https://github.com/crmne/fastframe">fastframe</a>, the shared foundation for native Rust apps built with egui.</p>
 
 <style>
   .sibling {
