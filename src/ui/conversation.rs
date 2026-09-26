@@ -45,6 +45,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if theme::macos_chrome(ui.ctx()) {
         super::banner(app, ui);
     }
+    pin_banner(app, ui, &chat);
     composer(app, ui, &chat);
     messages(app, ui, &chat);
     // Over the messages, which scroll under the header.
@@ -55,6 +56,74 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         header.right(),
         header.bottom(),
     );
+}
+
+/// Height of one pinned-message row. A pin is one plain line under the header,
+/// so the banner adds a row per pin instead of wrapping or clipping a bubble.
+const PIN_ROW_HEIGHT: f32 = 30.0;
+/// Gap between the banner edge and the pin icon, and the icon's own box.
+const PIN_ROW_INSET: f32 = 12.0;
+const PIN_ICON: f32 = 16.0;
+
+/// The pinned row a point on the banner belongs to. Rows are one line each,
+/// stacked from the top, so a click answers with the band under the pointer.
+fn pin_banner_row(bar: Rect, rows: usize, pos: egui::Pos2) -> Option<usize> {
+    if rows == 0 || !bar.contains(pos) {
+        return None;
+    }
+    let index = ((pos.y - bar.top()) / PIN_ROW_HEIGHT).floor();
+    (index >= 0.0 && (index as usize) < rows).then_some(index as usize)
+}
+
+/// Pinned messages under the chat header: plain text, one line each, with the
+/// message's own words cut off with an ellipsis when they do not fit.
+fn pin_banner(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+    let rows: Vec<crate::archive::Pinned> =
+        app.chat_pins.get(&chat.id).cloned().unwrap_or_default();
+    if rows.is_empty() {
+        return;
+    }
+    let palette = app.palette;
+    let height = PIN_ROW_HEIGHT * rows.len() as f32;
+    let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    ui.painter().rect_filled(bar, 0.0, palette.panel);
+    let icon_left = bar.left() + PIN_ROW_INSET;
+    let text_left = icon_left + PIN_ICON + 8.0;
+    let text_width = (bar.right() - PIN_ROW_INSET - text_left).max(1.0);
+    for (index, row) in rows.iter().enumerate() {
+        let center_y = bar.top() + PIN_ROW_HEIGHT * (index as f32 + 0.5);
+        let icon = Rect::from_center_size(
+            pos2(icon_left + PIN_ICON / 2.0, center_y),
+            Vec2::splat(PIN_ICON),
+        );
+        theme::paint_icon(ui, Icon::Pin, icon, 14.0, palette.accent);
+        let label = widgets::line(
+            ui,
+            &row.text,
+            theme::regular(13.0),
+            palette.text,
+            text_width,
+            1,
+        );
+        label.paint(
+            ui,
+            pos2(text_left, center_y - label.size().y / 2.0),
+            palette.text,
+        );
+    }
+    let response = ui
+        .interact(bar, ui.id().with("pin-banner"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+        && let Some(index) = pin_banner_row(bar, rows.len(), pos)
+    {
+        let row = &rows[index];
+        app.actions.push(Action::OpenMessage {
+            chat: row.chat.clone(),
+            message: row.id.clone(),
+        });
+    }
 }
 
 fn empty(app: &mut App, ui: &mut egui::Ui) {
@@ -1611,6 +1680,8 @@ struct View<'a> {
     anchor: Option<&'a str>,
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
+    /// Ids of this chat's pinned messages, for the menu and the bubble mark.
+    pins: Option<&'a HashSet<String>>,
     reaction: Option<&'a str>,
     /// The reaction picker was opened from the message's context menu.
     reaction_menu: bool,
@@ -1714,6 +1785,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             app.scroll_anchor.as_deref()
         },
         open_menu: app.open_message_menu.as_deref(),
+        pins: app.pins.get(&chat.id),
         reaction: app
             .reaction_target
             .as_ref()
@@ -3068,7 +3140,8 @@ fn bubble_frame(
             // no more than the cap. Text spans that width and stays left-aligned.
             // Bubbles without cards use the natural text width.
             let cap = ((max_width - 20.0).min(ui.available_width())).max(0.0);
-            let reserve = footer_width(ui, message);
+            let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
+            let reserve = footer_width(ui, message, pinned);
             let settled = settled_width(ui, view, message, cap);
             let slot = match settled {
                 Some(width) => {
@@ -3079,7 +3152,7 @@ fn bubble_frame(
                 }
                 None => content(ui, view, message, cap, reserve, actions),
             };
-            footer(ui, &palette, message, slot);
+            footer(ui, &palette, message, slot, pinned);
             if matches!(message.content, Content::Poll { .. }) {
                 super::polls::results_button(
                     ui,
@@ -3310,7 +3383,8 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
         .map(|row| row.row.size.x)
         .fold(0.0, f32::max);
     let last = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
-    let reserve = footer_width(ui, message);
+    let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
+    let reserve = footer_width(ui, message, pinned);
     Some(if last + 8.0 + reserve <= cap {
         widest.max(last + 8.0 + reserve)
     } else {
@@ -3429,18 +3503,30 @@ fn mirrored_row(
     });
 }
 
-/// Width of the message footer.
-fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
-    let font = theme::regular(11.0);
-    let time = ui
-        .painter()
+/// Painted size of the pin mark in the bubble footer.
+const FOOTER_MARK: f32 = 13.0;
+/// Gap between the clock and the mark.
+const FOOTER_MARK_GAP: f32 = 8.0;
+/// Room the mark keeps, so showing it does not change the bubble's width.
+const FOOTER_MARK_SLOT: f32 = FOOTER_MARK + FOOTER_MARK_GAP;
+
+/// The clock's own width at the footer's size: the floor a footer starts from,
+/// and the one part of it that depends on the reader's clock format.
+fn clock_width(ui: &egui::Ui, message: &Message) -> f32 {
+    ui.painter()
         .layout_no_wrap(
             crate::util::clock(message.timestamp),
-            font.clone(),
+            theme::regular(11.0),
             Color32::WHITE,
         )
         .size()
-        .x;
+        .x
+}
+
+/// Width of the message footer.
+fn footer_width(ui: &egui::Ui, message: &Message, pinned: bool) -> f32 {
+    let font = theme::regular(11.0);
+    let time = clock_width(ui, message);
     let edited = if message.edited {
         ui.painter()
             .layout_no_wrap("edited".to_owned(), font, Color32::WHITE)
@@ -3459,7 +3545,8 @@ fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
     } else {
         0.0
     };
-    time + edited + not_sent + if message.from_me { 19.0 } else { 0.0 }
+    let pin = if pinned { FOOTER_MARK_SLOT } else { 0.0 };
+    time + edited + not_sent + if message.from_me { 19.0 } else { 0.0 } + pin
 }
 
 fn not_sent(message: &Message) -> bool {
@@ -3467,7 +3554,13 @@ fn not_sent(message: &Message) -> bool {
 }
 
 /// Paints the time and ticks at the bubble's right edge without widening it.
-fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<Rect>) {
+fn footer(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    message: &Message,
+    slot: Option<Rect>,
+    pinned: bool,
+) {
     let font = theme::regular(11.0);
     let time = ui.painter().layout_no_wrap(
         crate::util::clock(message.timestamp),
@@ -3510,6 +3603,21 @@ fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<
         time,
         palette.secondary,
     );
+    if pinned {
+        // Left of the clock. The footer already reserved the slot, so showing
+        // the mark never changes the bubble's width.
+        x -= FOOTER_MARK_SLOT;
+        theme::paint_icon(
+            ui,
+            Icon::Pin,
+            Rect::from_center_size(
+                pos2(x + FOOTER_MARK / 2.0, rect.center().y),
+                Vec2::splat(FOOTER_MARK),
+            ),
+            FOOTER_MARK,
+            palette.secondary,
+        );
+    }
     if let Some(edited) = edited {
         x -= edited.size().x + 4.0;
         ui.painter().galley(
@@ -3717,6 +3825,25 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
     {
         actions.push(Action::Reply(message.id.clone()));
+    }
+    let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
+    if !matches!(message.content, Content::Revoked)
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Pin),
+            if pinned {
+                "Unpin message"
+            } else {
+                "Pin message"
+            },
+        )
+    {
+        actions.push(Action::SetMessagePinned {
+            chat: chat.clone(),
+            message: message.id.clone(),
+            pinned: !pinned,
+        });
     }
     if !matches!(
         message.content,
@@ -6767,6 +6894,79 @@ mod tests {
     }
 
     #[test]
+    fn a_click_on_the_pin_banner_opens_the_row_under_it() {
+        let bar = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 60.0));
+        // One plain line per pin, so the second pin owns the second band.
+        assert_eq!(pin_banner_row(bar, 2, pos2(80.0, 2.0)), Some(0));
+        assert_eq!(pin_banner_row(bar, 2, pos2(10.0, 29.9)), Some(0));
+        assert_eq!(pin_banner_row(bar, 2, pos2(50.0, 30.0)), Some(1));
+        assert_eq!(pin_banner_row(bar, 2, pos2(390.0, 59.9)), Some(1));
+
+        // Outside the banner, in the space a shorter banner left below it, or
+        // with nothing pinned at all, a click opens nothing.
+        assert_eq!(pin_banner_row(bar, 2, pos2(50.0, 60.0)), None);
+        assert_eq!(pin_banner_row(bar, 1, pos2(50.0, 30.0)), None);
+        assert_eq!(pin_banner_row(bar, 0, pos2(50.0, 10.0)), None);
+    }
+
+    #[test]
+    fn the_footer_reserves_the_pin_mark_slot() {
+        let ctx = egui::Context::default();
+        let mut clock = 0.0;
+        let mut plain = 0.0;
+        let mut pinned = 0.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 200.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let message = crate::archive::tests::message("1@s.whatsapp.net", "m1", 0, false);
+                clock = clock_width(ui, &message);
+                plain = footer_width(ui, &message, false);
+                pinned = footer_width(ui, &message, true);
+            },
+        );
+        output.textures_delta.clear();
+        // Measured against the clock the reader's own format produces, not a
+        // number that only holds on a 24-hour one: the same footer is a third
+        // wider where the system shows "12:00 AM".
+        assert!(
+            (plain - clock).abs() < 0.01,
+            "a plain incoming footer is just the clock, {plain} vs {clock}"
+        );
+        assert!(
+            (pinned - clock - FOOTER_MARK_SLOT).abs() < 0.5,
+            "a pin reserves one mark slot, {pinned} vs {clock}"
+        );
+    }
+
+    #[test]
+    fn the_footer_paints_a_pin_mark_when_the_message_is_pinned() {
+        let ctx = egui::Context::default();
+        let palette = Palette::dark();
+        let shapes = |pinned: bool| {
+            let message = crate::archive::tests::message("1@s.whatsapp.net", "m1", 0, false);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 200.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    footer(ui, &palette, &message, None, pinned);
+                },
+            );
+            output.textures_delta.clear();
+            output.shapes.len()
+        };
+        assert_eq!(
+            shapes(true),
+            shapes(false) + 1,
+            "a pinned message paints one extra mark"
+        );
+    }
+
+    #[test]
     fn picture_frames_keep_their_shape_within_the_limit() {
         let landscape = frame_size(&media(Some(1600), Some(1200)), None, 340.0, PICTURE_HEIGHT);
         assert!((landscape.x - 340.0).abs() < 0.01);
@@ -6806,12 +7006,12 @@ mod tests {
         };
         let mut widths = Vec::new();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            widths.push(footer_width(ui, &message));
+            widths.push(footer_width(ui, &message, false));
             message.status = Delivery::Failed;
-            widths.push(footer_width(ui, &message));
+            widths.push(footer_width(ui, &message, false));
             // Only our own messages can fail to send.
             message.from_me = false;
-            widths.push(footer_width(ui, &message) + 19.0);
+            widths.push(footer_width(ui, &message, false) + 19.0);
         });
         output.textures_delta.clear();
         assert!(widths[1] > widths[0] + 30.0, "{widths:?}");

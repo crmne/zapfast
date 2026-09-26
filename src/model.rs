@@ -660,6 +660,19 @@ impl Content {
         }
     }
 
+    /// The message's own words, whole, for the rows that wrap them. A pin
+    /// banner shows one line of this; the pinned list shows all of it.
+    pub fn body(&self) -> String {
+        match self {
+            Self::Text { text, .. } => text.clone(),
+            Self::Image { caption, .. } => with_whole_caption("Photo", caption),
+            Self::Video { caption, gif, .. } => {
+                with_whole_caption(if *gif { "GIF" } else { "Video" }, caption)
+            }
+            other => other.summary(),
+        }
+    }
+
     pub fn summary(&self) -> String {
         match self {
             Self::Text { text, .. } | Self::Interactive { text, .. } => {
@@ -790,6 +803,14 @@ fn video_label(gif: bool, note: bool) -> &'static str {
         "Video message"
     } else {
         "Video"
+    }
+}
+
+/// `label: caption` with the caption whole, for a row that wraps it.
+fn with_whole_caption(label: &str, caption: &Option<String>) -> String {
+    match caption.as_deref().filter(|caption| !caption.is_empty()) {
+        Some(caption) => format!("{label}: {caption}"),
+        None => label.to_owned(),
     }
 }
 
@@ -1461,6 +1482,14 @@ pub enum Action {
     /// Clears a chat's messages here and on the phone, keeping the chat.
     ClearChat(ChatId),
     SetPinned(ChatId, bool),
+    /// Pins or unpins one message for everyone in the chat.
+    SetMessagePinned {
+        chat: ChatId,
+        message: String,
+        pinned: bool,
+    },
+    /// Shows or hides the pinned messages in the left panel.
+    TogglePinned,
     /// Marks a chat as a favorite, or removes the mark, here and on the phone.
     SetFavorite(ChatId, bool),
     ShowDialog(Dialog),

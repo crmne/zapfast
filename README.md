@@ -98,6 +98,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   in their original order, or Escape cancels. A batch goes out one message at
   a time, each starting once the one before it reached WhatsApp, so a picture
   cannot overtake the text that came before it.
+- **Pinned messages.** **Pin message** in a message's menu pins it for
+  everyone in the chat, for the seven days WhatsApp offers. A chat keeps three
+  active pins and a fourth is refused here instead of quietly replacing one. An
+  open chat shows its pins in a line under the header, one per pin, and clicking
+  one opens the message it names; the pinned message also carries a pin mark
+  beside its time. The pin icon above the chat list opens every pinned message,
+  newest first, each row drawn as the bubble it came from.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew,
   Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so

@@ -83,6 +83,21 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         theme::bold(20.0),
                         palette.text,
                     );
+                } else if app.show_pinned {
+                    if theme::icon_button(
+                        ui,
+                        Icon::ArrowLeft,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        "Back to chats",
+                    )
+                    .tab_stop(Stop::Back)
+                    .clicked()
+                    {
+                        app.actions.push(Action::TogglePinned);
+                    }
+                    theme::text(ui, "Pinned messages", theme::bold(20.0), palette.text);
                 } else {
                     let me = app.me.clone().unwrap_or_default();
                     let name = app.me_name.clone().unwrap_or_else(|| "You".to_owned());
@@ -121,6 +136,22 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                     );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if theme::icon_button(
+                        ui,
+                        Icon::Pin,
+                        18.0,
+                        if app.show_pinned {
+                            palette.accent
+                        } else {
+                            palette.secondary
+                        },
+                        palette.text,
+                        "Pinned messages",
+                    )
+                    .clicked()
+                    {
+                        app.actions.push(Action::TogglePinned);
+                    }
                     if theme::icon_button(
                         ui,
                         Icon::Settings,
@@ -237,6 +268,21 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         theme::bold(16.0),
                         palette.text,
                     );
+                } else if app.show_pinned {
+                    if theme::icon_button(
+                        ui,
+                        Icon::ArrowLeft,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        "Back to chats",
+                    )
+                    .tab_stop(Stop::Back)
+                    .clicked()
+                    {
+                        app.actions.push(Action::TogglePinned);
+                    }
+                    theme::text(ui, "Pinned messages", theme::bold(20.0), palette.text);
                 } else {
                     theme::text(
                         ui,
@@ -246,6 +292,22 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if theme::icon_button(
+                        ui,
+                        Icon::Pin,
+                        18.0,
+                        if app.show_pinned {
+                            palette.accent
+                        } else {
+                            palette.secondary
+                        },
+                        palette.text,
+                        "Pinned messages",
+                    )
+                    .clicked()
+                    {
+                        app.actions.push(Action::TogglePinned);
+                    }
                     if theme::icon_button(
                         ui,
                         Icon::SquarePen,
@@ -419,6 +481,121 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     labels::chip_row(app, ui, &palette);
 }
 
+/// The pinned messages, in the place the chat list usually takes. Newest pin
+/// first, each row naming the chat, the moment, and the message.
+fn pinned_list(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let entries: Vec<crate::archive::Pinned> = app.pinned.clone();
+    if entries.is_empty() {
+        widgets::empty_state(
+            ui,
+            &palette,
+            Icon::Pin,
+            "No pinned messages",
+            "Pin a message from its menu to keep it under the chat header.",
+        );
+        return;
+    }
+    egui::ScrollArea::vertical()
+        .id_salt("pinned-messages")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for entry in &entries {
+                pinned_row(app, ui, &palette, entry);
+            }
+        });
+}
+
+/// One pinned message: where it is, when it was pinned, and the message itself
+/// drawn as the bubble it is in the chat. Clicking opens its chat at the
+/// message.
+fn pinned_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette, entry: &crate::archive::Pinned) {
+    let width = ui.available_width();
+    let clock = ui.painter().layout_no_wrap(
+        crate::util::clock(entry.sent_at),
+        theme::regular(11.0),
+        palette.secondary,
+    );
+    // The bubble wraps, so the row is as tall as the message needs. The text
+    // leaves room for the time in the corner, like the chat does.
+    let galley = ui.painter().layout(
+        entry.text.clone(),
+        theme::regular(13.0),
+        palette.text,
+        (width - 32.0 - 24.0 - clock.size().x - 10.0).max(60.0),
+    );
+    let bubble_height = galley.rect.height() + 12.0;
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(width, 26.0 + bubble_height + 10.0), Sense::click());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, 6.0, palette.surface_hover.gamma_multiply(0.5));
+    }
+    let name = app.display_name_or(&entry.chat, None);
+    let when = crate::util::chat_stamp(app.locale, entry.pinned_at);
+    // First line: where the message is, with the moment it was pinned.
+    ui.painter().text(
+        pos2(rect.left() + 16.0, rect.top() + 14.0),
+        egui::Align2::LEFT_CENTER,
+        name,
+        theme::medium(14.0),
+        palette.text,
+    );
+    ui.painter().text(
+        pos2(rect.right() - 16.0, rect.top() + 14.0),
+        egui::Align2::RIGHT_CENTER,
+        when,
+        theme::regular(11.5),
+        palette.secondary,
+    );
+    // The message itself, as the bubble the chat shows: same fill, same side,
+    // with the time in its bottom corner.
+    let bubble_width = (galley.rect.width() + 20.0 + clock.size().x + 6.0).min(width - 32.0);
+    let left = if entry.from_me {
+        rect.right() - 16.0 - bubble_width
+    } else {
+        rect.left() + 16.0
+    };
+    let bubble = Rect::from_min_size(
+        pos2(left, rect.top() + 26.0),
+        vec2(bubble_width, bubble_height),
+    );
+    ui.painter().rect_filled(
+        bubble,
+        10.0,
+        if entry.from_me {
+            palette.bubble_out
+        } else {
+            palette.bubble_in
+        },
+    );
+    ui.painter().galley(
+        pos2(bubble.left() + 10.0, bubble.top() + 6.0),
+        galley,
+        palette.text,
+    );
+    ui.painter().galley(
+        pos2(
+            bubble.right() - 10.0 - clock.size().x,
+            bubble.bottom() - 6.0 - clock.size().y,
+        ),
+        clock,
+        palette.secondary,
+    );
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        app.actions.push(Action::OpenMessage {
+            chat: entry.chat.clone(),
+            message: entry.id.clone(),
+        });
+    }
+}
+
 fn list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     if app.locked_folder_open() {
@@ -429,6 +606,10 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         // Typing the secret code hides every other result: the folder entry
         // is all the search reveals until it is clicked.
         locked_entry(app, ui);
+        return;
+    }
+    if app.show_pinned {
+        pinned_list(app, ui);
         return;
     }
     if !app.search.trim().is_empty() {

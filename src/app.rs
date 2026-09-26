@@ -448,6 +448,14 @@ pub struct App {
     pub pair_phone: String,
     pub sidebar_visible: bool,
     pub show_archived: bool,
+    /// Whether the left panel shows the pinned messages instead of the chats.
+    pub show_pinned: bool,
+    /// Every active pin, newest first, for that panel.
+    pub pinned: Vec<crate::archive::Pinned>,
+    /// Ids of each chat's pinned messages, for its menu and its bubble mark.
+    pub pins: HashMap<ChatId, HashSet<String>>,
+    /// Active pins of each chat, for the line under its header.
+    pub chat_pins: HashMap<ChatId, Vec<crate::archive::Pinned>>,
     /// Chat-list filter; applies to the main list, not to search or the archive.
     pub chat_filter: ChatFilter,
     /// Labels known here, in creation order. Local to this computer.
@@ -891,6 +899,10 @@ impl App {
             pair_phone: String::new(),
             sidebar_visible: true,
             show_archived: false,
+            show_pinned: false,
+            pinned: Vec::new(),
+            pins: HashMap::new(),
+            chat_pins: HashMap::new(),
             chat_filter: ChatFilter::All,
             labels: Vec::new(),
             label_name: String::new(),
@@ -1863,6 +1875,29 @@ impl App {
                     }
                 }
                 Event::ChatUpdated(chat) => self.handle_chat_updated(*chat),
+                Event::Pins { chat, items } => {
+                    self.pins.insert(
+                        chat.clone(),
+                        items.iter().map(|item| item.id.clone()).collect(),
+                    );
+                    self.chat_pins.insert(chat, items);
+                }
+                Event::PinChanged {
+                    chat,
+                    message,
+                    pinned,
+                } => {
+                    let ids = self.pins.entry(chat.clone()).or_default();
+                    if pinned {
+                        ids.insert(message);
+                    } else {
+                        ids.remove(&message);
+                    }
+                    if self.show_pinned {
+                        self.backend.send(Command::LoadPinned);
+                    }
+                }
+                Event::PinnedList(list) => self.pinned = list,
                 Event::Messages {
                     chat,
                     messages,
@@ -2353,6 +2388,9 @@ impl App {
                 self.notifications.clear_all();
                 self.chats.clear();
                 self.conversations.clear();
+                self.pinned.clear();
+                self.pins.clear();
+                self.chat_pins.clear();
                 self.contacts.clear();
                 self.avatars.clear();
                 self.account_privacy = crate::privacy::Snapshot::default();
@@ -4223,6 +4261,36 @@ impl App {
                     };
                 }
                 self.backend.send(Command::SetPinned(chat, pinned));
+            }
+            Action::SetMessagePinned {
+                chat,
+                message,
+                pinned,
+            } => {
+                // WhatsApp keeps three active pins per chat, and the phone
+                // replaces an existing one when a fourth arrives. Refuse the
+                // fourth here, where the count is already known.
+                if pinned
+                    && self
+                        .pins
+                        .get(&chat)
+                        .is_some_and(|ids| ids.len() >= 3 && !ids.contains(&message))
+                {
+                    self.toast("This chat already has three pinned messages");
+                } else {
+                    self.backend.send(Command::SetMessagePinned {
+                        chat,
+                        message,
+                        pinned,
+                    });
+                }
+            }
+            Action::TogglePinned => {
+                self.show_pinned = !self.show_pinned;
+                if self.show_pinned {
+                    self.show_archived = false;
+                    self.backend.send(Command::LoadPinned);
+                }
             }
             Action::SetFavorite(chat, favorite) => {
                 if let Some(known) = self.chat_mut(&chat) {
@@ -7073,6 +7141,54 @@ mod tests {
             &egui::Context::default(),
         );
         assert!(app.chat("3@s.whatsapp.net").unwrap().pinned);
+    }
+
+    #[test]
+    fn a_fourth_pinned_message_is_refused_here() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net".to_owned();
+        app.pins.insert(
+            chat.clone(),
+            ["a".to_owned(), "b".to_owned(), "c".to_owned()]
+                .into_iter()
+                .collect(),
+        );
+        app.apply(
+            Action::SetMessagePinned {
+                chat: chat.clone(),
+                message: "d".into(),
+                pinned: true,
+            },
+            &ctx,
+        );
+        assert!(
+            !matches!(commands.try_recv(), Ok(Command::SetMessagePinned { .. })),
+            "a fourth pin never reaches the phone"
+        );
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message.contains("three pinned messages")),
+            "and the window says why"
+        );
+        app.apply(
+            Action::SetMessagePinned {
+                chat,
+                message: "a".into(),
+                pinned: false,
+            },
+            &ctx,
+        );
+        assert!(
+            matches!(
+                commands.try_recv(),
+                Ok(Command::SetMessagePinned { pinned: false, .. })
+            ),
+            "unpinning always goes through"
+        );
     }
 
     #[test]
