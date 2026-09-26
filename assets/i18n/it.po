@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-26 21:30+0300\n"
+"POT-Creation-Date: 2026-09-26 23:34+0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -1058,7 +1058,7 @@ msgid "Missed"
 msgstr ""
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:660
+#: src/ui/widgets.rs:717
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "Fatto con amore da {name}"

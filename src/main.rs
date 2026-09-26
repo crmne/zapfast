@@ -108,6 +108,10 @@ enum Control {
 
 /// Default log filter, used when `RUST_LOG` is unset.
 ///
+/// `fastframe_fonts` logs, once at startup, which installed face draws each
+/// script Inter lacks, which is what a report of odd Arabic or CJK text
+/// needs first.
+///
 /// `arboard` warns on every clipboard open when a Wayland compositor has no
 /// data-control protocol (GNOME, mutter) and it falls back to X11, which works
 /// there. Quiet that one target so it does not fill the log file, without
@@ -116,7 +120,7 @@ fn default_log_filter(verbose: bool) -> &'static str {
     if verbose {
         "info,zapfast=debug,whatsapp_rust=debug,wacore=debug"
     } else {
-        "warn,zapfast=info,arboard=error"
+        "warn,zapfast=info,fastframe_fonts=info,arboard=error"
     }
 }
 
@@ -628,6 +632,22 @@ mod log_filter_tests {
             filter,
             log::Level::Warn,
             "zapfast::backend::worker"
+        ));
+    }
+
+    /// Every log names the face chosen for each fallback script, without
+    /// asking a reporter to start with `--verbose`.
+    #[test]
+    fn the_default_log_records_the_fallback_fonts() {
+        assert!(matches(
+            default_log_filter(false),
+            log::Level::Info,
+            "fastframe_fonts::system"
+        ));
+        assert!(!matches(
+            default_log_filter(false),
+            log::Level::Debug,
+            "fastframe_fonts::system"
         ));
     }
 
