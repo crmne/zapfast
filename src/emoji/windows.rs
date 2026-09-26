@@ -7,6 +7,7 @@
 
 use std::cell::Cell;
 use std::ffi::c_void;
+use std::mem::ManuallyDrop;
 
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
@@ -55,8 +56,11 @@ struct Factories {
 }
 
 thread_local! {
-    /// COM objects stay on the thread that made them.
-    static FACTORIES: Option<Factories> = factories().ok();
+    /// COM objects stay on the thread that made them. They are never
+    /// released: the main thread's locals are dropped after DirectWrite,
+    /// Direct2D, and WIC have shut down, and releasing them then fails with
+    /// STATUS_INVALID_PARAMETER. Only the interface and warm-up threads draw.
+    static FACTORIES: ManuallyDrop<Option<Factories>> = ManuallyDrop::new(factories().ok());
 }
 
 /// Draws `cluster` as one colour picture on a fixed canvas and returns its
