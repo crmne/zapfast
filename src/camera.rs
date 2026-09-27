@@ -357,6 +357,7 @@ impl Source {
     pub fn open(
         device: &str,
         _budget: (usize, usize),
+        _fps: u32,
         _child: Arc<Mutex<Option<std::process::Child>>>,
     ) -> Result<Self, String> {
         Err(format!(
@@ -1299,6 +1300,7 @@ mod tests {
     /// No camera is needed for this and none could check it: a wrong offset here is a size no
     /// driver ever offered, which is a request the driver quietly clamps and a call that quietly
     /// loses its picture quality, with every hardware test still passing.
+    #[cfg(target_os = "linux")]
     #[test]
     fn an_enumerated_frame_size_is_read_from_the_drivers_own_union() {
         let mut discrete = vec![0_u8; super::v4l2::FRMSIZE_LEN];
@@ -1346,6 +1348,7 @@ mod tests {
     /// camera on hardware that does thirty at 640 by 480, so the size a call asks for cannot be
     /// chosen by area alone. A driver that states no interval at all is taken at its largest size,
     /// because there is nothing to weigh against it.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_size_is_taken_when_the_camera_can_read_it_at_the_calls_cadence() {
         // Thirty frames a second, stated as one frame per thirtieth of a second.
