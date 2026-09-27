@@ -883,6 +883,13 @@ pub enum Page {
     Wallpaper,
 }
 
+/// Which side of a call this account was on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallDirection {
+    Incoming,
+    Outgoing,
+}
+
 /// The tabs of the picker above the composer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickerTab {
@@ -1206,6 +1213,35 @@ pub enum Action {
     /// Opens settings, or closes them when they are already showing.
     ToggleSettings,
     OpenChat(ChatId),
+    /// Starts a 1:1 voice call with the chat.
+    StartCall(ChatId),
+    /// Starts a 1:1 video call with the chat.
+    StartVideoCall(ChatId),
+    /// Answers the ringing incoming call.
+    AnswerCall,
+    /// Declines the ringing incoming call.
+    DeclineCall,
+    /// Ends the current call.
+    HangupCall,
+    /// Mutes or unmutes the current call's microphone.
+    SetCallMuted(bool),
+    /// Turns the current call's camera on or off.
+    SetCallCamera(bool),
+    /// Rebinds the current call's microphone; `None` is the system default.
+    SetCallMicrophone(Option<String>),
+    /// Rebinds the current call's speaker; `None` is the system default.
+    SetCallSpeaker(Option<String>),
+    /// Switches the current call's camera node.
+    SetCallCameraDevice(Option<String>),
+    /// Opens the chat a logged call belongs to.
+    OpenCallChat(ChatId),
+    /// Steps away from the full call screen without ending the call.
+    LeaveCallSurface,
+    /// Opens the full call screen again.
+    ReturnToCall,
+    /// Takes the call surface full screen, or leaves full screen again. The window moves; the call
+    /// does not.
+    ToggleCallFullscreen,
     /// Creates and opens a chat for a contact without one.
     StartChat {
         id: ChatId,
