@@ -1,7 +1,7 @@
 //! The worker's side of a 1:1 call: commands, signaling routing, and media events.
 //!
 //! One call at a time. [`Worker::call`] holds the only one, and every entry point here refuses to
-//! start or accept a second while it exists, so a double click, a second chat's call button, and a
+//! start or accept a second while it exists — a double click, a second chat's call button, and a
 //! second inbound offer all land on the same refusal.
 //!
 //! The state the UI renders is never computed here: it comes from the backend. `<accept>` moves an
@@ -10,18 +10,20 @@
 //! gave. Nothing is inferred from the button that was pressed.
 
 use super::*;
-use crate::calls::{self, Call, CallUpdate};
+use crate::calls::{self, Call, CallUpdate, VideoTick};
 use whatsapp_rust::types::call::IncomingCall;
-use whatsapp_rust::voip::CallEvent;
+use whatsapp_rust::voip::{CallEvent, KeyframeUrgency};
 
 /// The call this worker owns: its state, and the channels the tasks around it feed.
 ///
-/// Dropped the moment the call reaches a terminal phase, which is what releases the media tasks and
-/// the microphone and speaker streams.
+/// Dropped the moment the call reaches a terminal phase, which is what releases the media tasks,
+/// the microphone and speaker streams and the camera thread.
 pub(super) struct CallRuntime {
     pub(super) call: Call,
     /// Media-plane events, and the signal that the media task finished.
     pub(super) events: async_channel::Receiver<CallRuntimeEvent>,
+    /// Video frames for the UI.
+    pub(super) frames: Option<async_channel::Receiver<VideoTick>>,
     /// Whether the media-plane watcher was started for this call's handle.
     watching: bool,
     /// The snapshot the UI was last handed, so the periodic check publishes only real changes.
@@ -39,12 +41,13 @@ pub(super) enum CallRuntimeEvent {
 impl CallRuntime {
     /// A runtime whose media plane is not watched yet: a call that is still ringing has no handle
     /// to watch, and gets one the moment it is placed or answered.
-    pub(super) fn new(call: Call) -> Self {
+    pub(super) fn new(call: Call, frames: Option<async_channel::Receiver<VideoTick>>) -> Self {
         let (_tx, events) = async_channel::bounded(64);
         let last = call.update();
         Self {
             call,
             events,
+            frames,
             watching: false,
             last,
         }
@@ -91,8 +94,8 @@ impl Worker {
     // Command entry points
     // -----------------------------------------------------------------------
 
-    /// Hands the call screen the microphones and speakers it can offer, and keeps them: they are
-    /// how a device that goes away is named by the description the user saw.
+    /// Hands the call screen the microphones, speakers and cameras it can offer, and keeps them:
+    /// they are how a device that goes away is named by the description the user saw.
     pub(super) fn emit_call_devices(&mut self) -> calls::DeviceList {
         let devices = calls::devices();
         self.call_devices = devices.clone();
@@ -127,7 +130,7 @@ impl Worker {
         false
     }
 
-    pub(super) async fn start_call(&mut self, chat: ChatId) {
+    pub(super) async fn start_call(&mut self, chat: ChatId, video: bool) {
         if self.call_busy() {
             return;
         }
@@ -148,18 +151,21 @@ impl Worker {
         // opening a stream that can never deliver a frame.
         let devices = self.emit_call_devices();
         let wanted = self.call_defaults.clone();
-        let resolved = calls::resolve_devices(&devices, wanted.microphone, wanted.speaker);
+        let resolved =
+            calls::resolve_devices(&devices, wanted.microphone, wanted.speaker, wanted.camera);
         match Call::place(
             &client,
             chat.to_string(),
+            video,
             resolved.microphone,
             resolved.speaker,
+            resolved.camera,
         )
         .await
         {
-            Ok(mut call) => {
+            Ok((mut call, frames)) => {
                 call.set_lost_devices(resolved.lost_devices);
-                let mut runtime = CallRuntime::new(call);
+                let mut runtime = CallRuntime::new(call, frames);
                 runtime.watch();
                 let update = runtime.call.update();
                 self.call = Some(runtime);
@@ -183,14 +189,23 @@ impl Worker {
                 // Whatever the user picked while the phone was ringing is what the media binds to,
                 // checked against the machine so one that vanished falls back rather than opening a
                 // stream that can never deliver.
-                let (microphone, speaker) = runtime.call.selections();
-                let resolved = calls::resolve_devices(&calls::devices(), microphone, speaker);
+                let (microphone, speaker, camera) = runtime.call.selections();
+                let resolved =
+                    calls::resolve_devices(&calls::devices(), microphone, speaker, camera);
                 let answered = runtime
                     .call
-                    .answer(&client, resolved.microphone, resolved.speaker)
+                    .answer(
+                        &client,
+                        resolved.microphone,
+                        resolved.speaker,
+                        resolved.camera,
+                    )
                     .await;
                 match answered {
-                    Ok(()) => {
+                    Ok(frames) => {
+                        if frames.is_some() {
+                            runtime.frames = frames;
+                        }
                         runtime.call.set_lost_devices(resolved.lost_devices);
                         runtime.watch();
                         Some(runtime.call.update())
@@ -251,6 +266,37 @@ impl Worker {
         }
     }
 
+    pub(super) async fn set_call_camera(&mut self, on: bool) {
+        let outcome = match self.call.as_mut() {
+            Some(runtime) => {
+                if on && !runtime.call.is_video() {
+                    // A voice call: ask the peer for video and start draining the frames it brings,
+                    // from the camera the settings remember.
+                    let camera = self.call_defaults.camera.clone();
+                    match runtime.call.upgrade_to_video(camera).await {
+                        Ok(frames) => {
+                            if frames.is_some() {
+                                runtime.frames = frames;
+                            }
+                            Ok(runtime.call.update())
+                        }
+                        Err(error) => Err(error),
+                    }
+                } else {
+                    runtime.call.set_camera(on).await
+                }
+            }
+            None => return,
+        };
+        match outcome {
+            Ok(update) => self.emit_call(update),
+            Err(error) => {
+                log::error!("[CALL] the camera could not be toggled: {error}");
+                self.emit(Event::Error(error.to_string()));
+            }
+        }
+    }
+
     pub(super) fn set_call_microphone(&mut self, device: Option<String>) {
         // The picker is also the preference: the next call opens where this one was left.
         self.call_defaults.microphone = device.clone();
@@ -274,6 +320,22 @@ impl Worker {
         }
     }
 
+    pub(super) fn set_call_camera_device(&mut self, device: Option<String>) {
+        self.call_defaults.camera = device.clone();
+        let outcome = self
+            .call
+            .as_mut()
+            .map(|runtime| runtime.call.set_camera_device(device));
+        match outcome {
+            Some(Ok(update)) => self.emit_call(update),
+            Some(Err(error)) => {
+                log::error!("[CALL] the camera could not be switched: {error}");
+                self.emit(Event::Error(error.to_string()));
+            }
+            None => {}
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Backend events
     // -----------------------------------------------------------------------
@@ -283,12 +345,47 @@ impl Worker {
         let update = match self.call.as_mut() {
             Some(runtime) => match event {
                 CallRuntimeEvent::Ended => runtime.call.media_ended(),
-                CallRuntimeEvent::Media(media) => runtime.call.media(&media),
+                CallRuntimeEvent::Media(media) => {
+                    if matches!(media, CallEvent::RelayAllocated)
+                        && runtime.call.is_video()
+                        && let Some(handle) = runtime.call.handle()
+                    {
+                        // A decoder cannot start on a delta frame, so ask for an IDR at once.
+                        handle.request_peer_keyframe(KeyframeUrgency::Immediate);
+                    }
+                    runtime.call.media(&media)
+                }
             },
             None => None,
         };
         if let Some(update) = update {
             self.emit_call(update);
+        }
+    }
+
+    /// One video frame from the current call, straight to the UI.
+    pub(super) fn call_frame(&mut self, tick: VideoTick) {
+        match tick {
+            VideoTick::Local(image) => {
+                self.emit(Event::CallVideo {
+                    local: Some(image),
+                    remote: None,
+                });
+            }
+            VideoTick::Remote(image) => {
+                let first = self
+                    .call
+                    .as_mut()
+                    .is_some_and(|runtime| runtime.call.saw_remote_video());
+                self.emit(Event::CallVideo {
+                    local: None,
+                    remote: Some(image),
+                });
+                if first && let Some(runtime) = self.call.as_ref() {
+                    let update = runtime.call.update();
+                    self.emit(Event::Call(Box::new(update)));
+                }
+            }
         }
     }
 
@@ -327,11 +424,17 @@ impl Worker {
             log::warn!("[CALL] refusing an incoming offer from a chat that is not one to one");
             return;
         }
+        let video = calls::offer_is_video(action);
         // The remembered devices are pre-selected on the prompt, so answering picks up right where
         // the last call left off.
-        let call = Call::ringing(chat, Box::new(incoming.clone()), self.call_defaults.clone());
+        let call = Call::ringing(
+            chat,
+            Box::new(incoming.clone()),
+            video,
+            self.call_defaults.clone(),
+        );
         let update = call.update();
-        self.call = Some(CallRuntime::new(call));
+        self.call = Some(CallRuntime::new(call, None));
         self.emit_call_devices();
         self.emit_call(update);
     }
@@ -357,10 +460,11 @@ impl Worker {
 
     /// Keeps a live call's picture of the machine honest.
     ///
-    /// A device the user picked can disappear mid-call (a Bluetooth headset switching off, a sound
-    /// card taken over by another app) and nothing here ends the call over it. The stream behind it
-    /// is rebound to the system default, and the snapshot carries the reason, so the picker stops
-    /// claiming a device that is not there.
+    /// A device the user picked can disappear mid-call — a Bluetooth headset switching off, a camera
+    /// unplugged, a sound card taken over by another app — and nothing here ends the call over it.
+    /// The stream behind it is rebound to the system default, a camera that stopped is stopped for
+    /// the peer as well, and the snapshot carries the reason, so the picker stops claiming a device
+    /// that is not there.
     ///
     /// The fresh list is also published when it changed, so a device that came or went shows up in
     /// the pickers without anyone pressing anything.
@@ -378,9 +482,9 @@ impl Worker {
         if let Some(runtime) = self.call.as_ref() {
             runtime.call.log_media_stats();
         }
-        // Discovery opens every audio device to name it, so it runs on a blocking thread rather
-        // than on the worker's async loop: a slow device must not hold up message handling or the
-        // call's own events.
+        // Discovery opens every audio device to name it and runs `v4l2-ctl` with a format probe per
+        // camera node, so it runs on a blocking thread rather than on the worker's async loop: a
+        // slow device or a stuck helper must not hold up message handling or the call's own events.
         let devices = tokio::task::spawn_blocking(calls::devices)
             .await
             .unwrap_or_default();
@@ -395,6 +499,11 @@ impl Worker {
         if let Some(runtime) = self.call.as_mut() {
             lost.extend(runtime.call.take_stream_fallbacks());
             lost.extend(runtime.call.verify_devices(&devices).await);
+            if runtime.call.camera_stalled()
+                && let Err(error) = runtime.call.set_camera(false).await
+            {
+                log::warn!("[CALL] the peer was not told the camera stopped: {error}");
+            }
         }
         if !lost.is_empty() {
             // Worded by the call screen, which knows the reader's language; the log says it plainly.
@@ -410,8 +519,8 @@ impl Worker {
                 runtime.call.set_lost_devices(lost);
             }
         }
-        // Compared against the snapshot the UI was handed, so a mute another device set reaches the
-        // screen even though no user pressed anything.
+        // Compared against the snapshot the UI was handed, so a camera that stopped on its own or a
+        // mute another device set reaches the screen even though no user pressed anything.
         let changed = self.call.as_mut().and_then(|runtime| {
             let current = runtime.call.update();
             let changed = current != runtime.last;
@@ -426,9 +535,10 @@ impl Worker {
 
 /// Whether a chat can be called at all.
 ///
-/// The interface only draws the phone button on a one-to-one chat, but the worker is the boundary
-/// rather than the interface: a group, a channel or a broadcast list reaching the 1:1 builder would
-/// be refused by the protocol at best and misbehave at worst, so the JID is checked here as well.
+/// The interface only draws the phone and camera buttons on a one-to-one chat, but the worker is the
+/// boundary rather than the interface: a group, a channel or a broadcast list reaching the 1:1
+/// builder would be refused by the protocol at best and misbehave at worst, so the JID is checked
+/// here as well.
 fn callable_chat(chat: &str) -> bool {
     matches!(
         crate::model::ChatKind::from_id(chat),

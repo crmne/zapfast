@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use egui::{Align, Color32, CornerRadius, Layout, Rect, Sense, Vec2, vec2};
+use egui::{Align, Color32, CornerRadius, Layout, Rect, Sense, TextureOptions, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::calls::{CallOutcome, CallPhase, CallUpdate, PeerAudio, SilenceReason};
@@ -25,6 +25,9 @@ const MINIBAR: &str = "zapfast-call-bar";
 const PADDING: f32 = 26.0;
 /// The main round controls.
 const CONTROL: f32 = 58.0;
+/// How much of the surface the corner preview may take, so a portrait camera stays a preview.
+const PREVIEW_WIDTH_SHARE: f32 = 0.34;
+const PREVIEW_HEIGHT_SHARE: f32 = 0.38;
 
 /// Draws the call surface, if there is one.
 ///
@@ -59,7 +62,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.set_min_size(screen.size());
             egui::Frame::new()
-                .fill(surface_color(&palette))
+                .fill(surface_color(&palette, &call))
                 .show(ui, |ui| {
                     ui.set_min_size(screen.size());
                     let inner = screen.shrink(PADDING);
@@ -74,9 +77,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         });
 }
 
-/// The backdrop: a window colour.
-fn surface_color(palette: &Palette) -> Color32 {
-    if palette.dark {
+/// The backdrop: near-black under a peer's picture, a window colour otherwise.
+fn surface_color(palette: &Palette, call: &CallUpdate) -> Color32 {
+    if call.video && call.remote_video {
+        Color32::from_rgb(8, 10, 12)
+    } else if palette.dark {
         Color32::from_rgb(18, 21, 24)
     } else {
         palette.window
@@ -93,21 +98,88 @@ fn live(
     palette: &Palette,
     area: Rect,
 ) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(area.height() * 0.16);
-        let size = (area.height() * 0.26).clamp(96.0, 168.0);
-        widgets::avatar(ui, palette, peer, &call.chat, size, picture);
-        ui.add_space(18.0);
-        theme::text(ui, peer, theme::bold(26.0), palette.text);
-        ui.add_space(6.0);
-        theme::text(
-            ui,
-            status(app, call),
-            theme::medium(15.0),
-            status_color(call, palette),
+    // The peer's picture fills the surface when there is one; everything else is drawn on top of
+    // it. Both textures are re-uploaded by name, so no handle is kept between frames.
+    if call.video
+        && let Some(image) = app.call_remote_frame.clone()
+    {
+        let at = fit_inside(area, vec2(image.width() as f32, image.height() as f32));
+        let texture = ui.ctx().load_texture(
+            "zapfast-call-remote",
+            image.as_ref().clone(),
+            TextureOptions::LINEAR,
         );
-        under_status(ui, app, call, palette, false);
-    });
+        ui.painter().image(
+            texture.id(),
+            at,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+    // Our own camera sits in the top corner, where a call app puts it, at its own shape: a camera
+    // held upright previews upright rather than being stretched into a landscape box.
+    if call.video
+        && let Some(image) = app.call_local_frame.clone()
+    {
+        let size = fit_inside(
+            Rect::from_min_size(
+                area.min,
+                vec2(
+                    area.width() * PREVIEW_WIDTH_SHARE,
+                    area.height() * PREVIEW_HEIGHT_SHARE,
+                ),
+            ),
+            vec2(image.width() as f32, image.height() as f32),
+        )
+        .size();
+        let at = Rect::from_min_size(pos2(area.right() - size.x, area.top()), size);
+        ui.painter()
+            .rect_filled(at.expand(3.0), CornerRadius::same(12), palette.outline);
+        let texture = ui.ctx().load_texture(
+            "zapfast-call-local",
+            image.as_ref().clone(),
+            TextureOptions::LINEAR,
+        );
+        ui.painter().image(
+            texture.id(),
+            at,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+
+    let has_picture = call.video && call.remote_video;
+    if !has_picture {
+        ui.vertical_centered(|ui| {
+            ui.add_space(area.height() * 0.16);
+            let size = (area.height() * 0.26).clamp(96.0, 168.0);
+            widgets::avatar(ui, palette, peer, &call.chat, size, picture);
+            ui.add_space(18.0);
+            theme::text(ui, peer, theme::bold(26.0), palette.text);
+            ui.add_space(6.0);
+            theme::text(
+                ui,
+                status(app, call),
+                theme::medium(15.0),
+                status_color(call, palette),
+            );
+            under_status(ui, app, call, palette, false);
+        });
+    } else {
+        // The name and the timer ride on top of the picture, which is why they are painted rather
+        // than laid out: the picture owns the whole surface.
+        ui.vertical_centered(|ui| {
+            ui.add_space(6.0);
+            theme::text(ui, peer, theme::bold(17.0), Color32::WHITE);
+            theme::text(
+                ui,
+                status(app, call),
+                theme::medium(13.0),
+                Color32::from_white_alpha(190),
+            );
+            under_status(ui, app, call, palette, true);
+        });
+    }
 
     // Window-level controls: stepping back to the chat, and taking the surface full screen. Neither
     // one ends the call. They come after whatever the surface fills itself with, so they are drawn
@@ -289,7 +361,7 @@ fn status_color(call: &CallUpdate, palette: &Palette) -> Color32 {
     }
 }
 
-/// The lines under the status: what moved beneath it.
+/// The lines under the status: how far along a video call's picture is, and what moved beneath it.
 ///
 /// A device that went away is shown rather than swallowed, so a headset switching off reads as a
 /// reason instead of as a call that quietly started using another microphone.
@@ -300,6 +372,20 @@ fn under_status(
     palette: &Palette,
     on_picture: bool,
 ) {
+    if call.video && call.phase == CallPhase::Active && !call.remote_video {
+        let tint = if on_picture {
+            Color32::from_white_alpha(170)
+        } else {
+            palette.secondary
+        };
+        ui.add_space(2.0);
+        theme::text(
+            ui,
+            gettext(app.locale, "Waiting for video…"),
+            theme::medium(12.5),
+            tint,
+        );
+    }
     if !call.lost_devices.is_empty() {
         let tint = if on_picture {
             Color32::from_rgb(255, 214, 150)
@@ -370,6 +456,7 @@ fn lost_device(app: &App, lost: &crate::calls::LostDevice) -> String {
             locale,
             "Speaker “{name}” is not available; using the system default",
         ),
+        crate::calls::DeviceKind::Camera => gettext(locale, "Camera “{name}” is not available"),
     };
     template.replace("{name}", &lost.name)
 }
@@ -390,7 +477,7 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
     let locale = app.locale;
     let connected = call.phase.is_connected();
     let live = call.phase.is_live();
-    let buttons = 4.0;
+    let buttons = if call.video { 5.0 } else { 4.0 };
     ui.horizontal(|ui| {
         let spacing = 14.0;
         let width = buttons * CONTROL + (buttons - 1.0) * spacing;
@@ -404,7 +491,11 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         };
         let response = control(
             ui,
-            if call.muted { Icon::VolumeX } else { Icon::Mic },
+            if call.muted {
+                Icon::VolumeX
+            } else {
+                Icon::Mic
+            },
             CONTROL,
             if call.muted {
                 palette.danger
@@ -417,6 +508,63 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         );
         if response.clicked() {
             app.actions.push(Action::SetCallMuted(!call.muted));
+        }
+
+        // Camera: starts video on a voice call, and stops sending our picture on a video call.
+        let tip = if !call.video {
+            gettext(locale, "Start video").into_owned()
+        } else if call.camera_on {
+            gettext(locale, "Turn the camera off").into_owned()
+        } else {
+            gettext(locale, "Turn the camera on").into_owned()
+        };
+        let response = control(
+            ui,
+            Icon::Video,
+            CONTROL,
+            if call.camera_on {
+                palette.accent
+            } else {
+                palette.surface_active
+            },
+            if call.camera_on {
+                palette.on_accent
+            } else {
+                palette.text
+            },
+            &tip,
+            connected,
+        );
+        if response.clicked() {
+            app.actions.push(Action::SetCallCamera(!call.camera_on));
+        }
+
+        // Screen sharing has no 1:1 path in the protocol crate. The button is driven by the
+        // capability flag rather than by a literal `false`, so the day the crate grows the path this
+        // becomes a live control and nothing else here changes.
+        if call.video {
+            let supported = crate::calls::screen_share_supported();
+            let tip = if supported {
+                gettext(locale, "Share your screen").into_owned()
+            } else {
+                // Stated plainly rather than hinted at: the pinned whatsapp-rust revision has no
+                // 1:1 screen-share path, and pointing at a virtual camera instead is an honest
+                // workaround rather than a screen-share implementation.
+                gettext(
+                    locale,
+                    "1:1 screen sharing is not available in the whatsapp-rust revision this app uses; an OBS virtual camera can be selected as a camera instead",
+                )
+                .into_owned()
+            };
+            control(
+                ui,
+                Icon::Monitor,
+                CONTROL,
+                palette.surface_active,
+                palette.text,
+                &tip,
+                supported,
+            );
         }
 
         // The speaker button shows and hides the device pickers below it.
@@ -523,10 +671,16 @@ fn devices(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate) {
         .iter()
         .map(|device| (device.id.clone(), device.label.clone()))
         .collect();
+    let cameras: Vec<(String, String)> = app
+        .call_devices
+        .cameras
+        .iter()
+        .map(|device| (device.id.clone(), device.label.clone()))
+        .collect();
     let connected = call.phase.is_connected();
 
     ui.horizontal(|ui| {
-        let width = 384.0;
+        let width = if call.video { 560.0 } else { 384.0 };
         ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
         let mut actions = Vec::new();
         let choices = Picker {
@@ -549,6 +703,18 @@ fn devices(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate) {
             enabled: connected,
         };
         choices.show(ui, &mut actions, Action::SetCallSpeaker);
+        if call.video {
+            let choices = Picker {
+                salt: "call-camera",
+                icon: Icon::Video,
+                title: &gettext(locale, "Camera"),
+                default_label: &default_label,
+                current: call.camera.as_deref(),
+                devices: &cameras,
+                enabled: connected,
+            };
+            choices.show(ui, &mut actions, Action::SetCallCameraDevice);
+        }
         app.actions.extend(actions);
     });
 }
@@ -644,7 +810,11 @@ fn ringing(
         ui.add_space(6.0);
         theme::text(
             ui,
-            gettext(locale, "Incoming voice call"),
+            if call.video {
+                gettext(locale, "Incoming video call")
+            } else {
+                gettext(locale, "Incoming voice call")
+            },
             theme::medium(15.0),
             palette.secondary,
         );
@@ -683,4 +853,13 @@ fn ringing(
             }
         });
     });
+}
+
+/// The largest rect of `size`'s aspect ratio that fits inside `area`.
+fn fit_inside(area: Rect, size: Vec2) -> Rect {
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return area;
+    }
+    let scale = (area.width() / size.x).min(area.height() / size.y);
+    Rect::from_center_size(area.center(), Vec2::new(size.x * scale, size.y * scale))
 }

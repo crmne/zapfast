@@ -416,6 +416,8 @@ pub struct Settings {
     pub call_microphone: Option<String>,
     /// Speaker the next 1:1 call plays through, as a PipeWire node name.
     pub call_speaker: Option<String>,
+    /// Camera the next video call captures from, as a V4L2 capture node.
+    pub call_camera: Option<String>,
 }
 
 impl Default for Settings {
@@ -462,6 +464,7 @@ impl Default for Settings {
             chat_lock_hint_dismissed: false,
             call_microphone: None,
             call_speaker: None,
+            call_camera: None,
         }
     }
 }
@@ -642,12 +645,14 @@ mod tests {
         let picked = Settings {
             call_microphone: Some("alsa_input.usb-Generic_USB_Headset-00.analog-mono".into()),
             call_speaker: Some("bluez_output.AC_12_34_56.1".into()),
+            call_camera: Some("/dev/video2".into()),
             ..Settings::default()
         };
         let text = serde_json::to_string(&picked).expect("settings serialize");
         let loaded: Settings = serde_json::from_str(&text).expect("settings load");
         assert_eq!(loaded.call_microphone, picked.call_microphone);
         assert_eq!(loaded.call_speaker, picked.call_speaker);
+        assert_eq!(loaded.call_camera, picked.call_camera);
     }
 
     #[test]
@@ -656,6 +661,7 @@ mod tests {
         let loaded: Settings = serde_json::from_str("{}").expect("settings load");
         assert_eq!(loaded.call_microphone, None);
         assert_eq!(loaded.call_speaker, None);
+        assert_eq!(loaded.call_camera, None);
     }
 
     #[test]

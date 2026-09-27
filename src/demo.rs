@@ -1877,9 +1877,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "wallpaper" => app.page = Page::Wallpaper,
             // The call surface itself: the incoming call waiting to be answered, and a call that
-            // has been up for a few minutes.
-            "call" => call_sample(app, true),
-            "call-active" => call_sample(app, false),
+            // has been up for a few minutes, in voice and with video.
+            "call" => call_sample(app, true, false),
+            "call-active" => call_sample(app, false, false),
+            "call-video" => call_sample(app, false, true),
             "wallpaper-image" => wallpaper_image_sample(app),
             "omarchy" | "omarchy-light" => {
                 let mut themes: Vec<_> = crate::theme::presets().collect();
@@ -2580,10 +2581,11 @@ pub fn sample_ids() -> Vec<&'static str> {
 
 /// Puts a synthetic call on screen, for the call previews and their layout test.
 ///
-/// Demo mode has no engine and no peer, so the surface is handed the same snapshot a real call
-/// publishes, filled in by hand: an invented call id and one of the sample chats. `incoming` is the
-/// call waiting to be accepted; otherwise the call is one that has been up for a few minutes.
-pub fn call_sample(app: &mut App, incoming: bool) {
+/// Demo mode has no engine, no peer, and no camera, so the surface is handed the same snapshot a
+/// real call publishes, filled in by hand: an invented call id, one of the sample chats, and a
+/// picture that is plainly a test pattern rather than anybody's room. `incoming` is the call
+/// waiting to be accepted; otherwise the call is one that has been up for a few minutes.
+pub fn call_sample(app: &mut App, incoming: bool, video: bool) {
     let chat = SAMPLES[0].id;
     app.call = Some(CallUpdate {
         generation: 1,
@@ -2593,6 +2595,7 @@ pub fn call_sample(app: &mut App, incoming: bool) {
         } else {
             CallDirection::Outgoing
         },
+        video,
         phase: if incoming {
             CallPhase::Incoming
         } else {
@@ -2603,12 +2606,53 @@ pub fn call_sample(app: &mut App, incoming: bool) {
         started: (!incoming)
             .then(|| std::time::Instant::now() - std::time::Duration::from_secs(221)),
         muted: false,
+        camera_on: video,
+        remote_video: video && !incoming,
         outcome: None,
         peer_audio: None,
         lost_devices: Vec::new(),
         microphone: None,
         speaker: None,
+        camera: None,
     });
+    if video && !incoming {
+        app.call_remote_frame = Some(std::sync::Arc::new(test_pattern(1280, 720, false)));
+        app.call_local_frame = Some(std::sync::Arc::new(test_pattern(640, 360, true)));
+    }
+}
+
+/// A frame of colour bars, which no camera produces and no person is in.
+fn test_pattern(width: usize, height: usize, arms: bool) -> egui::ColorImage {
+    let bars = [
+        egui::Color32::from_rgb(214, 214, 214),
+        egui::Color32::from_rgb(214, 214, 0),
+        egui::Color32::from_rgb(0, 214, 214),
+        egui::Color32::from_rgb(0, 214, 0),
+        egui::Color32::from_rgb(214, 0, 214),
+        egui::Color32::from_rgb(214, 0, 0),
+        egui::Color32::from_rgb(0, 0, 214),
+    ];
+    let mut pixels = Vec::with_capacity(width * height);
+    for y in 0..height {
+        for x in 0..width {
+            // A dark band across the middle keeps the two ends distinguishable, and the preview's
+            // arms make it obvious which corner is the small one.
+            let band = (y * 10 / height.max(1)).is_multiple_of(2);
+            let arm = arms
+                && ((x < width / 12 || x + 1 > width - width / 12)
+                    || (y < height / 4
+                        && (x as f32 - width as f32 / 2.0).abs() < height as f32 / 8.0));
+            let colour = bars[(x * bars.len() / width.max(1)).min(bars.len() - 1)];
+            pixels.push(if arm {
+                egui::Color32::from_gray(245)
+            } else if band {
+                colour
+            } else {
+                egui::Color32::from_rgb(colour.r() / 3, colour.g() / 3, colour.b() / 3)
+            });
+        }
+    }
+    egui::ColorImage::new([width, height], pixels)
 }
 
 /// Synthetic call records for the Calls view and the transcript entries.
@@ -4002,8 +4046,12 @@ mod tests {
             "react-picker-empty",
             "react-custom",
             "react-other",
+            "calls",
+            "call-entries",
             "call",
             "call-active",
+            "call-video",
+            "call-video,light",
         ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
@@ -10085,14 +10133,18 @@ mod call_preview_tests {
     #[test]
     fn the_call_previews_hand_the_surface_a_live_call() {
         let mut screen = app();
-        call_sample(&mut screen, true);
+        call_sample(&mut screen, true, false);
         let incoming = screen.call.clone().expect("a call is on screen");
         assert_eq!(incoming.phase, CallPhase::Incoming);
         assert_eq!(incoming.direction, CallDirection::Incoming);
         assert!(incoming.phase.is_live(), "a ringing call is still a call");
+        assert!(
+            !incoming.video,
+            "the ringing preview is the voice one, so the two do not read alike"
+        );
 
         let mut screen = app();
-        call_sample(&mut screen, false);
+        call_sample(&mut screen, false, true);
         let live = screen.call.clone().expect("a call is on screen");
         assert_eq!(live.phase, CallPhase::Active);
         assert_eq!(live.direction, CallDirection::Outgoing);
@@ -10100,5 +10152,29 @@ mod call_preview_tests {
             live.started.is_some(),
             "the duration has something to count from"
         );
+        assert!(live.remote_video && live.camera_on);
+        assert!(
+            screen.call_remote_frame.is_some() && screen.call_local_frame.is_some(),
+            "a video preview has both pictures"
+        );
+        assert_eq!(
+            screen.call_remote_frame.as_ref().map(|frame| frame.size),
+            Some([1280, 720]),
+            "the peer's picture keeps the shape a landscape camera sends"
+        );
+    }
+
+    #[test]
+    fn the_test_pattern_is_a_frame_of_the_size_asked_for() {
+        let frame = test_pattern(64, 48, false);
+        assert_eq!(frame.size, [64, 48]);
+        assert_eq!(frame.pixels.len(), 64 * 48);
+        assert!(
+            frame.pixels.iter().any(|pixel| pixel.r() != pixel.g()),
+            "the bars are more than one colour, so the preview is not a flat block"
+        );
+        let preview = test_pattern(32, 24, true);
+        assert_eq!(preview.size, [32, 24]);
+        assert_eq!(preview.pixels.len(), 32 * 24);
     }
 }

@@ -542,6 +542,10 @@ pub async fn run(
         // Cloned before the select so its branches never borrow the worker: a live call is the only
         // thing that gives either of these a receiver.
         let mut call_events = worker.call.as_ref().map(|runtime| runtime.events.clone());
+        let mut call_frames = worker
+            .call
+            .as_ref()
+            .and_then(|runtime| runtime.frames.clone());
         tokio::select! {
             command = inbox.recv() => {
                 match command {
@@ -568,6 +572,12 @@ pub async fn run(
                     None => std::future::pending().await,
                 }
             } => worker.call_runtime(event),
+            Some(tick) = async {
+                match call_frames.as_mut() {
+                    Some(frames) => frames.recv().await.ok(),
+                    None => std::future::pending().await,
+                }
+            } => worker.call_frame(tick),
             _ = async {
                 match deadline {
                     Some(deadline) => tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await,
@@ -4070,23 +4080,27 @@ impl Worker {
             }
         }
         match command {
-            Command::StartCall { chat } => self.start_call(chat).await,
+            Command::StartCall { chat, video } => self.start_call(chat, video).await,
             Command::AnswerCall => self.answer_call().await,
             Command::DeclineCall => self.decline_call().await,
             Command::HangupCall => self.hangup_call().await,
             Command::SetCallMuted(muted) => self.set_call_muted(muted).await,
+            Command::SetCallCamera(on) => self.set_call_camera(on).await,
             Command::SetCallMicrophone(device) => self.set_call_microphone(device),
             Command::SetCallSpeaker(device) => self.set_call_speaker(device),
+            Command::SetCallCameraDevice(device) => self.set_call_camera_device(device),
             Command::RefreshCallDevices => {
                 self.emit_call_devices();
             }
             Command::SetCallDevices {
                 microphone,
                 speaker,
+                camera,
             } => {
                 self.call_defaults = crate::calls::CallDevices {
                     microphone,
                     speaker,
+                    camera,
                 };
             }
             Command::RefreshPoll { chat, message } => self.refresh_poll(chat, message),

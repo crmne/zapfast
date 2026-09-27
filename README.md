@@ -297,13 +297,17 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   them. Changes made on the phone or by other members arrive as before. Clicking a `chat.whatsapp.com` invite
   link shows the group's name, size, and description, and joins it (or sends a
   join request when admins approve members) without leaving ZapFast.
-- **Voice calls.** One-to-one voice calls. The phone button in a chat's header
-  starts one, and an incoming call takes over the window with the caller's name
-  and **Accept** / **Decline**; the duration counts from the moment the two sides
-  are really connected, not from the button press. The microphone and speaker a
-  call uses are picked in the call's own controls and remembered for the next
-  one, without changing your system's defaults. Calls work wherever the app's own
-  audio layer does; see [Calling](#calling).
+- **Calls.** Voice and video calls, one to one. The phone and camera buttons in
+  a chat's header start one, and an incoming call takes over the window with the
+  caller's name and **Accept** / **Decline**; the duration counts from the moment
+  the two sides are really connected, not from the button press. A video call
+  shows the peer's picture full-window with your own camera in the corner, and
+  turning your camera off keeps the call and its audio running. The microphone,
+  speaker, and camera a call uses are picked in the call's own controls and
+  remembered for the next one, without changing your system's defaults. The
+  rotation a phone announces with its camera is applied, so a portrait caller
+  stays portrait. Voice calls work wherever the app's own audio layer does, and
+  video needs a camera; see [Calling](#calling).
 - **Presence.** See online, last-seen, and typing status, and send your typing
   status. Like WhatsApp Web, ZapFast shows you as online only while its window
   is focused, and goes offline ten seconds after you switch away or hide it to
@@ -413,9 +417,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 - Play videos in codecs other than H.264 in the app (they open in your system
   player).
-- Video calls, and sharing your screen in a 1:1 call. The pinned
-  whatsapp-rust revision carries screen sharing for group calls only; see
-  [Calling](#calling).
+- Share your screen in a 1:1 call. The pinned whatsapp-rust revision carries
+  screen sharing for group calls only, so **Share screen** is shown disabled
+  rather than as a control that cannot work. OBS Virtual Camera stands in for it;
+  see [Calling](#calling).
 - Status posts, communities, newsletters, and group administration beyond a
   group's name and photo (members, admins, descriptions, settings).
 - Submit interactive forms, payments, shopping flows, or carousel selections.
@@ -574,36 +579,44 @@ to your phone and linked devices.
 
 ### Calling
 
-The phone icon in a chat's header starts a voice call. An incoming call takes
-over the window with the caller's name and **Accept** and **Decline**; accepting
-brings up the microphone and speaker.
+The phone icon in a chat's header starts a voice call and the camera icon a
+video call. An incoming call takes over the window with the caller's name, a
+voice or video label, and **Accept** and **Decline**; accepting brings up the
+microphone and speaker, and for a video call the camera as well.
 
 An incoming call also raises a desktop notification with the caller's name, so a
 window that is hidden to the tray, or behind another program, does not hide the
 call; clicking it brings ZapFast up with the call waiting. A call in a chat you
 have muted, archived, or locked stays as quiet as a message in it.
 
-During a call the window shows the chat's picture with the call's length, and the
-controls along the bottom: mute, speaker, the **Microphone** / **Speaker**
-pickers, and the red hang-up button. Muting goes through whatsapp-rust's own
-mute, so the outgoing audio stops without restarting the recorder or
-renegotiating the call, and the peer is told. **Back to the chat** in the
-top-left corner of the call leaves the call running in a bar at the bottom of the
-window, with the call's length and **Return to the call**; only hanging up ends
-it. **Full screen** beside it grows the call to the whole display, and Escape
-leaves full screen first and steps back to the chat only on a second press:
-neither one touches the call, and a call that ends puts the window back itself.
-A call keeps running when the window is hidden to the tray.
+During a call the window shows the peer's picture (or the chat's picture for a
+voice call) with the call's length, and the controls along the bottom: mute,
+camera, speaker, the **Microphone** / **Speaker** / **Camera** pickers, and the
+red hang-up button. Muting goes through whatsapp-rust's own mute, so the outgoing
+audio stops without restarting the recorder or renegotiating the call, and the
+peer is told. Turning the camera off stops the video direction and leaves the
+call and its audio running; so does a camera that is unplugged or claimed by
+another program. **Back to the chat** leaves the call running in a bar at the
+bottom of the window, with the call's length and **Return to the call**; only
+hanging up ends it. **Full screen** beside it grows the call, a remote picture
+and all, to the whole display, and Escape leaves full screen first and steps
+back to the chat only on a second press: neither one touches the call, and a
+call that ends puts the window back itself. A call keeps running when the window
+is hidden to the tray.
 
 The pickers list what the machine really has, and the choices are saved and
 reused by the next call. They never change your system's default devices: the
 selection applies to ZapFast's own call media only. A device that is gone when a
-call starts (a headset switched off) falls back to the system default, and the
-call screen says so rather than opening a stream that can never deliver.
+call starts (a headset switched off, a camera unplugged) falls back to the
+system default, and the call screen says so rather than opening a stream that can
+never deliver.
 
 The call's audio goes through the same audio layer the rest of ZapFast plays
 and records with, so the platform's own API is what a call talks to: PipeWire or
-ALSA on Linux, CoreAudio on macOS, WASAPI on Windows.
+ALSA on Linux, CoreAudio on macOS, WASAPI on Windows. Video calls additionally
+need a capture device, read over V4L2 on Linux. Any camera the kernel exposes
+appears in the picker, including **OBS Virtual Camera** once OBS Studio has
+started it, which is also the way to put anything OBS can capture into a call.
 
 Screenshots and recordings in this repository come from demo mode
 (`zapfast --demo`), which runs on synthetic conversations and never touches a
@@ -851,12 +864,19 @@ cargo test --lib -- --ignored                             # hardware: this machi
 
 Normal tests are deterministic and are the only ones CI runs. The calling
 feature is covered there through a device a test installs in place of the
-machine's own, so a build host with no sound still exercises the real audio
-pumps and the real framing.
+machine's own, so a build host with no camera and no sound still exercises the
+real audio pumps, the real framing and the real camera code paths.
+
+One normal test needs a program rather than a device: the camera fallback is
+proved by a real `ffmpeg` process reading a synthetic source, so that the spawn,
+the frames and the cleanup are the ones a call runs. Where `ffmpeg` is not
+installed the test says so and does nothing rather than passing quietly, and CI
+runs it for real on Linux, where that capture path lives.
 
 Hardware tests are ignored by default because they open the machine's real
-devices. `cargo test --lib -- --ignored --nocapture` reads real frames from the
-microphone and plays to the real speaker.
+devices, and they skip nothing: a machine without a camera needs them run by
+hand to say so. `cargo test --lib -- --ignored --nocapture` reads real frames
+from the microphone, plays to the real speaker, and opens the real camera.
 
 A live call between two WhatsApp accounts is neither: it needs two accounts and
 a phone, so it stays manual and is never claimed as tested by the suite.
@@ -901,8 +921,9 @@ and its attachment and poll menu. `typing`, `mention`, and
 Use `--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page chat-header-menu` for the menu at the top of an open chat, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
-Use `--demo-page call` for the incoming-call screen and `call-active` for a call
-in progress.
+Use `--demo-page call` for the incoming-call screen, `call-active` for a voice
+call in progress, and `call-video` for a video call with the peer's picture and
+your own camera.
 `--demo-page video` shows a video and round video messages, and
 `video-playing` or `note-playing` starts one of them, silently.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and

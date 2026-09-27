@@ -40,9 +40,9 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
   message they announced. Supported desktops show the unread count on the app
   icon in the taskbar or dock; on Windows, the count appears while the window
   has a taskbar button. Muting a chat also mutes it on your phone.
-- **Voice calls.** One-to-one voice calls, with incoming calls taking over the
-  window to accept or decline. Microphone and speaker are chosen inside the call
-  and remembered. [See calling](/using-zapfast/#calling).
+- **Calls.** Voice and video calls, one to one, with incoming calls taking over
+  the window to accept or decline. Microphone, speaker, and camera are chosen
+  inside the call and remembered. [See calling](/using-zapfast/#calling).
 - **Copies message text.** Select part of a message or copy across messages
   with the time, date, and sender included.
 
@@ -50,9 +50,9 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
 
 ZapFast does not currently support:
 
-- Video calls, and sharing your screen in a 1:1 call: the whatsapp-rust
-  revision ZapFast uses carries screen sharing for group calls only.
-  [See calling](/using-zapfast/#calling).
+- Sharing your screen in a 1:1 call: the whatsapp-rust revision ZapFast uses
+  carries screen sharing for group calls only, so the control is disabled. OBS
+  Virtual Camera stands in for it. [See calling](/using-zapfast/#calling).
 - Status posts, communities, newsletters, and group administration.
 - Playing ordinary videos in the app; they open in your player. Voice
   messages and GIFs do play in place.

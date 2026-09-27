@@ -1,6 +1,6 @@
 ---
 title: Using ZapFast
-description: Send messages, use attachments, interactive messages, and voice messages, make voice calls, and learn the keyboard shortcuts.
+description: Send messages, use attachments, interactive messages, and voice messages, make voice and video calls, and learn the keyboard shortcuts.
 redirect_from:
   - /using-fastsapp/
 nav_order: 3
@@ -10,23 +10,30 @@ nav_order: 3
 
 The phone icon in a chat's header starts a voice call: the chat takes over the
 window, and the call's length only starts counting once the other side has
-really answered. A call you are receiving takes over the window by itself,
-whoever you were writing to, with the caller's name and picture, a line saying it
-is a voice call, and **Accept** and **Decline**. Names come from your address
+really answered. The camera icon starts a video call instead. A call you are
+receiving takes over the window by itself, whoever you were writing to, with the
+caller's name and picture, a line saying whether it is a voice or a video call,
+and **Accept** and **Decline**. Names come from your address
 book or the public profile name, exactly as they do in the chat list. A desktop
 notification with the caller's name goes out as well, so a window hidden in the
 tray or behind another program does not hide the call; clicking it brings
 ZapFast up with the call waiting. A chat you have muted, archived, or locked
 keeps its calls as quiet as its messages.
 
-Along the bottom of a call are the controls: mute, the speaker button that opens
-the device pickers, and the red button that hangs up. Mute goes through the
-calling library's own mute, so the other side is told and the audio stream is not
-restarted. **Microphone** and **Speaker** list the devices this computer really
-has; picking one applies to ZapFast's call and never to your system defaults,
-and the choice is remembered for the next call. A device that has gone away
-since it was picked, such as a headset switched off, falls back to the system
-default and the call screen says so.
+Along the bottom of a call are the controls: mute, camera, the speaker button
+that opens the device pickers, and the red button that hangs up. Mute goes
+through the calling library's own mute, so the other side is told and the audio
+stream is not restarted. **Microphone**, **Speaker**, and **Camera** list the
+devices this computer really has; picking one applies to ZapFast's call and never
+to your system defaults, and the choice is remembered for the next call. A
+device that has gone away since it was picked, such as a headset switched off or
+a camera unplugged, falls back to the system default and the call screen says so.
+
+Turning the camera off leaves the call and its audio running; so does a camera
+that stops delivering, which is reported rather than ending the call. A video
+call shows the other side's picture as large as it fits without stretching it,
+with your own camera in the corner. If their phone announces a rotation, it is
+applied, so a phone held upright stays upright here.
 
 **Back to the chat** in the top-left corner of a call puts you back in the
 conversation with the call still running in a bar at the bottom of the window,
@@ -38,7 +45,17 @@ itself. If you close the window to the tray, the call keeps running there.
 
 Calls go through the same audio layer the rest of ZapFast plays and records
 with, so a call talks to the platform's own audio API: PipeWire or ALSA on
-Linux, CoreAudio on macOS, WASAPI on Windows.
+Linux, CoreAudio on macOS, WASAPI on Windows. Video calls additionally need a
+V4L2 camera under `/dev/video*`. Any camera the kernel exposes works, including
+**OBS Virtual Camera** once OBS Studio has started it: start the virtual camera
+in OBS, open a call's **Camera** picker, and choose it. That is also how to show
+a window or a slide deck on a call, by capturing it in OBS and sending the
+virtual camera.
+
+Sharing your screen directly from ZapFast is not available: the whatsapp-rust
+revision it uses carries screen sharing for group calls only, so **Share screen**
+is shown disabled rather than as a control that cannot work. OBS Virtual Camera
+covers the same ground on Linux.
 
 ## Writing
 

@@ -1215,6 +1215,8 @@ pub enum Action {
     OpenChat(ChatId),
     /// Starts a 1:1 voice call with the chat.
     StartCall(ChatId),
+    /// Starts a 1:1 video call with the chat.
+    StartVideoCall(ChatId),
     /// Answers the ringing incoming call.
     AnswerCall,
     /// Declines the ringing incoming call.
@@ -1223,10 +1225,14 @@ pub enum Action {
     HangupCall,
     /// Mutes or unmutes the current call's microphone.
     SetCallMuted(bool),
+    /// Turns the current call's camera on or off.
+    SetCallCamera(bool),
     /// Rebinds the current call's microphone; `None` is the system default.
     SetCallMicrophone(Option<String>),
     /// Rebinds the current call's speaker; `None` is the system default.
     SetCallSpeaker(Option<String>),
+    /// Switches the current call's camera node.
+    SetCallCameraDevice(Option<String>),
     /// Opens the chat a logged call belongs to.
     OpenCallChat(ChatId),
     /// Steps away from the full call screen without ending the call.

@@ -505,7 +505,7 @@ pub struct App {
     pub call: Option<crate::calls::CallUpdate>,
     /// When a finished call's surface should disappear.
     call_surface_until: Option<Instant>,
-    /// The microphones and speakers the call screen offers.
+    /// The microphones, speakers and cameras the call screen offers.
     pub call_devices: crate::calls::DeviceList,
     /// Whether the call screen shows its device pickers.
     pub call_devices_open: bool,
@@ -519,8 +519,11 @@ pub struct App {
     /// The generation of an incoming call the desktop was told about, so its notification can be
     /// taken back when the call is answered or given up.
     call_notified: Option<u64>,
-    /// Set when a call event arrived, so the surface is drawn now instead of when something else
-    /// happens to ask for a repaint.
+    /// The newest local camera preview and peer picture for the call screen.
+    pub call_local_frame: Option<std::sync::Arc<egui::ColorImage>>,
+    pub call_remote_frame: Option<std::sync::Arc<egui::ColorImage>>,
+    /// Set when a call event or a video frame arrived, so the frame is drawn now instead of when
+    /// something else happens to ask for a repaint.
     call_repaint: bool,
     /// Whether ZapFast starts at login, when this installation supports it.
     pub start_with_system: Option<bool>,
@@ -733,6 +736,7 @@ impl App {
         app.backend.send(Command::SetCallDevices {
             microphone: app.settings.call_microphone.clone(),
             speaker: app.settings.call_speaker.clone(),
+            camera: app.settings.call_camera.clone(),
         });
         if crate::autostart::supported() {
             app.start_with_system = Some(crate::autostart::enabled());
@@ -955,6 +959,8 @@ impl App {
             call_surface_hidden: false,
             call_fullscreen: false,
             call_notified: None,
+            call_local_frame: None,
+            call_remote_frame: None,
             call_repaint: false,
             start_with_system: None,
             waker,
@@ -1540,10 +1546,13 @@ impl App {
     /// Puts a live call back behind the bar when its chat is locked and the folder closes.
     ///
     /// The locked state is otherwise only applied when a call update arrives, so a call opened
-    /// while the folder was open would keep painting full-window after it closed.
+    /// while the folder was open would keep painting full-window after it closed. The frames are
+    /// dropped as well, so no remote picture lingers for the redacted bar to lift.
     fn hide_private_call(&mut self) {
         if self.call_is_private() {
             self.call_surface_hidden = true;
+            self.call_local_frame = None;
+            self.call_remote_frame = None;
         }
     }
 
@@ -1952,6 +1961,15 @@ impl App {
                 }
                 Event::Call(update) => self.handle_call_update(*update),
                 Event::CallDevices(devices) => self.call_devices = *devices,
+                Event::CallVideo { local, remote } => {
+                    if let Some(image) = local {
+                        self.call_local_frame = Some(image);
+                    }
+                    if let Some(image) = remote {
+                        self.call_remote_frame = Some(image);
+                    }
+                    self.call_repaint = true;
+                }
                 Event::Drafts(drafts) => {
                     // Unsent text stored by an earlier session. Text typed in
                     // this session wins over the stored copy.
@@ -3294,6 +3312,8 @@ impl App {
                 // Nothing was drawn for this call, so there is nothing to take down.
                 return;
             }
+            self.call_local_frame = None;
+            self.call_remote_frame = None;
             self.call_surface_until = Some(Instant::now() + CALL_FAREWELL);
             // How a call ended is the whole reason the surface lingers, but a locked chat still says
             // nothing: with the folder closed the four-second farewell stays behind the bar instead
@@ -3347,7 +3367,11 @@ impl App {
         // The call's own name, not the chat's title: a stranger who calls is an unknown caller here,
         // never a phone number on a lock screen.
         let title = self.call_name(&call.chat);
-        let body = crate::i18n::gettext(self.locale, "Incoming voice call");
+        let body = if call.video {
+            crate::i18n::gettext(self.locale, "Incoming video call")
+        } else {
+            crate::i18n::gettext(self.locale, "Incoming voice call")
+        };
         let picture = self.call_avatar(&call.chat);
         // A call is not a mention and not a group message, so it uses the chat's own sound when it
         // has one and the ordinary message sound otherwise.
@@ -3373,6 +3397,8 @@ impl App {
         if self.call_surface_until.is_some_and(|until| now >= until) {
             self.call_surface_until = None;
             self.call = None;
+            self.call_local_frame = None;
+            self.call_remote_frame = None;
         }
         // Full screen belongs to the call surface and only while the reader is looking at it.
         // Whichever way the surface was put aside (the back button, Escape, a locked chat, or a
@@ -3382,8 +3408,8 @@ impl App {
             self.set_call_fullscreen(ctx, false);
         }
         if let Some(call) = &self.call {
-            // The duration changes every second; asking here keeps a muted, idle call's timer
-            // honest.
+            // The duration changes every second, and a video call repaints from its frames; asking
+            // here keeps a muted, idle voice call's timer honest either way.
             if call.phase.is_live() {
                 ctx.request_repaint_after(Duration::from_millis(500));
             }
@@ -3700,12 +3726,16 @@ impl App {
                 }
             }
             Action::StartCall(chat) => {
-                self.backend.send(Command::StartCall { chat });
+                self.backend.send(Command::StartCall { chat, video: false });
+            }
+            Action::StartVideoCall(chat) => {
+                self.backend.send(Command::StartCall { chat, video: true });
             }
             Action::AnswerCall => self.backend.send(Command::AnswerCall),
             Action::DeclineCall => self.backend.send(Command::DeclineCall),
             Action::HangupCall => self.backend.send(Command::HangupCall),
             Action::SetCallMuted(muted) => self.backend.send(Command::SetCallMuted(muted)),
+            Action::SetCallCamera(on) => self.backend.send(Command::SetCallCamera(on)),
             Action::SetCallMicrophone(device) => {
                 // Picked here means preferred from now on, so it is written to the settings the
                 // same moment the live call is rebound.
@@ -3717,6 +3747,11 @@ impl App {
                 self.settings.call_speaker = device.clone();
                 self.mark_settings_dirty();
                 self.backend.send(Command::SetCallSpeaker(device));
+            }
+            Action::SetCallCameraDevice(device) => {
+                self.settings.call_camera = device.clone();
+                self.mark_settings_dirty();
+                self.backend.send(Command::SetCallCameraDevice(device));
             }
             Action::CloseChat => {
                 if let Some(chat) = self.open_chat.take() {
@@ -9804,11 +9839,13 @@ mod tests {
         assert!(app.locked_folder_open(), "the folder is authenticated");
         app.handle_call_update(call_for(id, 1, crate::calls::CallPhase::Active));
         assert!(!app.call_surface_hidden, "the folder lets the call show");
+        app.call_remote_frame = Some(std::sync::Arc::new(egui::ColorImage::example()));
         app.close_locked_folder();
         assert!(
             app.call_surface_hidden,
             "the lock sends the live call back to the bar"
         );
+        assert!(app.call_remote_frame.is_none(), "no remote picture lingers");
     }
 
     #[test]
@@ -10012,14 +10049,18 @@ mod tests {
             generation,
             chat: "1@s.whatsapp.net".to_owned(),
             direction: crate::model::CallDirection::Incoming,
+            video: false,
             phase,
             started: None,
             muted: false,
+            camera_on: false,
+            remote_video: false,
             outcome: None,
             peer_audio: None,
             lost_devices: Vec::new(),
             microphone: None,
             speaker: None,
+            camera: None,
         }
     }
 }
