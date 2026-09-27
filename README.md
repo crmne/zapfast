@@ -304,10 +304,12 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   shows the peer's picture full-window with your own camera in the corner, and
   turning your camera off keeps the call and its audio running. The microphone,
   speaker, and camera a call uses are picked in the call's own controls and
-  remembered for the next one, without changing your system's defaults. The
-  rotation a phone announces with its camera is applied, so a portrait caller
-  stays portrait. Voice calls work wherever the app's own audio layer does, and
-  video needs a camera; see [Calling](#calling).
+  remembered for the next one, without changing your system's defaults. Finished
+  calls are listed under **Calls** and appear in the chat they belong to, with
+  how they ended: answered, missed, declined, busy, no answer, or a lost
+  connection. The rotation a phone announces with its camera is applied, so a
+  portrait caller stays portrait. Voice calls work wherever the app's own audio
+  layer does, and video needs a camera; see [Calling](#calling).
 - **Presence.** See online, last-seen, and typing status, and send your typing
   status. Like WhatsApp Web, ZapFast shows you as online only while its window
   is focused, and goes offline ten seconds after you switch away or hide it to
@@ -610,6 +612,13 @@ selection applies to ZapFast's own call media only. A device that is gone when a
 call starts (a headset switched off, a camera unplugged) falls back to the
 system default, and the call screen says so rather than opening a stream that can
 never deliver.
+
+Finished calls are recorded in the local archive, not in `settings.json`, and
+listed under **Calls** with their direction, whether they were voice or video,
+how long they lasted, and how they ended. The same record is shown inside the
+chat the call belongs to, with its length and the time it happened. Only a call
+that both sides answered has a length; a call that was rejected, missed, or
+never connected keeps the reason instead.
 
 The call's audio goes through the same audio layer the rest of ZapFast plays
 and records with, so the platform's own API is what a call talks to: PipeWire or
@@ -922,8 +931,9 @@ Use `--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page chat-header-menu` for the menu at the top of an open chat, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
 Use `--demo-page call` for the incoming-call screen, `call-active` for a voice
-call in progress, and `call-video` for a video call with the peer's picture and
-your own camera.
+call in progress, `call-video` for a video call with the peer's picture and your
+own camera, `calls` for the call history, and `call-entries` for the call
+entries inside a chat.
 `--demo-page video` shows a video and round video messages, and
 `video-playing` or `note-playing` starts one of them, silently.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and

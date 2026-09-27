@@ -43,6 +43,12 @@ back to the chat only on a second press. None of that touches the call: hanging
 up is the only thing that ends one, and a call that ends puts the window back
 itself. If you close the window to the tray, the call keeps running there.
 
+When a call is over, both sides' outcomes are recorded in the local archive:
+the **Calls** view in the sidebar lists every call with its direction, how long
+it lasted, and how it ended, and the same entry appears in its chat with the
+time. A call that was not answered has no length, because there was no call to
+measure.
+
 Calls go through the same audio layer the rest of ZapFast plays and records
 with, so a call talks to the platform's own audio API: PipeWire or ALSA on
 Linux, CoreAudio on macOS, WASAPI on Windows. Video calls additionally need a

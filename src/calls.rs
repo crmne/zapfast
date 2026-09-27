@@ -19,7 +19,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, anyhow};
 use egui::ColorImage;
 
-use crate::model::CallDirection;
+use crate::model::{CallDirection, CallMedia, CallRecord, CallStatus};
 use whatsapp_rust::prelude::{Client, Jid};
 use whatsapp_rust::types::call::{CallAction, IncomingCall};
 use whatsapp_rust::voip::{
@@ -137,6 +137,24 @@ pub enum CallOutcome {
     AnsweredElsewhere,
     /// Another of this account's devices rejected it.
     DeclinedElsewhere,
+}
+
+impl CallOutcome {
+    /// The status the call log stores for this outcome. One call, one status: the log keeps the
+    /// peer's answer rather than the sequence of stanzas that led to it.
+    pub fn status(self) -> CallStatus {
+        match self {
+            Self::Answered => CallStatus::Answered,
+            // Answered here? No: another device took it, so this device has no length to record.
+            Self::AnsweredElsewhere => CallStatus::AnsweredElsewhere,
+            Self::Missed => CallStatus::Missed,
+            Self::Declined | Self::DeclinedElsewhere => CallStatus::Declined,
+            Self::Busy => CallStatus::Busy,
+            Self::Failed => CallStatus::Failed,
+            Self::NoAnswer => CallStatus::NoAnswer,
+            Self::ConnectionLost => CallStatus::ConnectionLost,
+        }
+    }
 }
 
 /// Why the peer's audio is not becoming sound, as the engine names the reason.
@@ -1029,6 +1047,9 @@ pub struct Call {
     /// The offer of an incoming call that has not been answered. Held because `accept` borrows it.
     incoming: Option<Box<IncomingCall>>,
     handle: Option<Arc<CallHandle>>,
+    /// When this call reached this computer, on the wall clock, which is what the log stores. The
+    /// monotonic [`Call::started`] cannot be written down: it means nothing once the process exits.
+    began: std::time::SystemTime,
     /// Whether the media plane has reported itself live. Kept apart from the phase because the
     /// relay is allocated as soon as our offer is acked, long before anyone answers: a call is
     /// Active only once the peer has answered *and* there is a media path to talk over.
@@ -1112,6 +1133,7 @@ impl Call {
                 generation: next_generation(),
                 call_id: handle.call_id().to_owned(),
                 chat,
+                began: std::time::SystemTime::now(),
                 direction: CallDirection::Outgoing,
                 video: video_pipe.is_some(),
                 phase: CallPhase::Dialing,
@@ -1153,6 +1175,7 @@ impl Call {
             generation: next_generation(),
             call_id,
             chat,
+            began: std::time::SystemTime::now(),
             direction: CallDirection::Incoming,
             video,
             phase: CallPhase::Incoming,
@@ -1996,6 +2019,33 @@ impl Call {
         Ok(self.update())
     }
 
+    /// The archived record of a call that has finished, or `None` while it is still going.
+    ///
+    /// Every field comes from the call itself: which side placed it, what it carried, what the peer
+    /// and the media plane said became of it, and how long the two sides were really connected. The
+    /// length counts from the moment the call became active, so a call that never connected records
+    /// zero rather than the time spent ringing.
+    pub fn record(&self) -> Option<CallRecord> {
+        let outcome = self.outcome?;
+        Some(CallRecord {
+            id: self.call_id.clone(),
+            chat: self.chat.clone(),
+            started_at: unix_seconds(self.began),
+            ended_at: unix_seconds(std::time::SystemTime::now()),
+            direction: self.direction,
+            media: if self.video {
+                CallMedia::Video
+            } else {
+                CallMedia::Voice
+            },
+            status: outcome.status(),
+            duration: self
+                .started
+                .map(|started| started.elapsed().as_secs())
+                .unwrap_or(0),
+        })
+    }
+
     /// Notes that the peer's picture arrived, so the UI can stop saying it is waiting.
     pub fn saw_remote_video(&mut self) -> bool {
         if self.remote_video {
@@ -2005,6 +2055,14 @@ impl Call {
         log::info!("[CALL] remote video received call_id={}", self.call_id);
         true
     }
+}
+
+/// Whole seconds since the Unix epoch. A clock set before 1970 reads as zero rather than as a
+/// negative timestamp, which no query and no layout expects.
+fn unix_seconds(at: std::time::SystemTime) -> i64 {
+    at.duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// How a `<reject>`'s reason reads as an outcome. The peer refusing for a reason we do not know is
@@ -2709,6 +2767,7 @@ mod tests {
             peer_audio: None,
             incoming: None,
             handle: None,
+            began: std::time::SystemTime::now(),
             media_ready: false,
             mic: None,
             speaker: None,
@@ -2837,8 +2896,11 @@ mod tests {
             assert_eq!(update.phase, CallPhase::Failed);
             assert_eq!(update.outcome, Some(expected));
             assert!(call.handle.is_none(), "the media is released");
-            assert!(
-                call.started.is_none(),
+            assert_eq!(
+                call.record()
+                    .expect("a finished call has a record")
+                    .duration,
+                0,
                 "a call that was never answered has no length"
             );
         }
@@ -2865,25 +2927,29 @@ mod tests {
             .expect("the media is gone");
         assert_eq!(update.phase, CallPhase::Ended);
         assert_eq!(update.outcome, Some(CallOutcome::ConnectionLost));
+        assert_eq!(
+            call.record().expect("a record").status,
+            CallStatus::ConnectionLost
+        );
     }
 
     #[test]
-    fn a_call_that_had_been_up_ends_as_answered_with_its_timer_running() {
+    fn a_call_that_had_been_up_records_who_hung_up_and_how_long_it_lasted() {
         let mut call = dialing();
         call.media(&CallEvent::RelayAllocated);
         call.signaling(&accept()).expect("the peer answered");
-        // The length counts from the moment the call became active, not from the button press, and
-        // the monotonic start is what carries it.
-        let started = call.started.expect("an active call has started");
-        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        // Backdate the start: the record's length comes from the monotonic clock, and no test
+        // should have to sleep for a minute to prove that a minute is measured.
+        call.started = Some(Instant::now() - std::time::Duration::from_secs(221));
         let update = call.signaling(&terminate(None)).expect("the peer hung up");
         assert_eq!(update.phase, CallPhase::Ended);
         assert_eq!(update.outcome, Some(CallOutcome::Answered));
-        assert_eq!(
-            update.started,
-            Some(started),
-            "an answered call keeps its start"
-        );
+        let record = call.record().expect("a record");
+        assert_eq!(record.status, CallStatus::Answered);
+        assert_eq!(record.direction, CallDirection::Outgoing);
+        assert_eq!(record.media, CallMedia::Voice);
+        assert_eq!(record.duration, 221);
+        assert!(record.ended_at >= record.started_at);
     }
 
     #[test]
@@ -2911,13 +2977,14 @@ mod tests {
         live.signaling(&accept()).expect("the peer answered");
         let update = live.resolved_elsewhere().expect("resolved elsewhere");
         assert_eq!(update.phase, CallPhase::Ended);
-        // The other device answered, so this is neither an answered call here nor one nobody
-        // answered: it is its own kind of ending, and the outcome is what says so rather than the
-        // local timer, which did start.
         assert_eq!(update.outcome, Some(CallOutcome::AnsweredElsewhere));
+        // The other device answered, so this device's record is not an answered call with no
+        // length: it carries its own status and an explicit history label.
+        let record = live.record().expect("a record");
+        assert_eq!(record.status, CallStatus::AnsweredElsewhere);
         assert!(
-            live.started.is_some(),
-            "the call had been live here as well"
+            !record.status.connected(),
+            "this device never carried the call"
         );
     }
 
@@ -2931,7 +2998,10 @@ mod tests {
         let update = call.resolved_elsewhere().expect("resolved elsewhere");
         assert_eq!(update.phase, CallPhase::Failed);
         assert_eq!(update.outcome, Some(CallOutcome::NoAnswer));
-        assert!(call.started.is_none(), "never answered here");
+        assert!(
+            !call.record().expect("a record").status.connected(),
+            "never answered here"
+        );
     }
 
     #[tokio::test]
@@ -2954,6 +3024,10 @@ mod tests {
         let update = call.hangup(None).await;
         assert_eq!(update.phase, CallPhase::Failed);
         assert_eq!(update.outcome, Some(CallOutcome::Declined));
+        assert_eq!(
+            call.record().expect("a record").status,
+            CallStatus::Declined
+        );
 
         // The media plane failing under a call that is already over says nothing new either.
         assert!(call.media(&CallEvent::RelayAllocateFailed(1)).is_none());
@@ -2981,6 +3055,10 @@ mod tests {
         let update = call.signaling(&terminate(None)).expect("the peer hung up");
         assert_eq!(update.phase, CallPhase::Failed);
         assert_eq!(update.outcome, Some(CallOutcome::NoAnswer));
+        assert_eq!(
+            call.record().expect("a record").status,
+            CallStatus::NoAnswer
+        );
     }
 
     #[test]
@@ -2997,7 +3075,11 @@ mod tests {
         // it is not booked as an answered call of zero seconds.
         assert_eq!(update.phase, CallPhase::Failed);
         assert_eq!(update.outcome, Some(CallOutcome::ConnectionLost));
-        assert!(call.started.is_none(), "the call never came up");
+        assert_eq!(
+            call.record().expect("a record").status,
+            CallStatus::ConnectionLost
+        );
+        assert!(!call.record().expect("a record").status.connected());
     }
 
     #[cfg(unix)]

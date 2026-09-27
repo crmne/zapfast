@@ -58,6 +58,15 @@ const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
 /// How long a finished call's outcome stays on screen before the surface goes away.
 const CALL_FAREWELL: Duration = Duration::from_secs(4);
 
+/// Orders a call log newest first, with the call id breaking a tie so the order is stable.
+fn sort_calls(calls: &mut [crate::model::CallRecord]) {
+    calls.sort_by(|a, b| {
+        b.started_at
+            .cmp(&a.started_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+}
+
 /// Loaded chat history and paging state.
 #[derive(Default)]
 pub struct Conversation {
@@ -80,6 +89,8 @@ pub struct Conversation {
     /// The height each row last took, keyed by message id, so the transcript
     /// can skip rows far from the viewport instead of laying them out.
     pub(crate) rows: HashMap<String, RowHeight>,
+    /// This chat's calls, newest first, drawn among the messages by time.
+    pub calls: Vec<crate::model::CallRecord>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
 }
@@ -519,6 +530,10 @@ pub struct App {
     /// The generation of an incoming call the desktop was told about, so its notification can be
     /// taken back when the call is answered or given up.
     call_notified: Option<u64>,
+    /// The call log, newest first, as the Calls view shows it.
+    pub call_log: Vec<crate::model::CallRecord>,
+    /// Whether the log has been read at least once, so an empty view can say which empty it is.
+    pub call_log_loaded: bool,
     /// The newest local camera preview and peer picture for the call screen.
     pub call_local_frame: Option<std::sync::Arc<egui::ColorImage>>,
     pub call_remote_frame: Option<std::sync::Arc<egui::ColorImage>>,
@@ -738,6 +753,8 @@ impl App {
             speaker: app.settings.call_speaker.clone(),
             camera: app.settings.call_camera.clone(),
         });
+        // The call log, so the Calls view has something to show the moment it is opened.
+        app.backend.send(Command::LoadCalls);
         if crate::autostart::supported() {
             app.start_with_system = Some(crate::autostart::enabled());
         }
@@ -959,6 +976,8 @@ impl App {
             call_surface_hidden: false,
             call_fullscreen: false,
             call_notified: None,
+            call_log: Vec::new(),
+            call_log_loaded: false,
             call_local_frame: None,
             call_remote_frame: None,
             call_repaint: false,
@@ -1961,6 +1980,11 @@ impl App {
                 }
                 Event::Call(update) => self.handle_call_update(*update),
                 Event::CallDevices(devices) => self.call_devices = *devices,
+                Event::CallLog(calls) => self.apply_call_log(*calls),
+                Event::ChatCalls { chat, calls } => {
+                    self.conversations.entry(chat).or_default().calls = *calls;
+                }
+                Event::CallLogged(record) => self.call_logged(*record),
                 Event::CallVideo { local, remote } => {
                     if let Some(image) = local {
                         self.call_local_frame = Some(image);
@@ -2581,6 +2605,20 @@ impl App {
         self.sidebar_visible = true;
     }
 
+    /// Files a call that just ended, so the Calls view and the chat it belongs to both show it
+    /// without asking the backend again.
+    fn call_logged(&mut self, record: crate::model::CallRecord) {
+        if !self.call_log.iter().any(|known| known.id == record.id) {
+            self.call_log.push(record.clone());
+            sort_calls(&mut self.call_log);
+        }
+        let conversation = self.conversations.entry(record.chat.clone()).or_default();
+        if !conversation.calls.iter().any(|known| known.id == record.id) {
+            conversation.calls.push(record);
+            sort_calls(&mut conversation.calls);
+        }
+    }
+
     /// Empties a chat that stays listed. Search hits and anything pointing at
     /// one of its messages would otherwise refer to rows that are gone, and a
     /// pending edit would send `EditText` for a message that no longer exists.
@@ -2895,6 +2933,26 @@ impl App {
         }
     }
 
+    /// Replaces the call log and rebuilds the per-chat entries already loaded.
+    ///
+    /// A privacy-id mapping can move a call from an @lid onto its phone number, so a chat that was
+    /// opened before the mapping keeps a call row under an id the locked-chat filter no longer
+    /// recognizes unless its entries are rebuilt from the refreshed log.
+    fn apply_call_log(&mut self, calls: Vec<crate::model::CallRecord>) {
+        self.call_log = calls;
+        self.call_log_loaded = true;
+        for (chat, conversation) in self.conversations.iter_mut() {
+            if conversation.requested {
+                conversation.calls = self
+                    .call_log
+                    .iter()
+                    .filter(|record| &record.chat == chat)
+                    .cloned()
+                    .collect();
+            }
+        }
+    }
+
     fn ensure_loaded(&mut self, chat: &str) {
         let conversation = self.conversations.entry(chat.to_owned()).or_default();
         if !conversation.requested {
@@ -2902,6 +2960,11 @@ impl App {
             self.backend.send(Command::LoadChat {
                 chat: chat.to_owned(),
                 before: None,
+            });
+            // This chat's calls come with its messages, so a call row sits among them rather than
+            // arriving a moment later.
+            self.backend.send(Command::LoadChatCalls {
+                chat: chat.to_owned(),
             });
         }
     }
@@ -3645,6 +3708,15 @@ impl App {
                 self.apply(Action::Open(page), ctx);
             }
             Action::OpenChat(id) => self.open_chat(id),
+            Action::ShowCalls => {
+                self.page = Page::Calls;
+                // Read again on the way in: another window, or an earlier session, may have added
+                // to the log since this one last looked.
+                self.backend.send(Command::LoadCalls);
+            }
+            Action::CallBack { chat, video } => {
+                self.backend.send(Command::StartCall { chat, video });
+            }
             Action::OpenCallChat(id) => self.open_chat(id),
             Action::LeaveCallSurface => self.call_surface_hidden = true,
             // Returning to a locked chat's call cannot lift the redaction on its own: the bar
@@ -10030,6 +10102,42 @@ mod tests {
         app.call_surface_until = Some(Instant::now() - Duration::from_secs(1));
         app.background_frame(&ctx);
         assert!(app.call.is_none(), "and then the bar has nothing to show");
+    }
+
+    #[test]
+    fn a_call_log_refresh_moves_a_chat_entry_off_a_stale_privacy_id() {
+        let mut app = app();
+        let lid = "12345@lid";
+        let pn = "15551234567@s.whatsapp.net";
+        // A chat opened before the mapping arrived, with its call filed under the privacy id.
+        let opened = app.conversations.entry(lid.to_owned()).or_default();
+        opened.requested = true;
+        opened.calls.push(call_record("call-1", lid));
+        app.conversations
+            .entry(pn.to_owned())
+            .or_default()
+            .requested = true;
+        // The mapping is learned and the log is refreshed: the call now lives under the number.
+        app.apply_call_log(vec![call_record("call-1", pn)]);
+        assert!(
+            app.conversations[lid].calls.is_empty(),
+            "the stale privacy id keeps no call row"
+        );
+        assert_eq!(app.conversations[pn].calls.len(), 1);
+        assert_eq!(app.conversations[pn].calls[0].chat, pn);
+    }
+
+    fn call_record(id: &str, chat: &str) -> crate::model::CallRecord {
+        crate::model::CallRecord {
+            id: id.to_owned(),
+            chat: chat.to_owned(),
+            started_at: 100,
+            ended_at: 160,
+            direction: crate::model::CallDirection::Outgoing,
+            media: crate::model::CallMedia::Voice,
+            status: crate::model::CallStatus::Answered,
+            duration: 60,
+        }
     }
 
     /// An incoming call for a specific chat, as the backend would publish it.

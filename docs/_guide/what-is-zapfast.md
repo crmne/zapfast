@@ -42,7 +42,8 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
   has a taskbar button. Muting a chat also mutes it on your phone.
 - **Calls.** Voice and video calls, one to one, with incoming calls taking over
   the window to accept or decline. Microphone, speaker, and camera are chosen
-  inside the call and remembered. [See calling](/using-zapfast/#calling).
+  inside the call and remembered. Finished calls are listed under **Calls** and
+  in the chat they belong to. [See calling](/using-zapfast/#calling).
 - **Copies message text.** Select part of a message or copy across messages
   with the time, date, and sender included.
 

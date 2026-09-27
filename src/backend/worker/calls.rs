@@ -109,6 +109,16 @@ impl Worker {
     /// finished call holds no child process and no task.
     pub(super) fn emit_call(&mut self, update: CallUpdate) {
         let finished = !update.phase.is_live();
+        // Read before the runtime is let go, and before the update is published: the record is the
+        // call's own account of itself, and once this returns there is nothing left to ask.
+        let record = finished
+            .then(|| {
+                self.call
+                    .as_ref()
+                    .filter(|runtime| runtime.call.generation() == update.generation)
+                    .and_then(|runtime| runtime.call.record())
+            })
+            .flatten();
         // Remembered so the periodic check can tell a real change from a snapshot it already sent.
         if let Some(runtime) = self.call.as_mut()
             && runtime.call.generation() == update.generation
@@ -119,6 +129,30 @@ impl Worker {
         if finished {
             self.call = None;
         }
+        if let Some(record) = record {
+            self.log_call(record);
+        }
+    }
+
+    /// Writes one finished call to the log and tells the interface it is there.
+    ///
+    /// A log that cannot be written is a warning, not an error the user needs: the call is over
+    /// either way, and the next one is unaffected.
+    fn log_call(&mut self, record: crate::model::CallRecord) {
+        // Deliberately without the chat: a record's chat id is the peer's phone number, and this log
+        // ships. What a call became is what a report needs.
+        log::info!(
+            "[CALL] history direction={:?} media={:?} status={:?} duration={}s",
+            record.direction,
+            record.media,
+            record.status,
+            record.duration
+        );
+        if let Err(error) = self.archive.save_call(&record) {
+            log::warn!("[CALL] the call could not be written to the log: {error}");
+            return;
+        }
+        self.emit(Event::CallLogged(Box::new(record)));
     }
 
     /// Whether a call is already up, which every entry point refuses to double.
@@ -448,6 +482,37 @@ impl Worker {
         };
         if let Some(update) = update {
             self.emit_call(update);
+        }
+    }
+
+    /// The whole call log, newest first.
+    ///
+    /// Held back until the archive's privacy recovery finishes: a call record names the chat, and
+    /// a locked chat's rows must not reach the Calls view while the lock state is still unknown.
+    /// `reveal_private_content` re-issues this read once recovery completes, so a request made at
+    /// startup is not simply dropped.
+    pub(super) fn load_calls(&mut self) {
+        if !self.privacy_ready {
+            return;
+        }
+        match self.archive.calls() {
+            Ok(calls) => self.emit(Event::CallLog(Box::new(calls))),
+            Err(error) => log::warn!("[CALL] the call log could not be read: {error}"),
+        }
+    }
+
+    /// One chat's calls, newest first, for the entries inside that conversation.
+    pub(super) fn load_chat_calls(&mut self, chat: ChatId) {
+        // Same boundary as the whole log: a chat's call rows are archive-derived private content.
+        if !self.privacy_ready {
+            return;
+        }
+        match self.archive.calls_for_chat(&chat) {
+            Ok(calls) => self.emit(Event::ChatCalls {
+                chat,
+                calls: Box::new(calls),
+            }),
+            Err(error) => log::warn!("[CALL] a chat's call log could not be read: {error}"),
         }
     }
 

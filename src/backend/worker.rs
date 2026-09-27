@@ -997,6 +997,12 @@ impl Worker {
                     | Event::SearchHits { .. }
                     | Event::Labels(_)
                     | Event::Typing { .. }
+                    // Call records name their chat, so they are archive-derived private content
+                    // too: a locked chat's calls must not reach the Calls view before the lock
+                    // state is known (see `reveal_private_content`, which re-issues the read).
+                    | Event::CallLog(_)
+                    | Event::ChatCalls { .. }
+                    | Event::CallLogged(_)
             )
         {
             return;
@@ -1703,6 +1709,9 @@ impl Worker {
         }
         self.privacy_ready = true;
         self.load_state();
+        // The startup read was held back while the lock state was unknown; answer it now, so the
+        // Calls view is populated without waiting for the user to open it.
+        self.load_calls();
         self.emit(Event::Syncing(self.syncing));
         // The picker may have been sent an empty Received shelf meanwhile.
         self.emit_stickers();
@@ -1746,6 +1755,11 @@ impl Worker {
         self.lid_to_pn.insert(lid.to_owned(), pn.to_owned());
         match self.archive.put_lid(lid, pn) {
             Ok(changed) => {
+                // The mapping moves this chat's calls from its privacy id onto its phone number in
+                // the archive, so the in-memory log is refreshed even when no chat preference was
+                // touched: otherwise the Calls view keeps a record under the old id, which the
+                // locked-chat filter no longer recognizes.
+                self.load_calls();
                 if changed {
                     self.emit_chats();
                 }
@@ -4092,6 +4106,8 @@ impl Worker {
             Command::RefreshCallDevices => {
                 self.emit_call_devices();
             }
+            Command::LoadCalls => self.load_calls(),
+            Command::LoadChatCalls { chat } => self.load_chat_calls(chat),
             Command::SetCallDevices {
                 microphone,
                 speaker,
@@ -9602,6 +9618,79 @@ mod tests {
             })
             .unwrap();
         assert!(chats[0].locked);
+    }
+
+    #[test]
+    fn call_logs_are_withheld_until_privacy_recovery_completes() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        const PEER: &str = "fixture@s.whatsapp.net";
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        worker
+            .archive
+            .save_call(&crate::model::CallRecord {
+                id: "call-1".into(),
+                chat: PEER.into(),
+                started_at: 100,
+                ended_at: 130,
+                direction: crate::model::CallDirection::Outgoing,
+                media: crate::model::CallMedia::Voice,
+                status: crate::model::CallStatus::Answered,
+                duration: 30,
+            })
+            .unwrap();
+        unconfirmed(&mut worker);
+        // The startup read happens while the lock state is still unknown: it must be held back,
+        // because a record names its chat and a locked chat's rows are not to be shown yet.
+        worker.load_calls();
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::CallLog(_))),
+            "no call records while lock state is unknown"
+        );
+        worker.preferences_recovered(0, true, true);
+        assert!(worker.privacy_ready);
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::CallLog(_))),
+            "the withheld read is answered once recovery completes"
+        );
+    }
+
+    #[test]
+    fn learning_a_privacy_id_moves_its_calls_onto_the_phone_number() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        const LID: &str = "12345";
+        const PN: &str = "15551234567";
+        let lid_chat = format!("{LID}@lid");
+        worker.archive.ensure_chat(&lid_chat, "Fixture").unwrap();
+        worker
+            .archive
+            .save_call(&crate::model::CallRecord {
+                id: "call-1".into(),
+                chat: lid_chat.clone(),
+                started_at: 100,
+                ended_at: 130,
+                direction: crate::model::CallDirection::Outgoing,
+                media: crate::model::CallMedia::Voice,
+                status: crate::model::CallStatus::Answered,
+                duration: 30,
+            })
+            .unwrap();
+        while events.try_recv().is_ok() {}
+        // The mapping arrives and the log is refreshed under the phone number, so the Calls view
+        // never keeps a record the locked-chat filter cannot place.
+        worker.learn_lid(LID, PN);
+        let calls = events
+            .try_iter()
+            .find_map(|event| match event {
+                Event::CallLog(calls) => Some(calls),
+                _ => None,
+            })
+            .expect("the refreshed log is published");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].chat, format!("{PN}@s.whatsapp.net"));
     }
 
     /// A chat opened while lock state was still being recovered asked for its

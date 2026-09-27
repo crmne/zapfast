@@ -343,6 +343,12 @@ pub enum Command {
         speaker: Option<String>,
         camera: Option<String>,
     },
+    /// Reads the whole call log, for the Calls view.
+    LoadCalls,
+    /// Reads one chat's call log, for the entries inside the conversation.
+    LoadChatCalls {
+        chat: ChatId,
+    },
     /// Sends a played receipt for a voice message.
     MarkPlayed {
         chat: ChatId,
@@ -923,6 +929,15 @@ pub enum Event {
     Call(Box<crate::calls::CallUpdate>),
     /// The devices the call screen can offer.
     CallDevices(Box<crate::calls::DeviceList>),
+    /// The whole call log, newest first.
+    CallLog(Box<Vec<crate::model::CallRecord>>),
+    /// One chat's calls, newest first, for the entries inside the conversation.
+    ChatCalls {
+        chat: ChatId,
+        calls: Box<Vec<crate::model::CallRecord>>,
+    },
+    /// One call reached its end and was written to the log.
+    CallLogged(Box<crate::model::CallRecord>),
     /// One video frame for the call screen: our own preview, the peer's picture, or both.
     CallVideo {
         local: Option<Arc<egui::ColorImage>>,

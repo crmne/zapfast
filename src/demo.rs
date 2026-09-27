@@ -574,6 +574,12 @@ pub fn populate(app: &mut App) {
         app.chats.push(chat);
     }
 
+    // The call log, so the Calls view has something to show. The entries *inside* a conversation are
+    // left out of the sample chats on purpose: an entry changes a transcript's height, and the
+    // transcript tests measure a chat no call happened in. A flag puts them in one chat instead.
+    app.call_log = demo_calls();
+    app.call_log_loaded = true;
+
     plant_avatars(app);
     // Cover every supported bubble type in the first chat.
     let (photo, sticker) = sample_files(app);
@@ -1876,11 +1882,25 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.settings_search = choice["settings-search=".len()..].to_owned();
             }
             "wallpaper" => app.page = Page::Wallpaper,
+            // The call log, with the shapes a list has to survive: an answered call, a missed one,
+            // a cancellation, and one that never connected. Synthetic, offline, no real numbers.
+            "calls" => app.page = Page::Calls,
             // The call surface itself: the incoming call waiting to be answered, and a call that
             // has been up for a few minutes, in voice and with video.
             "call" => call_sample(app, true, false),
             "call-active" => call_sample(app, false, false),
             "call-video" => call_sample(app, false, true),
+            "call-entries" => {
+                // Every call in the log, in the one chat the sample opens. Synthetic, and the only
+                // place the transcript carries call entries at all.
+                let chat = app
+                    .chats
+                    .iter()
+                    .find(|chat| !chat.is_group())
+                    .map_or_else(|| ME.to_owned(), |chat| chat.id.clone());
+                app.conversations.entry(chat.clone()).or_default().calls = app.call_log.clone();
+                app.open_chat = Some(chat);
+            }
             "wallpaper-image" => wallpaper_image_sample(app),
             "omarchy" | "omarchy-light" => {
                 let mut themes: Vec<_> = crate::theme::presets().collect();
@@ -2657,6 +2677,79 @@ fn test_pattern(width: usize, height: usize, arms: bool) -> egui::ColorImage {
 
 /// Synthetic call records for the Calls view and the transcript entries.
 ///
+/// Invented, offline, and dated relative to now: a demo must never carry a real call log, and the
+/// four shapes here are the ones a list has to survive (answered, missed, declined, never
+/// connected).
+pub fn demo_calls() -> Vec<crate::model::CallRecord> {
+    use crate::model::{CallDirection, CallMedia, CallRecord, CallStatus};
+    let now = crate::util::now();
+    let ada = SAMPLES[0].id;
+    let group = SAMPLES[2].id;
+    let call = |id: &str,
+                chat: &str,
+                minutes_ago: i64,
+                duration: u64,
+                direction: CallDirection,
+                media: CallMedia,
+                status: CallStatus| CallRecord {
+        id: id.to_owned(),
+        chat: chat.to_owned(),
+        started_at: now - minutes_ago * 60,
+        ended_at: now - minutes_ago * 60 + duration as i64,
+        direction,
+        media,
+        status,
+        duration,
+    };
+    vec![
+        call(
+            "demo-call-1",
+            ada,
+            12,
+            221,
+            CallDirection::Outgoing,
+            CallMedia::Voice,
+            CallStatus::Answered,
+        ),
+        call(
+            "demo-call-2",
+            ada,
+            95,
+            0,
+            CallDirection::Incoming,
+            CallMedia::Video,
+            CallStatus::Missed,
+        ),
+        call(
+            "demo-call-3",
+            group,
+            240,
+            0,
+            CallDirection::Outgoing,
+            CallMedia::Voice,
+            CallStatus::NoAnswer,
+        ),
+        call(
+            "demo-call-4",
+            group,
+            1500,
+            82,
+            CallDirection::Incoming,
+            CallMedia::Video,
+            CallStatus::Answered,
+        ),
+        call(
+            "demo-call-5",
+            ada,
+            4300,
+            0,
+            CallDirection::Outgoing,
+            CallMedia::Voice,
+            CallStatus::Declined,
+        ),
+    ]
+}
+
 #[allow(dead_code)]
 fn contacts_by_id(app: &App) -> HashMap<&str, &Contact> {
     app.contacts
