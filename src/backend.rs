@@ -313,6 +313,29 @@ pub enum Command {
         samples: Vec<f32>,
         quoting: Option<String>,
     },
+    /// Places a 1:1 voice call.
+    StartCall {
+        chat: ChatId,
+    },
+    /// Answers the ringing incoming call with the real `<accept>`.
+    AnswerCall,
+    /// Declines the ringing incoming call with the real `<reject>`.
+    DeclineCall,
+    /// Ends the current call.
+    HangupCall,
+    /// Mutes or unmutes the current call's microphone through the engine.
+    SetCallMuted(bool),
+    /// Rebinds the current call's microphone; `None` is the system default.
+    SetCallMicrophone(Option<String>),
+    /// Rebinds the current call's speaker; `None` is the system default.
+    SetCallSpeaker(Option<String>),
+    /// Lists the microphones and speakers the call screen offers.
+    RefreshCallDevices,
+    /// The devices a call should open with: the ones last picked, as the settings hold them.
+    SetCallDevices {
+        microphone: Option<String>,
+        speaker: Option<String>,
+    },
     /// Sends a played receipt for a voice message.
     MarkPlayed {
         chat: ChatId,
@@ -889,6 +912,10 @@ pub enum Event {
         id: String,
         name: Option<String>,
     },
+    /// The current call changed state. The UI renders this and nothing else.
+    Call(Box<crate::calls::CallUpdate>),
+    /// The devices the call screen can offer.
+    CallDevices(Box<crate::calls::DeviceList>),
     /// Informational toast message.
     Info(String),
     /// A decoded image ready to be written to the clipboard on the interface thread.

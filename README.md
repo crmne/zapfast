@@ -297,6 +297,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   them. Changes made on the phone or by other members arrive as before. Clicking a `chat.whatsapp.com` invite
   link shows the group's name, size, and description, and joins it (or sends a
   join request when admins approve members) without leaving ZapFast.
+- **Voice calls.** One-to-one voice calls. The phone button in a chat's header
+  starts one, and an incoming call takes over the window with the caller's name
+  and **Accept** / **Decline**; the duration counts from the moment the two sides
+  are really connected, not from the button press. The microphone and speaker a
+  call uses are picked in the call's own controls and remembered for the next
+  one, without changing your system's defaults. Calls work wherever the app's own
+  audio layer does; see [Calling](#calling).
 - **Presence.** See online, last-seen, and typing status, and send your typing
   status. Like WhatsApp Web, ZapFast shows you as online only while its window
   is focused, and goes offline ten seconds after you switch away or hide it to
@@ -406,8 +413,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 - Play videos in codecs other than H.264 in the app (they open in your system
   player).
-- Calls, status posts, communities, newsletters, and group administration
-  beyond a group's name and photo (members, admins, descriptions, settings).
+- Video calls, and sharing your screen in a 1:1 call. The pinned
+  whatsapp-rust revision carries screen sharing for group calls only; see
+  [Calling](#calling).
+- Status posts, communities, newsletters, and group administration beyond a
+  group's name and photo (members, admins, descriptions, settings).
 - Submit interactive forms, payments, shopping flows, or carousel selections.
   Use these in WhatsApp Web or on your phone. Embedded videos and documents,
   and templates without readable text also need another client.
@@ -561,6 +571,43 @@ contacts** in that dialog adds the contact to your phone's address book too, as
 the phone asks; the next contact starts from your last choice. You
 can also open a group member's contact card. Saved names sync through WhatsApp
 to your phone and linked devices.
+
+### Calling
+
+The phone icon in a chat's header starts a voice call. An incoming call takes
+over the window with the caller's name and **Accept** and **Decline**; accepting
+brings up the microphone and speaker.
+
+An incoming call also raises a desktop notification with the caller's name, so a
+window that is hidden to the tray, or behind another program, does not hide the
+call; clicking it brings ZapFast up with the call waiting. A call in a chat you
+have muted, archived, or locked stays as quiet as a message in it.
+
+During a call the window shows the chat's picture with the call's length, and the
+controls along the bottom: mute, speaker, the **Microphone** / **Speaker**
+pickers, and the red hang-up button. Muting goes through whatsapp-rust's own
+mute, so the outgoing audio stops without restarting the recorder or
+renegotiating the call, and the peer is told. **Back to the chat** in the
+top-left corner of the call leaves the call running in a bar at the bottom of the
+window, with the call's length and **Return to the call**; only hanging up ends
+it. **Full screen** beside it grows the call to the whole display, and Escape
+leaves full screen first and steps back to the chat only on a second press:
+neither one touches the call, and a call that ends puts the window back itself.
+A call keeps running when the window is hidden to the tray.
+
+The pickers list what the machine really has, and the choices are saved and
+reused by the next call. They never change your system's default devices: the
+selection applies to ZapFast's own call media only. A device that is gone when a
+call starts (a headset switched off) falls back to the system default, and the
+call screen says so rather than opening a stream that can never deliver.
+
+The call's audio goes through the same audio layer the rest of ZapFast plays
+and records with, so the platform's own API is what a call talks to: PipeWire or
+ALSA on Linux, CoreAudio on macOS, WASAPI on Windows.
+
+Screenshots and recordings in this repository come from demo mode
+(`zapfast --demo`), which runs on synthetic conversations and never touches a
+real account.
 
 ### Locked chats
 
@@ -793,6 +840,27 @@ The earlier `FASTSAPP_GIPHY_KEY` build variable remains supported as a fallback.
 CI checks the complete lockfile against RustSec advisories with `cargo audit`.
 Candidate-specific manual checks and results are tracked in the release PR.
 
+### The three kinds of test
+
+The suite is split by what it needs and by what it can prove.
+
+```sh
+cargo test --all-features                                 # normal: no hardware, no network
+cargo test --lib -- --ignored                             # hardware: this machine's devices
+```
+
+Normal tests are deterministic and are the only ones CI runs. The calling
+feature is covered there through a device a test installs in place of the
+machine's own, so a build host with no sound still exercises the real audio
+pumps and the real framing.
+
+Hardware tests are ignored by default because they open the machine's real
+devices. `cargo test --lib -- --ignored --nocapture` reads real frames from the
+microphone and plays to the real speaker.
+
+A live call between two WhatsApp accounts is neither: it needs two accounts and
+a phone, so it stays manual and is never claimed as tested by the suite.
+
 ### Recording a demo
 
 The `demo` feature uses offline sample chats in a fresh temporary directory.
@@ -833,6 +901,8 @@ and its attachment and poll menu. `typing`, `mention`, and
 Use `--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page chat-header-menu` for the menu at the top of an open chat, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
+Use `--demo-page call` for the incoming-call screen and `call-active` for a call
+in progress.
 `--demo-page video` shows a video and round video messages, and
 `video-playing` or `note-playing` starts one of them, silently.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and

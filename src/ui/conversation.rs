@@ -120,7 +120,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 ui.set_min_height(HEADER_ROW);
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
-                let right_controls = 72.0;
+                // The call buttons reflect the backend's own state: this chat's call is the one
+                // the worker owns, and nothing about it is inferred here.
+                let call_here = app.call.as_ref().is_some_and(|call| call.chat == chat.id);
+                let right_controls = 108.0;
                 // Treat the avatar, name, and subtitle as one info button.
                 let block = ui
                     .scope(|ui| {
@@ -305,6 +308,48 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 app.actions.push(Action::CloseChat);
                             }
                         });
+                    // A call is one to one, and it needs the platform's media backend: a group, a
+                    // channel or a broadcast list has no phone button here, and neither has any
+                    // chat on a platform whose backend cannot open a microphone, where a call
+                    // would fail on its first frame. The worker refuses those JIDs whatever this
+                    // header offers, so nothing can be started behind the interface's back either.
+                    // A live call still offers its hang-up button, which can only exist where the
+                    // backend does.
+                    let calls_here = crate::calls::capabilities();
+                    if chat.kind == crate::model::ChatKind::Direct
+                        && (calls_here.voice || call_here)
+                    {
+                        // While this chat is the one on a call, the phone button ends it;
+                        // otherwise it starts a voice call. A call in another chat is refused by
+                        // the worker rather than hidden here.
+                        let (call_tooltip, call_icon, call_fill, call) = if call_here {
+                            (
+                                crate::i18n::gettext(app.locale, "Hang up").into_owned(),
+                                Icon::Phone,
+                                palette.danger,
+                                Action::HangupCall,
+                            )
+                        } else {
+                            (
+                                crate::i18n::gettext(app.locale, "Voice call").into_owned(),
+                                Icon::Phone,
+                                palette.secondary,
+                                Action::StartCall(chat.id.clone()),
+                            )
+                        };
+                        if theme::icon_button(
+                            ui,
+                            call_icon,
+                            18.0,
+                            call_fill,
+                            palette.text,
+                            &call_tooltip,
+                        )
+                        .clicked()
+                        {
+                            app.actions.push(call);
+                        }
+                    }
                     let searching = app.chat_search_open;
                     let tip = format!(
                         "{} ({})",

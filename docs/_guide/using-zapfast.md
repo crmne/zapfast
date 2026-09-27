@@ -1,10 +1,44 @@
 ---
 title: Using ZapFast
-description: Send messages and use attachments, interactive messages, voice messages, and keyboard shortcuts.
+description: Send messages, use attachments, interactive messages, and voice messages, make voice calls, and learn the keyboard shortcuts.
 redirect_from:
   - /using-fastsapp/
 nav_order: 3
 ---
+
+## Calling
+
+The phone icon in a chat's header starts a voice call: the chat takes over the
+window, and the call's length only starts counting once the other side has
+really answered. A call you are receiving takes over the window by itself,
+whoever you were writing to, with the caller's name and picture, a line saying it
+is a voice call, and **Accept** and **Decline**. Names come from your address
+book or the public profile name, exactly as they do in the chat list. A desktop
+notification with the caller's name goes out as well, so a window hidden in the
+tray or behind another program does not hide the call; clicking it brings
+ZapFast up with the call waiting. A chat you have muted, archived, or locked
+keeps its calls as quiet as its messages.
+
+Along the bottom of a call are the controls: mute, the speaker button that opens
+the device pickers, and the red button that hangs up. Mute goes through the
+calling library's own mute, so the other side is told and the audio stream is not
+restarted. **Microphone** and **Speaker** list the devices this computer really
+has; picking one applies to ZapFast's call and never to your system defaults,
+and the choice is remembered for the next call. A device that has gone away
+since it was picked, such as a headset switched off, falls back to the system
+default and the call screen says so.
+
+**Back to the chat** in the top-left corner of a call puts you back in the
+conversation with the call still running in a bar at the bottom of the window,
+showing its length and a **Return to the call** button. **Full screen** beside it
+fills the display with the call, and Escape leaves full screen first and steps
+back to the chat only on a second press. None of that touches the call: hanging
+up is the only thing that ends one, and a call that ends puts the window back
+itself. If you close the window to the tray, the call keeps running there.
+
+Calls go through the same audio layer the rest of ZapFast plays and records
+with, so a call talks to the platform's own audio API: PipeWire or ALSA on
+Linux, CoreAudio on macOS, WASAPI on Windows.
 
 ## Writing
 
