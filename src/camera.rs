@@ -70,6 +70,23 @@ pub fn current_size(device: &str) -> Option<(u32, u32)> {
     }
 }
 
+/// The largest frame a node says it can capture, for a caller that is choosing what to ask it for.
+///
+/// This is a capability rather than the size a node happens to be set to: a webcam that can do
+/// 1280 by 720 usually comes up at 640 by 480, and a call that asked the second question got the
+/// second answer. `None` where the node answers nothing, so the caller keeps its own default.
+pub fn largest_size(device: &str, fps: u32) -> Option<(u32, u32)> {
+    #[cfg(target_os = "linux")]
+    {
+        v4l2::largest_size(device, fps)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (device, fps);
+        None
+    }
+}
+
 /// Whether a node can deliver frames, which is what makes it a camera rather than a metadata node.
 pub fn is_capture(device: &str) -> bool {
     #[cfg(target_os = "linux")]
@@ -148,7 +165,7 @@ impl Input {
 /// process: the node is read as V4L2, scaled and padded into the encoder's frame, and written to
 /// stdout as raw tightly packed YUV 4:2:0.
 #[cfg(target_os = "linux")]
-fn ffmpeg_args(input: &Input, size: (usize, usize)) -> Vec<String> {
+fn ffmpeg_args(input: &Input, size: (usize, usize), fps: u32) -> Vec<String> {
     let (width, height) = size;
     let filter = format!(
         "scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p"
@@ -163,7 +180,7 @@ fn ffmpeg_args(input: &Input, size: (usize, usize)) -> Vec<String> {
         "-vf".to_owned(),
         filter,
         "-r".to_owned(),
-        "15".to_owned(),
+        fps.to_string(),
         "-pix_fmt".to_owned(),
         "yuv420p".to_owned(),
         "-f".to_owned(),
@@ -214,14 +231,16 @@ impl Source {
     pub fn open(
         device: &str,
         budget: (usize, usize),
+        fps: u32,
         child: Arc<Mutex<Option<std::process::Child>>>,
     ) -> Result<Self, String> {
         Self::open_routed(
             device,
             budget,
+            fps,
             child,
             Input::Node(device.to_owned()),
-            || Node::open(device, budget).map(Source::Node),
+            || Node::open(device, budget, fps).map(Source::Node),
         )
     }
 
@@ -231,6 +250,7 @@ impl Source {
     fn open_routed(
         device: &str,
         budget: (usize, usize),
+        fps: u32,
         child: Arc<Mutex<Option<std::process::Child>>>,
         input: Input,
         native: impl FnOnce() -> Result<Self, String>,
@@ -242,7 +262,7 @@ impl Source {
                     return Err(format!("{device} is not a camera: {error}"));
                 }
                 log::info!("[CALL] reading the camera directly is not possible: {error}");
-                Self::start(input, budget, child)
+                Self::start(input, budget, fps, child)
             }
         }
     }
@@ -251,10 +271,11 @@ impl Source {
     fn start(
         input: Input,
         budget: (usize, usize),
+        fps: u32,
         slot: Arc<Mutex<Option<std::process::Child>>>,
     ) -> Result<Self, String> {
         let mut process = std::process::Command::new("ffmpeg")
-            .args(ffmpeg_args(&input, budget))
+            .args(ffmpeg_args(&input, budget, fps))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -441,6 +462,32 @@ mod v4l2 {
     /// `VIDIOC_G_PARM` and `VIDIOC_S_PARM`, on a `v4l2_streamparm`.
     const G_PARM: libc::c_ulong = iowr(21, PARM_LEN);
     const S_PARM: libc::c_ulong = iowr(22, PARM_LEN);
+    /// `VIDIOC_ENUM_FRAMESIZES`, on a `v4l2_frmsizeenum`.
+    const ENUM_FRAMESIZES: libc::c_ulong = iowr(74, FRMSIZE_LEN);
+    /// `VIDIOC_ENUM_FRAMEINTERVALS`, on a `v4l2_frmivalenum`.
+    const ENUM_FRAMEINTERVALS: libc::c_ulong = iowr(75, FRMIVAL_LEN);
+
+    /// One `v4l2_frmivalenum`: an index, the format and size it answers for, the kind of answer, the
+    /// union, and two reserved words.
+    const FRMIVAL_LEN: usize = 52;
+    /// The interval of one frame as a fraction of a second: numerator over denominator. The first
+    /// answer of a discrete list is the fastest the size can be read, and the first of a stepwise
+    /// one is the shortest interval, so the same two words answer for both.
+    const FRMIVAL_NUMERATOR: usize = 20;
+    const FRMIVAL_DENOMINATOR: usize = 24;
+
+    /// One `v4l2_frmsizeenum`: an index, the pixel format it answers for, the kind of answer, the
+    /// union, and two reserved words.
+    pub(super) const FRMSIZE_LEN: usize = 44;
+    const FRMSIZE_TYPE: usize = 8;
+    /// `V4L2_FRMSIZE_TYPE_DISCRETE`, which answers with one size.
+    pub(super) const FRMSIZE_DISCRETE: u32 = 1;
+    const FRMSIZE_DISCRETE_WIDTH: usize = 12;
+    const FRMSIZE_DISCRETE_HEIGHT: usize = 16;
+    /// `V4L2_FRMSIZE_TYPE_STEPWISE`, which answers with a range; the top of it is the capability.
+    pub(super) const FRMSIZE_STEPWISE: u32 = 2;
+    const FRMSIZE_STEPWISE_MAX_WIDTH: usize = 16;
+    const FRMSIZE_STEPWISE_MAX_HEIGHT: usize = 28;
 
     const BUF_TYPE_VIDEO_CAPTURE: u32 = 1;
     /// `V4L2_MEMORY_MMAP`, the streaming method every camera driver offers.
@@ -557,11 +604,11 @@ mod v4l2 {
         }
     }
 
-    fn u32_at(buffer: &[u8], at: usize) -> u32 {
+    pub(super) fn u32_at(buffer: &[u8], at: usize) -> u32 {
         u32::from_ne_bytes(buffer[at..at + 4].try_into().expect("four bytes"))
     }
 
-    fn put_u32(buffer: &mut [u8], at: usize, value: u32) {
+    pub(super) fn put_u32(buffer: &mut [u8], at: usize, value: u32) {
         buffer[at..at + 4].copy_from_slice(&value.to_ne_bytes());
     }
 
@@ -598,6 +645,26 @@ mod v4l2 {
         found
     }
 
+    /// One `VIDIOC_ENUM_FRAMESIZES` answer as a size, or `None` for a type this does not know.
+    ///
+    /// Split out because the union's field offsets are the part of this that a camera cannot check:
+    /// reading the wrong word out of an answer is a size no driver ever offered, and every hardware
+    /// test would still pass while the call asked for it.
+    pub(super) fn enumerated_size(answer: &[u8]) -> Option<(u32, u32)> {
+        match u32_at(answer, FRMSIZE_TYPE) {
+            FRMSIZE_DISCRETE => Some((
+                u32_at(answer, FRMSIZE_DISCRETE_WIDTH),
+                u32_at(answer, FRMSIZE_DISCRETE_HEIGHT),
+            )),
+            // A stepwise driver reports a range, and the top of it is what it can do.
+            FRMSIZE_STEPWISE => Some((
+                u32_at(answer, FRMSIZE_STEPWISE_MAX_WIDTH),
+                u32_at(answer, FRMSIZE_STEPWISE_MAX_HEIGHT),
+            )),
+            _ => None,
+        }
+    }
+
     /// Asks for one size and format, and answers with what the driver granted, including the row
     /// stride the granted format carries.
     fn set_format(
@@ -629,9 +696,10 @@ mod v4l2 {
         ))
     }
 
-    /// Asks for 15 frames a second. A driver that will not say is not a failure: the read loop does
-    /// not depend on the rate.
-    fn set_rate(fd: libc::c_int) {
+    /// Asks for `fps` frames a second. A driver that will not say is not a failure: the read loop
+    /// does not depend on the rate, and a camera that grants another one is encoded at its own
+    /// cadence because the frames carry the time they were captured at.
+    fn set_rate(fd: libc::c_int, fps: u32) {
         let mut buffer = vec![0_u8; 204];
         put_u32(&mut buffer, 0, BUF_TYPE_VIDEO_CAPTURE);
         if ioctl(fd, G_PARM, &mut buffer).is_err() {
@@ -640,7 +708,7 @@ mod v4l2 {
         // v4l2_streamparm's capture arm is capability, capturemode, then timeperframe, which is a
         // numerator and a denominator.
         buffer[12..16].copy_from_slice(&1_u32.to_ne_bytes());
-        buffer[16..20].copy_from_slice(&15_u32.to_ne_bytes());
+        buffer[16..20].copy_from_slice(&fps.to_ne_bytes());
         let _ = ioctl(fd, S_PARM, &mut buffer);
     }
 
@@ -673,6 +741,114 @@ mod v4l2 {
         let fd = open(device).ok()?;
         let (width, height, _) = get_format(fd.as_raw_fd()).ok()?;
         (width > 0 && height > 0).then_some((width as u32, height as u32))
+    }
+
+    /// The largest frame this camera can capture at `fps`, across the formats it offers.
+    ///
+    /// The size a node comes up at is a default, not a capability: a webcam that can do 1280 by 720
+    /// commonly wakes up at 640 by 360, and asking the driver what it is set to rather than what it
+    /// can do is how a call ended up with a picture from a decade ago on hardware that could do far
+    /// better.
+    ///
+    /// Cadence is asked with the size, because the largest frame is often the slowest one: the
+    /// packed format this module reads directly reaches 1280 by 720 on some cameras only at ten
+    /// frames a second, and a call that took that for its picture would be trading a soft image for
+    /// a stuttering one. So the largest size that can hold the call's cadence wins, and a camera
+    /// that says nothing about its intervals is taken at its largest size, since there is nothing to
+    /// weigh against it.
+    ///
+    /// The packed format this module reads directly is asked first, because that is the size the
+    /// direct path can really deliver at; a node that reads only through the fallback is asked for
+    /// its largest over everything, and the fallback scales that into what it is given. `None` where
+    /// the node answers nothing, which leaves the caller with its own default rather than a guess.
+    pub fn largest_size(device: &str, fps: u32) -> Option<(u32, u32)> {
+        let fd = open(device).ok()?;
+        let raw = fd.as_raw_fd();
+        let offered = pixel_formats(raw);
+        if offered.is_empty() {
+            return None;
+        }
+        let direct = offered.contains(&FMT_YUYV);
+        let mut at_cadence: Option<(u32, u32)> = None;
+        let mut any: Option<(u32, u32)> = None;
+        for pixel in offered {
+            if direct && pixel != FMT_YUYV {
+                continue;
+            }
+            let mut index = 0_u32;
+            loop {
+                let mut buffer = vec![0_u8; FRMSIZE_LEN];
+                put_u32(&mut buffer, 0, index);
+                put_u32(&mut buffer, 4, pixel);
+                if ioctl(raw, ENUM_FRAMESIZES, &mut buffer).is_err() {
+                    break;
+                }
+                let Some((width, height)) = enumerated_size(&buffer) else {
+                    break;
+                };
+                if width > 0 && height > 0 {
+                    if bigger_than(any, (width, height)) {
+                        any = Some((width, height));
+                    }
+                    if reaches_cadence(raw, pixel, (width, height), fps)
+                        && bigger_than(at_cadence, (width, height))
+                    {
+                        at_cadence = Some((width, height));
+                    }
+                }
+                index += 1;
+            }
+        }
+        at_cadence.or(any)
+    }
+
+    /// The frame rate one enumerated size can deliver, as the driver states it.
+    ///
+    /// `None` where the driver does not answer, which is not a refusal: plenty of drivers enumerate
+    /// sizes without enumerating their intervals, and a size they will not talk about is taken.
+    fn reaches_cadence(fd: libc::c_int, pixel: u32, size: (u32, u32), fps: u32) -> bool {
+        let (width, height) = size;
+        let mut index = 0_u32;
+        let mut answered = false;
+        let mut reaches = false;
+        loop {
+            let mut buffer = vec![0_u8; FRMIVAL_LEN];
+            put_u32(&mut buffer, 0, index);
+            put_u32(&mut buffer, 4, pixel);
+            put_u32(&mut buffer, 8, width);
+            put_u32(&mut buffer, 12, height);
+            if ioctl(fd, ENUM_FRAMEINTERVALS, &mut buffer).is_err() {
+                break;
+            }
+            answered = true;
+            if interval_reaches(
+                fps,
+                u32_at(&buffer, FRMIVAL_NUMERATOR),
+                u32_at(&buffer, FRMIVAL_DENOMINATOR),
+            ) {
+                reaches = true;
+                break;
+            }
+            index += 1;
+        }
+        if answered { reaches } else { true }
+    }
+
+    /// Whether one interval offers at least `fps`, given as a numerator and a denominator.
+    ///
+    /// Pure, and separate, because this is the rule that decides whether a call's picture is a
+    /// larger one or a stuttering one, and it is the same rule for every camera.
+    pub(super) fn interval_reaches(fps: u32, numerator: u32, denominator: u32) -> bool {
+        numerator > 0 && denominator >= numerator.saturating_mul(fps)
+    }
+
+    /// Whether `candidate` is a larger frame than `current`, by area.
+    fn bigger_than(current: Option<(u32, u32)>, candidate: (u32, u32)) -> bool {
+        let area = |(width, height): (u32, u32)| u64::from(width) * u64::from(height);
+        match current {
+            Some(current) => area(candidate) > area(current),
+            None => true,
+        }
     }
 
     pub fn cameras() -> Vec<(String, String)> {
@@ -857,7 +1033,7 @@ mod v4l2 {
     }
 
     impl Node {
-        pub fn open(device: &str, budget: (usize, usize)) -> Result<Self, String> {
+        pub fn open(device: &str, budget: (usize, usize), fps: u32) -> Result<Self, String> {
             let fd = open(device).map_err(|error| error.to_string())?;
             let raw = fd.as_raw_fd();
             let (_, capabilities) = capability(raw)?;
@@ -873,7 +1049,7 @@ mod v4l2 {
             if width == 0 || height == 0 {
                 return Err("the camera reported an empty frame".to_owned());
             }
-            set_rate(raw);
+            set_rate(raw, fps);
             // YUYV packs two pixels into four bytes, so a row is at least `width * 2`.
             let stride = stride.max(width * 2);
             let buffers = map_buffers(raw)?;
@@ -1118,13 +1294,80 @@ mod tests {
         );
     }
 
+    /// The size inside one `VIDIOC_ENUM_FRAMESIZES` answer is read from the right words.
+    ///
+    /// No camera is needed for this and none could check it: a wrong offset here is a size no
+    /// driver ever offered, which is a request the driver quietly clamps and a call that quietly
+    /// loses its picture quality, with every hardware test still passing.
+    #[test]
+    fn an_enumerated_frame_size_is_read_from_the_drivers_own_union() {
+        let mut discrete = vec![0_u8; super::v4l2::FRMSIZE_LEN];
+        super::v4l2::put_u32(&mut discrete, 0, 3);
+        super::v4l2::put_u32(&mut discrete, 4, super::v4l2::FMT_YUYV);
+        super::v4l2::put_u32(&mut discrete, 8, super::v4l2::FRMSIZE_DISCRETE);
+        super::v4l2::put_u32(&mut discrete, 12, 1280);
+        super::v4l2::put_u32(&mut discrete, 16, 720);
+        // The reserved words are not a size, whatever they happen to hold.
+        super::v4l2::put_u32(&mut discrete, 36, 4);
+        super::v4l2::put_u32(&mut discrete, 40, 3);
+        assert_eq!(super::v4l2::enumerated_size(&discrete), Some((1280, 720)));
+
+        let mut stepwise = vec![0_u8; super::v4l2::FRMSIZE_LEN];
+        super::v4l2::put_u32(&mut stepwise, 8, super::v4l2::FRMSIZE_STEPWISE);
+        // min_width, max_width, step_width, min_height, max_height, step_height.
+        for (at, value) in [
+            (12, 320),
+            (16, 1920),
+            (20, 2),
+            (24, 240),
+            (28, 1080),
+            (32, 2),
+        ] {
+            super::v4l2::put_u32(&mut stepwise, at, value);
+        }
+        assert_eq!(
+            super::v4l2::enumerated_size(&stepwise),
+            Some((1920, 1080)),
+            "a range answers with its top"
+        );
+
+        let mut unknown = vec![0_u8; super::v4l2::FRMSIZE_LEN];
+        super::v4l2::put_u32(&mut unknown, 8, 99);
+        assert_eq!(
+            super::v4l2::enumerated_size(&unknown),
+            None,
+            "a type this does not know is not read as a size"
+        );
+    }
+
+    /// A size is taken only when the camera can read it at the call's cadence.
+    ///
+    /// The largest frame is often the slowest one: 1280 by 720 read as packed YUYV is a ten-frame
+    /// camera on hardware that does thirty at 640 by 480, so the size a call asks for cannot be
+    /// chosen by area alone. A driver that states no interval at all is taken at its largest size,
+    /// because there is nothing to weigh against it.
+    #[test]
+    fn a_size_is_taken_when_the_camera_can_read_it_at_the_calls_cadence() {
+        // Thirty frames a second, stated as one frame per thirtieth of a second.
+        assert!(super::v4l2::interval_reaches(30, 1, 30));
+        // Faster than asked is still enough.
+        assert!(super::v4l2::interval_reaches(30, 1, 60));
+        // Ten frames a second is not thirty, so a 720p answer at that rate loses to a smaller size
+        // that keeps the cadence.
+        assert!(!super::v4l2::interval_reaches(30, 1, 10));
+        // A long exposure written the other way round is read the same way.
+        assert!(super::v4l2::interval_reaches(30, 1000, 33_000));
+        // A driver that states a zero numerator has not stated an interval.
+        assert!(!super::v4l2::interval_reaches(30, 0, 30));
+    }
+
     /// A node that is not a camera is refused instead of a capture process being started for it.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_node_that_is_not_a_camera_is_refused_rather_than_read() {
         let before = STARTED.load(std::sync::atomic::Ordering::Relaxed);
         let child = Arc::new(Mutex::new(None));
-        let error = Source::open("/dev/null", (640, 360), child)
+        let error = Source::open("/dev/null", (640, 360), 30, child)
             .err()
             .expect("a device that is not a camera does not open");
         assert!(error.contains("not a camera"), "{error}");
@@ -1154,7 +1397,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_fallback_command_reads_the_node_as_raw_yuv420() {
-        let args = ffmpeg_args(&Input::Node("/dev/video0".to_owned()), (640, 360));
+        let args = ffmpeg_args(&Input::Node("/dev/video0".to_owned()), (640, 360), 30);
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         assert_eq!(
             args,
@@ -1169,7 +1412,7 @@ mod tests {
                 "-vf",
                 "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
                 "-r",
-                "15",
+                "30",
                 "-pix_fmt",
                 "yuv420p",
                 "-f",
@@ -1188,6 +1431,7 @@ mod tests {
         let source = Source::open_routed(
             "/dev/video0",
             (640, 360),
+            30,
             Arc::clone(&slot),
             Input::Node("/dev/video0".to_owned()),
             || Ok(Source::Stub),
@@ -1229,6 +1473,7 @@ mod tests {
         let mut source = Source::start(
             Input::Synthetic(format!("testsrc=size={}x{}:rate=15", budget.0, budget.1)),
             budget,
+            30,
             Arc::clone(&slot),
         )
         .expect("the fallback process starts");
@@ -1283,7 +1528,7 @@ mod tests {
         assert!(cameras().is_empty());
         assert!(!is_capture("/dev/video0"));
         assert!(current_size("/dev/video0").is_none());
-        assert!(Source::open("/dev/video0", (640, 360), Arc::new(Mutex::new(None))).is_err());
+        assert!(Source::open("/dev/video0", (640, 360), 30, Arc::new(Mutex::new(None))).is_err());
     }
 
     /// Opens this machine's real camera and counts frames.
@@ -1302,8 +1547,15 @@ mod tests {
             "no camera was found to open on this machine"
         );
         let (device, label) = &listed[0];
+        // What the driver is set to against what it can do: the call's capture budget comes from the
+        // second, so the two disagreeing is exactly the bug this path fixes.
+        eprintln!(
+            "{label}: driver default {:?}, largest at 30 fps {:?}",
+            current_size(device),
+            largest_size(device, 30)
+        );
         let child = Arc::new(Mutex::new(None));
-        let mut source = Source::open(device, (640, 360), child).expect("the camera opens");
+        let mut source = Source::open(device, (640, 360), 30, child).expect("the camera opens");
         // The node is the main path and `ffmpeg` only fills in, so a camera this readable must not
         // have started a capture process at all.
         assert!(

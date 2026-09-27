@@ -13,6 +13,7 @@
 
 use std::num::NonZero;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -49,6 +50,18 @@ const STALLED: Duration = Duration::from_millis(500);
 /// Two seconds is far above any start-up a working device needs and far below leaving a dead one
 /// silent for the rest of the call.
 const STARTUP: Duration = Duration::from_millis(2_000);
+/// How long the sink is excused from the stall clock after a new media stream relinks the audio
+/// graph.
+///
+/// Turning a camera on opens a second stream on this machine's audio graph, and the graph relinks
+/// every stream on it while the new one settles: the sink stops draining for as long as that takes,
+/// which is routinely longer than the half-second stall window. Judged by that window the call
+/// tore its own player down the moment the camera came on, dropped the peer's audio queued behind
+/// it, and reopened the stream into the same relink: the sound did not come back while the
+/// microphone, the video and the signaling all kept working. Three seconds is above any relink a
+/// working graph needs and below leaving a dead device holding the call, and the window only opens
+/// when the call itself says a stream came or went.
+const RELINK_GRACE: Duration = Duration::from_millis(3_000);
 /// How many times a sink may be restarted without ever having played before the selected device is
 /// given up for the system default.
 ///
@@ -673,6 +686,8 @@ pub struct AudioOutput {
     /// that was playing and stopped, and this is every restart, so a device that never plays at all
     /// is visible as a run of opens rather than as no stall at all.
     pub restarts: Arc<AtomicUsize>,
+    /// When the current grace window closes, if one is open.
+    relink: Arc<Mutex<Option<Instant>>>,
 }
 
 impl AudioOutput {
@@ -683,14 +698,18 @@ impl AudioOutput {
         let opens = Arc::new(AtomicUsize::new(0));
         let stalls = Arc::new(AtomicUsize::new(0));
         let restarts = Arc::new(AtomicUsize::new(0));
+        let relink = Arc::new(Mutex::new(None));
         tokio::spawn(play_pump(
             rx,
             swaps,
             fell,
             target.clone(),
-            Arc::clone(&opens),
-            Arc::clone(&stalls),
-            Arc::clone(&restarts),
+            SpeakerHealth {
+                opens: Arc::clone(&opens),
+                stalls: Arc::clone(&stalls),
+                restarts: Arc::clone(&restarts),
+                relink: Arc::clone(&relink),
+            },
         ));
         (
             Self {
@@ -699,9 +718,30 @@ impl AudioOutput {
                 opens,
                 stalls,
                 restarts,
+                relink,
             },
             tx,
         )
+    }
+
+    /// Whether a relink window is open right now, which is what a call's own test asks.
+    #[cfg(test)]
+    pub(crate) fn relink_open(&self) -> bool {
+        relink_left(&self.relink).is_some()
+    }
+
+    /// Says a new media stream has just been opened or closed here, which relinks the streams
+    /// already on this machine's audio graph.
+    ///
+    /// Called by the call when the camera starts or stops, so the sink is not judged stalled while
+    /// the graph settles around the new stream. It only ever widens a window; it can neither stop
+    /// nor restart anything by itself.
+    pub fn relink(&self) {
+        let mut until = self
+            .relink
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *until = Some(Instant::now() + RELINK_GRACE);
     }
 
     /// Rebinds the speaker, keeping the engine's channel alive.
@@ -717,21 +757,39 @@ impl AudioOutput {
     }
 }
 
+/// What one call's speaker keeps about itself, handed to the pump as one thing.
+///
+/// Three counters and a window, which are four questions about one stream: how many were opened,
+/// how many that had played stopped draining, how many were reopened at all, and how long a stream
+/// the call just opened or closed is still being excused from the stall clock. Kept together so the
+/// pump's signature stays about the audio rather than about bookkeeping.
+#[derive(Clone)]
+struct SpeakerHealth {
+    opens: Arc<AtomicUsize>,
+    stalls: Arc<AtomicUsize>,
+    restarts: Arc<AtomicUsize>,
+    relink: Arc<Mutex<Option<Instant>>>,
+}
+
 async fn play_pump(
     rx: async_channel::Receiver<Vec<i16>>,
     swaps: async_channel::Receiver<Option<String>>,
     fell: async_channel::Sender<()>,
     initial: Option<String>,
-    opens: Arc<AtomicUsize>,
-    stalls: Arc<AtomicUsize>,
-    restarts: Arc<AtomicUsize>,
+    health: SpeakerHealth,
 ) {
+    let SpeakerHealth {
+        opens,
+        stalls,
+        restarts,
+        relink,
+    } = health;
     let mut target = initial;
     // Restarts in a row that never played a sample. Reset by any stream that plays one, so this
     // counts a device that is not there rather than a busy one.
     let mut unplayed = 0_usize;
     loop {
-        let writer = match SpkWriter::start(target.as_deref()) {
+        let writer = match SpkWriter::start(target.as_deref(), Arc::clone(&relink)) {
             Ok(writer) => {
                 opens.fetch_add(1, Ordering::Relaxed);
                 writer
@@ -849,7 +907,7 @@ struct SpkWriter {
 }
 
 impl SpkWriter {
-    fn start(device: Option<&str>) -> Result<Self, String> {
+    fn start(device: Option<&str>, relink: Arc<Mutex<Option<Instant>>>) -> Result<Self, String> {
         let (tx, rx) = async_channel::bounded::<Vec<i16>>(SPEAKER_QUEUE);
         let stop = Arc::new(AtomicBool::new(false));
         let accepted = Arc::new(AtomicBool::new(false));
@@ -869,9 +927,12 @@ impl SpkWriter {
                         name.as_deref(),
                         &rx,
                         &stop,
-                        &accepted,
-                        &stalled,
-                        &played,
+                        SpeakerFlags {
+                            accepted: &accepted,
+                            stalled: &stalled,
+                            played: &played,
+                        },
+                        &relink,
                         &ready,
                     )
                 })
@@ -910,15 +971,33 @@ impl Drop for SpkWriter {
     }
 }
 
+/// The three flags one speaker stream reports itself through.
+///
+/// A struct because each is one fact about the same stream, and the writer's signature is about the
+/// audio rather than about how many `AtomicBool`s it takes to describe it.
+struct SpeakerFlags<'a> {
+    /// Set once a frame reached the sink, which tells a device that is gone from one that is quiet.
+    accepted: &'a AtomicBool,
+    /// Set when the sink stopped draining, so the pump restarts it.
+    stalled: &'a AtomicBool,
+    /// Set once the stream has played, which is what tells a stream that never started from one
+    /// that was playing and stopped.
+    played: &'a AtomicBool,
+}
+
 fn write_speaker(
     device: Option<&str>,
     frames: &async_channel::Receiver<Vec<i16>>,
     stop: &AtomicBool,
-    accepted: &AtomicBool,
-    stalled: &AtomicBool,
-    played: &AtomicBool,
+    flags: SpeakerFlags<'_>,
+    relink: &Mutex<Option<Instant>>,
     ready: &std::sync::mpsc::Sender<Result<(), String>>,
 ) {
+    let SpeakerFlags {
+        accepted,
+        stalled,
+        played,
+    } = flags;
     let sink = match open_sink(device) {
         Ok(sink) => {
             let _ = ready.send(Ok(()));
@@ -953,10 +1032,18 @@ fn write_speaker(
             // whole start-up window; one that was playing gets the stall window, which is where
             // the peer's voice would otherwise be stuck behind a device that stopped draining.
             //
-            let limit = if played.load(Ordering::Relaxed) {
+            // Either window is widened while a stream the call just opened or closed is still
+            // relinking this machine's audio graph: that pause is the graph's, not the device's,
+            // and tearing the stream down over it is what took the peer's voice away with the
+            // camera on.
+            let base = if played.load(Ordering::Relaxed) {
                 STALLED
             } else {
                 STARTUP
+            };
+            let limit = match relink_left(relink) {
+                Some(left) => base.max(left),
+                None => base,
             };
             let since = *quiet_since.get_or_insert_with(Instant::now);
             if since.elapsed() > limit {
@@ -972,6 +1059,12 @@ fn write_speaker(
         }
         last_position = position;
     }
+}
+
+/// How long the sink is still excused from the stall clock, if a relink is in flight.
+fn relink_left(relink: &Mutex<Option<Instant>>) -> Option<Duration> {
+    let guard = relink.lock().unwrap_or_else(|error| error.into_inner());
+    (*guard)?.checked_duration_since(Instant::now())
 }
 
 /// A device backend a test installs in place of this machine's devices.
@@ -1496,6 +1589,54 @@ mod tests {
         assert!(speaker.played_count() > before, "the slow device played");
         assert_eq!(opens, 1, "and it played on the stream it started with");
         assert_eq!(stalls, 0, "a slow start is not a stall");
+    }
+
+    /// A sink that pauses while a new stream relinks this machine's audio graph is left alone.
+    ///
+    /// This is the reported regression, and it is why the grace window exists: a voice call was
+    /// playing, the camera came on, the graph relinked every stream on it, and the sink stopped
+    /// draining for longer than the stall window. The call tore its own player down over that
+    /// pause, dropped the peer's audio queued behind it, and reopened into the same relink, so the
+    /// peer went quiet with the picture and the microphone still working. A sink can still move no
+    /// samples for most of a second after the call says a stream came or went, and it must not be
+    /// restarted for it: it is the graph, not the device.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_relink_does_not_let_the_call_tear_down_its_own_audio() {
+        let (_devices, speaker) = fake::install(vec![0.0; 8], 1, RATE, (RATE, 1));
+        let (output, tx) = AudioOutput::spawn(None);
+        let frame = vec![100_i16; FRAME_SAMPLES];
+        let started = Instant::now();
+        while speaker.played_count() < 2 && started.elapsed() < Duration::from_secs(5) {
+            let _ = tx.try_send(frame.clone());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(speaker.played_count() >= 2, "the call was playing");
+        // The camera opens: the graph relinks and this stream stops draining, well past the stall
+        // window that used to decide.
+        output.relink();
+        speaker.drains.store(false, Ordering::Relaxed);
+        let quiet = Instant::now();
+        while quiet.elapsed() < Duration::from_millis(900) {
+            let _ = tx.try_send(frame.clone());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (opens, stalls) = (
+            output.opens.load(Ordering::Relaxed),
+            output.stalls.load(Ordering::Relaxed),
+        );
+        assert_eq!(opens, 1, "a relink must not reopen the sink");
+        assert_eq!(stalls, 0, "and it is not a stall");
+        // The graph settles and the same stream plays on, with nothing restarted or rebound.
+        speaker.drains.store(true, Ordering::Relaxed);
+        let before = speaker.played_count();
+        let started = Instant::now();
+        while speaker.played_count() <= before && started.elapsed() < Duration::from_secs(5) {
+            let _ = tx.try_send(frame.clone());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        drop(output);
+        assert!(speaker.played_count() > before, "the call kept its sound");
+        assert_eq!(speaker.opened_count(), 1, "on the stream it already had");
     }
 
     /// A device that takes frames and never plays one is given up for the system default.

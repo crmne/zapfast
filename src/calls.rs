@@ -26,21 +26,34 @@ use whatsapp_rust::voip::{
     CallEvent, CallHandle, TimedVideoFrame, VideoFrame, VideoSink, VideoSource,
 };
 
-/// The pixel budget one camera session encodes within: a landscape frame at most 640 by 360, a
-/// portrait one at most 360 by 640.
+/// The pixel budget one camera session encodes within: a landscape frame at most 1280 by 720, a
+/// portrait one at most 720 by 1280.
 ///
 /// Following the camera's own aspect is what keeps a portrait camera portrait on the peer's screen
 /// and in the corner preview. Stretching it into one fixed landscape frame would either pad it into
-/// a letterbox or squash it, and neither is what the camera saw.
-const CAPTURE_LONG_SIDE: usize = 640;
-const CAPTURE_SHORT_SIDE: usize = 360;
-/// The largest the corner preview may be, in the same orientation as the capture.
+/// a letterbox or squash it, and neither is what the camera saw. The budget is 720p because that is
+/// what the peer's screen is: a smaller frame is scaled up twice (once by this side's bitrate and
+/// again by the phone) and reads as the soft, blocky picture a 640 by 360 call is.
+const CAPTURE_LONG_SIDE: usize = 1280;
+const CAPTURE_SHORT_SIDE: usize = 720;
+/// The largest the corner preview may be, in the same orientation as the capture. The preview is a
+/// thumbnail rather than the call, so it stays the size of one and costs nothing to draw.
 const PREVIEW_LONG_SIDE: usize = 320;
 const PREVIEW_SHORT_SIDE: usize = 180;
-const VIDEO_FPS: u32 = 15;
+/// The cadence the camera is asked for and the encoder is built for.
+///
+/// Thirty frames a second is the difference between a picture that moves and one that steps: at
+/// fifteen the peer sees every gesture twice. A camera that grants fewer frames is used at what it
+/// gives, and the frames carry their own capture times, so nothing plays back at the wrong speed.
+const VIDEO_FPS: u32 = 30;
 /// RTP video clock (90 kHz) divided by the capture cadence.
 const VIDEO_TS_STRIDE: u32 = 90_000 / VIDEO_FPS;
-const VIDEO_BITRATE: u32 = 1_200_000;
+/// The encoder's bitrate for the budget above.
+///
+/// Two and a half megabits a second is a normal 720p30 1:1 call: enough for a face and the room
+/// around it to stay sharp at that size, and low enough to fit the uplink a call has to share with
+/// its own audio.
+const VIDEO_BITRATE: u32 = 2_500_000;
 
 // ---------------------------------------------------------------------------
 // State
@@ -346,8 +359,8 @@ fn fit_even(size: (u32, u32), bounds: (usize, usize)) -> (usize, usize) {
 
 /// The frame size one camera session encodes at, given the format the camera reports.
 ///
-/// A portrait camera is encoded portrait over the same pixel budget (360 by 640 rather than 640 by
-/// 360), so the peer receives a picture whose shape is the shape the camera saw: nothing cropped,
+/// A portrait camera is encoded portrait over the same pixel budget (720 by 1280 rather than 1280 by
+/// 720), so the peer receives a picture whose shape is the shape the camera saw: nothing cropped,
 /// nothing stretched, and no rotation metadata needed, because the frames really are upright. A
 /// camera that will not say what it has keeps the landscape default, which is what every camera
 /// this app has met so far reports.
@@ -377,7 +390,10 @@ fn preview_size(capture: (usize, usize)) -> (usize, usize) {
 /// A node that will not answer, which is every metadata node, leaves the default, so the encoder
 /// runs at the budget's own shape.
 fn native_format(device: &str) -> Option<(u32, u32)> {
-    crate::camera::current_size(device)
+    // What the camera can do, not what it happens to be set to: the budget is derived from this, so
+    // a driver's own default (640 by 480 on a camera that can do far more) must not be what decides
+    // how large a call's picture is.
+    crate::camera::largest_size(device, VIDEO_FPS).or_else(|| crate::camera::current_size(device))
 }
 
 /// Whether an offer announces video.
@@ -768,7 +784,7 @@ fn capture(
     let budget = capture_size(native_format(&device));
     // The node is read first and `ffmpeg` only fills in, so a camera that is readable directly
     // never starts a process.
-    let mut source = match crate::camera::Source::open(&device, budget, child) {
+    let mut source = match crate::camera::Source::open(&device, budget, VIDEO_FPS, child) {
         Ok(source) => source,
         Err(error) => {
             log::error!("[CALL] camera capture could not start: {error}");
@@ -1811,17 +1827,50 @@ impl Call {
         Some(self.update())
     }
 
+    /// Says a media stream the call owns has just been opened or closed.
+    ///
+    /// A camera is a second stream on this machine's audio graph, and the graph relinks every
+    /// stream already on it while the new one settles. The sink is told, so a pause that belongs to
+    /// the graph is not read as a device that died and is not recovered from by throwing the peer's
+    /// audio away.
+    fn media_stream_changed(&self) {
+        if let Some(speaker) = &self.speaker {
+            speaker.relink();
+        }
+    }
+
+    /// The engine's counters and this side's audio path, for one transition of a call.
+    ///
+    /// Called at every point a media stream comes or goes, so a report has the numbers from before
+    /// and after the change rather than one heartbeat somewhere in the middle. A call that goes
+    /// quiet when the camera comes on is diagnosed from these lines: `rtp_received` and
+    /// `audio_frames_decoded` climbing while `audio_sink_dropped` climbs says the peer is still
+    /// being heard and this side is the one dropping it, and a flat `rtp_received` says the
+    /// opposite.
+    pub fn note_transition(&self, marker: &str) {
+        self.log_media_stats_at(marker);
+    }
+
     /// Turns the camera on or off through the engine's video direction.
     pub async fn set_camera(&mut self, on: bool) -> Result<CallUpdate> {
         let Some(handle) = self.handle.clone() else {
             return Err(anyhow!("the call is not up"));
         };
+        self.note_transition(if on {
+            "camera on requested"
+        } else {
+            "camera off requested"
+        });
         if on {
             let Some(pipe) = self.video_pipe.as_mut() else {
                 return Err(anyhow!("this call has no video"));
             };
             pipe.resume_camera(self.camera.clone())?;
             let (source, sink) = (pipe.source(), pipe.sink());
+            // The camera stream exists now, so the graph has relinked around it.
+            if let Some(speaker) = &self.speaker {
+                speaker.relink();
+            }
             handle
                 .resume_video(source, sink)
                 .await
@@ -1836,8 +1885,14 @@ impl Call {
                 pipe.pause_camera();
             }
             self.camera_wanted = false;
+            self.media_stream_changed();
         }
         log::info!("[CALL] camera enabled={on}");
+        self.note_transition(if on {
+            "camera on settled"
+        } else {
+            "camera off settled"
+        });
         Ok(self.update())
     }
 
@@ -1854,25 +1909,46 @@ impl Call {
         let Some(handle) = self.handle.clone() else {
             return Err(anyhow!("the call is not up"));
         };
+        self.note_transition("video requested");
         if self.video_pipe.is_none() {
             let (pipe, frames) = VideoPipeline::start(camera.clone())?;
+            self.media_stream_changed();
             self.camera_wanted = pipe.camera_running();
             self.video_pipe = Some(pipe);
-            self.camera = camera;
+            self.camera = camera.clone();
             self.video = true;
             let (source, sink) = {
                 let pipe = self.video_pipe.as_ref().expect("just installed");
                 (pipe.source(), pipe.sink())
             };
-            handle
-                .start_video(source, sink)
-                .await
-                .map_err(|error| anyhow!("the peer could not be asked for video: {error}"))?;
+            if let Err(error) = handle.start_video(source, sink).await {
+                self.abandon_video();
+                return Err(anyhow!("the peer could not be asked for video: {error}"));
+            }
             log::info!("[CALL] video upgrade requested call_id={}", self.call_id);
+            self.note_transition("video requested ok");
             return Ok(Some(frames));
         }
         self.set_camera(true).await?;
         Ok(None)
+    }
+
+    /// Gives back everything an upgrade that the peer refused had built.
+    ///
+    /// The peer was never asked, so there is no video call to be in: leaving the pipeline installed
+    /// would be a call the screen draws as sending a picture that was never announced, with a camera
+    /// holding the device and the frames going to nobody. The camera is stopped, the pipeline is
+    /// dropped, and the selection is cleared so the next press starts from the machine rather than
+    /// from a device this attempt had already taken.
+    fn abandon_video(&mut self) {
+        if let Some(mut pipe) = self.video_pipe.take() {
+            pipe.shutdown();
+        }
+        self.video = false;
+        self.camera = None;
+        self.camera_wanted = false;
+        self.media_stream_changed();
+        log::warn!("[CALL] video upgrade refused call_id={}", self.call_id);
     }
 
     /// Rebinds the microphone. The engine's channel is untouched.
@@ -1901,6 +1977,16 @@ impl Call {
     pub fn set_camera_device(&mut self, device: Option<String>) -> Result<CallUpdate> {
         self.camera = device.clone();
         self.lost_devices.clear();
+        // Said before the switch is attempted, because the stream is going either way: the old
+        // camera is already released by the time a new one is opened, so the graph relinks whether
+        // or not the new node turns out to be usable.
+        if self
+            .video_pipe
+            .as_ref()
+            .is_some_and(VideoPipeline::camera_running)
+        {
+            self.media_stream_changed();
+        }
         if let Some(pipe) = self.video_pipe.as_mut()
             && pipe.camera_running()
         {
@@ -2081,6 +2167,74 @@ mod tests {
             "the camera changes opened no audio device"
         );
         call.cleanup();
+    }
+
+    /// A video direction with a camera that reads as running, without a device behind it.
+    ///
+    /// Enough to drive the paths that only ask whether a camera is capturing, which is what a
+    /// machine with no camera cannot exercise otherwise.
+    fn pipeline_with_a_running_camera() -> VideoPipeline {
+        let (ticks, _ticks_rx) = async_channel::bounded::<VideoTick>(2);
+        let (remote_tx, _remote_rx) = async_channel::bounded::<VideoFrame>(8);
+        let (_frames, timed) = async_channel::bounded::<TimedVideoFrame>(4);
+        VideoPipeline {
+            ticks,
+            remote_tx,
+            camera: Some(CameraCapture {
+                timed,
+                running: Arc::new(AtomicBool::new(true)),
+                child: Arc::new(std::sync::Mutex::new(None)),
+            }),
+            device: None,
+        }
+    }
+
+    /// Opening or closing a camera tells the speaker the audio graph is relinking.
+    ///
+    /// A camera is a second stream on the same graph the call's audio runs on, and the graph
+    /// relinks every stream on it while the new one settles. Without this the sink is judged stalled
+    /// through that pause and recovers by throwing the peer's audio away, which is the reported
+    /// "camera on and the other side went quiet" with everything else still working.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_camera_change_tells_the_speaker_the_graph_is_relinking() {
+        let samples: Vec<f32> = (0..960).map(|sample| sample as f32 / 1_920.0).collect();
+        let (_devices, _speaker) =
+            crate::call_audio::fake::install(samples, 2, 48_000, (48_000, 2));
+        let mut call = dialing();
+        let (output, _frames) = AudioOutput::spawn(None);
+        call.speaker = Some(output);
+        call.video = true;
+        call.video_pipe = Some(pipeline_with_a_running_camera());
+        assert!(
+            !call.speaker.as_ref().is_some_and(AudioOutput::relink_open),
+            "nothing has relinked yet"
+        );
+        // Whether this machine can open `/dev/video9` is not what is under test: the stream is
+        // torn down either way, so the sink is told either way.
+        let _ = call.set_camera_device(Some("/dev/video9".to_owned()));
+        assert!(
+            call.speaker.as_ref().is_some_and(AudioOutput::relink_open),
+            "switching the camera tells the sink the graph is relinking"
+        );
+        call.cleanup();
+    }
+
+    /// An upgrade the peer refused leaves no half-installed video behind it.
+    ///
+    /// The call would otherwise draw itself as video with a camera holding the device, the frames
+    /// going to nobody, and the peer never having been asked, so the next press of the camera would
+    /// have to undo a state the user never asked for.
+    #[test]
+    fn a_refused_upgrade_gives_back_everything_it_built() {
+        let mut call = dialing();
+        call.video = true;
+        call.camera = Some("/dev/video0".to_owned());
+        call.camera_wanted = true;
+        call.abandon_video();
+        assert!(!call.is_video(), "the call is a voice call again");
+        assert!(call.camera.is_none(), "and it holds no camera");
+        assert!(!call.camera_wanted, "so none is wanted");
+        assert!(call.video_pipe.is_none(), "and the pipeline is gone");
     }
 
     /// The engine's mute gate, as the engine's own media backend applies it to the frames a call
@@ -2484,25 +2638,25 @@ mod tests {
     #[test]
     fn a_portrait_camera_is_encoded_portrait() {
         // The shape the camera reports is the shape the peer receives, within the same pixel
-        // budget: 640 by 360 across, 360 by 640 upright.
-        assert_eq!(capture_size(Some((1280, 720))), (640, 360));
-        assert_eq!(capture_size(Some((1920, 1080))), (640, 360));
-        assert_eq!(capture_size(Some((1920, 960))), (640, 320));
-        assert_eq!(capture_size(Some((640, 480))), (480, 360));
-        assert_eq!(capture_size(Some((480, 640))), (360, 480));
-        assert_eq!(capture_size(Some((1080, 1920))), (360, 640));
+        // budget: 1280 by 720 across, 720 by 1280 upright.
+        assert_eq!(capture_size(Some((1280, 720))), (1280, 720));
+        assert_eq!(capture_size(Some((1920, 1080))), (1280, 720));
+        assert_eq!(capture_size(Some((1920, 960))), (1280, 640));
+        assert_eq!(capture_size(Some((640, 480))), (640, 480));
+        assert_eq!(capture_size(Some((480, 640))), (480, 640));
+        assert_eq!(capture_size(Some((1080, 1920))), (720, 1280));
         // A small camera is not blown up: that costs bytes and latency for nothing.
         assert_eq!(capture_size(Some((320, 240))), (320, 240));
         // Nothing known about the camera keeps the landscape default rather than guessing.
-        assert_eq!(capture_size(None), (640, 360));
-        assert_eq!(capture_size(Some((0, 0))), (640, 360));
+        assert_eq!(capture_size(None), (1280, 720));
+        assert_eq!(capture_size(Some((0, 0))), (1280, 720));
     }
 
     #[test]
     fn the_corner_preview_keeps_the_capture_shape() {
-        assert_eq!(preview_size((640, 360)), (320, 180));
-        assert_eq!(preview_size((480, 360)), (240, 180));
-        assert_eq!(preview_size((360, 640)), (180, 320));
+        assert_eq!(preview_size((1280, 720)), (320, 180));
+        assert_eq!(preview_size((640, 480)), (240, 180));
+        assert_eq!(preview_size((720, 1280)), (180, 320));
     }
 
     #[test]
@@ -2510,7 +2664,7 @@ mod tests {
         // The camera module decides how to read a device and says when it cannot; a call built on a
         // device that is not a camera would otherwise start with no picture and no reason shown.
         let child = Arc::new(std::sync::Mutex::new(None));
-        assert!(crate::camera::Source::open("/dev/null", (640, 360), child).is_err());
+        assert!(crate::camera::Source::open("/dev/null", (1280, 720), VIDEO_FPS, child).is_err());
     }
 
     #[test]
