@@ -5089,7 +5089,16 @@ fn rich_body(
     // Click links and drag to select text.
     // Text selection and pointer links do not need a sequential Tab stop.
     // The surrounding transcript remains available to accessibility readers.
-    let (rect, response) = ui.allocate_exact_size(allocation, Sense::CLICK | Sense::DRAG);
+    let (rect, _) = ui.allocate_exact_size(allocation, Sense::hover());
+    // egui matches selection endpoints to widgets by id every frame and drops
+    // the selection when one is missed. A positional auto id shifts whenever
+    // a sibling allocates differently (virtualized rows), killing the
+    // selection mid-drag; an explicit id keeps the anchor alive.
+    let response = ui.interact(
+        rect,
+        bubble_id(&view.chat.id, &message.id).with("body-text"),
+        Sense::CLICK | Sense::DRAG,
+    );
     // Store the body rect for selection tests.
     ui.ctx().data_mut(|data| {
         data.insert_temp(bubble_id(&view.chat.id, &message.id).with("body"), rect);
