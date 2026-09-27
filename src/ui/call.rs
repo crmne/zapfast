@@ -267,12 +267,12 @@ fn bar(app: &mut App, ctx: &egui::Context, call: &CallUpdate, peer: &str, palett
                 })
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        // A voice call, in the colour the surface uses for a call that is up. The
-                        // whole point of the bar is that the call is still there, so it says what
-                        // kind of call it is before it says who is on it.
+                        // A call in the colour the surface uses for a call that is up. The whole
+                        // point of the bar is that the call is still there, so it says what kind
+                        // of call it is before it says who is on it.
                         theme::icon(
                             ui,
-                            Icon::Phone,
+                            if call.video { Icon::Video } else { Icon::Phone },
                             13.0,
                             if live { palette.danger } else { palette.accent },
                         );
