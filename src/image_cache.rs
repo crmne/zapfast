@@ -36,18 +36,18 @@ fn registry(ctx: &egui::Context) -> Registry {
 ///
 /// Re-registers them after [`sweep`] has forgotten the image, or after egui
 /// has dropped them once the texture was uploaded.
-pub fn include(ctx: &egui::Context, uri: String, bytes: &[u8]) {
+pub fn include(ctx: &egui::Context, uri: &str, bytes: &[u8]) {
     let frame = ctx.cumulative_frame_nr();
     let registry = registry(ctx);
     let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
-    let fresh = match entries.get_mut(&uri) {
+    let fresh = match entries.get_mut(uri) {
         Some(entry) => {
             entry.frame = frame;
             !std::mem::replace(&mut entry.registered, true)
         }
         None => {
             entries.insert(
-                uri.clone(),
+                uri.to_owned(),
                 Entry {
                     frame,
                     registered: true,
@@ -58,7 +58,7 @@ pub fn include(ctx: &egui::Context, uri: String, bytes: &[u8]) {
     };
     drop(entries);
     if fresh {
-        ctx.include_bytes(uri, bytes.to_vec());
+        ctx.include_bytes(uri.to_owned(), bytes.to_vec());
     }
 }
 
@@ -79,6 +79,19 @@ pub fn touch(ctx: &egui::Context, uri: &str) {
             );
         }
     }
+}
+
+/// Forgets one image now rather than once it falls out of the resident
+/// window: the info panel frees its thumbnails when it closes. A later draw
+/// registers the bytes again.
+pub fn forget(ctx: &egui::Context, uri: &str) {
+    let registry = registry(ctx);
+    registry
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(uri);
+    ctx.forget_image(uri);
 }
 
 /// Forgets the images that have not been drawn for the longest.
@@ -180,11 +193,25 @@ mod tests {
     }
 
     #[test]
+    fn a_forgotten_image_is_released_and_registers_again_when_drawn() {
+        let ctx = context();
+        include(&ctx, &uri(1), b"image bytes");
+        assert!(registered(&ctx, &uri(1)));
+        forget(&ctx, &uri(1));
+        assert!(
+            !registered(&ctx, &uri(1)),
+            "forgotten at once, not swept later"
+        );
+        include(&ctx, &uri(1), b"image bytes");
+        assert!(registered(&ctx, &uri(1)), "a later draw registers it again");
+    }
+
+    #[test]
     fn images_the_current_frame_drew_are_never_released() {
         let ctx = context();
         let total = RESIDENT + 40;
         for index in 0..total {
-            include(&ctx, uri(index), b"image bytes");
+            include(&ctx, &uri(index), b"image bytes");
         }
         // A frame that shows more images than the window holds must not drop
         // the ones it is showing right now.
@@ -199,7 +226,7 @@ mod tests {
         let ctx = context();
         let total = RESIDENT + 40;
         for index in 0..total {
-            include(&ctx, uri(index), b"image bytes");
+            include(&ctx, &uri(index), b"image bytes");
         }
         frame(&ctx);
         sweep(&ctx);
@@ -213,13 +240,13 @@ mod tests {
     fn a_released_image_is_registered_again_when_it_comes_back() {
         let ctx = context();
         for index in 0..RESIDENT + 40 {
-            include(&ctx, uri(index), b"image bytes");
+            include(&ctx, &uri(index), b"image bytes");
         }
         frame(&ctx);
         sweep(&ctx);
         // The oldest URI lost its bytes. Drawing it again must put them back,
         // because egui has no other way to resolve a `bytes://` image.
-        include(&ctx, uri(0), b"image bytes");
+        include(&ctx, &uri(0), b"image bytes");
         assert!(registered(&ctx, &uri(0)));
     }
 
@@ -229,7 +256,7 @@ mod tests {
         ctx.add_image_loader(std::sync::Arc::new(ReadyLoader));
         let uris: Vec<String> = (0..RESIDENT + 8).map(uri).collect();
         for uri in &uris {
-            include(&ctx, uri.clone(), b"image bytes");
+            include(&ctx, uri, b"image bytes");
         }
         let mut showing = draw(&ctx, &uris);
         let shown = allocated(&ctx);

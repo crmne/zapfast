@@ -12,9 +12,9 @@ use crate::backend::{Backend, Command, Event, LinkStatus, Refusal, Unsent, Waker
 use crate::i18n::Locale;
 use crate::image_preview::PreviewState;
 use crate::model::{
-    Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Label,
-    Media, MediaState, Message, Page, PickerTab, Scroll, SidebarDisplayMode, StickerPack,
-    StickerShelf, Toast, ToastKind,
+    Action, Chat, ChatFilter, ChatId, ChatMedia, Contact, Content, Delivery, Dialog, Gif, GifError,
+    InfoPanel, InfoView, Label, Media, MediaState, Message, Page, PickerTab, Scroll,
+    SidebarDisplayMode, StickerPack, StickerShelf, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{NotificationSound, Settings, ThemeChoice};
@@ -333,6 +333,15 @@ fn add_range(messages: &[Message], ids: &mut Vec<String>, anchor: &str, to: &str
     ids.sort_by_key(|id| position(id).unwrap_or(usize::MAX));
 }
 
+/// The info panel control the keyboard moves to after a view change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InfoFocus {
+    /// The Back button, after the media row opened the media view.
+    Back,
+    /// The media row, after Back returned to the overview.
+    MediaRow,
+}
+
 /// The "unread messages" divider of the open chat. It stays until another
 /// chat opens, like on the phone.
 #[derive(Clone, Debug, PartialEq)]
@@ -425,6 +434,30 @@ pub struct App {
     pub chat_search_calendar: bool,
     /// Whether the pane's field should take focus.
     pub focus_chat_search: bool,
+    /// The info panel beside the conversation, when open.
+    pub info: Option<InfoPanel>,
+    /// The listing of the panel's chat, once the worker has answered.
+    pub info_media: Option<ChatMedia>,
+    /// Whether a listing is on its way from the worker.
+    pub info_media_pending: bool,
+    /// Whether the chat changed while a listing was on its way, so it is
+    /// asked for again once that one is in.
+    info_media_stale: bool,
+    /// The thumbnails the panel has registered with egui, freed when it
+    /// closes rather than when they fall out of the resident window.
+    pub(crate) info_textures: HashSet<String>,
+    /// The texture name of each listed picture, in the listing's order.
+    pub(crate) info_uris: Vec<String>,
+    /// The request the panel is waiting for; an earlier one's answer is
+    /// ignored.
+    info_media_request: u64,
+    /// Whether the worker could not make the listing asked for last.
+    pub info_media_failed: bool,
+    /// The shown group's members in display order, sorted once per change
+    /// rather than every frame.
+    pub(crate) info_members: Option<(ChatId, Vec<(String, String)>)>,
+    /// The panel control that takes the keyboard on the next frame.
+    pub(crate) info_focus: Option<InfoFocus>,
     /// Whether the locked-chats folder is open.
     pub locked_folder: bool,
     /// The verifier authenticated for this window session, never the code.
@@ -989,6 +1022,16 @@ impl App {
             search_selected: None,
             search_hits: Vec::new(),
             chat_search_open: false,
+            info: None,
+            info_media: None,
+            info_media_pending: false,
+            info_media_stale: false,
+            info_textures: HashSet::new(),
+            info_uris: Vec::new(),
+            info_media_request: 0,
+            info_media_failed: false,
+            info_members: None,
+            info_focus: None,
             chat_search: String::new(),
             chat_search_hits: Vec::new(),
             chat_search_truncated: false,
@@ -1460,11 +1503,13 @@ impl App {
     fn leave_chat(&mut self, id: &str) {
         self.notifications.clear(id);
         self.search_hits.retain(|message| message.chat != id);
+        if self.info.as_ref().is_some_and(|info| info.chat == id) {
+            self.close_info();
+        }
         if matches!(
             &self.dialog,
             Some(
-                Dialog::ChatInfo(chat)
-                    | Dialog::CreatePoll(chat)
+                Dialog::CreatePoll(chat)
                     | Dialog::ConfirmDeleteChat(chat)
                     | Dialog::ConfirmClearChat(chat)
             ) if chat == id
@@ -1478,7 +1523,7 @@ impl App {
         }
         if self.open_chat.as_deref() == Some(id) {
             self.stop_composing(id);
-            self.open_chat = None;
+            self.set_open_chat(None);
             self.composer.clear();
             self.composer_mentions.clear();
             self.pending.clear();
@@ -2150,16 +2195,25 @@ impl App {
                         }
                     }
                     self.chats = chats;
+                    self.info_members = None;
+                    self.drop_locked_panel();
+                    // A chat the phone unlocked can be listed now.
+                    self.request_info_media_if_unloaded();
                     if let Some(open) = self.open_chat.clone() {
                         if self.chat(&open).is_none_or(|chat| chat.locked) {
-                            self.open_chat = None;
+                            self.set_open_chat(None);
                         } else {
                             // Show archived messages immediately, including offline.
                             self.ensure_loaded(&open);
                         }
                     }
                 }
-                Event::ChatUpdated(chat) => self.handle_chat_updated(*chat),
+                Event::ChatUpdated(chat) => {
+                    self.info_members = None;
+                    self.handle_chat_updated(*chat);
+                    // A chat unlocked alone opens the way for its waiting panel.
+                    self.request_info_media_if_unloaded();
+                }
                 Event::Messages {
                     chat,
                     messages,
@@ -2204,6 +2258,36 @@ impl App {
                         }
                     }
                 }
+                Event::ChatMedia { request, result } => {
+                    // Only the answer to the request being waited for counts:
+                    // an earlier request's, or one for a chat the panel no
+                    // longer shows, arrives too late to matter.
+                    let current = request == self.info_media_request
+                        && self.info_media_allowed()
+                        && self.info.as_ref().is_some_and(|info| match &result {
+                            Ok(media) => media.chat == info.chat,
+                            Err(_) => true,
+                        });
+                    if current {
+                        self.info_media_pending = false;
+                        match result {
+                            Ok(media) => {
+                                self.info_media_failed = false;
+                                self.set_info_media(media);
+                                if std::mem::take(&mut self.info_media_stale) {
+                                    self.request_info_media();
+                                }
+                            }
+                            Err(_) => {
+                                self.info_media_failed = true;
+                                self.info_media_stale = false;
+                            }
+                        }
+                    }
+                }
+                // The worker's word that what the panel lists changed; the
+                // transcript's own events are not read for it.
+                Event::ChatMediaChanged(chat) => self.refresh_info_media(&chat),
                 Event::ChatHits {
                     chat,
                     query,
@@ -2304,6 +2388,7 @@ impl App {
                     }
                 }
                 Event::Contacts(contacts) => {
+                    self.info_members = None;
                     for contact in contacts {
                         self.contacts.insert(contact.id.clone(), contact);
                     }
@@ -2655,7 +2740,7 @@ impl App {
                 self.avatars.clear();
                 self.account_privacy = crate::privacy::Snapshot::default();
                 self.account_receipts_off = false;
-                self.open_chat = None;
+                self.set_open_chat(None);
                 // Unsent text belongs to the account that was unlinked.
                 self.drafts.clear();
                 self.draft_mentions.clear();
@@ -2718,6 +2803,17 @@ impl App {
         {
             self.hide_locked_chat(&id);
         }
+        self.drop_locked_panel();
+    }
+
+    /// Takes a locked chat's info panel away once it may no longer be shown:
+    /// lock authentication ended, or the chat was locked under its panel.
+    /// The listing, the pictures' textures and the answer being waited for
+    /// go with it.
+    fn drop_locked_panel(&mut self) {
+        if self.info.is_some() && !self.info_media_allowed() {
+            self.close_info();
+        }
     }
 
     fn clear_chat_lock_entry(&mut self) {
@@ -2738,6 +2834,8 @@ impl App {
         self.show_archived = false;
         self.page = Page::Chats;
         self.sidebar_visible = true;
+        // A locked chat's panel opened before this can be listed now.
+        self.request_info_media_if_unloaded();
     }
 
     /// Empties a chat that stays listed. Search hits and anything pointing at
@@ -2813,6 +2911,8 @@ impl App {
         if self.open_chat.is_none() || self.page != Page::Chats {
             return;
         }
+        // The pane takes the info panel's place beside the chat.
+        self.close_info();
         if !self.chat_search_open {
             self.chat_search_open = true;
             self.chat_search_month = crate::util::today();
@@ -2820,6 +2920,134 @@ impl App {
         self.focus_chat_search = true;
         self.focus_search = false;
         self.focus_composer = false;
+    }
+
+    /// Whether the info panel is on screen: it sits beside the open chat and
+    /// only the chat view shows it.
+    pub fn info_visible(&self) -> bool {
+        self.info.is_some() && self.page == Page::Chats && self.open_chat.is_some()
+    }
+
+    /// Opens the info panel on a chat's overview, in the search pane's
+    /// place. The listing is asked for once per chat shown; opening the
+    /// same chat again only returns to the overview.
+    fn open_info(&mut self, chat: ChatId) {
+        if self.open_chat.is_none() || self.page != Page::Chats {
+            return;
+        }
+        self.close_chat_search();
+        self.contact_edit = None;
+        self.group_name_edit = None;
+        self.emoji_start = None;
+        self.mention_start = None;
+        if self.info.as_ref().is_none_or(|info| info.chat != chat) {
+            // The listing asked for the chat shown before is not this
+            // chat's: its answer is refused and nothing stays due, even
+            // when this chat cannot be asked for yet.
+            self.reset_info_media();
+            self.info_members = None;
+            self.info = Some(InfoPanel {
+                chat,
+                view: InfoView::Overview,
+            });
+            self.request_info_media();
+        } else if let Some(info) = self.info.as_mut() {
+            info.view = InfoView::Overview;
+            self.request_info_media_if_unloaded();
+        }
+    }
+
+    /// Asks for the panel's listing when it may be listed and nothing is
+    /// loaded, on its way or failed: the same panel opened again, or lock
+    /// authentication opening the way for a locked chat's panel.
+    fn request_info_media_if_unloaded(&mut self) {
+        if self.info.is_some()
+            && self.info_media_allowed()
+            && self.info_media.is_none()
+            && !self.info_media_pending
+            && !self.info_media_failed
+        {
+            self.request_info_media();
+        }
+    }
+
+    fn close_info(&mut self) {
+        self.info = None;
+        self.reset_info_media();
+        self.info_members = None;
+        self.info_focus = None;
+        self.contact_edit = None;
+        self.group_name_edit = None;
+    }
+
+    /// Drops the listing and invalidates the request still out for it: an
+    /// answer on its way is for a chat the panel no longer shows.
+    fn reset_info_media(&mut self) {
+        self.info_media = None;
+        self.info_uris.clear();
+        self.info_media_request += 1;
+        self.info_media_pending = false;
+        self.info_media_stale = false;
+        self.info_media_failed = false;
+    }
+
+    /// The one place the open chat changes: the info panel belongs beside
+    /// the chat it was opened over, and goes with it.
+    fn set_open_chat(&mut self, id: Option<ChatId>) {
+        if self.open_chat != id {
+            self.close_info();
+        }
+        self.open_chat = id;
+    }
+
+    /// Whether the panel may list its chat's media: a locked chat's stays
+    /// in the locked folder, so a member's panel opened from an unlocked
+    /// group shows who they are and nothing shared with them.
+    pub fn info_media_allowed(&self) -> bool {
+        self.info.as_ref().is_some_and(|info| {
+            !self.chat(&info.chat).is_some_and(|chat| chat.locked) || self.locked_folder_open()
+        })
+    }
+
+    fn request_info_media(&mut self) {
+        if !self.info_media_allowed() {
+            return;
+        }
+        if let Some(info) = &self.info {
+            self.info_media_request += 1;
+            self.info_media_pending = true;
+            self.info_media_failed = false;
+            self.backend.send(Command::LoadChatMedia {
+                chat: info.chat.clone(),
+                request: self.info_media_request,
+            });
+        }
+    }
+
+    /// Keeps the panel's listing current after `chat` gained, changed or
+    /// lost a message: one request at a time, and one more once it is in.
+    fn refresh_info_media(&mut self, chat: &str) {
+        if self.info.as_ref().is_none_or(|info| info.chat != chat) || !self.info_media_allowed() {
+            return;
+        }
+        if self.info_media_pending {
+            self.info_media_stale = true;
+        } else {
+            self.request_info_media();
+        }
+    }
+
+    /// Keeps a listing, with the texture name of each of its pictures, so
+    /// the panel draws them under fixed names and frees them together when
+    /// it closes.
+    pub(crate) fn set_info_media(&mut self, media: ChatMedia) {
+        self.info_uris = media
+            .media
+            .iter()
+            .map(|row| crate::ui::info::thumbnail_uri(&row.chat, &row.id))
+            .collect();
+        self.info_textures.extend(self.info_uris.iter().cloned());
+        self.info_media = Some(media);
     }
 
     fn close_chat_search(&mut self) {
@@ -2994,6 +3222,23 @@ impl App {
         card: Option<usize>,
         result: Result<PathBuf, String>,
     ) {
+        // The info panel's listing keeps its own copy of the message, so a
+        // picture without a preview stops being blank once its file is there.
+        if let Ok(path) = &result
+            && let Some(listing) = self
+                .info_media
+                .as_mut()
+                .filter(|listing| listing.chat == chat)
+            && let Some(row) = listing
+                .media
+                .iter_mut()
+                .chain(listing.docs.iter_mut())
+                .find(|row| row.id == id)
+            && let Some(media) = row.content.media_at_mut(card)
+        {
+            media.path = Some(path.clone());
+            media.state = MediaState::Idle;
+        }
         let Some(message) = self
             .conversations
             .get_mut(chat)
@@ -3206,8 +3451,10 @@ impl App {
                     });
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
-            // A search belongs to the chat it was typed in.
+            // A search and an info panel belong to the chat they were
+            // opened beside.
             self.close_chat_search();
+            self.close_info();
             self.reply_to = None;
             self.editing = None;
             // A run of voice messages belongs to the chat it started in.
@@ -3221,7 +3468,7 @@ impl App {
         }
         self.emoji_start = None;
         self.mention_start = None;
-        self.open_chat = Some(id.clone());
+        self.set_open_chat(Some(id.clone()));
         self.page = Page::Chats;
         self.scroll_to_bottom = true;
         self.at_bottom = true;
@@ -3769,6 +4016,7 @@ impl App {
                 }
             }
             Action::CloseChat => {
+                self.close_info();
                 if let Some(chat) = self.open_chat.take() {
                     self.stop_composing(&chat);
                     let draft = std::mem::take(&mut self.composer);
@@ -4865,6 +5113,25 @@ impl App {
                 }
             }
             Action::OpenChatSearch => self.open_chat_search(),
+            Action::OpenInfo(chat) => self.open_info(chat),
+            Action::CloseInfo => {
+                self.close_info();
+                self.refocus_composer(ctx);
+            }
+            Action::ShowInfo(view) => {
+                if let Some(info) = self.info.as_mut() {
+                    // The keyboard follows the view: Back after the media row
+                    // opened the media view, the row after Back closed it.
+                    self.info_focus = match (info.view, view) {
+                        (InfoView::Overview, InfoView::Media(_)) => Some(InfoFocus::Back),
+                        (InfoView::Media(_), InfoView::Overview) => Some(InfoFocus::MediaRow),
+                        _ => None,
+                    };
+                    info.view = view;
+                }
+            }
+            Action::RetryInfoMedia => self.request_info_media(),
+            Action::CloseContactEdit => self.contact_edit = None,
             Action::CloseChatSearch => {
                 self.close_chat_search();
                 self.refocus_composer(ctx);
@@ -8201,7 +8468,11 @@ mod tests {
         app.scroll_chat_into_view = Some(chat.into());
         app.search_hits.push(message(chat, "m1", 100));
         app.search_hits.push(message(other, "m2", 100));
-        app.dialog = Some(Dialog::ChatInfo(chat.into()));
+        app.info = Some(InfoPanel {
+            chat: chat.into(),
+            view: InfoView::Overview,
+        });
+        app.dialog = Some(Dialog::ConfirmClearChat(chat.into()));
 
         let ctx = egui::Context::default();
         app.apply(Action::DeleteChat(chat.into()), &ctx);
@@ -8234,6 +8505,7 @@ mod tests {
         assert_eq!(app.scroll_chat_into_view, None);
         assert!(app.search_hits.iter().all(|hit| hit.chat != chat));
         assert!(app.dialog.is_none());
+        assert!(app.info.is_none(), "the panel goes with the chat");
         // Neighbouring chats and their search hits stay.
         assert!(app.chat(other).is_some());
         assert_eq!(app.search_hits.len(), 1);
@@ -9671,6 +9943,717 @@ mod tests {
         app.search_hits.push(message("1@s.whatsapp.net", "m", 1));
         app.apply(Action::Search(String::new()), &ctx);
         assert!(app.search_hits.is_empty());
+    }
+
+    /// The listings the info panel asked the worker for: each chat and the
+    /// request it carries.
+    fn media_requests(
+        commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
+    ) -> Vec<(String, u64)> {
+        std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::LoadChatMedia { chat, request } => Some((chat, request)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The worker's answer to `request`, listing `ids` as the pictures of
+    /// `chat`.
+    fn media_listing(request: u64, chat: &str, ids: &[&str]) -> Event {
+        Event::ChatMedia {
+            request,
+            result: Ok(crate::model::ChatMedia {
+                chat: chat.into(),
+                media: ids.iter().map(|id| message(chat, id, 1)).collect(),
+                ..Default::default()
+            }),
+        }
+    }
+
+    #[test]
+    fn the_info_panel_opens_beside_the_chat_and_asks_for_its_media_once() {
+        use crate::model::{InfoPanel, InfoView, MediaTab};
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Ada".into()));
+        app.apply(Action::OpenChat(chat.into()), &ctx);
+        app.contact_edit = Some(("Ada".into(), String::new()));
+        app.apply(Action::OpenInfo(chat.into()), &ctx);
+        assert_eq!(
+            app.info,
+            Some(InfoPanel {
+                chat: chat.into(),
+                view: InfoView::Overview,
+            })
+        );
+        assert!(app.info_visible());
+        assert!(app.dialog.is_none(), "a panel, not a modal");
+        assert!(app.contact_edit.is_none(), "opening starts without an edit");
+        assert_eq!(media_requests(&mut commands).len(), 1);
+        assert!(app.info_media_pending);
+        // Opened again for the same chat, from the header, it asks nothing
+        // more and returns to the overview.
+        app.apply(Action::ShowInfo(InfoView::Media(MediaTab::Docs)), &ctx);
+        assert_eq!(
+            app.info.as_ref().map(|info| info.view),
+            Some(InfoView::Media(MediaTab::Docs))
+        );
+        app.apply(Action::OpenInfo(chat.into()), &ctx);
+        assert!(media_requests(&mut commands).is_empty());
+        assert_eq!(
+            app.info.as_ref().map(|info| info.view),
+            Some(InfoView::Overview)
+        );
+    }
+
+    #[test]
+    fn the_info_panel_and_the_search_pane_never_show_together() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Ada".into()));
+        app.apply(Action::OpenChat(chat.into()), &ctx);
+        app.apply(Action::OpenInfo(chat.into()), &ctx);
+        app.apply(Action::OpenChatSearch, &ctx);
+        assert!(app.chat_search_visible());
+        assert!(app.info.is_none(), "the pane takes the panel's place");
+        app.apply(Action::OpenInfo(chat.into()), &ctx);
+        assert!(app.info_visible());
+        assert!(!app.chat_search_open, "and the panel the pane's");
+    }
+
+    #[test]
+    fn the_info_panel_closes_with_a_chat_switch_a_close_or_a_leave() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let (ada, bob) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        app.chats.push(Chat::new(bob.into(), "Bob".into()));
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        assert!(app.info.is_some(), "the same chat again keeps it");
+        app.apply(Action::OpenChat(bob.into()), &ctx);
+        assert!(app.info.is_none(), "another chat closes it");
+        // A member's panel over a group goes when that member's chat is
+        // deleted; every panel goes when the chat under it is closed.
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        app.leave_chat(ada);
+        assert!(app.info.is_none());
+        assert!(app.open_chat.is_some(), "the chat under it stays open");
+        app.apply(Action::OpenInfo(bob.into()), &ctx);
+        app.apply(Action::CloseChat, &ctx);
+        assert!(app.info.is_none());
+    }
+
+    /// The chat under the panel can go without a close or a switch: the
+    /// account is unlinked, or the open group is left while a member's panel
+    /// is showing. The panel goes with it either way.
+    #[test]
+    fn the_info_panel_goes_when_the_chat_under_it_goes() {
+        let mut app = app();
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let group = "1-2@g.us";
+        let mira = "2@s.whatsapp.net";
+        let mut chat = Chat::new(group.into(), "Rust".into());
+        chat.participants = vec![mira.into()];
+        app.chats.push(chat);
+        app.apply(Action::OpenChat(group.into()), &ctx);
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        app.leave_chat(group);
+        assert!(app.open_chat.is_none());
+        assert!(
+            app.info.is_none(),
+            "leaving the open group closes a member's panel"
+        );
+        app.chats.push(Chat::new(group.into(), "Rust".into()));
+        app.apply(Action::OpenChat(group.into()), &ctx);
+        app.apply(Action::OpenInfo(group.into()), &ctx);
+        events.send(Event::Link(LinkStatus::LoggedOut)).unwrap();
+        app.handle_events();
+        assert!(app.open_chat.is_none());
+        assert!(app.info.is_none(), "unlinking closes the panel");
+    }
+
+    /// A locked chat's media stays private: a member's panel opened from an
+    /// unlocked group shows who they are, not what was shared with them.
+    #[test]
+    fn a_locked_members_media_stays_out_of_the_panel() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let group = "1-2@g.us";
+        let mira = "2@s.whatsapp.net";
+        let mut chat = Chat::new(group.into(), "Rust".into());
+        chat.participants = vec![mira.into()];
+        app.chats.push(chat);
+        let mut private = Chat::new(mira.into(), "Mira".into());
+        private.locked = true;
+        app.chats.push(private);
+        app.apply(Action::OpenChat(group.into()), &ctx);
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        assert!(app.info.is_some(), "the identity still shows");
+        assert!(!app.info_media_allowed(), "the media section does not");
+        assert!(media_requests(&mut commands).is_empty(), "nothing is asked");
+        assert!(!app.info_media_pending);
+        // A change in that chat does not ask either.
+        events_for(&mut app, Event::ChatMediaChanged(mira.into()));
+        assert!(media_requests(&mut commands).is_empty());
+    }
+
+    /// Delivers one event through the app's channel.
+    fn events_for(app: &mut App, event: Event) {
+        let (backend, events) = Backend::detached();
+        let recording = std::mem::replace(&mut app.backend, backend);
+        events.send(event).unwrap();
+        app.handle_events();
+        app.backend = recording;
+    }
+
+    #[test]
+    fn media_arrives_for_the_shown_chat_only_and_leaves_with_the_panel() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let (ada, bob) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        let request = media_requests(&mut commands)[0].1;
+        events
+            .send(media_listing(request, bob, &["theirs"]))
+            .unwrap();
+        app.handle_events();
+        assert!(
+            app.info_media.is_none(),
+            "another chat's listing is ignored"
+        );
+        assert!(app.info_media_pending);
+        events
+            .send(media_listing(request, ada, &["photo"]))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(
+            app.info_media.as_ref().map(|media| media.media.len()),
+            Some(1)
+        );
+        assert!(!app.info_media_pending);
+        app.apply(Action::CloseInfo, &ctx);
+        assert!(app.info.is_none());
+        assert!(app.info_media.is_none(), "closing drops the listing");
+        assert!(app.focus_composer, "and hands the keyboard back");
+    }
+
+    /// Closing and reopening the panel asks again; the first request's
+    /// answer, arriving late, must not clear the wait for the second.
+    #[test]
+    fn only_the_newest_requests_answer_is_accepted() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let ada = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        app.apply(Action::CloseInfo, &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        let requests = media_requests(&mut commands);
+        assert_eq!(requests.len(), 2);
+        assert_ne!(requests[0].1, requests[1].1, "each request is its own");
+        events
+            .send(media_listing(requests[0].1, ada, &["old"]))
+            .unwrap();
+        app.handle_events();
+        assert!(app.info_media.is_none(), "the first answer is stale");
+        assert!(app.info_media_pending, "and the second is still due");
+        events
+            .send(media_listing(requests[1].1, ada, &["new"]))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(
+            app.info_media
+                .as_ref()
+                .map(|media| media.media[0].id.as_str()),
+            Some("new")
+        );
+        assert!(!app.info_media_pending);
+    }
+
+    /// A stale listing is one event of a batch; the ones after it in the
+    /// same batch still count.
+    #[test]
+    fn a_stale_listing_does_not_drop_the_rest_of_its_batch() {
+        let mut app = app();
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let ada = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        events.send(media_listing(999, ada, &["stale"])).unwrap();
+        events
+            .send(Event::Presence {
+                id: ada.into(),
+                online: true,
+                last_seen: None,
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(app.info_media.is_none());
+        assert!(
+            app.presence
+                .get(ada)
+                .is_some_and(|presence| presence.online),
+            "the event after the stale listing was applied"
+        );
+    }
+
+    /// A listing the worker could not make is reported, not waited for, and
+    /// can be asked for again.
+    #[test]
+    fn a_failed_listing_is_reported_and_can_be_asked_for_again() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let ada = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        let first = media_requests(&mut commands)[0].1;
+        events
+            .send(Event::ChatMedia {
+                request: first,
+                result: Err("disk".into()),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(!app.info_media_pending, "nothing is waited for");
+        assert!(app.info_media_failed, "and the panel says so");
+        app.apply(Action::RetryInfoMedia, &ctx);
+        let again = media_requests(&mut commands);
+        assert_eq!(again.len(), 1);
+        assert_ne!(again[0].1, first);
+        assert!(app.info_media_pending);
+        events
+            .send(media_listing(again[0].1, ada, &["photo"]))
+            .unwrap();
+        app.handle_events();
+        assert!(!app.info_media_failed);
+        assert_eq!(
+            app.info_media.as_ref().map(|media| media.media.len()),
+            Some(1)
+        );
+    }
+
+    /// The worker says when what the panel lists changed in the archive;
+    /// the app asks again on that word alone, one request at a time.
+    /// Receipts, reactions, pages and even new messages in the transcript
+    /// are not that word.
+    #[test]
+    fn the_workers_change_signal_refreshes_the_listing_one_request_at_a_time() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let (ada, bob) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        let picture = |id: &str, timestamp: i64| Message {
+            content: Content::Image {
+                caption: None,
+                media: Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    path: None,
+                    state: MediaState::Idle,
+                },
+            },
+            ..message(ada, id, timestamp)
+        };
+        app.conversations.insert(
+            ada.into(),
+            Conversation {
+                requested: true,
+                complete: true,
+                messages: vec![picture("photo", 10)],
+                ..Default::default()
+            },
+        );
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        let request = media_requests(&mut commands)[0].1;
+        events
+            .send(media_listing(request, ada, &["photo"]))
+            .unwrap();
+        app.handle_events();
+        let mut read = picture("photo", 10);
+        read.status = Delivery::Read;
+        events.send(Event::MessageUpdated(Box::new(read))).unwrap();
+        let mut liked = picture("photo", 10);
+        liked.reactions.push(crate::model::Reaction {
+            sender: ada.into(),
+            from_me: false,
+            emoji: "❤️".into(),
+        });
+        events.send(Event::MessageUpdated(Box::new(liked))).unwrap();
+        events
+            .send(Event::Messages {
+                chat: ada.into(),
+                messages: vec![picture("older", 1)],
+                older: true,
+                complete: true,
+            })
+            .unwrap();
+        events
+            .send(Event::Messages {
+                chat: ada.into(),
+                messages: vec![picture("fresh", 12)],
+                older: false,
+                complete: true,
+            })
+            .unwrap();
+        events.send(Event::ChatMediaChanged(bob.into())).unwrap();
+        app.handle_events();
+        assert!(
+            media_requests(&mut commands).is_empty(),
+            "the transcript's events are not the archive's word"
+        );
+        events.send(Event::ChatMediaChanged(ada.into())).unwrap();
+        events.send(Event::ChatMediaChanged(ada.into())).unwrap();
+        app.handle_events();
+        let asked = media_requests(&mut commands);
+        assert_eq!(asked.len(), 1, "one request at a time");
+        events
+            .send(media_listing(asked[0].1, ada, &["fresh", "photo"]))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(
+            media_requests(&mut commands).len(),
+            1,
+            "the change during the wait is asked for once it is over"
+        );
+    }
+
+    /// A locked member's panel opened while the locked folder was open goes
+    /// when lock authentication ends: the folder closes, the window goes, or
+    /// the chat is locked under it. Its listing and the answer it was
+    /// waiting for go with it.
+    #[test]
+    fn the_end_of_lock_authentication_takes_a_locked_panel_with_it() {
+        use crate::model::{InfoView, MediaTab};
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let group = "1-2@g.us";
+        let mira = "2@s.whatsapp.net";
+        let mut chat = Chat::new(group.into(), "Rust".into());
+        chat.participants = vec![mira.into()];
+        app.chats.push(chat);
+        let mut private = Chat::new(mira.into(), "Mira".into());
+        private.locked = true;
+        app.chats.push(private);
+        app.settings.set_chat_lock_code(Some("fixture-code"));
+        app.apply(Action::OpenChat(group.into()), &ctx);
+        app.enter_locked_folder();
+        assert!(app.locked_folder_open());
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        let first = media_requests(&mut commands);
+        assert_eq!(first.len(), 1, "listed while the folder is open");
+        events
+            .send(media_listing(first[0].1, mira, &["theirs"]))
+            .unwrap();
+        app.handle_events();
+        app.apply(Action::ShowInfo(InfoView::Media(MediaTab::Media)), &ctx);
+        assert!(app.info_media.is_some());
+        app.close_locked_folder();
+        assert!(app.info.is_none(), "the folder closing takes the panel");
+        assert!(app.info_media.is_none(), "and its listing");
+        assert!(!app.info_media_pending);
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some(group),
+            "the group stays open"
+        );
+        // A late answer to the request made while authenticated is refused.
+        app.enter_locked_folder();
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        let second = media_requests(&mut commands);
+        assert_eq!(second.len(), 1);
+        app.close_locked_folder();
+        events
+            .send(media_listing(second[0].1, mira, &["theirs"]))
+            .unwrap();
+        app.handle_events();
+        assert!(app.info.is_none() && app.info_media.is_none());
+        // The window going away ends the session the same way.
+        app.enter_locked_folder();
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        let third = media_requests(&mut commands);
+        events
+            .send(media_listing(third[0].1, mira, &["theirs"]))
+            .unwrap();
+        app.handle_events();
+        assert!(app.info_media.is_some());
+        app.window_gone();
+        assert!(app.info.is_none(), "the window going takes the panel");
+        assert!(app.info_media.is_none());
+        // And a chat locked under its panel, with the folder closed, loses it.
+        app.chat_mut(mira).expect("chat").locked = false;
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        let fourth = media_requests(&mut commands);
+        events
+            .send(media_listing(fourth[0].1, mira, &["theirs"]))
+            .unwrap();
+        app.handle_events();
+        assert!(app.info_media.is_some());
+        let mut locked_now = app.chats.clone();
+        locked_now
+            .iter_mut()
+            .find(|chat| chat.id == mira)
+            .expect("chat")
+            .locked = true;
+        events.send(Event::Chats(locked_now)).unwrap();
+        app.handle_events();
+        assert!(app.info.is_none(), "locking the shown chat takes the panel");
+        assert!(app.info_media.is_none());
+    }
+
+    /// A locked member's panel opened before authentication asks for its
+    /// listing once the locked folder opens, or once the chat is unlocked;
+    /// opening the same panel again asks only while nothing is loaded.
+    #[test]
+    fn a_locked_members_listing_loads_once_the_way_is_open() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let group = "1-2@g.us";
+        let mira = "2@s.whatsapp.net";
+        let mut chat = Chat::new(group.into(), "Rust".into());
+        chat.participants = vec![mira.into()];
+        app.chats.push(chat);
+        let mut private = Chat::new(mira.into(), "Mira".into());
+        private.locked = true;
+        app.chats.push(private);
+        app.settings.set_chat_lock_code(Some("fixture-code"));
+        app.apply(Action::OpenChat(group.into()), &ctx);
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        assert!(
+            media_requests(&mut commands).is_empty(),
+            "locked: not asked"
+        );
+        app.enter_locked_folder();
+        let asked = media_requests(&mut commands);
+        assert_eq!(asked.len(), 1, "authentication asks once");
+        assert!(app.info_media_pending);
+        events
+            .send(media_listing(asked[0].1, mira, &["theirs"]))
+            .unwrap();
+        app.handle_events();
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        assert!(
+            media_requests(&mut commands).is_empty(),
+            "reopening with a listing loaded asks nothing"
+        );
+        // Opened again with nothing loaded: the chat was unlocked meanwhile.
+        app.close_locked_folder();
+        assert!(app.info.is_none());
+        app.chat_mut(mira).expect("chat").locked = true;
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        assert!(media_requests(&mut commands).is_empty());
+        app.chat_mut(mira).expect("chat").locked = false;
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        assert_eq!(
+            media_requests(&mut commands).len(),
+            1,
+            "reopening with nothing loaded asks once"
+        );
+        // The phone unlocking the chat opens the way too.
+        app.apply(Action::CloseInfo, &ctx);
+        app.chat_mut(mira).expect("chat").locked = true;
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        media_requests(&mut commands);
+        let mut unlocked = app.chats.clone();
+        unlocked
+            .iter_mut()
+            .find(|chat| chat.id == mira)
+            .expect("chat")
+            .locked = false;
+        events.send(Event::Chats(unlocked)).unwrap();
+        app.handle_events();
+        assert_eq!(
+            media_requests(&mut commands).len(),
+            1,
+            "an unlocked chat is listed"
+        );
+    }
+
+    /// The phone unlocking one chat arrives as that chat's update, not as
+    /// a new chat list; a panel waiting for it asks once and shows the answer.
+    #[test]
+    fn a_chat_the_phone_unlocks_alone_is_listed_in_its_waiting_panel() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let group = "1-2@g.us";
+        let mira = "2@s.whatsapp.net";
+        let mut chat = Chat::new(group.into(), "Rust".into());
+        chat.participants = vec![mira.into()];
+        app.chats.push(chat);
+        let mut private = Chat::new(mira.into(), "Mira".into());
+        private.locked = true;
+        app.chats.push(private);
+        app.settings.set_chat_lock_code(Some("fixture-code"));
+        app.apply(Action::OpenChat(group.into()), &ctx);
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        assert!(
+            media_requests(&mut commands).is_empty(),
+            "locked: not asked"
+        );
+        let mut unlocked = app.chat(mira).expect("chat").clone();
+        unlocked.locked = false;
+        events.send(Event::ChatUpdated(Box::new(unlocked))).unwrap();
+        app.handle_events();
+        let asked = media_requests(&mut commands);
+        assert_eq!(asked.len(), 1, "the unlocked chat is asked for once");
+        events
+            .send(media_listing(asked[0].1, mira, &["theirs"]))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(
+            app.info_media.as_ref().map(|media| media.chat.as_str()),
+            Some(mira),
+            "and its answer is shown"
+        );
+    }
+
+    /// Switching the panel to another chat invalidates the request still
+    /// out for the first one, even when the new chat cannot be asked for:
+    /// the old answer is refused, nothing stays pending, and once the new
+    /// chat may be listed it is asked for exactly once.
+    #[test]
+    fn switching_the_panel_while_a_listing_is_due_invalidates_that_request() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let group = "1-2@g.us";
+        let mira = "2@s.whatsapp.net";
+        let mut chat = Chat::new(group.into(), "Rust".into());
+        chat.participants = vec![mira.into()];
+        app.chats.push(chat);
+        let mut private = Chat::new(mira.into(), "Mira".into());
+        private.locked = true;
+        app.chats.push(private);
+        app.settings.set_chat_lock_code(Some("fixture-code"));
+        app.apply(Action::OpenChat(group.into()), &ctx);
+        app.apply(Action::OpenInfo(group.into()), &ctx);
+        let groups = media_requests(&mut commands);
+        assert_eq!(groups.len(), 1);
+        app.apply(Action::OpenInfo(mira.into()), &ctx);
+        assert!(!app.info_media_pending, "nothing is due for the member");
+        events
+            .send(media_listing(groups[0].1, group, &["group-photo"]))
+            .unwrap();
+        app.handle_events();
+        assert!(
+            app.info_media.is_none(),
+            "the group's late answer is refused"
+        );
+        assert!(!app.info_media_pending);
+        app.enter_locked_folder();
+        let members = media_requests(&mut commands);
+        assert_eq!(members.len(), 1, "authentication asks for the member once");
+        events
+            .send(media_listing(members[0].1, mira, &["theirs"]))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(
+            app.info_media.as_ref().map(|media| media.chat.as_str()),
+            Some(mira),
+            "and that answer is accepted"
+        );
+        assert!(!app.info_media_pending);
+    }
+
+    /// A download that finishes lands in the listing too, so a picture
+    /// without a preview stops being blank once its file is there.
+    #[test]
+    fn a_finished_download_lands_in_the_listing() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let ada = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        let picture = Message {
+            content: Content::Image {
+                caption: None,
+                media: Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    path: None,
+                    state: MediaState::Idle,
+                },
+            },
+            ..message(ada, "photo", 10)
+        };
+        app.conversations.insert(
+            ada.into(),
+            Conversation {
+                requested: true,
+                complete: true,
+                messages: vec![picture.clone()],
+                ..Default::default()
+            },
+        );
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        let request = media_requests(&mut commands)[0].1;
+        events
+            .send(Event::ChatMedia {
+                request,
+                result: Ok(crate::model::ChatMedia {
+                    chat: ada.into(),
+                    media: vec![picture],
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+        events
+            .send(Event::Media {
+                card: None,
+                chat: ada.into(),
+                message: "photo".into(),
+                result: Ok(PathBuf::from("photo.jpg")),
+            })
+            .unwrap();
+        app.handle_events();
+        let listed = &app.info_media.as_ref().expect("listed").media[0];
+        assert_eq!(
+            listed
+                .content
+                .media()
+                .and_then(|media| media.path.as_deref()),
+            Some(std::path::Path::new("photo.jpg"))
+        );
+        assert!(media_requests(&mut commands).is_empty(), "no query for it");
     }
 
     #[test]

@@ -705,6 +705,8 @@ enum WithheldPage {
     Page(ChatId, Option<super::PageKey>),
     /// `Command::LoadUntil`.
     Until(ChatId, String, super::PageKey),
+    /// `Command::LoadChatMedia`, with its request.
+    Media(ChatId, u64),
 }
 
 struct Worker {
@@ -1016,6 +1018,8 @@ impl Worker {
                     | Event::SearchHits { .. }
                     | Event::Labels(_)
                     | Event::Typing { .. }
+                    | Event::ChatMedia { .. }
+                    | Event::ChatMediaChanged(_)
             )
         {
             return;
@@ -1089,6 +1093,10 @@ impl Worker {
                             through,
                         });
                         self.emit_chat(chat);
+                        // The older pictures, documents and links went with
+                        // the deletion; a full removal closes the panel
+                        // through `ChatRemoved` instead.
+                        self.emit(Event::ChatMediaChanged(chat.to_owned()));
                     }
                 } else {
                     log::info!("chat removal: no matching cached chat");
@@ -1113,6 +1121,7 @@ impl Worker {
                         through,
                     });
                     self.emit_chat(chat);
+                    self.emit(Event::ChatMediaChanged(chat.to_owned()));
                 }
                 true
             }
@@ -1120,6 +1129,19 @@ impl Worker {
                 log::warn!("could not clear a chat");
                 false
             }
+        }
+    }
+
+    /// Deletes this computer's copy of a message.
+    fn delete_local(&mut self, chat: ChatId, id: String) {
+        let old = self.archive.message(&chat, &id).ok().flatten();
+        if let Ok(true) = self.archive.delete_message(&chat, &id) {
+            self.emit(Event::MessageDeleted {
+                chat: chat.clone(),
+                id,
+            });
+            self.emit_chat(&chat);
+            self.media_changed(&chat, old.as_ref().map(|old| &old.content), None);
         }
     }
 
@@ -1190,6 +1212,15 @@ impl Worker {
         if let Ok(Some(mut message)) = self.archive.message(chat, id) {
             self.polish(&mut message);
             self.emit(Event::MessageUpdated(Box::new(message)));
+        }
+    }
+
+    /// Tells the interface that what the info panel lists for `chat` may
+    /// have changed, when a message went from or to a picture, a video, a
+    /// document or a linked text.
+    fn media_changed(&self, chat: &str, old: Option<&Content>, new: Option<&Content>) {
+        if old.is_some_and(Content::listable) || new.is_some_and(Content::listable) {
+            self.emit(Event::ChatMediaChanged(chat.to_owned()));
         }
     }
 
@@ -1779,6 +1810,7 @@ impl Worker {
             match page {
                 WithheldPage::Page(chat, before) => self.send_page(&chat, before),
                 WithheldPage::Until(chat, id, before) => self.load_until(chat, id, before),
+                WithheldPage::Media(chat, request) => self.load_chat_media(chat, request),
             }
         }
     }
@@ -3047,12 +3079,14 @@ impl Worker {
             };
             match protocol.r#type {
                 Some(Type::REVOKE) => {
+                    let old = self.archive.message(&chat, &target).ok().flatten();
                     if let Ok(true) =
                         self.archive
                             .set_content(&chat, &target, &Content::Revoked, false)
                     {
                         self.emit_message(&chat, &target);
                         self.emit_chat(&chat);
+                        self.media_changed(&chat, old.as_ref().map(|old| &old.content), None);
                     }
                 }
                 Some(Type::MESSAGE_EDIT) => {
@@ -3060,12 +3094,18 @@ impl Worker {
                         && let Some(mut content) = classify(edited)
                     {
                         // Preserve downloaded media when updating a caption.
-                        if let Ok(Some(existing)) = self.archive.message(&chat, &target) {
+                        let existing = self.archive.message(&chat, &target).ok().flatten();
+                        if let Some(existing) = &existing {
                             content.keep_local_paths(&existing.content);
                         }
                         if let Ok(true) = self.archive.set_content(&chat, &target, &content, true) {
                             self.emit_message(&chat, &target);
                             self.emit_chat(&chat);
+                            self.media_changed(
+                                &chat,
+                                existing.as_ref().map(|existing| &existing.content),
+                                Some(&content),
+                            );
                         }
                     }
                 }
@@ -3630,6 +3670,16 @@ impl Worker {
             log::warn!("could not store a message: {error}");
             return;
         }
+        if existing
+            .as_ref()
+            .is_none_or(|existing| existing.content != message.content)
+        {
+            self.media_changed(
+                &chat,
+                existing.as_ref().map(|existing| &existing.content),
+                Some(&message.content),
+            );
+        }
         if poll_baseline && let Err(error) = self.archive.mark_poll_history(&chat, &message.id) {
             log::warn!("could not store a live poll baseline: {error}");
         }
@@ -3847,6 +3897,9 @@ impl Worker {
         parsed: ParsedHistory,
         metadata: bool,
     ) -> Vec<(ChatId, usize, Option<bool>)> {
+        // Chats whose listed pictures, documents or links changed, told
+        // once each rather than once per imported message.
+        let mut media_changed_in: HashSet<ChatId> = HashSet::new();
         for (lid, pn) in &parsed.lids {
             if let (Some(lid), Some(pn)) = (Self::jid_of(lid), Self::jid_of(pn)) {
                 self.learn_pair(&lid, &pn);
@@ -4071,11 +4124,21 @@ impl Worker {
                 }
                 // History replays and on-demand chunks can repeat a message the
                 // archive already holds; keep the files it already downloaded.
-                if let Ok(Some(existing)) = self.archive.message(&id, &row.id) {
+                let existing = self.archive.message(&id, &row.id).ok().flatten();
+                if let Some(existing) = &existing {
                     row.content.keep_local_paths(&existing.content);
                 }
                 if let Err(error) = self.archive.insert_message(&row, Some(&raw)) {
                     log::warn!("could not store a history message: {error}");
+                } else if existing
+                    .as_ref()
+                    .is_none_or(|existing| existing.content != row.content)
+                    && (existing
+                        .as_ref()
+                        .is_some_and(|existing| existing.content.listable())
+                        || row.content.listable())
+                {
+                    media_changed_in.insert(id.clone());
                 }
                 self.settle_early_events(&id, &row.id);
                 if group {
@@ -4108,6 +4171,15 @@ impl Worker {
                 );
             }
             for revoked in chat.revoked {
+                if self
+                    .archive
+                    .message(&id, &revoked)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|old| old.content.listable())
+                {
+                    media_changed_in.insert(id.clone());
+                }
                 let _ = self
                     .archive
                     .set_content(&id, &revoked, &Content::Revoked, false);
@@ -4144,6 +4216,9 @@ impl Worker {
         self.pump_poll_history();
         for (id, _, _) in &filed {
             self.emit_chat(id);
+        }
+        for chat in media_changed_in {
+            self.emit(Event::ChatMediaChanged(chat));
         }
         filed
     }
@@ -4427,6 +4502,7 @@ impl Worker {
                 from,
                 until,
             } => self.search_chat_messages(chat, query, from, until),
+            Command::LoadChatMedia { chat, request } => self.load_chat_media(chat, request),
             Command::EnsureChat { chat, name } => {
                 let is_new = self.archive.chat(&chat).ok().flatten().is_none();
                 if let Err(error) = self.archive.ensure_chat(&chat, &name) {
@@ -4458,15 +4534,7 @@ impl Worker {
                 mentions,
             } => self.edit_text(chat, id, text, mentions),
             Command::Revoke { chat, id } => self.revoke(chat, id),
-            Command::DeleteLocal { chat, id } => {
-                if let Ok(true) = self.archive.delete_message(&chat, &id) {
-                    self.emit(Event::MessageDeleted {
-                        chat: chat.clone(),
-                        id,
-                    });
-                    self.emit_chat(&chat);
-                }
-            }
+            Command::DeleteLocal { chat, id } => self.delete_local(chat, id),
             Command::PickFiles(chat) => {
                 let commands = self.commands.clone();
                 tokio::task::spawn_blocking(move || {
@@ -6787,6 +6855,30 @@ impl Worker {
     /// full page can be told apart from a truncated one.
     const CHAT_SEARCH_LIMIT: usize = 80;
 
+    /// Answers the info panel with a chat's media, documents and links, or
+    /// with why they could not be listed. A listing asked for while private
+    /// content is withheld waits, as a transcript page does, so the panel is
+    /// answered once content is shown instead of waiting forever.
+    fn load_chat_media(&mut self, chat: ChatId, request: u64) {
+        use crate::model::{ChatMedia, MEDIA_LIST_LIMIT};
+        if self.withhold(WithheldPage::Media(chat.clone(), request)) {
+            return;
+        }
+        let result = match self.archive.media_docs_links(&chat, MEDIA_LIST_LIMIT + 1) {
+            Ok(mut rows) => {
+                for row in &mut rows {
+                    self.polish(row);
+                }
+                Ok(ChatMedia::collect(chat, rows, MEDIA_LIST_LIMIT))
+            }
+            Err(error) => {
+                log::warn!("could not list a chat's media: {error}");
+                Err(error.to_string())
+            }
+        };
+        self.emit(Event::ChatMedia { request, result });
+    }
+
     /// Answers the in-chat search with its matches.
     fn search_chat_messages(
         &mut self,
@@ -6925,12 +7017,14 @@ impl Worker {
         };
         let content = Content::text(text.clone());
         let mention_rows = self.mentions_of(&mentions);
+        let old = self.archive.message(&chat, &id).ok().flatten();
         if let Ok(true) = self
             .archive
             .set_edited_text(&chat, &id, &content, &mention_rows)
         {
             self.emit_message(&chat, &id);
             self.emit_chat(&chat);
+            self.media_changed(&chat, old.as_ref().map(|old| &old.content), Some(&content));
         }
         let mut message = outgoing_text(text, None, &mentions);
         self.apply_ephemeral(&chat, &mut message);
@@ -6951,12 +7045,14 @@ impl Worker {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
+        let old = self.archive.message(&chat, &id).ok().flatten();
         if let Ok(true) = self
             .archive
             .set_content(&chat, &id, &Content::Revoked, false)
         {
             self.emit_message(&chat, &id);
             self.emit_chat(&chat);
+            self.media_changed(&chat, old.as_ref().map(|old| &old.content), None);
         }
         let commands = self.commands.clone();
         tokio::spawn(async move {
@@ -10161,6 +10257,38 @@ mod tests {
         assert!(worker.withheld_pages.is_empty());
     }
 
+    /// The info panel's listing is private content too: asked for while
+    /// lock state is unknown, it is answered once content is shown, so the
+    /// panel does not wait forever (as the transcript did in #180).
+    #[test]
+    fn media_listings_withheld_during_privacy_recovery_are_answered_once_shown() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        const PEER: &str = "fixture@s.whatsapp.net";
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        unconfirmed(&mut worker);
+        worker.load_chat_media(PEER.into(), 7);
+        worker.load_chat_media(PEER.into(), 7);
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::ChatMedia { .. })),
+            "nothing private is sent while lock state is unknown"
+        );
+        worker.preferences_recovered(0, false, false);
+        let answered: Vec<u64> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::ChatMedia { request, result } => {
+                    assert_eq!(result.expect("listed").chat, PEER);
+                    Some(request)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(answered, [7], "asked twice, answered once");
+        assert!(worker.withheld_pages.is_empty());
+    }
+
     #[test]
     fn failed_privacy_recovery_shows_known_state_and_keeps_retrying() {
         let (mut worker, events, _, _) = receipt_tests::worker();
@@ -11889,6 +12017,95 @@ mod receipt_tests {
         assert_eq!(stored.reactions[0].emoji, "🏆");
         assert!(!stored.reactions[0].from_me);
         assert_eq!(stored.reactions[0].sender, reactor);
+    }
+
+    /// The info panel's listing follows the archive: a picture, a document
+    /// or a linked text filed, imported, deleted or cleared says so, once per
+    /// change; a page, a receipt, a reaction, plain text and a duplicate
+    /// delivery do not.
+    #[test]
+    fn listable_archive_changes_are_reported_once_and_others_are_not() {
+        use crate::model::{Content, Media, Message};
+        let (mut worker, events, _, _) = worker();
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        let changes = |events: &std::sync::mpsc::Receiver<Event>| -> Vec<String> {
+            events
+                .try_iter()
+                .filter_map(|event| match event {
+                    Event::ChatMediaChanged(chat) => Some(chat),
+                    _ => None,
+                })
+                .collect()
+        };
+        let photo = Message {
+            content: Content::Image {
+                caption: None,
+                media: Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    path: None,
+                    state: Default::default(),
+                },
+            },
+            ..own_message("photo", 100)
+        };
+        worker.store_message(photo.clone(), None, None);
+        assert_eq!(
+            changes(&events),
+            [PEER],
+            "the first picture in an empty chat"
+        );
+        worker.store_message(photo, None, None);
+        assert!(
+            changes(&events).is_empty(),
+            "the same picture delivered again"
+        );
+        worker.store_message(own_message("plain", 101), None, None);
+        assert!(changes(&events).is_empty(), "text without a link");
+        worker.send_page(&PEER.to_owned(), None);
+        worker.emit_message(PEER, "photo");
+        worker.store_reaction(PEER, "photo", PEER, false, "❤️");
+        assert!(changes(&events).is_empty(), "a page, a receipt, a reaction");
+        // A document imported from the phone's history.
+        let history = parse_conversation(wa::Conversation {
+            id: PEER.into(),
+            messages: vec![history_entry(
+                PEER,
+                "notes",
+                false,
+                None,
+                wa::Message {
+                    document_message: MessageField::some(wa::message::DocumentMessage {
+                        mimetype: Some("application/pdf".into()),
+                        file_name: Some("Notes.pdf".into()),
+                        file_length: Some(10),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                Vec::new(),
+                None,
+            )],
+            ..Default::default()
+        });
+        worker.apply_history(
+            ParsedHistory {
+                chats: vec![history],
+                push_names: Vec::new(),
+                lids: Vec::new(),
+                stickers: Vec::new(),
+            },
+            false,
+        );
+        assert_eq!(changes(&events), [PEER], "an imported document");
+        worker.delete_local(PEER.into(), "notes".into());
+        assert_eq!(changes(&events), [PEER], "a deleted document");
+        worker.delete_local(PEER.into(), "plain".into());
+        assert!(changes(&events).is_empty(), "a deleted plain text");
+        assert!(worker.empty_chat(PEER, i64::MAX, false));
+        assert_eq!(changes(&events), [PEER], "a cleared chat");
     }
 
     #[test]
@@ -13713,6 +13930,51 @@ mod chat_removal_tests {
 
         worker.apply_history(history(CHAT, &[300]), false);
         assert_eq!(stored(&worker, CHAT), ["m300"]);
+    }
+
+    /// A deletion that keeps the newer messages takes older pictures,
+    /// documents and links with it, so the info panel is told; a deletion
+    /// that removes the chat closes the panel through `ChatRemoved`.
+    #[test]
+    fn a_partial_deletion_reports_a_media_change() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.archive.ensure_chat(CHAT, "Somebody").expect("chat");
+        let mut photo = crate::archive::tests::message(CHAT, "photo", 100, false);
+        photo.content = crate::model::Content::Image {
+            caption: None,
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                path: None,
+                state: Default::default(),
+            },
+        };
+        worker.store_message(photo, None, None);
+        let text = crate::archive::tests::message(CHAT, "text", 300, false);
+        worker.store_message(text, None, None);
+        let changes = |events: &std::sync::mpsc::Receiver<Event>| -> Vec<String> {
+            events
+                .try_iter()
+                .filter_map(|event| match event {
+                    Event::ChatMediaChanged(chat) => Some(chat),
+                    _ => None,
+                })
+                .collect()
+        };
+        changes(&events);
+        worker.remove_chat(CHAT, 200, false);
+        assert_eq!(stored(&worker, CHAT), ["text"], "the newer text survives");
+        assert_eq!(changes(&events), [CHAT], "the deleted picture is reported");
+        worker.remove_chat(CHAT, i64::MAX, false);
+        assert!(worker.archive.chat(CHAT).expect("chat").is_none());
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::ChatRemoved { chat } if chat == CHAT)),
+            "a full removal closes the panel through ChatRemoved"
+        );
     }
 
     #[test]

@@ -1014,6 +1014,440 @@ mod tests {
         assert_eq!(app.chat_search_hits.len(), 2, "as it was");
     }
 
+    /// A frame at `size` that also reports the address the frame asked the
+    /// browser to open, if any.
+    fn frame_sized(
+        app: &mut App,
+        tour: &mut Tour,
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        events: Vec<Event>,
+    ) -> Option<String> {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            app.background_frame(ctx);
+            app.frame_ui(ui);
+            tour.observe(app, ctx);
+        });
+        output.textures_delta.clear();
+        output
+            .platform_output
+            .commands
+            .into_iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::OpenUrl(open) => Some(open.url),
+                _ => None,
+            })
+    }
+
+    /// Presses and releases the pointer on the painted `label`, and reports
+    /// the address the frames asked the browser to open, if any.
+    fn click_sized(
+        app: &mut App,
+        tour: &mut Tour,
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        label: &str,
+    ) -> Option<String> {
+        let pos = *tour
+            .labels
+            .get(label)
+            .unwrap_or_else(|| panic!("missing {label}"));
+        let mut opened = None;
+        for pressed in [true, false] {
+            opened = opened.or(frame_sized(
+                app,
+                tour,
+                ctx,
+                size,
+                vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            ));
+        }
+        opened.or(frame_sized(app, tour, ctx, size, Vec::new()))
+    }
+
+    /// Every way in opens the panel beside the chat, never a modal: the chat
+    /// header, the header menu's Info, a sender's name in a group, and the
+    /// chat list's Info, which also opens that chat.
+    #[test]
+    fn every_entry_opens_the_info_panel_beside_the_chat() {
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let ada = super::super::sample_ids()[0].to_owned();
+        let group = super::super::sample_ids()[1].to_owned();
+        let shown = |app: &App| app.info.as_ref().map(|info| info.chat.clone());
+        app.actions
+            .push(crate::model::Action::OpenChat(ada.clone()));
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        // The header's name is painted after the chat list's, so the click
+        // lands on the header.
+        click(&mut app, &mut tour, &ctx, "Ada Lovelace");
+        assert_eq!(shown(&app), Some(ada.clone()), "the header opens it");
+        assert!(app.dialog.is_none(), "as a panel, not a modal");
+        app.actions.push(crate::model::Action::CloseInfo);
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        app.open_header_menu = Some(ada.clone());
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        click(&mut app, &mut tour, &ctx, "Info");
+        assert_eq!(shown(&app), Some(ada.clone()), "the header menu opens it");
+        app.open_header_menu = None;
+        app.actions
+            .push(crate::model::Action::OpenChat(group.clone()));
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        assert_eq!(shown(&app), None, "another chat closes it");
+        // Mira's name over her message in the group opens her own panel,
+        // over the group that stays open.
+        let mira = "491702222222@s.whatsapp.net";
+        click(&mut app, &mut tour, &ctx, "Mira");
+        assert_eq!(shown(&app), Some(mira.to_owned()), "a sender opens theirs");
+        assert_eq!(app.open_chat.as_deref(), Some(group.as_str()));
+        // The chat list's Info opens that chat and its panel together.
+        app.open_chat_menu = Some(ada.clone());
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        click(&mut app, &mut tour, &ctx, "Info");
+        assert_eq!(app.open_chat.as_deref(), Some(ada.as_str()));
+        assert_eq!(shown(&app), Some(ada), "the chat list's Info opens both");
+    }
+
+    /// The panel shares the search pane's docking: beside the chat when the
+    /// window has room, over it when the chat list leaves too little.
+    #[test]
+    fn the_info_panel_docks_beside_a_wide_chat_and_lies_over_a_narrow_one() {
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let ada = super::super::sample_ids()[0].to_owned();
+        app.actions
+            .push(crate::model::Action::OpenChat(ada.clone()));
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        app.actions.push(crate::model::Action::OpenInfo(ada));
+        let docked = |ctx: &egui::Context| {
+            ctx.data(|data| data.get_temp::<bool>(crate::ui::info::docked_id()))
+        };
+        for _ in 0..2 {
+            frame_sized(&mut app, &mut tour, &ctx, vec2(1180.0, 780.0), Vec::new());
+        }
+        assert_eq!(docked(&ctx), Some(true), "docked in a wide window");
+        for _ in 0..2 {
+            frame_sized(&mut app, &mut tour, &ctx, vec2(760.0, 600.0), Vec::new());
+        }
+        assert_eq!(docked(&ctx), Some(false), "over a narrow chat");
+        assert!(app.info.is_some());
+        app.actions.push(crate::model::Action::CloseInfo);
+        frame_sized(&mut app, &mut tour, &ctx, vec2(760.0, 600.0), Vec::new());
+        assert_eq!(docked(&ctx), None, "gone with the panel");
+    }
+
+    /// The overview's media row opens the media view, whose tabs list the
+    /// chat's pictures, documents and links; a document goes to its message
+    /// and a link opens in the browser.
+    #[test]
+    fn the_media_row_opens_the_media_view_with_its_tabs_and_items() {
+        use crate::model::{InfoView, MediaTab};
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let size = vec2(1280.0, 800.0);
+        let ada = super::super::sample_ids()[0].to_owned();
+        app.actions
+            .push(crate::model::Action::OpenChat(ada.clone()));
+        frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        super::super::apply_flags(&mut app, Some("info"));
+        for _ in 0..3 {
+            frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        }
+        let view = |app: &App| app.info.as_ref().map(|info| info.view);
+        // The panel's copy is translated, and the interface language
+        // follows the system when Settings carries no choice of its own.
+        let locale = app.locale;
+        let media_title = crate::i18n::gettext(locale, "Media, links and docs").to_string();
+        click_sized(&mut app, &mut tour, &ctx, size, &media_title);
+        assert_eq!(view(&app), Some(InfoView::Media(MediaTab::Media)));
+        let docs = crate::ui::info::tab_label(&app, MediaTab::Docs);
+        click_sized(&mut app, &mut tour, &ctx, size, &docs);
+        assert_eq!(view(&app), Some(InfoView::Media(MediaTab::Docs)));
+        // The bubble under the panel paints the same file name and title, so
+        // the clicks land on the rows' detail lines, which carry the day.
+        let doc = app.conversations[&ada]
+            .message("ada-doc")
+            .cloned()
+            .expect("the sample document");
+        let crate::model::Content::Document { media, pages, .. } = &doc.content else {
+            panic!("a document");
+        };
+        let pages = pages.expect("pages");
+        let detail = format!(
+            "{} · {} · {}",
+            crate::i18n::ngettext(locale, "{} page", "{} pages", pages)
+                .replace("{}", &pages.to_string()),
+            crate::util::bytes(media.size),
+            crate::util::chat_stamp(locale, doc.timestamp)
+        );
+        click_sized(&mut app, &mut tour, &ctx, size, &detail);
+        assert_eq!(
+            app.jump_highlight
+                .as_ref()
+                .map(|jump| jump.message.as_str()),
+            Some("ada-doc"),
+            "a document goes to its message"
+        );
+        assert!(app.info.is_some(), "and the panel stays");
+        let links = crate::ui::info::tab_label(&app, MediaTab::Links);
+        click_sized(&mut app, &mut tour, &ctx, size, &links);
+        assert_eq!(view(&app), Some(InfoView::Media(MediaTab::Links)));
+        // The newest link the listing found, whichever the tour's sample
+        // put there.
+        let link = app
+            .info_media
+            .as_ref()
+            .and_then(|media| media.links.first())
+            .cloned()
+            .expect("a link in the sample");
+        let detail = format!(
+            "{} · {}",
+            crate::ui::info::domain(&link.url),
+            crate::util::chat_stamp(app.locale, link.timestamp)
+        );
+        let opened = click_sized(&mut app, &mut tour, &ctx, size, &detail);
+        // The safety check hands the browser a normalised address.
+        assert_eq!(
+            opened.as_deref().map(|url| url.trim_end_matches('/')),
+            Some(link.url.trim_end_matches('/')),
+            "a link opens in the browser"
+        );
+        // Escape walks back: the overview first, then the panel closes.
+        let escape = Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        frame_sized(&mut app, &mut tour, &ctx, size, vec![escape.clone()]);
+        assert_eq!(view(&app), Some(InfoView::Overview));
+        frame_sized(&mut app, &mut tour, &ctx, size, vec![escape]);
+        assert!(app.info.is_none());
+    }
+
+    /// The Tab key stays inside the panel's name fields while one is being
+    /// typed in: the main cycle would otherwise jump to the composer.
+    #[test]
+    fn tab_moves_from_the_first_name_to_the_surname() {
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let size = vec2(1280.0, 800.0);
+        let ada = super::super::sample_ids()[0].to_owned();
+        app.actions
+            .push(crate::model::Action::OpenChat(ada.clone()));
+        frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        super::super::apply_flags(&mut app, Some("info"));
+        app.actions.push(crate::model::Action::EditContact {
+            id: ada,
+            name: "Ada Lovelace".into(),
+        });
+        for _ in 0..3 {
+            frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        }
+        let first = egui::Id::new("contact-first");
+        let last = egui::Id::new("contact-last");
+        ctx.memory_mut(|memory| memory.request_focus(first));
+        frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        assert!(ctx.memory(|memory| memory.has_focus(first)));
+        let tab = Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        frame_sized(&mut app, &mut tour, &ctx, size, vec![tab]);
+        frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        assert!(
+            ctx.memory(|memory| memory.has_focus(last)),
+            "Tab reaches the surname, focus is on {:?}",
+            ctx.memory(|memory| memory.focused())
+        );
+        assert!(app.contact_edit.is_some(), "the edit is still open");
+    }
+
+    /// Enter on the "Media, links and docs" row opens the media view with
+    /// the keyboard on Back, and Back puts it back on the row.
+    #[test]
+    fn enter_on_the_media_row_keeps_the_keyboard_in_the_panel() {
+        use crate::model::{InfoView, MediaTab};
+        use crate::ui::focus::{Stop, control};
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let size = vec2(1280.0, 800.0);
+        let ada = super::super::sample_ids()[0].to_owned();
+        app.actions.push(crate::model::Action::OpenChat(ada));
+        frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        super::super::apply_flags(&mut app, Some("info"));
+        for _ in 0..3 {
+            frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        }
+        let row = control(&ctx, Stop::InfoControl(crate::ui::info::MEDIA_ROW_STOP))
+            .expect("the media row is a stop");
+        ctx.memory_mut(|memory| memory.request_focus(row));
+        let enter = || Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        frame_sized(&mut app, &mut tour, &ctx, size, vec![enter()]);
+        for _ in 0..2 {
+            frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        }
+        assert_eq!(
+            app.info.as_ref().map(|info| info.view),
+            Some(InfoView::Media(MediaTab::Media))
+        );
+        let back = control(&ctx, Stop::InfoClose).expect("the Back button");
+        assert!(
+            ctx.memory(|memory| memory.has_focus(back)),
+            "Back has the keyboard, not {:?}",
+            ctx.memory(|memory| memory.focused())
+        );
+        frame_sized(&mut app, &mut tour, &ctx, size, vec![enter()]);
+        for _ in 0..2 {
+            frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        }
+        assert_eq!(
+            app.info.as_ref().map(|info| info.view),
+            Some(InfoView::Overview)
+        );
+        let row = control(&ctx, Stop::InfoControl(crate::ui::info::MEDIA_ROW_STOP))
+            .expect("the media row again");
+        assert!(ctx.memory(|memory| memory.has_focus(row)));
+    }
+
+    /// Over a narrow chat the panel would hide the message an item goes
+    /// to, so it closes, as the search pane folds.
+    #[test]
+    fn an_item_opened_from_the_overlay_closes_the_panel() {
+        use crate::model::{InfoView, MediaTab};
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::new(None, None);
+        let size = vec2(760.0, 600.0);
+        let ada = super::super::sample_ids()[0].to_owned();
+        app.actions
+            .push(crate::model::Action::OpenChat(ada.clone()));
+        frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        super::super::apply_flags(&mut app, Some("info-docs"));
+        for _ in 0..3 {
+            frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
+        }
+        assert_eq!(
+            app.info.as_ref().map(|info| info.view),
+            Some(InfoView::Media(MediaTab::Docs))
+        );
+        let locale = app.locale;
+        let doc = app.conversations[&ada]
+            .message("ada-doc")
+            .cloned()
+            .expect("the sample document");
+        let crate::model::Content::Document { media, pages, .. } = &doc.content else {
+            panic!("a document");
+        };
+        let pages = pages.expect("pages");
+        let detail = format!(
+            "{} · {} · {}",
+            crate::i18n::ngettext(locale, "{} page", "{} pages", pages)
+                .replace("{}", &pages.to_string()),
+            crate::util::bytes(media.size),
+            crate::util::chat_stamp(locale, doc.timestamp)
+        );
+        click_sized(&mut app, &mut tour, &ctx, size, &detail);
+        assert_eq!(
+            app.jump_highlight
+                .as_ref()
+                .map(|jump| jump.message.as_str()),
+            Some("ada-doc")
+        );
+        assert!(
+            app.info.is_none(),
+            "the panel folds away over a narrow chat"
+        );
+    }
+
+    /// A member whose private chat is locked shows who they are, and no
+    /// media section: what was shared with them stays in the locked folder.
+    #[test]
+    fn a_locked_members_panel_has_no_media_section() {
+        use crate::backend::Command;
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        let mut tour = Tour::new(None, None);
+        let group = super::super::sample_ids()[1].to_owned();
+        let mira = "491702222222@s.whatsapp.net";
+        let mut private = crate::model::Chat::new(mira.into(), "Mira".into());
+        private.locked = true;
+        app.chats.push(private);
+        app.actions.push(crate::model::Action::OpenChat(group));
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        app.backend.take_demo_commands();
+        click(&mut app, &mut tour, &ctx, "Mira");
+        for _ in 0..2 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        assert_eq!(app.info.as_ref().map(|info| info.chat.as_str()), Some(mira));
+        let title = crate::i18n::gettext(app.locale, "Media, links and docs").to_string();
+        assert!(
+            !tour.labels.contains_key(&title),
+            "no media section for a locked chat"
+        );
+        assert!(
+            !app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command, Command::LoadChatMedia { .. })),
+            "and nothing is asked for it"
+        );
+    }
+
     #[test]
     fn leaving_is_offered_for_a_group_and_for_a_channel() {
         for (index, leave, title, archive) in [
@@ -1037,7 +1471,10 @@ mod tests {
             let mut tour = Tour::new(None, None);
             let id = super::super::sample_ids()[index].to_owned();
             app.open_chat = Some(id.clone());
-            app.dialog = Some(crate::model::Dialog::ChatInfo(id.clone()));
+            app.info = Some(crate::model::InfoPanel {
+                chat: id.clone(),
+                view: crate::model::InfoView::Overview,
+            });
             for _ in 0..3 {
                 frame(&mut app, &mut tour, &ctx, Vec::new());
             }
@@ -1468,7 +1905,7 @@ mod tests {
                 seen[1] |= app.reply_to.is_some();
                 seen[2] |= app.picker == Some(PickerTab::Gifs);
                 seen[3] |= app.picker == Some(PickerTab::Stickers);
-                seen[4] |= matches!(app.dialog, Some(Dialog::ChatInfo(_)));
+                seen[4] |= app.info.is_some();
                 seen[5] |= matches!(app.dialog, Some(Dialog::Shortcuts));
                 seen[6] |= app.settings.theme == ThemeChoice::Light;
             });

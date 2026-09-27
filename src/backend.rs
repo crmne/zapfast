@@ -240,6 +240,13 @@ pub enum Command {
         from: Option<i64>,
         until: Option<i64>,
     },
+    /// Lists one chat's pictures, videos, documents and links for the info
+    /// panel. `request` comes back with the answer, so a late answer to an
+    /// earlier request is told apart from the one being waited for.
+    LoadChatMedia {
+        chat: ChatId,
+        request: u64,
+    },
     /// Creates an archive chat before its first message is sent.
     EnsureChat {
         chat: ChatId,
@@ -761,6 +768,16 @@ pub enum Event {
         /// the pane can say so instead of dropping them silently.
         truncated: bool,
     },
+    /// One chat's media, documents and links, newest first, for the info
+    /// panel, or why they could not be listed.
+    ChatMedia {
+        request: u64,
+        result: Result<crate::model::ChatMedia, String>,
+    },
+    /// What the info panel lists for a chat changed in the archive: a
+    /// picture, a video, a document or a linked text was filed, imported,
+    /// edited, revoked or deleted, or the chat was cleared.
+    ChatMediaChanged(ChatId),
     ChatUpdated(Box<Chat>),
     /// Chat messages in ascending order. `older` prepends them; `complete`
     /// means the archive has no earlier rows.

@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
 pub mod image_preview;
+pub mod info;
 pub mod keys;
 pub mod labels;
 pub mod lock;
@@ -51,6 +52,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.mention_start.is_none()
         // The day filter keeps egui's own order among its days.
         && !app.chat_search_calendar
+        // A name typed in the info panel keeps Tab between its fields.
+        && !(app.info_visible() && (app.contact_edit.is_some() || app.group_name_edit.is_some()))
         && !egui::Popup::is_any_open(ctx);
     focus::begin(ctx, main_navigation);
     // The open chat's composer records its rect again below, if there is one.
@@ -73,6 +76,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         SidebarDisplayMode::CollapsedIconsOnly => chats::compact_show(app, ui),
     }
     let search_overlay = pane::show(app, ui);
+    let info_overlay = info::show(app, ui);
     egui::CentralPanel::default()
         .frame(central_frame(app))
         .show(ui, |ui| match app.page {
@@ -82,6 +86,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         });
     if let Some(region) = search_overlay {
         pane::show_overlay(app, ctx, region);
+    }
+    if let Some(region) = info_overlay {
+        info::show_overlay(app, ctx, region);
     }
     focus::finish(ctx, main_navigation);
     update::show(app, ctx);

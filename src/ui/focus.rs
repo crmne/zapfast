@@ -16,6 +16,11 @@ pub enum Stop {
     ChatSearchDate,
     ChatSearchField,
     ChatSearchDay,
+    /// The info panel's close or back button, then its buttons and tabs
+    /// in reading order. Its members, pictures, documents and links are
+    /// pointer and accessibility targets, like chat rows.
+    InfoClose,
+    InfoControl(u8),
     Back,
     Profile,
     Sidebar,

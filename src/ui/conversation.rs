@@ -210,8 +210,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     .interact(block.rect, ui.id().with("chat-header-info"), Sense::click())
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if block.clicked() {
-                    app.actions
-                        .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
+                    app.actions.push(Action::OpenInfo(chat.id.clone()));
                 }
                 // The item and the width that has to hold it are measured from
                 // the same localized label: a translation wider than the
@@ -253,8 +252,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         .frame(widgets::menu_frame(&palette))
                         .show(|ui| {
                             if widgets::menu_item(ui, &palette, Some(Icon::Info), "Info") {
-                                app.actions
-                                    .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
+                                app.actions.push(Action::OpenInfo(chat.id.clone()));
                             }
                             if widgets::menu_item(
                                 ui,
@@ -2784,7 +2782,7 @@ fn bubble(
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                     {
-                        actions.push(Action::ShowDialog(Dialog::ChatInfo(message.sender.clone())));
+                        actions.push(Action::OpenInfo(message.sender.clone()));
                     }
                     if show_sender && ui.is_rect_visible(rect) {
                         let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
@@ -3202,7 +3200,7 @@ fn bubble_frame(
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if response.clicked() {
-                    actions.push(Action::ShowDialog(Dialog::ChatInfo(message.sender.clone())));
+                    actions.push(Action::OpenInfo(message.sender.clone()));
                 }
             }
             // Reserve the label's line now and paint it once the contents
@@ -5682,7 +5680,7 @@ fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> Str
             .collect::<String>(),
         id
     );
-    crate::image_cache::include(ctx, uri.clone(), bytes);
+    crate::image_cache::include(ctx, &uri, bytes);
     uri
 }
 
