@@ -805,6 +805,50 @@ impl Output<'_> {
     }
 }
 
+/// Converts a YUV 4:2:0 picture to RGB, scaled to `out` when it differs from `size`.
+///
+/// Shared with the call screen, which has raw camera planes and decoded peer frames rather than a
+/// whole file to play. `turns` is quarter turns clockwise to apply while converting; a call passes
+/// [`orientation_turns`] of the peer's `device_orientation`, and `out` stays the size the picture
+/// has *before* those turns, since the rotation swaps the result's sides.
+pub(crate) fn rgb_image(
+    y: &[u8],
+    u: &[u8],
+    v: &[u8],
+    strides: (usize, usize, usize),
+    size: (usize, usize),
+    out: (usize, usize),
+    turns: u8,
+) -> ColorImage {
+    convert(
+        &Planes {
+            y,
+            u,
+            v,
+            strides,
+            size,
+        },
+        out,
+        turns,
+    )
+}
+
+/// How many quarter turns clockwise a peer's `device_orientation` asks the picture to take.
+///
+/// WhatsApp's low two bits are a counter-clockwise quarter-turn count, not a clockwise one: the
+/// shipped web renderer applies `rotate(Math.PI * (orientation - 1) / 2)`, and whatsapp-rust's own
+/// `voip-cli` example undoes the same value with `transpose=cclock` for 1 and `transpose=clock`
+/// for 3 (`examples/voip-cli/src/video.rs`). [`convert`] turns clockwise, so the count flips; 2 is
+/// its own inverse. Anything else, including the 0 an upright camera reports, is no turn at all.
+pub(crate) fn orientation_turns(orientation: u8) -> u8 {
+    match orientation & 0x03 {
+        1 => 3,
+        2 => 2,
+        3 => 1,
+        _ => 0,
+    }
+}
+
 /// Turns one decoded frame into an upright picture no larger than
 /// [`MAX_SIDE`].
 fn picture(yuv: &openh264::decoder::DecodedYUV<'_>, turns: u8) -> Option<ColorImage> {
@@ -1226,6 +1270,49 @@ mod tests {
         assert_eq!(upside_down.pixels, [white, black]);
         let back = convert(&planes, (2, 1), 3);
         assert_eq!(back.pixels, [white, black]);
+    }
+
+    #[test]
+    fn a_peer_orientation_turns_the_picture_upright() {
+        // The low two bits are the rotation; the keyframe flag rides in a higher bit.
+        assert_eq!(orientation_turns(0), 0);
+        assert_eq!(orientation_turns(1), 3);
+        assert_eq!(orientation_turns(2), 2);
+        assert_eq!(orientation_turns(3), 1);
+        assert_eq!(orientation_turns(0x08 | 1), 3);
+
+        // A four by two picture, dark on the left. A peer whose device orientation is one quarter
+        // turn counter-clockwise has sent it rotated, so it must be turned back the same amount:
+        // the picture comes out portrait, two wide by four tall, with the half that was on the
+        // right now on top.
+        let y = [16, 16, 235, 235, 16, 16, 235, 235];
+        let chroma = [128, 128];
+        let planes = Planes {
+            y: &y,
+            u: &chroma,
+            v: &chroma,
+            strides: (4, 2, 2),
+            size: (4, 2),
+        };
+        let black = egui::Color32::from_rgb(0, 0, 0);
+        let white = egui::Color32::from_rgb(255, 255, 255);
+        let upright = convert(&planes, (4, 2), orientation_turns(1));
+        assert_eq!(
+            upright.size,
+            [2, 4],
+            "the sides swap, so a portrait stays portrait"
+        );
+        assert_eq!(
+            upright.pixels,
+            [white, white, white, white, black, black, black, black]
+        );
+        // An upright frame is left alone, and a half turn swaps the halves without reshaping.
+        let alone = convert(&planes, (4, 2), orientation_turns(0));
+        assert_eq!(alone.size, [4, 2]);
+        assert_eq!(alone.pixels[..4], [black, black, white, white]);
+        let halves = convert(&planes, (4, 2), orientation_turns(2));
+        assert_eq!(halves.size, [4, 2]);
+        assert_eq!(halves.pixels[..4], [white, white, black, black]);
     }
 
     #[test]

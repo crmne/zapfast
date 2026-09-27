@@ -133,6 +133,14 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CancelEdit);
         } else if app.reply_to.is_some() {
             actions.push(Action::CancelReply);
+        } else if app.call_fullscreen {
+            // The window shrinks back first, and only then does the next Escape put the surface
+            // aside. Neither one ends the call; only the hang-up button does that.
+            actions.push(Action::ToggleCallFullscreen);
+        } else if app.call_surface_open() {
+            // The same move the surface's own button makes: the call keeps running, and the bar at
+            // the bottom of the chat offers the way back.
+            actions.push(Action::LeaveCallSurface);
         } else if app.page == Page::Wallpaper {
             actions.push(Action::Open(Page::Settings));
         } else if app.page == Page::Settings && !app.settings_search.is_empty() {
@@ -390,6 +398,68 @@ mod tests {
             app.actions.as_slice(),
             [Action::Open(Page::Chats)]
         ));
+    }
+
+    /// Escape leaves the call screen rather than the call.
+    ///
+    /// The window shrinks back first and only the next Escape puts the surface aside, and neither
+    /// one hangs up: a call the reader stepped away from is still running behind the bar. This is
+    /// the rule the whole call surface turns on, so it is checked through the real key handler
+    /// rather than only through the actions it pushes.
+    #[test]
+    fn escape_leaves_the_call_screen_without_ending_the_call() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.call = Some(crate::calls::CallUpdate {
+            generation: 1,
+            chat: "1@s.whatsapp.net".to_owned(),
+            direction: crate::model::CallDirection::Outgoing,
+            video: false,
+            phase: crate::calls::CallPhase::Active,
+            started: Some(std::time::Instant::now()),
+            muted: false,
+            camera_on: false,
+            remote_video: false,
+            outcome: None,
+            peer_audio: None,
+            lost_devices: Vec::new(),
+            microphone: None,
+            speaker: None,
+            camera: None,
+        });
+        app.call_fullscreen = true;
+        let ctx = egui::Context::default();
+        escape(&mut app, &ctx);
+        assert!(
+            matches!(app.actions.as_slice(), [Action::ToggleCallFullscreen]),
+            "the window shrinks back first: {:?}",
+            app.actions
+        );
+        app.actions.clear();
+        // The window is back at its normal size, which is what that action does, so the next
+        // Escape reaches the surface rather than the full-screen state.
+        app.call_fullscreen = false;
+        escape(&mut app, &ctx);
+        assert!(
+            matches!(app.actions.as_slice(), [Action::LeaveCallSurface]),
+            "and only then does the surface step aside: {:?}",
+            app.actions
+        );
+        assert!(
+            !app.actions
+                .iter()
+                .any(|action| matches!(action, Action::HangupCall)),
+            "neither Escape hangs up"
+        );
+        assert_eq!(
+            app.call.as_ref().map(|call| call.phase),
+            Some(crate::calls::CallPhase::Active),
+            "Escape never ends the call"
+        );
     }
 
     fn escape(app: &mut App, ctx: &egui::Context) {

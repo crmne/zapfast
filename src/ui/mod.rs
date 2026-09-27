@@ -1,5 +1,7 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
+pub mod call;
+pub mod calls;
 pub mod chats;
 pub mod conversation;
 pub mod dialogs;
@@ -67,6 +69,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .show(ui, |ui| match app.page {
             Page::Settings => settings::show(app, ui),
             Page::Chats => conversation::show(app, ui),
+            Page::Calls => calls::show(app, ui),
             Page::Wallpaper => settings::wallpaper_show(app, ui),
         });
     if let Some(region) = search_overlay {
@@ -77,6 +80,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     picker::show(app, ctx);
     dialogs::show(app, ctx);
     image_preview::show(app, ctx);
+    call::show(app, ctx);
     drop_target(app, ctx);
     toasts(app, ctx);
     focus_ring(app, ctx);
