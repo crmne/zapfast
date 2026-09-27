@@ -10140,6 +10140,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn stepping_away_from_the_call_screen_writes_no_history() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.conversations
+            .entry(chat.to_owned())
+            .or_default()
+            .requested = true;
+        app.call = Some(active_call(chat));
+        // The one row a call that is up has, as the backend wrote it when the call was answered.
+        app.apply_call_log(vec![call_record("call-1", chat)]);
+        let logged = app.conversations[chat].calls.clone();
+        assert_eq!(logged.len(), 1, "the answered call is in the log");
+        app.backend.record_demo_commands();
+        // Showing, hiding and moving the surface is the window, and the log is not part of it.
+        app.apply(Action::LeaveCallSurface, &ctx);
+        app.apply(Action::ReturnToCall, &ctx);
+        app.apply(Action::ToggleCallFullscreen, &ctx);
+        app.apply(Action::ToggleCallFullscreen, &ctx);
+        assert!(
+            app.backend.take_demo_commands().is_empty(),
+            "moving the call screen asks the backend for nothing"
+        );
+        assert_eq!(
+            app.conversations[chat].calls, logged,
+            "and the log is still only what the call's own ending wrote"
+        );
+    }
+
     /// An incoming call for a specific chat, as the backend would publish it.
     fn call_for(
         chat: &str,
