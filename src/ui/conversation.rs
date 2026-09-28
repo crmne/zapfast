@@ -1630,6 +1630,7 @@ struct View<'a> {
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
     transcripts: &'a HashMap<String, String>,
     transcribing: &'a HashSet<String>,
+    transcription_progress: &'a HashMap<String, crate::transcribe::Progress>,
 }
 
 /// A row height to assume for a message that has not been laid out yet. Rows
@@ -1688,6 +1689,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // and paging state are updated on the checked-out conversation.
     let transcripts = conversation.transcripts.clone();
     let transcribing = conversation.transcribing.clone();
+    let transcription_progress = conversation.transcription_progress.clone();
     let mut avatars = HashMap::new();
     if shows_sender_pictures(chat) {
         let mut senders: HashSet<String> = conversation
@@ -1740,6 +1742,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         copy_rows: app.copy_rows.as_ref(),
         transcripts: &transcripts,
         transcribing: &transcribing,
+        transcription_progress: &transcription_progress,
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -2714,7 +2717,7 @@ fn bubble(
                     theme::spinner(ui, 13.0, view.palette.accent);
                     theme::text(
                         ui,
-                        "Transcribing locally…",
+                        transcription_status(view, &message.id),
                         theme::regular(BODY_SIZE - 1.0),
                         view.palette.secondary,
                     );
@@ -2724,6 +2727,39 @@ fn bubble(
         },
     );
     response
+}
+
+fn transcription_status(view: &View<'_>, message: &str) -> String {
+    use crate::transcribe::Progress;
+    match view.transcription_progress.get(message) {
+        Some(Progress::DownloadingVoice) => {
+            crate::i18n::gettext(view.locale, "Downloading voice message…").into_owned()
+        }
+        Some(Progress::DownloadingModel {
+            received,
+            total: Some(total),
+        }) if *total > 0 => crate::i18n::gettext(
+            view.locale,
+            "Downloading Whisper large-v3-turbo… {percent}%",
+        )
+        .replace(
+            "{percent}",
+            &(received.saturating_mul(100) / total).min(100).to_string(),
+        ),
+        Some(Progress::DownloadingModel { .. }) => {
+            crate::i18n::gettext(view.locale, "Downloading Whisper large-v3-turbo (1.5 GB)…")
+                .into_owned()
+        }
+        Some(Progress::InstallingModel) => {
+            crate::i18n::gettext(view.locale, "Verifying Whisper model…").into_owned()
+        }
+        Some(Progress::LoadingModel) => {
+            crate::i18n::gettext(view.locale, "Loading Whisper model…").into_owned()
+        }
+        Some(Progress::Transcribing) | None => {
+            crate::i18n::gettext(view.locale, "Transcribing locally…").into_owned()
+        }
+    }
 }
 
 /// Selectable transcript text shown beneath its source voice bubble.

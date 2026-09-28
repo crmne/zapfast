@@ -24,6 +24,16 @@ const MODEL_SHA256: &str = "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee59438
 const MAX_MODEL_BYTES: u64 = 1_700_000_000;
 const LEGACY_MODEL_FILES: &[&str] = &["ggml-base.bin"];
 
+/// User-visible progress for one local transcription request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Progress {
+    DownloadingVoice,
+    DownloadingModel { received: u64, total: Option<u64> },
+    InstallingModel,
+    LoadingModel,
+    Transcribing,
+}
+
 /// A completed local transcription and the digest of its source recording.
 #[derive(Clone, Debug)]
 pub struct Completed {
@@ -34,9 +44,14 @@ pub struct Completed {
 /// Serializes model installation and inference. This avoids loading the model
 /// twice when two messages are requested together and keeps whisper.cpp's
 /// native context away from the interface thread.
-fn engine_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+#[derive(Default)]
+struct Engine {
+    context: Option<WhisperContext>,
+}
+
+fn engine() -> &'static Mutex<Engine> {
+    static ENGINE: OnceLock<Mutex<Engine>> = OnceLock::new();
+    ENGINE.get_or_init(|| Mutex::new(Engine::default()))
 }
 
 pub fn model_path(directory: &Path) -> PathBuf {
@@ -50,13 +65,18 @@ pub fn model_installed(directory: &Path) -> bool {
 
 /// Downloads and verifies the model into `directory` when it is absent.
 /// A partial or unverified download never becomes the installed model.
-fn ensure_model(directory: &Path) -> Result<PathBuf, String> {
+fn ensure_model(directory: &Path, progress: &mut impl FnMut(Progress)) -> Result<PathBuf, String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("Could not create the Whisper model folder: {error}"))?;
     let target = model_path(directory);
     if model_installed(directory) {
         return Ok(target);
     }
+
+    progress(Progress::DownloadingModel {
+        received: 0,
+        total: None,
+    });
 
     let partial = directory.join(format!("{MODEL_FILE}.download"));
     let _ = std::fs::remove_file(&partial);
@@ -83,10 +103,12 @@ fn ensure_model(directory: &Path) -> Result<PathBuf, String> {
     {
         return Err("The Whisper model download was unexpectedly large".to_owned());
     }
+    let expected = response.content_length();
     let mut file = std::fs::File::create(&partial)
         .map_err(|error| format!("Could not save the Whisper model: {error}"))?;
     let mut hash = Sha256::new();
     let mut total = 0u64;
+    let mut reported_percent = None;
     let mut buffer = [0u8; 64 * 1024];
     loop {
         let read = response
@@ -104,6 +126,16 @@ fn ensure_model(directory: &Path) -> Result<PathBuf, String> {
         hash.update(&buffer[..read]);
         file.write_all(&buffer[..read])
             .map_err(|error| format!("Could not save the Whisper model: {error}"))?;
+        let percent = expected
+            .filter(|expected| *expected > 0)
+            .map(|expected| (total.saturating_mul(100) / expected).min(100));
+        if percent != reported_percent {
+            reported_percent = percent;
+            progress(Progress::DownloadingModel {
+                received: total,
+                total: expected,
+            });
+        }
     }
     file.flush()
         .and_then(|()| file.sync_all())
@@ -114,6 +146,7 @@ fn ensure_model(directory: &Path) -> Result<PathBuf, String> {
         let _ = std::fs::remove_file(&partial);
         return Err("The downloaded Whisper model failed its integrity check".to_owned());
     }
+    progress(Progress::InstallingModel);
     if target.exists() {
         std::fs::remove_file(&target)
             .map_err(|error| format!("Could not replace the Whisper model: {error}"))?;
@@ -128,10 +161,20 @@ fn ensure_model(directory: &Path) -> Result<PathBuf, String> {
 
 /// Transcribes a WhatsApp OGG/Opus voice message with multilingual Whisper.
 pub fn transcribe(model_directory: &Path, recording: &Path) -> Result<Completed, String> {
-    let _guard = engine_lock()
+    transcribe_with_progress(model_directory, recording, |_| {})
+}
+
+/// Transcribes while reporting the one-time model download separately from
+/// inference. The callback runs on the blocking transcription worker.
+pub fn transcribe_with_progress(
+    model_directory: &Path,
+    recording: &Path,
+    mut progress: impl FnMut(Progress),
+) -> Result<Completed, String> {
+    let mut engine = engine()
         .lock()
         .map_err(|_| "The Whisper engine could not be started".to_owned())?;
-    let model = ensure_model(model_directory)?;
+    let model = ensure_model(model_directory, &mut progress)?;
     let bytes = std::fs::read(recording)
         .map_err(|error| format!("Could not read the voice message: {error}"))?;
     let source_sha256 = sha256_bytes(&bytes);
@@ -148,24 +191,30 @@ pub fn transcribe(model_directory: &Path, recording: &Path) -> Result<Completed,
         .map(|frame| (frame[0] + frame[1] + frame[2]) / 3.0)
         .collect();
 
-    let context = WhisperContext::new_with_params(
-        model
-            .to_str()
-            .ok_or_else(|| "The Whisper model path is not valid text".to_owned())?,
-        WhisperContextParameters::default(),
-    )
-    .map_err(|error| format!("Could not load the Whisper model: {error}"))?;
-    let mut state = context
+    if engine.context.is_none() {
+        progress(Progress::LoadingModel);
+        engine.context = Some(
+            WhisperContext::new_with_params(
+                model
+                    .to_str()
+                    .ok_or_else(|| "The Whisper model path is not valid text".to_owned())?,
+                WhisperContextParameters::default(),
+            )
+            .map_err(|error| format!("Could not load the Whisper model: {error}"))?,
+        );
+    }
+    progress(Progress::Transcribing);
+    let mut state = engine
+        .context
+        .as_ref()
+        .expect("the Whisper context was installed above")
         .create_state()
         .map_err(|error| format!("Could not start Whisper: {error}"))?;
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_language(None);
     params.set_translate(false);
-    params.set_n_threads(
-        std::thread::available_parallelism()
-            .map_or(1, usize::from)
-            .min(4) as i32,
-    );
+    params.set_n_threads(inference_threads());
+    params.set_no_timestamps(true);
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
@@ -191,6 +240,11 @@ pub fn transcribe(model_directory: &Path, recording: &Path) -> Result<Completed,
         text,
         source_sha256,
     })
+}
+
+fn inference_threads() -> i32 {
+    let logical = std::thread::available_parallelism().map_or(1, usize::from);
+    logical.div_ceil(2).clamp(4.min(logical), 16) as i32
 }
 
 fn sha256_file(path: &Path) -> std::io::Result<String> {
@@ -238,6 +292,15 @@ mod tests {
         assert!(!model_installed(directory.path()));
     }
 
+    #[test]
+    fn inference_uses_more_than_four_threads_on_large_cpus() {
+        let expected = std::thread::available_parallelism().map_or(1, usize::from);
+        assert!((1..=expected.min(16) as i32).contains(&inference_threads()));
+        if expected >= 10 {
+            assert!(inference_threads() > 4);
+        }
+    }
+
     /// Manual end-to-end probe with a real model and WhatsApp-style OGG:
     /// `ZAPFAST_WHISPER_MODEL_DIR=... ZAPFAST_WHISPER_PROBE=note.ogg cargo test
     /// transcribe::tests::probe -- --ignored --nocapture`.
@@ -250,9 +313,19 @@ mod tests {
         let Some(recording) = std::env::var_os("ZAPFAST_WHISPER_PROBE") else {
             return;
         };
+        let started = std::time::Instant::now();
         let completed =
             transcribe(Path::new(&model_dir), Path::new(&recording)).expect("transcribes");
+        let first = started.elapsed();
         assert!(!completed.text.is_empty());
-        println!("{}", completed.text);
+        let started = std::time::Instant::now();
+        let repeated =
+            transcribe(Path::new(&model_dir), Path::new(&recording)).expect("transcribes again");
+        assert_eq!(repeated.text, completed.text);
+        println!(
+            "{}\nfirst: {first:.2?}; warm: {:.2?}",
+            completed.text,
+            started.elapsed()
+        );
     }
 }

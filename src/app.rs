@@ -64,6 +64,8 @@ pub struct Conversation {
     pub transcripts: HashMap<String, String>,
     /// Voice messages currently downloading a model/audio or transcribing.
     pub transcribing: HashSet<String>,
+    /// Detailed progress for active local transcriptions.
+    pub transcription_progress: HashMap<String, crate::transcribe::Progress>,
     /// Whether the local archive has no earlier messages.
     pub complete: bool,
     pub loading_older: bool,
@@ -2142,12 +2144,24 @@ impl App {
                 } => {
                     let conversation = self.conversations.entry(chat).or_default();
                     conversation.transcribing.remove(&message);
+                    conversation.transcription_progress.remove(&message);
                     match text {
                         Ok(text) => {
                             conversation.transcripts.insert(message, text);
                         }
                         Err(error) => self.toast_error(error),
                     }
+                }
+                Event::TranscriptionProgress {
+                    chat,
+                    message,
+                    progress,
+                } => {
+                    self.conversations
+                        .entry(chat)
+                        .or_default()
+                        .transcription_progress
+                        .insert(message, progress);
                 }
                 Event::Transcripts { chat, transcripts } => {
                     let conversation = self.conversations.entry(chat).or_default();

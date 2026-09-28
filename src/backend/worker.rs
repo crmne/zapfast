@@ -6352,6 +6352,11 @@ impl Worker {
             None => {
                 self.pending_transcriptions
                     .insert((chat.clone(), id.clone()));
+                self.emit(Event::TranscriptionProgress {
+                    chat: chat.clone(),
+                    message: id.clone(),
+                    progress: crate::transcribe::Progress::DownloadingVoice,
+                });
                 self.download(chat, id);
             }
         }
@@ -6359,9 +6364,18 @@ impl Worker {
 
     fn start_transcription(&mut self, chat: ChatId, id: String, path: PathBuf) {
         let commands = self.commands.clone();
+        let events = self.events.clone();
+        let waker = self.waker.clone();
         let models = self.dirs.transcription_model_dir();
         tokio::task::spawn_blocking(move || {
-            let result = crate::transcribe::transcribe(&models, &path);
+            let result = crate::transcribe::transcribe_with_progress(&models, &path, |progress| {
+                let _ = events.send(Event::TranscriptionProgress {
+                    chat: chat.clone(),
+                    message: id.clone(),
+                    progress,
+                });
+                waker.wake();
+            });
             let _ = commands.send(Command::TranscriptionResult {
                 chat,
                 message: id,

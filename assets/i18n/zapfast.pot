@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-28 17:35-0300\n"
+"POT-Creation-Date: 2026-09-28 18:56-0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -162,7 +162,7 @@ msgstr ""
 msgid "No favorites yet"
 msgstr ""
 
-#: src/ui/chats.rs:782 src/app.rs:1400
+#: src/ui/chats.rs:782 src/app.rs:1402
 msgid "Message yourself"
 msgstr ""
 
@@ -170,7 +170,7 @@ msgstr ""
 msgid "Remove from favorites"
 msgstr ""
 
-#: src/ui/chats.rs:1015 src/ui/chats.rs:1373 src/ui/conversation.rs:3892
+#: src/ui/chats.rs:1015 src/ui/chats.rs:1373 src/ui/conversation.rs:3928
 #: src/ui/dialogs.rs:1013 src/ui/picker.rs:1582
 msgid "Add to favorites"
 msgstr ""
@@ -257,79 +257,104 @@ msgstr ""
 msgid "Discard voice message"
 msgstr ""
 
-#: src/ui/conversation.rs:1961 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:1964 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/conversation.rs:3232 src/ui/conversation.rs:3901
+#: src/ui/conversation.rs:2736
+msgid "Downloading voice message…"
+msgstr ""
+
+#: src/ui/conversation.rs:2743
+#, rust-format
+msgid "Downloading Whisper large-v3-turbo… {percent}%"
+msgstr ""
+
+#: src/ui/conversation.rs:2750
+msgid "Downloading Whisper large-v3-turbo (1.5 GB)…"
+msgstr ""
+
+#: src/ui/conversation.rs:2754
+msgid "Verifying Whisper model…"
+msgstr ""
+
+#: src/ui/conversation.rs:2757
+msgid "Loading Whisper model…"
+msgstr ""
+
+#: src/ui/conversation.rs:2760
+msgid "Transcribing locally…"
+msgstr ""
+
+#: src/ui/conversation.rs:3268 src/ui/conversation.rs:3937
 msgid "Open in system player"
 msgstr ""
 
-#: src/ui/conversation.rs:3233 src/ui/conversation.rs:3960
+#: src/ui/conversation.rs:3269 src/ui/conversation.rs:3996
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr ""
 
-#: src/ui/conversation.rs:4294
+#: src/ui/conversation.rs:4330
 msgid "Location"
 msgstr ""
 
-#: src/ui/conversation.rs:4320
+#: src/ui/conversation.rs:4356
 msgid "Live location ended"
 msgstr ""
 
-#: src/ui/conversation.rs:4322 src/ui/conversation.rs:4512
+#: src/ui/conversation.rs:4358 src/ui/conversation.rs:4548
 msgid "Live location"
 msgstr ""
 
-#: src/ui/conversation.rs:4332
+#: src/ui/conversation.rs:4368
 #, rust-format
 msgid "Updated {time}"
 msgstr ""
 
-#: src/ui/conversation.rs:4382
+#: src/ui/conversation.rs:4418
 msgid "Chat"
 msgstr ""
 
-#: src/ui/conversation.rs:4396
+#: src/ui/conversation.rs:4432
 msgid "Add"
 msgstr ""
 
-#: src/ui/conversation.rs:4441
+#: src/ui/conversation.rs:4477
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/conversation.rs:4454
+#: src/ui/conversation.rs:4490
 msgid "View stickers"
 msgstr ""
 
-#: src/ui/conversation.rs:4520
+#: src/ui/conversation.rs:4556
 msgid "Open WhatsApp on your phone to follow it."
 msgstr ""
 
-#: src/ui/conversation.rs:5366
+#: src/ui/conversation.rs:5402
 msgid "Open in a map"
 msgstr ""
 
-#: src/ui/conversation.rs:5925
+#: src/ui/conversation.rs:5961
 msgid "Pause"
 msgstr ""
 
-#: src/ui/conversation.rs:5927 src/ui/settings.rs:1428
+#: src/ui/conversation.rs:5963 src/ui/settings.rs:1428
 msgid "Play"
 msgstr ""
 
-#: src/ui/conversation.rs:5950
+#: src/ui/conversation.rs:5986
 msgid "Unmute"
 msgstr ""
 
-#: src/ui/conversation.rs:5952
+#: src/ui/conversation.rs:5988
 msgid "Mute"
 msgstr ""
 
@@ -882,56 +907,56 @@ msgstr[1] ""
 msgid "No one yet"
 msgstr ""
 
-#: src/app.rs:1321
+#: src/app.rs:1323
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr ""
 
-#: src/app.rs:1381
+#: src/app.rs:1383
 #, rust-format
 msgid "{name} (You)"
 msgstr ""
 
-#: src/app.rs:1382 src/app.rs:1401
+#: src/app.rs:1384 src/app.rs:1403
 msgid "You"
 msgstr ""
 
-#: src/app.rs:2232
+#: src/app.rs:2246
 msgid "Could not use this image"
 msgstr ""
 
-#: src/app.rs:2706
+#: src/app.rs:2720
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr ""
 
-#: src/app.rs:2710
+#: src/app.rs:2724
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:4093
+#: src/app.rs:4107
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:4168
+#: src/app.rs:4182
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:4458 src/ui/labels.rs:237
+#: src/app.rs:4472 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
-#: src/app.rs:5023
+#: src/app.rs:5037
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/app.rs:5514
+#: src/app.rs:5528
 msgid "Copied image"
 msgstr ""
 
-#: src/app.rs:5517 src/app.rs:5522
+#: src/app.rs:5531 src/app.rs:5536
 msgid "Failed to copy image"
 msgstr ""
 

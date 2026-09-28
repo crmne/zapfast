@@ -190,7 +190,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   works; macOS has no public API for this, so the switch is hidden there.
 - **Local voice transcripts.** Right-click a voice message and choose
   **Transcribe locally**. The first request downloads and verifies Whisper's
-  multilingual large-v3-turbo model (1.5 GB); later requests work offline.
+  multilingual large-v3-turbo model (1.5 GB); download, verification, model
+  loading, and transcription progress appear beneath the voice message. Later
+  requests work offline and reuse the loaded model while ZapFast stays open.
   Audio never leaves this computer, transcription runs away from the interface
   thread, and selectable results are cached in the encrypted message archive.
   **Transcribe received voice messages automatically** in Settings opts newly

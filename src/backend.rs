@@ -845,6 +845,12 @@ pub enum Event {
         message: String,
         text: Result<String, String>,
     },
+    /// Current local transcription phase, including one-time model download.
+    TranscriptionProgress {
+        chat: ChatId,
+        message: String,
+        progress: crate::transcribe::Progress,
+    },
     /// Cached transcriptions for a loaded chat.
     Transcripts {
         chat: ChatId,
