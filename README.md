@@ -46,7 +46,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   flash; Escape closes the calendar, then the pane. The pane can be dragged
   wider, and in a narrow window it lies over the conversation instead of
   squeezing it. The newest 80 matches are listed, and the pane says when there
-  are more. Right-click a group or a followed channel and choose **Leave group**
+  are more. Clicking a chat's header, or **Info** in its menu, opens an info
+  panel in the same place: the picture, the number or the members, the chat's
+  actions, and **Media, links and docs**, which lists the photos and videos,
+  the documents, and the links shared in the chat, newest first. A photo or a
+  document goes to its message, and a link opens in the browser. Escape steps
+  back to the overview, then closes the panel; opening another chat closes it
+  too. Right-click a group or a followed channel and choose **Leave group**
   or **Leave channel** to leave it, with the option to archive it in the same
   step; the local history stays on this computer and the chat keeps its
   messages.
@@ -637,6 +643,10 @@ Offline previews for these states use `--demo --demo-page channel`,
 `--demo --demo-page keyring`. The open locked-folder preview uses `demo-code`.
 Use `--demo-page locked-prompt`, `locked-setup`, `new-chat`, `unnamed-group`,
 or `react-picker` for the new dialogs, shared group summaries, and reactions.
+`info` shows a contact's info panel beside the chat, and `info-media`,
+`info-docs`, and `info-links` its media view on each tab. When the window has
+no room for the chat list, the chat and the panel side by side, the panel
+lies over the chat.
 `group-info`, `group-info-rename`, `group-info-saving`, and `group-info-locked`
 show a group's info with its name and photo editable, being renamed, saving,
 and locked to admins. `meta-ai` shows a Meta AI reply with code and a table.
