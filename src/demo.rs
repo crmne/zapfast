@@ -6172,6 +6172,59 @@ mod tests {
         }
     }
 
+    /// Alt+Up/Down and Ctrl+Shift+[ ] switch chats while the question is up.
+    /// Confirming afterwards must still delete in the chat the message came
+    /// from, not in whichever chat is open by then.
+    #[test]
+    fn a_message_deletion_confirmed_after_switching_chats_stays_in_its_chat() {
+        let own_chat = SAMPLES[0].id;
+        for (page, message, everyone) in [
+            ("delete-message", "ada-emoji", true),
+            ("delete-message-mine", "ada-format", false),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some(page));
+            app.open_chat = Some(SAMPLES[1].id.to_owned());
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+
+            let pos = accessible_nodes(&mut app, &ctx, Vec::new())
+                .into_iter()
+                .find(|(label, role, _)| {
+                    label == "Delete" && *role == egui::accesskit::Role::Button
+                })
+                .map(|(_, _, centre)| centre)
+                .expect("the confirm button is on screen");
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos), press(true)],
+            );
+            frame_with(&mut app, &ctx, vec![press(false)]);
+
+            let row = app.conversations[own_chat].message(message);
+            if everyone {
+                assert!(
+                    matches!(
+                        row.map(|message| &message.content),
+                        Some(crate::model::Content::Revoked)
+                    ),
+                    "{page}: the message is revoked in its own chat"
+                );
+            } else {
+                assert!(row.is_none(), "{page}: the message leaves its own chat");
+            }
+        }
+    }
+
     #[test]
     fn errors_stay_until_dismissed_while_info_fades() {
         let mut app = app();

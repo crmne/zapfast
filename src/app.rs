@@ -3768,25 +3768,21 @@ impl App {
                     self.mention_start = None;
                 }
             }
-            Action::DeleteForEveryone(id) => {
-                if let Some(chat) = self.open_chat.clone() {
-                    if let Some(message) = self
-                        .conversations
-                        .get_mut(&chat)
-                        .and_then(|conversation| conversation.message_mut(&id))
-                    {
-                        message.content = Content::Revoked;
-                    }
-                    self.backend.send(Command::Revoke { chat, id });
+            Action::DeleteForEveryone { chat, id } => {
+                if let Some(message) = self
+                    .conversations
+                    .get_mut(&chat)
+                    .and_then(|conversation| conversation.message_mut(&id))
+                {
+                    message.content = Content::Revoked;
                 }
+                self.backend.send(Command::Revoke { chat, id });
             }
-            Action::DeleteForMe(id) => {
-                if let Some(chat) = self.open_chat.clone() {
-                    if let Some(conversation) = self.conversations.get_mut(&chat) {
-                        conversation.messages.retain(|message| message.id != id);
-                    }
-                    self.backend.send(Command::DeleteLocal { chat, id });
+            Action::DeleteForMe { chat, id } => {
+                if let Some(conversation) = self.conversations.get_mut(&chat) {
+                    conversation.messages.retain(|message| message.id != id);
                 }
+                self.backend.send(Command::DeleteLocal { chat, id });
             }
             Action::Attach => {
                 if let Some(chat) = self.open_chat.clone() {

@@ -77,10 +77,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmDeleteChat(id) => confirm_delete_chat(app, ui, &id),
                 Dialog::ConfirmClearChat(id) => confirm_clear_chat(app, ui, &id),
                 Dialog::ConfirmDeleteMessage {
+                    chat,
                     message,
                     for_everyone,
-                    ..
-                } => confirm_delete_message(app, ui, &message, for_everyone),
+                } => confirm_delete_message(app, ui, &chat, &message, for_everyone),
                 Dialog::Forward { chat, messages } => forward(app, ui, &chat, &messages),
                 Dialog::JoinGroup => join_group(app, ui),
                 Dialog::ConfirmStartOver => confirm_start_over(app, ui),
@@ -1056,7 +1056,13 @@ fn confirm_start_over(app: &mut App, ui: &mut egui::Ui) {
 
 /// Confirms deleting one message. Enter is deliberately not bound here: a
 /// stray keypress must not destroy a message.
-fn confirm_delete_message(app: &mut App, ui: &mut egui::Ui, id: &str, for_everyone: bool) {
+fn confirm_delete_message(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    chat: &str,
+    id: &str,
+    for_everyone: bool,
+) {
     let palette = app.palette;
     let (heading, body) = if for_everyone {
         (
@@ -1075,10 +1081,11 @@ fn confirm_delete_message(app: &mut App, ui: &mut egui::Ui, id: &str, for_everyo
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if danger_button(ui, app, "Delete") {
+                let (chat, id) = (chat.to_owned(), id.to_owned());
                 let action = if for_everyone {
-                    Action::DeleteForEveryone(id.to_owned())
+                    Action::DeleteForEveryone { chat, id }
                 } else {
-                    Action::DeleteForMe(id.to_owned())
+                    Action::DeleteForMe { chat, id }
                 };
                 app.actions.push(action);
                 app.actions.push(Action::CloseDialog);

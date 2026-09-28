@@ -1345,10 +1345,17 @@ pub enum Action {
     /// Loads an outgoing message into the composer for editing.
     Edit(String),
     CancelEdit,
-    /// Revokes an outgoing message for everyone.
-    DeleteForEveryone(String),
-    /// Deletes a message locally.
-    DeleteForMe(String),
+    /// Revokes an outgoing message for everyone. The chat travels with the
+    /// message because the reader may switch chats before confirming.
+    DeleteForEveryone {
+        chat: ChatId,
+        id: String,
+    },
+    /// Deletes a message locally, in the chat it belongs to.
+    DeleteForMe {
+        chat: ChatId,
+        id: String,
+    },
     /// Opens the attachment picker for the current chat.
     Attach,
     /// Opens or closes the composer tools menu.
