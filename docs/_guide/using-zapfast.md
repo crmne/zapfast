@@ -184,6 +184,13 @@ microphone. Press Enter or the send button to send the recording, or Escape or
 the delete button to discard it. ZapFast raises the volume of quiet recordings.
 Starting a reply before recording includes the quoted message.
 
+Right-click a voice message and choose **Transcribe locally** to turn it into
+selectable text with Whisper. The first request downloads and verifies the
+multilingual base model (142 MiB); after that, transcription works offline.
+Recordings never leave your computer, and ZapFast only transcribes messages
+you request. Results are cached in the encrypted message archive and disappear
+when their source message is deleted or its chat is cleared.
+
 ## Copying
 
 Select and copy any message text. A selection across messages uses WhatsApp's

@@ -512,6 +512,8 @@ pub async fn run(
         favorites_recovered,
         favorites_recovering: false,
         downloads: HashSet::new(),
+        transcriptions: HashSet::new(),
+        pending_transcriptions: HashSet::new(),
         read_sync: ReadSync::default(),
         favorite_chats: Default::default(),
         poll_decrypting: 0,
@@ -785,6 +787,10 @@ struct Worker {
     favorites_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
+    /// Active local transcriptions by chat and message id.
+    transcriptions: HashSet<(ChatId, String)>,
+    /// Transcriptions waiting for their voice attachment to download.
+    pending_transcriptions: HashSet<(ChatId, String)>,
     /// Serial forward in flight. The next send waits for the running one.
     forward_queue: Option<ForwardQueue<ForwardJob>>,
 }
@@ -4193,6 +4199,12 @@ impl Worker {
                 chat,
                 message,
             } => self.download_media(chat, message, card),
+            Command::Transcribe { chat, message } => self.transcribe(chat, message),
+            Command::TranscriptionResult {
+                chat,
+                message,
+                result,
+            } => self.transcription_result(chat, message, result),
             Command::FetchAvatar { id, full } => self.fetch_avatar(id, full),
             Command::EditText {
                 chat,
@@ -6258,22 +6270,138 @@ impl Worker {
         card: Option<usize>,
         result: Result<PathBuf, String>,
     ) {
+        let waiting_for_transcript = card.is_none()
+            && self
+                .pending_transcriptions
+                .remove(&(chat.clone(), id.clone()));
         if let Ok(path) = &result {
             let _ = self.archive.put_media_path_at(&chat, &id, card, Some(path));
         }
         self.downloads.remove(&(chat.clone(), id.clone(), card));
         let for_picker = self.sticker_downloads.remove(&(chat.clone(), id.clone()));
+        let transcript_path = result.as_ref().ok().cloned();
+        let transcript_error = result.as_ref().err().cloned();
         self.emit(Event::Media {
             card,
-            chat,
-            message: id,
+            chat: chat.clone(),
+            message: id.clone(),
             result,
         });
+        if waiting_for_transcript {
+            if let Some(path) = transcript_path {
+                self.start_transcription(chat, id, path);
+            } else {
+                self.transcriptions.remove(&(chat.clone(), id.clone()));
+                self.emit(Event::Transcribed {
+                    chat,
+                    message: id,
+                    text: Err(transcript_error
+                        .unwrap_or_else(|| "Could not download the voice message".to_owned())),
+                });
+            }
+        }
         // Listing the shelves scans the archive; one pass per batch keeps
         // a send queued behind many picker downloads from waiting on each.
         if for_picker && self.sticker_downloads.is_empty() {
             self.emit_stickers();
         }
+    }
+
+    /// Starts a manual local transcript, serving the encrypted cache first
+    /// and downloading the voice attachment when necessary.
+    fn transcribe(&mut self, chat: ChatId, id: String) {
+        if !self.privacy_ready || !self.transcriptions.insert((chat.clone(), id.clone())) {
+            return;
+        }
+        if let Ok(Some(text)) = self.archive.transcription(&chat, &id) {
+            self.transcriptions.remove(&(chat.clone(), id.clone()));
+            self.emit(Event::Transcribed {
+                chat,
+                message: id,
+                text: Ok(text),
+            });
+            return;
+        }
+        let Some(message) = self.archive.message(&chat, &id).ok().flatten() else {
+            self.transcriptions.remove(&(chat.clone(), id.clone()));
+            return;
+        };
+        if !matches!(
+            message.content,
+            Content::Audio {
+                voice_note: true,
+                ..
+            }
+        ) {
+            self.transcriptions.remove(&(chat.clone(), id.clone()));
+            self.emit(Event::Transcribed {
+                chat,
+                message: id,
+                text: Err("Only voice messages can be transcribed".to_owned()),
+            });
+            return;
+        }
+        let path = message
+            .content
+            .media()
+            .and_then(|media| media.path.clone())
+            .filter(|path| path.is_file());
+        match path {
+            Some(path) => self.start_transcription(chat, id, path),
+            None => {
+                self.pending_transcriptions
+                    .insert((chat.clone(), id.clone()));
+                self.download(chat, id);
+            }
+        }
+    }
+
+    fn start_transcription(&mut self, chat: ChatId, id: String, path: PathBuf) {
+        let commands = self.commands.clone();
+        let models = self.dirs.transcription_model_dir();
+        tokio::task::spawn_blocking(move || {
+            let result = crate::transcribe::transcribe(&models, &path);
+            let _ = commands.send(Command::TranscriptionResult {
+                chat,
+                message: id,
+                result,
+            });
+        });
+    }
+
+    /// Stores a result only while the source message still exists. This makes
+    /// message deletion and chat clearing win over in-flight inference.
+    fn transcription_result(
+        &mut self,
+        chat: ChatId,
+        id: String,
+        result: Result<crate::transcribe::Completed, String>,
+    ) {
+        self.transcriptions.remove(&(chat.clone(), id.clone()));
+        let text = match result {
+            Ok(completed) => {
+                let row = crate::archive::Transcription {
+                    text: completed.text.clone(),
+                    model: crate::transcribe::MODEL_NAME.to_owned(),
+                    source_sha256: completed.source_sha256,
+                    created_at: crate::util::now(),
+                };
+                match self.archive.set_transcription(&chat, &id, &row) {
+                    Ok(true) => Ok(completed.text),
+                    Ok(false) => return,
+                    Err(error) => {
+                        log::warn!("could not cache the voice transcript: {error}");
+                        Err("Could not save the voice transcript".to_owned())
+                    }
+                }
+            }
+            Err(error) => Err(error),
+        };
+        self.emit(Event::Transcribed {
+            chat,
+            message: id,
+            text,
+        });
     }
 
     /// Downloads missing recent and archived stickers for the picker.
@@ -6574,6 +6702,9 @@ impl Worker {
                     older: before.is_some(),
                     complete,
                 });
+                if before.is_none() {
+                    self.emit_transcripts(chat);
+                }
             }
             Err(error) => self.emit(Event::Error(format!("Could not read the chat: {error}"))),
         }
@@ -6591,6 +6722,23 @@ impl Worker {
             self.withheld_pages.push(page);
         }
         true
+    }
+
+    /// Sends cached transcript text only after private chat state is safe to
+    /// reveal. Like messages, it never crosses to the interface during the
+    /// startup privacy-recovery window.
+    fn emit_transcripts(&self, chat: &str) {
+        if !self.privacy_ready {
+            return;
+        }
+        match self.archive.transcriptions_for_chat(chat) {
+            Ok(transcripts) if !transcripts.is_empty() => self.emit(Event::Transcripts {
+                chat: chat.to_owned(),
+                transcripts,
+            }),
+            Ok(_) => {}
+            Err(error) => log::warn!("could not list voice transcripts: {error}"),
+        }
     }
 
     fn load_until(&mut self, chat: ChatId, id: String, before: super::PageKey) {
@@ -10744,6 +10892,8 @@ mod receipt_tests {
             favorites_recovered: true,
             favorites_recovering: false,
             downloads: HashSet::new(),
+            transcriptions: HashSet::new(),
+            pending_transcriptions: HashSet::new(),
             read_sync: ReadSync::default(),
             favorite_chats: Default::default(),
             poll_decrypting: 0,

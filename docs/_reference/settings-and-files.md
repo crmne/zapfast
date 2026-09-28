@@ -17,6 +17,7 @@ ZapFast follows each platform's conventions. On Linux:
 | Profile pictures | `~/.cache/zapfast/avatars/` | Always |
 | Stickers | `~/.cache/zapfast/stickers/` | Always |
 | GIF search stills | `~/.cache/zapfast/gifs/` | Always |
+| Whisper model | `~/.cache/zapfast/models/` | Yes; downloaded again on the next transcript request |
 | Last run's log | `~/.local/state/zapfast/zapfast.log` | Always |
 | Crash log | `~/.local/state/zapfast/panic.log` | Always |
 

@@ -51,6 +51,15 @@ pub struct Archive {
     connection: Connection,
 }
 
+/// A cached local transcription for one audio message.
+#[derive(Clone, Debug)]
+pub struct Transcription {
+    pub text: String,
+    pub model: String,
+    pub source_sha256: String,
+    pub created_at: i64,
+}
+
 pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
 const SCHEMA: &str = "
@@ -120,6 +129,18 @@ CREATE TABLE IF NOT EXISTS group_receipts (
 );
 CREATE TRIGGER IF NOT EXISTS delete_group_receipts AFTER DELETE ON messages BEGIN
     DELETE FROM group_receipts WHERE chat = OLD.chat AND id = OLD.id;
+END;
+CREATE TABLE IF NOT EXISTS transcriptions (
+    chat TEXT NOT NULL,
+    message TEXT NOT NULL,
+    text TEXT NOT NULL,
+    model TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (chat, message)
+);
+CREATE TRIGGER IF NOT EXISTS delete_transcription AFTER DELETE ON messages BEGIN
+    DELETE FROM transcriptions WHERE chat = OLD.chat AND message = OLD.id;
 END;
 ";
 
@@ -944,6 +965,18 @@ impl Archive {
             "UPDATE chats SET last_activity = MAX(last_activity, ?2) WHERE id = ?1",
             params![message.chat, message.timestamp],
         )?;
+        if !matches!(
+            message.content,
+            Content::Audio {
+                voice_note: true,
+                ..
+            }
+        ) {
+            self.connection.execute(
+                "DELETE FROM transcriptions WHERE chat = ?1 AND message = ?2",
+                params![message.chat, message.id],
+            )?;
+        }
         Ok(())
     }
 
@@ -1351,6 +1384,7 @@ impl Archive {
             "poll_history",
             "local_chat_labels",
             "drafts",
+            "transcriptions",
         ] {
             self.connection.execute(
                 &format!("DELETE FROM {table} WHERE chat = ?1"),
@@ -1365,6 +1399,56 @@ impl Archive {
     /// Attachment paths recorded for one chat.
     fn chat_media(&self, chat: &str) -> Result<Vec<PathBuf>> {
         self.cached_media("m.chat = ?1", params![chat])
+    }
+
+    /// Stores a transcription, replacing any earlier result for the message.
+    /// The row exists only when its source message still exists, preventing a
+    /// late background result from recreating data after deletion.
+    pub fn set_transcription(
+        &self,
+        chat: &str,
+        message: &str,
+        transcription: &Transcription,
+    ) -> Result<bool> {
+        let changed = self.connection.execute(
+            "INSERT INTO transcriptions (chat, message, text, model, source_sha256, created_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6
+             WHERE EXISTS (SELECT 1 FROM messages WHERE chat = ?1 AND id = ?2)
+             ON CONFLICT(chat, message) DO UPDATE SET
+                text = excluded.text,
+                model = excluded.model,
+                source_sha256 = excluded.source_sha256,
+                created_at = excluded.created_at",
+            params![
+                chat,
+                message,
+                transcription.text,
+                transcription.model,
+                transcription.source_sha256,
+                transcription.created_at,
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Returns a message's cached transcription text, if any.
+    pub fn transcription(&self, chat: &str, message: &str) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT text FROM transcriptions WHERE chat = ?1 AND message = ?2",
+                params![chat, message],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// Returns every cached transcription in one chat.
+    pub fn transcriptions_for_chat(&self, chat: &str) -> Result<Vec<(String, String)>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT message, text FROM transcriptions WHERE chat = ?1")?;
+        let rows = statement.query_map(params![chat], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 
     /// Attachment paths of the messages matching `filter` (over `messages m`),
@@ -1688,7 +1772,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM transcriptions; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }
@@ -3370,5 +3454,73 @@ mod media_path_tests {
             .clear_media_path("a@s.whatsapp.net", "p1")
             .expect("cleared");
         assert!(archive.media_paths().expect("lists").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod transcription_tests {
+    use super::*;
+
+    fn transcript(text: &str) -> Transcription {
+        Transcription {
+            text: text.into(),
+            model: crate::transcribe::MODEL_NAME.into(),
+            source_sha256: "abc".into(),
+            created_at: 100,
+        }
+    }
+
+    #[test]
+    fn transcripts_round_trip_replace_and_follow_message_lifecycle() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "a@s.whatsapp.net";
+        archive.ensure_chat(chat, "A").expect("chat");
+        archive
+            .insert_message(&super::tests::message(chat, "m1", 100, false), None)
+            .expect("message");
+
+        assert!(
+            archive
+                .set_transcription(chat, "m1", &transcript("hello"))
+                .expect("stored")
+        );
+        assert_eq!(
+            archive.transcription(chat, "m1").expect("read"),
+            Some("hello".into())
+        );
+        assert!(
+            archive
+                .set_transcription(chat, "m1", &transcript("hello again"))
+                .expect("replaced")
+        );
+        assert_eq!(
+            archive.transcriptions_for_chat(chat).expect("lists"),
+            vec![("m1".into(), "hello again".into())]
+        );
+
+        archive.delete_message(chat, "m1").expect("deleted");
+        assert!(
+            archive
+                .transcriptions_for_chat(chat)
+                .expect("lists")
+                .is_empty()
+        );
+        // A background result arriving after deletion cannot recreate a row.
+        assert!(
+            !archive
+                .set_transcription(chat, "m1", &transcript("late"))
+                .expect("ignored")
+        );
+
+        let mut revoked = super::tests::message(chat, "m2", 200, false);
+        archive.insert_message(&revoked, None).expect("message");
+        assert!(
+            archive
+                .set_transcription(chat, "m2", &transcript("before revoke"))
+                .expect("stored")
+        );
+        revoked.content = Content::Revoked;
+        archive.insert_message(&revoked, None).expect("revoked");
+        assert_eq!(archive.transcription(chat, "m2").expect("read"), None);
     }
 }

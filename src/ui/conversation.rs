@@ -1628,13 +1628,15 @@ struct View<'a> {
     player: &'a crate::audio::Player,
     video: &'a crate::video::Player,
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
+    transcripts: &'a HashMap<String, String>,
+    transcribing: &'a HashSet<String>,
 }
 
 /// A row height to assume for a message that has not been laid out yet. Rows
 /// near the viewport are always measured, and a change in the height of a row
 /// above the viewport moves the scroll offset with it, so this only shapes the
 /// scrollbar until the reader scrolls near the row.
-fn estimated_height(message: &Message, width: f32, new_day: bool) -> f32 {
+fn estimated_height(message: &Message, transcript: Option<&str>, width: f32, new_day: bool) -> f32 {
     // Bubbles take at most 72% of the transcript, and 560 points.
     let bubble = ((width * 0.72).min(560.0) - 20.0).max(40.0);
     let text_rows = |text: &str| {
@@ -1661,7 +1663,8 @@ fn estimated_height(message: &Message, width: f32, new_day: bool) -> f32 {
     };
     // Bubble padding, the sender line, and the row spacing, plus the date
     // chip above the first message of a day.
-    40.0 + body + if new_day { 36.0 } else { 0.0 }
+    let transcript = transcript.map_or(0.0, |text| text_rows(text) * 19.0 + 7.0);
+    40.0 + body + transcript + if new_day { 36.0 } else { 0.0 }
 }
 
 /// Incoming messages carry their sender's picture and name in groups only,
@@ -1681,6 +1684,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // Check out the conversation while drawing rows and collecting actions.
     let mut conversation = app.conversations.remove(&chat.id).unwrap_or_default();
     let typing = app.typing_in(&chat.id);
+    // Keep transcript state independently borrowable while row measurements
+    // and paging state are updated on the checked-out conversation.
+    let transcripts = conversation.transcripts.clone();
+    let transcribing = conversation.transcribing.clone();
     let mut avatars = HashMap::new();
     if shows_sender_pictures(chat) {
         let mut senders: HashSet<String> = conversation
@@ -1731,6 +1738,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         player: &app.player,
         video: &app.video,
         copy_rows: app.copy_rows.as_ref(),
+        transcripts: &transcripts,
+        transcribing: &transcribing,
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -1891,7 +1900,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         });
                         let known = rows.get(&message.id).copied();
                         let height = known.map_or_else(
-                            || estimated_height(message, layout_width, new_day),
+                            || {
+                                estimated_height(
+                                    message,
+                                    view.transcripts.get(&message.id).map(String::as_str),
+                                    layout_width,
+                                    new_day,
+                                )
+                            },
                             |row| row.height,
                         );
                         // A pass redone after the offset followed rows that
@@ -2682,9 +2698,51 @@ fn bubble(
                 });
                 ui.add_space(2.0);
             }
+            if let Some(transcript) = view.transcripts.get(&message.id) {
+                ui.horizontal(|ui| {
+                    if with_avatar {
+                        ui.add_space(SENDER_AVATAR + 8.0);
+                    }
+                    transcript_text(ui, view, transcript, max_width);
+                });
+                ui.add_space(3.0);
+            } else if view.transcribing.contains(&message.id) {
+                ui.horizontal(|ui| {
+                    if with_avatar {
+                        ui.add_space(SENDER_AVATAR + 8.0);
+                    }
+                    theme::spinner(ui, 13.0, view.palette.accent);
+                    theme::text(
+                        ui,
+                        "Transcribing locally…",
+                        theme::regular(BODY_SIZE - 1.0),
+                        view.palette.secondary,
+                    );
+                });
+                ui.add_space(3.0);
+            }
         },
     );
     response
+}
+
+/// Selectable transcript text shown beneath its source voice bubble.
+fn transcript_text(ui: &mut egui::Ui, view: &View<'_>, text: &str, width: f32) {
+    let style = markup::Style {
+        size: BODY_SIZE - 1.0,
+        color: view.palette.secondary,
+        secondary: view.palette.secondary,
+        link: view.palette.link,
+        mention: view.palette.accent,
+    };
+    let laid = markup::layout(ui, text, &[], &style, width);
+    let (rect, response) = ui.allocate_exact_size(laid.galley.size(), Sense::CLICK | Sense::DRAG);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), "Voice transcript")
+    });
+    if ui.is_rect_visible(rect) {
+        markup::paint_selectable(ui, &laid, &response, rect.min, view.palette.secondary, true);
+    }
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -3734,6 +3792,35 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     }
     if widgets::menu_item(ui, &palette, Some(Icon::Check), "Select") {
         actions.push(Action::SelectMessage(message.id.clone()));
+    }
+    if matches!(
+        message.content,
+        Content::Audio {
+            voice_note: true,
+            ..
+        }
+    ) {
+        let pending = view.transcribing.contains(&message.id);
+        let available = view.transcripts.contains_key(&message.id);
+        let label = if pending {
+            "Transcribing locally…"
+        } else if available {
+            "Transcript available"
+        } else {
+            "Transcribe locally"
+        };
+        if widgets::menu_item_enabled(
+            ui,
+            &palette,
+            Some(Icon::FileText),
+            label,
+            !pending && !available,
+        ) {
+            actions.push(Action::Transcribe {
+                chat: chat.clone(),
+                message: message.id.clone(),
+            });
+        }
     }
     let text = match &message.content {
         Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),

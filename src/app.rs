@@ -60,6 +60,10 @@ const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
 #[derive(Default)]
 pub struct Conversation {
     pub messages: Vec<Message>,
+    /// Local Whisper transcript text by source message id.
+    pub transcripts: HashMap<String, String>,
+    /// Voice messages currently downloading a model/audio or transcribing.
+    pub transcribing: HashSet<String>,
     /// Whether the local archive has no earlier messages.
     pub complete: bool,
     pub loading_older: bool,
@@ -1982,6 +1986,14 @@ impl App {
                     if let Some(conversation) = self.conversations.get_mut(&message.chat)
                         && let Some(existing) = conversation.message_mut(&message.id)
                     {
+                        let keep_transcript = matches!(
+                            message.content,
+                            Content::Audio {
+                                voice_note: true,
+                                ..
+                            }
+                        );
+                        let id = message.id.clone();
                         let state = existing.content.media().map(|media| media.state.clone());
                         let carousel_states = match &existing.content {
                             Content::Interactive {
@@ -2003,6 +2015,10 @@ impl App {
                         }
                         if let (Some(state), Some(media)) = (state, existing.content.media_mut()) {
                             media.state = state;
+                        }
+                        if !keep_transcript {
+                            conversation.transcripts.remove(&id);
+                            conversation.transcribing.remove(&id);
                         }
                     }
                 }
@@ -2089,6 +2105,8 @@ impl App {
                 Event::MessageDeleted { chat, id } => {
                     if let Some(conversation) = self.conversations.get_mut(&chat) {
                         conversation.messages.retain(|message| message.id != id);
+                        conversation.transcripts.remove(&id);
+                        conversation.transcribing.remove(&id);
                     }
                     if self.editing.as_deref() == Some(id.as_str()) {
                         self.editing = None;
@@ -2103,6 +2121,24 @@ impl App {
                     message,
                     result,
                 } => self.handle_media(&chat, &message, card, result),
+                Event::Transcribed {
+                    chat,
+                    message,
+                    text,
+                } => {
+                    let conversation = self.conversations.entry(chat).or_default();
+                    conversation.transcribing.remove(&message);
+                    match text {
+                        Ok(text) => {
+                            conversation.transcripts.insert(message, text);
+                        }
+                        Err(error) => self.toast_error(error),
+                    }
+                }
+                Event::Transcripts { chat, transcripts } => {
+                    let conversation = self.conversations.entry(chat).or_default();
+                    conversation.transcripts.extend(transcripts);
+                }
                 Event::Syncing(syncing) => {
                     if self.syncing && !syncing {
                         self.toast("History loaded");
@@ -2459,6 +2495,17 @@ impl App {
         conversation
             .messages
             .retain(|message| message.timestamp > through);
+        let remaining: HashSet<String> = conversation
+            .messages
+            .iter()
+            .map(|message| message.id.clone())
+            .collect();
+        conversation
+            .transcripts
+            .retain(|message, _| remaining.contains(message));
+        conversation
+            .transcribing
+            .retain(|message| remaining.contains(message));
         conversation.requested = true;
         conversation.complete = true;
         conversation.phone_exhausted = true;
@@ -3551,6 +3598,20 @@ impl App {
                     chat,
                     message,
                 });
+            }
+            Action::Transcribe { chat, message } => {
+                let conversation = self.conversations.entry(chat.clone()).or_default();
+                if conversation.transcripts.contains_key(&message)
+                    || !conversation.transcribing.insert(message.clone())
+                {
+                    return;
+                }
+                if !crate::transcribe::model_path(&self.dirs.transcription_model_dir()).is_file() {
+                    self.toast("Downloading the multilingual Whisper model (142 MB)…");
+                } else {
+                    self.toast("Transcribing locally with Whisper…");
+                }
+                self.backend.send(Command::Transcribe { chat, message });
             }
             Action::PreviewImage(path) => {
                 if crate::safety::can_preview_image(&path) && path.is_file() {
