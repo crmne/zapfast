@@ -1846,6 +1846,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             // releases stick-to-bottom; setting the offset directly does not.
             let viewport = ui.clip_rect();
             *app.selection_view.lock().unwrap_or_else(|p| p.into_inner()) = Some(viewport);
+            // Keep ordinary conversation-space clicks useful: after reading,
+            // the next keystroke should go straight to the composer. Register
+            // this before the message controls so text, links, media, and
+            // selection interactions remain in front of the background.
+            let background = ui.interact(
+                viewport,
+                ui.id().with(("message-background", &chat.id)),
+                Sense::click(),
+            );
             // Only a drag that has moved past a click, such as selecting
             // text, scrolls; a click near an edge does not.
             let held_inside = ui.input(|input| {
@@ -2070,6 +2079,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         pinned = true;
                     }
                 });
+            if background.clicked() {
+                actions.push(Action::FocusComposer);
+            }
             // A keyboard PgUp/PgDn/Home/End scroll moves by the next slice of
             // its eased distance each frame, as an instant scroll: relative
             // steps compose with the row-height compensation below, and

@@ -4465,6 +4465,42 @@ mod tests {
         assert_eq!(app.composer, "", "Enter sends");
     }
 
+    #[test]
+    fn clicking_empty_conversation_space_returns_focus_to_the_composer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = app.open_chat.clone().expect("the demo opens a chat");
+        let conversation = app.conversations.get_mut(&chat).unwrap();
+        conversation.messages.clear();
+        conversation.complete = true;
+        conversation.phone_exhausted = true;
+        app.focus_composer = true;
+        render(&mut app, &ctx);
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+
+        let viewport = app
+            .selection_view
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .expect("the message viewport is on screen");
+        let at = viewport.center();
+        let pointer = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(at), pointer(true), pointer(false)],
+        );
+        render(&mut app, &ctx);
+
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+    }
+
     /// The composer keeps its draft while the preview is open: Enter does not
     /// send it, and Tab and Enter reach the preview's own controls instead.
     #[test]
