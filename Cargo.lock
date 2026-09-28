@@ -7706,6 +7706,7 @@ dependencies = [
  "open",
  "openh264",
  "opus",
+ "opusic-sys",
  "png 0.18.1",
  "qrcode",
  "rand 0.10.2",

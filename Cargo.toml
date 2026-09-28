@@ -204,6 +204,12 @@ raw-window-handle = "0.6"
 # recording or playing voice messages. The same version cpal already uses.
 windows = { version = "0.62", features = ["Media_Control", "Foundation_Collections", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
+# clang-cl is required by whisper.cpp on Windows ARM64. Opus's runtime SIMD
+# probe uses MSVC-only __emit intrinsics, so keep its portable scalar path on
+# that one target. Cargo unifies this feature with opus's transitive dependency.
+[target.'cfg(all(windows, target_arch = "aarch64"))'.dependencies]
+opusic-sys = { version = "0.7.5", features = ["no-simd"] }
+
 # The icon and version information Windows shows for the executable.
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

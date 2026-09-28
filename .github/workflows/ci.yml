@@ -16,6 +16,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # whisper.cpp requires clang on Windows ARM64. clang-cl leaves C++
+  # exceptions off unless they are requested explicitly.
+  CXXFLAGS_aarch64_pc_windows_msvc: /EHsc
 
 jobs:
   audit:
