@@ -193,9 +193,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   or return to a conversation; invoking search keeps focus in search, and
   Escape clears search and returns to the composer; another Escape closes the
   chat and saves your text draft. Drafts are kept in the encrypted archive, so
-  unsent text survives closing ZapFast and restarting. Open menus, dialogs, and unfinished actions
-  are dismissed first. Type `:name` to autocomplete
-  an emoji without leaving the composer, or `@` in a group to mention a member.
+  unsent text survives closing ZapFast and restarting. Open menus, dialogs, and
+  unfinished actions are dismissed first. Sending while reading older messages
+  keeps your place; use the newest-message button or End to return to the latest
+  message. Type `:name` to autocomplete an emoji without leaving the composer,
+  or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
   delivered, or read. Replies can be text, attachments, voice messages,
   stickers, or GIFs. A reply never goes out without its quote: if the

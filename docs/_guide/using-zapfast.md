@@ -204,6 +204,10 @@ without leaving the composer (Command instead of Ctrl on macOS). Within an open
 chat, `PgUp`/`PgDn` scroll by about a page, and `Home`/`End` jump to the top or
 the newest message (when the input is empty).
 
+Sending while reading older messages keeps your place. Use the
+newest-message button or `End` to return to the latest message when you are
+ready.
+
 A shared contact message shows the name from its vCard. When the card names a
 WhatsApp account, **Chat** opens a private conversation with it and, if the
 person is not already in ZapFast's contacts, **Add** saves them, adding them to
