@@ -119,7 +119,10 @@ protocol. These notes are for coding agents and new contributors.
 - `src/markup.rs` turns WhatsApp's text markup, links, and mentions into an
   egui `LayoutJob`; `src/emoji.rs` swaps every emoji for a placeholder
   glyph at layout time and paints the desktop's colour emoji bitmap over
-  it afterwards (resolving sequences through the font's GSUB ligatures).
+  it afterwards (resolving sequences through the font's GSUB ligatures). On
+  macOS with **System fonts** on, Apple Color Emoji draws first, its sequences
+  joined by harfrust through `morx`, and the bundled Noto fills its gaps;
+  `theme::use_system_face` puts San Francisco in Inter's place.
   Any text that can hold an emoji goes through `widgets::line` /
   `widgets::rich_text` or `markup::layout`, never a bare `Label`.
 - `src/animation.rs` plays animated stickers and GIFs: WebP/GIF frames

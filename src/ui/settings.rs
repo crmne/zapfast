@@ -287,6 +287,16 @@ fn sections(app: &App) -> Vec<Section> {
         Text::default()
     };
     appearance.row(translated(locale, "Theme"), detail, theme_picker);
+    if cfg!(target_os = "macos") {
+        appearance.toggle(
+            translated(locale, "System fonts"),
+            translated(
+                locale,
+                "San Francisco and Apple Color Emoji, as in other Mac apps. When off, Inter and Noto Color Emoji.",
+            ),
+            |settings| &mut settings.system_fonts,
+        );
+    }
     appearance.row(
         translated(locale, "Wallpaper"),
         Text::default(),

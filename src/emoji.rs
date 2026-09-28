@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use egui::text::LayoutJob;
@@ -27,20 +28,28 @@ pub const PLACEHOLDER: char = '\u{2B1B}';
 const TEXTURE_WIDTH: u32 = 72;
 
 struct Font {
-    bytes: Vec<u8>,
+    bytes: Box<dyn AsRef<[u8]> + Send + Sync>,
     index: u32,
     /// Maps a glyph sequence to its ligature glyph.
     ligatures: HashMap<Vec<u32>, u32>,
+    /// Joins sequences through `morx`, which Apple Color Emoji uses in place of GSUB.
+    #[cfg(target_os = "macos")]
+    shaper: Option<harfrust::ShaperData>,
 }
 
 static FONT: OnceLock<Option<Font>> = OnceLock::new();
 
-/// Noto Color Emoji supplies bitmap glyphs on systems such as Windows whose
-/// installed emoji font uses an outline colour format this renderer cannot
-/// rasterize. macOS uses it too: Apple Color Emoji joins flags, skin tones,
-/// and ZWJ sequences through an AAT `morx` table rather than GSUB ligatures,
-/// so every sequence would fall back to its first part, and the 190 MB font
-/// would stay in memory for nothing.
+/// Apple Color Emoji, mapped rather than read: it is 190 MB.
+#[cfg(target_os = "macos")]
+static SYSTEM: OnceLock<Option<Font>> = OnceLock::new();
+
+/// Off until the app reads Settings, so unit tests draw the bundled font.
+static USE_SYSTEM: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+const SYSTEM_PATH: &str = "/System/Library/Fonts/Apple Color Emoji.ttc";
+
+/// Noto bitmaps: Windows' own emoji are outlines this renderer cannot draw; macOS's fallback.
 const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
 
 /// Whether a color emoji font is available.
@@ -48,13 +57,40 @@ pub fn available() -> bool {
     font().is_some()
 }
 
-/// Loads the emoji font before the first frame needs it.
+/// Draws emoji with the system's own font when `enabled` and it loads.
+pub fn use_system(enabled: bool) {
+    USE_SYSTEM.store(enabled, Ordering::Relaxed);
+}
+
+/// Loads the emoji fonts before the first frame needs them.
 pub fn warm_up() {
     let _ = font();
+    let _ = system();
 }
 
 fn font() -> Option<&'static Font> {
     FONT.get_or_init(load).as_ref()
+}
+
+/// The system's emoji font, when Settings chose it and it loads.
+fn system() -> Option<&'static Font> {
+    #[cfg(target_os = "macos")]
+    if USE_SYSTEM.load(Ordering::Relaxed) {
+        return SYSTEM.get_or_init(load_system).as_ref();
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn load_system() -> Option<Font> {
+    let file = std::fs::File::open(SYSTEM_PATH)
+        .inspect_err(|error| log::warn!("{SYSTEM_PATH}: {error}"))
+        .ok()?;
+    // SAFETY: the sealed system volume keeps this file from changing while mapped.
+    let map = unsafe { memmap2::Mmap::map(&file) }
+        .inspect_err(|error| log::warn!("{SYSTEM_PATH}: {error}"))
+        .ok()?;
+    load_bytes(map, 0, SYSTEM_PATH)
 }
 
 fn load() -> Option<Font> {
@@ -68,18 +104,29 @@ fn load() -> Option<Font> {
     load_bytes(BUNDLED.to_vec(), 0, "bundled Noto Color Emoji")
 }
 
-fn load_bytes(bytes: Vec<u8>, index: u32, source: &str) -> Option<Font> {
-    let font = FontRef::from_index(&bytes, index).ok()?;
+fn load_bytes(
+    bytes: impl AsRef<[u8]> + Send + Sync + 'static,
+    index: u32,
+    source: &str,
+) -> Option<Font> {
+    let font = FontRef::from_index(bytes.as_ref(), index).ok()?;
     if font.bitmap_strikes().is_empty() {
         log::info!("{source} has no bitmap emoji");
         return None;
     }
     let ligatures = read_ligatures(&font);
+    #[cfg(target_os = "macos")]
+    let shaper = font
+        .table_data(skrifa::Tag::new(b"morx"))
+        .is_some()
+        .then(|| harfrust::ShaperData::new(&font));
     log::info!("colour emoji from {source} ({} sequences)", ligatures.len());
     Some(Font {
-        bytes,
+        bytes: Box::new(bytes),
         index,
         ligatures,
+        #[cfg(target_os = "macos")]
+        shaper,
     })
 }
 
@@ -195,11 +242,23 @@ fn add_ligatures(map: &mut HashMap<Vec<u32>, u32>, subtable: &LigatureSubstForma
 
 impl Font {
     fn font_ref(&self) -> Option<FontRef<'_>> {
-        FontRef::from_index(&self.bytes, self.index).ok()
+        FontRef::from_index((*self.bytes).as_ref(), self.index).ok()
+    }
+
+    /// The sequence's picture, if this font draws it.
+    fn picture(&self, cluster: &[char]) -> Option<ColorImage> {
+        let font = self.font_ref()?;
+        let glyph = self.glyph(&font, cluster)?;
+        self.image(&font, glyph)
     }
 
     /// Resolves a sequence to its final glyph through font ligatures.
     fn glyph(&self, font: &FontRef<'_>, cluster: &[char]) -> Option<GlyphId> {
+        // A shaped font answers whole sequences only; the bundled font draws the rest.
+        #[cfg(target_os = "macos")]
+        if let Some(shaper) = &self.shaper {
+            return shape(font, shaper, cluster);
+        }
         let charmap = font.charmap();
         let sequence = |chars: &[char]| -> Option<u32> {
             let glyphs: Vec<u32> = chars
@@ -273,13 +332,43 @@ impl Font {
     }
 }
 
+/// The one glyph the font's shaping turns a whole sequence into.
+#[cfg(target_os = "macos")]
+fn shape(font: &FontRef<'_>, data: &harfrust::ShaperData, cluster: &[char]) -> Option<GlyphId> {
+    let mut buffer = harfrust::UnicodeBuffer::new();
+    buffer.push_str(&cluster.iter().collect::<String>());
+    buffer.guess_segment_properties();
+    let glyphs = data
+        .shaper(font)
+        .build()
+        .shape(buffer, harfrust::ShapeOptions::new());
+    match glyphs.glyph_infos() {
+        [only] if only.glyph_id != 0 => Some(GlyphId::new(only.glyph_id)),
+        _ => None,
+    }
+}
+
+/// The system font's picture of a sequence, else the bundled font's.
+fn preferred_picture(
+    system: Option<&Font>,
+    bundled: Option<&Font>,
+    cluster: &[char],
+) -> Option<ColorImage> {
+    system
+        .into_iter()
+        .chain(bundled)
+        .find_map(|font| font.picture(cluster))
+}
+
 /// Uploaded emoji textures for each egui context.
 #[derive(Clone, Default)]
 struct Cache(Arc<Mutex<HashMap<String, Option<TextureHandle>>>>);
 
 fn texture(ctx: &egui::Context, cluster: &str) -> Option<TextureHandle> {
+    let system = system();
+    // Each choice of font keeps its own pictures.
     let cache: Cache = ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<Cache>(egui::Id::new("emoji-cache"))
+        data.get_temp_mut_or_default::<Cache>(egui::Id::new(("emoji-cache", system.is_some())))
             .clone()
     });
     let mut map = cache
@@ -289,13 +378,9 @@ fn texture(ctx: &egui::Context, cluster: &str) -> Option<TextureHandle> {
     if let Some(known) = map.get(cluster) {
         return known.clone();
     }
-    let handle = font().and_then(|font| {
-        let font_ref = font.font_ref()?;
-        let chars: Vec<char> = cluster.chars().collect();
-        let glyph = font.glyph(&font_ref, &chars)?;
-        let image = font.image(&font_ref, glyph)?;
-        Some(ctx.load_texture(format!("emoji-{cluster}"), image, TextureOptions::LINEAR))
-    });
+    let chars: Vec<char> = cluster.chars().collect();
+    let handle = preferred_picture(system, font(), &chars)
+        .map(|image| ctx.load_texture(format!("emoji-{cluster}"), image, TextureOptions::LINEAR));
     map.insert(cluster.to_owned(), handle.clone());
     handle
 }
@@ -661,6 +746,46 @@ mod tests {
         for sequence in ["🇩🇪", "👍🏽", "👨‍👩‍👧"] {
             assert_joined(&font, &font_ref, sequence);
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn apple_color_emoji_joins_and_draws_sequences() {
+        let font = load_system().expect("Apple Color Emoji ships with macOS");
+        let font_ref = font.font_ref().expect("font face");
+        let joined = [
+            "\u{1F1E9}\u{1F1EA}",                          // flag of Germany
+            "\u{1F44D}\u{1F3FD}",                          // thumbs up, medium skin
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", // family
+            "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}",          // rainbow flag
+        ];
+        for sequence in joined {
+            assert_joined(&font, &font_ref, sequence);
+        }
+        // A trailing variation selector must still shape to one drawable glyph.
+        let selected = ["\u{2764}\u{FE0F}", "\u{23}\u{FE0F}\u{20E3}"]; // red heart, keycap #
+        for sequence in joined.into_iter().chain(selected) {
+            let chars: Vec<char> = sequence.chars().collect();
+            let image = font.picture(&chars).expect("colour bitmap");
+            assert_eq!(image.size[0], TEXTURE_WIDTH as usize);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn apple_color_emoji_draws_first_and_the_bundled_font_fills_its_gaps() {
+        let apple = load_system().expect("Apple Color Emoji ships with macOS");
+        let bundled = load_bytes(BUNDLED.to_vec(), 0, "test font").expect("bundled font");
+        let known: Vec<char> = "\u{1F44D}\u{1F3FD}".chars().collect();
+        let chosen = preferred_picture(Some(&apple), Some(&bundled), &known);
+        assert_eq!(chosen, apple.picture(&known));
+        assert_ne!(chosen, bundled.picture(&known));
+        // Two grinning faces joined: a sequence Apple does not draw.
+        let unknown: Vec<char> = "\u{1F600}\u{200D}\u{1F600}".chars().collect();
+        assert!(apple.picture(&unknown).is_none());
+        let fallback = preferred_picture(Some(&apple), Some(&bundled), &unknown);
+        assert!(fallback.is_some());
+        assert_eq!(fallback, bundled.picture(&unknown));
     }
 
     #[test]

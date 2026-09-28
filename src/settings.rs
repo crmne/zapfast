@@ -347,6 +347,8 @@ pub struct Settings {
     /// Download attachments when they enter view instead of on click.
     #[serde(alias = "auto_download_images")]
     pub auto_download: bool,
+    /// Draw with San Francisco and Apple Color Emoji on macOS, not Inter and Noto.
+    pub system_fonts: bool,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
     /// Colour selected in the wallpaper picker.
@@ -428,6 +430,8 @@ impl Default for Settings {
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
+            // Tests keep the bundled fonts so the machine does not decide their layout.
+            system_fonts: cfg!(all(target_os = "macos", not(test))),
             show_wallpaper: true,
             wallpaper_color: WallpaperColor::Theme,
             dark_wallpaper_color: WallpaperColor::Theme,

@@ -1117,6 +1117,8 @@ impl App {
         ctx.add_plugin(crate::ui::conversation::SelectionLeash::new(
             std::sync::Arc::clone(&self.selection_view),
         ));
+        crate::theme::set_system_fonts(self.settings.system_fonts);
+        crate::emoji::use_system(self.settings.system_fonts);
         crate::theme::install(ctx);
         // Use a faster wheel speed for short chat rows.
         ctx.options_mut(|options| options.input_options.line_scroll_speed = 120.0);
@@ -3311,9 +3313,12 @@ impl App {
                 Palette::light()
             }
         });
-        if crate::theme::apply_text_rendering_change(ctx) {
+        let rendering_changed = crate::theme::apply_text_rendering_change(ctx);
+        let fonts_changed = crate::theme::apply_system_fonts(ctx, self.settings.system_fonts);
+        if rendering_changed || fonts_changed {
             self.applied_dark = None;
         }
+        crate::emoji::use_system(self.settings.system_fonts);
         // A change of colours after the window's first is revealed from the
         // middle outwards, as Omarchy does; the old palette stays until the
         // window's picture of it arrives.

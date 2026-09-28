@@ -190,6 +190,10 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSText", "NSView", "NSWindow"] }
 # Reads the locale's clock format.
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDateFormatter", "NSFormatter", "NSLocale", "NSString"] }
+# Joins Apple Color Emoji sequences through its morx table; in the tree via epaint.
+harfrust = "0.12"
+# Maps the 190 MB Apple emoji font and SF; in the tree via fastframe-fonts.
+memmap2 = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }

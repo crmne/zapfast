@@ -469,8 +469,65 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
 /// for the scripts Inter lacks, hinted as the desktop asks.
 fn install_fonts(ctx: &egui::Context) {
     let mut fonts = fastframe_fonts::FontSetup::default().definitions();
+    #[cfg(target_os = "macos")]
+    if SYSTEM_FONTS.load(std::sync::atomic::Ordering::Acquire) {
+        use_system_face(&mut fonts);
+    }
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
+}
+
+/// Off until the app reads Settings, so unit tests draw Inter.
+static SYSTEM_FONTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Chooses the interface font for the next [`install`].
+pub fn set_system_fonts(enabled: bool) {
+    SYSTEM_FONTS.store(enabled, std::sync::atomic::Ordering::Release);
+}
+
+/// Reinstalls the fonts when Settings switched system fonts; true if it did.
+pub fn apply_system_fonts(ctx: &egui::Context, enabled: bool) -> bool {
+    let changed = SYSTEM_FONTS.swap(enabled, std::sync::atomic::Ordering::AcqRel) != enabled;
+    if changed {
+        install_fonts(ctx);
+    }
+    changed
+}
+
+/// San Francisco, the variable font macOS draws its own interface with.
+#[cfg(target_os = "macos")]
+const SYSTEM_FONT_PATH: &str = "/System/Library/Fonts/SFNS.ttf";
+
+/// SF's Text cut for interface sizes; the font defaults to its 28 pt Display cut.
+#[cfg(target_os = "macos")]
+const TEXT_OPTICAL_SIZE: f32 = 17.0;
+
+/// Puts San Francisco in Inter's place at each weight; Inter stays if SF cannot be read.
+#[cfg(target_os = "macos")]
+fn use_system_face(fonts: &mut egui::FontDefinitions) {
+    static FACE: std::sync::OnceLock<Option<memmap2::Mmap>> = std::sync::OnceLock::new();
+    let face = FACE.get_or_init(|| {
+        let file = std::fs::File::open(SYSTEM_FONT_PATH)
+            .inspect_err(|error| log::warn!("{SYSTEM_FONT_PATH}: {error}"))
+            .ok()?;
+        // SAFETY: the sealed system volume keeps this file from changing while mapped.
+        unsafe { memmap2::Mmap::map(&file) }
+            .inspect_err(|error| log::warn!("{SYSTEM_FONT_PATH}: {error}"))
+            .ok()
+    });
+    let Some(face) = face else {
+        return;
+    };
+    for weight in fastframe_fonts::Weight::ALL {
+        if let Some(data) = fonts.font_data.get_mut(weight.name()) {
+            let mut system = egui::FontData::from_static(face);
+            system.tweak.coords = egui::epaint::text::VariationCoords::new([
+                (b"wght", weight.value()),
+                (b"opsz", TEXT_OPTICAL_SIZE),
+            ]);
+            *data = std::sync::Arc::new(system);
+        }
+    }
 }
 
 /// The desktop's text rendering: read once, on the first window, and kept
@@ -1058,6 +1115,22 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn system_fonts_put_san_francisco_at_every_weight() {
+        let mut fonts = fastframe_fonts::FontSetup::default()
+            .system_fallbacks(false)
+            .definitions();
+        use_system_face(&mut fonts);
+        let sf = std::fs::metadata(SYSTEM_FONT_PATH)
+            .expect("SF ships with macOS")
+            .len();
+        for weight in fastframe_fonts::Weight::ALL {
+            let data = &fonts.font_data[weight.name()];
+            assert_eq!(data.font.len() as u64, sf, "{} is not SF", weight.name());
+        }
+    }
 
     #[test]
     fn raised_surfaces_get_a_lit_edge_and_a_denser_shadow() {
