@@ -376,6 +376,8 @@ pub struct App {
     pauses_media: bool,
     /// Image currently shown in the native preview.
     pub image_preview: Option<PreviewState>,
+    /// Sticker currently shown large.
+    pub sticker_view: Option<crate::image_preview::StickerPreview>,
     /// Voice messages with a sent played receipt.
     played_told: HashSet<String>,
     /// Message bodies registered for transcript copy formatting.
@@ -845,6 +847,7 @@ impl App {
             media_hold: None,
             pauses_media: false,
             image_preview: None,
+            sticker_view: None,
             played_told: HashSet::new(),
             copy_rows: Default::default(),
             selection_view: Default::default(),
@@ -3596,6 +3599,24 @@ impl App {
             }
             Action::CloseImagePreview => {
                 self.image_preview = None;
+                self.refocus_composer(ctx);
+            }
+            Action::PreviewSticker(path) => {
+                if path.is_file() {
+                    self.sticker_view = Some(crate::image_preview::StickerPreview::new(path));
+                    self.dialog = None;
+                    self.picker = None;
+                    // As for the image preview: the composer must not take
+                    // Enter in the frame before the modal is known.
+                    ctx.memory_mut(|memory| {
+                        if let Some(focused) = memory.focused() {
+                            memory.surrender_focus(focused);
+                        }
+                    });
+                }
+            }
+            Action::CloseStickerPreview => {
+                self.sticker_view = None;
                 self.refocus_composer(ctx);
             }
             Action::OpenFile(path) => {

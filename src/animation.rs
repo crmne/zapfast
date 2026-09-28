@@ -46,6 +46,10 @@ struct Playing {
     started: Instant,
     last_drawn: Instant,
     animating: bool,
+    /// The last pass that drew it playing. A paused draw of the same file in
+    /// another place, such as a chat bubble behind the sticker viewer, must
+    /// not restart it from the first frame on every pass.
+    played_in: u64,
     /// Whether every frame is decoded. A paused animation decodes only its
     /// poster: a picker full of animated stickers would otherwise hold more
     /// frames than the budget, and each decode would evict a visible tile that
@@ -156,6 +160,7 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
                     started: Instant::now(),
                     last_drawn: Instant::now(),
                     animating: false,
+                    played_in: 0,
                     complete,
                     upgrading: false,
                 })
@@ -217,10 +222,14 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
     }
     match animations.entries.get_mut(path) {
         Some(Entry::Ready(playing)) => {
+            let pass = ctx.cumulative_frame_nr();
             if !animate {
-                playing.animating = false;
+                if playing.played_in + 1 < pass {
+                    playing.animating = false;
+                }
                 return Frame::Ready(playing.frames[0].0.clone());
             }
+            playing.played_in = pass;
             if !playing.complete {
                 // Keep showing the poster while the other frames decode.
                 if !playing.upgrading {
@@ -836,6 +845,7 @@ mod tests {
                     started: Instant::now() - Duration::from_secs(90),
                     last_drawn: Instant::now(),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -911,6 +921,7 @@ mod tests {
                     // event-driven repaints it can go this long without a frame.
                     last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -974,6 +985,7 @@ mod tests {
                     started: Instant::now(),
                     last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -991,6 +1003,7 @@ mod tests {
                     started: Instant::now(),
                     last_drawn: Instant::now(),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -1095,6 +1108,7 @@ mod tests {
                     started: Instant::now(),
                     last_drawn: Instant::now() - Duration::from_secs(1),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -1146,6 +1160,27 @@ mod tests {
         assert!(!old.complete, "it decodes again when it next plays");
     }
 
+    /// WhatsApp stickers can carry their EXIF metadata ahead of the animation.
+    #[test]
+    fn a_sticker_with_metadata_before_its_frames_still_plays() {
+        let dir = tempfile::tempdir().expect("temp");
+        let plain = std::fs::read(animated_webp(dir.path(), "plain.webp", 3)).expect("reads");
+        assert_eq!(&plain[12..16], b"VP8X");
+        let mut bytes = plain[..30].to_vec();
+        bytes[20] |= 0x08;
+        bytes.extend_from_slice(b"EXIF");
+        bytes.extend_from_slice(&8u32.to_le_bytes());
+        bytes.extend_from_slice(b"MM\0*\0\0\0\x08");
+        bytes.extend_from_slice(&plain[30..]);
+        let size = (bytes.len() - 8) as u32;
+        bytes[4..8].copy_from_slice(&size.to_le_bytes());
+        let path = dir.path().join("sticker.webp");
+        std::fs::write(&path, &bytes).expect("writes");
+        assert!(crate::image_preview::webp_moves(&bytes));
+        let decoded = decode(&path, MAX_FRAMES).expect("decodes");
+        assert_eq!(decoded.frames.len(), 3);
+    }
+
     /// An animated WebP of `count` 8x8 frames that all differ.
     fn animated_webp(dir: &Path, name: &str, count: i32) -> PathBuf {
         let mut encoder = webp_animation::Encoder::new((8, 8)).expect("encoder");
@@ -1184,6 +1219,49 @@ mod tests {
         );
         output.textures_delta.clear();
         shown
+    }
+
+    /// A sticker playing in one place keeps playing while the same file is
+    /// drawn paused elsewhere in the same pass, as a chat bubble is behind the
+    /// sticker viewer.
+    #[test]
+    fn a_paused_copy_does_not_hold_a_playing_one_on_its_first_frame() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = animated_webp(dir.path(), "shared.webp", 4);
+        let ctx = egui::Context::default();
+        let pass = || {
+            let mut playing = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.horizontal(|ui| {
+                        let (bubble, _) =
+                            ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                        let _ = frame(ui, &path, bubble, false);
+                        let (viewer, _) =
+                            ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                        if let Frame::Ready(texture) = frame(ui, &path, viewer, true) {
+                            playing = Some(texture.id());
+                        }
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            playing
+        };
+        let mut seen = HashSet::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while seen.len() < 3 && Instant::now() < deadline {
+            seen.extend(pass());
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        assert!(seen.len() >= 3, "the viewer showed {} frames", seen.len());
     }
 
     /// Draws until every path shows a frame, or panics after a few seconds.
@@ -1315,6 +1393,7 @@ mod tests {
                         started: Instant::now(),
                         last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
                         animating: false,
+                        played_in: 0,
                         complete: true,
                         upgrading: false,
                     }),

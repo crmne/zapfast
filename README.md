@@ -231,6 +231,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   (Cmd+wheel on macOS) zoom around the pointer, as does a trackpad pinch on
   macOS and Windows. Drag a zoomed picture to move it; where a trackpad scrolls
   smoothly (macOS, Wayland), two-finger scrolling moves it instead of zooming.
+  Click a sticker to see it on its own, playing if animated, with a button to add
+  it to or remove it from Favorites; click it again or press Esc to close.
   Double-click to switch between fitting the window and the original size.
   Copy the image to your clipboard via the copy button in the header, the
   right-click menu (**Copy image**), or

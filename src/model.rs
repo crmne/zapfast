@@ -1313,6 +1313,9 @@ pub enum Action {
     ZoomImageOut,
     FitImage,
     CloseImagePreview,
+    /// Shows a downloaded sticker large, with a favorite toggle.
+    PreviewSticker(PathBuf),
+    CloseStickerPreview,
     OpenFile(PathBuf),
     OpenFolder(PathBuf),
     /// Saves a copy of a downloaded attachment where the person chooses.

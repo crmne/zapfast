@@ -1203,7 +1203,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }
                                 // The composer waits for the image preview to
                                 // close before taking focus back.
-                                if app.focus_composer && app.image_preview.is_none() {
+                                if app.focus_composer
+                                    && app.image_preview.is_none()
+                                    && app.sticker_view.is_none()
+                                {
                                     app.focus_composer = false;
                                     response.request_focus();
                                 }
@@ -5386,7 +5389,7 @@ fn picture(
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()
             {
-                actions.push(Action::OpenFile(path.clone()));
+                actions.push(Action::PreviewSticker(path.clone()));
             }
             return size.x;
         }
@@ -5431,13 +5434,16 @@ fn picture(
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
-                    let action = match crate::image_preview::open_target(path, sticker.is_none()) {
-                        crate::image_preview::OpenTarget::Preview => {
-                            Action::PreviewImage(path.clone())
-                        }
-                        crate::image_preview::OpenTarget::External => {
-                            Action::OpenFile(path.clone())
-                        }
+                    let action = match sticker {
+                        Some(_) => Action::PreviewSticker(path.clone()),
+                        None => match crate::image_preview::open_target(path, true) {
+                            crate::image_preview::OpenTarget::Preview => {
+                                Action::PreviewImage(path.clone())
+                            }
+                            crate::image_preview::OpenTarget::External => {
+                                Action::OpenFile(path.clone())
+                            }
+                        },
                     };
                     actions.push(action);
                 }

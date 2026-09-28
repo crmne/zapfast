@@ -1824,13 +1824,7 @@ fn probe_motion(path: &Path) -> Option<bool> {
     let mut head = [0u8; 64];
     let mut file = std::fs::File::open(path).ok()?;
     let read = std::io::Read::read(&mut file, &mut head).ok()?;
-    let head = &head[..read];
-    Some(
-        head.len() >= 12
-            && &head[0..4] == b"RIFF"
-            && &head[8..12] == b"WEBP"
-            && head.windows(4).any(|window| window == b"ANIM"),
-    )
+    Some(crate::image_preview::webp_moves(&head[..read]))
 }
 
 fn sticker_picture(ui: &egui::Ui, path: &Path, rect: Rect) {

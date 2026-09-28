@@ -2433,6 +2433,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "sticker-search" => sticker_sample(app, crate::model::StickerShelf::Recent, "laugh"),
             "sticker-animated" => animated_sticker_sample(app),
             "sticker-add" => sticker_sample(app, crate::model::StickerShelf::Add, ""),
+            // A received sticker shown large, not yet a favorite.
+            "sticker-view" => {
+                sticker_sample(app, crate::model::StickerShelf::Recent, "");
+                app.picker = None;
+                app.sticker_view = app
+                    .stickers_received
+                    .first()
+                    .map(|path| crate::image_preview::StickerPreview::new(path.clone()));
+            }
             "sticker-maker" => {
                 let (photo, _) = sample_files(app);
                 let crop = crate::model::StickerCrop::centered(900, 1200).resized(620, 900, 1200);
@@ -3936,6 +3945,7 @@ mod tests {
             "sticker-search",
             "sticker-animated",
             "sticker-add",
+            "sticker-view",
             "sticker-pack-message",
             "sticker-maker",
             "sticker-pack-view",
@@ -4511,6 +4521,137 @@ mod tests {
         render(&mut app, &ctx);
         assert!(app.image_preview.is_none(), "Enter activates Close");
         assert_eq!(app.composer, "draft");
+    }
+
+    /// A sticker shown large offers the favorite toggle that matches its
+    /// state, and a click on the sticker itself closes it.
+    #[test]
+    fn a_large_sticker_toggles_its_favorite_and_closes_on_click() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("sticker-view"));
+        app.backend.record_demo_commands();
+        render(&mut app, &ctx);
+        let received = app.sticker_view.as_ref().expect("open").path().to_owned();
+        let click = |app: &mut App, pos: egui::Pos2| {
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(app, &ctx, vec![egui::Event::PointerMoved(pos), press(true)]);
+            frame_with(app, &ctx, vec![press(false)]);
+            render(app, &ctx);
+        };
+        let button = || {
+            ctx.data(|data| {
+                data.get_temp::<egui::Rect>(crate::ui::image_preview::sticker_favorite_id())
+            })
+            .expect("the favorite button is drawn")
+        };
+
+        click(&mut app, button().center());
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(
+                |command| matches!(command, crate::backend::Command::SaveSticker { path } if *path == received)
+            ),
+            "{commands:?}"
+        );
+
+        // Once the favorite copy arrives, the same button removes it.
+        let copy = app.dirs.media_cache_dir().join(format!(
+            "{}.webp",
+            crate::backend::sticker_store::content_hash(&std::fs::read(&received).unwrap())
+        ));
+        app.stickers_saved.push(copy.clone());
+        render(&mut app, &ctx);
+        click(&mut app, button().center());
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(
+                |command| matches!(command, crate::backend::Command::ForgetSticker { path } if *path == copy)
+            ),
+            "{commands:?}"
+        );
+        assert!(app.sticker_view.is_some(), "the buttons leave it open");
+
+        let above = button().center_top() - egui::vec2(0.0, 120.0);
+        click(&mut app, above);
+        assert!(
+            app.sticker_view.is_none(),
+            "a click on the sticker closes it"
+        );
+    }
+
+    /// The viewer steps through an animated sticker's frames on its own.
+    #[test]
+    fn an_animated_sticker_plays_in_the_viewer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        animated_sticker_sample(&mut app);
+        app.picker = None;
+        let path = app.stickers[0].clone();
+        render(&mut app, &ctx);
+        app.actions
+            .push(crate::model::Action::PreviewSticker(path.clone()));
+        let drawn = |app: &mut App| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output
+                .shapes
+                .iter()
+                .map(|clipped| clipped.shape.texture_id())
+                .collect::<std::collections::HashSet<_>>()
+        };
+        let first = drawn(&mut app);
+        assert!(app.sticker_view.as_ref().expect("open").animated());
+        let mut seen = std::collections::HashSet::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while seen.len() < 3 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            seen.extend(drawn(&mut app).difference(&first).copied());
+        }
+        assert!(
+            seen.len() >= 3,
+            "the viewer showed {} new frames",
+            seen.len()
+        );
+    }
+
+    /// Escape closes a large sticker without reaching the chat behind it.
+    #[test]
+    fn escape_closes_a_large_sticker() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("sticker-view"));
+        render(&mut app, &ctx);
+        assert!(app.sticker_view.is_some());
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+        assert!(app.sticker_view.is_none());
+        assert!(app.open_chat.is_some(), "the chat stays open");
     }
 
     /// Ctrl++ zooms the picture, not the whole interface, including when the

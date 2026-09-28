@@ -1,4 +1,4 @@
-//! Native preview for downloaded image attachments.
+//! Native previews for downloaded images and stickers.
 
 use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Stroke, Vec2, vec2};
 
@@ -293,6 +293,128 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+/// Height kept below a sticker for its favorite button and the card margins.
+const STICKER_BUTTON_ROOM: f32 = 110.0;
+/// A sticker's side in the viewer, as in WhatsApp's: a card, not the window.
+/// Animated frames are decoded at most 320 pixels wide, so this stays sharp.
+const STICKER_VIEW_SIDE: f32 = 300.0;
+
+/// Shows a sticker on a square card over the chat. A click on the sticker,
+/// the backdrop, or Escape closes it.
+pub fn show_sticker(app: &mut App, ctx: &egui::Context) {
+    let Some(preview) = app.sticker_view.clone() else {
+        return;
+    };
+    let palette = app.palette;
+    let favorite = preview.favorite(&app.stickers_saved).cloned();
+    let side = sticker_side(ctx.content_rect().size());
+    let card = Frame::new()
+        .fill(palette.overlay)
+        .stroke(Stroke::new(1.0, palette.outline))
+        .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+        .inner_margin(Margin::same(20));
+    let response = egui::Modal::new(egui::Id::new("sticker-preview"))
+        .frame(card)
+        .backdrop_color(palette.shadow)
+        .show(ctx, |ui| {
+            ui.set_width(side);
+            ui.vertical_centered(|ui| {
+                let (rect, response) =
+                    ui.allocate_exact_size(Vec2::splat(side), egui::Sense::click());
+                paint_sticker(ui, &preview, rect, &palette);
+                if response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    app.actions.push(Action::CloseStickerPreview);
+                }
+                ui.add_space(16.0);
+                let (icon, label, action) = match favorite {
+                    Some(saved) => (
+                        Icon::StarOff,
+                        "Remove from favorites",
+                        Action::ForgetSticker(saved),
+                    ),
+                    None => (
+                        Icon::Star,
+                        "Add to favorites",
+                        Action::SaveSticker(preview.path().to_owned()),
+                    ),
+                };
+                let label = crate::i18n::gettext(app.locale, label);
+                let button = theme::soft_button(ui, &palette, Some(icon), &label, false);
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(sticker_favorite_id(), button.rect));
+                if button.clicked() {
+                    app.actions.push(action);
+                }
+            });
+        });
+    if response.should_close() {
+        app.actions.push(Action::CloseStickerPreview);
+    }
+}
+
+/// Where the sticker preview's favorite button was drawn, for tests.
+pub fn sticker_favorite_id() -> egui::Id {
+    egui::Id::new("sticker-preview-favorite")
+}
+
+/// Side of the square a sticker is shown in, shrunk only when the window
+/// cannot fit the card.
+fn sticker_side(viewport: Vec2) -> f32 {
+    ((viewport.y - STICKER_BUTTON_ROOM).min(viewport.x - 48.0)).clamp(64.0, STICKER_VIEW_SIDE)
+}
+
+fn paint_sticker(
+    ui: &mut egui::Ui,
+    preview: &crate::image_preview::StickerPreview,
+    rect: Rect,
+    palette: &crate::theme::Palette,
+) {
+    let full = Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+    let loaded = if preview.animated() {
+        match crate::animation::frame(ui, preview.path(), rect, true) {
+            crate::animation::Frame::Ready(texture) => {
+                ui.painter().image(
+                    texture.id(),
+                    fit_within(texture.size_vec2(), rect),
+                    full,
+                    egui::Color32::WHITE,
+                );
+                Some(true)
+            }
+            crate::animation::Frame::Pending => None,
+            crate::animation::Frame::Unavailable => Some(false),
+        }
+    } else {
+        let image = crate::ui::widgets::file_image(ui, preview.path());
+        match image.load_for_size(ui.ctx(), rect.size()) {
+            Ok(egui::load::TexturePoll::Ready { texture }) => {
+                image.paint_at(ui, fit_within(texture.size, rect));
+                Some(true)
+            }
+            Ok(egui::load::TexturePoll::Pending { .. }) => None,
+            Err(_) => Some(false),
+        }
+    };
+    match loaded {
+        Some(true) => {}
+        Some(false) => theme::paint_icon(ui, Icon::Sticker, rect, 64.0, palette.secondary),
+        None => theme::paint_spinner(ui, rect, 28.0, palette.accent),
+    }
+}
+
+/// The largest rect of `size`'s shape centred in `rect`. Stickers are small,
+/// so unlike photos they are enlarged to fill it.
+fn fit_within(size: Vec2, rect: Rect) -> Rect {
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return rect;
+    }
+    let scale = (rect.width() / size.x).min(rect.height() / size.y);
+    Rect::from_center_size(rect.center(), size * scale)
+}
+
 /// Zoom factor the wheel or a pinch asks for over the preview area, with the
 /// anchor point relative to the picture area. Each wheel notch is one header
 /// zoom step. A plain mouse wheel zooms instead of scrolling, so its delta is
@@ -361,6 +483,23 @@ fn display_size(original: Vec2, canvas: Vec2, fit: bool, zoom: f32) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stickers_show_on_a_card_that_fits_small_windows() {
+        assert_eq!(sticker_side(vec2(1180.0, 780.0)), STICKER_VIEW_SIDE);
+        assert_eq!(
+            sticker_side(vec2(1180.0, 300.0)),
+            300.0 - STICKER_BUTTON_ROOM
+        );
+        assert_eq!(sticker_side(vec2(10.0, 10.0)), 64.0);
+        let square = Rect::from_min_size(egui::Pos2::ZERO, Vec2::splat(600.0));
+        assert_eq!(fit_within(vec2(512.0, 512.0), square), square);
+        assert_eq!(
+            fit_within(vec2(512.0, 256.0), square),
+            Rect::from_min_max(egui::pos2(0.0, 150.0), egui::pos2(600.0, 450.0))
+        );
+        assert_eq!(fit_within(Vec2::ZERO, square), square);
+    }
 
     #[test]
     fn fitted_images_keep_aspect_ratio_inside_the_canvas() {
