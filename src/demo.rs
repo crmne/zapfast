@@ -5026,6 +5026,61 @@ mod tests {
     }
 
     #[test]
+    fn arrows_pick_a_chat_search_result_and_enter_opens_it_for_typing() {
+        let mut app = app();
+        let mut first = Chat::new(
+            "491700009001@s.whatsapp.net".into(),
+            "Forsaken Alpha".into(),
+        );
+        first.last_activity = 2_000_000_000;
+        let mut second = Chat::new("491700009002@s.whatsapp.net".into(), "Forsaken Beta".into());
+        second.last_activity = first.last_activity - 1;
+        app.chats.extend([first, second]);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::K, egui::Modifiers::COMMAND)],
+        );
+        render(&mut app, &ctx);
+        frame_with(&mut app, &ctx, vec![egui::Event::Text("Forsaken".into())]);
+        assert_eq!(app.search, "Forsaken");
+
+        let matches: Vec<_> = app
+            .visible_chats()
+            .into_iter()
+            .map(|chat| chat.id.clone())
+            .collect();
+        assert_eq!(matches.len(), 2, "only the two fixtures match");
+
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.search_selected.as_ref(), matches.first());
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.search_selected.as_ref(), matches.get(1));
+
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+
+        assert_eq!(app.open_chat.as_ref(), matches.get(1));
+        assert!(app.search.is_empty());
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+    }
+
+    #[test]
     fn at_sign_selects_a_group_member_without_leaving_the_composer() {
         let mut app = app();
         let ctx = egui::Context::default();

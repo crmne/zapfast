@@ -262,6 +262,8 @@ pub struct App {
     composing: bool,
     last_keystroke: Option<Instant>,
     pub search: String,
+    /// Chat result reached with the arrow keys in the global search field.
+    pub search_selected: Option<ChatId>,
     /// Message search results, newest first.
     pub search_hits: Vec<Message>,
     /// The search pane beside the open chat: its query, day filter and the
@@ -785,6 +787,7 @@ impl App {
             composing: false,
             last_keystroke: None,
             search: String::new(),
+            search_selected: None,
             search_hits: Vec::new(),
             chat_search_open: false,
             chat_search: String::new(),
@@ -4473,6 +4476,7 @@ impl App {
             }
             Action::Search(text) => {
                 self.search = text;
+                self.search_selected = None;
                 let query = self.search.trim().to_owned();
                 // Editing the search away from the secret code hides the
                 // locked folder again, like leaving the phone's home screen.
