@@ -1,6 +1,6 @@
 //! Fully local, on-demand Whisper transcription for voice messages.
 //!
-//! The multilingual base model is downloaded separately, verified before it
+//! The multilingual large-v3-turbo model is downloaded separately, verified before it
 //! is installed, and then used without sending recordings off this computer.
 
 use std::io::{Read, Write};
@@ -12,14 +12,17 @@ use sha2::{Digest, Sha256};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 /// Human-readable model name stored with encrypted transcript rows.
-pub const MODEL_NAME: &str = "Whisper base (multilingual)";
-/// The 142 MiB multilingual base model published for whisper.cpp.
-pub const MODEL_FILE: &str = "ggml-base.bin";
-const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
-const MODEL_SHA256: &str = "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe";
-/// A modest margin above the published model size, preventing an unexpected
-/// response from consuming unbounded disk space.
-const MAX_MODEL_BYTES: u64 = 160 * 1024 * 1024;
+pub const MODEL_NAME: &str = "Whisper large-v3-turbo (multilingual)";
+/// The full-precision multilingual large-v3-turbo model published for whisper.cpp.
+pub const MODEL_FILE: &str = "ggml-large-v3-turbo.bin";
+pub const MODEL_DOWNLOAD_LABEL: &str = "1.5 GB";
+const MODEL_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin";
+const MODEL_SHA256: &str = "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69";
+/// A modest margin above the published 1,624,555,275-byte model, preventing an
+/// unexpected response from consuming unbounded disk space.
+const MAX_MODEL_BYTES: u64 = 1_700_000_000;
+const LEGACY_MODEL_FILES: &[&str] = &["ggml-base.bin"];
 
 /// A completed local transcription and the digest of its source recording.
 #[derive(Clone, Debug)]
@@ -57,7 +60,7 @@ fn ensure_model(directory: &Path) -> Result<PathBuf, String> {
 
     let partial = directory.join(format!("{MODEL_FILE}.download"));
     let _ = std::fs::remove_file(&partial);
-    let mut builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10 * 60));
+    let mut builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30 * 60));
     if let Some(proxy) = crate::proxy::reqwest_proxy() {
         builder = builder.proxy(proxy);
     }
@@ -117,6 +120,9 @@ fn ensure_model(directory: &Path) -> Result<PathBuf, String> {
     }
     std::fs::rename(&partial, &target)
         .map_err(|error| format!("Could not install the Whisper model: {error}"))?;
+    for legacy in LEGACY_MODEL_FILES {
+        let _ = std::fs::remove_file(directory.join(legacy));
+    }
     Ok(target)
 }
 

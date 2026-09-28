@@ -1431,23 +1431,28 @@ impl Archive {
         Ok(changed > 0)
     }
 
-    /// Returns a message's cached transcription text, if any.
+    /// Returns a message's cached transcription text from the current model.
+    /// Results from an older model are ignored so an explicit request upgrades
+    /// them rather than perpetuating a lower-quality transcript.
     pub fn transcription(&self, chat: &str, message: &str) -> Result<Option<String>> {
         self.connection
             .query_row(
-                "SELECT text FROM transcriptions WHERE chat = ?1 AND message = ?2",
-                params![chat, message],
+                "SELECT text FROM transcriptions
+                 WHERE chat = ?1 AND message = ?2 AND model = ?3",
+                params![chat, message, crate::transcribe::MODEL_NAME],
                 |row| row.get(0),
             )
             .optional()
     }
 
-    /// Returns every cached transcription in one chat.
+    /// Returns current-model cached transcriptions in one chat.
     pub fn transcriptions_for_chat(&self, chat: &str) -> Result<Vec<(String, String)>> {
         let mut statement = self
             .connection
-            .prepare("SELECT message, text FROM transcriptions WHERE chat = ?1")?;
-        let rows = statement.query_map(params![chat], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            .prepare("SELECT message, text FROM transcriptions WHERE chat = ?1 AND model = ?2")?;
+        let rows = statement.query_map(params![chat, crate::transcribe::MODEL_NAME], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
         rows.collect()
     }
 
@@ -3522,5 +3527,36 @@ mod transcription_tests {
         revoked.content = Content::Revoked;
         archive.insert_message(&revoked, None).expect("revoked");
         assert_eq!(archive.transcription(chat, "m2").expect("read"), None);
+    }
+
+    #[test]
+    fn transcripts_from_an_older_model_are_replaced_on_demand() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "a@s.whatsapp.net";
+        archive.ensure_chat(chat, "A").expect("chat");
+        archive
+            .insert_message(&super::tests::message(chat, "m1", 100, false), None)
+            .expect("message");
+        let mut old = transcript("rough draft");
+        old.model = "Whisper base (multilingual)".into();
+        archive
+            .set_transcription(chat, "m1", &old)
+            .expect("stores old result");
+
+        assert_eq!(archive.transcription(chat, "m1").expect("reads"), None);
+        assert!(
+            archive
+                .transcriptions_for_chat(chat)
+                .expect("lists")
+                .is_empty()
+        );
+
+        archive
+            .set_transcription(chat, "m1", &transcript("better result"))
+            .expect("replaces with current model");
+        assert_eq!(
+            archive.transcription(chat, "m1").expect("reads"),
+            Some("better result".into())
+        );
     }
 }

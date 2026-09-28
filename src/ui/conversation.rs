@@ -2728,20 +2728,33 @@ fn bubble(
 
 /// Selectable transcript text shown beneath its source voice bubble.
 fn transcript_text(ui: &mut egui::Ui, view: &View<'_>, text: &str, width: f32) {
+    const HORIZONTAL_PADDING: f32 = 10.0;
+    const VERTICAL_PADDING: f32 = 7.0;
     let style = markup::Style {
         size: BODY_SIZE - 1.0,
-        color: view.palette.secondary,
-        secondary: view.palette.secondary,
+        color: view.palette.text,
+        secondary: view.palette.text,
         link: view.palette.link,
         mention: view.palette.accent,
     };
-    let laid = markup::layout(ui, text, &[], &style, width);
-    let (rect, response) = ui.allocate_exact_size(laid.galley.size(), Sense::CLICK | Sense::DRAG);
+    let content_width = (width - HORIZONTAL_PADDING * 2.0).max(80.0);
+    let laid = markup::layout(ui, text, &[], &style, content_width);
+    let size = laid.galley.size() + vec2(HORIZONTAL_PADDING * 2.0, VERTICAL_PADDING * 2.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::CLICK | Sense::DRAG);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), "Voice transcript")
     });
     if ui.is_rect_visible(rect) {
-        markup::paint_selectable(ui, &laid, &response, rect.min, view.palette.secondary, true);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(8), view.palette.surface);
+        markup::paint_selectable(
+            ui,
+            &laid,
+            &response,
+            rect.min + vec2(HORIZONTAL_PADDING, VERTICAL_PADDING),
+            view.palette.text,
+            true,
+        );
     }
 }
 

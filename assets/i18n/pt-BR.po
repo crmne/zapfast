@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-26 22:04+0200\n"
+"POT-Creation-Date: 2026-09-28 17:35-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -159,7 +159,7 @@ msgstr "Trancadas"
 msgid "No favorites yet"
 msgstr "Ainda não há favoritas"
 
-#: src/ui/chats.rs:782 src/app.rs:1396
+#: src/ui/chats.rs:782 src/app.rs:1400
 msgid "Message yourself"
 msgstr "Envie uma mensagem para você mesmo"
 
@@ -167,7 +167,7 @@ msgstr "Envie uma mensagem para você mesmo"
 msgid "Remove from favorites"
 msgstr "Remover dos favoritos"
 
-#: src/ui/chats.rs:1015 src/ui/chats.rs:1373 src/ui/conversation.rs:3792
+#: src/ui/chats.rs:1015 src/ui/chats.rs:1373 src/ui/conversation.rs:3892
 #: src/ui/dialogs.rs:1013 src/ui/picker.rs:1582
 msgid "Add to favorites"
 msgstr "Adicionar aos favoritos"
@@ -257,80 +257,80 @@ msgstr "Mensagem de voz ({duration}) não enviada"
 msgid "Discard voice message"
 msgstr "Descartar mensagem de voz"
 
-#: src/ui/conversation.rs:1945 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:1961 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} mensagem não lida"
 msgstr[1] "{} mensagens não lidas"
 
-#: src/ui/conversation.rs:3161 src/ui/conversation.rs:3801
+#: src/ui/conversation.rs:3232 src/ui/conversation.rs:3901
 msgid "Open in system player"
 msgstr "Abrir no player do sistema"
 
-#: src/ui/conversation.rs:3162 src/ui/conversation.rs:3860
+#: src/ui/conversation.rs:3233 src/ui/conversation.rs:3960
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Dados da mensagem"
 
-#: src/ui/conversation.rs:4194
+#: src/ui/conversation.rs:4294
 #, fuzzy
 msgid "Location"
 msgstr "Localização em tempo real"
 
-#: src/ui/conversation.rs:4220
+#: src/ui/conversation.rs:4320
 msgid "Live location ended"
 msgstr "Localização em tempo real encerrada"
 
-#: src/ui/conversation.rs:4222 src/ui/conversation.rs:4412
+#: src/ui/conversation.rs:4322 src/ui/conversation.rs:4512
 msgid "Live location"
 msgstr "Localização em tempo real"
 
-#: src/ui/conversation.rs:4232
+#: src/ui/conversation.rs:4332
 #, rust-format
 msgid "Updated {time}"
 msgstr "Atualizada às {time}"
 
-#: src/ui/conversation.rs:4282
+#: src/ui/conversation.rs:4382
 msgid "Chat"
 msgstr "Conversar"
 
-#: src/ui/conversation.rs:4296
+#: src/ui/conversation.rs:4396
 msgid "Add"
 msgstr "Adicionar"
 
-#: src/ui/conversation.rs:4341
+#: src/ui/conversation.rs:4441
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} figurinha"
 msgstr[1] "{} figurinhas"
 
-#: src/ui/conversation.rs:4354
+#: src/ui/conversation.rs:4454
 msgid "View stickers"
 msgstr "Ver figurinhas"
 
-#: src/ui/conversation.rs:4420
+#: src/ui/conversation.rs:4520
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Abra o WhatsApp no seu celular para acompanhá-la."
 
-#: src/ui/conversation.rs:5266
+#: src/ui/conversation.rs:5366
 msgid "Open in a map"
 msgstr "Abrir em um mapa"
 
-#: src/ui/conversation.rs:5825
+#: src/ui/conversation.rs:5925
 msgid "Pause"
 msgstr "Pausar"
 
-#: src/ui/conversation.rs:5827 src/ui/settings.rs:1420
+#: src/ui/conversation.rs:5927 src/ui/settings.rs:1428
 msgid "Play"
 msgstr "Reproduzir"
 
-#: src/ui/conversation.rs:5850
+#: src/ui/conversation.rs:5950
 msgid "Unmute"
 msgstr "Ativar som"
 
-#: src/ui/conversation.rs:5852
+#: src/ui/conversation.rs:5952
 msgid "Mute"
 msgstr "Silenciar"
 
@@ -374,7 +374,7 @@ msgstr "Emojis que a descrevam, como 😂 ou ❤️"
 msgid "Send"
 msgstr "Enviar"
 
-#: src/ui/dialogs.rs:1020 src/ui/dialogs.rs:1168 src/ui/settings.rs:1223
+#: src/ui/dialogs.rs:1020 src/ui/dialogs.rs:1168 src/ui/settings.rs:1231
 msgid "Cancel"
 msgstr "Cancelar"
 
@@ -525,19 +525,27 @@ msgstr "Baixar arquivos automaticamente"
 msgid "Files up to 64 MiB download as they come into view."
 msgstr "Arquivos de até 64 MiB são baixados quando aparecem na tela."
 
-#: src/ui/settings.rs:362
+#: src/ui/settings.rs:360
+msgid "Transcribe received voice messages automatically"
+msgstr ""
+
+#: src/ui/settings.rs:363
+msgid "Uses the local Whisper large-v3-turbo model (1.5 GB) and your CPU."
+msgstr ""
+
+#: src/ui/settings.rs:370
 msgid "Pause other media while recording or playing"
 msgstr "Pausar outras mídias ao gravar ou reproduzir"
 
-#: src/ui/settings.rs:363
+#: src/ui/settings.rs:371
 msgid "Music and videos in other apps resume afterwards."
 msgstr "Músicas e vídeos de outros apps voltam a tocar depois."
 
-#: src/ui/settings.rs:368
+#: src/ui/settings.rs:376
 msgid "Locked chats code"
 msgstr "Código das conversas trancadas"
 
-#: src/ui/settings.rs:371
+#: src/ui/settings.rs:379
 msgid ""
 "Opens the Locked tab on this computer. It hides chats, it does not encrypt "
 "them."
@@ -545,107 +553,107 @@ msgstr ""
 "Abre a aba Trancadas neste computador. Ele esconde conversas, não as "
 "criptografa."
 
-#: src/ui/settings.rs:383
+#: src/ui/settings.rs:391
 msgid "Secret code"
 msgstr "Código secreto"
 
-#: src/ui/settings.rs:392
+#: src/ui/settings.rs:400
 msgid "Clear"
 msgstr "Limpar"
 
-#: src/ui/settings.rs:402 src/ui/settings.rs:1548
+#: src/ui/settings.rs:410 src/ui/settings.rs:1556
 msgid "Notifications"
 msgstr "Notificações"
 
-#: src/ui/settings.rs:404
+#: src/ui/settings.rs:412
 msgid "Desktop notifications"
 msgstr "Notificações na área de trabalho"
 
-#: src/ui/settings.rs:407
+#: src/ui/settings.rs:415
 msgid "For chats you are not looking at. Muted chats stay quiet."
 msgstr ""
 "Para conversas que você não está vendo. Conversas silenciadas ficam quietas."
 
-#: src/ui/settings.rs:415 src/ui/settings.rs:1555
+#: src/ui/settings.rs:423 src/ui/settings.rs:1563
 msgid "Play sounds for group messages"
 msgstr "Tocar sons para mensagens de grupo"
 
-#: src/ui/settings.rs:418
+#: src/ui/settings.rs:426
 msgid "When off, only mentions and replies to you make a sound."
 msgstr "Quando desligado, só menções e respostas a você tocam som."
 
-#: src/ui/settings.rs:426
+#: src/ui/settings.rs:434
 msgid "Privacy"
 msgstr "Privacidade"
 
-#: src/ui/settings.rs:428
+#: src/ui/settings.rs:436
 msgid "Off for your account, so only groups get them."
 msgstr "Desligadas na sua conta, então só os grupos as recebem."
 
-#: src/ui/settings.rs:430
+#: src/ui/settings.rs:438
 msgid "Let people see when you read their messages."
 msgstr "Permite que as pessoas vejam quando você lê as mensagens delas."
 
-#: src/ui/settings.rs:433
+#: src/ui/settings.rs:441
 msgid "Send read receipts"
 msgstr "Enviar confirmações de leitura"
 
-#: src/ui/settings.rs:438
+#: src/ui/settings.rs:446
 msgid "Show when you are typing"
 msgstr "Mostrar quando você está digitando"
 
-#: src/ui/settings.rs:448
+#: src/ui/settings.rs:456
 msgid ""
 "Could not load your account privacy. Trying again when ZapFast reconnects."
 msgstr ""
 "Não foi possível carregar a privacidade da sua conta. Nova tentativa quando "
 "o ZapFast reconectar."
 
-#: src/ui/settings.rs:453
+#: src/ui/settings.rs:461
 msgid "Connect to WhatsApp to change your account privacy."
 msgstr "Conecte-se ao WhatsApp para alterar a privacidade da sua conta."
 
-#: src/ui/settings.rs:458
+#: src/ui/settings.rs:466
 msgid "Loading your account privacy…"
 msgstr "Carregando a privacidade da sua conta…"
 
-#: src/ui/settings.rs:483
+#: src/ui/settings.rs:491
 msgid "Change who is excluded on your phone."
 msgstr "Altere quem fica de fora no seu celular."
 
-#: src/ui/settings.rs:501
+#: src/ui/settings.rs:509
 msgid "System"
 msgstr "Sistema"
 
-#: src/ui/settings.rs:503
+#: src/ui/settings.rs:511
 msgid "Keep running when the window closes"
 msgstr "Continuar em execução ao fechar a janela"
 
-#: src/ui/settings.rs:504
+#: src/ui/settings.rs:512
 msgid "Quit from the tray or with Ctrl+Q."
 msgstr "Saia pela bandeja do sistema ou com Ctrl+Q."
 
-#: src/ui/settings.rs:509 src/ui/settings.rs:517
+#: src/ui/settings.rs:517 src/ui/settings.rs:525
 msgid "Start at login"
 msgstr "Iniciar ao entrar"
 
-#: src/ui/settings.rs:510
+#: src/ui/settings.rs:518
 msgid "Starts in the tray, without a window."
 msgstr "Inicia na bandeja do sistema, sem janela."
 
-#: src/ui/settings.rs:533
+#: src/ui/settings.rs:541
 msgid "Check for updates"
 msgstr "Verificar atualizações"
 
-#: src/ui/settings.rs:536
+#: src/ui/settings.rs:544
 msgid "Asks GitHub once a day, sending only the ZapFast version."
 msgstr "Consulta o GitHub uma vez por dia, enviando só a versão do ZapFast."
 
-#: src/ui/settings.rs:541
+#: src/ui/settings.rs:549
 msgid "Download updates automatically"
 msgstr "Baixar atualizações automaticamente"
 
-#: src/ui/settings.rs:544
+#: src/ui/settings.rs:552
 msgid ""
 "You still choose when to restart. Package managers and Flatpak update "
 "ZapFast themselves."
@@ -653,170 +661,170 @@ msgstr ""
 "Você escolhe quando reiniciar. Gerenciadores de pacotes e o Flatpak "
 "atualizam o ZapFast por conta própria."
 
-#: src/ui/settings.rs:557
+#: src/ui/settings.rs:565
 #, rust-format
 msgid "Using {proxy} from the environment."
 msgstr "Usando {proxy} do ambiente."
 
-#: src/ui/settings.rs:565
+#: src/ui/settings.rs:573
 msgid "For WhatsApp, media, and updates. Empty uses ALL_PROXY or HTTPS_PROXY."
 msgstr ""
 "Para WhatsApp, mídia e atualizações. Vazio usa ALL_PROXY ou HTTPS_PROXY."
 
-#: src/ui/settings.rs:568
+#: src/ui/settings.rs:576
 msgid "Proxy"
 msgstr "Proxy"
 
-#: src/ui/settings.rs:588
+#: src/ui/settings.rs:596
 msgid "GIPHY API key"
 msgstr "Chave de API do GIPHY"
 
-#: src/ui/settings.rs:592
+#: src/ui/settings.rs:600
 msgid "For GIF search. Replaces the key this build includes."
 msgstr "Para buscar GIFs. Substitui a chave incluída nesta versão."
 
-#: src/ui/settings.rs:597
+#: src/ui/settings.rs:605
 msgid "For GIF search. Get a free key at developers.giphy.com."
 msgstr "Para buscar GIFs. Obtenha uma chave gratuita em developers.giphy.com."
 
-#: src/ui/settings.rs:613 src/ui/settings.rs:1600 src/ui/settings.rs:1606
+#: src/ui/settings.rs:621 src/ui/settings.rs:1608 src/ui/settings.rs:1614
 msgid "Account"
 msgstr "Conta"
 
-#: src/ui/settings.rs:616 src/ui/settings.rs:1149
+#: src/ui/settings.rs:624 src/ui/settings.rs:1157
 msgid "Your name"
 msgstr "Seu nome"
 
-#: src/ui/settings.rs:617 src/ui/settings.rs:697 src/ui/settings.rs:1157
-#: src/ui/settings.rs:1319
+#: src/ui/settings.rs:625 src/ui/settings.rs:705 src/ui/settings.rs:1165
+#: src/ui/settings.rs:1327
 msgid "About"
 msgstr "Sobre"
 
-#: src/ui/settings.rs:618 src/ui/settings.rs:1126
+#: src/ui/settings.rs:626 src/ui/settings.rs:1134
 msgid "Change profile picture"
 msgstr "Alterar foto do perfil"
 
-#: src/ui/settings.rs:619 src/ui/settings.rs:1193 src/ui/settings.rs:1602
+#: src/ui/settings.rs:627 src/ui/settings.rs:1201 src/ui/settings.rs:1610
 msgid "Unlink this computer"
 msgstr "Desconectar este computador"
 
-#: src/ui/settings.rs:624
+#: src/ui/settings.rs:632
 msgid "Files"
 msgstr "Arquivos"
 
-#: src/ui/settings.rs:626
+#: src/ui/settings.rs:634
 msgid "Open folder"
 msgstr "Abrir pasta"
 
-#: src/ui/settings.rs:628
+#: src/ui/settings.rs:636
 msgid "Message archive"
 msgstr "Arquivo de mensagens"
 
-#: src/ui/settings.rs:644
+#: src/ui/settings.rs:652
 msgid "Downloads"
 msgstr "Downloads"
 
-#: src/ui/settings.rs:657
+#: src/ui/settings.rs:665
 msgid "Change…"
 msgstr "Alterar…"
 
-#: src/ui/settings.rs:669
+#: src/ui/settings.rs:677
 msgid "Use default"
 msgstr "Usar o padrão"
 
-#: src/ui/settings.rs:680
+#: src/ui/settings.rs:688
 msgid "Log"
 msgstr "Registro"
 
-#: src/ui/settings.rs:687
+#: src/ui/settings.rs:695
 msgid "Open"
 msgstr "Abrir"
 
-#: src/ui/settings.rs:701 src/ui/settings.rs:1308
+#: src/ui/settings.rs:709 src/ui/settings.rs:1316
 msgid "Keyboard shortcuts"
 msgstr "Atalhos de teclado"
 
-#: src/ui/settings.rs:702 src/ui/settings.rs:1330
+#: src/ui/settings.rs:710 src/ui/settings.rs:1338
 msgid "Source code"
 msgstr "Código-fonte"
 
-#: src/ui/settings.rs:804
+#: src/ui/settings.rs:812
 msgid "How to make a theme"
 msgstr "Como criar um tema"
 
-#: src/ui/settings.rs:823 src/ui/settings.rs:832
+#: src/ui/settings.rs:831 src/ui/settings.rs:840
 msgid "Auto"
 msgstr "Automático"
 
-#: src/ui/settings.rs:919
+#: src/ui/settings.rs:927
 msgid "Add doodles"
 msgstr "Adicionar desenhos"
 
-#: src/ui/settings.rs:923
+#: src/ui/settings.rs:931
 msgid "Show the default doodles over the selected colour."
 msgstr "Mostrar os desenhos padrão sobre a cor selecionada."
 
-#: src/ui/settings.rs:1007
+#: src/ui/settings.rs:1015
 msgid "Choose image…"
 msgstr "Escolher imagem…"
 
-#: src/ui/settings.rs:1008
+#: src/ui/settings.rs:1016
 msgid "Remove image"
 msgstr "Remover imagem"
 
-#: src/ui/settings.rs:1036
+#: src/ui/settings.rs:1044
 msgctxt "wallpaper colour"
 msgid "Theme"
 msgstr "Tema"
 
-#: src/ui/settings.rs:1165
+#: src/ui/settings.rs:1173
 msgid "Linked device"
 msgstr "Dispositivo conectado"
 
-#: src/ui/settings.rs:1176
+#: src/ui/settings.rs:1184
 msgid "Edit your name and About"
 msgstr "Editar seu nome e recado"
 
-#: src/ui/settings.rs:1213
+#: src/ui/settings.rs:1221
 msgid "Save"
 msgstr "Salvar"
 
-#: src/ui/settings.rs:1287
+#: src/ui/settings.rs:1295
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "Um cliente nativo do WhatsApp feito com Rust, egui e whatsapp-rust."
 
-#: src/ui/settings.rs:1298
+#: src/ui/settings.rs:1306
 #, rust-format
 msgid "Update to {version}"
 msgstr "Atualizar para {version}"
 
-#: src/ui/settings.rs:1376
+#: src/ui/settings.rs:1384
 msgid "Mention sound"
 msgstr "Som de menção"
 
-#: src/ui/settings.rs:1377
+#: src/ui/settings.rs:1385
 msgid "When a group mentions you or replies to you."
 msgstr "Quando alguém menciona você ou responde a você em um grupo."
 
-#: src/ui/settings.rs:1380
+#: src/ui/settings.rs:1388
 msgid "Message sound"
 msgstr "Som de mensagem"
 
-#: src/ui/settings.rs:1397
+#: src/ui/settings.rs:1405
 msgid "Pidgin alert"
 msgstr "Alerta do Pidgin"
 
-#: src/ui/settings.rs:1398
+#: src/ui/settings.rs:1406
 msgid "System default"
 msgstr "Padrão do sistema"
 
 #. Translators: no notification sound.
-#: src/ui/settings.rs:1400
+#: src/ui/settings.rs:1408
 msgctxt "sound"
 msgid "None"
 msgstr "Nenhum"
 
-#: src/ui/settings.rs:1437
+#: src/ui/settings.rs:1445
 msgid "Choose a file…"
 msgstr "Escolher um arquivo…"
 
@@ -889,29 +897,29 @@ msgstr[1] "{} restantes"
 msgid "No one yet"
 msgstr "Ninguém ainda"
 
-#: src/app.rs:1317
+#: src/app.rs:1321
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Já existe uma etiqueta chamada “{name}”."
 
-#: src/app.rs:1377
+#: src/app.rs:1381
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Você)"
 
-#: src/app.rs:1378 src/app.rs:1397
+#: src/app.rs:1382 src/app.rs:1401
 msgid "You"
 msgstr "Você"
 
-#: src/app.rs:2182
+#: src/app.rs:2232
 msgid "Could not use this image"
 msgstr "Não foi possível usar esta imagem"
 
-#: src/app.rs:2645
+#: src/app.rs:2706
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Não enviado: o ZapFast não está conectado ao WhatsApp."
 
-#: src/app.rs:2649
+#: src/app.rs:2710
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -919,28 +927,28 @@ msgstr ""
 "Não enviado: a mensagem que você está respondendo não está disponível neste "
 "computador. Cancele a resposta para enviar sem citação."
 
-#: src/app.rs:4006
+#: src/app.rs:4093
 msgid "Added to favorites"
 msgstr "Adicionada aos favoritos"
 
-#: src/app.rs:4081
+#: src/app.rs:4168
 msgid "Sending the sticker pack…"
 msgstr "Enviando o pacote de figurinhas…"
 
-#: src/app.rs:4371 src/ui/labels.rs:237
+#: src/app.rs:4458 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Você tem {limit} etiquetas, o máximo que o ZapFast guarda."
 
-#: src/app.rs:4936
+#: src/app.rs:5023
 msgid "This video opens in your system player"
 msgstr "Este vídeo abre no player do sistema"
 
-#: src/app.rs:5427
+#: src/app.rs:5514
 msgid "Copied image"
 msgstr "Imagem copiada"
 
-#: src/app.rs:5430 src/app.rs:5435
+#: src/app.rs:5517 src/app.rs:5522
 msgid "Failed to copy image"
 msgstr "Falha ao copiar imagem"
 

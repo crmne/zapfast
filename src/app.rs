@@ -1945,7 +1945,21 @@ impl App {
                             .collect();
                     }
                 }
-                Event::Incoming { chat, message } => self.maybe_notify(&chat, &message),
+                Event::Incoming { chat, message } => {
+                    self.maybe_notify(&chat, &message);
+                    if self.settings.auto_transcribe_voice
+                        && !message.from_me
+                        && matches!(
+                            message.content,
+                            Content::Audio {
+                                voice_note: true,
+                                ..
+                            }
+                        )
+                    {
+                        self.request_transcription(chat, message.id.clone(), false);
+                    }
+                }
                 Event::Picked { chat, paths } => {
                     if self.open_chat.as_deref() == Some(chat.as_str()) {
                         self.stage_files(paths);
@@ -3269,6 +3283,29 @@ impl App {
         self.settings_dirty = true;
     }
 
+    /// Starts one local voice transcription unless it is already cached or
+    /// running. Automatic requests stay quiet; their opt-in setting already
+    /// explains the model download and background CPU work.
+    fn request_transcription(&mut self, chat: ChatId, message: String, announce: bool) {
+        let conversation = self.conversations.entry(chat.clone()).or_default();
+        if conversation.transcripts.contains_key(&message)
+            || !conversation.transcribing.insert(message.clone())
+        {
+            return;
+        }
+        if announce {
+            if crate::transcribe::model_installed(&self.dirs.transcription_model_dir()) {
+                self.toast("Transcribing locally with Whisper large-v3-turbo…");
+            } else {
+                self.toast(format!(
+                    "Downloading Whisper large-v3-turbo ({})…",
+                    crate::transcribe::MODEL_DOWNLOAD_LABEL
+                ));
+            }
+        }
+        self.backend.send(Command::Transcribe { chat, message });
+    }
+
     fn save_settings(&mut self) {
         self.settings_dirty = false;
         self.last_settings_save = Instant::now();
@@ -3600,18 +3637,7 @@ impl App {
                 });
             }
             Action::Transcribe { chat, message } => {
-                let conversation = self.conversations.entry(chat.clone()).or_default();
-                if conversation.transcripts.contains_key(&message)
-                    || !conversation.transcribing.insert(message.clone())
-                {
-                    return;
-                }
-                if !crate::transcribe::model_path(&self.dirs.transcription_model_dir()).is_file() {
-                    self.toast("Downloading the multilingual Whisper model (142 MB)…");
-                } else {
-                    self.toast("Transcribing locally with Whisper…");
-                }
-                self.backend.send(Command::Transcribe { chat, message });
+                self.request_transcription(chat, message, true);
             }
             Action::PreviewImage(path) => {
                 if crate::safety::can_preview_image(&path) && path.is_file() {
@@ -7506,6 +7532,58 @@ mod tests {
             waveform: Vec::new(),
         };
         row
+    }
+
+    #[test]
+    fn incoming_voice_messages_follow_the_automatic_transcript_setting() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let chat = "1@s.whatsapp.net";
+        app.chats = vec![Chat::new(chat.into(), "Ada".into())];
+
+        let first = voice(chat, "off", 1, None);
+        events
+            .send(Event::Messages {
+                chat: chat.into(),
+                messages: vec![first.clone()],
+                older: false,
+                complete: false,
+            })
+            .unwrap();
+        events
+            .send(Event::Incoming {
+                chat: chat.into(),
+                message: Box::new(first),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(commands.try_recv().is_err(), "the default remains opt-in");
+
+        app.settings.auto_transcribe_voice = true;
+        let second = voice(chat, "on", 2, None);
+        events
+            .send(Event::Messages {
+                chat: chat.into(),
+                messages: vec![second.clone()],
+                older: false,
+                complete: false,
+            })
+            .unwrap();
+        events
+            .send(Event::Incoming {
+                chat: chat.into(),
+                message: Box::new(second),
+            })
+            .unwrap();
+        app.handle_events();
+
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Transcribe { chat: target, message })
+                if target == chat && message == "on"
+        ));
+        assert!(app.conversations[chat].transcribing.contains("on"));
     }
 
     #[test]

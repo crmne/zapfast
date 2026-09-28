@@ -6307,8 +6307,9 @@ impl Worker {
         }
     }
 
-    /// Starts a manual local transcript, serving the encrypted cache first
-    /// and downloading the voice attachment when necessary.
+    /// Starts a requested local transcript, serving the encrypted cache first
+    /// and downloading the voice attachment when necessary. Requests may come
+    /// from the message menu or the incoming-voice opt-in.
     fn transcribe(&mut self, chat: ChatId, id: String) {
         if !self.privacy_ready || !self.transcriptions.insert((chat.clone(), id.clone())) {
             return;

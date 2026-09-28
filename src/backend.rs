@@ -839,7 +839,7 @@ pub enum Event {
         message: String,
         result: Result<PathBuf, String>,
     },
-    /// A manual local transcription finished or failed.
+    /// A requested local transcription finished or failed.
     Transcribed {
         chat: ChatId,
         message: String,

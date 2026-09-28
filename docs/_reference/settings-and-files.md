@@ -60,6 +60,9 @@ name or description, in the interface language or in English.
   on macOS) sends.
 - **Download files automatically**: files up to 64 MiB, stickers included,
   download as they come into view. When off, click one to download it.
+- **Transcribe received voice messages automatically**: process new incoming
+  voice notes locally with Whisper large-v3-turbo. Off by default; the model
+  uses 1.5 GB of disk space and transcription uses your CPU.
 - **Pause other media while recording or playing**: pause music and videos in
   other apps while you record, or while a voice message, audio, or video plays
   with sound, and resume them afterwards. Linux and Windows only.

@@ -356,6 +356,14 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.auto_download,
     );
+    chats.toggle(
+        translated(locale, "Transcribe received voice messages automatically"),
+        translated(
+            locale,
+            "Uses the local Whisper large-v3-turbo model (1.5 GB) and your CPU.",
+        ),
+        |settings| &mut settings.auto_transcribe_voice,
+    );
     // macOS has no public API to pause other apps' media.
     if crate::media_pause::SUPPORTED {
         chats.toggle(

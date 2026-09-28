@@ -186,10 +186,12 @@ Starting a reply before recording includes the quoted message.
 
 Right-click a voice message and choose **Transcribe locally** to turn it into
 selectable text with Whisper. The first request downloads and verifies the
-multilingual base model (142 MiB); after that, transcription works offline.
-Recordings never leave your computer, and ZapFast only transcribes messages
-you request. Results are cached in the encrypted message archive and disappear
-when their source message is deleted or its chat is cleared.
+multilingual large-v3-turbo model (1.5 GB); after that, transcription works
+offline. Recordings never leave your computer. Turn on **Transcribe received
+voice messages automatically** in Settings to process new incoming voice notes
+as they arrive; it is off by default. Results are cached in the encrypted
+message archive and disappear when their source message is deleted or its chat
+is cleared.
 
 ## Copying
 
