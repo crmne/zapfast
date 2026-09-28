@@ -108,6 +108,13 @@ jobs:
     name: compile (Windows arm64)
     runs-on: windows-latest
     timeout-minutes: 40
+    env:
+      # whisper.cpp deliberately rejects MSVC's ARM backend. The hosted
+      # Windows image includes LLVM and Ninja, so use clang-cl while retaining
+      # the MSVC ABI expected by Rust's aarch64-pc-windows-msvc target.
+      CMAKE_GENERATOR: Ninja
+      CC_aarch64_pc_windows_msvc: clang-cl
+      CXX_aarch64_pc_windows_msvc: clang-cl
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

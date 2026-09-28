@@ -66,6 +66,15 @@ jobs:
       # The repository pins its toolchain; add the cross-target's standard
       # library to the toolchain the pin actually resolves to.
       - run: rustup target add ${{ matrix.target }}
+      - name: Configure Windows ARM compiler
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: bash
+        run: |
+          # whisper.cpp deliberately rejects MSVC's ARM backend. Keep the MSVC
+          # ABI while compiling its native code with the hosted LLVM toolchain.
+          echo CMAKE_GENERATOR=Ninja >> "$GITHUB_ENV"
+          echo CC_aarch64_pc_windows_msvc=clang-cl >> "$GITHUB_ENV"
+          echo CXX_aarch64_pc_windows_msvc=clang-cl >> "$GITHUB_ENV"
       - name: GUI build dependencies
         if: runner.os == 'Linux'
         run: |
