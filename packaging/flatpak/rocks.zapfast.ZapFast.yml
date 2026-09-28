@@ -36,6 +36,9 @@ build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
     CARGO_HOME: /run/build/zapfast/cargo
+    # whisper-rs ships bindings for its pinned whisper.cpp revision. The
+    # sandbox has no libclang, so use those Linux bindings instead.
+    WHISPER_DONT_GENERATE_BINDINGS: '1'
 modules:
   - name: zapfast
     buildsystem: simple

@@ -44,6 +44,7 @@
             pkg-config
             cmake
             perl
+            llvmPackages.libclang
             alsa-lib
             libxkbcommon
             wayland
@@ -67,6 +68,7 @@
             ]
           );
           ZAPFAST_TEST_RTL_FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf";
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
         };
       });
 
@@ -104,6 +106,7 @@
               pkg-config
               cmake
               perl
+              llvmPackages.libclang
               makeWrapper
             ];
             buildInputs = with pkgs; [
@@ -112,6 +115,7 @@
               libx11
             ];
             ZAPFAST_TEST_RTL_FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf";
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
 
             # The GUI dlopens its Wayland, X11 and GL libraries at run time.
             postFixup = ''
