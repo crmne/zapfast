@@ -64,7 +64,8 @@ Demo runs never open the microphone: recording plays back a synthetic tone.
 Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
 English lines.
 Use `--demo-page composer-tools` to preview the WhatsApp-style composer pill
-and its attachment and poll menu. `typing`, `mention`, and
+and its attachment and poll menu, or `--demo-page location` for the location
+dialog with a spot pasted in. `typing`, `mention`, and
 `emoji-complete` preview the multiline field and inline suggestions.
 `mention-everyone` shows the group's synthetic `@all` message with the
 everyone suggestion at the top of the composer list.

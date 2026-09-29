@@ -4,6 +4,7 @@ src/util.rs
 src/ui/chats.rs
 src/ui/conversation.rs
 src/ui/dialogs.rs
+src/ui/locations.rs
 src/ui/settings.rs
 src/ui/call.rs
 src/ui/calls.rs

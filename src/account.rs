@@ -60,6 +60,8 @@ pub struct Account {
     pub sticker_import_pending: bool,
     pub sticker_link: String,
     pub poll_draft: PollDraft,
+    /// What the location dialog has to read, cleared when it opens.
+    pub location_draft: String,
     pub poll_creating: bool,
     pub poll_voting: HashSet<(ChatId, String)>,
     pub contact_edit: Option<(String, String)>,
@@ -132,6 +134,7 @@ impl Account {
             sticker_import_pending: false,
             sticker_link: String::new(),
             poll_draft: Default::default(),
+            location_draft: String::new(),
             poll_creating: false,
             poll_voting: HashSet::new(),
             contact_edit: None,
