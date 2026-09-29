@@ -492,7 +492,15 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         scroll_area = scroll_area.vertical_scroll_offset(offset);
         app.scroll_chat_into_view = None;
     }
-    scroll_area.show_rows(ui, row_height, total, |ui, range| {
+    // A scroll gesture that began over the list stays with it (#274).
+    let carried = app.scroll_route.take(crate::app::ScrollPane::Chats);
+    let output = scroll_area.show_rows(ui, row_height, total, |ui, range| {
+        if carried != 0.0 {
+            ui.scroll_with_delta_animation(
+                vec2(0.0, carried),
+                egui::style::ScrollAnimation::none(),
+            );
+        }
         for index in range {
             let chat = &chats[index];
             // Key by chat so an open menu survives list reordering.
@@ -511,6 +519,17 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+    app.scroll_route
+        .place(crate::app::ScrollPane::Chats, output.inner_rect);
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(list_offset_id(), output.state.offset.y));
+}
+
+/// Where the chat list's scroll offset is kept for tests.
+#[cfg(test)]
+pub(crate) fn list_offset_id() -> egui::Id {
+    egui::Id::new("chat-list-offset")
 }
 
 /// The row the secret code reveals: the only thing the search then shows.
@@ -1214,8 +1233,15 @@ fn compact_list(app: &mut App, ui: &mut egui::Ui) {
         scroll_area = scroll_area.vertical_scroll_offset(offset);
         app.scroll_chat_into_view = None;
     }
+    let carried = app.scroll_route.take(crate::app::ScrollPane::Chats);
     // Only the avatars on screen are laid out, however many chats there are.
-    scroll_area.show_rows(ui, COMPACT_CELL, chats.len(), |ui, range| {
+    let output = scroll_area.show_rows(ui, COMPACT_CELL, chats.len(), |ui, range| {
+        if carried != 0.0 {
+            ui.scroll_with_delta_animation(
+                vec2(0.0, carried),
+                egui::style::ScrollAnimation::none(),
+            );
+        }
         for chat in &chats[range] {
             let response = ui
                 .push_id(("chat", &chat.id), |ui| compact_row(app, ui, chat))
@@ -1225,6 +1251,8 @@ fn compact_list(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+    app.scroll_route
+        .place(crate::app::ScrollPane::Chats, output.inner_rect);
 }
 
 /// The collapsed form of the entry the secret code reveals.

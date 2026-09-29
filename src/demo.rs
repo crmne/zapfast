@@ -1053,6 +1053,49 @@ fn quote_sample(app: &mut App) {
     }
 }
 
+/// A chat with Meta AI: a question and a rich reply, drawn as the text the
+/// worker makes of it (#253).
+fn meta_ai_sample(app: &mut App) {
+    let id = "15550100000@s.whatsapp.net";
+    let now = crate::util::now();
+    let question = message(
+        id,
+        "meta-ai-question",
+        true,
+        now - 60,
+        Content::text("How do I reverse a string in Rust?"),
+    );
+    let mut reply = message(
+        id,
+        "meta-ai-reply",
+        false,
+        now,
+        Content::text(
+            "Collect its characters in reverse order:\n\n```\nlet reversed: String = text.chars().rev().collect();\n```\n\nMethod | Handles\nchars().rev() | Unicode scalar values\ngraphemes(true).rev() | Combined emoji and accents",
+        ),
+    );
+    reply.quoted = Some(Quoted {
+        id: "meta-ai-question".into(),
+        sender: ME.into(),
+        sender_name: None,
+        summary: "How do I reverse a string in Rust?".into(),
+        mentions: Vec::new(),
+    });
+    let mut chat = Chat::new(id.into(), "Meta AI".into());
+    chat.last_activity = now;
+    chat.last = Some(crate::model::LastMessage {
+        from_me: false,
+        sender: reply.sender.clone(),
+        sender_name: None,
+        summary: reply.summary(),
+        full: reply.content.full_summary(),
+        status: reply.status,
+    });
+    app.chats.insert(0, chat);
+    app.conversations.entry(id.into()).or_default().messages = vec![question, reply];
+    app.open_chat = Some(id.into());
+}
+
 /// A Recent shelf of animated stickers, more frames than the animation cache
 /// holds at once, for the picker's paused tiles (#165).
 fn animated_sticker_sample(app: &mut App) {
@@ -1663,6 +1706,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 )];
                 app.open_chat = Some(id.into());
             }
+            "meta-ai" => meta_ai_sample(app),
             "locked" => {
                 app.chats[0].locked = true;
                 app.open_chat = None;
@@ -3854,6 +3898,7 @@ mod tests {
             "chat-menu",
             "chat-header-menu",
             "channel",
+            "meta-ai",
             "locked",
             "locked-open",
             "locked-prompt",
@@ -5100,6 +5145,47 @@ mod tests {
         assert!(egui::Popup::is_id_open(&ctx, popup), "and it stays open");
     }
 
+    /// #240: a right-click in the empty strip beside a bubble opens that
+    /// message's menu, on either side of the chat.
+    #[test]
+    fn right_click_beside_a_message_opens_its_menu() {
+        let chat = sample_ids()[0].to_owned();
+        for (message, own) in [("ada-voice", false), ("ada-doc", true)] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            for _ in 0..3 {
+                render(&mut app, &ctx);
+            }
+            let id = crate::ui::conversation::bubble_id(&chat, message);
+            let rect = ctx
+                .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+                .unwrap_or_else(|| panic!("{message} is on screen"));
+            let beside = if own {
+                egui::pos2(rect.left() - 60.0, rect.center().y)
+            } else {
+                egui::pos2(rect.right() + 60.0, rect.center().y)
+            };
+            let button = |pressed| egui::Event::PointerButton {
+                pos: beside,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(beside), button(true)],
+            );
+            frame_with(&mut app, &ctx, vec![button(false)]);
+            render(&mut app, &ctx);
+            assert!(
+                egui::Popup::is_id_open(&ctx, id.with("popup")),
+                "a right-click beside {message} opens its menu"
+            );
+        }
+    }
+
     #[test]
     fn ctrl_click_selects_messages_and_shift_click_takes_the_ones_between() {
         let mut app = app();
@@ -5172,6 +5258,62 @@ mod tests {
         frame_with(&mut app, &ctx, Vec::new());
         assert_eq!(selected(&app), None, "Escape ends the selection");
         assert_eq!(app.open_chat, Some(chat), "and leaves the chat open");
+    }
+
+    /// #241: while selecting, a click on a message's text or beside its
+    /// bubble adds it, not only a click on the bubble's padding.
+    #[test]
+    fn while_selecting_a_click_on_the_text_or_beside_it_selects() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let chat = sample_ids()[0].to_owned();
+        app.actions
+            .push(crate::model::Action::SelectMessage("ada-doc".into()));
+        render(&mut app, &ctx);
+        let rect = |message: &str, part: &str| {
+            let id = crate::ui::conversation::bubble_id(&chat, message).with(part);
+            ctx.data(|data| data.get_temp::<egui::Rect>(id))
+                .unwrap_or_else(|| panic!("{message} is on screen"))
+        };
+        let click = |app: &mut App, pos: egui::Pos2| {
+            let button = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                app,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos), button(true)],
+            );
+            frame_with(app, &ctx, vec![button(false)]);
+            render(app, &ctx);
+        };
+        let selected = |app: &App| {
+            app.selection
+                .as_ref()
+                .map(|(_, ids)| ids.clone())
+                .unwrap_or_default()
+        };
+        // The middle of the text, where the body takes clicks and drags.
+        click(&mut app, rect("ada-reply", "body").center());
+        assert_eq!(selected(&app), ["ada-doc", "ada-reply"], "the text selects");
+        // The empty strip to the right of an incoming bubble.
+        let voice = rect("ada-voice", "rect");
+        click(&mut app, egui::pos2(voice.right() + 60.0, voice.center().y));
+        assert_eq!(
+            selected(&app),
+            ["ada-doc", "ada-voice", "ada-reply"],
+            "the strip beside the bubble selects"
+        );
+        // And a second click on the text leaves the message out again.
+        click(&mut app, rect("ada-reply", "body").center());
+        assert_eq!(selected(&app), ["ada-doc", "ada-voice"]);
     }
 
     /// One frame with AccessKit on; returns (label, role, centre) per node.
@@ -9495,6 +9637,85 @@ mod tests {
         render(&mut app, &ctx);
         assert!(app.reply_to.is_none());
     }
+
+    /// Where the chat list's right edge is: the first chat row spans the
+    /// list's width.
+    fn chat_list_right(ctx: &egui::Context) -> f32 {
+        ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::chat_row_id(sample_ids()[0])))
+            .expect("the first chat is listed")
+            .right()
+    }
+
+    /// Drags from `from` through each x in `path` at one height, returning
+    /// the chat list's right edge after every step, and releases.
+    fn drag_list_edge(app: &mut App, ctx: &egui::Context, from: f32, path: &[f32]) -> Vec<f32> {
+        let y = 400.0;
+        let press = |x: f32, pressed| egui::Event::PointerButton {
+            pos: egui::pos2(x, y),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            app,
+            ctx,
+            vec![egui::Event::PointerMoved(egui::pos2(from, y))],
+        );
+        frame_with(app, ctx, vec![press(from, true)]);
+        let mut edges = Vec::new();
+        for &x in path {
+            frame_with(app, ctx, vec![egui::Event::PointerMoved(egui::pos2(x, y))]);
+            edges.push(chat_list_right(ctx));
+        }
+        let last = path.last().copied().unwrap_or(from);
+        frame_with(app, ctx, vec![press(last, false)]);
+        render(app, ctx);
+        edges
+    }
+
+    /// #239: a chat list dragged out past its widest follows the pointer
+    /// back in the same drag, instead of sticking at its widest.
+    #[test]
+    fn the_chat_list_shrinks_back_from_its_widest() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let edge = chat_list_right(&ctx);
+        let out = (1..=30).map(|step| edge + 10.0 * step as f32);
+        let back = (1..=40).map(|step| edge + 300.0 - 5.0 * step as f32);
+        let path: Vec<f32> = out.chain(back).collect();
+        let edges = drag_list_edge(&mut app, &ctx, edge, &path);
+        let end = *path.last().expect("a path");
+        assert!(
+            (chat_list_right(&ctx) - end).abs() < 12.0,
+            "the list stopped at {} with the pointer at {end}: {edges:?}",
+            chat_list_right(&ctx)
+        );
+    }
+
+    /// #239: a drag to the left, taken on the conversation's side of the
+    /// list's edge, narrows the list and never widens it.
+    #[test]
+    fn dragging_the_chat_list_edge_left_never_widens_it() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let start = chat_list_right(&ctx) + 2.0;
+        let path: Vec<f32> = (1..=6).map(|step| start - 5.0 * step as f32).collect();
+        let edges = drag_list_edge(&mut app, &ctx, start, &path);
+        assert!(
+            edges.iter().all(|&edge| edge < start),
+            "dragging left widened the list: {edges:?}"
+        );
+        assert!(
+            (chat_list_right(&ctx) - (start - 30.0)).abs() < 12.0,
+            "the list stopped at {} instead of {}: {edges:?}",
+            chat_list_right(&ctx),
+            start - 30.0
+        );
+    }
 }
 
 /// A long transcript lays out only the rows near the screen.
@@ -9843,6 +10064,111 @@ mod long_chat_tests {
             Some(&y),
             "the message stays where it landed"
         );
+    }
+
+    /// One frame of a trackpad gesture at `pos`: several small steps, which
+    /// egui applies at once, or the fingers lifting when `steps` is empty.
+    fn swipe(pos: egui::Pos2, steps: &[f32]) -> Vec<egui::Event> {
+        let wheel = |delta: f32, phase| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, delta),
+            modifiers: egui::Modifiers::NONE,
+            phase,
+        };
+        std::iter::once(egui::Event::PointerMoved(pos))
+            .chain(if steps.is_empty() {
+                vec![wheel(0.0, egui::TouchPhase::End)]
+            } else {
+                steps
+                    .iter()
+                    .map(|&step| wheel(step, egui::TouchPhase::Move))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// #274: a trackpad scroll that begins over the messages stays with them
+    /// when the pointer drifts over the chat list, fingers down and in the
+    /// glide after they lift; a gesture that begins over the list scrolls it.
+    #[test]
+    fn a_scroll_stays_with_the_pane_it_began_over() {
+        let (mut app, ctx, chat) = long_chat();
+        // Enough chats for the list to scroll.
+        let template = app.chats[1].clone();
+        for n in 0..60 {
+            let mut extra = template.clone();
+            extra.id = format!("39000000{n:04}@s.whatsapp.net");
+            app.chats.push(extra);
+        }
+        for _ in 0..3 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        let list = |ctx: &egui::Context| {
+            ctx.data(|data| data.get_temp::<f32>(crate::ui::chats::list_offset_id()))
+                .expect("the chat list has drawn")
+        };
+        let messages = |ctx: &egui::Context| {
+            ctx.data(|data| {
+                data.get_temp::<(f32, f32)>(crate::ui::conversation::scroll_metrics_id(&chat))
+            })
+            .expect("the message list has drawn")
+            .0
+        };
+        let over_list = egui::pos2(150.0, 400.0);
+        let over_messages = egui::pos2(700.0, 400.0);
+        let settle = |app: &mut App| {
+            for _ in 0..90 {
+                frame(app, &ctx, Vec::new());
+            }
+        };
+
+        // Down the list first, so it has room to move either way.
+        let before = list(&ctx);
+        for _ in 0..4 {
+            frame(&mut app, &ctx, swipe(over_list, &[-6.0; 6]));
+        }
+        frame(&mut app, &ctx, swipe(over_list, &[]));
+        settle(&mut app);
+        assert!(
+            list(&ctx) > before + 50.0,
+            "a swipe over the list scrolls it"
+        );
+
+        // Up the messages, then over the list with the fingers still down.
+        let list_before = list(&ctx);
+        let start = messages(&ctx);
+        for _ in 0..3 {
+            frame(&mut app, &ctx, swipe(over_messages, &[6.0; 6]));
+        }
+        let over = messages(&ctx);
+        assert!(over < start, "the swipe scrolls the messages up");
+        for _ in 0..3 {
+            frame(&mut app, &ctx, swipe(over_list, &[6.0; 6]));
+        }
+        assert!(
+            messages(&ctx) < over - 50.0,
+            "the messages keep scrolling with the pointer over the list"
+        );
+        assert_eq!(list(&ctx), list_before, "the list holds still");
+        // The fingers lift over the list; the glide stays with the messages.
+        let lifted = messages(&ctx);
+        frame(&mut app, &ctx, swipe(over_list, &[]));
+        settle(&mut app);
+        assert_eq!(list(&ctx), list_before, "the glide leaves the list alone");
+        if cfg!(target_os = "linux") {
+            assert!(messages(&ctx) < lifted, "the glide scrolls the messages");
+        }
+
+        // A new gesture over the list scrolls the list.
+        let still = messages(&ctx);
+        for _ in 0..3 {
+            frame(&mut app, &ctx, swipe(over_list, &[6.0; 6]));
+        }
+        assert!(
+            list(&ctx) < list_before,
+            "a new swipe over the list scrolls it"
+        );
+        assert_eq!(messages(&ctx), still, "and leaves the messages alone");
     }
 }
 

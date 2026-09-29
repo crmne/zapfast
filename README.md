@@ -72,6 +72,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   an empty cached subject remains eligible for recovery.
   Typing indicators show other participants, excluding your own linked devices.
   Newsletter channels are read-only; publishing channel posts is not supported.
+  Channels show their own pictures, read from the channel's details on WhatsApp.
 - **Account privacy.** Settings, Privacy shows who can see your last seen,
   online status, profile photo, and About, who can add you to groups, your
   account read receipts, and whether unknown callers are silenced, and
@@ -151,6 +152,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   original message is available and they have not been edited, without relinking.
   Other embedded attachments and templates containing only a
   reference to server-side text still need the phone.
+  Meta AI replies show as text, with code in monospace blocks and tables as
+  rows; their images, maps, and other media parts still need the phone, and a
+  reply made only of those shows as an unsupported message.
 - **Errors stay readable.** Confirmations such as "Copied" fade after a few
   seconds. Error messages stay above the composer until you dismiss them, and
   a button copies their text for a bug report. A repeated error replaces its
@@ -368,13 +372,14 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   gives that chat its own sound for every message in it, mentions included,
   stored in the encrypted archive.
 - **Unread count on the taskbar.** Linux desktops that implement the Unity
-  Launcher API show the unread total on the app icon; KDE Plasma needs **Show
-  badges** enabled in Task Manager. On Windows, ZapFast overlays a compact count
-  on its taskbar button while the window is open, showing `99+` above 99. Windows
-  must be using its regular taskbar icon size for overlays to appear. The count
-  covers unread messages in unarchived, unmuted, and unlocked
-  chats, not toasts kept in Windows notification history. Reading messages
-  lowers the count, and zero removes the overlay.
+  Launcher API show the number of unread chats on the app icon; KDE Plasma needs
+  **Show badges** enabled in Task Manager. On Windows, ZapFast overlays a compact
+  count on its taskbar button while the window is open, showing `99+` above 99.
+  Windows must be using its regular taskbar icon size for overlays to appear. As
+  in WhatsApp, the count is of chats, not of the messages in them or of toasts
+  kept in Windows notification history: archived, muted, and locked chats are
+  left out, and a chat marked unread counts. Reading a chat lowers the count,
+  and zero removes the overlay.
 - **Update notices.** ZapFast checks GitHub once a day and shows a download
   link when a newer release is available. You can turn this off in Settings.
 - **Themes.** Light, dark, follow the system, or a local JSON palette. Native
@@ -608,7 +613,7 @@ Use `--demo-page locked-prompt`, `locked-setup`, `new-chat`, `unnamed-group`,
 or `react-picker` for the new dialogs, shared group summaries, and reactions.
 `group-info`, `group-info-rename`, `group-info-saving`, and `group-info-locked`
 show a group's info with its name and photo editable, being renamed, saving,
-and locked to admins.
+and locked to admins. `meta-ai` shows a Meta AI reply with code and a table.
 
 The protocol dependency includes the upstream WhatsApp Business pairing fix.
 Device-store migration waits until an updated window is acknowledged, preserving

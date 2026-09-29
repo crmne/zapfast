@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-09-29 06:45-0400\n"
+"POT-Creation-Date: 2026-09-29 06:57-0400\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -180,30 +180,30 @@ msgstr "Заблокированные"
 msgid "No favorites yet"
 msgstr "Пока нет избранных"
 
-#: src/ui/chats.rs:782 src/app.rs:1398
+#: src/ui/chats.rs:801 src/app.rs:1502
 msgid "Message yourself"
 msgstr "Написать себе"
 
-#: src/ui/chats.rs:1013 src/ui/chats.rs:1371 src/ui/picker.rs:1581
+#: src/ui/chats.rs:1032 src/ui/chats.rs:1399 src/ui/picker.rs:1581
 msgid "Remove from favorites"
 msgstr "Убрать из избранного"
 
-#: src/ui/chats.rs:1015 src/ui/chats.rs:1373 src/ui/conversation.rs:3786
+#: src/ui/chats.rs:1034 src/ui/chats.rs:1401 src/ui/conversation.rs:3828
 #: src/ui/dialogs.rs:1013 src/ui/picker.rs:1582
 msgid "Add to favorites"
 msgstr "Добавить в избранное"
 
-#: src/ui/chats.rs:1025 src/ui/chats.rs:1397 src/ui/conversation.rs:212
+#: src/ui/chats.rs:1044 src/ui/chats.rs:1425 src/ui/conversation.rs:212
 #: src/ui/dialogs.rs:1147 src/ui/dialogs.rs:1665
 msgid "Leave group"
 msgstr "Покинуть группу"
 
-#: src/ui/chats.rs:1026 src/ui/chats.rs:1395 src/ui/conversation.rs:210
+#: src/ui/chats.rs:1045 src/ui/chats.rs:1423 src/ui/conversation.rs:210
 #: src/ui/dialogs.rs:1145 src/ui/dialogs.rs:1663
 msgid "Leave channel"
 msgstr "Покинуть канал"
 
-#: src/ui/chats.rs:1041 src/ui/labels.rs:166 src/ui/labels.rs:203
+#: src/ui/chats.rs:1060 src/ui/labels.rs:166 src/ui/labels.rs:203
 msgid "Labels"
 msgstr "Метки"
 
@@ -279,7 +279,7 @@ msgstr "Голосовое сообщение ({duration}) не отправле
 msgid "Discard voice message"
 msgstr "Удалить голосовое сообщение"
 
-#: src/ui/conversation.rs:1939 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:1954 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
@@ -287,48 +287,48 @@ msgstr[0] "{} непрочитанное сообщение"
 msgstr[1] "{} непрочитанных сообщения"
 msgstr[2] "{} непрочитанных сообщений"
 
-#: src/ui/conversation.rs:3155 src/ui/conversation.rs:3795
+#: src/ui/conversation.rs:3197 src/ui/conversation.rs:3837
 msgid "Open in system player"
 msgstr "Открыть в системном плеере"
 
-#: src/ui/conversation.rs:3156 src/ui/conversation.rs:3864
+#: src/ui/conversation.rs:3198 src/ui/conversation.rs:3906
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Данные сообщения"
 
-#: src/ui/conversation.rs:3807 src/ui/image_preview.rs:61
+#: src/ui/conversation.rs:3849 src/ui/image_preview.rs:61
 #: src/ui/image_preview.rs:172
 msgid "Copy image"
 msgstr "Копировать изображение"
 
-#: src/ui/conversation.rs:4198
+#: src/ui/conversation.rs:4240
 #, fuzzy
 msgid "Location"
 msgstr "Геоданные в реальном времени"
 
-#: src/ui/conversation.rs:4224
+#: src/ui/conversation.rs:4266
 msgid "Live location ended"
 msgstr "Трансляция геоданных завершена"
 
-#: src/ui/conversation.rs:4226 src/ui/conversation.rs:4416
+#: src/ui/conversation.rs:4268 src/ui/conversation.rs:4458
 msgid "Live location"
 msgstr "Геоданные в реальном времени"
 
-#: src/ui/conversation.rs:4236
+#: src/ui/conversation.rs:4278
 #, rust-format
 msgid "Updated {time}"
 msgstr "Обновлено в {time}"
 
-#: src/ui/conversation.rs:4286
+#: src/ui/conversation.rs:4328
 #, fuzzy
 msgid "Chat"
 msgstr "Чаты"
 
-#: src/ui/conversation.rs:4300
+#: src/ui/conversation.rs:4342
 msgid "Add"
 msgstr ""
 
-#: src/ui/conversation.rs:4345
+#: src/ui/conversation.rs:4387
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
@@ -336,65 +336,65 @@ msgstr[0] "{} стикер"
 msgstr[1] "{} стикера"
 msgstr[2] "{} стикеров"
 
-#: src/ui/conversation.rs:4358
+#: src/ui/conversation.rs:4400
 msgid "View stickers"
 msgstr "Посмотреть стикеры"
 
-#: src/ui/conversation.rs:4424
+#: src/ui/conversation.rs:4466
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Откройте WhatsApp на телефоне, чтобы следить за ними."
 
-#: src/ui/conversation.rs:4442
+#: src/ui/conversation.rs:4484
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое фото. В целях конфиденциальности оно открывается только на "
 "телефоне."
 
-#: src/ui/conversation.rs:4446
+#: src/ui/conversation.rs:4488
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое видео. В целях конфиденциальности оно открывается только на "
 "телефоне."
 
-#: src/ui/conversation.rs:4450
+#: src/ui/conversation.rs:4492
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое голосовое сообщение. В целях конфиденциальности оно открывается "
 "только на телефоне."
 
-#: src/ui/conversation.rs:4454
+#: src/ui/conversation.rs:4496
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое аудио. В целях конфиденциальности оно открывается только на "
 "телефоне."
 
-#: src/ui/conversation.rs:4458
+#: src/ui/conversation.rs:4500
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое сообщение. В целях конфиденциальности оно открывается только на "
 "телефоне."
 
-#: src/ui/conversation.rs:4460
+#: src/ui/conversation.rs:4502
 msgid "This message can only be seen on your phone."
 msgstr "Это сообщение можно посмотреть только на телефоне."
 
-#: src/ui/conversation.rs:5292
+#: src/ui/conversation.rs:5334
 msgid "Open in a map"
 msgstr "Открыть на карте"
 
-#: src/ui/conversation.rs:5851
+#: src/ui/conversation.rs:5893
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/ui/conversation.rs:5853 src/ui/settings.rs:1430
+#: src/ui/conversation.rs:5895 src/ui/settings.rs:1430
 msgid "Play"
 msgstr "Воспроизвести"
 
-#: src/ui/conversation.rs:5876
+#: src/ui/conversation.rs:5918
 msgid "Unmute"
 msgstr "Включить звук"
 
-#: src/ui/conversation.rs:5878
+#: src/ui/conversation.rs:5920
 msgid "Mute"
 msgstr "Выключить звук"
 
@@ -970,29 +970,29 @@ msgstr[2] "ещё {}"
 msgid "No one yet"
 msgstr "Пока никто"
 
-#: src/app.rs:1319
+#: src/app.rs:1423
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Метка «{name}» уже есть."
 
-#: src/app.rs:1379
+#: src/app.rs:1483
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Вы)"
 
-#: src/app.rs:1380 src/app.rs:1399
+#: src/app.rs:1484 src/app.rs:1503
 msgid "You"
 msgstr "Вы"
 
-#: src/app.rs:2186
+#: src/app.rs:2296
 msgid "Could not use this image"
 msgstr "Не удалось использовать это изображение"
 
-#: src/app.rs:2649
+#: src/app.rs:2759
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
 
-#: src/app.rs:2653
+#: src/app.rs:2763
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1000,28 +1000,28 @@ msgstr ""
 "Не отправлено: сообщение, на которое вы отвечаете, недоступно на этом "
 "компьютере. Отмените ответ, чтобы отправить без цитаты."
 
-#: src/app.rs:4010
+#: src/app.rs:4120
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: src/app.rs:4085
+#: src/app.rs:4195
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:4375 src/ui/labels.rs:237
+#: src/app.rs:4485 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
 
-#: src/app.rs:4940
+#: src/app.rs:5050
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
 
-#: src/app.rs:5440
+#: src/app.rs:5570
 msgid "Copied image"
 msgstr "Изображение скопировано"
 
-#: src/app.rs:5443 src/app.rs:5448
+#: src/app.rs:5573 src/app.rs:5578
 msgid "Failed to copy image"
 msgstr "Не удалось скопировать изображение"
 

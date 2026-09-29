@@ -35,6 +35,8 @@ use whatsapp_rust::wacore_binary::jid::JidExt;
 use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
+mod bot_replies;
+mod channel_pictures;
 mod device_store;
 mod early_events;
 use early_events::WaitingReaction;
@@ -504,6 +506,7 @@ pub async fn run(
         pending_older: HashMap::new(),
         older_warned: HashSet::new(),
         pending_avatars: HashMap::new(),
+        channel_pictures: Default::default(),
         sticker_fetches: HashSet::new(),
         sticker_downloads: HashSet::new(),
         recent_hashes: HashMap::new(),
@@ -771,6 +774,8 @@ struct Worker {
     older_warned: HashSet<ChatId>,
     /// Deferred profile-picture requests and retry counts.
     pending_avatars: HashMap<(String, bool), u32>,
+    /// Followed channels' pictures, which no profile-picture lookup finds.
+    channel_pictures: channel_pictures::ChannelPictures,
     /// Active recent-sticker downloads by hash.
     sticker_fetches: HashSet<String>,
     /// Active chat-sticker downloads by chat and message id.
@@ -2237,6 +2242,15 @@ impl Worker {
                         // chat's app state, so read it from the server.
                         match followed.newsletter().list_subscribed().await {
                             Ok(list) => {
+                                let pictures = list
+                                    .iter()
+                                    .map(|channel| {
+                                        (
+                                            channel.jid.to_string(),
+                                            super::ChannelPicture::of(channel),
+                                        )
+                                    })
+                                    .collect();
                                 let mutes = list
                                     .into_iter()
                                     .filter_map(|channel| {
@@ -2244,8 +2258,12 @@ impl Worker {
                                     })
                                     .collect();
                                 let _ = channels.send(Command::ChannelMutes(mutes));
+                                let _ = channels.send(Command::ChannelPictures(Some(pictures)));
                             }
-                            Err(error) => log::debug!("followed channels not listed: {error}"),
+                            Err(error) => {
+                                log::debug!("followed channels not listed: {error}");
+                                let _ = channels.send(Command::ChannelPictures(None));
+                            }
                         }
                     });
                     tokio::spawn(async move {
@@ -5260,6 +5278,7 @@ impl Worker {
                     }
                 }
             }
+            Command::ChannelPictures(list) => self.channel_pictures_listed(list),
             Command::SetFavorite(chat, favorite) => self.set_favorite_chat(&chat, favorite),
             Command::FavoritesSent {
                 through,
@@ -6550,6 +6569,10 @@ impl Worker {
             self.emit(Event::Avatar { id, full, path });
             return;
         }
+        if id.ends_with("@newsletter") {
+            self.fetch_channel_avatar(id, full);
+            return;
+        }
         // Try both of our ids for our profile picture.
         let candidates: Vec<Jid> = if self.is_me(&id) || id == self.me() {
             [self.me_pn.clone(), self.me_lid.clone()]
@@ -6604,25 +6627,7 @@ impl Worker {
                         Ok(None)
                     };
                 };
-                let url = picture.url;
-                let bytes = tokio::task::spawn_blocking(move || {
-                    crate::proxy::agent()
-                        .get(&url)
-                        .call()
-                        .and_then(|mut response| response.body_mut().read_to_vec())
-                        .map_err(|error| error.to_string())
-                })
-                .await
-                .map_err(|error| error.to_string())??;
-                if let Some(parent) = path.parent() {
-                    tokio::fs::create_dir_all(parent)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                }
-                tokio::fs::write(&path, &bytes)
-                    .await
-                    .map_err(|error| error.to_string())?;
-                Ok::<Option<PathBuf>, String>(Some(path.clone()))
+                download_avatar(picture.url, path).await.map(Some)
             }
             .await;
             match fetched {
@@ -7466,6 +7471,12 @@ fn outgoing_text(
 
 /// Extracts quote and mention context from a message.
 fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
+    if let Some(inner) = bot_replies::invoked(base) {
+        return context_of(inner);
+    }
+    if let Some(reply) = base.rich_response_message.as_option() {
+        return reply.context_info.as_option();
+    }
     if let Some(text) = base.extended_text_message.as_option() {
         return text.context_info.as_option();
     }
@@ -7670,6 +7681,9 @@ fn classify(message: &wa::Message) -> Option<Content> {
 
 /// [`classify`] for a message with its wrappers already removed.
 fn classify_base(base: &wa::Message) -> Option<Content> {
+    if let Some(inner) = bot_replies::invoked(base) {
+        return classify_base(inner);
+    }
     if let Some(text) = base.text_content() {
         let preview = base.extended_text_message.as_option().and_then(|extended| {
             let title = non_empty(&extended.title);
@@ -7815,6 +7829,9 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
             once: None,
         });
     }
+    if let Some(reply) = base.rich_response_message.as_option() {
+        return Some(bot_replies::content(reply));
+    }
     let unsupported = |what: &str| {
         Some(Content::Unsupported {
             what: what.to_owned(),
@@ -7862,16 +7879,27 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
             .fast_ratchet_key_sender_key_distribution_message
             .is_set()
         || base.sticker_sync_rmr_message.is_set()
-        || base.message_context_info.is_set()
         || base.device_sent_message.is_set()
         || base.secret_encrypted_message.is_set()
         || base.message_history_bundle.is_set()
         || base.message_history_notice.is_set()
         || base.bot_invoke_message.is_set()
+        || base.group_root_key_share.is_set()
+        || base.root_secret_distribute_message.is_set()
+        || base.poll_add_option_message.is_set()
+        || base.bot_task_message.is_set()
+        || base.status_notification_message.is_set()
     {
         return None;
     }
-    if *base == wa::Message::default() {
+    // Most messages carry `message_context_info` (secrets, bot metadata), so
+    // it marks nothing on its own: content beside it that is not recognised
+    // above is shown as unsupported rather than dropped.
+    let without_metadata = wa::Message {
+        message_context_info: MessageField::none(),
+        ..base.clone()
+    };
+    if without_metadata == wa::Message::default() {
         return None;
     }
     unsupported("message")
@@ -7894,6 +7922,28 @@ fn encode_jpeg(image: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, Stri
         .encode_image(&image.to_rgb8())
         .map_err(|error| error.to_string())?;
     Ok(bytes)
+}
+
+/// Downloads a picture through the proxy settings into the avatar cache.
+async fn download_avatar(url: String, path: PathBuf) -> Result<PathBuf, String> {
+    let bytes = tokio::task::spawn_blocking(move || {
+        crate::proxy::agent()
+            .get(&url)
+            .call()
+            .and_then(|mut response| response.body_mut().read_to_vec())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(path)
 }
 
 /// Crops a picture file to a centred square and encodes it at the size
@@ -11059,6 +11109,7 @@ mod receipt_tests {
             pending_older: HashMap::new(),
             older_warned: HashSet::new(),
             pending_avatars: HashMap::new(),
+            channel_pictures: Default::default(),
             sticker_fetches: HashSet::new(),
             sticker_downloads: HashSet::new(),
             recent_hashes: HashMap::new(),
