@@ -3591,6 +3591,7 @@ mod media_path_tests {
                 Content::PhoneOnly {
                     view_once: true,
                     live_location: false,
+                    once: None,
                 },
             ),
             (chat, "plain", 15, Content::text("nothing to open. really")),

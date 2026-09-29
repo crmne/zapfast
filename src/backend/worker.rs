@@ -12066,7 +12066,20 @@ mod receipt_tests {
         assert!(changes(&events).is_empty(), "text without a link");
         worker.send_page(&PEER.to_owned(), None);
         worker.emit_message(PEER, "photo");
-        worker.store_reaction(PEER, "photo", PEER, false, "❤️");
+        worker.store_plain_reaction(
+            PEER,
+            PEER,
+            false,
+            &wa::message::ReactionMessage {
+                key: MessageField::some(wa::MessageKey {
+                    id: Some("photo".into()),
+                    ..Default::default()
+                }),
+                text: Some("❤️".into()),
+                ..Default::default()
+            },
+            102,
+        );
         assert!(changes(&events).is_empty(), "a page, a receipt, a reaction");
         // A document imported from the phone's history.
         let history = parse_conversation(wa::Conversation {

@@ -2378,6 +2378,7 @@ mod tests {
                 Content::PhoneOnly {
                     view_once: true,
                     live_location: false,
+                    once: None,
                 },
             ),
             row("plain", 15, Content::text("no link here")),
