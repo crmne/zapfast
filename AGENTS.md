@@ -162,6 +162,13 @@ protocol. These notes are for coding agents and new contributors.
   Selection galleys share the message viewport's horizontal bounds while
   retaining their glyph positions: otherwise egui considers short incoming
   and outgoing messages separate columns and will not sweep across them.
+  Messages themselves are swept by a drag that starts on the strip beside
+  the bubbles (which senses drags beneath the text), or anywhere on a row
+  while selecting (the row's pick target sits above the text). `App::sweep`
+  keeps the anchor and the selection it started from; the view maps the
+  pointer's y to the last laid-out row above it each frame and the app
+  selects by message order, so rows the list skipped during edge scroll
+  count. Releasing the button ends the sweep, whichever widget held it.
 - Group names and members come from `groups().get_metadata`, asked one
   turn at a time (two per 5 s tick, `pump_group_info`): dozens of unnamed
   groups arrive with history sync and a burst of queries hits the
@@ -294,9 +301,9 @@ egui pitfalls this code has already hit:
   double-click on either replies; the body keeps it for selecting the word.
 - `Popup::context_menu` opens on the *response's* right-click, which those
   inner widgets take for themselves; the bubble reads the right-click from
-  the input over the part of its rect inside the transcript viewport (the chat
-  header shares its layer) and opens `Popup::menu` itself, so the menu
-  comes up anywhere on the message.
+  the input over its row (the bubble and the strip beside it) inside the
+  transcript viewport (the chat header shares its layer) and opens
+  `Popup::menu` itself, so the menu comes up anywhere on the message.
 
 ## Branches
 

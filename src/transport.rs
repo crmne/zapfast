@@ -255,7 +255,12 @@ pub async fn websocket(
         .get_or_init(default_tls_connector)
         .wrap(host, stream)
         .await
-        .map_err(|error| anyhow::anyhow!("TLS {via} failed: {error}"))?;
+        .map_err(|error| {
+            // The library's own line about this is reduced to a category, so
+            // the TLS error itself is kept here, under our own target.
+            log::warn!("TLS {via} failed: {error}");
+            anyhow::anyhow!("TLS {via} failed: {error}")
+        })?;
     let (ws, _) = tokio_websockets::ClientBuilder::from_uri(uri)
         .add_header(
             http::header::ORIGIN,
@@ -263,7 +268,10 @@ pub async fn websocket(
         )?
         .connect_on(stream)
         .await
-        .map_err(|error| anyhow::anyhow!("WebSocket connect {via} failed: {error}"))?;
+        .map_err(|error| {
+            log::warn!("WebSocket connect {via} failed: {error}");
+            anyhow::anyhow!("WebSocket connect {via} failed: {error}")
+        })?;
     Ok(from_websocket(ws))
 }
 

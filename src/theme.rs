@@ -552,6 +552,8 @@ fastframe_icons::icons! {
         CircleX => lucide "circle-x",
         Clock => lucide "clock",
         Contact => "contact",
+        DeliveryTick => "delivery-tick",
+        DeliveryTicks => "delivery-ticks",
         Copy => lucide "copy",
         Download => "download",
         Timer => "timer",

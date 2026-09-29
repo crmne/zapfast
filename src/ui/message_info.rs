@@ -166,7 +166,7 @@ fn direct(app: &App, ui: &mut egui::Ui, message: &Message) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-            theme::paint_icon(ui, Icon::CheckCheck, rect, 18.0, color);
+            theme::paint_icon(ui, Icon::DeliveryTicks, rect, 18.0, color);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 theme::text(ui, label, theme::medium(14.0), palette.text);
@@ -263,7 +263,7 @@ fn section(
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-        theme::paint_icon(ui, Icon::CheckCheck, rect, 16.0, color);
+        theme::paint_icon(ui, Icon::DeliveryTicks, rect, 16.0, color);
         theme::text(ui, title, theme::semibold(14.0), palette.text);
     });
     if recipients.is_empty() {

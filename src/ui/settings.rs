@@ -202,10 +202,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .id_salt("settings")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            Frame::new()
-                .inner_margin(Margin::symmetric(32, 24))
-                .show(ui, |ui| {
-                    ui.set_max_width(ui.available_width().min(640.0));
+            // The column keeps a readable width and sits in the middle of a
+            // wide window instead of leaving the space on its right empty.
+            let full = ui.available_width();
+            let width = (full - 2.0 * SIDE_MARGIN).clamp(0.0, COLUMN_WIDTH);
+            let column = Rect::from_min_size(
+                ui.cursor().min + vec2((full - width) / 2.0, TOP_MARGIN),
+                vec2(width, ui.available_height()),
+            );
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(column_id(), column.x_range()));
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(column)
+                    .layout(Layout::top_down(Align::Min)),
+                |ui| {
+                    ui.set_width(width);
                     ui.horizontal(|ui| {
                         if theme::icon_button(
                             ui,
@@ -244,8 +256,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             palette.secondary,
                         );
                     }
-                });
+                },
+            );
+            ui.add_space(TOP_MARGIN);
         });
+}
+
+/// Widest the settings column grows.
+const COLUMN_WIDTH: f32 = 640.0;
+/// Least space beside the settings column.
+const SIDE_MARGIN: f32 = 32.0;
+/// Space above and below the settings column.
+const TOP_MARGIN: f32 = 24.0;
+
+/// Where the settings column was laid out, for layout tests.
+pub fn column_id() -> egui::Id {
+    egui::Id::new("settings-column")
 }
 
 /// The search field above the settings. Ctrl+F focuses it.
@@ -689,7 +715,7 @@ fn sections(app: &App) -> Vec<Section> {
             )
             .clicked()
             {
-                app.actions.push(Action::OpenFile(log));
+                app.actions.push(Action::OpenLog(log));
             }
         },
     );

@@ -284,15 +284,33 @@ pub fn paint_disappearing_badge(ui: &Ui, palette: &Palette, avatar: Rect) {
 
 /// Outgoing-message status ticks.
 pub fn ticks(ui: &Ui, palette: &Palette, rect: Rect, status: Delivery) {
-    let (icon, color) = match status {
-        Delivery::None => return,
-        Delivery::Pending => (Icon::Clock, palette.secondary),
-        Delivery::Sent => (Icon::Check, palette.secondary),
-        Delivery::Delivered => (Icon::CheckCheck, palette.secondary),
-        Delivery::Read | Delivery::Played => (Icon::CheckCheck, palette.read),
-        Delivery::Failed => (Icon::CircleAlert, palette.danger),
+    ticks_in(ui, palette, rect, status, palette.secondary);
+}
+
+/// Status ticks with `plain` for the states that are not read or failed,
+/// for ticks drawn over a picture.
+pub fn ticks_in(ui: &Ui, palette: &Palette, rect: Rect, status: Delivery, plain: Color32) {
+    let Some(icon) = tick_icon(status) else {
+        return;
+    };
+    let color = match status {
+        Delivery::Read | Delivery::Played => palette.read,
+        Delivery::Failed => palette.danger,
+        _ => plain,
     };
     theme::paint_icon(ui, icon, rect, rect.height(), color);
+}
+
+/// The glyph for a delivery state: our own ticks, both as tall as each
+/// other, as people know them from their phone.
+pub fn tick_icon(status: Delivery) -> Option<Icon> {
+    Some(match status {
+        Delivery::None => return None,
+        Delivery::Pending => Icon::Clock,
+        Delivery::Sent => Icon::DeliveryTick,
+        Delivery::Delivered | Delivery::Read | Delivery::Played => Icon::DeliveryTicks,
+        Delivery::Failed => Icon::CircleAlert,
+    })
 }
 
 /// Chat-row unread badge.
@@ -1038,6 +1056,34 @@ pub fn dotted_chip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sent shows one tick and delivered or read two, drawn from our own
+    /// glyphs, where the second tick reaches as high as the first (#249).
+    #[test]
+    fn delivery_ticks_are_our_own_equal_height_glyphs() {
+        assert_eq!(tick_icon(Delivery::Sent), Some(Icon::DeliveryTick));
+        for status in [Delivery::Delivered, Delivery::Read, Delivery::Played] {
+            assert_eq!(tick_icon(status), Some(Icon::DeliveryTicks));
+        }
+        assert_eq!(tick_icon(Delivery::None), None);
+        let svg = include_str!("../../assets/icons/delivery-ticks.svg");
+        let tops: Vec<(f32, f32)> = svg
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("<path d=\"M"))
+            .map(|path| {
+                let numbers: Vec<f32> = path
+                    .split(['"', ' '])
+                    .take(6)
+                    .map(|number| number.parse().expect("a coordinate"))
+                    .collect();
+                // The long arm ends at the path's last point, its top.
+                (numbers[4], numbers[5])
+            })
+            .collect();
+        assert_eq!(tops.len(), 2, "two ticks");
+        assert_eq!(tops[0].1, tops[1].1, "both ticks are as tall: {tops:?}");
+        assert!(tops[1].0 > tops[0].0, "the second tick sits to the right");
+    }
 
     /// A raised frame lies on its edge: one point higher, under its fill, in
     /// the palette's raised-edge colour, with the bubble's lift shadow.
