@@ -1736,12 +1736,18 @@ impl App {
             .count()
     }
 
-    pub fn unread_total(&self) -> u32 {
-        self.chats
+    /// The taskbar count: unarchived, unmuted, unlocked chats that look
+    /// unread. WhatsApp counts chats here, not the messages inside them.
+    pub fn unread_chat_count(&self) -> u32 {
+        let now = crate::util::now();
+        let chats = self
+            .chats
             .iter()
-            .filter(|chat| !chat.archived && !chat.locked && !chat.muted(crate::util::now()))
-            .map(|chat| chat.unread)
-            .sum()
+            .filter(|chat| {
+                !chat.archived && !chat.locked && !chat.muted(now) && chat.looks_unread()
+            })
+            .count();
+        u32::try_from(chats).unwrap_or(u32::MAX)
     }
 
     /// Returns or requests a cached profile picture.
@@ -4840,16 +4846,16 @@ impl App {
         self.sync_badge();
     }
 
-    /// Mirrors the unread total onto the taskbar icon, where the desktop
+    /// Mirrors the unread chat count onto the taskbar icon, where the desktop
     /// reads it. The badge ignores repeats, so calling this each frame is cheap.
     fn sync_badge(&mut self) {
-        let count = self.unread_total();
+        let count = self.unread_chat_count();
         if let Some(badge) = &mut self.badge {
             badge.set(count);
         }
     }
 
-    /// The unread total for the Windows taskbar overlay, which the window
+    /// The unread chat count for the Windows taskbar overlay, which the window
     /// applies itself; `None` in demo and test runs.
     #[cfg(target_os = "windows")]
     pub fn taskbar_badge_count(&self) -> Option<u32> {
@@ -8581,8 +8587,26 @@ mod tests {
             .map(|chat| chat.name.as_str())
             .collect();
         assert_eq!(shown, ["Ada"], "the chip finds the chat marked by hand");
-        // Nothing is pending, so the app badge stays at zero.
-        assert_eq!(app.unread_total(), 0);
+        // The app badge counts it too, as WhatsApp does.
+        assert_eq!(app.unread_chat_count(), 1);
+    }
+
+    #[test]
+    fn the_app_badge_counts_unread_chats_not_messages() {
+        let mut app = app();
+        let mut busy = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        busy.unread = 7;
+        let mut quiet = Chat::new("2@s.whatsapp.net".into(), "Grace".into());
+        quiet.unread = 1;
+        let mut archived = Chat::new("3@s.whatsapp.net".into(), "Old".into());
+        archived.archived = true;
+        archived.unread = 4;
+        let mut muted = Chat::new("4@s.whatsapp.net".into(), "Loud".into());
+        muted.muted_until = Some(i64::MAX);
+        muted.unread = 9;
+        let read = Chat::new("5@s.whatsapp.net".into(), "Done".into());
+        app.chats = vec![busy, quiet, archived, muted, read];
+        assert_eq!(app.unread_chat_count(), 2);
     }
 
     #[test]
@@ -8989,7 +9013,7 @@ mod tests {
         assert_eq!(names, vec!["Ada"]);
         app.search = "bob".into();
         assert!(app.visible_chats().is_empty());
-        assert_eq!(app.unread_total(), 3);
+        assert_eq!(app.unread_chat_count(), 1);
         assert_eq!(app.unread_chats(ChatFilter::All), 1);
 
         // Typing the code reveals the entry; opening the folder shows only
