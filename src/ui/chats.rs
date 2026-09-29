@@ -1,6 +1,6 @@
 //! The left panel: the chat list.
 
-use egui::{Align, Frame, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
+use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
@@ -12,6 +12,7 @@ use super::labels;
 use super::widgets;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    search_keyboard(app, ui);
     let palette = app.palette;
     let panel = egui::Panel::left("chats")
         .resizable(true)
@@ -39,6 +40,61 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         rect.y_range(),
         egui::Stroke::new(1.0, palette.outline),
     );
+}
+
+/// Walks matching chats while the global search field keeps keyboard focus.
+/// Enter leaves search and opens the reached chat ready for typing.
+fn search_keyboard(app: &mut App, ui: &egui::Ui) {
+    let field = egui::Id::new("chat-search");
+    if app.search.trim().is_empty()
+        || app.locked_folder_open()
+        || app.secret_code_matched()
+        || !ui.memory(|memory| memory.has_focus(field))
+    {
+        return;
+    }
+    let (down, up, enter) = ui.input_mut(|input| {
+        (
+            super::keys::take_plain(input, Key::ArrowDown),
+            super::keys::take_plain(input, Key::ArrowUp),
+            super::keys::take_plain(input, Key::Enter),
+        )
+    });
+    if !down && !up && !enter {
+        return;
+    }
+    let chats: Vec<_> = app
+        .visible_chats()
+        .into_iter()
+        .map(|chat| chat.id.clone())
+        .collect();
+    if chats.is_empty() {
+        app.search_selected = None;
+        return;
+    }
+    let before = app.search_selected.clone();
+    let mut index = before
+        .as_ref()
+        .and_then(|selected| chats.iter().position(|chat| chat == selected));
+    if down {
+        index = Some(index.map_or(0, |index| (index + 1).min(chats.len() - 1)));
+    }
+    if up {
+        index = index.map(|index| index.saturating_sub(1));
+    }
+    app.search_selected = index.map(|index| chats[index].clone());
+    if app.search_selected != before {
+        app.scroll_chat_into_view.clone_from(&app.search_selected);
+    }
+    if enter {
+        let chat = app
+            .search_selected
+            .clone()
+            .unwrap_or_else(|| chats[0].clone());
+        ui.memory_mut(|memory| memory.surrender_focus(field));
+        app.actions.push(Action::Search(String::new()));
+        app.actions.push(Action::OpenChat(chat));
+    }
 }
 
 fn header(app: &mut App, ui: &mut egui::Ui) {
@@ -492,7 +548,15 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         scroll_area = scroll_area.vertical_scroll_offset(offset);
         app.scroll_chat_into_view = None;
     }
-    scroll_area.show_rows(ui, row_height, total, |ui, range| {
+    // A scroll gesture that began over the list stays with it (#274).
+    let carried = app.scroll_route.take(crate::app::ScrollPane::Chats);
+    let output = scroll_area.show_rows(ui, row_height, total, |ui, range| {
+        if carried != 0.0 {
+            ui.scroll_with_delta_animation(
+                vec2(0.0, carried),
+                egui::style::ScrollAnimation::none(),
+            );
+        }
         for index in range {
             let chat = &chats[index];
             // Key by chat so an open menu survives list reordering.
@@ -511,6 +575,17 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+    app.scroll_route
+        .place(crate::app::ScrollPane::Chats, output.inner_rect);
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(list_offset_id(), output.state.offset.y));
+}
+
+/// Where the chat list's scroll offset is kept for tests.
+#[cfg(test)]
+pub(crate) fn list_offset_id() -> egui::Id {
+    egui::Id::new("chat-list-offset")
 }
 
 /// The row the secret code reveals: the only thing the search then shows.
@@ -834,7 +909,14 @@ fn person_row(
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
-    let selected = app.open_chat.as_deref() == Some(chat.id.as_str());
+    // While searching, the result reached with the arrows is the selection;
+    // before any arrow press it stays the open chat, as a click leaves it.
+    let selected = app
+        .search_selected
+        .as_ref()
+        .filter(|_| !app.search.trim().is_empty())
+        .or(app.open_chat.as_ref())
+        .is_some_and(|selected| *selected == chat.id);
     let now = crate::util::now();
     let muted = chat.muted(now);
     let (rect, response) = ui.allocate_exact_size(
@@ -1214,8 +1296,15 @@ fn compact_list(app: &mut App, ui: &mut egui::Ui) {
         scroll_area = scroll_area.vertical_scroll_offset(offset);
         app.scroll_chat_into_view = None;
     }
+    let carried = app.scroll_route.take(crate::app::ScrollPane::Chats);
     // Only the avatars on screen are laid out, however many chats there are.
-    scroll_area.show_rows(ui, COMPACT_CELL, chats.len(), |ui, range| {
+    let output = scroll_area.show_rows(ui, COMPACT_CELL, chats.len(), |ui, range| {
+        if carried != 0.0 {
+            ui.scroll_with_delta_animation(
+                vec2(0.0, carried),
+                egui::style::ScrollAnimation::none(),
+            );
+        }
         for chat in &chats[range] {
             let response = ui
                 .push_id(("chat", &chat.id), |ui| compact_row(app, ui, chat))
@@ -1225,6 +1314,8 @@ fn compact_list(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+    app.scroll_route
+        .place(crate::app::ScrollPane::Chats, output.inner_rect);
 }
 
 /// The collapsed form of the entry the secret code reveals.

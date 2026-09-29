@@ -64,12 +64,15 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   new messages. Like on the phone, you can pin up to three chats. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
   The filters stay on one row and scroll horizontally in narrow sidebars.
-  Unnamed groups use a shared participant summary for their title and subtitle;
-  repeated first names appear as `Andrea ×3`, with your own entry shown as `You`.
+  Unnamed groups use a shared participant summary for their title and subtitle.
+  It names each saved contact by its whole first name as saved on the phone (the
+  full name when none was saved), repeated names appear as `Andrea ×3`, and your
+  own entry is shown as `You`.
   Incomplete group metadata preserves known names and retries with backoff;
   an empty cached subject remains eligible for recovery.
   Typing indicators show other participants, excluding your own linked devices.
   Newsletter channels are read-only; publishing channel posts is not supported.
+  Channels show their own pictures, read from the channel's details on WhatsApp.
 - **Account privacy.** Settings, Privacy shows who can see your last seen,
   online status, profile photo, and About, who can add you to groups, your
   account read receipts, and whether unknown callers are silenced, and
@@ -146,6 +149,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   original message is available and they have not been edited, without relinking.
   Other embedded attachments and templates containing only a
   reference to server-side text still need the phone.
+  Meta AI replies show as text, with code in monospace blocks and tables as
+  rows; their images, maps, and other media parts still need the phone, and a
+  reply made only of those shows as an unsupported message.
 - **Errors stay readable.** Confirmations such as "Copied" fade after a few
   seconds. Error messages stay above the composer until you dismiss them, and
   a button copies their text for a bug report. A repeated error replaces its
@@ -153,7 +159,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Send attachments with captions.** Paste a picture, drop files, or choose
   **Send files** from the plus menu. They stay in the composer until you send them or press Escape.
   Pasting a picture uses its image data without adding the source URL or HTML
-  to your caption. Text-only clipboard contents still paste as text.
+  to your caption. Files copied in Finder, Explorer, or a Linux file manager
+  paste as the files themselves, not their icons. Text-only clipboard contents
+  still paste as text.
   MP3, M4A, AAC, and OGG files go as audio messages; other audio, such as
   WAV or FLAC, goes as a document so the recipient gets the original file.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
@@ -235,7 +243,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Double-click to switch between fitting the window and the original size.
   Copy the image to your clipboard via the copy button in the header, the
   right-click menu (**Copy image**), or
-  Ctrl+C (Cmd+C on macOS). Click a video to play it in its message, with
+  Ctrl+C (Cmd+C on macOS); a downloaded image's message menu has **Copy image**
+  too, without opening the preview. Click a video to play it in its message, with
   sound, a seek bar, and a mute switch; round video messages play inside their
   circle with a progress ring, like on the phone. A video that is not
   downloaded yet downloads first and then plays. Videos in codecs other than
@@ -249,7 +258,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   phone to upload it again. Downloads stop after two minutes with an inline
   retry error if they cannot finish; the menu disables Download while one is running.
   Cached attachment filenames use extensions of at most 16 ASCII letters, digits,
-  or hyphens; invalid or empty extensions are saved as `.bin`.
+  or hyphens; invalid or empty extensions are saved as `.bin`. A photo, video,
+  or voice message sent to be viewed once shows as a view-once placeholder:
+  WhatsApp opens it only on your phone, as it does in WhatsApp Web.
 - **Polls.** Choose **Create poll** from the plus menu beside the message
   field to create a poll with 2–12 answers. Turn off **Allow multiple
   answers** for a single-choice poll.
@@ -359,13 +370,14 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   gives that chat its own sound for every message in it, mentions included,
   stored in the encrypted archive.
 - **Unread count on the taskbar.** Linux desktops that implement the Unity
-  Launcher API show the unread total on the app icon; KDE Plasma needs **Show
-  badges** enabled in Task Manager. On Windows, ZapFast overlays a compact count
-  on its taskbar button while the window is open, showing `99+` above 99. Windows
-  must be using its regular taskbar icon size for overlays to appear. The count
-  covers unread messages in unarchived, unmuted, and unlocked
-  chats, not toasts kept in Windows notification history. Reading messages
-  lowers the count, and zero removes the overlay.
+  Launcher API show the number of unread chats on the app icon; KDE Plasma needs
+  **Show badges** enabled in Task Manager. On Windows, ZapFast overlays a compact
+  count on its taskbar button while the window is open, showing `99+` above 99.
+  Windows must be using its regular taskbar icon size for overlays to appear. As
+  in WhatsApp, the count is of chats, not of the messages in them or of toasts
+  kept in Windows notification history: archived, muted, and locked chats are
+  left out, and a chat marked unread counts. Reading a chat lowers the count,
+  and zero removes the overlay.
 - **Update notices.** ZapFast checks GitHub once a day and shows a download
   link when a newer release is available. You can turn this off in Settings.
 - **Themes.** Light, dark, follow the system, or a local JSON palette. Native
@@ -378,6 +390,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
   `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` or `Ctrl+Shift+F` searches your chats,
+  where `↑`/`↓` selects a matching chat and Enter opens it ready for typing;
   `Ctrl+F` searches the open chat as in WhatsApp (`↑`/`↓` walk the results
   and Enter jumps to one; with no chat open it searches your chats, and in
   Settings it searches the settings), `Alt+↑/↓` or WhatsApp's
@@ -599,7 +612,7 @@ Use `--demo-page locked-prompt`, `locked-setup`, `new-chat`, `unnamed-group`,
 or `react-picker` for the new dialogs, shared group summaries, and reactions.
 `group-info`, `group-info-rename`, `group-info-saving`, and `group-info-locked`
 show a group's info with its name and photo editable, being renamed, saving,
-and locked to admins.
+and locked to admins. `meta-ai` shows a Meta AI reply with code and a table.
 
 The protocol dependency includes the upstream WhatsApp Business pairing fix.
 Device-store migration waits until an updated window is acknowledged, preserving
@@ -677,7 +690,7 @@ from the environment and honors `NO_PROXY`.
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
 | Wallpaper image | `~/.local/state/zapfast/wallpaper.jpg` | Copy of the chosen picture, or `.png`, `.webp`, `.gif`; deleted by **Remove image** |
-| Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
+| Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more; **Settings > Files > Log > Open** shows it in its folder when no app opens it |
 
 macOS and Windows use the standard platform directories selected by the
 `directories` crate. On first start, ZapFast moves settings, the linked session,

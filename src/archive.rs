@@ -158,6 +158,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // NULL until the group's metadata says whether only admins edit its info.
     ("chats", "info_locked", "INTEGER"),
     ("chats", "group_admin", "INTEGER NOT NULL DEFAULT 0"),
+    ("contacts", "first_name", "TEXT"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
@@ -1212,6 +1213,16 @@ impl Archive {
         rows.collect()
     }
 
+    /// Photo, video, and audio messages with their raw protobuf.
+    pub fn media_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
+             AND json_extract(content, '$.kind') IN ('image', 'video', 'audio')",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
     /// Interactive messages eligible for a derived presentation upgrade.
     /// Deleted and edited rows are left intact; callers preserve local media paths.
     pub fn interactive_placeholders(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
@@ -1612,11 +1623,18 @@ impl Archive {
 
     pub fn upsert_contact(&self, contact: &Contact) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO contacts (id, full_name, push_name) VALUES (?1, ?2, ?3)
+            "INSERT INTO contacts (id, full_name, first_name, push_name) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(id) DO UPDATE SET
+                first_name = CASE WHEN excluded.full_name IS NULL THEN first_name
+                    ELSE excluded.first_name END,
                 full_name = COALESCE(excluded.full_name, full_name),
                 push_name = COALESCE(excluded.push_name, push_name)",
-            params![contact.id, contact.full_name, contact.push_name],
+            params![
+                contact.id,
+                contact.full_name,
+                contact.first_name,
+                contact.push_name
+            ],
         )?;
         Ok(())
     }
@@ -1625,13 +1643,14 @@ impl Archive {
     pub fn contact(&self, id: &str) -> Result<Option<Contact>> {
         self.connection
             .query_row(
-                "SELECT id, full_name, push_name FROM contacts WHERE id = ?1",
+                "SELECT id, full_name, first_name, push_name FROM contacts WHERE id = ?1",
                 params![id],
                 |row| {
                     Ok(Contact {
                         id: row.get(0)?,
                         full_name: row.get(1)?,
-                        push_name: row.get(2)?,
+                        first_name: row.get(2)?,
+                        push_name: row.get(3)?,
                     })
                 },
             )
@@ -1641,12 +1660,13 @@ impl Archive {
     pub fn contacts(&self) -> Result<Vec<Contact>> {
         let mut statement = self
             .connection
-            .prepare("SELECT id, full_name, push_name FROM contacts")?;
+            .prepare("SELECT id, full_name, first_name, push_name FROM contacts")?;
         let rows = statement.query_map([], |row| {
             Ok(Contact {
                 id: row.get(0)?,
                 full_name: row.get(1)?,
-                push_name: row.get(2)?,
+                first_name: row.get(2)?,
+                push_name: row.get(3)?,
             })
         })?;
         rows.collect()
@@ -2664,6 +2684,7 @@ pub(crate) mod tests {
             .upsert_contact(&Contact {
                 id: id.into(),
                 full_name: None,
+                first_name: None,
                 push_name: Some("~slavic".into()),
             })
             .expect("stores");
@@ -2671,6 +2692,7 @@ pub(crate) mod tests {
             .upsert_contact(&Contact {
                 id: id.into(),
                 full_name: Some("Slavic".into()),
+                first_name: None,
                 push_name: None,
             })
             .expect("renames");
@@ -2682,6 +2704,45 @@ pub(crate) mod tests {
                 .contact("nobody@s.whatsapp.net")
                 .expect("reads")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn a_first_name_travels_with_its_saved_name() {
+        let archive = Archive::in_memory().expect("opens");
+        let id = "491700000002@s.whatsapp.net";
+        let saved = |full: Option<&str>, first: Option<&str>, push: Option<&str>| Contact {
+            id: id.into(),
+            full_name: full.map(Into::into),
+            first_name: first.map(Into::into),
+            push_name: push.map(Into::into),
+        };
+        let first_name = || {
+            archive
+                .contact(id)
+                .expect("reads")
+                .expect("exists")
+                .first_name
+        };
+        archive
+            .upsert_contact(&saved(Some("My Dih"), Some("My Dih"), None))
+            .expect("stores");
+        assert_eq!(first_name().as_deref(), Some("My Dih"));
+        archive
+            .upsert_contact(&saved(None, None, Some("dih")))
+            .expect("push name");
+        assert_eq!(
+            first_name().as_deref(),
+            Some("My Dih"),
+            "a push name leaves the saved names alone"
+        );
+        archive
+            .upsert_contact(&saved(Some("Dih"), None, None))
+            .expect("renames");
+        assert_eq!(
+            first_name(),
+            None,
+            "a rename without a first name drops the old one"
         );
     }
 

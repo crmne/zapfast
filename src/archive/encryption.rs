@@ -43,9 +43,12 @@ pub(super) fn key_for(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
     let store = apple_native_keyring_store::keychain::Store::new();
     #[cfg(windows)]
     let store = windows_native_keyring_store::Store::new();
-    let store = store.context("Unlock your OS keyring and restart ZapFast")?;
+    let store = store
+        .map_err(keyring_error)
+        .context("Unlock your OS keyring and restart ZapFast")?;
     let entry = store
         .build("rocks.zapfast.ZapFast", &identity, None)
+        .map_err(keyring_error)
         .context("The OS keyring could not open ZapFast's archive key")?;
     key_from_entry(path, &entry)
 }
@@ -71,11 +74,13 @@ fn key_from_entry(path: &Path, entry: &keyring_core::Entry) -> Result<Zeroizing<
             getrandom::fill(key.as_mut()).context("Could not generate an archive key")?;
             entry
                 .set_secret(key.as_ref())
+                .map_err(keyring_error)
                 .context("Could not save the archive key in the OS keyring")?;
             // Read back before touching the only copy of the message history.
             let saved = Zeroizing::new(
                 entry
                     .get_secret()
+                    .map_err(keyring_error)
                     .context("Could not verify the saved archive key")?,
             );
             ensure!(
@@ -84,7 +89,33 @@ fn key_from_entry(path: &Path, entry: &keyring_core::Entry) -> Result<Zeroizing<
             );
             Ok(key)
         }
-        Err(error) => Err(error).context("Unlock your OS keyring and restart ZapFast"),
+        Err(error) => {
+            Err(keyring_error(error)).context("Unlock your OS keyring and restart ZapFast")
+        }
+    }
+}
+
+/// How the Windows store names `ERROR_NOT_ENOUGH_MEMORY`, which `CredWriteW`
+/// returns when Credential Manager holds as many credentials as it can take.
+/// The store keeps its error type private, so its text is what can be matched.
+const WINDOWS_CREDENTIALS_FULL: &str = "Windows error code 8";
+
+/// A keyring error as one message.
+///
+/// keyring-core's text already includes the error underneath and also reports
+/// it as the source, so a chain printed with `{:#}` repeated it ("Platform
+/// failure: Windows error code 8: Windows error code 8"). A full Credential
+/// Manager is also named for what it is, with what to do about it.
+fn keyring_error(error: keyring_core::Error) -> anyhow::Error {
+    match &error {
+        keyring_core::Error::PlatformFailure(inner)
+            if inner.to_string() == WINDOWS_CREDENTIALS_FULL =>
+        {
+            anyhow::anyhow!(
+                "Windows Credential Manager is full. Remove entries you no longer need in Credential Manager and try again"
+            )
+        }
+        _ => anyhow::anyhow!("{error}"),
     }
 }
 
@@ -260,6 +291,48 @@ mod tests {
                 .contains("Unlock")
         );
         assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    /// Stands in for the Windows store's private error type, whose text for
+    /// code 8 is "Windows error code 8".
+    #[derive(Debug)]
+    struct WindowsCode(u32);
+
+    impl std::fmt::Display for WindowsCode {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Windows error code {}", self.0)
+        }
+    }
+
+    impl std::error::Error for WindowsCode {}
+
+    fn saving(error: keyring_core::Error) -> String {
+        let error: Result<()> =
+            Err(keyring_error(error)).context("Could not save the archive key in the OS keyring");
+        format!("{:#}", error.unwrap_err())
+    }
+
+    #[test]
+    fn a_full_credential_manager_says_what_to_do() {
+        assert_eq!(
+            saving(keyring_core::Error::PlatformFailure(Box::new(WindowsCode(
+                8
+            )))),
+            "Could not save the archive key in the OS keyring: Windows Credential Manager is full. Remove entries you no longer need in Credential Manager and try again"
+        );
+        // Any other platform failure is reported once, as the keyring put it.
+        assert_eq!(
+            saving(keyring_core::Error::PlatformFailure(Box::new(WindowsCode(
+                5
+            )))),
+            "Could not save the archive key in the OS keyring: Platform failure: Windows error code 5"
+        );
+        assert_eq!(
+            saving(keyring_core::Error::NoStorageAccess(Box::new(WindowsCode(
+                8
+            )))),
+            "Could not save the archive key in the OS keyring: Couldn't access platform storage: Windows error code 8"
+        );
     }
 
     #[test]

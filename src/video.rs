@@ -226,12 +226,44 @@ fn sound_decoder(
 ) -> Option<rodio::Decoder<std::io::BufReader<std::fs::File>>> {
     let file = std::fs::File::open(path).ok()?;
     // Fails for a video without a sound track: the MP4's H.264 track has no
-    // codec symphonia knows, so there is nothing to pick.
-    let mut decoder = rodio::Decoder::try_from(file).ok()?;
-    if !from.is_zero() {
-        decoder.try_seek(from).ok()?;
+    // codec symphonia knows, so there is nothing to pick. It also fails for a
+    // sound track symphonia cannot decode, such as HE-AAC, which is worth
+    // naming when a video plays silently.
+    let mut decoder = match rodio::Decoder::try_from(file) {
+        Ok(decoder) => decoder,
+        Err(error) => {
+            if let Some(codec) = sound_codec(path) {
+                log::debug!("video plays without sound: its {codec} track did not open: {error}");
+            }
+            return None;
+        }
+    };
+    if !from.is_zero()
+        && let Err(error) = decoder.try_seek(from)
+    {
+        log::debug!("video plays without sound: its sound track did not seek: {error}");
+        return None;
     }
     Some(decoder)
+}
+
+/// The codec and profile of the MP4's sound track, such as "aac (SBR)", or
+/// `None` when there is no sound track.
+fn sound_codec(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    let mp4 = mp4::Mp4Reader::read_header(std::io::BufReader::new(file), size).ok()?;
+    let track = mp4
+        .tracks()
+        .values()
+        .find(|track| track.track_type().ok() == Some(mp4::TrackType::Audio))?;
+    let codec = track
+        .media_type()
+        .map_or_else(|_| "unknown".to_owned(), |media| media.to_string());
+    Some(match track.audio_profile() {
+        Ok(profile) => format!("{codec} ({profile})"),
+        Err(_) => codec,
+    })
 }
 
 struct Session {
@@ -1020,6 +1052,16 @@ mod tests {
         };
         assert_eq!(notice, Notice::Unsupported(path));
         assert!(player.message().is_none());
+    }
+
+    /// What a silent video's log line names about its sound track.
+    #[test]
+    fn the_sound_track_is_named_by_codec_and_profile() {
+        assert_eq!(sound_codec(Path::new(SAMPLE)).as_deref(), Some("aac (LC)"));
+        let directory = tempfile::tempdir().unwrap();
+        let unreadable = directory.path().join("clip.mp4");
+        std::fs::write(&unreadable, b"not a video").unwrap();
+        assert_eq!(sound_codec(&unreadable), None);
     }
 
     #[test]

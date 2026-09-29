@@ -372,13 +372,7 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
             return ("online".to_owned(), palette.accent);
         }
         if let Some(seen) = presence.last_seen {
-            return (
-                format!(
-                    "last seen {}",
-                    crate::util::chat_stamp(app.locale, seen).to_lowercase()
-                ),
-                palette.secondary,
-            );
+            return (crate::util::last_seen(app.locale, seen), palette.secondary);
         }
     }
     match chat.phone() {
@@ -1675,6 +1669,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // Taken up front: `names_or` below borrows the rest of `app` for the
     // whole function, so a pending scroll must come out before that.
     let pending_scroll = app.scroll_page.take();
+    // A scroll gesture that began over the messages stays with them when
+    // the pointer drifts off (#274), taken here for the same reason.
+    let carried = app.scroll_route.take(crate::app::ScrollPane::Messages);
     // An explicit jump (Ctrl+End, or the return-to-bottom button) must reach
     // the bottom even while a message bubble retains keyboard focus.
     let scroll_forced = std::mem::take(&mut app.scroll_to_bottom_forced);
@@ -1823,7 +1820,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .hover_pos()
                 .is_some_and(|pos| list.contains(pos))
     });
-    if view.anchor.is_some() || view.reaction.is_some() || wheel_over_list {
+    // The reaction bar holds the view still.
+    let carried = if view.reaction.is_some() {
+        0.0
+    } else {
+        carried
+    };
+    if view.anchor.is_some() || view.reaction.is_some() || wheel_over_list || carried != 0.0 {
         key_scroll = None;
     }
     let key_duration = ui.style().scroll_animation.duration.max;
@@ -1846,6 +1849,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             // releases stick-to-bottom; setting the offset directly does not.
             let viewport = ui.clip_rect();
             *app.selection_view.lock().unwrap_or_else(|p| p.into_inner()) = Some(viewport);
+            if carried != 0.0 {
+                ui.scroll_with_delta_animation(
+                    vec2(0.0, carried),
+                    egui::style::ScrollAnimation::none(),
+                );
+            }
             // Keep ordinary conversation-space clicks useful: after reading,
             // the next keystroke should go straight to the composer. Register
             // this before the message controls so text, links, media, and
@@ -1919,6 +1928,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         let near = before + height >= viewport.top() - reach
                             && before <= viewport.bottom() + reach;
                         if !lay_out_all && !near {
+                            // The body rect of a row that just left the
+                            // layout marks where it last was, not where it is.
+                            if known
+                                .is_some_and(|row| row.pass.is_some_and(|last| last + 1 == pass))
+                            {
+                                let id = bubble_id(&chat.id, &message.id).with("body");
+                                ui.ctx().data_mut(|data| data.remove::<Rect>(id));
+                            }
                             ui.add_space(height);
                             if known.is_none() {
                                 rows.insert(message.id.clone(), RowHeight { height, pass: None });
@@ -2024,7 +2041,21 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     egui::StrokeKind::Outside,
                                 );
                             }
-                            if response.clicked() {
+                            // While selecting, a click anywhere on the row picks
+                            // the message: its text, links and media, and the
+                            // strip beside it, not only the bubble's padding
+                            // (#241). Registered after the row, so it takes
+                            // those clicks; a drag still selects text.
+                            let row = Rect::from_x_y_ranges(
+                                ui.max_rect().x_range(),
+                                response.rect.y_range(),
+                            );
+                            let pick = ui.interact(
+                                row,
+                                bubble_id(&chat.id, &message.id).with("pick"),
+                                Sense::CLICK,
+                            );
+                            if response.clicked() || pick.clicked() {
                                 let shift = ui.input(|input| input.modifiers.shift);
                                 actions.push(if shift {
                                     Action::SelectRange(message.id.clone())
@@ -2126,6 +2157,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 ui.ctx().request_repaint();
             }
         });
+    app.scroll_route
+        .place(crate::app::ScrollPane::Messages, output.inner_rect);
     let at_bottom =
         output.state.offset.y + output.inner_rect.height() >= output.content_size.y - 24.0;
     ui.ctx().data_mut(|data| {
@@ -2725,12 +2758,19 @@ impl egui::plugin::Plugin for SelectionLeash {
         "zapfast-selection-leash"
     }
 
-    fn input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+    fn input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         let Some(view) = *self.view.lock().unwrap_or_else(|p| p.into_inner()) else {
             self.holding = false;
             return;
         };
-        let inside = |pos: &egui::Pos2| view.contains(*pos) && pos.x < view.right() - 16.0;
+        // The chat list's resize handle reaches into the view from its left
+        // edge, as the scroll bar does on the right. Leashing a drag of the
+        // handle pinned the pointer, and the list's edge, just inside the
+        // view: stuck at its widest, or growing while dragged left (#239).
+        let handle = ctx.global_style().interaction.resize_grab_radius_side;
+        let inside = |pos: &egui::Pos2| {
+            view.contains(*pos) && pos.x >= view.left() + handle && pos.x < view.right() - 16.0
+        };
         let mut gone = Vec::new();
         for (index, event) in input.events.iter_mut().enumerate() {
             match event {
@@ -3148,10 +3188,14 @@ fn bubble_frame(
 
     reaction_affordance(ui, view, message, &bubble, actions);
     // Read right-click from input because inner widgets own their responses.
-    // Count only the part of the bubble inside the transcript's viewport: the
-    // chat header shares this layer, and a bubble scrolled under it is hidden
-    // there. Open only when no floating layer covers the chat panel.
-    let shown = bubble.rect.intersect(ui.clip_rect());
+    // The whole row counts, the empty strip beside the bubble included, as in
+    // other messaging apps (#240). Count only the part inside the transcript's
+    // viewport: the chat header shares this layer, and a bubble scrolled under
+    // it is hidden there. Open only when no floating layer covers the chat
+    // panel.
+    let viewport = ui.clip_rect();
+    let shown =
+        Rect::from_x_y_ranges(viewport.x_range(), bubble.rect.y_range()).intersect(viewport);
     let right_clicked = ui.input(|input| {
         input.pointer.secondary_clicked()
             && input
@@ -3820,6 +3864,16 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), &open) {
                     actions.push(Action::OpenFile(path.clone()));
                 }
+                if matches!(message.content, Content::Image { .. })
+                    && widgets::menu_item(
+                        ui,
+                        &palette,
+                        Some(Icon::Copy),
+                        &crate::i18n::gettext(view.locale, "Copy image"),
+                    )
+                {
+                    actions.push(Action::CopyImage(path.clone()));
+                }
                 if widgets::menu_item(ui, &palette, Some(Icon::Download), "Save as…") {
                     actions.push(Action::SaveAttachmentAs {
                         path: path.clone(),
@@ -4442,11 +4496,33 @@ fn content(
             );
             None
         }
-        Content::PhoneOnly { view_once, .. } => {
-            let text = if *view_once {
-                "View once message. For your privacy, it opens only on your phone."
-            } else {
-                "This message can only be seen on your phone."
+        Content::PhoneOnly {
+            view_once, once, ..
+        } => {
+            use crate::i18n::gettext;
+            use crate::model::OnceMedia;
+            let text = match once {
+                Some(OnceMedia::Photo) => gettext(
+                    view.locale,
+                    "View once photo. For your privacy, it opens only on your phone.",
+                ),
+                Some(OnceMedia::Video) => gettext(
+                    view.locale,
+                    "View once video. For your privacy, it opens only on your phone.",
+                ),
+                Some(OnceMedia::Voice) => gettext(
+                    view.locale,
+                    "View once voice message. For your privacy, it opens only on your phone.",
+                ),
+                Some(OnceMedia::Audio) => gettext(
+                    view.locale,
+                    "View once audio. For your privacy, it opens only on your phone.",
+                ),
+                None if *view_once => gettext(
+                    view.locale,
+                    "View once message. For your privacy, it opens only on your phone.",
+                ),
+                None => gettext(view.locale, "This message can only be seen on your phone."),
             };
             mirrored_row(
                 ui,
@@ -5104,7 +5180,16 @@ fn rich_body(
     // Click links and drag to select text.
     // Text selection and pointer links do not need a sequential Tab stop.
     // The surrounding transcript remains available to accessibility readers.
-    let (rect, response) = ui.allocate_exact_size(allocation, Sense::CLICK | Sense::DRAG);
+    let (rect, _) = ui.allocate_exact_size(allocation, Sense::hover());
+    // egui matches selection endpoints to widgets by id every frame and drops
+    // the selection when one is missed. A positional auto id shifts whenever
+    // a sibling allocates differently (virtualized rows), killing the
+    // selection mid-drag; an explicit id keeps the anchor alive.
+    let response = ui.interact(
+        rect,
+        bubble_id(&view.chat.id, &message.id).with("body-text"),
+        Sense::CLICK | Sense::DRAG,
+    );
     // Store the body rect for selection tests.
     ui.ctx().data_mut(|data| {
         data.insert_temp(bubble_id(&view.chat.id, &message.id).with("body"), rect);

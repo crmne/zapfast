@@ -294,9 +294,9 @@ egui pitfalls this code has already hit:
   double-click on either replies; the body keeps it for selecting the word.
 - `Popup::context_menu` opens on the *response's* right-click, which those
   inner widgets take for themselves; the bubble reads the right-click from
-  the input over the part of its rect inside the transcript viewport (the chat
-  header shares its layer) and opens `Popup::menu` itself, so the menu
-  comes up anywhere on the message.
+  the input over its row (the bubble and the strip beside it) inside the
+  transcript viewport (the chat header shares its layer) and opens
+  `Popup::menu` itself, so the menu comes up anywhere on the message.
 
 ## Branches
 

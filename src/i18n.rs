@@ -77,9 +77,15 @@ impl Locale {
             "fr" => Self::French,
             "ru" => Self::Russian,
             "zh" => match (tag.script.as_deref(), tag.region.as_deref()) {
+                // An explicit script decides on its own: a tag that asks for
+                // Simplified and names a region where Traditional is the
+                // default, such as `zh-Hans-HK`, is still Simplified. The
+                // region only speaks for the tags that name no script.
+                (Some("hans"), _) => Self::ChineseSimplified,
+                (Some("hant"), _) => return None,
                 // Windows writes the legacy `zh-CHT` region, macOS and Linux
-                // the script or the region subtag.
-                (Some("hant"), _) | (_, Some("tw" | "hk" | "mo" | "cht")) => return None,
+                // the region subtag.
+                (_, Some("tw" | "hk" | "mo" | "cht")) => return None,
                 _ => Self::ChineseSimplified,
             },
             _ => return None,
@@ -145,6 +151,21 @@ mod tests {
         );
         // Traditional Chinese has no catalog, so it keeps English rather than
         // showing Simplified characters to a reader who asked for another script.
+        // A script the tag names itself decides, even beside a region whose
+        // own default is the other one.
+        assert_eq!(
+            Locale::from_system("zh-Hans-TW"),
+            Some(Locale::ChineseSimplified)
+        );
+        assert_eq!(
+            Locale::from_system("zh-Hans-HK"),
+            Some(Locale::ChineseSimplified)
+        );
+        assert_eq!(
+            Locale::from_system("zh-Hans-CN"),
+            Some(Locale::ChineseSimplified)
+        );
+        assert_eq!(Locale::from_system("zh-Hant-CN"), None);
         assert_eq!(Locale::from_system("zh-TW"), None);
         assert_eq!(Locale::from_system("zh-Hant"), None);
         assert_eq!(Locale::from_system("zh-CHT"), None);

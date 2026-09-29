@@ -44,6 +44,107 @@ enum ScrollAxis {
     Horizontal,
     Vertical,
 }
+
+/// A pane that scrolls on its own, which a scroll gesture stays with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollPane {
+    /// The chat list, or its collapsed avatar column.
+    Chats,
+    /// The open chat's messages.
+    Messages,
+}
+
+/// Keeps a scroll gesture, glide included, with the pane it began over
+/// (#274). egui scrolls whichever scroll area is under the pointer, so a
+/// gesture that drifted over the other pane moved that one instead, and so
+/// did the rest of its glide. The panes say where they are each frame; while
+/// a gesture lasts, vertical scrolling with the pointer away from its pane is
+/// taken from egui and handed to that pane, which applies it itself.
+#[derive(Default)]
+pub struct ScrollRoute {
+    /// Where each pane was drawn in the last frame.
+    placed: Vec<(ScrollPane, egui::Rect)>,
+    /// Where each pane is drawn in this frame. Behind a lock so a view can
+    /// record it while other parts of the app are borrowed.
+    placing: std::sync::Mutex<Vec<(ScrollPane, egui::Rect)>>,
+    /// The pane the gesture under way began over.
+    owner: Option<ScrollPane>,
+    /// When the gesture last had input.
+    last_input: Option<Instant>,
+    /// Whether the gesture's fingers lifted: new input starts another.
+    lifted: bool,
+    /// Scrolling taken for the owner this frame.
+    carry: Option<(ScrollPane, f32)>,
+}
+
+impl ScrollRoute {
+    /// Records where `pane` is drawn this frame.
+    pub fn place(&self, pane: ScrollPane, rect: egui::Rect) {
+        self.placing
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push((pane, rect));
+    }
+
+    /// The vertical scrolling taken for `pane` from over another place this
+    /// frame, for the pane to apply with `Ui::scroll_with_delta`.
+    pub fn take(&mut self, pane: ScrollPane) -> f32 {
+        match self.carry {
+            Some((to, delta)) if to == pane => {
+                self.carry = None;
+                delta
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// Picks the gesture's pane and takes its scrolling from elsewhere.
+    /// `moved` is whether wheel input arrived this frame, `lifted` whether
+    /// the fingers left the trackpad, and `gliding` whether the app's own
+    /// glide is still adding to the scroll.
+    fn route(&mut self, ctx: &egui::Context, moved: bool, lifted: bool, gliding: bool) {
+        self.placed = std::mem::take(self.placing.get_mut().unwrap_or_else(|p| p.into_inner()));
+        self.carry = None;
+        let now = Instant::now();
+        // Floating layers, such as menus and dialogs, are no pane.
+        let under = ctx
+            .input(|input| input.pointer.hover_pos())
+            .filter(|pos| {
+                ctx.layer_id_at(*pos)
+                    .is_none_or(|layer| layer.order == egui::Order::Background)
+            })
+            .and_then(|pos| {
+                self.placed
+                    .iter()
+                    .find(|(_, rect)| rect.contains(pos))
+                    .map(|(pane, _)| *pane)
+            });
+        let recent = self
+            .last_input
+            .is_some_and(|at| now.duration_since(at) < SCROLL_GESTURE_GAP);
+        if moved {
+            if self.lifted || !recent {
+                self.owner = under;
+            }
+            self.last_input = Some(now);
+            self.lifted = false;
+        }
+        self.lifted |= lifted;
+        let settling = ctx.input(|input| input.smooth_scroll_delta != egui::Vec2::ZERO);
+        if !moved && !gliding && !settling && !recent {
+            self.owner = None;
+        }
+        let Some(owner) = self.owner else {
+            return;
+        };
+        if under != Some(owner) && self.placed.iter().any(|(pane, _)| *pane == owner) {
+            let delta = ctx.input_mut(|input| std::mem::take(&mut input.smooth_scroll_delta.y));
+            if delta != 0.0 {
+                self.carry = Some((owner, delta));
+            }
+        }
+    }
+}
 /// Delay after the last keystroke before clearing typing state.
 const COMPOSING_TIMEOUT: Duration = Duration::from_secs(4);
 /// How long an info toast stays, including its fade.
@@ -262,6 +363,8 @@ pub struct App {
     composing: bool,
     last_keystroke: Option<Instant>,
     pub search: String,
+    /// Chat result reached with the arrow keys in the global search field.
+    pub search_selected: Option<ChatId>,
     /// Message search results, newest first.
     pub search_hits: Vec<Message>,
     /// The search pane beside the open chat: its query, day filter and the
@@ -422,6 +525,8 @@ pub struct App {
     scroll_accum: egui::Vec2,
     glide: Option<egui::Vec2>,
     scroll_last_event: Option<Instant>,
+    /// Keeps a scroll gesture with the pane it began over.
+    pub scroll_route: ScrollRoute,
 
     pub page: Page,
     pub dialog: Option<Dialog>,
@@ -785,6 +890,7 @@ impl App {
             composing: false,
             last_keystroke: None,
             search: String::new(),
+            search_selected: None,
             search_hits: Vec::new(),
             chat_search_open: false,
             chat_search: String::new(),
@@ -872,6 +978,7 @@ impl App {
             scroll_history: egui::util::History::new(2..16, 0.1),
             scroll_accum: egui::Vec2::ZERO,
             glide: None,
+            scroll_route: ScrollRoute::default(),
             scroll_last_event: None,
             page: Page::Chats,
             dialog: None,
@@ -1558,8 +1665,10 @@ impl App {
             if name.starts_with('+') || name == "Unknown" {
                 numbers.push(name);
             } else {
-                let name = name.trim_start_matches('~');
-                names.push(name.split_whitespace().next().unwrap_or(name).to_owned());
+                // The saved first name, as WhatsApp shows here, whole: it can
+                // hold several words. Without one, the whole name.
+                let first = self.contacts.get(id).and_then(Contact::first_name);
+                names.push(first.unwrap_or(name.trim_start_matches('~')).to_owned());
             }
         }
         names.sort_by_key(|name| name.to_lowercase());
@@ -1736,12 +1845,18 @@ impl App {
             .count()
     }
 
-    pub fn unread_total(&self) -> u32 {
-        self.chats
+    /// The taskbar count: unarchived, unmuted, unlocked chats that look
+    /// unread. WhatsApp counts chats here, not the messages inside them.
+    pub fn unread_chat_count(&self) -> u32 {
+        let now = crate::util::now();
+        let chats = self
+            .chats
             .iter()
-            .filter(|chat| !chat.archived && !chat.locked && !chat.muted(crate::util::now()))
-            .map(|chat| chat.unread)
-            .sum()
+            .filter(|chat| {
+                !chat.archived && !chat.locked && !chat.muted(now) && chat.looks_unread()
+            })
+            .count();
+        u32::try_from(chats).unwrap_or(u32::MAX)
     }
 
     /// Returns or requests a cached profile picture.
@@ -3610,6 +3725,7 @@ impl App {
                     }
                 }
             }
+            Action::OpenLog(path) => self.backend.send(Command::OpenLog(path)),
             Action::SaveAttachmentAs { path, name } => {
                 self.backend
                     .send(Command::SaveAttachmentAs { source: path, name });
@@ -3768,25 +3884,21 @@ impl App {
                     self.mention_start = None;
                 }
             }
-            Action::DeleteForEveryone(id) => {
-                if let Some(chat) = self.open_chat.clone() {
-                    if let Some(message) = self
-                        .conversations
-                        .get_mut(&chat)
-                        .and_then(|conversation| conversation.message_mut(&id))
-                    {
-                        message.content = Content::Revoked;
-                    }
-                    self.backend.send(Command::Revoke { chat, id });
+            Action::DeleteForEveryone { chat, id } => {
+                if let Some(message) = self
+                    .conversations
+                    .get_mut(&chat)
+                    .and_then(|conversation| conversation.message_mut(&id))
+                {
+                    message.content = Content::Revoked;
                 }
+                self.backend.send(Command::Revoke { chat, id });
             }
-            Action::DeleteForMe(id) => {
-                if let Some(chat) = self.open_chat.clone() {
-                    if let Some(conversation) = self.conversations.get_mut(&chat) {
-                        conversation.messages.retain(|message| message.id != id);
-                    }
-                    self.backend.send(Command::DeleteLocal { chat, id });
+            Action::DeleteForMe { chat, id } => {
+                if let Some(conversation) = self.conversations.get_mut(&chat) {
+                    conversation.messages.retain(|message| message.id != id);
                 }
+                self.backend.send(Command::DeleteLocal { chat, id });
             }
             Action::Attach => {
                 if let Some(chat) = self.open_chat.clone() {
@@ -4473,6 +4585,7 @@ impl App {
             }
             Action::Search(text) => {
                 self.search = text;
+                self.search_selected = None;
                 let query = self.search.trim().to_owned();
                 // Editing the search away from the secret code hides the
                 // locked folder again, like leaving the phone's home screen.
@@ -4840,16 +4953,16 @@ impl App {
         self.sync_badge();
     }
 
-    /// Mirrors the unread total onto the taskbar icon, where the desktop
+    /// Mirrors the unread chat count onto the taskbar icon, where the desktop
     /// reads it. The badge ignores repeats, so calling this each frame is cheap.
     fn sync_badge(&mut self) {
-        let count = self.unread_total();
+        let count = self.unread_chat_count();
         if let Some(badge) = &mut self.badge {
             badge.set(count);
         }
     }
 
-    /// The unread total for the Windows taskbar overlay, which the window
+    /// The unread chat count for the Windows taskbar overlay, which the window
     /// applies itself; `None` in demo and test runs.
     #[cfg(target_os = "windows")]
     pub fn taskbar_badge_count(&self) -> Option<u32> {
@@ -5143,6 +5256,7 @@ impl App {
             self.hide_intent = true;
         }
         self.lock_scroll_axis(ctx);
+        self.route_scroll(ctx);
         self.take_drops_and_pastes(ctx);
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
@@ -5212,13 +5326,14 @@ impl App {
         if !dropped.is_empty() {
             self.actions.push(Action::SendFiles(dropped));
         }
-        self.take_image_paste(ctx, clipboard_image);
+        self.take_clipboard_paste(ctx, || clipboard_contents(clipboard_files, clipboard_image));
     }
 
-    fn take_image_paste(
+    /// Stages pasted files or a pasted picture for the open chat.
+    fn take_clipboard_paste(
         &mut self,
         ctx: &egui::Context,
-        read_image: impl FnOnce() -> Option<(usize, usize, Vec<u8>)>,
+        read_clipboard: impl FnOnce() -> Option<ClipboardPaste>,
     ) {
         let (paste, text, released, focused, command) = ctx.input(|input| {
             (
@@ -5248,7 +5363,7 @@ impl App {
             // A menu paste has no key release to wait for.
             self.paste_before_release = command;
         }
-        // Handle image paste only when the composer or no field has focus.
+        // Handle file and image paste only when the composer or no field has focus.
         let composing = ctx.memory(|memory| {
             memory.has_focus(egui::Id::new("composer-text")) || memory.focused().is_none()
         });
@@ -5262,19 +5377,27 @@ impl App {
                 .as_deref()
                 .and_then(|id| self.chat(id))
                 .is_some_and(Chat::can_send)
-            && let Some((width, height, rgba)) = read_image()
+            && let Some(contents) = read_clipboard()
         {
-            // A browser can offer both pixels and its source URL. Consume the
-            // text before the composer sees it, keeping any existing caption.
+            // A browser can offer both pixels and its source URL, and a file
+            // manager both paths and their text. Consume the text before the
+            // composer sees it, keeping any existing caption.
             ctx.input_mut(|input| {
                 input
                     .events
                     .retain(|event| !matches!(event, egui::Event::Paste(_)))
             });
-            self.actions.push(Action::PasteImage {
-                width,
-                height,
-                rgba,
+            self.actions.push(match contents {
+                ClipboardPaste::Files(paths) => Action::SendFiles(paths),
+                ClipboardPaste::Image {
+                    width,
+                    height,
+                    rgba,
+                } => Action::PasteImage {
+                    width,
+                    height,
+                    rgba,
+                },
             });
         }
     }
@@ -5377,6 +5500,25 @@ impl App {
             ScrollAxis::Horizontal => input.smooth_scroll_delta.y = 0.0,
             ScrollAxis::Vertical => input.smooth_scroll_delta.x = 0.0,
         });
+    }
+
+    /// Keeps this frame's scrolling with the pane its gesture began over,
+    /// after the axis lock and glide have had their say.
+    fn route_scroll(&mut self, ctx: &egui::Context) {
+        let (moved, lifted) = ctx.input(|input| {
+            input
+                .events
+                .iter()
+                .fold((false, false), |(moved, lifted), event| match event {
+                    egui::Event::MouseWheel { delta, phase, .. } => (
+                        moved || *delta != egui::Vec2::ZERO,
+                        lifted || matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel),
+                    ),
+                    _ => (moved, lifted),
+                })
+        });
+        let gliding = self.glide.is_some();
+        self.scroll_route.route(ctx, moved, lifted, gliding);
     }
 
     /// Whether the latest wheel input came in points (a trackpad), which the
@@ -5511,6 +5653,54 @@ pub fn wants_paste(input: &egui::InputState) -> bool {
                 } if modifiers.command
             )
     })
+}
+
+/// What a paste into the composer stages.
+#[derive(Debug)]
+enum ClipboardPaste {
+    /// Files copied in a file manager, staged like dropped files.
+    Files(Vec<PathBuf>),
+    /// Picture data as width, height, and straight-alpha RGBA.
+    Image {
+        width: usize,
+        height: usize,
+        rgba: Vec<u8>,
+    },
+}
+
+/// Prefers the clipboard's file list over its picture: Finder, Explorer and
+/// Linux file managers offer the file's icon as an image alongside the path,
+/// so a copied PDF or ZIP would otherwise arrive as its icon (#285).
+fn clipboard_contents(
+    read_files: impl FnOnce() -> Option<Vec<PathBuf>>,
+    read_image: impl FnOnce() -> Option<(usize, usize, Vec<u8>)>,
+) -> Option<ClipboardPaste> {
+    let files: Vec<PathBuf> = read_files()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|path| {
+            // text/uri-list lines end in CRLF, and arboard splits only on LF.
+            let path = match path.to_str() {
+                Some(text) if text.ends_with('\r') => PathBuf::from(text.trim_end_matches('\r')),
+                _ => path,
+            };
+            path.exists().then_some(path)
+        })
+        .collect();
+    if !files.is_empty() {
+        return Some(ClipboardPaste::Files(files));
+    }
+    read_image().map(|(width, height, rgba)| ClipboardPaste::Image {
+        width,
+        height,
+        rgba,
+    })
+}
+
+/// Files copied to the clipboard by a file manager.
+fn clipboard_files() -> Option<Vec<PathBuf>> {
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    clipboard.get().file_list().ok()
 }
 
 /// Clipboard image as width, height, and straight-alpha RGBA.
@@ -5804,10 +5994,23 @@ mod tests {
     fn clipboard_frame(
         app: &mut App,
         ctx: &egui::Context,
-        mut events: Vec<egui::Event>,
+        events: Vec<egui::Event>,
         image: bool,
     ) -> usize {
+        clipboard_frame_with_files(app, ctx, events, None, image).0
+    }
+
+    /// Runs a frame whose clipboard holds `files` and, if `image`, a picture.
+    /// Returns how often the clipboard and its picture were read.
+    fn clipboard_frame_with_files(
+        app: &mut App,
+        ctx: &egui::Context,
+        mut events: Vec<egui::Event>,
+        files: Option<Vec<PathBuf>>,
+        image: bool,
+    ) -> (usize, usize) {
         let mut reads = 0;
+        let mut image_reads = 0;
         events.insert(0, egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -5815,9 +6018,15 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                app.take_image_paste(ui.ctx(), || {
+                app.take_clipboard_paste(ui.ctx(), || {
                     reads += 1;
-                    image.then(|| (2, 2, vec![200; 16]))
+                    clipboard_contents(
+                        || files.clone(),
+                        || {
+                            image_reads += 1;
+                            image.then(|| (2, 2, vec![200; 16]))
+                        },
+                    )
                 });
                 ui.add(
                     egui::TextEdit::singleline(&mut app.composer)
@@ -5827,7 +6036,7 @@ mod tests {
             },
         );
         output.textures_delta.clear();
-        reads
+        (reads, image_reads)
     }
 
     fn clipboard_app() -> (App, egui::Context) {
@@ -5882,7 +6091,13 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                app.take_image_paste(ui.ctx(), || Some((2, 2, vec![200; 16])));
+                app.take_clipboard_paste(ui.ctx(), || {
+                    Some(ClipboardPaste::Image {
+                        width: 2,
+                        height: 2,
+                        rgba: vec![200; 16],
+                    })
+                });
                 app.apply_actions(ui.ctx());
             },
         );
@@ -5927,6 +6142,57 @@ mod tests {
             "a clipboard change before release must not stage an unrelated image"
         );
         assert!(app.pending.is_empty());
+    }
+
+    #[test]
+    fn a_copied_file_stages_the_file_and_not_its_icon() {
+        let directory = tempfile::tempdir().unwrap();
+        let pdf = directory.path().join("fixture.pdf");
+        let zip = directory.path().join("fixture archive.zip");
+        std::fs::write(&pdf, b"%PDF-fixture").unwrap();
+        std::fs::write(&zip, b"PK-fixture").unwrap();
+        let (mut app, ctx) = clipboard_app();
+        // Finder offers the path, the file name as text, and an icon picture.
+        let (reads, image_reads) = clipboard_frame_with_files(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Paste("fixture.pdf".into()), paste_release()],
+            Some(vec![pdf.clone(), zip.clone()]),
+            true,
+        );
+        assert_eq!(reads, 1);
+        assert_eq!(image_reads, 0, "the icon picture is never read");
+        assert!(matches!(
+            app.pending.as_slice(),
+            [Pending::File(first), Pending::File(second)] if *first == pdf && *second == zip
+        ));
+        assert_eq!(app.composer, "caption", "the file name is not pasted");
+    }
+
+    #[test]
+    fn a_uri_list_line_ending_does_not_hide_the_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("fixture.zip");
+        std::fs::write(&file, b"PK-fixture").unwrap();
+        let mut listed = file.clone().into_os_string();
+        listed.push("\r");
+        let contents = clipboard_contents(|| Some(vec![PathBuf::from(listed)]), || None);
+        assert!(matches!(contents, Some(ClipboardPaste::Files(paths)) if paths == [file]));
+    }
+
+    #[test]
+    fn a_missing_copied_file_falls_back_to_the_picture() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, ctx) = clipboard_app();
+        let (_, image_reads) = clipboard_frame_with_files(
+            &mut app,
+            &ctx,
+            vec![paste_release()],
+            Some(vec![directory.path().join("gone.pdf")]),
+            true,
+        );
+        assert_eq!(image_reads, 1);
+        assert!(matches!(app.pending.as_slice(), [Pending::Picture { .. }]));
     }
 
     #[test]
@@ -8506,6 +8772,7 @@ mod tests {
         let contact = |id: &str, name: &str| crate::model::Contact {
             id: id.into(),
             full_name: Some(name.into()),
+            first_name: None,
             push_name: None,
         };
         // Exclude contacts that already have chats.
@@ -8581,8 +8848,26 @@ mod tests {
             .map(|chat| chat.name.as_str())
             .collect();
         assert_eq!(shown, ["Ada"], "the chip finds the chat marked by hand");
-        // Nothing is pending, so the app badge stays at zero.
-        assert_eq!(app.unread_total(), 0);
+        // The app badge counts it too, as WhatsApp does.
+        assert_eq!(app.unread_chat_count(), 1);
+    }
+
+    #[test]
+    fn the_app_badge_counts_unread_chats_not_messages() {
+        let mut app = app();
+        let mut busy = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        busy.unread = 7;
+        let mut quiet = Chat::new("2@s.whatsapp.net".into(), "Grace".into());
+        quiet.unread = 1;
+        let mut archived = Chat::new("3@s.whatsapp.net".into(), "Old".into());
+        archived.archived = true;
+        archived.unread = 4;
+        let mut muted = Chat::new("4@s.whatsapp.net".into(), "Loud".into());
+        muted.muted_until = Some(i64::MAX);
+        muted.unread = 9;
+        let read = Chat::new("5@s.whatsapp.net".into(), "Done".into());
+        app.chats = vec![busy, quiet, archived, muted, read];
+        assert_eq!(app.unread_chat_count(), 2);
     }
 
     #[test]
@@ -8989,7 +9274,7 @@ mod tests {
         assert_eq!(names, vec!["Ada"]);
         app.search = "bob".into();
         assert!(app.visible_chats().is_empty());
-        assert_eq!(app.unread_total(), 3);
+        assert_eq!(app.unread_chat_count(), 1);
         assert_eq!(app.unread_chats(ChatFilter::All), 1);
 
         // Typing the code reveals the entry; opening the folder shows only
@@ -9152,6 +9437,7 @@ mod tests {
         let contact = Contact {
             id: "2@s.whatsapp.net".into(),
             full_name: Some("A\u{301}ngel".into()),
+            first_name: None,
             push_name: None,
         };
         app.contacts.insert(contact.id.clone(), contact);
@@ -9346,6 +9632,7 @@ mod tests {
             Contact {
                 id: "1@s.whatsapp.net".into(),
                 full_name: Some("Ada".into()),
+                first_name: None,
                 push_name: None,
             },
         );
@@ -9360,6 +9647,7 @@ mod tests {
             Contact {
                 id: "42@lid".into(),
                 full_name: None,
+                first_name: None,
                 push_name: Some("Bob".into()),
             },
         );
@@ -9384,6 +9672,7 @@ mod name_tests {
             Contact {
                 id: "1@s.whatsapp.net".into(),
                 full_name: Some("Ada Lovelace".into()),
+                first_name: None,
                 push_name: Some("Ada".into()),
             },
         );
@@ -9392,10 +9681,42 @@ mod name_tests {
             Contact {
                 id: "2@s.whatsapp.net".into(),
                 full_name: None,
+                first_name: None,
                 push_name: Some("Bob".into()),
             },
         );
         app
+    }
+
+    #[test]
+    fn group_members_go_by_their_whole_saved_first_name() {
+        let mut app = app();
+        let mut chat = Chat::new("fixture@g.us".into(), "Group".into());
+        for (index, full_name, first_name) in [
+            (0, "My Dih", Some("My Dih")),
+            (1, "Grace Hopper", Some("Grace")),
+            (2, "Mary Ann Evans", None),
+            (3, "Stray Name", Some("")),
+        ] {
+            let id = format!("1555000001{index}@s.whatsapp.net");
+            app.contacts.insert(
+                id.clone(),
+                Contact {
+                    id: id.clone(),
+                    full_name: Some(full_name.into()),
+                    first_name: first_name.map(Into::into),
+                    push_name: None,
+                },
+            );
+            chat.participants.push(id);
+        }
+        // A profile name is not split either.
+        chat.participants.push("2@s.whatsapp.net".into());
+        app.contacts.get_mut("2@s.whatsapp.net").unwrap().push_name = Some("Bob Builder".into());
+        assert_eq!(
+            app.participant_names(&chat),
+            "Bob Builder, Grace, Mary Ann Evans, My Dih, Stray Name"
+        );
     }
 
     #[test]
@@ -9417,6 +9738,7 @@ mod name_tests {
                 Contact {
                     id: id.clone(),
                     full_name: Some((*name).into()),
+                    first_name: name.split(' ').next().map(Into::into),
                     push_name: Some((*name).into()),
                 },
             );

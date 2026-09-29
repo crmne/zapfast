@@ -418,6 +418,9 @@ pub enum Command {
         source: std::path::PathBuf,
         name: String,
     },
+    /// Opens the log, or shows it in its folder, off the interface thread;
+    /// only a failure reports back.
+    OpenLog(PathBuf),
     /// Reads and decodes an image file off the UI thread for clipboard writing.
     PrepareClipboardImage(PathBuf),
     /// Deletes an imported pack directory.
@@ -491,6 +494,7 @@ pub enum Command {
     ContactSaved {
         id: String,
         name: String,
+        first_name: Option<String>,
         error: Option<String>,
     },
     /// Checks a number, optionally saves it, and opens its chat.
@@ -678,6 +682,9 @@ pub enum Command {
     },
     /// Internal: followed channels and whether each is muted on the server.
     ChannelMutes(Vec<(String, bool)>),
+    /// Internal: the pictures of followed channels, or `None` when the list
+    /// could not be read.
+    ChannelPictures(Option<Vec<(ChatId, ChannelPicture)>>),
     /// Looks up the group behind an invite code without joining.
     PreviewInvite(String),
     /// Joins the group behind an invite code.
@@ -929,6 +936,17 @@ pub enum GroupEdit {
     Name(String),
     /// A new photo, or none.
     Picture { removed: bool },
+}
+
+/// Where a channel's picture lives on WhatsApp's media servers, as the
+/// channel's metadata names it. Channels have no profile picture a contact
+/// lookup would find.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChannelPicture {
+    /// The full-size picture's direct path.
+    pub full: Option<String>,
+    /// The small preview's direct path.
+    pub preview: Option<String>,
 }
 
 /// Why the worker refused a send.

@@ -460,7 +460,37 @@ pub enum Content {
         /// A live location, which WhatsApp shows only on the phone.
         #[serde(default)]
         live_location: bool,
+        /// What a view-once message holds, when it arrived as media this
+        /// device may not open rather than as a bare placeholder.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        once: Option<OnceMedia>,
     },
+}
+
+/// The kind of media a view-once message holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnceMedia {
+    Photo,
+    Video,
+    Voice,
+    Audio,
+}
+
+impl OnceMedia {
+    /// The kind of view-once media `content` would be, if it is media that
+    /// can be sent to be viewed once.
+    pub fn of(content: &Content) -> Option<Self> {
+        match content {
+            Content::Image { .. } => Some(Self::Photo),
+            Content::Video { .. } => Some(Self::Video),
+            Content::Audio {
+                voice_note: true, ..
+            } => Some(Self::Voice),
+            Content::Audio { .. } => Some(Self::Audio),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -707,6 +737,15 @@ impl Content {
                 ..
             } => "Live location".to_owned(),
             Self::PhoneOnly {
+                once: Some(kind), ..
+            } => match kind {
+                OnceMedia::Photo => "View once photo",
+                OnceMedia::Video => "View once video",
+                OnceMedia::Voice => "View once voice message",
+                OnceMedia::Audio => "View once audio",
+            }
+            .to_owned(),
+            Self::PhoneOnly {
                 view_once: true, ..
             } => "View once message".to_owned(),
             Self::PhoneOnly { .. } => "Message on your phone".to_owned(),
@@ -853,6 +892,10 @@ pub struct DecodedImage {
 pub struct Contact {
     pub id: String,
     pub full_name: Option<String>,
+    /// The first name saved with `full_name`, which WhatsApp shows where
+    /// space is short, as in a group's member line. It may hold several
+    /// words; only a contact saved with a separate first name has one.
+    pub first_name: Option<String>,
     pub push_name: Option<String>,
 }
 
@@ -862,6 +905,15 @@ impl Contact {
             .as_deref()
             .filter(|name| !name.is_empty())
             .or(self.push_name.as_deref().filter(|name| !name.is_empty()))
+    }
+
+    /// The saved first name, when the address-book entry has one.
+    pub fn first_name(&self) -> Option<&str> {
+        self.full_name.as_deref().filter(|name| !name.is_empty())?;
+        self.first_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
     }
 
     /// WhatsApp display name: address-book name or `~`-prefixed push name.
@@ -1314,6 +1366,9 @@ pub enum Action {
     FitImage,
     CloseImagePreview,
     OpenFile(PathBuf),
+    /// Opens ZapFast's log, or shows it in its folder when no application
+    /// takes it, and says so when neither works.
+    OpenLog(PathBuf),
     OpenFolder(PathBuf),
     /// Saves a copy of a downloaded attachment where the person chooses.
     SaveAttachmentAs {
@@ -1345,10 +1400,17 @@ pub enum Action {
     /// Loads an outgoing message into the composer for editing.
     Edit(String),
     CancelEdit,
-    /// Revokes an outgoing message for everyone.
-    DeleteForEveryone(String),
-    /// Deletes a message locally.
-    DeleteForMe(String),
+    /// Revokes an outgoing message for everyone. The chat travels with the
+    /// message because the reader may switch chats before confirming.
+    DeleteForEveryone {
+        chat: ChatId,
+        id: String,
+    },
+    /// Deletes a message locally, in the chat it belongs to.
+    DeleteForMe {
+        chat: ChatId,
+        id: String,
+    },
     /// Opens the attachment picker for the current chat.
     Attach,
     /// Opens or closes the composer tools menu.
@@ -1975,12 +2037,14 @@ mod tests {
         let saved = Contact {
             id: "1".into(),
             full_name: Some("Ada".into()),
+            first_name: None,
             push_name: Some("ada l".into()),
         };
         assert_eq!(saved.label().as_deref(), Some("Ada"));
         let stranger = Contact {
             id: "2".into(),
             full_name: None,
+            first_name: None,
             push_name: Some("Bob".into()),
         };
         assert_eq!(stranger.label().as_deref(), Some("~Bob"));
