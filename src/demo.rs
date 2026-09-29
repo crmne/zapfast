@@ -5054,6 +5054,13 @@ mod tests {
             .map(|chat| chat.id.clone())
             .collect();
         assert_eq!(matches.len(), 2, "only the two fixtures match");
+        // Shift+↓ keeps selecting text in the field.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::SHIFT)],
+        );
+        assert_eq!(app.search_selected, None);
 
         frame_with(
             &mut app,

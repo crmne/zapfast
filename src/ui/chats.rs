@@ -1,6 +1,6 @@
 //! The left panel: the chat list.
 
-use egui::{Align, Frame, Key, Layout, Margin, Modifiers, Rect, Sense, Vec2, pos2, vec2};
+use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
@@ -55,9 +55,9 @@ fn search_keyboard(app: &mut App, ui: &egui::Ui) {
     }
     let (down, up, enter) = ui.input_mut(|input| {
         (
-            input.consume_key(Modifiers::NONE, Key::ArrowDown),
-            input.consume_key(Modifiers::NONE, Key::ArrowUp),
-            input.consume_key(Modifiers::NONE, Key::Enter),
+            super::keys::take_plain(input, Key::ArrowDown),
+            super::keys::take_plain(input, Key::ArrowUp),
+            super::keys::take_plain(input, Key::Enter),
         )
     });
     if !down && !up && !enter {
@@ -890,11 +890,14 @@ fn person_row(
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
-    let selected = if app.search.trim().is_empty() {
-        app.open_chat.as_deref() == Some(chat.id.as_str())
-    } else {
-        app.search_selected.as_deref() == Some(chat.id.as_str())
-    };
+    // While searching, the result reached with the arrows is the selection;
+    // before any arrow press it stays the open chat, as a click leaves it.
+    let selected = app
+        .search_selected
+        .as_ref()
+        .filter(|_| !app.search.trim().is_empty())
+        .or(app.open_chat.as_ref())
+        .is_some_and(|selected| *selected == chat.id);
     let now = crate::util::now();
     let muted = chat.muted(now);
     let (rect, response) = ui.allocate_exact_size(
