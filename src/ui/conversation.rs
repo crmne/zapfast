@@ -2623,6 +2623,9 @@ fn bubble(
     if let Some(rect) = previous {
         let strip = Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
         let strip = ui.interact(strip, id.with("row"), Sense::CLICK);
+        if strip.clicked() {
+            actions.push(Action::FocusComposer);
+        }
         reply_on_double_click(&strip, message, actions);
     }
     let mut response = None;

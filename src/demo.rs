@@ -4501,6 +4501,53 @@ mod tests {
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
     }
 
+    /// Most empty space in a chat is the strip beside a bubble, which takes
+    /// clicks before the background does; a click there refocuses too.
+    #[test]
+    fn clicking_beside_a_message_returns_focus_to_the_composer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = app.open_chat.clone().expect("the demo opens a chat");
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let viewport = app
+            .selection_view
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .expect("the message viewport is on screen");
+        let bubble = app.conversations[&chat]
+            .messages
+            .iter()
+            .rev()
+            .find_map(|message| {
+                let id = crate::ui::conversation::bubble_id(&chat, &message.id).with("rect");
+                let rect = ctx.data(|data| data.get_temp::<egui::Rect>(id))?;
+                (viewport.contains_rect(rect) && rect.right() < viewport.right() - 60.0)
+                    .then_some(rect)
+            })
+            .expect("an incoming bubble with room beside it");
+        let composer = egui::Id::new("composer-text");
+        ctx.memory_mut(|memory| memory.surrender_focus(composer));
+        render(&mut app, &ctx);
+        assert!(!ctx.memory(|memory| memory.has_focus(composer)));
+
+        let at = egui::pos2(viewport.right() - 20.0, bubble.center().y);
+        let pointer = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(at), pointer(true), pointer(false)],
+        );
+        render(&mut app, &ctx);
+        assert!(ctx.memory(|memory| memory.has_focus(composer)));
+    }
+
     /// The composer keeps its draft while the preview is open: Enter does not
     /// send it, and Tab and Enter reach the preview's own controls instead.
     #[test]
