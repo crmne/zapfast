@@ -5921,6 +5921,88 @@ mod tests {
         assert_eq!(selected(&app), ["ada-doc", "ada-voice"]);
     }
 
+    /// While selecting, as in WhatsApp Web, every row has a check box in a
+    /// column on the left, the whole width of the row picks it, and the
+    /// selection stays open with nothing in it.
+    #[test]
+    fn while_selecting_every_row_has_a_check_box_on_the_left() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let chat = sample_ids()[0].to_owned();
+        let check = |message: &str| {
+            let id = crate::ui::conversation::bubble_id(&chat, message).with("check");
+            ctx.data(|data| data.get_temp::<egui::Rect>(id))
+        };
+        assert!(
+            check("ada-reply").is_none(),
+            "no check boxes outside a selection"
+        );
+        app.actions.push(crate::model::Action::StartSelection);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        assert_eq!(app.selection, Some((chat.clone(), Vec::new())));
+        let rect = |message: &str| {
+            let id = crate::ui::conversation::bubble_id(&chat, message).with("rect");
+            ctx.data(|data| data.get_temp::<egui::Rect>(id))
+                .unwrap_or_else(|| panic!("{message} is on screen"))
+        };
+        for (message, own) in [
+            ("ada-voice", false),
+            ("you-voice", true),
+            ("ada-reply", false),
+        ] {
+            let boxed = check(message).unwrap_or_else(|| panic!("{message} has a check box"));
+            let bubble = rect(message);
+            assert!(
+                boxed.right() < bubble.left(),
+                "{message}'s check box sits left of its bubble"
+            );
+            assert!(bubble.y_range().contains(boxed.center().y));
+            if own {
+                assert!(
+                    bubble.right() > rect("ada-voice").right() + 50.0,
+                    "an own bubble stays on the right"
+                );
+            }
+        }
+        let click = |app: &mut App, pos: egui::Pos2| {
+            let button = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                app,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos), button(true)],
+            );
+            frame_with(app, &ctx, vec![button(false)]);
+            render(app, &ctx);
+        };
+        click(&mut app, check("ada-voice").unwrap().center());
+        assert_eq!(selected_ids(&app), ["ada-voice"], "the check box picks");
+        // The view's margin, left of the check box.
+        let margin = check("ada-reply").unwrap().left_center() - egui::vec2(10.0, 0.0);
+        click(&mut app, margin);
+        assert_eq!(
+            selected_ids(&app),
+            ["ada-voice", "ada-reply"],
+            "the margin picks too"
+        );
+        click(&mut app, check("ada-voice").unwrap().center());
+        click(&mut app, check("ada-reply").unwrap().center());
+        assert_eq!(
+            app.selection,
+            Some((chat.clone(), Vec::new())),
+            "unticking every message keeps selecting"
+        );
+    }
+
     /// One frame with AccessKit on; returns (label, role, centre) per node.
     fn accessible_nodes(
         app: &mut App,
