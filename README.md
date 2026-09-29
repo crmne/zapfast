@@ -286,6 +286,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   if that key is missing, the message explains that voting is available on your
   phone. Creating polls in disappearing-message chats is not yet supported by
   the protocol library's poll API, so ZapFast blocks it instead of ignoring the timer.
+- **Locations.** Choose **Send location** from the plus menu beside the
+  message field and paste a pair of coordinates, with a comma or a space
+  between them and a dot or a comma as the decimal mark, or a link to a spot
+  on Google Maps, Apple Maps, OpenStreetMap, or a `geo:` URI. The dialog shows
+  the spot and a link to it before anything is sent, and refuses text it cannot
+  read instead of guessing a place. What goes out stays where it was sent:
+  WhatsApp shares a position that keeps moving only from the phone.
 - **Emoji, GIF, and sticker picker.** Search emoji and GIFs, use recent emoji
   and stickers, and add stickers to Favorites with a right-click. Favorites
   sync with your phone both ways, and Recent holds only stickers you sent. Emoji autocomplete and
@@ -896,7 +903,8 @@ Demo runs never open the microphone: recording plays back a synthetic tone.
 Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
 English lines.
 Use `--demo-page composer-tools` to preview the WhatsApp-style composer pill
-and its attachment and poll menu. `typing`, `mention`, and
+and its attachment and poll menu, or `--demo-page location` for the location
+dialog with a spot pasted in. `typing`, `mention`, and
 `emoji-complete` preview the multiline field and inline suggestions.
 Use `--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page chat-header-menu` for the menu at the top of an open chat, and

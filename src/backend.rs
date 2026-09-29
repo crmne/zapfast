@@ -155,6 +155,12 @@ pub enum Command {
         quoting: Option<String>,
         mentions: Vec<String>,
     },
+    SendLocation {
+        chat: ChatId,
+        latitude: f64,
+        longitude: f64,
+        quoting: Option<String>,
+    },
     ReplyInteractive {
         chat: ChatId,
         message: String,
@@ -965,6 +971,11 @@ pub enum Refusal {
 pub enum Unsent {
     /// Composer text in wire form, with `@user` mention tokens.
     Text(String),
+    /// The spot a location was to send, so the dialog can come back with it.
+    Location {
+        latitude: f64,
+        longitude: f64,
+    },
     Voice(Vec<f32>),
     Files {
         paths: Vec<PathBuf>,
