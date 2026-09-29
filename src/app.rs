@@ -303,6 +303,15 @@ pub(crate) struct Sweep {
     base: Vec<String>,
 }
 
+/// Whether a message can join a selection: deleted and placeholder
+/// messages cannot be forwarded.
+pub(crate) fn can_select(content: &Content) -> bool {
+    !matches!(
+        content,
+        Content::Revoked | Content::PhoneOnly { .. } | Content::Unsupported { .. }
+    )
+}
+
 /// Adds the messages from `anchor` to `to` to a selection, in either
 /// direction, keeping the chat's order. Deleted and placeholder messages
 /// cannot be forwarded, so they stay out.
@@ -313,11 +322,7 @@ fn add_range(messages: &[Message], ids: &mut Vec<String>, anchor: &str, to: &str
     };
     let (from, to) = (from.min(to), from.max(to));
     for message in &messages[from..=to] {
-        if !matches!(
-            message.content,
-            Content::Revoked | Content::PhoneOnly { .. } | Content::Unsupported { .. }
-        ) && !ids.contains(&message.id)
-        {
+        if can_select(&message.content) && !ids.contains(&message.id) {
             ids.push(message.id.clone());
         }
     }
@@ -4434,6 +4439,18 @@ impl App {
                 self.forward_search.clear();
                 self.selection = None;
             }
+            Action::StartSelection => {
+                // Choosing it again keeps what is already ticked.
+                if let Some(chat) = self.open_chat.clone()
+                    && self
+                        .selection
+                        .as_ref()
+                        .is_none_or(|(selected, _)| *selected != chat)
+                {
+                    self.selection = Some((chat, Vec::new()));
+                    self.selection_anchor = None;
+                }
+            }
             Action::SelectMessage(id) => {
                 if let Some(chat) = self.open_chat.clone() {
                     self.selection = Some((chat, vec![id.clone()]));
@@ -4496,7 +4513,13 @@ impl App {
                 let Some(ids) = range else {
                     return;
                 };
-                self.selection = (!ids.is_empty()).then_some((chat, ids));
+                // An open selection stays open, as its check boxes do, even
+                // with nothing in it.
+                let open = self
+                    .selection
+                    .as_ref()
+                    .is_some_and(|(selected, _)| *selected == chat);
+                self.selection = (open || !ids.is_empty()).then_some((chat, ids));
                 self.selection_anchor = Some(to);
             }
             Action::EndSweep => self.sweep = None,
@@ -4504,6 +4527,14 @@ impl App {
                 self.selection_anchor = Some(id.clone());
                 let mut next = self.selection.clone();
                 if let Some((chat, ids)) = next.as_mut() {
+                    let blocked = self
+                        .conversations
+                        .get(chat.as_str())
+                        .and_then(|conversation| conversation.message(&id))
+                        .is_some_and(|message| !can_select(&message.content));
+                    if blocked {
+                        return;
+                    }
                     if let Some(index) = ids.iter().position(|selected| *selected == id) {
                         ids.remove(index);
                     } else {
@@ -4521,13 +4552,6 @@ impl App {
                     }
                 }
                 self.selection = next;
-                if self
-                    .selection
-                    .as_ref()
-                    .is_some_and(|(_, ids)| ids.is_empty())
-                {
-                    self.selection = None;
-                }
             }
             Action::CancelSelection => {
                 self.selection = None;
@@ -8506,10 +8530,21 @@ mod tests {
             Some(vec!["second".into(), "third".into(), "fifth".into()])
         );
         app.apply(Action::CancelSelection, &ctx);
-        // Unselecting the last message leaves selection mode.
+        // Unselecting the last message keeps selecting, as WhatsApp Web
+        // does, and the chat menu opens a selection with nothing in it.
         app.apply(Action::SelectMessage("second".into()), &ctx);
         app.apply(Action::ToggleSelected("second".into()), &ctx);
-        assert!(app.selection.is_none());
+        assert_eq!(app.selection, Some((chat.into(), Vec::new())));
+        app.apply(Action::CancelSelection, &ctx);
+        app.apply(Action::StartSelection, &ctx);
+        assert_eq!(app.selection, Some((chat.into(), Vec::new())));
+        app.apply(Action::ToggleSelected("fifth".into()), &ctx);
+        assert_eq!(app.selection, Some((chat.into(), vec!["fifth".into()])));
+        // Choosing it again keeps what is ticked, and a deleted message
+        // cannot be ticked.
+        app.apply(Action::StartSelection, &ctx);
+        app.apply(Action::ToggleSelected("gone".into()), &ctx);
+        assert_eq!(app.selection, Some((chat.into(), vec!["fifth".into()])));
     }
 
     /// #246: a sweep adds its range to what was selected when it began, in

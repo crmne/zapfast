@@ -51,6 +51,20 @@ Availability depends on what the phone sends; messages deleted for you stay
 deleted. This action does not require unlinking your account or clearing the
 archive.
 
+## Selecting messages
+
+Choose **Select messages** in the chat's menu (the three dots at the top),
+**Select** in a message's menu, or Ctrl-click (Command-click on macOS) a
+message. As in WhatsApp Web, every message then gets a check box on the left.
+Click anywhere on a message's row, its box included, to add or remove it.
+Shift-click adds every message up to the one you click, and a drag adds every
+message it passes, scrolling when you hold the pointer at the top or bottom
+edge. A drag that starts beside the bubbles, off the text, starts a selection
+too. **Forward…** sends the selected messages together, in their original
+order. Unticking the last message keeps the selection open; Escape or the
+close button ends it. Deleted and unsupported messages cannot be forwarded, so
+they have no box.
+
 ## Stickers
 
 The sticker tab works like WhatsApp's: a row of tabs holds **Recent**
