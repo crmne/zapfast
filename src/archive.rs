@@ -2069,6 +2069,7 @@ pub(crate) mod tests {
                 sequence,
                 ended,
                 updated: 0,
+                newer_on_phone: false,
             };
             row.thumbnail = thumbnail;
             row
@@ -2102,6 +2103,7 @@ pub(crate) mod tests {
                 sequence: 2,
                 ended: false,
                 updated: 0,
+                newer_on_phone: false,
             }
         );
         assert_eq!(updated.thumbnail, Some(vec![1, 2, 3]));

@@ -269,7 +269,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Cached attachment filenames use extensions of at most 16 ASCII letters, digits,
   or hyphens; invalid or empty extensions are saved as `.bin`. A photo, video,
   or voice message sent to be viewed once shows as a view-once placeholder:
-  WhatsApp opens it only on your phone, as it does in WhatsApp Web.
+  WhatsApp opens it only on your phone, as it does in WhatsApp Web. A live
+  location is the same: WhatsApp keeps it on the phone and sends linked
+  devices only its first position, so the card shows that position, marks
+  where the newer ones are, and opens the spot in your browser's map.
 - **Polls.** Choose **Create poll** from the plus menu beside the message
   field to create a poll with 2–12 answers. Turn off **Allow multiple
   answers** for a single-choice poll.
