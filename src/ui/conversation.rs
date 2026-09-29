@@ -1910,6 +1910,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         let near = before + height >= viewport.top() - reach
                             && before <= viewport.bottom() + reach;
                         if !lay_out_all && !near {
+                            // The body rect of a row that just left the
+                            // layout marks where it last was, not where it is.
+                            if known
+                                .is_some_and(|row| row.pass.is_some_and(|last| last + 1 == pass))
+                            {
+                                let id = bubble_id(&chat.id, &message.id).with("body");
+                                ui.ctx().data_mut(|data| data.remove::<Rect>(id));
+                            }
                             ui.add_space(height);
                             if known.is_none() {
                                 rows.insert(message.id.clone(), RowHeight { height, pass: None });
