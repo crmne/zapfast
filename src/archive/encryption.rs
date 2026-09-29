@@ -57,6 +57,12 @@ fn key_from_entry(path: &Path, entry: &keyring_core::Entry) -> Result<Zeroizing<
     match entry.get_secret() {
         Ok(secret) => {
             let secret = Zeroizing::new(secret);
+            // Start over moves the unreadable archive aside but leaves its
+            // credential behind. Replace an invalid credential only when no
+            // archive remains at this path, never while protecting an archive.
+            if secret.len() != 32 && !path.try_exists()? {
+                return create_key(entry);
+            }
             ensure!(
                 secret.len() == 32,
                 "The archive key in the OS keyring is invalid"
@@ -70,24 +76,7 @@ fn key_from_entry(path: &Path, entry: &keyring_core::Entry) -> Result<Zeroizing<
                 plaintext(path)?,
                 "The archive is encrypted but its OS keyring key is missing. Restore the original keyring; the archive has not been changed"
             );
-            let mut key = Zeroizing::new([0; 32]);
-            getrandom::fill(key.as_mut()).context("Could not generate an archive key")?;
-            entry
-                .set_secret(key.as_ref())
-                .map_err(keyring_error)
-                .context("Could not save the archive key in the OS keyring")?;
-            // Read back before touching the only copy of the message history.
-            let saved = Zeroizing::new(
-                entry
-                    .get_secret()
-                    .map_err(keyring_error)
-                    .context("Could not verify the saved archive key")?,
-            );
-            ensure!(
-                saved.as_slice() == key.as_ref(),
-                "The OS keyring did not retain the archive key"
-            );
-            Ok(key)
+            create_key(entry)
         }
         Err(error) => {
             Err(keyring_error(error)).context("Unlock your OS keyring and restart ZapFast")
@@ -117,6 +106,27 @@ fn keyring_error(error: keyring_core::Error) -> anyhow::Error {
         }
         _ => anyhow::anyhow!("{error}"),
     }
+}
+
+fn create_key(entry: &keyring_core::Entry) -> Result<Zeroizing<[u8; 32]>> {
+    let mut key = Zeroizing::new([0; 32]);
+    getrandom::fill(key.as_mut()).context("Could not generate an archive key")?;
+    entry
+        .set_secret(key.as_ref())
+        .map_err(keyring_error)
+        .context("Could not save the archive key in the OS keyring")?;
+    // Read back before touching the only copy of the message history.
+    let saved = Zeroizing::new(
+        entry
+            .get_secret()
+            .map_err(keyring_error)
+            .context("Could not verify the saved archive key")?,
+    );
+    ensure!(
+        saved.as_slice() == key.as_ref(),
+        "The OS keyring did not retain the archive key"
+    );
+    Ok(key)
 }
 
 fn key_literal(key: &[u8; 32]) -> Zeroizing<String> {
@@ -333,6 +343,54 @@ mod tests {
             )))),
             "Could not save the archive key in the OS keyring: Couldn't access platform storage: Windows error code 8"
         );
+    }
+
+    #[test]
+    fn starting_over_replaces_an_invalid_key_only_after_preserving_the_archive() {
+        for invalid in [vec![], vec![1; 12], vec![2; 64]] {
+            let directory = directory();
+            let path = directory.path().join("archive.db");
+            let kept = directory.path().join("archive-unreadable.db");
+            let store = keyring_core::mock::Store::new().unwrap();
+            let entry = store.build("zapfast-test", "archive", None).unwrap();
+            let original_key = key_from_entry(&path, &entry).unwrap();
+            let connection = open(&path, &original_key).unwrap();
+            connection
+                .execute_batch("CREATE TABLE example(value TEXT);")
+                .unwrap();
+            drop(connection);
+            let original = fs::read(&path).unwrap();
+            entry.set_secret(&invalid).unwrap();
+
+            assert!(key_from_entry(&path, &entry).is_err());
+            assert_eq!(entry.get_secret().unwrap(), invalid);
+            assert_eq!(fs::read(&path).unwrap(), original);
+
+            // The recovery action keeps the old archive before retrying unlock.
+            fs::rename(&path, &kept).unwrap();
+            let key = key_from_entry(&path, &entry).unwrap();
+            assert_eq!(entry.get_secret().unwrap(), key.as_slice());
+            assert_eq!(*key_from_entry(&path, &entry).unwrap(), *key);
+            assert!(!path.exists());
+            assert_eq!(fs::read(&kept).unwrap(), original);
+            assert!(open(&kept, &original_key).is_ok());
+            assert!(open(&path, &key).is_ok());
+        }
+    }
+
+    #[test]
+    fn invalid_key_is_not_replaced_for_an_existing_plaintext_or_empty_archive() {
+        let directory = directory();
+        let path = directory.path().join("archive.db");
+        let store = keyring_core::mock::Store::new().unwrap();
+        let entry = store.build("zapfast-test", "archive", None).unwrap();
+        entry.set_secret(&[]).unwrap();
+        for contents in [b"".as_slice(), HEADER.as_slice()] {
+            fs::write(&path, contents).unwrap();
+            assert!(key_from_entry(&path, &entry).is_err());
+            assert!(entry.get_secret().unwrap().is_empty());
+            assert_eq!(fs::read(&path).unwrap(), contents);
+        }
     }
 
     #[test]

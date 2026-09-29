@@ -201,7 +201,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   works; macOS has no public API for this, so the switch is hidden there.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
-  or return to a conversation; invoking search keeps focus in search, and
+  or return to a conversation, and clicking empty conversation space returns
+  focus to it; invoking search keeps focus in search, and
   Escape clears search and returns to the composer; another Escape closes the
   chat and saves your text draft. Drafts are kept in the encrypted archive, so
   unsent text survives closing ZapFast and restarting. Open menus, dialogs, and unfinished actions
@@ -392,6 +393,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
   `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` or `Ctrl+Shift+F` searches your chats,
+  where `↑`/`↓` selects a matching chat and Enter opens it ready for typing;
   `Ctrl+F` searches the open chat as in WhatsApp (`↑`/`↓` walk the results
   and Enter jumps to one; with no chat open it searches your chats, and in
   Settings it searches the settings), `Alt+↑/↓` or WhatsApp's
@@ -499,8 +501,11 @@ can decrypt the existing archive. If the original key cannot come back,
 **Start over…** on that screen renames the unreadable archive to
 `archive-unreadable-<date>.db` beside it, forgets the linked session, and
 shows the linking screen: linking again brings recent history back from your
-phone. Remove the old ZapFast entry under Linked devices on the phone
-afterwards. For help, report the OS, app version, whether
+phone. If the saved key has an invalid length, ZapFast replaces it only after
+the unreadable archive has been moved aside; retrying leaves it unchanged while
+the archive is still present. This cannot recover a key already lost by the
+OS credential store. Remove the old ZapFast entry under Linked devices on the
+phone afterwards. For help, report the OS, app version, whether
 the profile was moved/restored, and the error text with personal paths removed.
 Never attach the archive, keys, or full logs from older releases.
 

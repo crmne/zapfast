@@ -233,7 +233,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
 /// reports whether one was found. `consume_key` is unsuitable here: it also
 /// matches the key with Shift or Alt held, and a plain binding must leave
 /// those combinations, such as Shift+Home for text selection, alone.
-fn take_plain(input: &mut egui::InputState, key: Key) -> bool {
+pub(super) fn take_plain(input: &mut egui::InputState, key: Key) -> bool {
     let mut taken = false;
     input.events.retain(|event| {
         if taken {

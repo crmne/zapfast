@@ -1855,6 +1855,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     egui::style::ScrollAnimation::none(),
                 );
             }
+            // Keep ordinary conversation-space clicks useful: after reading,
+            // the next keystroke should go straight to the composer. Register
+            // this before the message controls so text, links, media, and
+            // selection interactions remain in front of the background.
+            let background = ui.interact(
+                viewport,
+                ui.id().with(("message-background", &chat.id)),
+                Sense::click(),
+            );
             // Only a drag that has moved past a click, such as selecting
             // text, scrolls; a click near an edge does not.
             let held_inside = ui.input(|input| {
@@ -1919,6 +1928,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         let near = before + height >= viewport.top() - reach
                             && before <= viewport.bottom() + reach;
                         if !lay_out_all && !near {
+                            // The body rect of a row that just left the
+                            // layout marks where it last was, not where it is.
+                            if known
+                                .is_some_and(|row| row.pass.is_some_and(|last| last + 1 == pass))
+                            {
+                                let id = bubble_id(&chat.id, &message.id).with("body");
+                                ui.ctx().data_mut(|data| data.remove::<Rect>(id));
+                            }
                             ui.add_space(height);
                             if known.is_none() {
                                 rows.insert(message.id.clone(), RowHeight { height, pass: None });
@@ -2093,6 +2110,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         pinned = true;
                     }
                 });
+            if background.clicked() {
+                actions.push(Action::FocusComposer);
+            }
             // A keyboard PgUp/PgDn/Home/End scroll moves by the next slice of
             // its eased distance each frame, as an instant scroll: relative
             // steps compose with the row-height compensation below, and
@@ -2636,6 +2656,9 @@ fn bubble(
     if let Some(rect) = previous {
         let strip = Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
         let strip = ui.interact(strip, id.with("row"), Sense::CLICK);
+        if strip.clicked() {
+            actions.push(Action::FocusComposer);
+        }
         reply_on_double_click(&strip, message, actions);
     }
     let mut response = None;
@@ -5157,7 +5180,16 @@ fn rich_body(
     // Click links and drag to select text.
     // Text selection and pointer links do not need a sequential Tab stop.
     // The surrounding transcript remains available to accessibility readers.
-    let (rect, response) = ui.allocate_exact_size(allocation, Sense::CLICK | Sense::DRAG);
+    let (rect, _) = ui.allocate_exact_size(allocation, Sense::hover());
+    // egui matches selection endpoints to widgets by id every frame and drops
+    // the selection when one is missed. A positional auto id shifts whenever
+    // a sibling allocates differently (virtualized rows), killing the
+    // selection mid-drag; an explicit id keeps the anchor alive.
+    let response = ui.interact(
+        rect,
+        bubble_id(&view.chat.id, &message.id).with("body-text"),
+        Sense::CLICK | Sense::DRAG,
+    );
     // Store the body rect for selection tests.
     ui.ctx().data_mut(|data| {
         data.insert_temp(bubble_id(&view.chat.id, &message.id).with("body"), rect);
