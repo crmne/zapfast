@@ -3225,7 +3225,7 @@ impl Worker {
             && info.media_type == Some(EncMediaType::LiveLocation)
         {
             *live_location = true;
-            if self.continues_masked_live_location(&chat, &sender, &info.id, info) {
+            if self.absorb_masked_live_location(&chat, &sender, &info.id, info) {
                 return;
             }
         }
@@ -3333,14 +3333,21 @@ impl Worker {
 
     /// Whether a masked live location only continues the share `sender`
     /// last posted in this chat. Linked devices cannot follow the position,
-    /// so a share keeps the one bubble it started with.
-    fn continues_masked_live_location(
-        &self,
+    /// so a share keeps the one bubble it started with: the card it already
+    /// shows keeps its last position and says the newer ones are on the
+    /// phone, and a share this device was never able to read keeps its
+    /// single placeholder.
+    fn absorb_masked_live_location(
+        &mut self,
         chat: &str,
         sender: &str,
         id: &str,
         info: &MessageInfo,
     ) -> bool {
+        let now = info.timestamp.timestamp();
+        if self.mark_share_on_the_phone(chat, sender, id, now) {
+            return true;
+        }
         let Ok(Some(latest)) = self.archive.latest_id_from(chat, sender) else {
             return false;
         };
@@ -3360,6 +3367,38 @@ impl Worker {
                     }
                 ) && info.timestamp.timestamp() - message.timestamp <= LIVE_LOCATION_LIMIT
             })
+    }
+
+    /// Whether the sender's share in this chat is a card, marking it as the
+    /// one that cannot follow the phone's newer positions, and whether the
+    /// position that arrived belongs to it. That card is the share's whole
+    /// row, so it owns the fact instead of the chat growing a second bubble.
+    fn mark_share_on_the_phone(&mut self, chat: &str, sender: &str, id: &str, now: i64) -> bool {
+        let since = now - LIVE_LOCATION_LIMIT;
+        let Ok(Some(latest)) = self.archive.latest_live_location(chat, sender, since) else {
+            return false;
+        };
+        if latest == id {
+            return false;
+        }
+        let Ok(Some(mut share)) = self.archive.message(chat, &latest) else {
+            return false;
+        };
+        if share.content.live_location_over(share.timestamp, now) {
+            return false;
+        }
+        let Content::LiveLocation { newer_on_phone, .. } = &mut share.content else {
+            return false;
+        };
+        if *newer_on_phone {
+            return true;
+        }
+        *newer_on_phone = true;
+        if let Err(error) = self.archive.insert_message(&share, None) {
+            log::warn!("could not store a live location position notice: {error}");
+        }
+        self.emit_message(chat, &latest);
+        true
     }
 
     /// The stored live location that a position from `sender` updates: the
@@ -3640,7 +3679,7 @@ impl Worker {
             self.canonical(&info.source.sender)
         };
         let live_location = info.media_type == Some(EncMediaType::LiveLocation);
-        if live_location && self.continues_masked_live_location(&chat, &sender, &info.id, info) {
+        if live_location && self.absorb_masked_live_location(&chat, &sender, &info.id, info) {
             return;
         }
         let row = Message {
@@ -8122,6 +8161,7 @@ fn live_location_of(base: &wa::Message) -> Option<(Content, Option<String>)> {
                 sequence: 0,
                 ended: false,
                 updated: 0,
+                newer_on_phone: false,
             },
             None,
         ));
@@ -8139,6 +8179,7 @@ fn live_location_content(live: &wa::message::LiveLocationMessage, ended: bool) -
         sequence: live.sequence_number.unwrap_or(0),
         ended,
         updated: 0,
+        newer_on_phone: false,
     }
 }
 
@@ -10339,6 +10380,50 @@ mod tests {
             &live_location_info("again", now, source()),
         );
         assert_eq!(worker.archive.messages(PEER, None, 10).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_masked_position_marks_the_share_it_cannot_move() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let start = crate::util::now() - 600;
+        let source = || MessageSource {
+            chat: PEER.parse().unwrap(),
+            sender: PEER.parse().unwrap(),
+            ..Default::default()
+        };
+        let ingest = |worker: &mut Worker, position: (Arc<wa::Message>, MessageInfo)| {
+            worker.ingest(&position.0, &position.1);
+        };
+        // Whether the share's card says the phone holds the newer positions.
+        let marked = |worker: &Worker| {
+            let share = worker.archive.message(PEER, "start").unwrap().unwrap();
+            match share.content {
+                Content::LiveLocation { newer_on_phone, .. } => newer_on_phone,
+                other => panic!("unexpected {other:?}"),
+            }
+        };
+        // Ada shares where she is, and this device reads the position.
+        ingest(&mut worker, live_position("start", start, 1, 51.0, None));
+        assert!(!marked(&worker));
+        // She moves, and the phone keeps the positions to itself.
+        worker.ingest(
+            &masked_live_location(),
+            &live_location_info("masked", start + 60, source()),
+        );
+        assert_eq!(worker.archive.messages(PEER, None, 10).unwrap().len(), 1);
+        assert!(
+            marked(&worker),
+            "the card says where the newer positions are"
+        );
+        // A position this device can read takes the notice back.
+        ingest(
+            &mut worker,
+            live_position("p2", start + 120, 2, 51.1, Some("start")),
+        );
+        let rows = worker.archive.messages(PEER, None, 10).unwrap();
+        assert_eq!(rows.len(), 1, "the share keeps its one row");
+        assert!(!marked(&worker));
     }
 
     #[test]

@@ -737,6 +737,7 @@ pub fn populate(app: &mut App) {
                     sequence: 1,
                     ended: false,
                     updated: 0,
+                    newer_on_phone: false,
                 },
             );
             row.thumbnail = Some(sample_map());
@@ -2387,6 +2388,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         sequence: 14,
                         ended: false,
                         updated: now - 60,
+                        // The phone has posted newer positions this device
+                        // cannot read, so the card says where they are.
+                        newer_on_phone: true,
                     },
                 );
                 row.thumbnail = Some(sample_map());

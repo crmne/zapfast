@@ -135,7 +135,9 @@ downloads are on, or on click. Visible stickers download automatically even
 when that setting is off. The 64 MiB limit applies to both automatic and manual
 downloads, including videos and stickers; clicking a larger attachment does
 not bypass it. If an attachment has expired, ZapFast asks your phone to upload
-it again.
+it again. A live-location share shows the position this linked device received;
+WhatsApp sends later positions only to the phone. ZapFast marks when newer
+positions are available there, but cannot follow the moving location here.
 
 ## Interactive messages
 
