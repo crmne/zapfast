@@ -183,7 +183,7 @@ impl Sound {
     /// track, or a computer without an output device, plays silently.
     fn open(path: &Path, from: Duration, muted: bool) -> Option<Self> {
         let decoder = sound_decoder(path, from)?;
-        let device = match rodio::DeviceSinkBuilder::open_default_sink() {
+        let device = match crate::audio::open_output() {
             Ok(device) => device,
             Err(error) => {
                 log::warn!("video plays without sound: {error}");
