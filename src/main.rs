@@ -309,7 +309,7 @@ fn redact_protocol(
     use zapfast::diagnostics::{is_protocol_target, protocol_summary};
     (is_protocol_target(record.target())
         || is_protocol_target(record.module_path().unwrap_or_default()))
-    .then(|| protocol_summary(message).into())
+    .then(|| protocol_summary(message))
 }
 
 /// Parses `--demo-size WxH`.

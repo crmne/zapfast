@@ -64,8 +64,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   new messages. Like on the phone, you can pin up to three chats. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
   The filters stay on one row and scroll horizontally in narrow sidebars.
-  Unnamed groups use a shared participant summary for their title and subtitle;
-  repeated first names appear as `Andrea ×3`, with your own entry shown as `You`.
+  Unnamed groups use a shared participant summary for their title and subtitle.
+  It names each saved contact by its whole first name as saved on the phone (the
+  full name when none was saved), repeated names appear as `Andrea ×3`, and your
+  own entry is shown as `You`.
   Incomplete group metadata preserves known names and retries with backoff;
   an empty cached subject remains eligible for recovery.
   Typing indicators show other participants, excluding your own linked devices.
@@ -156,7 +158,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Send attachments with captions.** Paste a picture, drop files, or choose
   **Send files** from the plus menu. They stay in the composer until you send them or press Escape.
   Pasting a picture uses its image data without adding the source URL or HTML
-  to your caption. Text-only clipboard contents still paste as text.
+  to your caption. Files copied in Finder, Explorer, or a Linux file manager
+  paste as the files themselves, not their icons. Text-only clipboard contents
+  still paste as text.
   MP3, M4A, AAC, and OGG files go as audio messages; other audio, such as
   WAV or FLAC, goes as a document so the recipient gets the original file.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
@@ -237,7 +241,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Double-click to switch between fitting the window and the original size.
   Copy the image to your clipboard via the copy button in the header, the
   right-click menu (**Copy image**), or
-  Ctrl+C (Cmd+C on macOS). Click a video to play it in its message, with
+  Ctrl+C (Cmd+C on macOS); a downloaded image's message menu has **Copy image**
+  too, without opening the preview. Click a video to play it in its message, with
   sound, a seek bar, and a mute switch; round video messages play inside their
   circle with a progress ring, like on the phone. A video that is not
   downloaded yet downloads first and then plays. Videos in codecs other than
@@ -251,7 +256,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   phone to upload it again. Downloads stop after two minutes with an inline
   retry error if they cannot finish; the menu disables Download while one is running.
   Cached attachment filenames use extensions of at most 16 ASCII letters, digits,
-  or hyphens; invalid or empty extensions are saved as `.bin`.
+  or hyphens; invalid or empty extensions are saved as `.bin`. A photo, video,
+  or voice message sent to be viewed once shows as a view-once placeholder:
+  WhatsApp opens it only on your phone, as it does in WhatsApp Web.
 - **Polls.** Choose **Create poll** from the plus menu beside the message
   field to create a poll with 2–12 answers. Turn off **Allow multiple
   answers** for a single-choice poll.
@@ -679,7 +686,7 @@ from the environment and honors `NO_PROXY`.
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
 | Wallpaper image | `~/.local/state/zapfast/wallpaper.jpg` | Copy of the chosen picture, or `.png`, `.webp`, `.gif`; deleted by **Remove image** |
-| Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
+| Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more; **Settings > Files > Log > Open** shows it in its folder when no app opens it |
 
 macOS and Windows use the standard platform directories selected by the
 `directories` crate. On first start, ZapFast moves settings, the linked session,

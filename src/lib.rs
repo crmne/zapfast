@@ -20,6 +20,7 @@ pub mod markup;
 pub mod media_pause;
 pub mod model;
 pub mod notify;
+pub mod opener;
 pub mod paths;
 pub mod privacy;
 pub mod proxy;

@@ -1560,8 +1560,10 @@ impl App {
             if name.starts_with('+') || name == "Unknown" {
                 numbers.push(name);
             } else {
-                let name = name.trim_start_matches('~');
-                names.push(name.split_whitespace().next().unwrap_or(name).to_owned());
+                // The saved first name, as WhatsApp shows here, whole: it can
+                // hold several words. Without one, the whole name.
+                let first = self.contacts.get(id).and_then(Contact::first_name);
+                names.push(first.unwrap_or(name.trim_start_matches('~')).to_owned());
             }
         }
         names.sort_by_key(|name| name.to_lowercase());
@@ -3615,6 +3617,7 @@ impl App {
                     }
                 }
             }
+            Action::OpenLog(path) => self.backend.send(Command::OpenLog(path)),
             Action::SaveAttachmentAs { path, name } => {
                 self.backend
                     .send(Command::SaveAttachmentAs { source: path, name });
@@ -3773,25 +3776,21 @@ impl App {
                     self.mention_start = None;
                 }
             }
-            Action::DeleteForEveryone(id) => {
-                if let Some(chat) = self.open_chat.clone() {
-                    if let Some(message) = self
-                        .conversations
-                        .get_mut(&chat)
-                        .and_then(|conversation| conversation.message_mut(&id))
-                    {
-                        message.content = Content::Revoked;
-                    }
-                    self.backend.send(Command::Revoke { chat, id });
+            Action::DeleteForEveryone { chat, id } => {
+                if let Some(message) = self
+                    .conversations
+                    .get_mut(&chat)
+                    .and_then(|conversation| conversation.message_mut(&id))
+                {
+                    message.content = Content::Revoked;
                 }
+                self.backend.send(Command::Revoke { chat, id });
             }
-            Action::DeleteForMe(id) => {
-                if let Some(chat) = self.open_chat.clone() {
-                    if let Some(conversation) = self.conversations.get_mut(&chat) {
-                        conversation.messages.retain(|message| message.id != id);
-                    }
-                    self.backend.send(Command::DeleteLocal { chat, id });
+            Action::DeleteForMe { chat, id } => {
+                if let Some(conversation) = self.conversations.get_mut(&chat) {
+                    conversation.messages.retain(|message| message.id != id);
                 }
+                self.backend.send(Command::DeleteLocal { chat, id });
             }
             Action::Attach => {
                 if let Some(chat) = self.open_chat.clone() {
@@ -5217,13 +5216,14 @@ impl App {
         if !dropped.is_empty() {
             self.actions.push(Action::SendFiles(dropped));
         }
-        self.take_image_paste(ctx, clipboard_image);
+        self.take_clipboard_paste(ctx, || clipboard_contents(clipboard_files, clipboard_image));
     }
 
-    fn take_image_paste(
+    /// Stages pasted files or a pasted picture for the open chat.
+    fn take_clipboard_paste(
         &mut self,
         ctx: &egui::Context,
-        read_image: impl FnOnce() -> Option<(usize, usize, Vec<u8>)>,
+        read_clipboard: impl FnOnce() -> Option<ClipboardPaste>,
     ) {
         let (paste, text, released, focused, command) = ctx.input(|input| {
             (
@@ -5253,7 +5253,7 @@ impl App {
             // A menu paste has no key release to wait for.
             self.paste_before_release = command;
         }
-        // Handle image paste only when the composer or no field has focus.
+        // Handle file and image paste only when the composer or no field has focus.
         let composing = ctx.memory(|memory| {
             memory.has_focus(egui::Id::new("composer-text")) || memory.focused().is_none()
         });
@@ -5267,19 +5267,27 @@ impl App {
                 .as_deref()
                 .and_then(|id| self.chat(id))
                 .is_some_and(Chat::can_send)
-            && let Some((width, height, rgba)) = read_image()
+            && let Some(contents) = read_clipboard()
         {
-            // A browser can offer both pixels and its source URL. Consume the
-            // text before the composer sees it, keeping any existing caption.
+            // A browser can offer both pixels and its source URL, and a file
+            // manager both paths and their text. Consume the text before the
+            // composer sees it, keeping any existing caption.
             ctx.input_mut(|input| {
                 input
                     .events
                     .retain(|event| !matches!(event, egui::Event::Paste(_)))
             });
-            self.actions.push(Action::PasteImage {
-                width,
-                height,
-                rgba,
+            self.actions.push(match contents {
+                ClipboardPaste::Files(paths) => Action::SendFiles(paths),
+                ClipboardPaste::Image {
+                    width,
+                    height,
+                    rgba,
+                } => Action::PasteImage {
+                    width,
+                    height,
+                    rgba,
+                },
             });
         }
     }
@@ -5516,6 +5524,54 @@ pub fn wants_paste(input: &egui::InputState) -> bool {
                 } if modifiers.command
             )
     })
+}
+
+/// What a paste into the composer stages.
+#[derive(Debug)]
+enum ClipboardPaste {
+    /// Files copied in a file manager, staged like dropped files.
+    Files(Vec<PathBuf>),
+    /// Picture data as width, height, and straight-alpha RGBA.
+    Image {
+        width: usize,
+        height: usize,
+        rgba: Vec<u8>,
+    },
+}
+
+/// Prefers the clipboard's file list over its picture: Finder, Explorer and
+/// Linux file managers offer the file's icon as an image alongside the path,
+/// so a copied PDF or ZIP would otherwise arrive as its icon (#285).
+fn clipboard_contents(
+    read_files: impl FnOnce() -> Option<Vec<PathBuf>>,
+    read_image: impl FnOnce() -> Option<(usize, usize, Vec<u8>)>,
+) -> Option<ClipboardPaste> {
+    let files: Vec<PathBuf> = read_files()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|path| {
+            // text/uri-list lines end in CRLF, and arboard splits only on LF.
+            let path = match path.to_str() {
+                Some(text) if text.ends_with('\r') => PathBuf::from(text.trim_end_matches('\r')),
+                _ => path,
+            };
+            path.exists().then_some(path)
+        })
+        .collect();
+    if !files.is_empty() {
+        return Some(ClipboardPaste::Files(files));
+    }
+    read_image().map(|(width, height, rgba)| ClipboardPaste::Image {
+        width,
+        height,
+        rgba,
+    })
+}
+
+/// Files copied to the clipboard by a file manager.
+fn clipboard_files() -> Option<Vec<PathBuf>> {
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    clipboard.get().file_list().ok()
 }
 
 /// Clipboard image as width, height, and straight-alpha RGBA.
@@ -5809,10 +5865,23 @@ mod tests {
     fn clipboard_frame(
         app: &mut App,
         ctx: &egui::Context,
-        mut events: Vec<egui::Event>,
+        events: Vec<egui::Event>,
         image: bool,
     ) -> usize {
+        clipboard_frame_with_files(app, ctx, events, None, image).0
+    }
+
+    /// Runs a frame whose clipboard holds `files` and, if `image`, a picture.
+    /// Returns how often the clipboard and its picture were read.
+    fn clipboard_frame_with_files(
+        app: &mut App,
+        ctx: &egui::Context,
+        mut events: Vec<egui::Event>,
+        files: Option<Vec<PathBuf>>,
+        image: bool,
+    ) -> (usize, usize) {
         let mut reads = 0;
+        let mut image_reads = 0;
         events.insert(0, egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -5820,9 +5889,15 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                app.take_image_paste(ui.ctx(), || {
+                app.take_clipboard_paste(ui.ctx(), || {
                     reads += 1;
-                    image.then(|| (2, 2, vec![200; 16]))
+                    clipboard_contents(
+                        || files.clone(),
+                        || {
+                            image_reads += 1;
+                            image.then(|| (2, 2, vec![200; 16]))
+                        },
+                    )
                 });
                 ui.add(
                     egui::TextEdit::singleline(&mut app.composer)
@@ -5832,7 +5907,7 @@ mod tests {
             },
         );
         output.textures_delta.clear();
-        reads
+        (reads, image_reads)
     }
 
     fn clipboard_app() -> (App, egui::Context) {
@@ -5887,7 +5962,13 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                app.take_image_paste(ui.ctx(), || Some((2, 2, vec![200; 16])));
+                app.take_clipboard_paste(ui.ctx(), || {
+                    Some(ClipboardPaste::Image {
+                        width: 2,
+                        height: 2,
+                        rgba: vec![200; 16],
+                    })
+                });
                 app.apply_actions(ui.ctx());
             },
         );
@@ -5932,6 +6013,57 @@ mod tests {
             "a clipboard change before release must not stage an unrelated image"
         );
         assert!(app.pending.is_empty());
+    }
+
+    #[test]
+    fn a_copied_file_stages_the_file_and_not_its_icon() {
+        let directory = tempfile::tempdir().unwrap();
+        let pdf = directory.path().join("fixture.pdf");
+        let zip = directory.path().join("fixture archive.zip");
+        std::fs::write(&pdf, b"%PDF-fixture").unwrap();
+        std::fs::write(&zip, b"PK-fixture").unwrap();
+        let (mut app, ctx) = clipboard_app();
+        // Finder offers the path, the file name as text, and an icon picture.
+        let (reads, image_reads) = clipboard_frame_with_files(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Paste("fixture.pdf".into()), paste_release()],
+            Some(vec![pdf.clone(), zip.clone()]),
+            true,
+        );
+        assert_eq!(reads, 1);
+        assert_eq!(image_reads, 0, "the icon picture is never read");
+        assert!(matches!(
+            app.pending.as_slice(),
+            [Pending::File(first), Pending::File(second)] if *first == pdf && *second == zip
+        ));
+        assert_eq!(app.composer, "caption", "the file name is not pasted");
+    }
+
+    #[test]
+    fn a_uri_list_line_ending_does_not_hide_the_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("fixture.zip");
+        std::fs::write(&file, b"PK-fixture").unwrap();
+        let mut listed = file.clone().into_os_string();
+        listed.push("\r");
+        let contents = clipboard_contents(|| Some(vec![PathBuf::from(listed)]), || None);
+        assert!(matches!(contents, Some(ClipboardPaste::Files(paths)) if paths == [file]));
+    }
+
+    #[test]
+    fn a_missing_copied_file_falls_back_to_the_picture() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, ctx) = clipboard_app();
+        let (_, image_reads) = clipboard_frame_with_files(
+            &mut app,
+            &ctx,
+            vec![paste_release()],
+            Some(vec![directory.path().join("gone.pdf")]),
+            true,
+        );
+        assert_eq!(image_reads, 1);
+        assert!(matches!(app.pending.as_slice(), [Pending::Picture { .. }]));
     }
 
     #[test]
@@ -8511,6 +8643,7 @@ mod tests {
         let contact = |id: &str, name: &str| crate::model::Contact {
             id: id.into(),
             full_name: Some(name.into()),
+            first_name: None,
             push_name: None,
         };
         // Exclude contacts that already have chats.
@@ -9157,6 +9290,7 @@ mod tests {
         let contact = Contact {
             id: "2@s.whatsapp.net".into(),
             full_name: Some("A\u{301}ngel".into()),
+            first_name: None,
             push_name: None,
         };
         app.contacts.insert(contact.id.clone(), contact);
@@ -9351,6 +9485,7 @@ mod tests {
             Contact {
                 id: "1@s.whatsapp.net".into(),
                 full_name: Some("Ada".into()),
+                first_name: None,
                 push_name: None,
             },
         );
@@ -9365,6 +9500,7 @@ mod tests {
             Contact {
                 id: "42@lid".into(),
                 full_name: None,
+                first_name: None,
                 push_name: Some("Bob".into()),
             },
         );
@@ -9389,6 +9525,7 @@ mod name_tests {
             Contact {
                 id: "1@s.whatsapp.net".into(),
                 full_name: Some("Ada Lovelace".into()),
+                first_name: None,
                 push_name: Some("Ada".into()),
             },
         );
@@ -9397,10 +9534,42 @@ mod name_tests {
             Contact {
                 id: "2@s.whatsapp.net".into(),
                 full_name: None,
+                first_name: None,
                 push_name: Some("Bob".into()),
             },
         );
         app
+    }
+
+    #[test]
+    fn group_members_go_by_their_whole_saved_first_name() {
+        let mut app = app();
+        let mut chat = Chat::new("fixture@g.us".into(), "Group".into());
+        for (index, full_name, first_name) in [
+            (0, "My Dih", Some("My Dih")),
+            (1, "Grace Hopper", Some("Grace")),
+            (2, "Mary Ann Evans", None),
+            (3, "Stray Name", Some("")),
+        ] {
+            let id = format!("1555000001{index}@s.whatsapp.net");
+            app.contacts.insert(
+                id.clone(),
+                Contact {
+                    id: id.clone(),
+                    full_name: Some(full_name.into()),
+                    first_name: first_name.map(Into::into),
+                    push_name: None,
+                },
+            );
+            chat.participants.push(id);
+        }
+        // A profile name is not split either.
+        chat.participants.push("2@s.whatsapp.net".into());
+        app.contacts.get_mut("2@s.whatsapp.net").unwrap().push_name = Some("Bob Builder".into());
+        assert_eq!(
+            app.participant_names(&chat),
+            "Bob Builder, Grace, Mary Ann Evans, My Dih, Stray Name"
+        );
     }
 
     #[test]
@@ -9422,6 +9591,7 @@ mod name_tests {
                 Contact {
                     id: id.clone(),
                     full_name: Some((*name).into()),
+                    first_name: name.split(' ').next().map(Into::into),
                     push_name: Some((*name).into()),
                 },
             );

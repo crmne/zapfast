@@ -483,6 +483,7 @@ pub fn populate(app: &mut App) {
             Contact {
                 id: id.to_owned(),
                 full_name: Some(name.to_owned()),
+                first_name: None,
                 push_name: None,
             },
         );
@@ -493,6 +494,7 @@ pub fn populate(app: &mut App) {
         Contact {
             id: "12025550137@s.whatsapp.net".to_owned(),
             full_name: Some("Dorothy Vaughan".to_owned()),
+            first_name: None,
             push_name: None,
         },
     );
@@ -777,6 +779,18 @@ pub fn populate(app: &mut App) {
             row.thumbnail = Some(sample_map());
             row
         },
+        // A photo sent to be viewed once, which opens only on the phone.
+        message(
+            ada,
+            "ada-view-once",
+            false,
+            older + 60 * 22,
+            Content::PhoneOnly {
+                view_once: true,
+                live_location: false,
+                once: Some(crate::model::OnceMedia::Photo),
+            },
+        ),
         message(ada, "ada-deleted", false, older + 60 * 25, Content::Revoked),
     ];
     let conversation = app.conversations.get_mut(ada).expect("sample chat");
@@ -1679,6 +1693,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         Contact {
                             id: id.clone(),
                             full_name: Some((*name).to_owned()),
+                            first_name: None,
                             push_name: None,
                         },
                     );
@@ -2229,6 +2244,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         Content::PhoneOnly {
                             view_once: false,
                             live_location: true,
+                            once: None,
                         },
                     ),
                 ];
@@ -5244,6 +5260,91 @@ mod tests {
         assert!(app.toasts.iter().any(|toast| toast.message == "Copied"));
     }
 
+    /// Opening the log hands it to the worker, which waits to see it open or
+    /// shows it in its folder, instead of the fire-and-forget attachment path
+    /// that opened nothing on Linux desktops without a handler for it.
+    #[test]
+    fn opening_the_log_goes_through_the_checked_opener() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        let log = app.dirs.log_file();
+        app.actions.push(crate::model::Action::OpenLog(log.clone()));
+        render(&mut app, &ctx);
+        assert!(
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    crate::backend::Command::OpenLog(path) if path == &log
+                ))
+        );
+    }
+
+    /// A downloaded image's menu copies the picture itself, as the preview
+    /// does; one that is not downloaded yet offers no copy.
+    #[test]
+    fn the_menu_of_a_downloaded_image_copies_it() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let chat = sample_ids()[0].to_owned();
+        let path = std::path::PathBuf::from("demo/photo.jpg");
+        for downloaded in [true, false] {
+            let mut app = app();
+            app.attach(&ctx);
+            app.backend.record_demo_commands();
+            let mut photo = media("image/jpeg", 120_000, Some(800), Some(600));
+            photo.path = downloaded.then(|| path.clone());
+            app.conversations.get_mut(&chat).unwrap().messages = vec![message(
+                &chat,
+                "copy-photo",
+                false,
+                100,
+                Content::Image {
+                    caption: None,
+                    media: photo,
+                },
+            )];
+            app.open_message_menu = Some("copy-photo".into());
+            render(&mut app, &ctx);
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            let copy = nodes
+                .iter()
+                .find(|(label, _, _)| label == "Copy image")
+                .map(|(_, _, pos)| *pos);
+            assert_eq!(
+                copy.is_some(),
+                downloaded,
+                "Copy image only when downloaded"
+            );
+            let Some(pos) = copy else { continue };
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            accessible_nodes(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos), press(true)],
+            );
+            accessible_nodes(&mut app, &ctx, vec![press(false)]);
+            assert!(
+                app.backend
+                    .take_demo_commands()
+                    .iter()
+                    .any(|command| matches!(
+                        command,
+                        crate::backend::Command::PrepareClipboardImage(copied) if copied == &path
+                    )),
+                "the image goes to the clipboard"
+            );
+        }
+    }
+
     #[test]
     fn enter_submits_the_locked_chat_code_and_keeps_wrong_codes_locked() {
         for code in ["wrong-code", "demo-code"] {
@@ -6168,6 +6269,59 @@ mod tests {
                 );
             } else {
                 assert!(row.is_none(), "{page}: a local delete removes the row");
+            }
+        }
+    }
+
+    /// Alt+Up/Down and Ctrl+Shift+[ ] switch chats while the question is up.
+    /// Confirming afterwards must still delete in the chat the message came
+    /// from, not in whichever chat is open by then.
+    #[test]
+    fn a_message_deletion_confirmed_after_switching_chats_stays_in_its_chat() {
+        let own_chat = SAMPLES[0].id;
+        for (page, message, everyone) in [
+            ("delete-message", "ada-emoji", true),
+            ("delete-message-mine", "ada-format", false),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some(page));
+            app.open_chat = Some(SAMPLES[1].id.to_owned());
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+
+            let pos = accessible_nodes(&mut app, &ctx, Vec::new())
+                .into_iter()
+                .find(|(label, role, _)| {
+                    label == "Delete" && *role == egui::accesskit::Role::Button
+                })
+                .map(|(_, _, centre)| centre)
+                .expect("the confirm button is on screen");
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos), press(true)],
+            );
+            frame_with(&mut app, &ctx, vec![press(false)]);
+
+            let row = app.conversations[own_chat].message(message);
+            if everyone {
+                assert!(
+                    matches!(
+                        row.map(|message| &message.content),
+                        Some(crate::model::Content::Revoked)
+                    ),
+                    "{page}: the message is revoked in its own chat"
+                );
+            } else {
+                assert!(row.is_none(), "{page}: the message leaves its own chat");
             }
         }
     }
@@ -8131,6 +8285,7 @@ mod tests {
             Contact {
                 id: sender.into(),
                 full_name: Some("Alex Fixture".into()),
+                first_name: None,
                 push_name: None,
             },
         );
@@ -9622,19 +9777,33 @@ mod long_chat_tests {
         frame(&mut app, &ctx, wheel(150.0));
         let mut before = painted_rows(&frame(&mut app, &ctx, wheel(150.0)));
         let mut step = None;
-        for _ in 0..60 {
+        for n in 0..60 {
             let after = painted_rows(&frame(&mut app, &ctx, wheel(150.0)));
             let moves: Vec<f32> = before
                 .iter()
                 .filter_map(|(row, y)| Some(after.get(row)? - y))
                 .collect();
             assert!(!moves.is_empty(), "some row stays on screen");
-            let step = *step.get_or_insert(moves[0]);
-            assert!(step > 100.0, "the view scrolls up: {step}");
-            for moved in moves {
+            // Whatever the frame moved by, every row on screen took it: a row
+            // measured for the first time moves the rows below it and nothing
+            // else, so it would stand out here.
+            for moved in &moves {
                 assert!(
-                    (moved - step).abs() < 1.0,
-                    "a row moved {moved} where the scroll moves {step}"
+                    (moved - moves[0]).abs() < 1.0,
+                    "a row moved {moved} where the frame moves {}",
+                    moves[0]
+                );
+            }
+            // The delta that accumulated while the view was still held at the
+            // end lands in one frame, so the first frame's step is not the
+            // wheel's. Every frame after it is, and it does not change.
+            if n > 0 {
+                let step = *step.get_or_insert(moves[0]);
+                assert!(step > 100.0, "the view scrolls up: {step}");
+                assert!(
+                    (moves[0] - step).abs() < 1.0,
+                    "a frame moved {} where the scroll moves {step}",
+                    moves[0]
                 );
             }
             before = after;

@@ -699,7 +699,7 @@ fn sections(app: &App) -> Vec<Section> {
             )
             .clicked()
             {
-                app.actions.push(Action::OpenFile(log));
+                app.actions.push(Action::OpenLog(log));
             }
         },
     );

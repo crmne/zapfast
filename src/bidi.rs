@@ -681,22 +681,18 @@ pub fn is_rtl(c: char) -> bool {
 pub(crate) fn assert_rows_follow_uba(galley: &Galley, atlas: &egui::ColorImage) {
     use unicode_bidi::BidiDataSource as _;
     let text = galley.text();
-    // Rows hold one glyph per character in logical order, so the row's text
-    // follows from glyph counts alone, independent of the cluster offsets.
-    let byte_at: Vec<usize> = text
-        .char_indices()
-        .map(|(byte, _)| byte)
-        .chain(std::iter::once(text.len()))
-        .collect();
-    let mut first_char = 0usize;
     for (index, placed) in galley.rows.iter().enumerate() {
         let glyphs = &placed.row.glyphs;
-        let row_chars = first_char..first_char + glyphs.len();
-        first_char = row_chars.end + usize::from(placed.ends_with_newline);
         if glyphs.is_empty() {
             continue;
         }
-        let (start, end) = (byte_at[row_chars.start], byte_at[row_chars.end]);
+        // Each glyph names the byte of the character it draws. A font may
+        // shape a character into several glyphs, or a ligature into fewer,
+        // so the row's text comes from those offsets, not from glyph counts.
+        let cluster = |glyph: &Glyph| glyph.cluster as usize;
+        let start = glyphs.iter().map(cluster).min().expect("row starts");
+        let last = glyphs.iter().map(cluster).max().expect("row ends");
+        let end = last + text[last..].chars().next().map_or(0, char::len_utf8);
         let paragraph_start = text[..start].rfind('\n').map_or(0, |at| at + 1);
         let paragraph_end = text[start..].find('\n').map_or(text.len(), |at| start + at);
         let paragraph = &text[paragraph_start..paragraph_end];
@@ -708,25 +704,39 @@ pub(crate) fn assert_rows_follow_uba(galley: &Galley, atlas: &egui::ColorImage) 
             .find(|candidate| candidate.range.contains(&line.start))
             .expect("bidi paragraph for the row");
         let levels = info.reordered_levels(resolved, line);
-        let row_text: Vec<char> = text[start..end].chars().collect();
-        let row_levels: Vec<unicode_bidi::Level> = (0..row_text.len())
-            .map(|offset| levels[byte_at[row_chars.start + offset] - paragraph_start])
+        let level_of = |glyph: &Glyph| levels[cluster(glyph) - paragraph_start];
+        let row_text: Vec<(usize, char)> = text[start..end]
+            .char_indices()
+            .map(|(offset, chr)| (start + offset, chr))
+            .collect();
+        let row_levels: Vec<unicode_bidi::Level> = row_text
+            .iter()
+            .map(|&(byte, _)| levels[byte - paragraph_start])
             .collect();
         // Marks, joiners, and the letters a ligature absorbs draw no glyph of
-        // their own, so only characters whose glyph advances are compared.
+        // their own, so only characters with an advancing glyph are compared.
+        let advances = |glyph: &&Glyph| glyph.advance_width > 0.01;
         let expected: String = BidiInfo::reorder_visual(&row_levels)
             .into_iter()
-            .filter(|&offset| glyphs[offset].advance_width > 0.01)
             .map(|offset| row_text[offset])
+            .filter(|&(byte, _)| {
+                glyphs
+                    .iter()
+                    .filter(advances)
+                    .any(|glyph| cluster(glyph) == byte)
+            })
+            .map(|(_, chr)| chr)
             .collect();
-        let mut drawn: Vec<&Glyph> = glyphs
-            .iter()
-            .filter(|glyph| glyph.advance_width > 0.01)
-            .collect();
+        let mut drawn: Vec<&Glyph> = glyphs.iter().filter(advances).collect();
         drawn.sort_by(|a, b| a.pos.x.total_cmp(&b.pos.x));
-        let visual: String = drawn.iter().map(|glyph| glyph.chr).collect();
+        // A character shaped into several advancing glyphs appears once.
+        drawn.dedup_by_key(|glyph| glyph.cluster);
+        let visual: String = drawn
+            .iter()
+            .map(|glyph| text[cluster(glyph)..].chars().next().unwrap_or(glyph.chr))
+            .collect();
         assert_eq!(visual, expected, "row {index} of {paragraph:?}");
-        for (offset, glyph) in glyphs.iter().enumerate() {
+        for glyph in glyphs {
             let Some(bracket) =
                 unicode_bidi::HardcodedBidiData.bidi_matched_opening_bracket(glyph.chr)
             else {
@@ -735,7 +745,7 @@ pub(crate) fn assert_rows_follow_uba(galley: &Galley, atlas: &egui::ColorImage) 
             if !glyph.chr.is_ascii() || glyph.uv_rect.is_nothing() {
                 continue;
             }
-            let rtl = levels[byte_at[row_chars.start + offset] - paragraph_start].is_rtl();
+            let rtl = level_of(glyph).is_rtl();
             // An opening bracket's ink sits left of centre; mirrored, it sits right.
             assert_eq!(
                 ink_leans_right(atlas, glyph),

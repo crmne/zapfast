@@ -243,6 +243,43 @@ pub fn moment_stamp(locale: Locale, unix_seconds: i64) -> String {
     }
 }
 
+/// A contact's last-seen line as WhatsApp words it: "last seen today at
+/// 14:05", "last seen yesterday at 14:05", a weekday within the week, and
+/// only the date before that. The time follows the system's clock.
+pub fn last_seen(locale: Locale, unix_seconds: i64) -> String {
+    let Some(when) = zoned(unix_seconds) else {
+        return String::new();
+    };
+    last_seen_relative_to(locale, today(), &when)
+}
+
+fn last_seen_relative_to(locale: Locale, today: Date, when: &Zoned) -> String {
+    use crate::i18n::gettext;
+    let date = when.date();
+    let time = hour_minute(when);
+    let days = today
+        .since(date)
+        .map(|span| span.get_days())
+        .unwrap_or(i32::MAX);
+    match days {
+        // A clock slightly ahead of ours still means today.
+        ..=0 => gettext(locale, "last seen today at {time}").replace("{time}", &time),
+        1 => gettext(locale, "last seen yesterday at {time}").replace("{time}", &time),
+        2..=6 => {
+            let weekday = weekday_name(locale, date.weekday());
+            // Mid-sentence, only English and German keep the capital.
+            let weekday = match locale {
+                Locale::English | Locale::German => weekday,
+                _ => weekday.to_lowercase(),
+            };
+            gettext(locale, "last seen {weekday} at {time}")
+                .replace("{weekday}", &weekday)
+                .replace("{time}", &time)
+        }
+        _ => gettext(locale, "last seen {date}").replace("{date}", &short_date(locale, date)),
+    }
+}
+
 /// Conversation day-separator label.
 pub fn day_label(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
@@ -701,6 +738,51 @@ mod tests {
             ),
             "14 Nov 2023"
         );
+    }
+
+    /// Last seen reads as on the phone: the time today and yesterday, the
+    /// weekday and time within the week, and the date after that.
+    #[test]
+    fn last_seen_names_the_day_and_the_time() {
+        // Tuesday 14 November 2023, 22:13 UTC.
+        let when = Timestamp::from_second(1_700_000_000)
+            .expect("valid")
+            .to_zoned(jiff::tz::TimeZone::UTC);
+        let date = when.date();
+        let time = time_of_day(22, 13, twelve_hour_clock());
+        let later = |days: i64| {
+            date.checked_add(jiff::Span::new().days(days))
+                .expect("date")
+        };
+        let english = |today| last_seen_relative_to(Locale::English, today, &when);
+        assert_eq!(english(date), format!("last seen today at {time}"));
+        assert_eq!(
+            english(date.yesterday().expect("date")),
+            format!("last seen today at {time}"),
+            "a timestamp slightly ahead of our clock is still today"
+        );
+        assert_eq!(english(later(1)), format!("last seen yesterday at {time}"));
+        assert_eq!(english(later(3)), format!("last seen Tuesday at {time}"));
+        assert_eq!(english(later(6)), format!("last seen Tuesday at {time}"));
+        assert_eq!(english(later(7)), "last seen 14 Nov 2023");
+        assert_eq!(english(later(30)), "last seen 14 Nov 2023");
+
+        // Mid-sentence weekdays keep their capital only where the language
+        // writes one.
+        assert_eq!(
+            last_seen_relative_to(Locale::Italian, later(3), &when),
+            format!("ultimo accesso martedì alle {time}")
+        );
+        assert_eq!(
+            last_seen_relative_to(Locale::German, later(3), &when),
+            format!("zuletzt online am Dienstag um {time}")
+        );
+        for locale in Locale::ALL {
+            for days in [0, 1, 3, 30] {
+                let line = last_seen_relative_to(locale, later(days), &when);
+                assert!(!line.contains('{'), "{locale:?} {days}: {line}");
+            }
+        }
     }
 
     #[test]

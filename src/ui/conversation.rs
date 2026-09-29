@@ -372,13 +372,7 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
             return ("online".to_owned(), palette.accent);
         }
         if let Some(seen) = presence.last_seen {
-            return (
-                format!(
-                    "last seen {}",
-                    crate::util::chat_stamp(app.locale, seen).to_lowercase()
-                ),
-                palette.secondary,
-            );
+            return (crate::util::last_seen(app.locale, seen), palette.secondary);
         }
     }
     match chat.phone() {
@@ -3805,6 +3799,16 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), &open) {
                     actions.push(Action::OpenFile(path.clone()));
                 }
+                if matches!(message.content, Content::Image { .. })
+                    && widgets::menu_item(
+                        ui,
+                        &palette,
+                        Some(Icon::Copy),
+                        &crate::i18n::gettext(view.locale, "Copy image"),
+                    )
+                {
+                    actions.push(Action::CopyImage(path.clone()));
+                }
                 if widgets::menu_item(ui, &palette, Some(Icon::Download), "Save as…") {
                     actions.push(Action::SaveAttachmentAs {
                         path: path.clone(),
@@ -4427,11 +4431,33 @@ fn content(
             );
             None
         }
-        Content::PhoneOnly { view_once, .. } => {
-            let text = if *view_once {
-                "View once message. For your privacy, it opens only on your phone."
-            } else {
-                "This message can only be seen on your phone."
+        Content::PhoneOnly {
+            view_once, once, ..
+        } => {
+            use crate::i18n::gettext;
+            use crate::model::OnceMedia;
+            let text = match once {
+                Some(OnceMedia::Photo) => gettext(
+                    view.locale,
+                    "View once photo. For your privacy, it opens only on your phone.",
+                ),
+                Some(OnceMedia::Video) => gettext(
+                    view.locale,
+                    "View once video. For your privacy, it opens only on your phone.",
+                ),
+                Some(OnceMedia::Voice) => gettext(
+                    view.locale,
+                    "View once voice message. For your privacy, it opens only on your phone.",
+                ),
+                Some(OnceMedia::Audio) => gettext(
+                    view.locale,
+                    "View once audio. For your privacy, it opens only on your phone.",
+                ),
+                None if *view_once => gettext(
+                    view.locale,
+                    "View once message. For your privacy, it opens only on your phone.",
+                ),
+                None => gettext(view.locale, "This message can only be seen on your phone."),
             };
             mirrored_row(
                 ui,
