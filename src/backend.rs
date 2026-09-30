@@ -149,6 +149,13 @@ pub enum LoginStep {
     /// Slack: the app-level token that opens the Socket Mode connection and
     /// the bot token that calls the Web API. Both go to the OS keyring.
     SlackTokens { app: String, bot: String },
+    /// Zulip: the user's server, sign-in email, and API key. The key goes to
+    /// the OS keyring; the email and server are kept beside it.
+    ZulipCredentials {
+        server: String,
+        email: String,
+        api_key: String,
+    },
 }
 
 /// What the reader answered to an interactive session verification. The emoji
@@ -1120,6 +1127,7 @@ impl Backend {
             crate::account::NetworkKind::Telegram => Self::spawn_telegram(dirs, account.id, waker),
             crate::account::NetworkKind::Matrix => Self::spawn_matrix(dirs, account.id, waker),
             crate::account::NetworkKind::Slack => Self::spawn_slack(dirs, account.id, waker),
+            crate::account::NetworkKind::Zulip => Self::spawn_zulip(dirs, account.id, waker),
             _ => Self::spawn(dirs, waker),
         }
     }
@@ -1244,6 +1252,50 @@ impl Backend {
                 runtime.shutdown_timeout(Duration::from_secs(3));
             })
             .expect("unable to start the Slack thread");
+
+        Self {
+            startup: Some(startup),
+            commands: command_tx,
+            events: event_rx,
+            thread: Some(thread),
+            offline: false,
+            #[cfg(any(test, feature = "demo"))]
+            demo_commands: None,
+        }
+    }
+
+    /// Starts the Zulip adapter in its own thread, the way the WhatsApp
+    /// worker runs.
+    fn spawn_zulip(dirs: AppDirs, account: crate::account::AccountId, waker: Waker) -> Self {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("zapfast-zulip-runtime")
+            .enable_all()
+            .build()
+            .expect("unable to start the async runtime");
+        let (startup, started) = tokio::sync::oneshot::channel();
+        let worker_commands = command_tx.clone();
+        let thread = std::thread::Builder::new()
+            .name("zapfast-zulip".to_string())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    if started.await.is_ok() {
+                        crate::adapter::zulip::run(
+                            dirs,
+                            account,
+                            event_tx,
+                            worker_commands,
+                            command_rx,
+                            waker,
+                        )
+                        .await;
+                    }
+                });
+                runtime.shutdown_timeout(Duration::from_secs(3));
+            })
+            .expect("unable to start the Zulip thread");
 
         Self {
             startup: Some(startup),

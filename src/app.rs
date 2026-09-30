@@ -615,6 +615,11 @@ pub struct App {
     /// keyring once they work.
     pub slack_app_token: String,
     pub slack_bot_token: String,
+    /// Zulip sign-in fields, kept only while the card is showing; the API key
+    /// goes to the OS keyring once it works.
+    pub zulip_server: String,
+    pub zulip_email: String,
+    pub zulip_key: String,
     pub sidebar_visible: bool,
     pub show_archived: bool,
     /// Chat-list filter; applies to the main list, not to search or the archive.
@@ -1113,6 +1118,9 @@ impl App {
             matrix_password: String::new(),
             slack_app_token: String::new(),
             slack_bot_token: String::new(),
+            zulip_server: String::new(),
+            zulip_email: String::new(),
+            zulip_key: String::new(),
             sidebar_visible: true,
             show_archived: false,
             chat_filter: ChatFilter::All,

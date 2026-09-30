@@ -5,3 +5,4 @@
 pub mod matrix;
 pub mod slack;
 pub mod telegram;
+pub mod zulip;

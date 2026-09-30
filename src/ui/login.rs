@@ -582,6 +582,71 @@ pub(super) fn slack(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// The sign-in card for a Zulip account. The server and email are ordinary
+/// text; the API key is masked and goes to the OS keyring once it works.
+pub(super) fn zulip(app: &mut App, ui: &mut egui::Ui) {
+    let Some((account, state)) = app.sign_in() else {
+        return;
+    };
+    let palette = app.palette;
+    let card_width = 460.0_f32.min(ui.available_width() - 24.0).max(0.0);
+    ui.vertical_centered(|ui| {
+        ui.add_space(60.0);
+        Frame::new()
+            .fill(palette.panel)
+            .stroke(Stroke::new(1.0, palette.outline))
+            .corner_radius(CornerRadius::same(theme::RADIUS + 8))
+            .inner_margin(Margin::same(32))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 16],
+                blur: 48,
+                spread: 0,
+                color: palette.shadow,
+            })
+            .show(ui, |ui| {
+                ui.set_width((card_width - 64.0).max(0.0));
+                ui.spacing_mut().item_spacing.y = 8.0;
+                theme::text(ui, "ZapFast", theme::bold(28.0), palette.text);
+                theme::text(ui, "Connect Zulip.", theme::regular(14.5), palette.secondary);
+                ui.add_space(16.0);
+                if let crate::account::AuthState::Failed { reason } = &state {
+                    theme::paragraph(ui, reason, theme::regular(13.0), palette.danger);
+                    ui.add_space(4.0);
+                }
+                theme::paragraph(
+                    ui,
+                    "The server is your Zulip URL. The email and API key are the ones under your Zulip account settings; the key stays in the OS keyring.",
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+                field(ui, &palette, "zulip-server", &mut app.zulip_server, false);
+                field(ui, &palette, "zulip-email", &mut app.zulip_email, false);
+                let submit = field(ui, &palette, "zulip-key", &mut app.zulip_key, true);
+                let ready = !app.zulip_server.trim().is_empty()
+                    && !app.zulip_email.trim().is_empty()
+                    && !app.zulip_key.trim().is_empty();
+                let mut pressed = false;
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    pressed = ui
+                        .add_enabled_ui(ready, |ui| {
+                            theme::pill_button(ui, &palette, "Connect", true)
+                        })
+                        .inner
+                        .clicked();
+                });
+                if (submit && ready) || pressed {
+                    let step = crate::backend::LoginStep::ZulipCredentials {
+                        server: app.zulip_server.trim().to_owned(),
+                        email: app.zulip_email.trim().to_owned(),
+                        api_key: app.zulip_key.trim().to_owned(),
+                    };
+                    app.zulip_key.clear();
+                    app.actions.push(Action::Login { account, step });
+                }
+            });
+    });
+}
+
 /// The emoji comparison card for Matrix session verification. It stays up
 /// until the other device is confirmed or the request ends.
 pub(super) fn verification(app: &mut App, ui: &mut egui::Ui) {

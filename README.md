@@ -797,6 +797,22 @@ invited to; it cannot mark chats read and gets no typing indicator.
 Slack search, custom emoji images, the voice-note flag, huddles, and calls
 are not wired to Slack yet.
 
+### Zulip
+
+Add a Zulip account from the account switcher in the chat-list header. Enter
+the server URL, the email you sign in with, and the API key from your Zulip
+account settings. The API key is kept in the OS keyring rather than the
+settings file.
+
+The streams you are subscribed to show beside the WhatsApp chats. A stream
+row holds its general topic; every other topic appears as its own row under
+the stream it belongs to. Direct messages show as their own rows. Files
+download into the media cache, reactions show their counts, typing shows,
+and editing and deleting a message works.
+
+Zulip search, custom emoji images, the voice-note flag, and sticker packs are
+not wired to Zulip yet.
+
 ## Files
 
 | What | Linux | Notes |
@@ -807,6 +823,7 @@ are not wired to Slack yet.
 | Telegram session | `~/.local/state/zapfast/accounts/<id>/grammers/session.db` | Telegram device keys, peer cache, and update state; deleting it signs that account out here |
 | Matrix store | `~/.local/state/zapfast/accounts/<id>/matrix/` | matrix-sdk state, crypto keys, and the homeserver address; deleting it signs that account out and drops its keys |
 | Slack tokens | OS keyring | The app-level token and bot token; no Slack state is kept on disk |
+| Zulip credentials | OS keyring | The server, email, and API key; no Zulip state is kept on disk |
 | Messages | `~/.local/state/zapfast/accounts/1/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |

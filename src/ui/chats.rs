@@ -349,6 +349,15 @@ fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
                 add = Some(crate::account::NetworkKind::Slack);
                 ui.close();
             }
+            if widgets::menu_item(
+                ui,
+                &palette,
+                Some(Icon::Plus),
+                &crate::i18n::gettext(app.locale, "Add Zulip account"),
+            ) {
+                add = Some(crate::account::NetworkKind::Zulip);
+                ui.close();
+            }
             let matrix_active = app.host.accounts().iter().any(|account| {
                 account.id == app.active_account
                     && account.kind == crate::account::NetworkKind::Matrix
