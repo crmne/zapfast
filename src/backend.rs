@@ -139,6 +139,36 @@ pub enum LoginStep {
     TelegramCode(String),
     /// Telegram: the account's two-step verification password.
     TelegramPassword(String),
+    /// Matrix: the homeserver, user name, and password for a fresh sign-in.
+    /// The password is used once and never logged or stored.
+    MatrixPassword {
+        homeserver: String,
+        user: String,
+        password: String,
+    },
+}
+
+/// What the reader answered to an interactive session verification. The emoji
+/// comparison is the trust decision, so only the reader can confirm it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifyAction {
+    /// Start verifying this session from our side.
+    Start,
+    /// The emoji match on both devices.
+    Confirm,
+    /// The emoji do not match; the verification is rejected.
+    Mismatch,
+    /// The verification is cancelled for now.
+    Cancel,
+}
+
+/// The emoji a session verification wants compared, and their names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerificationPrompt {
+    /// Seven (symbol, name) pairs, in order.
+    pub emojis: Vec<(String, String)>,
+    /// The decimal alternative, when the network offers only that.
+    pub decimals: Option<(u16, u16, u16)>,
 }
 
 #[derive(Debug)]
@@ -608,6 +638,11 @@ pub enum Command {
         account: crate::account::AccountId,
         step: LoginStep,
     },
+    /// Answers or starts an interactive session verification.
+    VerifySession {
+        account: crate::account::AccountId,
+        action: VerifyAction,
+    },
     Shutdown,
     /// Internal send result.
     Sent {
@@ -747,6 +782,12 @@ pub enum Event {
     Auth {
         account: crate::account::AccountId,
         state: crate::account::AuthState,
+    },
+    /// An interactive session verification wants the emoji compared, or is
+    /// over when the prompt is `None`.
+    Verification {
+        account: crate::account::AccountId,
+        prompt: Option<VerificationPrompt>,
     },
     InteractiveReplyState {
         chat: ChatId,
@@ -1074,6 +1115,7 @@ impl Backend {
     pub fn spawn_for(dirs: AppDirs, account: crate::account::Account, waker: Waker) -> Self {
         match account.kind {
             crate::account::NetworkKind::Telegram => Self::spawn_telegram(dirs, account.id, waker),
+            crate::account::NetworkKind::Matrix => Self::spawn_matrix(dirs, account.id, waker),
             _ => Self::spawn(dirs, waker),
         }
     }
@@ -1110,6 +1152,50 @@ impl Backend {
                 runtime.shutdown_timeout(Duration::from_secs(3));
             })
             .expect("unable to start the Telegram thread");
+
+        Self {
+            startup: Some(startup),
+            commands: command_tx,
+            events: event_rx,
+            thread: Some(thread),
+            offline: false,
+            #[cfg(any(test, feature = "demo"))]
+            demo_commands: None,
+        }
+    }
+
+    /// Starts the Matrix adapter in its own thread, the way the WhatsApp
+    /// worker and the Telegram adapter run.
+    fn spawn_matrix(dirs: AppDirs, account: crate::account::AccountId, waker: Waker) -> Self {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("zapfast-matrix-runtime")
+            .enable_all()
+            .build()
+            .expect("unable to start the async runtime");
+        let (startup, started) = tokio::sync::oneshot::channel();
+        let worker_commands = command_tx.clone();
+        let thread = std::thread::Builder::new()
+            .name("zapfast-matrix".to_string())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    if started.await.is_ok() {
+                        crate::adapter::matrix::run(
+                            dirs,
+                            account,
+                            event_tx,
+                            worker_commands,
+                            command_rx,
+                            waker,
+                        )
+                        .await;
+                    }
+                });
+                runtime.shutdown_timeout(Duration::from_secs(3));
+            })
+            .expect("unable to start the Matrix thread");
 
         Self {
             startup: Some(startup),

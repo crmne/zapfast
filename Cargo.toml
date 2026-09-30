@@ -63,6 +63,15 @@ whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f746
 # (a second bundled SQLite) out of the build.
 grammers-client = { git = "https://codeberg.org/Lonami/grammers.git", rev = "42d4b51059524cf7c8c9a07745a1071057fa1526", default-features = false, features = ["fs"] }
 grammers-session = { git = "https://codeberg.org/Lonami/grammers.git", rev = "42d4b51059524cf7c8c9a07745a1071057fa1526", default-features = false, features = ["serde"] }
+# The Matrix protocol, from the official SDK. Rustls carries TLS, the stores
+# live in the account directory, and the crypto store stays inside the SDK
+# (vodozemac, pure Rust). Sentry, uniffi, and native TLS stay off.
+matrix-sdk = { version = "0.19", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs"] }
+# Streams the Matrix verification states and room lists. Already included
+# through the SDK; declared for the stream combinators.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# The upload content type the Matrix SDK's attachment API takes.
+mime = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 # Opens the WhatsApp WebSocket through a proxy. Both crates are already
 # included through the Tokio transport at these versions.

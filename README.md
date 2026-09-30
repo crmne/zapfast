@@ -757,6 +757,29 @@ up to 10 MiB; larger files are not fetched. Voice notes are recorded in the
 app and sent as Telegram voice messages. GIF search, sticker shelves,
 sticker uploads, and read receipts are not wired to Telegram yet.
 
+### Matrix
+
+Add a Matrix account from the account switcher in the chat-list header.
+Sign in with the homeserver address (for example `https://matrix.org`), the
+full user name (`@name:server`), and the password. The SDK keeps this
+account's encryption keys and room state in the account directory, so the
+next start signs in without the password.
+
+New messages arrive end-to-end encrypted, but their text stays hidden behind
+an "Encrypted message. Verify this session to read it." placeholder until
+this session is verified. To verify, pick **Verify this session** in the
+account switcher and compare the emoji (and numbers) with the other device;
+**They match** finishes the verification, and the room reloads in the clear.
+Rooms an account joins show beside the WhatsApp chats; Matrix spaces appear
+as a narrow rail beside the chat list, where "All" clears the filter. Edited
+and redacted messages, reactions with counts, replies, image and file
+attachments, voice notes, and typing indicators all work.
+
+Matrix search, the GIPHY picker, sticker packs, image-pack custom emoji,
+threads, and forwarding are not wired to Matrix yet. GIF and sticker
+messages received from other clients show their file or a placeholder where
+the window cannot paint them.
+
 ## Files
 
 | What | Linux | Notes |
@@ -765,6 +788,7 @@ sticker uploads, and read receipts are not wired to Telegram yet.
 | Accounts | `~/.local/state/zapfast/accounts.json` | Names, networks, and local account numbers only; no tokens or phone numbers |
 | Device keys | `~/.local/state/zapfast/accounts/1/session.db` | Owned by whatsapp-rust; deleting it unlinks |
 | Telegram session | `~/.local/state/zapfast/accounts/<id>/grammers/session.db` | Telegram device keys, peer cache, and update state; deleting it signs that account out here |
+| Matrix store | `~/.local/state/zapfast/accounts/<id>/matrix/` | matrix-sdk state, crypto keys, and the homeserver address; deleting it signs that account out and drops its keys |
 | Messages | `~/.local/state/zapfast/accounts/1/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |

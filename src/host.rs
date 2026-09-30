@@ -76,6 +76,9 @@ impl Host {
             crate::account::NetworkKind::Telegram => {
                 Account::telegram(crate::account::next_id(&self.accounts))
             }
+            crate::account::NetworkKind::Matrix => {
+                Account::matrix(crate::account::next_id(&self.accounts))
+            }
             _ => return None,
         };
         self.accounts.push(account.clone());

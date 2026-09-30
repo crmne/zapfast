@@ -1,5 +1,10 @@
 //! ZapFast internals exposed for diagnostics and tests.
 
+// The Matrix SDK's generic async types nest deeply. Test builds pull extra
+// features into the shared dependency graph, and type-checking the adapter
+// against that build needs more trait-query depth than the default.
+#![recursion_limit = "512"]
+
 pub mod account;
 pub mod adapter;
 pub mod animation;

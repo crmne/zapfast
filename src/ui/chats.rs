@@ -26,7 +26,23 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
     let response = panel.show(ui, |ui| {
         header(app, ui);
-        list(app, ui);
+        let spaces: Vec<Chat> = app
+            .chats
+            .iter()
+            .filter(|chat| chat.space && chat.id.account() == app.active_account)
+            .cloned()
+            .collect();
+        if spaces.is_empty() {
+            list(app, ui);
+        } else {
+            ui.horizontal_top(|ui| {
+                spaces_rail(app, ui, &spaces);
+                ui.vertical(|ui| {
+                    ui.set_width(ui.available_width());
+                    list(app, ui);
+                });
+            });
+        }
     });
     let width = response.response.rect.width();
     if (width - app.settings.sidebar_width).abs() > 1.0 {
@@ -292,6 +308,7 @@ fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
     let width = widgets::menu_width(ui, &names, true);
     let mut switch = None;
     let mut add = None;
+    let mut verify = false;
     egui::Popup::menu(&response)
         .width(width)
         .frame(widgets::menu_frame(&palette))
@@ -314,6 +331,30 @@ fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
                 add = Some(crate::account::NetworkKind::Telegram);
                 ui.close();
             }
+            if widgets::menu_item(
+                ui,
+                &palette,
+                Some(Icon::Plus),
+                &crate::i18n::gettext(app.locale, "Add Matrix account"),
+            ) {
+                add = Some(crate::account::NetworkKind::Matrix);
+                ui.close();
+            }
+            let matrix_active = app.host.accounts().iter().any(|account| {
+                account.id == app.active_account
+                    && account.kind == crate::account::NetworkKind::Matrix
+            });
+            if matrix_active
+                && widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::CircleCheck),
+                    &crate::i18n::gettext(app.locale, "Verify this session"),
+                )
+            {
+                verify = true;
+                ui.close();
+            }
         });
     if let Some(id) = switch {
         app.actions.push(Action::SwitchAccount(id));
@@ -321,6 +362,83 @@ fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
     if let Some(kind) = add {
         app.actions.push(Action::AddAccount(kind));
     }
+    if verify {
+        app.actions.push(Action::Verification {
+            account: app.active_account,
+            action: crate::backend::VerifyAction::Start,
+        });
+    }
+}
+
+/// The narrow rail of Matrix spaces beside the chat list. "All" clears the
+/// space filter; rooms inside a space remain ordinary chat rows.
+fn spaces_rail(app: &mut App, ui: &mut egui::Ui, spaces: &[Chat]) {
+    let palette = app.palette;
+    let mut pick: Option<Option<crate::model::ChatId>> = None;
+    ui.vertical(|ui| {
+        ui.set_width(56.0);
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            if space_button(ui, &palette, "All", app.space_filter.is_none())
+                .on_hover_text(crate::i18n::gettext(app.locale, "All chats"))
+                .clicked()
+            {
+                pick = Some(None);
+            }
+            ui.add_space(6.0);
+            for space in spaces {
+                let name = app.chat_title(space);
+                let initial = name
+                    .chars()
+                    .next()
+                    .unwrap_or(' ')
+                    .to_uppercase()
+                    .to_string();
+                let active = app.space_filter.as_ref() == Some(&space.id);
+                if space_button(ui, &palette, &initial, active)
+                    .on_hover_text(&name)
+                    .clicked()
+                {
+                    pick = Some(if active { None } else { Some(space.id.clone()) });
+                }
+                ui.add_space(6.0);
+            }
+        });
+    });
+    if let Some(space) = pick {
+        app.actions.push(Action::SetSpace(space));
+    }
+}
+
+/// One round space button showing its first letter.
+fn space_button(
+    ui: &mut egui::Ui,
+    palette: &theme::Palette,
+    label: &str,
+    active: bool,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(40.0), egui::Sense::click());
+    let color = if active { palette.accent } else { palette.text };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), theme::medium(14.0), color);
+    if ui.is_rect_visible(rect) {
+        let fill = if active {
+            palette.accent.gamma_multiply(0.18)
+        } else if response.hovered() {
+            palette.surface_hover
+        } else {
+            palette.surface
+        };
+        ui.painter()
+            .circle_filled(rect.center(), rect.width() / 2.0, fill);
+        let pos = egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        ui.painter().galley(pos, galley, color);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn macos_header(app: &mut App, ui: &mut egui::Ui) {

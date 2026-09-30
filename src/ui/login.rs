@@ -425,6 +425,158 @@ pub(super) fn telegram(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// The sign-in card for a Matrix account. The homeserver, user, and password
+/// go straight to the account's adapter and are never stored here.
+pub(super) fn matrix(app: &mut App, ui: &mut egui::Ui) {
+    let Some((account, state)) = app.sign_in() else {
+        return;
+    };
+    let palette = app.palette;
+    let card_width = 460.0_f32.min(ui.available_width() - 24.0).max(0.0);
+    ui.vertical_centered(|ui| {
+        ui.add_space(60.0);
+        Frame::new()
+            .fill(palette.panel)
+            .stroke(Stroke::new(1.0, palette.outline))
+            .corner_radius(CornerRadius::same(theme::RADIUS + 8))
+            .inner_margin(Margin::same(32))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 16],
+                blur: 48,
+                spread: 0,
+                color: palette.shadow,
+            })
+            .show(ui, |ui| {
+                ui.set_width((card_width - 64.0).max(0.0));
+                ui.spacing_mut().item_spacing.y = 8.0;
+                theme::text(ui, "ZapFast", theme::bold(28.0), palette.text);
+                theme::text(
+                    ui,
+                    "Sign in to Matrix.",
+                    theme::regular(14.5),
+                    palette.secondary,
+                );
+                ui.add_space(16.0);
+                if let crate::account::AuthState::Failed { reason } = &state {
+                    theme::paragraph(ui, reason, theme::regular(13.0), palette.danger);
+                    ui.add_space(4.0);
+                }
+                theme::paragraph(
+                    ui,
+                    "Sign in with an account on a homeserver. Messages are end-to-end encrypted; verify this session after signing in.",
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+                field(
+                    ui,
+                    &palette,
+                    "matrix-homeserver",
+                    &mut app.matrix_homeserver,
+                    false,
+                );
+                field(ui, &palette, "matrix-user", &mut app.matrix_user, false);
+                let submit = field(
+                    ui,
+                    &palette,
+                    "matrix-password",
+                    &mut app.matrix_password,
+                    true,
+                );
+                let ready = !app.matrix_homeserver.trim().is_empty()
+                    && !app.matrix_user.trim().is_empty()
+                    && !app.matrix_password.is_empty();
+                let mut pressed = false;
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    pressed = ui
+                        .add_enabled_ui(ready, |ui| {
+                            theme::pill_button(ui, &palette, "Sign in", true)
+                        })
+                        .inner
+                        .clicked();
+                });
+                if (submit && ready) || pressed {
+                    let step = crate::backend::LoginStep::MatrixPassword {
+                        homeserver: app.matrix_homeserver.trim().to_owned(),
+                        user: app.matrix_user.trim().to_owned(),
+                        password: app.matrix_password.clone(),
+                    };
+                    app.matrix_password.clear();
+                    app.actions.push(Action::Login { account, step });
+                }
+            });
+    });
+}
+
+/// The emoji comparison card for Matrix session verification. It stays up
+/// until the other device is confirmed or the request ends.
+pub(super) fn verification(app: &mut App, ui: &mut egui::Ui) {
+    let account = app.active_account;
+    let Some(prompt) = app.verification.get(&account).cloned() else {
+        return;
+    };
+    let palette = app.palette;
+    let card_width = 460.0_f32.min(ui.available_width() - 24.0).max(0.0);
+    let mut action = None;
+    ui.vertical_centered(|ui| {
+        ui.add_space(60.0);
+        Frame::new()
+            .fill(palette.panel)
+            .stroke(Stroke::new(1.0, palette.outline))
+            .corner_radius(CornerRadius::same(theme::RADIUS + 8))
+            .inner_margin(Margin::same(32))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 16],
+                blur: 48,
+                spread: 0,
+                color: palette.shadow,
+            })
+            .show(ui, |ui| {
+                ui.set_width((card_width - 64.0).max(0.0));
+                ui.spacing_mut().item_spacing.y = 8.0;
+                theme::text(ui, "Compare these emoji", theme::bold(22.0), palette.text);
+                theme::paragraph(
+                    ui,
+                    "They must match, in order, on the other device.",
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+                ui.add_space(12.0);
+                ui.horizontal_wrapped(|ui| {
+                    for (symbol, name) in &prompt.emojis {
+                        ui.vertical(|ui| {
+                            theme::text(ui, symbol, theme::bold(28.0), palette.text);
+                            theme::text(ui, name, theme::regular(11.0), palette.secondary);
+                        });
+                        ui.add_space(6.0);
+                    }
+                });
+                if let Some((first, second, third)) = prompt.decimals {
+                    theme::paragraph(
+                        ui,
+                        format!("{first} {second} {third}"),
+                        theme::regular(16.0),
+                        palette.text,
+                    );
+                }
+                ui.add_space(12.0);
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    if theme::pill_button(ui, &palette, "They match", true).clicked() {
+                        action = Some(crate::backend::VerifyAction::Confirm);
+                    }
+                    if theme::pill_button(ui, &palette, "They do not match", false).clicked() {
+                        action = Some(crate::backend::VerifyAction::Mismatch);
+                    }
+                    if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                        action = Some(crate::backend::VerifyAction::Cancel);
+                    }
+                });
+            });
+    });
+    if let Some(action) = action {
+        app.actions.push(Action::Verification { account, action });
+    }
+}
+
 /// One text field of the sign-in card, with Enter as a submit key.
 fn field(
     ui: &mut egui::Ui,

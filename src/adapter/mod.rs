@@ -2,4 +2,5 @@
 //! [`crate::backend`]; every other network projects its own protocol into the
 //! shared chat and message models.
 
+pub mod matrix;
 pub mod telegram;

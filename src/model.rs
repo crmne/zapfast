@@ -237,6 +237,9 @@ pub struct Chat {
     /// The chat this one belongs to when the network splits a chat into
     /// subchats, such as a Telegram forum topic. `None` for ordinary chats.
     pub parent: Option<ChatId>,
+    /// Matrix spaces hold rooms rather than messages. Space chats are not
+    /// listed; they fill the space rail.
+    pub space: bool,
     /// Latest-message Unix timestamp used for ordering.
     pub last_activity: i64,
     pub unread: u32,
@@ -301,6 +304,7 @@ impl Chat {
             group_subject_known: false,
             kind,
             parent: None,
+            space: false,
             last_activity: 0,
             unread: 0,
             marked_unread: false,
@@ -1445,6 +1449,13 @@ pub enum Action {
         account: AccountId,
         step: LoginStep,
     },
+    /// Answers or starts an interactive session verification.
+    Verification {
+        account: AccountId,
+        action: crate::backend::VerifyAction,
+    },
+    /// Filters the chat list to one space, or to every chat with `None`.
+    SetSpace(Option<ChatId>),
     OpenChat(ChatId),
     /// Creates and opens a chat for a contact without one.
     StartChat {

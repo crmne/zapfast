@@ -152,6 +152,7 @@ async fn serve(
                         Err(error) => auth = failed(&error),
                     }
                 }
+                LoginStep::MatrixPassword { .. } => {}
             },
             _ => {}
         }

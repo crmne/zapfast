@@ -76,10 +76,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .show(ui, |ui| match app.page {
             Page::Settings => settings::show(app, ui),
             Page::Chats => {
-                // An account that is not signed in yet shows its sign-in card
-                // instead of an empty conversation.
-                if app.sign_in().is_some() {
-                    login::telegram(app, ui);
+                // A verification prompt takes over while it is showing, then
+                // an account that is not signed in yet shows its sign-in
+                // card instead of an empty conversation.
+                if app.verification.contains_key(&app.active_account) {
+                    login::verification(app, ui);
+                } else if app.sign_in().is_some() {
+                    let matrix = app.host.accounts().iter().any(|account| {
+                        account.id == app.active_account
+                            && account.kind == crate::account::NetworkKind::Matrix
+                    });
+                    if matrix {
+                        login::matrix(app, ui);
+                    } else {
+                        login::telegram(app, ui);
+                    }
                 } else {
                     conversation::show(app, ui);
                 }

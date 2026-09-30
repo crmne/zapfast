@@ -377,8 +377,12 @@ pub struct App {
 
     /// The account whose chats are showing.
     pub active_account: crate::account::AccountId,
+    /// The Matrix space whose rooms are showing, when one is picked.
+    pub space_filter: Option<ChatId>,
     /// What each account's sign-in needs next, keyed by account.
     pub auth: HashMap<crate::account::AccountId, crate::account::AuthState>,
+    /// The verification prompt waiting per account, when one is showing.
+    pub verification: HashMap<crate::account::AccountId, crate::backend::VerificationPrompt>,
 
     /// Chats ordered by latest activity.
     pub chats: Vec<Chat>,
@@ -603,6 +607,10 @@ pub struct App {
     pub telegram_phone: String,
     pub telegram_code: String,
     pub telegram_password: String,
+    /// Matrix sign-in fields, kept only while the card is showing.
+    pub matrix_homeserver: String,
+    pub matrix_user: String,
+    pub matrix_password: String,
     pub sidebar_visible: bool,
     pub show_archived: bool,
     /// Chat-list filter; applies to the main list, not to search or the archive.
@@ -964,7 +972,9 @@ impl App {
             me_name: None,
             me_about: None,
             active_account,
+            space_filter: None,
             auth: HashMap::new(),
+            verification: HashMap::new(),
             chats: Vec::new(),
             contacts: HashMap::new(),
             conversations: HashMap::new(),
@@ -1094,6 +1104,9 @@ impl App {
             telegram_phone: String::new(),
             telegram_code: String::new(),
             telegram_password: String::new(),
+            matrix_homeserver: String::new(),
+            matrix_user: String::new(),
+            matrix_password: String::new(),
             sidebar_visible: true,
             show_archived: false,
             chat_filter: ChatFilter::All,
@@ -1932,6 +1945,11 @@ impl App {
             .chats
             .iter()
             .filter(|chat| chat.id.account() == self.active_account)
+            .filter(|chat| !chat.space)
+            .filter(|chat| match &self.space_filter {
+                Some(space) => chat.parent.as_ref() == Some(space),
+                None => true,
+            })
             .filter(|chat| chat.locked == locked)
             .filter(|chat| locked || chat.archived == self.show_archived || !needle.is_empty())
             .filter(|chat| match &self.label_filter {
@@ -2129,6 +2147,14 @@ impl App {
                 Event::Auth { account, state } => {
                     self.auth.insert(account, state);
                 }
+                Event::Verification { account, prompt } => match prompt {
+                    Some(prompt) => {
+                        self.verification.insert(account, prompt);
+                    }
+                    None => {
+                        self.verification.remove(&account);
+                    }
+                },
                 Event::Link(status) => self.handle_link(status),
                 Event::Me {
                     id,
@@ -3722,6 +3748,8 @@ impl App {
                     self.active_account = id;
                     self.settings.last_account = id;
                     self.settings_dirty = true;
+                    // Spaces belong to one account too.
+                    self.space_filter = None;
                     // The open conversation belongs to one account.
                     if self
                         .open_chat
@@ -3741,6 +3769,20 @@ impl App {
             }
             Action::Login { account, step } => {
                 self.host.send(Command::Login { account, step });
+            }
+            Action::SetSpace(space) => {
+                self.space_filter = space;
+                // The open conversation may not belong to the picked space.
+                if let Some(space) = self.space_filter.clone()
+                    && self.open_chat.as_ref().is_some_and(|id| {
+                        self.chat(id).and_then(|chat| chat.parent.as_ref()) != Some(&space)
+                    })
+                {
+                    self.apply(Action::CloseChat, ctx);
+                }
+            }
+            Action::Verification { account, action } => {
+                self.host.send(Command::VerifySession { account, action });
             }
             Action::StartChat { id, name } => {
                 if self.chat(&id).is_none() {

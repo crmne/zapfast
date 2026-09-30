@@ -4229,8 +4229,10 @@ impl Worker {
             }
         }
         match command {
-            // Only account adapters log in; the WhatsApp worker never sees one.
+            // Only account adapters log in or verify sessions; the WhatsApp
+            // worker never sees those.
             Command::Login { .. } => {}
+            Command::VerifySession { .. } => {}
             Command::RefreshPoll { chat, message } => self.refresh_poll(chat, message),
             Command::PollHistoryFailed {
                 chat,
