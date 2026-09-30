@@ -208,6 +208,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         name: row.get(1)?,
         group_subject_known: row.get(18)?,
         kind: kind_from_name(&kind),
+        parent: None,
         last_activity: row.get(3)?,
         unread: row.get(4)?,
         marked_unread: row.get(20)?,

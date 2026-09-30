@@ -182,7 +182,24 @@ async fn serve(
     let mut chats = Vec::new();
     while let Some(dialog) = dialogs.next().await? {
         if let Some(chat) = project::chat(account, &dialog, Some(me_id)) {
+            let forum = matches!(
+                &dialog.peer,
+                grammers_client::peer::Peer::Channel(channel) if channel.raw.forum
+            );
+            let parent = chat.id.clone();
             chats.push(chat);
+            if forum {
+                match dialog.peer.to_ref().await {
+                    Ok(Some(reference)) => {
+                        match forum_topics(&client, reference, &parent, account).await {
+                            Ok(mut topics) => chats.append(&mut topics),
+                            Err(error) => log::warn!("Telegram topics could not load: {error}"),
+                        }
+                    }
+                    Ok(None) => log::warn!("Telegram topics need an access hash"),
+                    Err(error) => log::warn!("Telegram topics could not resolve: {error}"),
+                }
+            }
         }
     }
     sink.send(Event::Chats(chats));
@@ -225,6 +242,49 @@ async fn serve(
             }
         }
     }
+}
+
+/// The topic rows of one forum. The General topic stays on the group's own
+/// row because its messages carry no topic header.
+async fn forum_topics(
+    client: &Client,
+    reference: PeerRef,
+    parent: &ChatId,
+    account: AccountId,
+) -> Result<Vec<crate::model::Chat>> {
+    let mut rows = Vec::new();
+    let mut offset_topic = 0;
+    for _ in 0..TOPIC_PAGES {
+        let grammers_client::tl::enums::messages::ForumTopics::Topics(page) = client
+            .invoke(&grammers_client::tl::functions::messages::GetForumTopics {
+                peer: reference.into(),
+                q: None,
+                offset_date: 0,
+                offset_id: 0,
+                offset_topic,
+                limit: TOPIC_PAGE,
+            })
+            .await?;
+        let count = page.topics.len();
+        let mut last = 0;
+        for topic in page.topics {
+            let grammers_client::tl::enums::ForumTopic::Topic(topic) = topic else {
+                continue;
+            };
+            if topic.id == 1 {
+                continue;
+            }
+            last = topic.id;
+            if let Some(chat) = project::topic_chat(account, reference.id, parent, &topic) {
+                rows.push(chat);
+            }
+        }
+        if count < TOPIC_PAGE as usize {
+            break;
+        }
+        offset_topic = last;
+    }
+    Ok(rows)
 }
 
 fn credentials() -> Result<(i32, String)> {
@@ -284,7 +344,7 @@ async fn project_message(
     } else {
         None
     };
-    project::message(account, message, Some(me), quoted)
+    project::message(account, message, Some(me), quoted, None)
 }
 
 /// The local account and the Telegram user it is signed in as.
@@ -307,19 +367,42 @@ async fn page(
     let Some(reference) = peer_ref(session, sink, chat).await else {
         return Ok(());
     };
-    let mut iter = client.iter_messages(reference).limit(PAGE + 1);
-    if let Some(before) = before {
-        iter = iter.offset_id(before);
-    }
-    let mut messages = Vec::new();
-    while let Some(message) = iter.next().await? {
-        if let Some(message) = project_message(account, &message, me).await {
-            messages.push(message);
+    let topic = project::parse_chat(chat.peer()).and_then(|(_, topic)| topic);
+    let mut items: Vec<(Option<i64>, crate::model::Message)> = Vec::new();
+    if let Some(topic) = topic {
+        // A topic page reads the group's recent history and keeps this
+        // topic's rows; grammers has no topic paging of its own, and a busy
+        // group's messages for other topics are left behind.
+        let mut iter = client.iter_messages(reference).limit(TOPIC_SCAN);
+        if let Some(before) = before {
+            iter = iter.offset_id(before);
+        }
+        while items.len() <= PAGE {
+            let Some(message) = iter.next().await? else {
+                break;
+            };
+            if project::topic_of(&message.raw) != Some(topic) {
+                continue;
+            }
+            if let Some(projected) = project_message(account, &message, me).await {
+                items.push((message.grouped_id(), projected));
+            }
+        }
+    } else {
+        let mut iter = client.iter_messages(reference).limit(PAGE + 1);
+        if let Some(before) = before {
+            iter = iter.offset_id(before);
+        }
+        while let Some(message) = iter.next().await? {
+            if let Some(projected) = project_message(account, &message, me).await {
+                items.push((message.grouped_id(), projected));
+            }
         }
     }
-    let older = messages.len() > PAGE;
-    messages.truncate(PAGE);
-    messages.reverse();
+    let older = items.len() > PAGE;
+    items.truncate(PAGE);
+    items.reverse();
+    let messages = project::album_bubbles(items);
     if let Some(earliest) = messages
         .first()
         .and_then(|message| message.id.parse::<i32>().ok())
@@ -336,6 +419,110 @@ async fn page(
         complete: !older,
     });
     Ok(())
+}
+
+/// How many topic rows one forum page carries, and how many pages the topics
+/// of one forum are read through.
+const TOPIC_PAGE: i32 = 100;
+const TOPIC_PAGES: usize = 10;
+
+/// How many recent group messages a topic page scans for its own rows.
+const TOPIC_SCAN: usize = 500;
+
+/// Where a send goes: the forum topic when the chat is one, and the message
+/// it replies to.
+#[derive(Clone, Copy)]
+struct Placement {
+    topic: Option<i64>,
+    reply_to: Option<i32>,
+}
+
+impl Placement {
+    /// Reads the placement out of a chat key and an optional quoted id.
+    fn of(chat: &ChatId, quoting: Option<&str>) -> Self {
+        let topic = project::parse_chat(chat.peer()).and_then(|(_, topic)| topic);
+        let reply_to = quoting.and_then(|id| id.parse::<i32>().ok());
+        Self { topic, reply_to }
+    }
+}
+
+/// The reply target a send carries: a topic root, a quoted message, or both.
+fn reply_to(
+    topic: Option<i64>,
+    reply: Option<i32>,
+) -> Option<grammers_client::tl::enums::InputReplyTo> {
+    if topic.is_none() && reply.is_none() {
+        return None;
+    }
+    Some(
+        grammers_client::tl::types::InputReplyToMessage {
+            reply_to_msg_id: reply.unwrap_or(0),
+            top_msg_id: topic.map(|topic| topic as i32),
+            reply_to_peer_id: None,
+            quote_text: None,
+            quote_entities: None,
+            quote_offset: None,
+            monoforum_peer_id: None,
+            todo_item_id: None,
+            poll_option: None,
+        }
+        .into(),
+    )
+}
+
+/// A fresh id Telegram uses to recognize duplicate sends.
+fn random_id() -> i64 {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    static LAST: AtomicI64 = AtomicI64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() as i64)
+        .unwrap_or(0);
+    now.wrapping_add(LAST.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Sends text. A forum topic needs the raw call because the high-level
+/// client has no topic parameter; the stream echoes the sent row back.
+async fn send_text(
+    client: &Client,
+    reference: PeerRef,
+    text: String,
+    placement: Placement,
+) -> Result<Option<TelegramMessage>> {
+    if placement.topic.is_some() {
+        client
+            .invoke(&grammers_client::tl::functions::messages::SendMessage {
+                no_webpage: false,
+                silent: false,
+                background: false,
+                clear_draft: false,
+                noforwards: false,
+                update_stickersets_order: false,
+                invert_media: false,
+                allow_paid_floodskip: false,
+                peer: reference.into(),
+                reply_to: reply_to(placement.topic, placement.reply_to),
+                message: text,
+                random_id: random_id(),
+                reply_markup: None,
+                entities: None,
+                schedule_date: None,
+                schedule_repeat_period: None,
+                send_as: None,
+                quick_reply_shortcut: None,
+                effect: None,
+                allow_paid_stars: None,
+                suggested_post: None,
+                rich_message: None,
+            })
+            .await?;
+        return Ok(None);
+    }
+    let mut input = grammers_client::message::InputMessage::new().text(text);
+    if let Some(id) = placement.reply_to {
+        input = input.reply_to(Some(id));
+    }
+    Ok(Some(client.send_message(reference, input).await?))
 }
 
 fn mime_of(path: &std::path::Path) -> &'static str {
@@ -410,7 +597,7 @@ async fn send_upload(
     photo: bool,
     voice: Option<i32>,
     caption: Option<String>,
-    reply_to: Option<i32>,
+    placement: Placement,
 ) -> Result<()> {
     let uploaded = client.upload_file(path).await?;
     let media = if let Some(duration) = voice {
@@ -434,11 +621,39 @@ async fn send_upload(
             None,
         )
     };
+    if placement.topic.is_some() {
+        client
+            .invoke(&grammers_client::tl::functions::messages::SendMedia {
+                silent: false,
+                background: false,
+                clear_draft: false,
+                noforwards: false,
+                update_stickersets_order: false,
+                invert_media: false,
+                allow_paid_floodskip: false,
+                peer: reference.into(),
+                reply_to: reply_to(placement.topic, placement.reply_to),
+                media,
+                message: caption.unwrap_or_default(),
+                random_id: random_id(),
+                reply_markup: None,
+                entities: None,
+                schedule_date: None,
+                schedule_repeat_period: None,
+                send_as: None,
+                quick_reply_shortcut: None,
+                effect: None,
+                allow_paid_stars: None,
+                suggested_post: None,
+            })
+            .await?;
+        return Ok(());
+    }
     let mut input = grammers_client::message::InputMessage::new().media(media);
     if let Some(caption) = caption {
         input = input.text(caption);
     }
-    if let Some(id) = reply_to {
+    if let Some(id) = placement.reply_to {
         input = input.reply_to(Some(id));
     }
     client.send_message(reference, input).await?;
@@ -465,12 +680,10 @@ async fn handle_command(
             let Some(reference) = peer_ref(session, sink, &chat).await else {
                 return Ok(());
             };
-            let mut input = grammers_client::message::InputMessage::new().text(text);
-            if let Some(id) = quoting.as_deref().and_then(|id| id.parse::<i32>().ok()) {
-                input = input.reply_to(Some(id));
-            }
-            let sent = client.send_message(reference, input).await?;
-            if let Some(message) = project_message(account, &sent, me).await {
+            let placement = Placement::of(&chat, quoting.as_deref());
+            if let Some(sent) = send_text(client, reference, text, placement).await?
+                && let Some(message) = project_message(account, &sent, me).await
+            {
                 sink.send(Event::Incoming {
                     chat,
                     message: Box::new(message),
@@ -487,11 +700,11 @@ async fn handle_command(
             let Some(reference) = peer_ref(session, sink, &chat).await else {
                 return Ok(());
             };
-            let reply_to = quoting.as_deref().and_then(|id| id.parse::<i32>().ok());
+            let placement = Placement::of(&chat, quoting.as_deref());
             for (index, path) in paths.iter().enumerate() {
                 let photo = mime_of(path).starts_with("image/");
                 let caption = (index == 0).then(|| caption.clone()).flatten();
-                send_upload(client, reference, path, photo, None, caption, reply_to).await?;
+                send_upload(client, reference, path, photo, None, caption, placement).await?;
             }
         }
         Command::SendImage {
@@ -516,8 +729,8 @@ async fn handle_command(
                 let _ = std::fs::create_dir_all(parent);
             }
             image.save(&path)?;
-            let reply_to = quoting.as_deref().and_then(|id| id.parse::<i32>().ok());
-            send_upload(client, reference, &path, true, None, caption, reply_to).await?;
+            let placement = Placement::of(&chat, quoting.as_deref());
+            send_upload(client, reference, &path, true, None, caption, placement).await?;
             let _ = std::fs::remove_file(&path);
         }
         Command::SendVoice {
@@ -544,7 +757,7 @@ async fn handle_command(
                 let _ = std::fs::create_dir_all(parent);
             }
             std::fs::write(&path, ogg)?;
-            let reply_to = quoting.as_deref().and_then(|id| id.parse::<i32>().ok());
+            let placement = Placement::of(&chat, quoting.as_deref());
             send_upload(
                 client,
                 reference,
@@ -552,7 +765,7 @@ async fn handle_command(
                 false,
                 Some(duration),
                 None,
-                reply_to,
+                placement,
             )
             .await?;
             let _ = std::fs::remove_file(&path);
@@ -567,8 +780,8 @@ async fn handle_command(
             };
             // Telegram stickers travel as documents here; the bubble reads as
             // the file it is.
-            let reply_to = quoting.as_deref().and_then(|id| id.parse::<i32>().ok());
-            send_upload(client, reference, &path, false, None, None, reply_to).await?;
+            let placement = Placement::of(&chat, quoting.as_deref());
+            send_upload(client, reference, &path, false, None, None, placement).await?;
         }
         Command::EditText { chat, id, text, .. } => {
             let Some(reference) = peer_ref(session, sink, &chat).await else {
@@ -619,6 +832,11 @@ async fn handle_command(
                 return Ok(());
             };
             let action = client.action(reference);
+            let topic = project::parse_chat(chat.peer()).and_then(|(_, topic)| topic);
+            let action = match topic {
+                Some(topic) => action.topic_id(topic as i32),
+                None => action,
+            };
             if composing {
                 let _ = action
                     .oneshot(grammers_client::tl::enums::SendMessageAction::SendMessageTypingAction)
@@ -725,6 +943,97 @@ async fn handle_command(
                 })
                 .await;
         }
+        Command::VotePoll {
+            chat,
+            message,
+            choices,
+        } => {
+            let Some(reference) = peer_ref(session, sink, &chat).await else {
+                return Ok(());
+            };
+            let Ok(id) = message.parse::<i32>() else {
+                return Ok(());
+            };
+            let options = match poll_options(client, reference, id, &choices).await {
+                Ok(options) => options,
+                Err(error) => {
+                    sink.send(Event::PollVoted {
+                        chat,
+                        message,
+                        error: Some(error.to_string()),
+                    });
+                    return Ok(());
+                }
+            };
+            match client
+                .invoke(&grammers_client::tl::functions::messages::SendVote {
+                    peer: reference.into(),
+                    msg_id: id,
+                    options,
+                })
+                .await
+            {
+                Ok(_) => {
+                    sink.send(Event::PollVoted {
+                        chat: chat.clone(),
+                        message: message.clone(),
+                        error: None,
+                    });
+                    let found = client.get_messages_by_id(reference, &[id]).await?;
+                    if let Some(Some(original)) = found.into_iter().next()
+                        && let Some(projected) = project_message(account, &original, me).await
+                    {
+                        sink.send(Event::MessageUpdated(Box::new(projected)));
+                    }
+                }
+                Err(error) => {
+                    sink.send(Event::PollVoted {
+                        chat,
+                        message,
+                        error: Some(error.to_string()),
+                    });
+                }
+            }
+        }
+        Command::CreatePoll { chat, draft } => {
+            let Some(reference) = peer_ref(session, sink, &chat).await else {
+                return Ok(());
+            };
+            let placement = Placement::of(&chat, None);
+            let media = poll_media(&draft);
+            match client
+                .invoke(&grammers_client::tl::functions::messages::SendMedia {
+                    silent: false,
+                    background: false,
+                    clear_draft: false,
+                    noforwards: false,
+                    update_stickersets_order: false,
+                    invert_media: false,
+                    allow_paid_floodskip: false,
+                    peer: reference.into(),
+                    reply_to: reply_to(placement.topic, placement.reply_to),
+                    media,
+                    message: String::new(),
+                    random_id: random_id(),
+                    reply_markup: None,
+                    entities: None,
+                    schedule_date: None,
+                    schedule_repeat_period: None,
+                    send_as: None,
+                    quick_reply_shortcut: None,
+                    effect: None,
+                    allow_paid_stars: None,
+                    suggested_post: None,
+                })
+                .await
+            {
+                Ok(_) => sink.send(Event::PollCreated { chat, error: None }),
+                Err(error) => sink.send(Event::PollCreated {
+                    chat,
+                    error: Some(error.to_string()),
+                }),
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -750,6 +1059,91 @@ fn content_media_mut(content: &mut Content) -> Option<&mut crate::model::Media> 
         | Content::Sticker { media, .. } => Some(media),
         _ => None,
     }
+}
+
+/// The option bytes behind the chosen answer indices of a poll message.
+async fn poll_options(
+    client: &Client,
+    reference: PeerRef,
+    id: i32,
+    choices: &[usize],
+) -> Result<Vec<Vec<u8>>> {
+    let found = client.get_messages_by_id(reference, &[id]).await?;
+    let Some(Some(original)) = found.into_iter().next() else {
+        anyhow::bail!("The poll message is gone");
+    };
+    let Some(grammers_client::media::Media::Poll(poll)) = original.media() else {
+        anyhow::bail!("The message is not a poll");
+    };
+    let answers: Vec<Vec<u8>> = poll
+        .iter_answers()
+        .filter_map(|answer| match answer {
+            grammers_client::tl::enums::PollAnswer::Answer(answer) => Some(answer.option.clone()),
+            _ => None,
+        })
+        .collect();
+    let options: Vec<Vec<u8>> = choices
+        .iter()
+        .filter_map(|choice| answers.get(*choice).cloned())
+        .collect();
+    if options.is_empty() {
+        anyhow::bail!("The vote does not name a poll answer");
+    }
+    Ok(options)
+}
+
+/// A fresh Telegram poll carrying the interface's draft.
+fn poll_media(draft: &crate::model::PollDraft) -> grammers_client::tl::enums::InputMedia {
+    let text = |text: &str| {
+        grammers_client::tl::enums::TextWithEntities::Entities(
+            grammers_client::tl::types::TextWithEntities {
+                text: text.to_owned(),
+                entities: Vec::new(),
+            },
+        )
+    };
+    let poll = grammers_client::tl::types::Poll {
+        id: 0,
+        closed: false,
+        public_voters: false,
+        multiple_choice: draft.multiple,
+        quiz: false,
+        open_answers: false,
+        revoting_disabled: false,
+        shuffle_answers: false,
+        hide_results_until_close: false,
+        creator: false,
+        subscribers_only: false,
+        question: text(&draft.question),
+        answers: draft
+            .options
+            .iter()
+            .map(|option| {
+                grammers_client::tl::enums::PollAnswer::Answer(
+                    grammers_client::tl::types::PollAnswer {
+                        text: text(option),
+                        option: random_id().to_le_bytes().to_vec(),
+                        media: None,
+                        added_by: None,
+                        date: None,
+                    },
+                )
+            })
+            .collect(),
+        close_period: None,
+        close_date: None,
+        countries_iso2: None,
+        hash: 0,
+    };
+    grammers_client::tl::types::InputMediaPoll {
+        poll: grammers_client::tl::enums::Poll::Poll(poll),
+        correct_answers: None,
+        attached_media: None,
+        solution: None,
+        solution_entities: None,
+        solution_media: None,
+    }
+    .into()
 }
 
 async fn handle_update(

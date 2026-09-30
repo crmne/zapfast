@@ -992,6 +992,11 @@ fn person_row(
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
+    // A subchat, such as a Telegram forum topic, shows where it belongs.
+    let parent = chat
+        .parent
+        .as_ref()
+        .map(|parent| app.display_name(parent.peer()));
     // While searching, the result reached with the arrows is the selection;
     // before any arrow press it stays the open chat, as a click leaves it.
     let selected = app
@@ -1066,8 +1071,18 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         } else {
             theme::medium(14.5)
         };
-        let name = widgets::line(ui, &title, name_font, palette.text, name_width, 1);
-        name.paint(ui, pos2(left, name_top), palette.text);
+        let mut name_x = left;
+        if let Some(parent) = &parent {
+            let label = format!("{parent} · ");
+            let prefix =
+                widgets::line(ui, &label, theme::regular(13.0), palette.dim, name_width, 1);
+            let width = prefix.size().x;
+            prefix.paint(ui, pos2(name_x, name_top + 2.0), palette.dim);
+            name_x += width;
+        }
+        let title_width = (name_width - (name_x - left)).max(0.0);
+        let name = widgets::line(ui, &title, name_font, palette.text, title_width, 1);
+        name.paint(ui, pos2(name_x, name_top), palette.text);
 
         // Leave room for badges beside the latest-message preview.
         let mut badge_right = right;

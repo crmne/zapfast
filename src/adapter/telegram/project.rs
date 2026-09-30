@@ -14,8 +14,8 @@ use crate::account::{
     AccountId, CallAccess, Capabilities, GifSource, ReactionStyle, StickerAccess,
 };
 use crate::model::{
-    Chat, ChatId, ChatKind, Content, Delivery, LastMessage, Media, MediaState, Message, Quoted,
-    Reaction,
+    AlbumItem, Chat, ChatId, ChatKind, Content, Delivery, LastMessage, Media, MediaState, Message,
+    PollState, Quoted, Reaction,
 };
 
 /// The peer part of a chat id: the Bot API dialog id, which embeds the kind
@@ -33,7 +33,32 @@ pub fn parse_peer(text: &str) -> Option<PeerId> {
 
 /// The chat id for a Telegram peer on one account.
 pub fn chat_id(account: AccountId, peer: PeerId) -> Option<ChatId> {
-    peer_string(peer).map(|peer| ChatId::new(account, peer))
+    chat_id_for(account, peer, None)
+}
+
+/// The chat key of a forum topic: the group's peer, then the topic id.
+pub fn topic_string(peer: PeerId, topic: i64) -> Option<String> {
+    Some(format!("{}:{topic}", peer_string(peer)?))
+}
+
+/// Splits a chat key into its peer and its forum topic id, when it has one.
+pub fn parse_chat(text: &str) -> Option<(PeerId, Option<i64>)> {
+    match text.split_once(':') {
+        Some((peer, topic)) => {
+            let topic: i64 = topic.parse().ok()?;
+            Some((parse_peer(peer)?, (topic != 0).then_some(topic)))
+        }
+        None => Some((parse_peer(text)?, None)),
+    }
+}
+
+/// The chat id for a peer, narrowed to a forum topic when there is one.
+pub fn chat_id_for(account: AccountId, peer: PeerId, topic: Option<i64>) -> Option<ChatId> {
+    let text = match topic {
+        Some(topic) => topic_string(peer, topic)?,
+        None => peer_string(peer)?,
+    };
+    Some(ChatId::new(account, text))
 }
 
 /// What kind of row a Telegram peer becomes in the chat list.
@@ -222,6 +247,28 @@ fn char_boundary(chars: &[char], offset: i32) -> Option<usize> {
     (units == offset).then_some(chars.len())
 }
 
+/// The forum topic a raw message belongs to, from its reply header.
+pub fn topic_of(raw: &tl::enums::Message) -> Option<i64> {
+    let tl::enums::Message::Message(message) = raw else {
+        return None;
+    };
+    message.reply_to.as_ref().and_then(topic_from_reply)
+}
+
+/// The forum topic a reply header names, when it marks one.
+fn topic_from_reply(reply: &tl::enums::MessageReplyHeader) -> Option<i64> {
+    let tl::enums::MessageReplyHeader::Header(reply) = reply else {
+        return None;
+    };
+    if !reply.forum_topic {
+        return None;
+    }
+    reply
+        .reply_to_top_id
+        .or(reply.reply_to_msg_id)
+        .map(i64::from)
+}
+
 /// A chat-list row for one dialog.
 pub fn chat(account: AccountId, dialog: &Dialog, me: Option<PeerId>) -> Option<Chat> {
     let peer = &dialog.peer;
@@ -242,7 +289,7 @@ pub fn chat(account: AccountId, dialog: &Dialog, me: Option<PeerId>) -> Option<C
         chat.pinned = raw.pinned;
     }
     if let Some(last) = dialog.last_message.as_ref()
-        && let Some(message) = message(account, last, me, None)
+        && let Some(message) = message(account, last, me, None, None)
     {
         chat.last_activity = message.timestamp;
         let summary = message.summary();
@@ -258,15 +305,34 @@ pub fn chat(account: AccountId, dialog: &Dialog, me: Option<PeerId>) -> Option<C
     Some(chat)
 }
 
+/// A chat-list row for one forum topic of a group.
+pub fn topic_chat(
+    account: AccountId,
+    peer: PeerId,
+    parent: &ChatId,
+    topic: &tl::types::ForumTopic,
+) -> Option<Chat> {
+    let id = chat_id_for(account, peer, Some(i64::from(topic.id)))?;
+    let mut chat = Chat::new(id, topic.title.clone());
+    chat.kind = ChatKind::Group;
+    chat.parent = Some(parent.clone());
+    chat.unread = topic.unread_count.max(0) as u32;
+    chat.pinned = topic.pinned;
+    Some(chat)
+}
+
 /// One message projected for the window. `quoted` is the reply target, which
-/// the runtime looks up before projecting.
+/// the runtime looks up before projecting; `topic` is the forum topic the
+/// caller asked for, when the message itself does not carry one.
 pub fn message(
     account: AccountId,
     message: &TelegramMessage,
     me: Option<PeerId>,
     quoted: Option<Quoted>,
+    topic: Option<i64>,
 ) -> Option<Message> {
-    let chat = chat_id(account, message.peer_id())?;
+    let topic = topic_of(&message.raw).or(topic);
+    let chat = chat_id_for(account, message.peer_id(), topic)?;
     let from_me = message.outgoing()
         || (me.is_some() && message.sender_id().is_some() && message.sender_id() == me);
     let sender = message
@@ -353,6 +419,57 @@ pub fn content(message: &TelegramMessage) -> Option<Content> {
         text: entities_text(text, entities),
         preview: None,
     })
+}
+
+/// The plain text of a Telegram text-with-entities value.
+fn entities_plain(text: &tl::enums::TextWithEntities) -> String {
+    match text {
+        tl::enums::TextWithEntities::Entities(text) => text.text.clone(),
+    }
+}
+
+/// A poll with its server-side results.
+fn poll_content(poll: &grammers_client::media::Poll) -> Content {
+    let options: Vec<String> = poll
+        .iter_answers()
+        .map(|answer| match answer {
+            tl::enums::PollAnswer::Answer(answer) => entities_plain(&answer.text),
+            tl::enums::PollAnswer::InputPollAnswer(_) => String::new(),
+        })
+        .collect();
+    let mut counts = vec![0usize; options.len()];
+    let mut selected = Vec::new();
+    if let Some(summary) = poll.iter_voters_summary() {
+        for (index, voters) in summary.enumerate() {
+            let count = voters.voters.unwrap_or(0).max(0) as usize;
+            if let Some(slot) = counts.get_mut(index) {
+                *slot = count;
+            }
+            if voters.chosen {
+                selected.push(index);
+            }
+        }
+    }
+    Content::Poll {
+        question: entities_plain(&poll.raw.question),
+        options,
+        state: PollState {
+            selectable: if poll.raw.multiple_choice {
+                poll.raw.answers.len()
+            } else {
+                1
+            },
+            counts,
+            selected,
+            voters: poll.total_voters().unwrap_or(0).max(0) as usize,
+            can_vote: !poll.closed(),
+            history_complete: true,
+            refresh_needed: false,
+            refreshing: false,
+            refresh_failed: false,
+            votes: Vec::new(),
+        },
+    }
 }
 
 /// A media message's content, from the shape the protocol sent.
@@ -452,10 +569,74 @@ fn media_content(media: &TelegramMedia, message: &TelegramMessage) -> Content {
                 vcard: contact.vcard().to_owned(),
             }
         }
+        TelegramMedia::Poll(poll) => poll_content(poll),
         _ => Content::Unsupported {
             what: "Media".to_owned(),
         },
     }
+}
+
+/// One album item from a projected message, when it holds a photo or a video.
+fn item_of(content: &Content) -> Option<(Option<String>, AlbumItem)> {
+    match content {
+        Content::Image { caption, media } => Some((
+            caption.clone(),
+            AlbumItem {
+                media: media.clone(),
+                seconds: None,
+                gif: false,
+            },
+        )),
+        Content::Video {
+            caption,
+            media,
+            seconds,
+            gif,
+            note,
+        } if !note => Some((
+            caption.clone(),
+            AlbumItem {
+                media: media.clone(),
+                seconds: *seconds,
+                gif: *gif,
+            },
+        )),
+        _ => None,
+    }
+}
+
+/// The album behind a message's content, either already grouped or one item.
+fn take_album(content: &Content) -> Option<(Option<String>, Vec<AlbumItem>)> {
+    match content {
+        Content::Album { caption, items } => Some((caption.clone(), items.clone())),
+        _ => item_of(content).map(|(caption, item)| (caption, vec![item])),
+    }
+}
+
+/// Merges consecutive Telegram album items into one grouped bubble. Items
+/// without a group id, or that are not photos and videos, stay on their own.
+pub fn album_bubbles(items: Vec<(Option<i64>, Message)>) -> Vec<Message> {
+    let mut out: Vec<(Option<i64>, Message)> = Vec::new();
+    for (group, message) in items {
+        if let Some(group) = group
+            && let Some((last_group, last)) = out.last_mut()
+            && *last_group == Some(group)
+            && let Some((caption, item)) = item_of(&message.content)
+            && let Some((mut album_caption, mut album)) = take_album(&last.content)
+        {
+            album.push(item);
+            if album_caption.is_none() {
+                album_caption = caption;
+            }
+            last.content = Content::Album {
+                caption: album_caption,
+                items: album,
+            };
+            continue;
+        }
+        out.push((group, message));
+    }
+    out.into_iter().map(|(_, message)| message).collect()
 }
 
 #[cfg(test)]
@@ -609,5 +790,216 @@ mod tests {
         assert_eq!(capabilities.gif, GifSource::None);
         assert_eq!(capabilities.stickers, StickerAccess::None);
         assert_eq!(capabilities.calls, CallAccess::LogOnly);
+    }
+
+    #[test]
+    fn topic_keys_round_trip_through_their_stored_form() {
+        let peer = PeerId::user(123).expect("a user id");
+        let account = AccountId::WHATSAPP;
+        assert_eq!(topic_string(peer, 456).as_deref(), Some("123:456"));
+        assert_eq!(parse_chat("123:456"), Some((peer, Some(456))));
+        assert_eq!(parse_chat("123"), Some((peer, None)));
+        assert_eq!(parse_chat("123:0"), Some((peer, None)));
+        assert_eq!(parse_chat("nonsense"), None);
+        assert_eq!(
+            chat_id_for(account, peer, Some(456)).map(|chat| chat.as_str().to_owned()),
+            topic_string(peer, 456)
+        );
+        assert_eq!(
+            chat_id_for(account, peer, None).map(|chat| chat.peer().to_owned()),
+            Some(peer.to_string())
+        );
+    }
+
+    fn reply_header(
+        top: Option<i32>,
+        message: Option<i32>,
+        forum: bool,
+    ) -> tl::enums::MessageReplyHeader {
+        tl::enums::MessageReplyHeader::Header(tl::types::MessageReplyHeader {
+            reply_to_scheduled: false,
+            forum_topic: forum,
+            quote: false,
+            reply_to_ephemeral: false,
+            reply_to_msg_id: message,
+            reply_to_peer_id: None,
+            reply_from: None,
+            reply_media: None,
+            reply_to_top_id: top,
+            quote_text: None,
+            quote_entities: None,
+            quote_offset: None,
+            todo_item_id: None,
+            poll_option: None,
+        })
+    }
+
+    #[test]
+    fn forum_topic_replies_name_their_topic() {
+        assert_eq!(
+            topic_from_reply(&reply_header(Some(7), Some(9), true)),
+            Some(7)
+        );
+        assert_eq!(
+            topic_from_reply(&reply_header(None, Some(9), true)),
+            Some(9)
+        );
+        assert_eq!(
+            topic_from_reply(&reply_header(Some(7), Some(9), false)),
+            None
+        );
+        assert_eq!(
+            topic_from_reply(&tl::enums::MessageReplyHeader::MessageReplyStoryHeader(
+                tl::types::MessageReplyStoryHeader {
+                    peer: tl::enums::Peer::User(tl::types::PeerUser { user_id: 1 }),
+                    story_id: 2,
+                }
+            )),
+            None
+        );
+    }
+
+    fn poll_answer(text: &str, option: u8) -> tl::enums::PollAnswer {
+        tl::enums::PollAnswer::Answer(tl::types::PollAnswer {
+            text: tl::enums::TextWithEntities::Entities(tl::types::TextWithEntities {
+                text: text.to_owned(),
+                entities: Vec::new(),
+            }),
+            option: vec![option],
+            media: None,
+            added_by: None,
+            date: None,
+        })
+    }
+
+    fn raw_poll() -> grammers_client::media::Poll {
+        grammers_client::media::Poll::from_raw_media(tl::types::MessageMediaPoll {
+            poll: tl::enums::Poll::Poll(tl::types::Poll {
+                id: 9,
+                closed: false,
+                public_voters: true,
+                multiple_choice: false,
+                quiz: false,
+                open_answers: false,
+                revoting_disabled: false,
+                shuffle_answers: false,
+                hide_results_until_close: false,
+                creator: false,
+                subscribers_only: false,
+                question: tl::enums::TextWithEntities::Entities(tl::types::TextWithEntities {
+                    text: "Ship it?".to_owned(),
+                    entities: Vec::new(),
+                }),
+                answers: vec![poll_answer("Yes", 1), poll_answer("No", 2)],
+                close_period: None,
+                close_date: None,
+                countries_iso2: None,
+                hash: 0,
+            }),
+            results: tl::enums::PollResults::Results(Box::new(tl::types::PollResults {
+                min: false,
+                has_unread_votes: false,
+                can_view_stats: true,
+                results: Some(vec![
+                    tl::enums::PollAnswerVoters::Voters(tl::types::PollAnswerVoters {
+                        chosen: true,
+                        correct: false,
+                        option: vec![1],
+                        voters: Some(3),
+                        recent_voters: None,
+                    }),
+                    tl::enums::PollAnswerVoters::Voters(tl::types::PollAnswerVoters {
+                        chosen: false,
+                        correct: false,
+                        option: vec![2],
+                        voters: Some(1),
+                        recent_voters: None,
+                    }),
+                ]),
+                total_voters: Some(4),
+                recent_voters: None,
+                solution: None,
+                solution_entities: None,
+                solution_media: None,
+            })),
+            attached_media: None,
+        })
+    }
+
+    #[test]
+    fn polls_project_their_questions_options_and_counts() {
+        let Content::Poll {
+            question,
+            options,
+            state,
+        } = poll_content(&raw_poll())
+        else {
+            panic!("a poll projects as a poll");
+        };
+        assert_eq!(question, "Ship it?");
+        assert_eq!(options, ["Yes", "No"]);
+        assert_eq!(state.counts, [3, 1]);
+        assert_eq!(state.selected, [0]);
+        assert_eq!(state.voters, 4);
+        assert!(state.can_vote);
+        assert_eq!(state.selectable, 1);
+        assert!(state.history_complete);
+    }
+
+    fn photo(id: &str, group: Option<i64>, caption: Option<String>) -> (Option<i64>, Message) {
+        (
+            group,
+            Message {
+                id: id.to_owned(),
+                chat: ChatId::whatsapp("chat"),
+                sender: "ada".to_owned(),
+                sender_name: Some("Ada".to_owned()),
+                from_me: false,
+                timestamp: 1,
+                content: Content::Image {
+                    caption,
+                    media: Media {
+                        mime: "image/jpeg".to_owned(),
+                        size: 1,
+                        width: None,
+                        height: None,
+                        path: None,
+                        state: MediaState::Idle,
+                    },
+                },
+                status: Delivery::None,
+                delivered_at: None,
+                read_at: None,
+                quoted: None,
+                reactions: Vec::new(),
+                edited: false,
+                mentions: Vec::new(),
+                forwarded: false,
+                thumbnail: None,
+            },
+        )
+    }
+
+    #[test]
+    fn albums_merge_only_consecutive_items_of_the_same_group() {
+        let merged = album_bubbles(vec![
+            photo("1", Some(5), Some("Trip".to_owned())),
+            photo("2", Some(5), None),
+            photo("3", None, None),
+            photo("4", Some(6), None),
+            photo("5", Some(6), None),
+        ]);
+        assert_eq!(merged.len(), 3);
+        assert!(matches!(
+            &merged[0].content,
+            Content::Album { caption: Some(caption), items }
+                if caption == "Trip" && items.len() == 2
+        ));
+        assert_eq!(merged[0].id, "1");
+        assert!(matches!(merged[1].content, Content::Image { .. }));
+        assert!(matches!(
+            &merged[2].content,
+            Content::Album { caption: None, items } if items.len() == 2
+        ));
     }
 }

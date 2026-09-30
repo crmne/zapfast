@@ -4378,6 +4378,32 @@ fn content(
                 actions,
             )
         }
+        Content::Album { caption, items } => {
+            // A grouped Telegram album draws as one strip of tiles.
+            let tiles = items.len().max(1) as f32;
+            let tile = ((width - 4.0 * (tiles - 1.0)) / tiles).max(96.0);
+            let mut drawn = None;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for item in items {
+                    let rect = picture(ui, view, message, &item.media, tile, None, actions);
+                    drawn = Some(drawn.map_or(rect, |union: Rect| union.union(rect)));
+                }
+            });
+            let Some(caption) = caption else {
+                return drawn;
+            };
+            rich_body(
+                ui,
+                view,
+                message,
+                caption,
+                width,
+                Some(reserve),
+                Some(width),
+                actions,
+            )
+        }
         Content::Interactive { text, card } => {
             let Some(card) = card else {
                 let span = message.quoted.is_some().then_some(width);

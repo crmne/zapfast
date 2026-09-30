@@ -234,6 +234,9 @@ pub struct Chat {
     /// Distinguishes an actual subject "Group" from older cached placeholders.
     pub group_subject_known: bool,
     pub kind: ChatKind,
+    /// The chat this one belongs to when the network splits a chat into
+    /// subchats, such as a Telegram forum topic. `None` for ordinary chats.
+    pub parent: Option<ChatId>,
     /// Latest-message Unix timestamp used for ordering.
     pub last_activity: i64,
     pub unread: u32,
@@ -297,6 +300,7 @@ impl Chat {
             name,
             group_subject_known: false,
             kind,
+            parent: None,
             last_activity: 0,
             unread: 0,
             marked_unread: false,
@@ -525,6 +529,12 @@ pub enum Content {
         #[serde(default)]
         waveform: Vec<u8>,
     },
+    /// Several photos or videos delivered as one grouped message, such as a
+    /// Telegram album.
+    Album {
+        caption: Option<String>,
+        items: Vec<AlbumItem>,
+    },
     /// A call that happened in this chat, logged by the network.
     Call {
         video: bool,
@@ -612,6 +622,18 @@ pub enum Content {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         once: Option<OnceMedia>,
     },
+}
+
+/// One item of a grouped album message.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AlbumItem {
+    pub media: Media,
+    /// Video length in seconds, when the item holds a video.
+    #[serde(default)]
+    pub seconds: Option<u32>,
+    /// Whether the item is an animated clip.
+    #[serde(default)]
+    pub gif: bool,
 }
 
 /// The kind of media a view-once message holds.
@@ -862,6 +884,7 @@ impl Content {
                 }
             }
             Self::Document { file_name, .. } => format!("Document: {file_name}"),
+            Self::Album { items, .. } => format!("Album: {} items", items.len()),
             Self::Call { video, missed, .. } => {
                 let kind = if *video { "video" } else { "voice" };
                 if *missed {

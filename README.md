@@ -735,6 +735,24 @@ pictures, GIF search, Signal sticker imports, and update checks through a proxy.
 at once. When the field is empty, ZapFast uses `ALL_PROXY` or `HTTPS_PROXY`
 from the environment and honors `NO_PROXY`.
 
+### Telegram
+
+Add a Telegram account from the account switcher in the chat-list header
+(the **Chats** title, then the account name). Telegram needs
+`ZAPFAST_TELEGRAM_API_ID` and `ZAPFAST_TELEGRAM_API_HASH` from
+[my.telegram.org](https://my.telegram.org) in the environment; without them
+the sign-in card says so. Sign in with the phone number, the code Telegram
+sends, and the two-step password when the account has one.
+
+Telegram chats load beside the WhatsApp ones, and the account switcher marks
+which account the window is showing. Forum topics are their own rows under
+the group with the group name beside them, albums arrive as one strip of
+pictures, polls can be voted in and show their server-side counts, reactions
+show counts, and call entries appear as history lines. Attachments download
+up to 10 MiB; larger files are not fetched. Voice notes are recorded in the
+app and sent as Telegram voice messages. GIF search, sticker shelves,
+sticker uploads, and read receipts are not wired to Telegram yet.
+
 ## Files
 
 | What | Linux | Notes |
@@ -742,6 +760,7 @@ from the environment and honors `NO_PROXY`.
 | Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit; the app lock password and the locked-chats code are kept only as salted verifiers |
 | Accounts | `~/.local/state/zapfast/accounts.json` | Names, networks, and local account numbers only; no tokens or phone numbers |
 | Device keys | `~/.local/state/zapfast/accounts/1/session.db` | Owned by whatsapp-rust; deleting it unlinks |
+| Telegram session | `~/.local/state/zapfast/accounts/<id>/grammers/session.db` | Telegram device keys, peer cache, and update state; deleting it signs that account out here |
 | Messages | `~/.local/state/zapfast/accounts/1/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |

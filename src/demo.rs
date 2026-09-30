@@ -1604,6 +1604,44 @@ fn photos_sample(app: &mut App) {
     app.scroll_to_bottom = true;
 }
 
+/// Replaces the first chat with a grouped album of two pictures.
+fn album_sample(app: &mut App) {
+    let id = SAMPLES[0].id;
+    let now = crate::util::now();
+    let dir = app.dirs.media_cache_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let item = |name: &str, hue: f32| {
+        let file = dir.join(name);
+        if !file.exists() {
+            let (width, height) = (600u32, 600u32);
+            let image = image::RgbImage::from_fn(width, height, |x, y| {
+                let t = (x + y) as f32 / (width + height) as f32;
+                image::Rgb(crate::theme::hsl_rgb(hue + 20.0 * t, 0.55, 0.5))
+            });
+            let _ = image.save(&file);
+        }
+        let mut media = media("image/jpeg", 214_500, Some(600), Some(600));
+        media.path = Some(file);
+        crate::model::AlbumItem {
+            media,
+            seconds: None,
+            gif: false,
+        }
+    };
+    let album = Content::Album {
+        caption: Some("Two shots from the trip".to_owned()),
+        items: vec![
+            item("demo-album-1.jpg", 20.0),
+            item("demo-album-2.jpg", 160.0),
+        ],
+    };
+    let mut row = message(id, "album-1", true, 0, album);
+    row.timestamp = now;
+    app.conversations.entry(id.into()).or_default().messages = vec![row];
+    app.open_chat = Some(id.into());
+    app.scroll_to_bottom = true;
+}
+
 /// Replaces the first chat with videos: a downloaded one, a round video
 /// message of our own, and one still on WhatsApp's servers. `play` starts
 /// one of them.
@@ -1765,6 +1803,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "poll-voted" => poll_sample(app, true, false),
             "poll-results" => poll_sample(app, true, true),
             "photos" => photos_sample(app),
+            "album" => album_sample(app),
             "drafts" => {
                 // Unsent text in two chats besides the open one, whose
                 // draft is in the composer.
