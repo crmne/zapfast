@@ -1,8 +1,8 @@
 //! WhatsApp message markup for egui.
 //!
 //! `*bold*`, `_italic_`, `~struck~`, `` `mono` ``, fenced blocks, `> `
-//! quotes, `* ` lists, links, email addresses, and named `@mentions`. Emoji
-//! go through [`crate::emoji`].
+//! quotes, `* ` lists, links, phone numbers, email addresses, and named
+//! `@mentions`. Emoji go through [`crate::emoji`].
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -394,6 +394,23 @@ fn link_and_mention(span: Span, mentions: &[Mention]) -> Vec<Span> {
                 .next_back()
                 .is_some_and(|c| c.is_alphanumeric());
         if at_boundary {
+            if (bytes[i].is_ascii_digit() || bytes[i] == b'+')
+                && let Some((end, digits)) = phone_at(text, i)
+            {
+                push_plain(&mut out, &span, &text[plain_start..i]);
+                out.push(Span {
+                    text: text[i..end].to_owned(),
+                    link: Some(format!("tel:{digits}")),
+                    bold: span.bold,
+                    italic: span.italic,
+                    strike: span.strike,
+                    quote: span.quote,
+                    ..Default::default()
+                });
+                plain_start = end;
+                i = end;
+                continue;
+            }
             if bytes[i] == b'@'
                 && let Some((end, mention)) = mention_at(text, i, mentions)
             {
@@ -431,6 +448,33 @@ fn link_and_mention(span: Span, mentions: &[Mention]) -> Vec<Span> {
     }
     push_plain(&mut out, &span, &text[plain_start..]);
     out
+}
+
+/// Finds a phone number with optional spaces, hyphens, and parentheses.
+/// Dots are excluded so formatted tax IDs such as XXX.XXX.XXX-XX stay plain.
+fn phone_at(text: &str, at: usize) -> Option<(usize, String)> {
+    let mut end = at;
+    let mut digits = String::new();
+    for (offset, c) in text[at..].char_indices() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else if matches!(c, '+' | ' ' | '-' | '(' | ')') {
+            if c == '+' && offset != 0 {
+                break;
+            }
+        } else {
+            break;
+        }
+        end = at + offset + c.len_utf8();
+    }
+    while end > at && text[..end].ends_with([' ', '-', '(']) {
+        end -= text[..end].chars().next_back()?.len_utf8();
+    }
+    let following = text[end..].chars().next();
+    (digits.len() >= 7
+        && digits.len() <= 15
+        && following.is_none_or(|c| !c.is_ascii_alphanumeric()))
+    .then_some((end, digits))
 }
 
 fn push_plain(out: &mut Vec<Span>, template: &Span, text: &str) {
@@ -781,6 +825,22 @@ mod tests {
         );
         let spans = parse("(see https://example.com)", &[]);
         assert_eq!(spans.last().map(|span| span.text.as_str()), Some(")"));
+    }
+
+    #[test]
+    fn phone_numbers_become_links_without_linking_tax_ids() {
+        let links = |text: &str| -> Vec<String> {
+            parse(text, &[])
+                .into_iter()
+                .filter_map(|span| span.link)
+                .collect()
+        };
+        assert_eq!(
+            links("CPF 000.000.000-00; call 000 0000-0000 or +00 (00) 00000-0000."),
+            vec!["tel:00000000000", "tel:0000000000000"]
+        );
+        assert!(links("id 000000; long id 0000000000000000").is_empty());
+        assert!(links("abc00000000000").is_empty());
     }
 
     #[test]

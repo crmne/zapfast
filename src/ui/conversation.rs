@@ -5522,13 +5522,47 @@ fn rich_body(
     if visible || selection_alive {
         markup::paint_selectable(ui, &laid, &response, origin, palette.text, visible);
     }
+    let message_number = crate::i18n::gettext(view.locale, "Message");
+    let copy_number = crate::i18n::gettext(view.locale, "Copy number");
+    let menu_labels = [message_number.as_ref(), copy_number.as_ref()];
+    for (range, url) in &laid.links {
+        let Some(number) = url.strip_prefix("tel:") else {
+            continue;
+        };
+        let Some(bounds) = crate::bidi::char_bounds(&laid.galley, range.start, range.end) else {
+            continue;
+        };
+        let link = ui
+            .interact(
+                bounds.translate(origin.to_vec2()).expand(2.0),
+                bubble_id(&view.chat.id, &message.id).with(("phone-link", range.start, range.end)),
+                Sense::CLICK,
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        egui::Popup::menu(&link)
+            .id(link.id.with("popup"))
+            .width(widgets::menu_width(ui, &menu_labels, true))
+            .frame(widgets::menu_frame(&view.palette))
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+            .show(|ui| {
+                if widgets::menu_item(ui, &view.palette, None, message_number.as_ref()) {
+                    actions.push(Action::StartChat {
+                        id: format!("{number}@s.whatsapp.net"),
+                        name: number.to_owned(),
+                    });
+                }
+                if widgets::menu_item(ui, &view.palette, Some(Icon::Copy), copy_number.as_ref()) {
+                    actions.push(Action::CopyText(number.to_owned()));
+                }
+            });
+    }
     if !laid.links.is_empty()
         && let Some(pos) = response.hover_pos()
     {
         let cursor = laid.galley.cursor_from_pos(pos - origin);
         if let Some(url) = laid.link_at(cursor.index.0) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            if response.clicked() {
+            if !url.starts_with("tel:") && response.clicked() {
                 actions.push(Action::OpenUrl(url.to_owned()));
             }
         }

@@ -381,6 +381,14 @@ msgid "This message can only be seen on your phone."
 msgstr "Bu mesaj yalnızca telefonunuzda görülebilir."
 
 #: src/ui/conversation.rs:5664
+#: src/ui/conversation.rs:PHONE_MESSAGE
+msgid "Message"
+msgstr "Mesaj gönder"
+
+#: src/ui/conversation.rs:PHONE_COPY
+msgid "Copy number"
+msgstr "Numarayı kopyala"
+
 msgid "Open in a map"
 msgstr "Haritada aç"
 

@@ -384,6 +384,14 @@ msgid "This message can only be seen on your phone."
 msgstr "Questo messaggio si può vedere solo sul telefono."
 
 #: src/ui/conversation.rs:5664
+#: src/ui/conversation.rs:PHONE_MESSAGE
+msgid "Message"
+msgstr "Invia messaggio"
+
+#: src/ui/conversation.rs:PHONE_COPY
+msgid "Copy number"
+msgstr "Copia numero"
+
 msgid "Open in a map"
 msgstr "Apri in una mappa"
 

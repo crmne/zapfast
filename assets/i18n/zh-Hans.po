@@ -366,6 +366,14 @@ msgid "This message can only be seen on your phone."
 msgstr "此消息只能在手机上查看。"
 
 #: src/ui/conversation.rs:5664
+#: src/ui/conversation.rs:PHONE_MESSAGE
+msgid "Message"
+msgstr "发送消息"
+
+#: src/ui/conversation.rs:PHONE_COPY
+msgid "Copy number"
+msgstr "复制号码"
+
 msgid "Open in a map"
 msgstr "在地图中打开"
 
