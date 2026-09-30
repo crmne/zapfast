@@ -543,17 +543,32 @@ fn media_content(media: &TelegramMedia, message: &TelegramMessage) -> Content {
                 pages: None,
             }
         }
-        TelegramMedia::Sticker(sticker) => Content::Sticker {
-            media: Media {
-                mime: "image/webp".to_owned(),
-                size: sticker.document.size().unwrap_or(0) as u64,
-                width: None,
-                height: None,
-                path: None,
-                state: MediaState::Idle,
-            },
-            animated: sticker.is_animated(),
-        },
+        TelegramMedia::Sticker(sticker) => {
+            let (width, height) = sticker
+                .document
+                .resolution()
+                .map_or((None, None), |(width, height)| {
+                    (Some(width.max(0) as u32), Some(height.max(0) as u32))
+                });
+            Content::Sticker {
+                media: Media {
+                    // Animated stickers arrive as application/x-tgsticker and
+                    // video stickers as video/webm; the download turns the
+                    // animated one into the WebP the player decodes.
+                    mime: sticker
+                        .document
+                        .mime_type()
+                        .unwrap_or("image/webp")
+                        .to_owned(),
+                    size: sticker.document.size().unwrap_or(0) as u64,
+                    width,
+                    height,
+                    path: None,
+                    state: MediaState::Idle,
+                },
+                animated: sticker.is_animated(),
+            }
+        }
         TelegramMedia::Geo(geo) => Content::Location {
             latitude: geo.latitue(),
             longitude: geo.longitude(),

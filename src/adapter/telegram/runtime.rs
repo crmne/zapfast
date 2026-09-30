@@ -913,7 +913,28 @@ async fn handle_command(
                     }
                     original.download_media(&path).await?;
                     if let Some(media) = content_media_mut(&mut projected.content) {
-                        media.path = Some(path);
+                        if media.mime == "application/x-tgsticker" {
+                            // The player decodes animated WebP, so a TGS
+                            // sticker is rasterized once and cached beside the
+                            // downloaded source.
+                            let webp = path.with_extension("webp");
+                            match crate::lottie::convert_tgs(&path, &webp) {
+                                Ok((width, height)) => {
+                                    media.mime = "image/webp".to_owned();
+                                    media.width = Some(width);
+                                    media.height = Some(height);
+                                    media.path = Some(webp);
+                                }
+                                Err(error) => {
+                                    log::warn!(
+                                        "A Telegram TGS sticker was left unconverted: {error}"
+                                    );
+                                    media.path = Some(path);
+                                }
+                            }
+                        } else {
+                            media.path = Some(path);
+                        }
                         media.state = MediaState::Idle;
                     }
                 }

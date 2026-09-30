@@ -124,6 +124,14 @@ webp-animation = "0.10"
 # Encodes stickers made from pictures as still lossy WebP. Already included
 # through webp-animation, whose animation encoder always writes an animation.
 libwebp-sys2 = { version = "0.2", features = ["1_2"] }
+# Rasterizes Telegram TGS stickers into the animated WebP the player already
+# decodes. The plan named velato, but that crate only renders into Vello
+# scenes, which need a GPU; rasterlottie is a pure-Rust headless rasterizer
+# over tiny-skia, so sticker conversion works in the backend and in tests
+# without a graphics device.
+rasterlottie = { version = "0.2", default-features = false }
+# TGS stickers are gzipped Lottie JSON.
+flate2 = "1"
 # Shared foundation of Carmine's egui apps (github.com/crmne/fastframe). Every
 # crate comes from the same revision.
 # Bundled gettext catalogs: lookups and system language detection.

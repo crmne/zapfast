@@ -748,7 +748,11 @@ Telegram chats load beside the WhatsApp ones, and the account switcher marks
 which account the window is showing. Forum topics are their own rows under
 the group with the group name beside them, albums arrive as one strip of
 pictures, polls can be voted in and show their server-side counts, reactions
-show counts, and call entries appear as history lines. Attachments download
+show counts, and call entries appear as history lines. Animated stickers
+(TGS) are rasterized once and cached as animated WebP beside the download;
+animations the rasterizer does not support keep the sticker placeholder.
+Video stickers (WebM) are not decoded in the window and open from the message
+menu in the system player. Attachments download
 up to 10 MiB; larger files are not fetched. Voice notes are recorded in the
 app and sent as Telegram voice messages. GIF search, sticker shelves,
 sticker uploads, and read receipts are not wired to Telegram yet.
