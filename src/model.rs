@@ -1454,6 +1454,12 @@ pub enum Action {
         account: AccountId,
         action: crate::backend::VerifyAction,
     },
+    /// Starts a one-to-one voice call in the open chat.
+    PlaceCall(ChatId),
+    /// Answers the ringing call.
+    AnswerCall,
+    /// Ends the active call.
+    HangupCall,
     /// Filters the chat list to one space, or to every chat with `None`.
     SetSpace(Option<ChatId>),
     OpenChat(ChatId),

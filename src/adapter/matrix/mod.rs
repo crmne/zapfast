@@ -6,6 +6,7 @@
 //! then encrypted messages show a placeholder. Interactive verification uses
 //! the emoji SAS method.
 
+mod call;
 pub mod project;
 mod runtime;
 

@@ -132,6 +132,10 @@ mp4 = "0.14"
 # but the selected one. Drop the pin at the first release that carries it.
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "e89e685d326a684b298c5138adf94caa49e5568c", default-features = false, features = ["playback", "recording", "mp3", "mp4", "wav", "vorbis"] }
 opus = "0.4"
+# One-to-one Matrix voice calls. The classic webrtc API brings its own
+# STUN/TURN client, which the homeserver's TURN service needs.
+webrtc = "0.17"
+bytes = "1"
 ogg = "0.9"
 # Converts animated Signal APNG stickers to the animated WebP used by WhatsApp.
 webp-animation = "0.10"

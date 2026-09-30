@@ -54,6 +54,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // The open chat's composer records its rect again below, if there is one.
     ctx.data_mut(|data| data.remove::<egui::Rect>(composer_rect_id()));
     titlebar_strip(app, ui);
+    if let Some((_, chat, state)) = app.call.clone() {
+        call_bar(app, ui, &chat, &state);
+    }
     if !app.is_linked() {
         login::show(app, ui);
         dialogs::show(app, ctx);
@@ -514,6 +517,54 @@ fn titlebar_strip(app: &App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             let rect = ui.max_rect();
             titlebar_drag(ui, rect);
+        });
+}
+
+/// The bar over the window while a call is active.
+fn call_bar(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    chat: &crate::model::ChatId,
+    state: &crate::backend::CallState,
+) {
+    use crate::backend::CallState;
+    let palette = app.palette;
+    let title = app.display_name(chat.peer());
+    egui::Panel::top("call-bar")
+        .show_separator_line(false)
+        .frame(
+            Frame::new()
+                .fill(palette.panel)
+                .inner_margin(Margin::symmetric(14, 6)),
+        )
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let label = match state {
+                    CallState::Ringing { caller, incoming } => {
+                        if *incoming {
+                            format!("Incoming call from {caller}")
+                        } else {
+                            format!("Calling {caller}...")
+                        }
+                    }
+                    CallState::Connecting => "Connecting...".to_owned(),
+                    CallState::Connected { since } => {
+                        format!("In call with {title} · {}", crate::util::clock(*since))
+                    }
+                    CallState::Ended { reason } => reason.clone(),
+                };
+                widgets::rich_text(ui, &label, theme::regular(13.0), palette.text);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if theme::pill_button(ui, &palette, "Hang up", false).clicked() {
+                        app.actions.push(crate::model::Action::HangupCall);
+                    }
+                    if matches!(state, CallState::Ringing { incoming: true, .. })
+                        && theme::pill_button(ui, &palette, "Answer", true).clicked()
+                    {
+                        app.actions.push(crate::model::Action::AnswerCall);
+                    }
+                });
+            });
         });
 }
 

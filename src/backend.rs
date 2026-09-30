@@ -191,6 +191,30 @@ pub struct VerificationPrompt {
     pub decimals: Option<(u16, u16, u16)>,
 }
 
+/// What the window shows for the active call. Only one call runs at a time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CallState {
+    /// An invite is waiting for an answer.
+    Ringing {
+        /// Who is calling.
+        caller: String,
+        /// Whether the invite came to this window.
+        incoming: bool,
+    },
+    /// The two sides are finding a route to each other.
+    Connecting,
+    /// Audio is flowing.
+    Connected {
+        /// Unix seconds when the call connected.
+        since: i64,
+    },
+    /// The call is over.
+    Ended {
+        /// Why it ended, for the notice.
+        reason: String,
+    },
+}
+
 #[derive(Debug)]
 pub enum Command {
     RefreshPoll {
@@ -663,6 +687,18 @@ pub enum Command {
         account: crate::account::AccountId,
         action: VerifyAction,
     },
+    /// Starts a one-to-one voice call in a chat.
+    PlaceCall {
+        chat: ChatId,
+    },
+    /// Answers the ringing call.
+    AnswerCall {
+        account: crate::account::AccountId,
+    },
+    /// Ends the active call.
+    HangupCall {
+        account: crate::account::AccountId,
+    },
     Shutdown,
     /// Internal send result.
     Sent {
@@ -808,6 +844,12 @@ pub enum Event {
     Verification {
         account: crate::account::AccountId,
         prompt: Option<VerificationPrompt>,
+    },
+    /// The active call changed state.
+    Call {
+        account: crate::account::AccountId,
+        chat: ChatId,
+        state: CallState,
     },
     InteractiveReplyState {
         chat: ChatId,

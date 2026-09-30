@@ -29,6 +29,10 @@ use matrix_sdk::room::edit::EditedContent;
 use matrix_sdk::room::reply::{EnforceThread, Reply};
 use matrix_sdk::room::{MessagesOptions, ParentSpace, Room};
 use matrix_sdk::ruma::api::client::receipt::create_receipt::v3::ReceiptType;
+use matrix_sdk::ruma::events::call::SessionDescription;
+use matrix_sdk::ruma::events::call::answer::{CallAnswerEventContent, OriginalSyncCallAnswerEvent};
+use matrix_sdk::ruma::events::call::hangup::{CallHangupEventContent, OriginalSyncCallHangupEvent};
+use matrix_sdk::ruma::events::call::invite::{CallInviteEventContent, OriginalSyncCallInviteEvent};
 use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
 use matrix_sdk::ruma::events::reaction::{ReactionEventContent, SyncReactionEvent};
 use matrix_sdk::ruma::events::receipt::ReceiptThread;
@@ -48,7 +52,9 @@ use mime::Mime;
 use tokio::sync::mpsc;
 
 use crate::account::{AccountId, AuthState};
-use crate::backend::{Command, Event, LoginStep, VerificationPrompt, VerifyAction, Waker};
+use crate::backend::{
+    CallState, Command, Event, LoginStep, VerificationPrompt, VerifyAction, Waker,
+};
 use crate::model::{
     Chat, ChatId, ChatKind, Content, Delivery, LastMessage, MediaState, Message, Quoted,
 };
@@ -103,6 +109,8 @@ struct Shared {
     typers: Arc<Mutex<HashMap<ChatId, String>>>,
     /// Where a running verification accepts match, mismatch, or cancel.
     slot: Arc<tokio::sync::Mutex<Option<mpsc::UnboundedSender<VerifyAction>>>>,
+    /// The active call, if any.
+    call: Arc<tokio::sync::Mutex<Option<CallSession>>>,
 }
 
 /// The sender run loop. Errors end the account with an [`AuthState::Failed`]
@@ -260,6 +268,7 @@ async fn serve(
         tokens: Arc::new(Mutex::new(HashMap::new())),
         typers: Arc::new(Mutex::new(HashMap::new())),
         slot: Arc::new(tokio::sync::Mutex::new(None)),
+        call: Arc::new(tokio::sync::Mutex::new(None)),
     };
     let (verify_tx, mut verify_rx) = mpsc::unbounded_channel();
 
@@ -314,6 +323,33 @@ async fn serve(
             let shared = shared.clone();
             async move {
                 on_typing(&shared, event, room).await;
+            }
+        });
+    }
+    {
+        let shared = shared.clone();
+        client.add_event_handler(move |event: OriginalSyncCallInviteEvent, room: Room| {
+            let shared = shared.clone();
+            async move {
+                on_call_invite(&shared, event, room).await;
+            }
+        });
+    }
+    {
+        let shared = shared.clone();
+        client.add_event_handler(move |event: OriginalSyncCallAnswerEvent| {
+            let shared = shared.clone();
+            async move {
+                on_call_answer(&shared, event).await;
+            }
+        });
+    }
+    {
+        let shared = shared.clone();
+        client.add_event_handler(move |event: OriginalSyncCallHangupEvent| {
+            let shared = shared.clone();
+            async move {
+                on_call_hangup(&shared, event).await;
             }
         });
     }
@@ -1178,9 +1214,235 @@ async fn handle_command(dirs: &AppDirs, shared: &Shared, command: Command) -> Re
                 .await
                 .context("The reaction could not be sent")?;
         }
+        Command::PlaceCall { chat } => place_call(shared, chat).await?,
+        Command::AnswerCall { .. } => answer_call(shared).await?,
+        Command::HangupCall { .. } => hangup_call(shared).await,
         _ => {}
     }
     Ok(())
+}
+
+/// The active call. An invite's offer waits here until the window answers.
+struct CallSession {
+    chat: ChatId,
+    call_id: String,
+    offer: Option<String>,
+    call: Option<Arc<super::call::Call>>,
+}
+
+/// Asks the homeserver for TURN credentials. An empty list still lets the
+/// two sides try direct routes.
+async fn turn_servers(client: &Client) -> Vec<webrtc::ice_transport::ice_server::RTCIceServer> {
+    let request = matrix_sdk::ruma::api::client::voip::get_turn_server_info::v3::Request::new();
+    match client.send(request).await {
+        Ok(response) => {
+            super::call::ice_servers(&response.uris, &response.username, &response.password)
+        }
+        Err(error) => {
+            log::warn!("Matrix could not get TURN servers: {error}");
+            Vec::new()
+        }
+    }
+}
+
+/// Places a one-to-one call and sends its invite.
+async fn place_call(shared: &Shared, chat: ChatId) -> Result<()> {
+    if shared.call.lock().await.is_some() {
+        return Ok(());
+    }
+    let Some(room) = chat_room(shared, &chat) else {
+        return Ok(());
+    };
+    if !room.is_direct().await.unwrap_or(false) {
+        shared.sink.send(Event::Call {
+            account: shared.account,
+            chat,
+            state: CallState::Ended {
+                reason: "Calls need a one-to-one room".to_owned(),
+            },
+        });
+        return Ok(());
+    }
+    let (call, offer) = super::call::Call::place(turn_servers(&shared.client).await).await?;
+    let call_id = super::call::call_id();
+    let content = CallInviteEventContent::version_0(
+        call_id.clone().into(),
+        UInt::from(60_000u32),
+        SessionDescription::new("offer".to_owned(), offer),
+    );
+    room.send(content)
+        .await
+        .context("The call invite could not be sent")?;
+    let call = Arc::new(call);
+    *shared.call.lock().await = Some(CallSession {
+        chat: chat.clone(),
+        call_id,
+        offer: None,
+        call: Some(call.clone()),
+    });
+    shared.sink.send(Event::Call {
+        account: shared.account,
+        chat: chat.clone(),
+        state: CallState::Connecting,
+    });
+    watch_call(shared, chat, call);
+    Ok(())
+}
+
+/// Answers the ringing call and sends its answer.
+async fn answer_call(shared: &Shared) -> Result<()> {
+    let (chat, call_id, offer) = {
+        let slot = shared.call.lock().await;
+        let Some(session) = slot.as_ref() else {
+            return Ok(());
+        };
+        let Some(offer) = session.offer.clone() else {
+            return Ok(());
+        };
+        (session.chat.clone(), session.call_id.clone(), offer)
+    };
+    let (call, answer) =
+        super::call::Call::answer(turn_servers(&shared.client).await, offer).await?;
+    let Some(room) = chat_room(shared, &chat) else {
+        return Ok(());
+    };
+    let content = CallAnswerEventContent::version_0(
+        SessionDescription::new("answer".to_owned(), answer),
+        call_id.into(),
+    );
+    room.send(content)
+        .await
+        .context("The call answer could not be sent")?;
+    let call = Arc::new(call);
+    if let Some(session) = shared.call.lock().await.as_mut() {
+        session.offer = None;
+        session.call = Some(call.clone());
+    }
+    shared.sink.send(Event::Call {
+        account: shared.account,
+        chat: chat.clone(),
+        state: CallState::Connecting,
+    });
+    watch_call(shared, chat, call);
+    Ok(())
+}
+
+/// Ends the active call and tells the other side.
+async fn hangup_call(shared: &Shared) {
+    let Some(session) = shared.call.lock().await.take() else {
+        return;
+    };
+    if let Some(call) = &session.call {
+        call.close().await;
+    }
+    if let Some(room) = chat_room(shared, &session.chat) {
+        let content = CallHangupEventContent::version_0(session.call_id.into());
+        if let Err(error) = room.send(content).await {
+            log::warn!("Matrix could not send the hangup: {error}");
+        }
+    }
+    shared.sink.send(Event::Call {
+        account: shared.account,
+        chat: session.chat,
+        state: CallState::Ended {
+            reason: "You ended the call".to_owned(),
+        },
+    });
+}
+
+/// Forwards the peer connection's state changes to the window.
+fn watch_call(shared: &Shared, chat: ChatId, call: Arc<super::call::Call>) {
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        while let Some(state) = call.next_state().await {
+            let ended = matches!(state, CallState::Ended { .. });
+            shared.sink.send(Event::Call {
+                account: shared.account,
+                chat: chat.clone(),
+                state,
+            });
+            if ended {
+                *shared.call.lock().await = None;
+                break;
+            }
+        }
+    });
+}
+
+/// A ring from another member of a one-to-one room.
+async fn on_call_invite(shared: &Shared, invite: OriginalSyncCallInviteEvent, room: Room) {
+    if !super::call::invites_me(
+        invite.content.invitee.as_ref().map(|id| id.as_str()),
+        shared.me.as_str(),
+    ) {
+        return;
+    }
+    if !room.is_direct().await.unwrap_or(false) {
+        return;
+    }
+    let chat = project::chat_id(shared.account, room.room_id());
+    shared
+        .rooms
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(chat.clone(), room);
+    let mut slot = shared.call.lock().await;
+    if slot.is_some() {
+        return;
+    }
+    *slot = Some(CallSession {
+        chat: chat.clone(),
+        call_id: invite.content.call_id.to_string(),
+        offer: Some(invite.content.offer.sdp.clone()),
+        call: None,
+    });
+    drop(slot);
+    shared.sink.send(Event::Call {
+        account: shared.account,
+        chat,
+        state: CallState::Ringing {
+            caller: invite.sender.to_string(),
+            incoming: true,
+        },
+    });
+}
+
+/// The other side answered our invite; finish the handshake.
+async fn on_call_answer(shared: &Shared, answer: OriginalSyncCallAnswerEvent) {
+    let call = {
+        let slot = shared.call.lock().await;
+        slot.as_ref().and_then(|session| session.call.clone())
+    };
+    let Some(call) = call else {
+        return;
+    };
+    if let Err(error) = call.accept_answer(answer.content.answer.sdp.clone()).await {
+        log::warn!("Matrix could not apply the call answer: {error}");
+    }
+}
+
+/// The other side ended the call. Candidate events are ignored: version 0
+/// carries the candidates inside the invite and answer SDP.
+async fn on_call_hangup(shared: &Shared, hangup: OriginalSyncCallHangupEvent) {
+    let mut slot = shared.call.lock().await;
+    let Some(session) = slot.as_ref() else {
+        return;
+    };
+    if session.call_id != hangup.content.call_id.as_str() {
+        return;
+    }
+    let session = slot.take().expect("just checked");
+    drop(slot);
+    if let Some(call) = &session.call {
+        call.close().await;
+    }
+    shared.sink.send(Event::Call {
+        account: shared.account,
+        chat: session.chat,
+        state: CallState::Ended {
+            reason: "The other side ended the call".to_owned(),
+        },
+    });
 }
 
 /// Accepts a verification request another device started, then runs the SAS

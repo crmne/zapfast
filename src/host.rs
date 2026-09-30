@@ -220,6 +220,10 @@ fn command_account(command: &Command) -> Option<crate::account::AccountId> {
         | Command::SendVoice { chat, .. }
         | Command::SendSticker { chat, .. }
         | Command::React { chat, .. } => chat,
+        Command::PlaceCall { chat } => chat,
+        Command::AnswerCall { account } | Command::HangupCall { account } => {
+            return Some(*account);
+        }
         Command::MarkUnread(chat)
         | Command::FetchOlder(chat)
         | Command::PickFiles(chat)

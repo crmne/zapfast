@@ -775,6 +775,12 @@ as a narrow rail beside the chat list, where "All" clears the filter. Edited
 and redacted messages, reactions with counts, replies, image and file
 attachments, voice notes, and typing indicators all work.
 
+A one-to-one Matrix room shows a call button in its header. Calls carry
+voice through the homeserver's TURN relay and do not need any extra setup.
+Only one-to-one voice calls are wired: there is no camera, no group call,
+and no Element Call or LiveKit support, and other networks show no call
+button.
+
 Matrix search, the GIPHY picker, sticker packs, image-pack custom emoji,
 threads, and forwarding are not wired to Matrix yet. GIF and sticker
 messages received from other clients show their file or a placeholder where

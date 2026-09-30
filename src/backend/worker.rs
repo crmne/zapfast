@@ -4233,6 +4233,8 @@ impl Worker {
             // worker never sees those.
             Command::Login { .. } => {}
             Command::VerifySession { .. } => {}
+            Command::PlaceCall { .. } | Command::AnswerCall { .. } | Command::HangupCall { .. } => {
+            }
             Command::RefreshPoll { chat, message } => self.refresh_poll(chat, message),
             Command::PollHistoryFailed {
                 chat,

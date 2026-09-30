@@ -383,6 +383,8 @@ pub struct App {
     pub auth: HashMap<crate::account::AccountId, crate::account::AuthState>,
     /// The verification prompt waiting per account, when one is showing.
     pub verification: HashMap<crate::account::AccountId, crate::backend::VerificationPrompt>,
+    /// The active call, if any: its account, chat, and state.
+    pub call: Option<(crate::account::AccountId, ChatId, crate::backend::CallState)>,
 
     /// Chats ordered by latest activity.
     pub chats: Vec<Chat>,
@@ -990,6 +992,7 @@ impl App {
             space_filter: None,
             auth: HashMap::new(),
             verification: HashMap::new(),
+            call: None,
             chats: Vec::new(),
             contacts: HashMap::new(),
             conversations: HashMap::new(),
@@ -2178,6 +2181,16 @@ impl App {
                         self.verification.remove(&account);
                     }
                 },
+                Event::Call {
+                    account,
+                    chat,
+                    state,
+                } => {
+                    self.call = match state {
+                        crate::backend::CallState::Ended { .. } => None,
+                        state => Some((account, chat, state)),
+                    };
+                }
                 Event::Link(status) => self.handle_link(status),
                 Event::Me {
                     id,
@@ -3806,6 +3819,19 @@ impl App {
             }
             Action::Verification { account, action } => {
                 self.host.send(Command::VerifySession { account, action });
+            }
+            Action::PlaceCall(chat) => {
+                self.host.send(Command::PlaceCall { chat });
+            }
+            Action::AnswerCall => {
+                self.host.send(Command::AnswerCall {
+                    account: self.active_account,
+                });
+            }
+            Action::HangupCall => {
+                self.host.send(Command::HangupCall {
+                    account: self.active_account,
+                });
             }
             Action::StartChat { id, name } => {
                 if self.chat(&id).is_none() {

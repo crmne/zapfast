@@ -36,7 +36,7 @@ pub fn capabilities() -> Capabilities {
         edit: true,
         delete_for_everyone: true,
         polls: false,
-        calls: CallAccess::None,
+        calls: CallAccess::PlaceVoice,
     }
 }
 
@@ -487,6 +487,6 @@ mod tests {
         assert!(caps.spaces);
         assert!(!caps.custom_emoji && !caps.threads && !caps.polls && !caps.video_notes);
         assert!(caps.gif == GifSource::None && caps.stickers == StickerAccess::None);
-        assert!(caps.calls == CallAccess::None);
+        assert!(caps.calls == CallAccess::PlaceVoice);
     }
 }

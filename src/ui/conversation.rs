@@ -13,8 +13,8 @@ use crate::animation;
 use crate::app::{App, Conversation, JumpHighlight, KeyScroll, RowHeight};
 use crate::markup;
 use crate::model::{
-    Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
-    PickerTab, Scroll,
+    Action, Chat, ChatId, ChatKind, Content, Delivery, Dialog, LinkPreview, Media, MediaState,
+    Message, PickerTab, Scroll,
 };
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
@@ -220,6 +220,25 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         palette.text,
                         "More",
                     );
+                    // A one-to-one Matrix chat can be called from here.
+                    let callable = chat.kind == ChatKind::Direct
+                        && app.host.accounts().iter().any(|account| {
+                            account.id == chat.id.account()
+                                && account.kind == crate::account::NetworkKind::Matrix
+                        });
+                    if callable
+                        && theme::icon_button(
+                            ui,
+                            Icon::Phone,
+                            18.0,
+                            palette.secondary,
+                            palette.text,
+                            "Call",
+                        )
+                        .clicked()
+                    {
+                        app.actions.push(Action::PlaceCall(chat.id.clone()));
+                    }
                     let width = widgets::menu_width(
                         ui,
                         &[
