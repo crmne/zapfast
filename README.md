@@ -108,7 +108,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   a time, each starting once the one before it reached WhatsApp, so a picture
   cannot overtake the text that came before it.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
-  mentions, and link previews are supported. Links are clickable. Hebrew,
+  mentions, and link previews are supported. Links are clickable. Phone numbers
+  in messages open actions to start a chat or copy the number. Hebrew,
   Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so
   numbers, punctuation, and embedded words stay in reading order and brackets
   face the right way. As in WhatsApp, a message whose first strong character is

@@ -366,6 +366,14 @@ msgstr ""
 msgid "This message can only be seen on your phone."
 msgstr ""
 
+#: src/ui/conversation.rs:5453
+msgid "Message"
+msgstr ""
+
+#: src/ui/conversation.rs:5454
+msgid "Copy number"
+msgstr ""
+
 #: src/ui/conversation.rs:5606
 msgid "Open in a map"
 msgstr ""

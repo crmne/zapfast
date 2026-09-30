@@ -383,6 +383,14 @@ msgid "This message can only be seen on your phone."
 msgstr "Это сообщение можно посмотреть только на телефоне."
 
 #: src/ui/conversation.rs:5606
+#: src/ui/conversation.rs:5453
+msgid "Message"
+msgstr "Написать сообщение"
+
+#: src/ui/conversation.rs:5454
+msgid "Copy number"
+msgstr "Скопировать номер"
+
 msgid "Open in a map"
 msgstr "Открыть на карте"
 
