@@ -830,6 +830,21 @@ state for them, so those controls are absent.
 Search, forwarding, sending voice notes, uploading stickers, and content
 from channels the bot was not invited to are not wired to Discord yet.
 
+### X
+
+An X account signs in through OAuth 2.0 with PKCE against a developer app of
+your own. Register the redirect `http://127.0.0.1:8787/callback` on the app
+and start ZapFast with `ZAPFAST_X_CLIENT_ID` set to its client id. The
+browser opens for approval, and the tokens are kept in the OS keyring.
+
+Direct message conversations appear beside the WhatsApp chats. Text and
+images can be sent when your developer tier allows uploading media through
+the API. X only returns messages from the last 30 days and only from the
+legacy DM system; encrypted X Chat messages never appear, and there is no
+streaming endpoint, so new messages arrive within a minute. Reactions,
+typing notices, stickers, voice notes, and GIF search are not available
+through the API and stay out of this account.
+
 ## Files
 
 | What | Linux | Notes |

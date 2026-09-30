@@ -156,6 +156,7 @@ async fn serve(
                 LoginStep::SlackTokens { .. } => {}
                 LoginStep::ZulipCredentials { .. } => {}
                 LoginStep::DiscordToken { .. } => {}
+                LoginStep::XConnect => {}
             },
             _ => {}
         }

@@ -91,6 +91,7 @@ impl NetworkKind {
                 | Self::Slack
                 | Self::Zulip
                 | Self::DiscordBot
+                | Self::X
         )
     }
 }
@@ -150,6 +151,15 @@ impl Account {
         }
     }
 
+    /// An X account the user is about to sign in.
+    pub fn x(id: AccountId) -> Self {
+        Self {
+            id,
+            kind: NetworkKind::X,
+            name: NetworkKind::X.label().to_owned(),
+        }
+    }
+
     /// A Matrix account the user is about to sign in.
     pub fn matrix(id: AccountId) -> Self {
         Self {
@@ -183,6 +193,9 @@ pub enum AuthState {
     TelegramCode { phone: String },
     /// Telegram: the code was accepted and the two-step password is expected.
     TelegramPassword { phone: String },
+    /// X: the user must open this link in a browser to approve the account.
+    /// It is a plain authorization URL and holds no secret.
+    XAuthorize { url: String },
     /// Sign-in failed. The reason is written for the window to show and never
     /// holds a code or a password.
     Failed { reason: String },

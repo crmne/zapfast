@@ -419,7 +419,9 @@ pub(super) fn telegram(app: &mut App, ui: &mut egui::Ui) {
                         });
                     }
                 }
-                crate::account::AuthState::WhatsappLink | crate::account::AuthState::Ready => {}
+                crate::account::AuthState::WhatsappLink
+                | crate::account::AuthState::Ready
+                | crate::account::AuthState::XAuthorize { .. } => {}
                 }
             });
     });
@@ -705,6 +707,84 @@ pub(super) fn discord(app: &mut App, ui: &mut egui::Ui) {
                     };
                     app.discord_token.clear();
                     app.actions.push(Action::Login { account, step });
+                }
+            });
+    });
+}
+
+/// The X sign-in card. Sign-in happens in the browser through OAuth 2.0 PKCE
+/// against the user's own developer app.
+pub(super) fn x(app: &mut App, ui: &mut egui::Ui) {
+    let Some((account, state)) = app.sign_in() else {
+        return;
+    };
+    let palette = app.palette;
+    let card_width = 460.0_f32.min(ui.available_width() - 24.0).max(0.0);
+    ui.vertical_centered(|ui| {
+        ui.add_space(60.0);
+        Frame::new()
+            .fill(palette.panel)
+            .stroke(Stroke::new(1.0, palette.outline))
+            .corner_radius(CornerRadius::same(theme::RADIUS + 8))
+            .inner_margin(Margin::same(32))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 16],
+                blur: 48,
+                spread: 0,
+                color: palette.shadow,
+            })
+            .show(ui, |ui| {
+                ui.set_width((card_width - 64.0).max(0.0));
+                ui.spacing_mut().item_spacing.y = 8.0;
+                theme::text(ui, "ZapFast", theme::bold(28.0), palette.text);
+                theme::text(ui, "Connect an X account.", theme::regular(14.5), palette.secondary);
+                ui.add_space(16.0);
+                if let crate::account::AuthState::Failed { reason } = &state {
+                    theme::paragraph(ui, reason, theme::regular(13.0), palette.danger);
+                    ui.add_space(4.0);
+                }
+                theme::paragraph(
+                    ui,
+                    "Sign-in opens X in your browser. X only returns direct messages from the last 30 days, and only legacy unencrypted messages; encrypted X Chat does not appear.",
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+                match &state {
+                    crate::account::AuthState::XAuthorize { url } => {
+                        theme::paragraph(
+                            ui,
+                            "Approve this account in your browser, then come back here.",
+                            theme::regular(13.0),
+                            palette.secondary,
+                        );
+                        theme::paragraph(ui, url, theme::regular(12.0), palette.secondary);
+                        let mut open = false;
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            open = theme::pill_button(ui, &palette, "Open in browser", true)
+                                .clicked();
+                        });
+                        if open {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(url.clone()));
+                        }
+                    }
+                    _ => {
+                        theme::paragraph(
+                            ui,
+                            "This needs your own developer app with the redirect http://127.0.0.1:8787/callback registered. The client id comes from ZAPFAST_X_CLIENT_ID.",
+                            theme::regular(13.0),
+                            palette.secondary,
+                        );
+                        let mut pressed = false;
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            pressed = theme::pill_button(ui, &palette, "Connect", true).clicked();
+                        });
+                        if pressed {
+                            app.actions.push(Action::Login {
+                                account,
+                                step: crate::backend::LoginStep::XConnect,
+                            });
+                        }
+                    }
                 }
             });
     });
