@@ -3975,6 +3975,7 @@ impl Worker {
                         },
                         from_me,
                         emoji,
+                        count: 0,
                     })
                     .collect();
                 let quoted = message.quoted.map(|quoted| {
@@ -4228,6 +4229,8 @@ impl Worker {
             }
         }
         match command {
+            // Only account adapters log in; the WhatsApp worker never sees one.
+            Command::Login { .. } => {}
             Command::RefreshPoll { chat, message } => self.refresh_poll(chat, message),
             Command::PollHistoryFailed {
                 chat,
@@ -10571,6 +10574,7 @@ mod tests {
                 sender: "two@s.whatsapp.net".into(),
                 from_me: false,
                 emoji: "👍".into(),
+                count: 0,
             }],
             edited: true,
             mentions: Vec::new(),

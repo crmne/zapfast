@@ -10,7 +10,8 @@ use std::time::Instant;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::account::AccountId;
+use crate::account::{AccountId, NetworkKind};
+use crate::backend::LoginStep;
 
 /// One chat on one account: a local account id plus the network's own peer
 /// string. WhatsApp peers are JIDs, other networks use their own ids. The
@@ -483,6 +484,10 @@ pub struct Reaction {
     pub sender: String,
     pub from_me: bool,
     pub emoji: String,
+    /// How many people chose this reaction, when the network counts them.
+    /// Networks that keep one reaction per person leave this at zero.
+    #[serde(default)]
+    pub count: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -519,6 +524,14 @@ pub enum Content {
         /// Sender-provided 64-bar voice waveform.
         #[serde(default)]
         waveform: Vec<u8>,
+    },
+    /// A call that happened in this chat, logged by the network.
+    Call {
+        video: bool,
+        missed: bool,
+        /// Call length in seconds, when the network reports one.
+        #[serde(default)]
+        seconds: Option<u32>,
     },
     Document {
         media: Media,
@@ -849,6 +862,14 @@ impl Content {
                 }
             }
             Self::Document { file_name, .. } => format!("Document: {file_name}"),
+            Self::Call { video, missed, .. } => {
+                let kind = if *video { "video" } else { "voice" };
+                if *missed {
+                    format!("Missed {kind} call")
+                } else {
+                    format!("{kind} call")
+                }
+            }
             Self::Sticker { .. } => "Sticker".to_owned(),
             Self::StickerPack { name, .. } => format!("Sticker pack: {name}"),
             Self::Location { name, .. } => match name {
@@ -1394,6 +1415,13 @@ pub enum Action {
     /// Shows the chats of another account. The open conversation belongs to
     /// one account, so a conversation from another account closes.
     SwitchAccount(AccountId),
+    /// Adds an account of a network and opens its sign-in.
+    AddAccount(NetworkKind),
+    /// Answers an account's sign-in prompt.
+    Login {
+        account: AccountId,
+        step: LoginStep,
+    },
     OpenChat(ChatId),
     /// Creates and opens a chat for a contact without one.
     StartChat {

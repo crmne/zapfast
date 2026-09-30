@@ -75,7 +75,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .frame(central_frame(app))
         .show(ui, |ui| match app.page {
             Page::Settings => settings::show(app, ui),
-            Page::Chats => conversation::show(app, ui),
+            Page::Chats => {
+                // An account that is not signed in yet shows its sign-in card
+                // instead of an empty conversation.
+                if app.sign_in().is_some() {
+                    login::telegram(app, ui);
+                } else {
+                    conversation::show(app, ui);
+                }
+            }
             Page::Wallpaper => settings::wallpaper_show(app, ui),
         });
     if let Some(region) = search_overlay {

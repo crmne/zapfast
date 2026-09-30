@@ -291,6 +291,7 @@ fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
         .collect();
     let width = widgets::menu_width(ui, &names, true);
     let mut switch = None;
+    let mut add = None;
     egui::Popup::menu(&response)
         .width(width)
         .frame(widgets::menu_frame(&palette))
@@ -303,9 +304,22 @@ fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
                     ui.close();
                 }
             }
+            ui.separator();
+            if widgets::menu_item(
+                ui,
+                &palette,
+                Some(Icon::Plus),
+                &crate::i18n::gettext(app.locale, "Add Telegram account"),
+            ) {
+                add = Some(crate::account::NetworkKind::Telegram);
+                ui.close();
+            }
         });
     if let Some(id) = switch {
         app.actions.push(Action::SwitchAccount(id));
+    }
+    if let Some(kind) = add {
+        app.actions.push(Action::AddAccount(kind));
     }
 }
 

@@ -1626,6 +1626,7 @@ impl Archive {
                 sender: sender.to_owned(),
                 from_me,
                 emoji: emoji.to_owned(),
+                count: 0,
             });
         }
         self.connection.execute(
@@ -2814,6 +2815,7 @@ pub(crate) mod tests {
             sender: sender.into(),
             from_me: false,
             emoji: emoji.into(),
+            count: 0,
         };
 
         let mut sent = message(chat, "m1", 100, true);
@@ -3050,6 +3052,7 @@ pub(crate) mod tests {
             sender: "3@s.whatsapp.net".into(),
             from_me: false,
             emoji: "🎉".into(),
+            count: 0,
         }];
         archive.insert_message(&replay, None).expect("replay");
         let stored = archive.message(chat, "m1").expect("read").expect("exists");

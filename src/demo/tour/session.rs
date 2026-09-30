@@ -192,6 +192,7 @@ pub fn respond(app: &mut App) {
                             sender: super::super::ME.into(),
                             from_me: true,
                             emoji,
+                            count: 0,
                         });
                     }
                 }

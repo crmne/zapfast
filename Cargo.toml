@@ -57,6 +57,12 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # (#1544). Device-store
 # compatibility retains the legacy created_at column.
 whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "f7468ae2920a2b0aedbd0848cf121de56a07f93c", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
+# The Telegram protocol, pinned by revision like whatsapp-rust. The session
+# store is ours (in the account directory), so the client keeps its file
+# helpers only and the session crate only its Serde forms. This keeps libsql
+# (a second bundled SQLite) out of the build.
+grammers-client = { git = "https://codeberg.org/Lonami/grammers.git", rev = "42d4b51059524cf7c8c9a07745a1071057fa1526", default-features = false, features = ["fs"] }
+grammers-session = { git = "https://codeberg.org/Lonami/grammers.git", rev = "42d4b51059524cf7c8c9a07745a1071057fa1526", default-features = false, features = ["serde"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 # Opens the WhatsApp WebSocket through a proxy. Both crates are already
 # included through the Tokio transport at these versions.

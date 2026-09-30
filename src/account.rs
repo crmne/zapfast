@@ -79,6 +79,12 @@ impl NetworkKind {
             Self::Line => "LINE",
         }
     }
+
+    /// Whether ZapFast ships an adapter for this network. Line stays a
+    /// reserved name with no adapter.
+    pub fn supported(self) -> bool {
+        matches!(self, Self::WhatsApp | Self::Telegram)
+    }
 }
 
 /// One account as the switcher and `accounts.json` know it.
@@ -99,6 +105,45 @@ impl Account {
             name: NetworkKind::WhatsApp.label().to_owned(),
         }
     }
+
+    /// A Telegram account the user is about to sign in.
+    pub fn telegram(id: AccountId) -> Self {
+        Self {
+            id,
+            kind: NetworkKind::Telegram,
+            name: NetworkKind::Telegram.label().to_owned(),
+        }
+    }
+}
+
+/// A local number that no stored account uses yet.
+pub fn next_id(accounts: &[Account]) -> AccountId {
+    let highest = accounts
+        .iter()
+        .map(|account| account.id.0)
+        .max()
+        .unwrap_or(0);
+    AccountId(highest.saturating_add(1))
+}
+
+/// Where one account's login stands. WhatsApp links this computer as a
+/// companion device; every other network signs in with its own credentials.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AuthState {
+    /// Not authorized, and not being asked for anything yet.
+    SignedOut,
+    /// WhatsApp: waiting for the phone to link this device.
+    WhatsappLink,
+    /// Telegram: a code was sent to this number. The number stays in memory,
+    /// is never logged, and is never written to `accounts.json`.
+    TelegramCode { phone: String },
+    /// Telegram: the code was accepted and the two-step password is expected.
+    TelegramPassword { phone: String },
+    /// Sign-in failed. The reason is written for the window to show and never
+    /// holds a code or a password.
+    Failed { reason: String },
+    /// Authorized and connected.
+    Ready,
 }
 
 /// Loads the account list, falling back to the one WhatsApp account when the

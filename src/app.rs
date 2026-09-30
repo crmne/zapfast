@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::account::AccountId;
 use crate::audio::{Player, Recorder};
 #[cfg(test)]
 use crate::backend::Backend;
@@ -376,6 +377,8 @@ pub struct App {
 
     /// The account whose chats are showing.
     pub active_account: crate::account::AccountId,
+    /// What each account's sign-in needs next, keyed by account.
+    pub auth: HashMap<crate::account::AccountId, crate::account::AuthState>,
 
     /// Chats ordered by latest activity.
     pub chats: Vec<Chat>,
@@ -596,6 +599,10 @@ pub struct App {
     pub new_contact_to_phone: bool,
     /// Phone number entered for pairing.
     pub pair_phone: String,
+    /// Telegram sign-in fields, kept only while the card is showing.
+    pub telegram_phone: String,
+    pub telegram_code: String,
+    pub telegram_password: String,
     pub sidebar_visible: bool,
     pub show_archived: bool,
     /// Chat-list filter; applies to the main list, not to search or the archive.
@@ -896,7 +903,7 @@ impl App {
     /// only draws once the tray or another launch shows the window.
     pub fn start_hidden(&mut self) {
         self.hide_intent = true;
-        if let Some(startup) = self.host.take_startup() {
+        for startup in self.host.take_startup() {
             let _ = startup.send(());
         }
     }
@@ -957,6 +964,7 @@ impl App {
             me_name: None,
             me_about: None,
             active_account,
+            auth: HashMap::new(),
             chats: Vec::new(),
             contacts: HashMap::new(),
             conversations: HashMap::new(),
@@ -1083,6 +1091,9 @@ impl App {
             new_contact_pending: false,
             new_contact_to_phone: true,
             pair_phone: String::new(),
+            telegram_phone: String::new(),
+            telegram_code: String::new(),
+            telegram_password: String::new(),
             sidebar_visible: true,
             show_archived: false,
             chat_filter: ChatFilter::All,
@@ -1408,6 +1419,30 @@ impl App {
             self.link,
             LinkStatus::Connected | LinkStatus::Connecting | LinkStatus::Disconnected { .. }
         ) || (!self.chats.is_empty() && !matches!(self.link, LinkStatus::LoggedOut))
+    }
+
+    /// The active account's sign-in state, when that account is not the
+    /// linked WhatsApp device and is not signed in yet. An account without
+    /// any recorded state counts as signed out.
+    pub fn sign_in(&self) -> Option<(AccountId, crate::account::AuthState)> {
+        let kind = self
+            .host
+            .accounts()
+            .iter()
+            .find(|account| account.id == self.active_account)
+            .map(|account| account.kind);
+        if !matches!(kind, Some(kind) if kind != crate::account::NetworkKind::WhatsApp) {
+            return None;
+        }
+        let state = self
+            .auth
+            .get(&self.active_account)
+            .cloned()
+            .unwrap_or(crate::account::AuthState::SignedOut);
+        if matches!(state, crate::account::AuthState::Ready) {
+            return None;
+        }
+        Some((self.active_account, state))
     }
 
     pub fn chat(&self, id: &str) -> Option<&Chat> {
@@ -1896,6 +1931,7 @@ impl App {
         let mut chats: Vec<&Chat> = self
             .chats
             .iter()
+            .filter(|chat| chat.id.account() == self.active_account)
             .filter(|chat| chat.locked == locked)
             .filter(|chat| locked || chat.archived == self.show_archived || !needle.is_empty())
             .filter(|chat| match &self.label_filter {
@@ -2090,6 +2126,9 @@ impl App {
     fn handle_events(&mut self) {
         for event in self.host.poll() {
             match event {
+                Event::Auth { account, state } => {
+                    self.auth.insert(account, state);
+                }
                 Event::Link(status) => self.handle_link(status),
                 Event::Me {
                     id,
@@ -3692,6 +3731,16 @@ impl App {
                         self.apply(Action::CloseChat, ctx);
                     }
                 }
+            }
+            Action::AddAccount(kind) => {
+                if let Some(account) = self.host.add_account(kind) {
+                    self.active_account = account.id;
+                    self.settings.last_account = account.id;
+                    self.settings_dirty = true;
+                }
+            }
+            Action::Login { account, step } => {
+                self.host.send(Command::Login { account, step });
             }
             Action::StartChat { id, name } => {
                 if self.chat(&id).is_none() {

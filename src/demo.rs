@@ -603,11 +603,13 @@ pub fn populate(app: &mut App) {
                 sender: ME.into(),
                 from_me: true,
                 emoji: "❤️".into(),
+                count: 0,
             });
             row.reactions.push(Reaction {
                 sender: ada.into(),
                 from_me: false,
                 emoji: "😂".into(),
+                count: 0,
             });
             row
         },
@@ -828,16 +830,19 @@ pub fn populate(app: &mut App) {
                 sender: jonas.0.into(),
                 from_me: false,
                 emoji: "🔥".into(),
+                count: 0,
             });
             row.reactions.push(Reaction {
                 sender: mira.0.into(),
                 from_me: false,
                 emoji: "🏆".into(),
+                count: 0,
             });
             row.reactions.push(Reaction {
                 sender: ME.into(),
                 from_me: true,
                 emoji: "🔥".into(),
+                count: 0,
             });
             row
         },
@@ -2779,6 +2784,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         sender: ME.into(),
                         from_me: true,
                         emoji: "🦀".into(),
+                        count: 0,
                     });
                 }
             }
@@ -3086,6 +3092,7 @@ mod tests {
                 sender: SAMPLES[0].id.into(),
                 from_me: false,
                 emoji: "👍".into(),
+                count: 0,
             }];
             let Content::Interactive {
                 card: Some(card), ..

@@ -495,12 +495,14 @@ impl eframe::App for Shell {
                     log::warn!("could not acknowledge the update: {error:#}");
                     return;
                 }
-                if let Some(startup) = startup {
+                for startup in startup {
                     let _ = startup.send(());
                 }
             });
-        } else if let Some(startup) = startup {
-            let _ = startup.send(());
+        } else {
+            for startup in startup {
+                let _ = startup.send(());
+            }
         }
         #[cfg(feature = "demo")]
         if let Some(tour) = self.tour.as_mut() {

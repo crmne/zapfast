@@ -278,6 +278,183 @@ fn archive_key_lost(message: &str) -> bool {
         || message.contains("could not be unlocked with its OS keyring key")
 }
 
+/// The sign-in card for an account that is not the linked WhatsApp device.
+/// Values typed here live only in memory until the account is signed in.
+pub(super) fn telegram(app: &mut App, ui: &mut egui::Ui) {
+    let Some((account, state)) = app.sign_in() else {
+        return;
+    };
+    let palette = app.palette;
+    let card_width = 460.0_f32.min(ui.available_width() - 24.0).max(0.0);
+    ui.vertical_centered(|ui| {
+        ui.add_space(60.0);
+        Frame::new()
+            .fill(palette.panel)
+            .stroke(Stroke::new(1.0, palette.outline))
+            .corner_radius(CornerRadius::same(theme::RADIUS + 8))
+            .inner_margin(Margin::same(32))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 16],
+                blur: 48,
+                spread: 0,
+                color: palette.shadow,
+            })
+            .show(ui, |ui| {
+                ui.set_width((card_width - 64.0).max(0.0));
+                ui.spacing_mut().item_spacing.y = 8.0;
+                theme::text(ui, "ZapFast", theme::bold(28.0), palette.text);
+                theme::text(
+                    ui,
+                    "Sign in to Telegram.",
+                    theme::regular(14.5),
+                    palette.secondary,
+                );
+                ui.add_space(16.0);
+                match state {
+                crate::account::AuthState::SignedOut
+                | crate::account::AuthState::Failed { .. } => {
+                    if let crate::account::AuthState::Failed { reason } = &state {
+                        theme::paragraph(ui, reason, theme::regular(13.0), palette.danger);
+                        ui.add_space(4.0);
+                    }
+                    theme::paragraph(
+                        ui,
+                        "Enter the phone number of your Telegram account. The sign-in code comes to your other devices.",
+                        theme::regular(13.0),
+                        palette.secondary,
+                    );
+                    let submit =
+                        field(ui, &palette, "telegram-phone", &mut app.telegram_phone, false);
+                    let ready = app
+                        .telegram_phone
+                        .chars()
+                        .filter(char::is_ascii_digit)
+                        .count()
+                        >= 7;
+                    let mut pressed = false;
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        pressed = ui
+                            .add_enabled_ui(ready, |ui| {
+                                theme::pill_button(ui, &palette, "Send code", true)
+                            })
+                            .inner
+                            .clicked();
+                    });
+                    if (submit && ready) || pressed {
+                        app.telegram_code.clear();
+                        app.telegram_password.clear();
+                        app.actions.push(Action::Login {
+                            account,
+                            step: crate::backend::LoginStep::TelegramPhone(
+                                app.telegram_phone.trim().to_owned(),
+                            ),
+                        });
+                    }
+                    ui.add_space(4.0);
+                    theme::paragraph(
+                        ui,
+                        "Live sign-in also needs ZAPFAST_TELEGRAM_API_ID and ZAPFAST_TELEGRAM_API_HASH from my.telegram.org.",
+                        theme::regular(12.0),
+                        palette.secondary,
+                    );
+                }
+                crate::account::AuthState::TelegramCode { .. } => {
+                    theme::paragraph(
+                        ui,
+                        "Enter the code Telegram sent to your other devices.",
+                        theme::regular(13.0),
+                        palette.secondary,
+                    );
+                    let submit =
+                        field(ui, &palette, "telegram-code", &mut app.telegram_code, false);
+                    let ready = !app.telegram_code.trim().is_empty();
+                    let mut pressed = false;
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        pressed = ui
+                            .add_enabled_ui(ready, |ui| {
+                                theme::pill_button(ui, &palette, "Sign in", true)
+                            })
+                            .inner
+                            .clicked();
+                    });
+                    if (submit && ready) || pressed {
+                        app.actions.push(Action::Login {
+                            account,
+                            step: crate::backend::LoginStep::TelegramCode(
+                                app.telegram_code.trim().to_owned(),
+                            ),
+                        });
+                    }
+                }
+                crate::account::AuthState::TelegramPassword { .. } => {
+                    theme::paragraph(
+                        ui,
+                        "This account has a two-step password. Enter it to finish signing in.",
+                        theme::regular(13.0),
+                        palette.secondary,
+                    );
+                    let submit = field(
+                        ui,
+                        &palette,
+                        "telegram-password",
+                        &mut app.telegram_password,
+                        true,
+                    );
+                    let ready = !app.telegram_password.is_empty();
+                    let mut pressed = false;
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        pressed = ui
+                            .add_enabled_ui(ready, |ui| {
+                                theme::pill_button(ui, &palette, "Sign in", true)
+                            })
+                            .inner
+                            .clicked();
+                    });
+                    if (submit && ready) || pressed {
+                        app.actions.push(Action::Login {
+                            account,
+                            step: crate::backend::LoginStep::TelegramPassword(
+                                app.telegram_password.clone(),
+                            ),
+                        });
+                    }
+                }
+                crate::account::AuthState::WhatsappLink | crate::account::AuthState::Ready => {}
+                }
+            });
+    });
+}
+
+/// One text field of the sign-in card, with Enter as a submit key.
+fn field(
+    ui: &mut egui::Ui,
+    palette: &theme::Palette,
+    salt: &str,
+    value: &mut String,
+    password: bool,
+) -> bool {
+    let id = egui::Id::new(salt);
+    let submit = ui.memory(|memory| memory.has_focus(id))
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let field = Frame::new()
+        .fill(palette.surface)
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::singleline(value)
+                    .id(id)
+                    .password(password)
+                    .font(theme::regular(16.0))
+                    .text_color(palette.text)
+                    .frame(egui::Frame::NONE)
+                    .desired_width(f32::INFINITY),
+            )
+        });
+    theme::focus_outline(ui, id, field.inner.rect, f32::from(theme::RADIUS));
+    submit
+}
+
 #[cfg(test)]
 mod start_over_tests {
     #[test]

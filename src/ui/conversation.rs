@@ -3843,11 +3843,16 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
             .find(|(emoji, _, _, _)| *emoji == reaction.emoji)
         {
             Some((_, count, mine, names)) => {
-                *count += 1;
+                *count += reaction.count.max(1);
                 *mine |= reaction.from_me;
                 names.push(who);
             }
-            None => counts.push((reaction.emoji.clone(), 1, reaction.from_me, vec![who])),
+            None => counts.push((
+                reaction.emoji.clone(),
+                reaction.count.max(1),
+                reaction.from_me,
+                vec![who],
+            )),
         }
     }
     ui.spacing_mut().item_spacing.x = 3.0;
@@ -4347,6 +4352,32 @@ fn content(
             .push(transcript_row(view, message, String::new(), Vec::new()));
     }
     match &message.content {
+        Content::Call {
+            video,
+            missed,
+            seconds,
+        } => {
+            let kind = if *video { "Video call" } else { "Voice call" };
+            let label = if *missed {
+                format!("Missed {}", kind.to_lowercase())
+            } else {
+                match seconds {
+                    Some(seconds) => format!("{kind} · {seconds}s"),
+                    None => kind.to_owned(),
+                }
+            };
+            let span = message.quoted.is_some().then_some(width);
+            rich_body(
+                ui,
+                view,
+                message,
+                &label,
+                width,
+                Some(reserve),
+                span,
+                actions,
+            )
+        }
         Content::Interactive { text, card } => {
             let Some(card) = card else {
                 let span = message.quoted.is_some().then_some(width);
@@ -7277,6 +7308,7 @@ mod reaction_tests {
             sender: if from_me { "me" } else { "them" }.into(),
             from_me,
             emoji: emoji.into(),
+            count: 0,
         }
     }
 
