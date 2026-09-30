@@ -45,6 +45,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.reaction_target.is_none()
         && app.recording.is_none()
         && app.image_preview.is_none()
+        && app.sticker_view.is_none()
         && app.emoji_start.is_none()
         && app.mention_start.is_none()
         // The day filter keeps egui's own order among its days.
@@ -86,6 +87,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     picker::show(app, ctx);
     dialogs::show(app, ctx);
     image_preview::show(app, ctx);
+    image_preview::show_sticker(app, ctx);
     drop_target(app, ctx);
     toasts(app, ctx);
     focus_ring(app, ctx);

@@ -1365,6 +1365,9 @@ pub enum Action {
     ZoomImageOut,
     FitImage,
     CloseImagePreview,
+    /// Shows a downloaded sticker large, with a favorite toggle.
+    PreviewSticker(PathBuf),
+    CloseStickerPreview,
     OpenFile(PathBuf),
     /// Opens ZapFast's log, or shows it in its folder when no application
     /// takes it, and says so when neither works.
