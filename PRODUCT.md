@@ -2,10 +2,10 @@
 
 ## Users and purpose
 
-ZapFast serves people reading and sending WhatsApp messages on Linux, macOS,
-and Windows. It is a small native companion client built with Rust and egui.
-The conversation is the primary workspace, with chats beside it and a composer
-below it.
+ZapFast serves people reading and sending messages across the accounts they
+connect, on Linux, macOS, and Windows. It is a small native client built with
+Rust and egui. The conversation is the primary workspace, with chats beside it
+and a composer below it.
 
 ## Product character
 
@@ -29,7 +29,9 @@ separated action rows.
 
 ## Boundaries and accessibility
 
-No browser engine, hosted backend, telemetry, or additional account system.
+No browser engine, hosted backend, telemetry, or relay. Every account talks
+only to its own network, and message content goes only to the network that
+account is connected to.
 Avoid decorative dashboards and extra nested cards inside message bubbles.
 Retain keyboard operation, zoom, text selection, and light and dark themes.
 No additional accessibility certification target is specified by the project.

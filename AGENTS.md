@@ -1,14 +1,19 @@
 # ZapFast agent guide
 
-ZapFast is a small native WhatsApp client: Rust, egui, and the
-[whatsapp-rust](https://github.com/oxidezap/whatsapp-rust) library for the
-protocol. These notes are for coding agents and new contributors.
+ZapFast is a small native client for the networks the user connects: Rust,
+egui, and one pinned upstream protocol library per account. WhatsApp, the
+original account, uses
+[whatsapp-rust](https://github.com/oxidezap/whatsapp-rust); every other
+network is a separate adapter over a pinned upstream crate. One window holds
+several accounts, and nothing relays through a ZapFast server. These notes are
+for coding agents and new contributors.
 
 ## Product boundaries
 
 - Keep it a small native client. No browser engine, no telemetry, no
-  hosted backend, no ZapFast-operated account system. Features never send
-  message content to a third party.
+  hosted backend, no ZapFast server or relay. Every account talks only to its
+  own network, and message content goes only to the network that account is
+  connected to; never to a third party.
 - Do not vendor, fork, or patch upstream crates (egui, epaint, whatsapp-rust)
   in this repository. Fix them upstream.
 - The protocol comes from whatsapp-rust. Do not reimplement pieces of it
