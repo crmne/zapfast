@@ -653,7 +653,10 @@ fn sections(app: &App) -> Vec<Section> {
     let open_folder = crate::i18n::gettext(locale, "Open folder");
     files.row(
         translated(locale, "Message archive"),
-        app.dirs.archive_db().display().to_string(),
+        app.dirs
+            .archive_db(crate::account::AccountId::WHATSAPP)
+            .display()
+            .to_string(),
         {
             let open_folder = open_folder.clone();
             move |ui, app| {

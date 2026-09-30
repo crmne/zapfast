@@ -462,7 +462,7 @@ mod tests {
             (Page::Chats, Some("fixture"), Some(Dialog::Shortcuts), false),
         ] {
             app.page = page;
-            app.open_chat = chat.map(str::to_owned);
+            app.open_chat = chat.map(crate::model::ChatId::whatsapp);
             app.dialog = dialog;
             app.actions.clear();
             let mut output = ctx.run_ui(
@@ -544,15 +544,17 @@ mod tests {
         assert!(matches!(app.actions.as_slice(), [Action::CloseUpdate]));
     }
 
-    fn app_with_chats(count: usize) -> (tempfile::TempDir, App, Vec<String>) {
+    fn app_with_chats(count: usize) -> (tempfile::TempDir, App, Vec<crate::model::ChatId>) {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::headless(
             crate::paths::AppDirs::under(root.path()),
             crate::settings::Settings::default(),
         )
         .0;
-        let ids: Vec<String> = (0..count)
-            .map(|index| format!("49170000{index:04}@s.whatsapp.net"))
+        let ids: Vec<crate::model::ChatId> = (0..count)
+            .map(|index| {
+                crate::model::ChatId::whatsapp(format!("49170000{index:04}@s.whatsapp.net"))
+            })
             .collect();
         for (index, id) in ids.iter().enumerate() {
             let mut chat = Chat::new(id.clone(), format!("Chat {index:02}"));

@@ -516,13 +516,14 @@ phone afterwards. For help, report the OS, app version, whether
 the profile was moved/restored, and the error text with personal paths removed.
 Never attach the archive, keys, or full logs from older releases.
 
-Only `archive.db` and its SQLite journal/WAL are encrypted. Device credentials in
-`session.db`, downloaded media, profile pictures, favorite sticker files and settings
-remain ordinary files. Use full-disk encryption for those files, swap, backups and
-remnants of the old plaintext archive. Migration removes the original only after
-verifying its encrypted copy; deletion cannot guarantee erasure from SSDs or
-snapshots. Keyring unlocking also does not protect against software running as you
-while your login is unlocked.
+Only each account's `archive.db` and its SQLite journal/WAL are encrypted.
+Device credentials in `session.db`, downloaded media, profile pictures,
+favorite sticker files and settings remain ordinary files. Use full-disk
+encryption for those files, swap, backups and remnants of the old plaintext
+archive. Migration removes the original only after verifying its encrypted
+copy; deletion cannot guarantee erasure from SSDs or snapshots. Keyring
+unlocking also does not protect against software running as you while your
+login is unlocked.
 
 ### From source
 
@@ -739,8 +740,9 @@ from the environment and honors `NO_PROXY`.
 | What | Linux | Notes |
 | --- | --- | --- |
 | Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit; the app lock password and the locked-chats code are kept only as salted verifiers |
-| Device keys | `~/.local/state/zapfast/session.db` | Owned by whatsapp-rust; deleting it unlinks |
-| Messages | `~/.local/state/zapfast/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
+| Accounts | `~/.local/state/zapfast/accounts.json` | Names, networks, and local account numbers only; no tokens or phone numbers |
+| Device keys | `~/.local/state/zapfast/accounts/1/session.db` | Owned by whatsapp-rust; deleting it unlinks |
+| Messages | `~/.local/state/zapfast/accounts/1/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
 | Wallpaper image | `~/.local/state/zapfast/wallpaper.jpg` | Copy of the chosen picture, or `.png`, `.webp`, `.gif`; deleted by **Remove image** |
@@ -750,7 +752,10 @@ macOS and Windows use the standard platform directories selected by the
 `directories` crate. On first start, ZapFast moves settings, the linked session,
 message archive, favorite stickers, caches, and window state from `fastsapp`
 (or the earlier `fastwhatsapp`) paths. Existing ZapFast directories take
-precedence and are never overwritten. Quit FastsApp before starting ZapFast;
+precedence and are never overwritten. A version before accounts kept the linked
+session and archive directly in the state directory; the first start with
+accounts moves them, and the archive's OS keyring key, under account 1. Quit
+FastsApp before starting ZapFast;
 if an older copy is still running, the new launch brings its window forward.
 Your phone may keep showing the old linked-device name until you link again.
 

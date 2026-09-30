@@ -372,6 +372,11 @@ pub struct App {
     /// Account about text.
     pub me_about: Option<String>,
 
+    /// Accounts the switcher can show, in order.
+    pub accounts: Vec<crate::account::Account>,
+    /// The account whose chats are showing.
+    pub active_account: crate::account::AccountId,
+
     /// Chats ordered by latest activity.
     pub chats: Vec<Chat>,
     pub contacts: HashMap<String, Contact>,
@@ -902,7 +907,24 @@ impl App {
                 ThemeChoice::Light => Palette::light(),
                 _ => Palette::dark(),
             });
-        let open_chat = settings.last_chat.clone();
+        let accounts = crate::account::load(&dirs.accounts_file());
+        let active_account = if accounts
+            .iter()
+            .any(|account| account.id == settings.last_account)
+        {
+            settings.last_account
+        } else {
+            accounts
+                .first()
+                .map(|account| account.id)
+                .unwrap_or(crate::account::AccountId::WHATSAPP)
+        };
+        // The last open chat is only reopened for the account that is showing.
+        let open_chat = settings
+            .last_chat
+            .as_ref()
+            .filter(|chat| chat.account() == active_account)
+            .map(|chat| ChatId::new(active_account, chat.peer().to_owned()));
         let locale = crate::i18n::resolve(settings.interface_language);
         // With a password set, ZapFast starts locked.
         let app_lock = crate::app_lock::AppLock::new(settings.app_lock_hash.is_some());
@@ -928,6 +950,8 @@ impl App {
             me_lid: None,
             me_name: None,
             me_about: None,
+            accounts,
+            active_account,
             chats: Vec::new(),
             contacts: HashMap::new(),
             conversations: HashMap::new(),
@@ -1247,7 +1271,7 @@ impl App {
             picture,
             sound,
             crate::notify::NotificationTarget {
-                chat: chat_id.to_owned(),
+                chat: ChatId::whatsapp(chat_id),
                 message: message.id.clone(),
             },
             std::sync::Arc::clone(&self.notification_opens),
@@ -1271,7 +1295,7 @@ impl App {
             None,
             sound,
             crate::notify::NotificationTarget {
-                chat: chat_id.to_owned(),
+                chat: ChatId::whatsapp(chat_id),
                 message: message.to_owned(),
             },
             std::sync::Arc::clone(&self.notification_opens),
@@ -1395,11 +1419,11 @@ impl App {
     fn forget_chat(&mut self, id: &str) {
         self.leave_chat(id);
         self.chats.retain(|chat| chat.id != id);
-        self.conversations.remove(id);
-        self.drafts.remove(id);
-        self.draft_mentions.remove(id);
-        self.typing.remove(id);
-        self.unread_kept.remove(id);
+        self.conversations.remove(&ChatId::whatsapp(id));
+        self.drafts.remove(&ChatId::whatsapp(id));
+        self.draft_mentions.remove(&ChatId::whatsapp(id));
+        self.typing.remove(&ChatId::whatsapp(id));
+        self.unread_kept.remove(&ChatId::whatsapp(id));
         if self.scroll_chat_into_view.as_deref() == Some(id) {
             self.scroll_chat_into_view = None;
         }
@@ -2040,7 +2064,7 @@ impl App {
         if self.open_chat.as_deref() == Some(chat) {
             return None;
         }
-        let draft = self.drafts.get(chat)?;
+        let draft = self.drafts.get(&ChatId::whatsapp(chat))?;
         let line = draft.split_whitespace().collect::<Vec<_>>().join(" ");
         (!line.is_empty()).then_some(line)
     }
@@ -2048,7 +2072,7 @@ impl App {
     /// Active typers in a chat as id and display name.
     pub fn typing_in(&self, chat: &str) -> Vec<(String, String)> {
         self.typing
-            .get(chat)
+            .get(&ChatId::whatsapp(chat))
             .map(|typers| {
                 typers
                     .iter()
@@ -2483,7 +2507,10 @@ impl App {
                     let name = name
                         .filter(|name| !name.is_empty())
                         .unwrap_or_else(|| crate::util::phone(&id));
-                    self.actions.push(Action::StartChat { id, name });
+                    self.actions.push(Action::StartChat {
+                        id: ChatId::whatsapp(id),
+                        name,
+                    });
                 }
                 Event::Info(message) => self.toast(message),
                 Event::ClipboardImage(result) => {
@@ -2699,12 +2726,12 @@ impl App {
         }
         self.notifications.clear(id);
         // Clearing a chat also removes its stored draft.
-        self.drafts.remove(id);
-        self.draft_mentions.remove(id);
+        self.drafts.remove(&ChatId::whatsapp(id));
+        self.draft_mentions.remove(&ChatId::whatsapp(id));
         self.search_hits
             .retain(|message| message.chat != id || message.timestamp > through);
         // Nothing earlier is left here, and the phone no longer has it either.
-        let conversation = self.conversations.entry(id.to_owned()).or_default();
+        let conversation = self.conversations.entry(ChatId::whatsapp(id)).or_default();
         conversation
             .messages
             .retain(|message| message.timestamp > through);
@@ -2830,12 +2857,17 @@ impl App {
             && !self.composer.is_empty()
         {
             self.drafts
-                .insert(id.to_owned(), std::mem::take(&mut self.composer));
-            self.draft_mentions
-                .insert(id.to_owned(), std::mem::take(&mut self.composer_mentions));
+                .insert(ChatId::whatsapp(id), std::mem::take(&mut self.composer));
+            self.draft_mentions.insert(
+                ChatId::whatsapp(id),
+                std::mem::take(&mut self.composer_mentions),
+            );
             self.store_draft(
                 id,
-                self.drafts.get(id).map(String::as_str).unwrap_or_default(),
+                self.drafts
+                    .get(&ChatId::whatsapp(id))
+                    .map(String::as_str)
+                    .unwrap_or_default(),
             );
         }
         self.leave_chat(id);
@@ -2918,11 +2950,11 @@ impl App {
             }
         } else if self
             .drafts
-            .get(chat)
+            .get(&ChatId::whatsapp(chat))
             .is_none_or(|draft| draft.trim().is_empty())
         {
             self.store_draft(chat, &text);
-            self.drafts.insert(chat.to_owned(), text);
+            self.drafts.insert(ChatId::whatsapp(chat), text);
         }
     }
 
@@ -2930,7 +2962,7 @@ impl App {
     /// survives a restart. An empty text clears the stored row.
     fn store_draft(&self, chat: &str, text: &str) {
         self.backend.send(Command::SaveDraft {
-            chat: chat.to_owned(),
+            chat: ChatId::whatsapp(chat),
             text: text.to_owned(),
         });
     }
@@ -2944,7 +2976,7 @@ impl App {
     ) {
         let Some(message) = self
             .conversations
-            .get_mut(chat)
+            .get_mut(&ChatId::whatsapp(chat))
             .and_then(|conversation| conversation.message_mut(id))
         else {
             return;
@@ -3003,18 +3035,21 @@ impl App {
     }
 
     fn ensure_loaded(&mut self, chat: &str) {
-        let conversation = self.conversations.entry(chat.to_owned()).or_default();
+        let conversation = self
+            .conversations
+            .entry(ChatId::whatsapp(chat))
+            .or_default();
         if !conversation.requested {
             conversation.requested = true;
             self.backend.send(Command::LoadChat {
-                chat: chat.to_owned(),
+                chat: ChatId::whatsapp(chat),
                 before: None,
             });
         }
     }
 
     pub fn load_older(&mut self, chat: &str) {
-        let Some(conversation) = self.conversations.get_mut(chat) else {
+        let Some(conversation) = self.conversations.get_mut(&ChatId::whatsapp(chat)) else {
             return;
         };
         if conversation.loading_older {
@@ -3031,14 +3066,14 @@ impl App {
         let before = (oldest.timestamp, oldest.id.clone());
         self.scroll_anchor = Some(oldest.id.clone());
         self.backend.send(Command::LoadChat {
-            chat: chat.to_owned(),
+            chat: ChatId::whatsapp(chat),
             before: Some(before),
         });
     }
 
     /// Requests older phone history when available and outside the cooldown.
     pub fn fetch_older(&mut self, chat: &str) {
-        let Some(conversation) = self.conversations.get_mut(chat) else {
+        let Some(conversation) = self.conversations.get_mut(&ChatId::whatsapp(chat)) else {
             return;
         };
         if conversation.fetching_phone || conversation.phone_exhausted {
@@ -3061,7 +3096,8 @@ impl App {
             .messages
             .first()
             .map(|oldest| oldest.id.clone());
-        self.backend.send(Command::FetchOlder(chat.to_owned()));
+        self.backend
+            .send(Command::FetchOlder(ChatId::whatsapp(chat)));
     }
 
     fn mark_read(&mut self, chat: &str) {
@@ -3072,7 +3108,7 @@ impl App {
         }
         // Clear local unread state regardless of receipt settings.
         self.backend.send(Command::MarkRead {
-            chat: chat.to_owned(),
+            chat: ChatId::whatsapp(chat),
             receipts: self.settings.send_read_receipts,
         });
     }
@@ -3087,7 +3123,8 @@ impl App {
             return;
         }
         known.marked_unread = true;
-        self.backend.send(Command::MarkUnread(chat.to_owned()));
+        self.backend
+            .send(Command::MarkUnread(ChatId::whatsapp(chat)));
     }
 
     fn open_chat(&mut self, id: ChatId) {
@@ -3198,7 +3235,7 @@ impl App {
     /// editing. Non-text and revoked messages cannot be edited and are
     /// skipped.
     pub(crate) fn previous_own_editable(&self) -> Option<String> {
-        let conversation = self.conversations.get(self.open_chat.as_deref()?)?;
+        let conversation = self.conversations.get(self.open_chat.as_ref()?)?;
         conversation
             .messages
             .iter()
@@ -3226,7 +3263,7 @@ impl App {
         if self.composing {
             self.composing = false;
             self.backend.send(Command::Composing {
-                chat: chat.to_owned(),
+                chat: ChatId::whatsapp(chat),
                 composing: false,
             });
         }
@@ -3638,6 +3675,21 @@ impl App {
                 self.apply(Action::Open(page), ctx);
             }
             Action::OpenChat(id) => self.open_chat(id),
+            Action::SwitchAccount(id) => {
+                if id != self.active_account {
+                    self.active_account = id;
+                    self.settings.last_account = id;
+                    self.settings_dirty = true;
+                    // The open conversation belongs to one account.
+                    if self
+                        .open_chat
+                        .as_ref()
+                        .is_some_and(|chat| chat.account() != id)
+                    {
+                        self.apply(Action::CloseChat, ctx);
+                    }
+                }
+            }
             Action::StartChat { id, name } => {
                 if self.chat(&id).is_none() {
                     self.chats.push(Chat::new(id.clone(), name.clone()));
@@ -3657,7 +3709,7 @@ impl App {
                     } else {
                         self.apply(
                             Action::StartChat {
-                                id,
+                                id: ChatId::whatsapp(id),
                                 name: "You".to_owned(),
                             },
                             ctx,
@@ -3952,7 +4004,7 @@ impl App {
                 let Some((chat, ids)) = self.selection.as_mut() else {
                     return;
                 };
-                let Some(conversation) = self.conversations.get(chat.as_str()) else {
+                let Some(conversation) = self.conversations.get(chat) else {
                     return;
                 };
                 let anchor = self.selection_anchor.clone().unwrap_or_else(|| id.clone());
@@ -3987,7 +4039,7 @@ impl App {
                     return;
                 };
                 sweep.to.clone_from(&to);
-                let Some(conversation) = self.conversations.get(chat.as_str()) else {
+                let Some(conversation) = self.conversations.get(&chat) else {
                     return;
                 };
                 let mut ids = sweep.base.clone();
@@ -4004,7 +4056,7 @@ impl App {
                     } else {
                         ids.push(id);
                         // Keep the chat's order, so forwards arrive as they were sent.
-                        if let Some(conversation) = self.conversations.get(chat.as_str()) {
+                        if let Some(conversation) = self.conversations.get(chat) {
                             let position = |id: &String| {
                                 conversation
                                     .messages
@@ -4027,7 +4079,7 @@ impl App {
             Action::Edit(id) => {
                 let text = self
                     .open_chat
-                    .as_deref()
+                    .as_ref()
                     .and_then(|chat| self.conversations.get(chat))
                     .and_then(|conversation| conversation.message(&id))
                     .and_then(|message| match &message.content {
@@ -5516,7 +5568,7 @@ impl App {
     /// the reader's own and those already played here are passed over, and
     /// anything else, an audio file included, ends it.
     fn next_voice_after(&self, chat: &str, finished: &str) -> Option<String> {
-        let conversation = self.conversations.get(chat)?;
+        let conversation = self.conversations.get(&ChatId::whatsapp(chat))?;
         let position = conversation
             .messages
             .iter()
@@ -5932,7 +5984,11 @@ impl App {
 
     /// Returns attachment state for a loaded message.
     pub fn media_of(&self, chat: &str, id: &str) -> Option<&Media> {
-        self.conversations.get(chat)?.message(id)?.content.media()
+        self.conversations
+            .get(&ChatId::whatsapp(chat))?
+            .message(id)?
+            .content
+            .media()
     }
 
     fn handle_clipboard_image(
@@ -6967,7 +7023,7 @@ mod tests {
     #[test]
     fn marking_unread_uses_the_empty_dot_until_the_chat_opens() {
         let mut app = app();
-        let id = "1@s.whatsapp.net".to_owned();
+        let id = ChatId::whatsapp("1@s.whatsapp.net");
         app.chats.push(Chat::new(id.clone(), "Ada".to_owned()));
         app.mark_unread(&id);
         let chat = app.chat(&id).expect("chat");
@@ -6983,7 +7039,7 @@ mod tests {
     #[test]
     fn marking_unread_leaves_a_real_count_alone() {
         let mut app = app();
-        let id = "1@s.whatsapp.net".to_owned();
+        let id = ChatId::whatsapp("1@s.whatsapp.net");
         let mut chat = Chat::new(id.clone(), "Ada".to_owned());
         chat.unread = 3;
         app.chats.push(chat);
@@ -6998,7 +7054,7 @@ mod tests {
         let mut app = app();
         let me = "me@s.whatsapp.net";
         app.me = Some(me.into());
-        let id = "1-2@g.us".to_owned();
+        let id = ChatId::whatsapp("1-2@g.us");
         let mut chat = Chat::new(id.clone(), "Rust".into());
         chat.participants = vec![me.into(), "other@s.whatsapp.net".into()];
         app.chats.push(chat);
@@ -7048,7 +7104,7 @@ mod tests {
         let mut app = app();
         let me = "me@s.whatsapp.net";
         app.me = Some(me.into());
-        let id = "1-2@g.us".to_owned();
+        let id = ChatId::whatsapp("1-2@g.us");
         let mut chat = Chat::new(id.clone(), "Rust".into());
         chat.participants = vec![me.into(), "other@s.whatsapp.net".into()];
         app.chats.push(chat.clone());
@@ -7077,7 +7133,7 @@ mod tests {
     #[test]
     fn leaving_a_channel_marks_it_read_only_and_can_archive() {
         let mut app = app();
-        let id = "1@newsletter".to_owned();
+        let id = ChatId::whatsapp("1@newsletter");
         let chat = Chat::new(id.clone(), "News".into());
         app.chats.push(chat);
         app.open_chat = Some(id.clone());
@@ -7180,7 +7236,7 @@ mod tests {
     }
 
     fn labeled(id: &str, unread: u32, labels: &[&str]) -> Chat {
-        let mut chat = Chat::new(id.to_owned(), id.to_owned());
+        let mut chat = Chat::new(ChatId::whatsapp(id), id.to_owned());
         chat.unread = unread;
         chat.labels = labels.iter().map(|label| (*label).to_owned()).collect();
         chat.last_activity = i64::from(unread) + 1;
@@ -7213,7 +7269,7 @@ mod tests {
         let listed: Vec<String> = app
             .visible_chats()
             .into_iter()
-            .map(|chat| chat.id.clone())
+            .map(|chat| chat.id.to_string())
             .collect();
         assert_eq!(listed, ["1@newsletter".to_owned()]);
         app.apply(Action::ShowArchived(true), &ctx);
@@ -7297,7 +7353,7 @@ mod tests {
         let listed: Vec<String> = app
             .visible_chats()
             .into_iter()
-            .map(|chat| chat.id.clone())
+            .map(|chat| chat.id.to_string())
             .collect();
         assert_eq!(listed, vec!["1@s.whatsapp.net".to_owned()]);
         app.label_filter = None;
@@ -7590,7 +7646,7 @@ mod tests {
         app.follow_receipts();
         assert_eq!(
             watches(&mut commands),
-            [Some((group.to_owned(), "m".to_owned()))]
+            [Some((ChatId::whatsapp(group), "m".to_owned()))]
         );
         // Receipts for another message, from a dialog opened earlier, are stale.
         events.send(Event::Receipts(receipts("other"))).unwrap();
@@ -7630,11 +7686,14 @@ mod tests {
             .unwrap();
         app.handle_events();
         assert_eq!(app.composer, "half a reply", "the reopened chat shows it");
-        assert_eq!(app.drafts.get(other).map(String::as_str), Some("later"));
+        assert_eq!(
+            app.drafts.get(&ChatId::whatsapp(other)).map(String::as_str),
+            Some("later")
+        );
         // Quitting stores what is in the composer.
         app.composer = "half a reply, finished".into();
         app.shutdown();
-        let saved: Vec<(String, String)> = std::iter::from_fn(|| commands.try_recv().ok())
+        let saved: Vec<(ChatId, String)> = std::iter::from_fn(|| commands.try_recv().ok())
             .filter_map(|command| match command {
                 Command::SaveDraft { chat, text } => Some((chat, text)),
                 _ => None,
@@ -7642,7 +7701,7 @@ mod tests {
             .collect();
         assert_eq!(
             saved,
-            [(open.to_owned(), "half a reply, finished".to_owned())]
+            [(ChatId::whatsapp(open), "half a reply, finished".to_owned())]
         );
         // Unlinking forgets every draft.
         events.send(Event::Link(LinkStatus::LoggedOut)).unwrap();
@@ -7695,7 +7754,7 @@ mod tests {
         let mut deleted = message(chat, "gone", 4);
         deleted.content = Content::Revoked;
         app.conversations
-            .get_mut(chat)
+            .get_mut(&ChatId::whatsapp(chat))
             .unwrap()
             .merge(vec![deleted, message(chat, "fifth", 5)], false);
         app.apply(Action::SelectMessage("second".into()), &ctx);
@@ -7941,7 +8000,10 @@ mod tests {
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
         for index in 0..5 {
-            let mut chat = Chat::new(format!("{index}@s.whatsapp.net"), format!("Chat {index}"));
+            let mut chat = Chat::new(
+                ChatId::whatsapp(format!("{index}@s.whatsapp.net")),
+                format!("Chat {index}"),
+            );
             chat.pinned = index < 3;
             chat.archived = index == 4;
             app.chats.push(chat);
@@ -7969,7 +8031,10 @@ mod tests {
         let (backend, _commands) = Backend::recording();
         app.backend = backend;
         for index in 0..4 {
-            let mut chat = Chat::new(format!("{index}@s.whatsapp.net"), format!("Chat {index}"));
+            let mut chat = Chat::new(
+                ChatId::whatsapp(format!("{index}@s.whatsapp.net")),
+                format!("Chat {index}"),
+            );
             chat.pinned = index < 3;
             app.chats.push(chat);
         }
@@ -8034,7 +8099,7 @@ mod tests {
 
         // Nothing changes here until the phone has deleted the chat too.
         assert!(app.chat(chat).is_some());
-        assert!(app.drafts.contains_key(chat));
+        assert!(app.drafts.contains_key(&ChatId::whatsapp(chat)));
         assert!(
             std::iter::from_fn(|| commands.try_recv().ok())
                 .any(|command| matches!(command, Command::DeleteChat(id) if id == chat))
@@ -8048,15 +8113,15 @@ mod tests {
         app.handle_events();
 
         assert!(app.chat(chat).is_none());
-        assert!(!app.conversations.contains_key(chat));
+        assert!(!app.conversations.contains_key(&ChatId::whatsapp(chat)));
         // The draft goes with the chat: closing would have kept it, but there
         // is nothing left to send it to.
-        assert!(!app.drafts.contains_key(chat));
+        assert!(!app.drafts.contains_key(&ChatId::whatsapp(chat)));
         assert_eq!(app.open_chat, None);
         // A restart must not try to reopen a chat that is gone.
         assert_eq!(app.settings.last_chat, None);
         // Nothing may keep pointing at a chat that is gone.
-        assert!(!app.unread_kept.contains(chat));
+        assert!(!app.unread_kept.contains(&ChatId::whatsapp(chat)));
         assert_eq!(app.scroll_chat_into_view, None);
         assert!(app.search_hits.iter().all(|hit| hit.chat != chat));
         assert!(app.dialog.is_none());
@@ -8121,10 +8186,12 @@ mod tests {
         // Nothing changes here until the phone has cleared the chat too.
         assert!(app.chat(chat).is_some());
         assert_eq!(
-            app.conversations.get(chat).map(|open| open.messages.len()),
+            app.conversations
+                .get(&ChatId::whatsapp(chat))
+                .map(|open| open.messages.len()),
             Some(1)
         );
-        assert!(app.drafts.contains_key(chat));
+        assert!(app.drafts.contains_key(&ChatId::whatsapp(chat)));
         assert!(
             std::iter::from_fn(|| commands.try_recv().ok())
                 .any(|command| matches!(command, Command::ClearChat(id) if id == chat))
@@ -8143,10 +8210,12 @@ mod tests {
         // The chat stays open with nothing left in it, and its draft goes.
         assert!(app.chat(chat).is_some());
         assert_eq!(
-            app.conversations.get(chat).map(|open| open.messages.len()),
+            app.conversations
+                .get(&ChatId::whatsapp(chat))
+                .map(|open| open.messages.len()),
             Some(0)
         );
-        assert!(!app.drafts.contains_key(chat));
+        assert!(!app.drafts.contains_key(&ChatId::whatsapp(chat)));
         assert_eq!(app.open_chat, Some(chat.into()));
         // Only the cleared chat loses its search hits.
         assert!(app.search_hits.iter().all(|hit| hit.chat != chat));
@@ -8206,7 +8275,7 @@ mod tests {
         output.textures_delta.clear();
 
         assert!(app.chat(chat).is_some());
-        let conversation = &app.conversations[chat];
+        let conversation = &app.conversations[&ChatId::whatsapp(chat)];
         assert!(conversation.messages.is_empty());
         // Nothing older remains, locally or on the phone, so neither is asked.
         assert!(conversation.complete && conversation.phone_exhausted);
@@ -8725,7 +8794,11 @@ mod tests {
             .or_default()
             .merge(vec![carousel.clone()], false);
         let images = |app: &App| -> Vec<Media> {
-            match &app.conversations[chat].message("carousel").unwrap().content {
+            match &app.conversations[&ChatId::whatsapp(chat)]
+                .message("carousel")
+                .unwrap()
+                .content
+            {
                 Content::Interactive {
                     card: Some(card), ..
                 } => card
@@ -8925,7 +8998,7 @@ mod tests {
             "no reply is armed in the wrong chat"
         );
         assert_eq!(
-            app.drafts.get(chat).map(String::as_str),
+            app.drafts.get(&ChatId::whatsapp(chat)).map(String::as_str),
             Some("Reply fixture")
         );
         assert!(
@@ -8943,7 +9016,7 @@ mod tests {
             .unwrap();
         app.handle_events();
         assert_eq!(
-            app.drafts.get(chat).map(String::as_str),
+            app.drafts.get(&ChatId::whatsapp(chat)).map(String::as_str),
             Some("Reply fixture")
         );
     }
@@ -9054,7 +9127,10 @@ mod tests {
             ))
             .unwrap();
         app.handle_events();
-        assert_eq!(app.unsent_voice, Some((chat.to_owned(), clip.clone())));
+        assert_eq!(
+            app.unsent_voice,
+            Some((ChatId::whatsapp(chat), clip.clone()))
+        );
         assert_eq!(app.reply_to.as_deref(), Some("original"));
         assert!(app.composer.is_empty(), "the composer stays empty");
         // Another chat's Send neither sends nor drops the clip.
@@ -9493,7 +9569,7 @@ mod tests {
         app.apply_actions(&ctx);
         let muted: Vec<String> = std::iter::from_fn(|| commands.try_recv().ok())
             .filter_map(|command| match command {
-                Command::SetMuted(chat, Some(0)) => Some(chat),
+                Command::SetMuted(chat, Some(0)) => Some(chat.to_string()),
                 _ => None,
             })
             .collect();
@@ -9737,7 +9813,7 @@ mod tests {
         assert!(app.open_chat.is_none());
         assert!(app.composer.is_empty());
         assert!(app.reply_to.is_none());
-        assert_eq!(app.drafts["fixture"], "fixture draft");
+        assert_eq!(app.drafts[&ChatId::whatsapp("fixture")], "fixture draft");
     }
 
     #[test]
@@ -9840,7 +9916,7 @@ mod tests {
         app.locale = crate::i18n::Locale::Italian;
         assert!(app.offers_self("te stesso"), "the interface language");
         assert!(app.offers_self("yourself"), "English still works");
-        let mut own = Chat::new(app.me.clone().unwrap(), "You".into());
+        let mut own = Chat::new(ChatId::whatsapp(app.me.clone().unwrap()), "You".into());
         own.locked = true;
         app.chats = vec![own];
         assert!(
@@ -9856,11 +9932,14 @@ mod tests {
         app.me = Some("15550000000@s.whatsapp.net".into());
         app.dialog = Some(Dialog::NewChat);
         app.apply(Action::MessageYourself, &ctx);
-        assert_eq!(app.open_chat, app.me);
+        assert_eq!(app.open_chat, app.me.clone().map(ChatId::whatsapp));
         assert!(app.dialog.is_none());
         app.apply(Action::MessageYourself, &ctx);
         assert_eq!(app.chats.len(), 1);
-        app.apply(Action::SetLocked(app.me.clone().unwrap(), true), &ctx);
+        app.apply(
+            Action::SetLocked(ChatId::whatsapp(app.me.clone().unwrap()), true),
+            &ctx,
+        );
         app.apply(Action::MessageYourself, &ctx);
         assert!(app.open_chat.is_none());
         assert_eq!(app.dialog, Some(Dialog::UnlockLockedChats));

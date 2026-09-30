@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message};
+use crate::model::{Chat, ChatId, ChatKind, Contact, Content, Delivery, LastMessage, Message};
 
 mod drafts;
 mod encryption;
@@ -20,6 +20,24 @@ mod receipts;
 mod stickers;
 pub use polls::PollVote;
 pub use stickers::FavoriteSticker;
+
+impl rusqlite::ToSql for ChatId {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        self.peer().to_sql()
+    }
+}
+
+impl rusqlite::types::FromSql for ChatId {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        String::column_result(value).map(ChatId::whatsapp)
+    }
+}
+
+/// Moves the archive keyring credential to the new path before the archive
+/// file moves there.
+pub(crate) fn move_archive_key(from: &Path, to: &Path) -> anyhow::Result<()> {
+    encryption::move_key(from, to)
+}
 
 /// Outcome of deleting or clearing a chat.
 #[derive(Clone, Debug, Default)]
@@ -973,7 +991,7 @@ impl Archive {
                 let mentions: String = row.get(11)?;
                 Ok(Message {
                     id: row.get(0)?,
-                    chat: chat.to_owned(),
+                    chat: ChatId::whatsapp(chat),
                     sender: row.get(1)?,
                     sender_name: row.get(2)?,
                     from_me: row.get(3)?,
@@ -1078,7 +1096,7 @@ impl Archive {
                 let mentions: String = row.get(11)?;
                 Ok(Message {
                     id: row.get(0)?,
-                    chat: chat.to_owned(),
+                    chat: ChatId::whatsapp(chat),
                     sender: row.get(1)?,
                     sender_name: row.get(2)?,
                     from_me: row.get(3)?,
@@ -1441,7 +1459,7 @@ impl Archive {
                 let mentions: String = row.get(10)?;
                 Ok(Message {
                     id: id.to_owned(),
-                    chat: chat.to_owned(),
+                    chat: ChatId::whatsapp(chat),
                     sender: row.get(0)?,
                     sender_name: row.get(1)?,
                     from_me: row.get(2)?,

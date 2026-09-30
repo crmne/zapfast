@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
 
+use crate::account::AccountId;
+
 #[derive(Clone, Debug)]
 pub struct AppDirs {
     pub config: PathBuf,
@@ -88,14 +90,34 @@ impl AppDirs {
         self.config.join("settings.json")
     }
 
+    /// One account's directory under the state directory.
+    pub fn account_dir(&self, account: AccountId) -> PathBuf {
+        self.state.join("accounts").join(account.get().to_string())
+    }
+
+    /// The list of connected accounts.
+    pub fn accounts_file(&self) -> PathBuf {
+        self.state.join("accounts.json")
+    }
+
     /// whatsapp-rust device identity, Signal sessions, and state keys.
     /// Deleting this database unlinks the computer.
-    pub fn session_db(&self) -> PathBuf {
-        self.state.join("session.db")
+    pub fn session_db(&self, account: AccountId) -> PathBuf {
+        self.account_dir(account).join("session.db")
     }
 
     /// Local message archive.
-    pub fn archive_db(&self) -> PathBuf {
+    pub fn archive_db(&self, account: AccountId) -> PathBuf {
+        self.account_dir(account).join("archive.db")
+    }
+
+    /// Device database from before accounts existed, moved on first start.
+    pub(crate) fn legacy_session_db(&self) -> PathBuf {
+        self.state.join("session.db")
+    }
+
+    /// Archive from before accounts existed, moved on first start.
+    pub(crate) fn legacy_archive_db(&self) -> PathBuf {
         self.state.join("archive.db")
     }
 
@@ -147,19 +169,24 @@ impl AppDirs {
 
     pub fn ensure(&self) -> std::io::Result<()> {
         for dir in [&self.config, &self.state, &self.cache] {
-            let mut builder = std::fs::DirBuilder::new();
-            builder.recursive(true);
-            // Create new directories privately, even with a permissive umask.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
-            }
-            builder.create(dir)?;
-            restrict_directory(dir)?;
+            create_private_dir(dir)?;
         }
         Ok(())
     }
+}
+
+/// Creates a directory tree only the user can read, even with a permissive
+/// umask. Directories that already exist are re-restricted.
+pub(crate) fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)?;
+    restrict_directory(path)
 }
 
 #[cfg(unix)]
@@ -280,9 +307,9 @@ mod tests {
             old.ensure().unwrap();
             for path in [
                 old.settings_file(),
-                old.session_db(),
+                old.legacy_session_db(),
                 old.state.join("session.db-wal"),
-                old.archive_db(),
+                old.legacy_archive_db(),
                 old.state.join("archive.db-wal"),
                 old.saved_sticker_dir().join("pack/sticker.webp"),
                 old.media_cache_dir().join("photo.jpg"),
@@ -294,9 +321,9 @@ mod tests {
             new.adopt(&old).unwrap(); // A second launch is a no-op.
             for path in [
                 new.settings_file(),
-                new.session_db(),
+                new.legacy_session_db(),
                 new.state.join("session.db-wal"),
-                new.archive_db(),
+                new.legacy_archive_db(),
                 new.state.join("archive.db-wal"),
                 new.saved_sticker_dir().join("pack/sticker.webp"),
                 new.media_cache_dir().join("photo.jpg"),
@@ -321,8 +348,8 @@ mod tests {
         std::fs::create_dir_all(&new.config).unwrap();
         std::fs::write(new.settings_file(), b"new settings").unwrap();
         std::fs::write(recent.settings_file(), b"old settings").unwrap();
-        std::fs::write(recent.archive_db(), b"recent archive").unwrap();
-        std::fs::write(oldest.archive_db(), b"oldest archive").unwrap();
+        std::fs::write(recent.legacy_archive_db(), b"recent archive").unwrap();
+        std::fs::write(oldest.legacy_archive_db(), b"oldest archive").unwrap();
         new.adopt(&recent).unwrap();
         new.adopt(&oldest).unwrap();
         assert_eq!(std::fs::read(new.settings_file()).unwrap(), b"new settings");
@@ -330,9 +357,12 @@ mod tests {
             std::fs::read(recent.settings_file()).unwrap(),
             b"old settings"
         );
-        assert_eq!(std::fs::read(new.archive_db()).unwrap(), b"recent archive");
         assert_eq!(
-            std::fs::read(oldest.archive_db()).unwrap(),
+            std::fs::read(new.legacy_archive_db()).unwrap(),
+            b"recent archive"
+        );
+        assert_eq!(
+            std::fs::read(oldest.legacy_archive_db()).unwrap(),
             b"oldest archive"
         );
         std::fs::remove_dir_all(root).unwrap();
@@ -354,9 +384,9 @@ mod tests {
             runtime: root.join("new/run"),
         };
         old.ensure().unwrap();
-        std::fs::write(old.session_db(), b"session").unwrap();
+        std::fs::write(old.legacy_session_db(), b"session").unwrap();
         new.adopt(&old).unwrap();
-        assert_eq!(std::fs::read(new.session_db()).unwrap(), b"session");
+        assert_eq!(std::fs::read(new.legacy_session_db()).unwrap(), b"session");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -366,13 +396,13 @@ mod tests {
         let old = AppDirs::under(&root.join("old"));
         let new = AppDirs::under(&root.join("blocked/new"));
         old.ensure().unwrap();
-        std::fs::write(old.session_db(), b"session").unwrap();
+        std::fs::write(old.legacy_session_db(), b"session").unwrap();
         std::fs::write(root.join("blocked"), b"not a directory").unwrap();
         assert!(new.adopt(&old).is_err());
-        assert_eq!(std::fs::read(old.session_db()).unwrap(), b"session");
+        assert_eq!(std::fs::read(old.legacy_session_db()).unwrap(), b"session");
         std::fs::remove_file(root.join("blocked")).unwrap();
         new.adopt(&old).unwrap();
-        assert_eq!(std::fs::read(new.session_db()).unwrap(), b"session");
+        assert_eq!(std::fs::read(new.legacy_session_db()).unwrap(), b"session");
         std::fs::remove_dir_all(root).unwrap();
     }
 }

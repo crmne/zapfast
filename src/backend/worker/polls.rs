@@ -188,7 +188,7 @@ impl Worker {
                 continue;
             };
             let vote = PollVote {
-                chat: row.chat.clone(),
+                chat: row.chat.to_string(),
                 poll: row.id.clone(),
                 voter: self.canonical_str(&sender),
                 sender,
@@ -567,7 +567,7 @@ impl Worker {
         let error = match result {
             Ok(update_id) => {
                 let vote = PollVote {
-                    chat: chat.clone(),
+                    chat: chat.to_string(),
                     poll: id.clone(),
                     voter: self.me(),
                     sender: self.me(),
@@ -774,7 +774,7 @@ mod tests {
             assert_eq!(state.counts, vec![0, 0]);
             assert!(!state.refresh_needed && !state.refreshing && !state.refresh_failed);
             // Even a stale UI request must not start a recovery loop.
-            worker.refresh_poll(chat, "live-poll".into());
+            worker.refresh_poll(ChatId::whatsapp(chat), "live-poll".into());
             assert!(worker.poll_history.next(Instant::now()).is_none());
         }
     }
@@ -825,7 +825,7 @@ mod tests {
             };
             assert!(!state.history_complete, "{source}");
             assert!(state.refresh_needed, "{source}");
-            worker.refresh_poll(chat, "live-poll".into());
+            worker.refresh_poll(ChatId::whatsapp(chat), "live-poll".into());
             assert!(
                 worker.poll_history.next(Instant::now()).is_some(),
                 "{source}"

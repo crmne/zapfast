@@ -2,7 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use zapfast::{app, backend, paths, settings, single_instance};
+use zapfast::{account, app, backend, paths, settings, single_instance};
 
 use clap::Parser;
 
@@ -193,6 +193,9 @@ fn main() -> eframe::Result<()> {
     // directories have been created and secured successfully.
     dirs.ensure()
         .map_err(|error| eframe::Error::AppCreation(error.into()))?;
+    if !demo {
+        account::adopt(&dirs).map_err(|error| eframe::Error::AppCreation(error.into()))?;
+    }
     let logging = fastframe_log::Logging::new("zapfast", env!("CARGO_PKG_VERSION"))
         .filter(default_filter)
         .panic_log(dirs.panic_log())

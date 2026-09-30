@@ -4,6 +4,7 @@
 //! its own thread because delivery and click handling can block. A click hands
 //! back the chat and the message it announced.
 
+use crate::model::ChatId;
 use crate::settings::NotificationSound;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -35,7 +36,7 @@ impl Badge {
 /// of the chat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NotificationTarget {
-    pub chat: String,
+    pub chat: ChatId,
     pub message: String,
 }
 

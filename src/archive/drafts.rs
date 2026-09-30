@@ -5,6 +5,7 @@
 //! the chat.
 
 use super::{Archive, Result, params};
+use crate::model::ChatId;
 
 pub const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS drafts (
@@ -16,7 +17,7 @@ CREATE TABLE IF NOT EXISTS drafts (
 
 impl Archive {
     /// Every stored draft, so the composer can restore them at startup.
-    pub fn drafts(&self) -> Result<Vec<(String, String)>> {
+    pub fn drafts(&self) -> Result<Vec<(ChatId, String)>> {
         let mut statement = self.connection.prepare("SELECT chat, text FROM drafts")?;
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         rows.collect()
@@ -72,8 +73,11 @@ mod tests {
         assert_eq!(
             drafts,
             vec![
-                ("1@s.whatsapp.net".to_owned(), "unsent again".to_owned()),
-                ("2@s.whatsapp.net".to_owned(), "other".to_owned()),
+                (
+                    ChatId::whatsapp("1@s.whatsapp.net"),
+                    "unsent again".to_owned(),
+                ),
+                (ChatId::whatsapp("2@s.whatsapp.net"), "other".to_owned()),
             ]
         );
 
@@ -81,7 +85,7 @@ mod tests {
         archive.set_draft("1@s.whatsapp.net", "   ", 13).unwrap();
         assert_eq!(
             archive.drafts().unwrap(),
-            vec![("2@s.whatsapp.net".to_owned(), "other".to_owned())]
+            vec![(ChatId::whatsapp("2@s.whatsapp.net"), "other".to_owned())]
         );
 
         // Sending the text, or dropping the chat, drops the draft.

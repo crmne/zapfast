@@ -416,7 +416,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
     });
     let Some(message) = app
         .conversations
-        .get(chat)
+        .get(&crate::model::ChatId::whatsapp(chat))
         .and_then(|c| c.message(id))
         .cloned()
     else {

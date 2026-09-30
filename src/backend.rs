@@ -68,13 +68,29 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let dirs = crate::paths::AppDirs::under(directory.path());
         let mut backend = super::Backend::spawn(dirs.clone(), super::Waker::default());
-        assert!(!dirs.session_db().exists());
-        assert!(!dirs.archive_db().exists());
+        assert!(
+            !dirs
+                .session_db(crate::account::AccountId::WHATSAPP)
+                .exists()
+        );
+        assert!(
+            !dirs
+                .archive_db(crate::account::AccountId::WHATSAPP)
+                .exists()
+        );
         // Closing before a first frame must cancel startup without connecting
         // or hanging while joining the waiting worker.
         backend.shutdown();
-        assert!(!dirs.session_db().exists());
-        assert!(!dirs.archive_db().exists());
+        assert!(
+            !dirs
+                .session_db(crate::account::AccountId::WHATSAPP)
+                .exists()
+        );
+        assert!(
+            !dirs
+                .archive_db(crate::account::AccountId::WHATSAPP)
+                .exists()
+        );
     }
 
     #[test]

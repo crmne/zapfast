@@ -3,13 +3,147 @@
 //! The backend translates protocol types into these models, keeping protobufs
 //! out of views and giving the archive a stable shape.
 
+use std::fmt;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Chat JID string: `<phone>@s.whatsapp.net`, `<id>@g.us`, or `<id>@lid`.
-pub type ChatId = String;
+use crate::account::AccountId;
+
+/// One chat on one account: a local account id plus the network's own peer
+/// string. WhatsApp peers are JIDs, other networks use their own ids. The
+/// persisted form is the peer string; old archive JSON loads as the linked
+/// WhatsApp account.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ChatId {
+    account: AccountId,
+    peer: String,
+}
+
+impl ChatId {
+    /// A chat on the linked WhatsApp account.
+    pub fn whatsapp(peer: impl Into<String>) -> Self {
+        Self::new(AccountId::WHATSAPP, peer)
+    }
+
+    pub fn new(account: AccountId, peer: impl Into<String>) -> Self {
+        Self {
+            account,
+            peer: peer.into(),
+        }
+    }
+
+    pub fn account(&self) -> AccountId {
+        self.account
+    }
+
+    pub fn peer(&self) -> &str {
+        &self.peer
+    }
+
+    pub fn into_peer(self) -> String {
+        self.peer
+    }
+
+    /// The peer part, for places that need a `&str` key or label.
+    pub fn as_str(&self) -> &str {
+        &self.peer
+    }
+}
+
+impl Default for ChatId {
+    fn default() -> Self {
+        Self::whatsapp("")
+    }
+}
+
+impl Deref for ChatId {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.peer
+    }
+}
+
+impl AsRef<str> for ChatId {
+    fn as_ref(&self) -> &str {
+        &self.peer
+    }
+}
+
+impl fmt::Display for ChatId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.peer)
+    }
+}
+
+impl From<String> for ChatId {
+    fn from(peer: String) -> Self {
+        Self::whatsapp(peer)
+    }
+}
+
+impl From<&str> for ChatId {
+    fn from(peer: &str) -> Self {
+        Self::whatsapp(peer)
+    }
+}
+
+impl From<&String> for ChatId {
+    fn from(peer: &String) -> Self {
+        Self::whatsapp(peer)
+    }
+}
+
+impl From<ChatId> for String {
+    fn from(chat: ChatId) -> Self {
+        chat.peer
+    }
+}
+
+impl PartialEq<str> for ChatId {
+    fn eq(&self, other: &str) -> bool {
+        self.peer == other
+    }
+}
+
+impl PartialEq<&str> for ChatId {
+    fn eq(&self, other: &&str) -> bool {
+        self.peer == *other
+    }
+}
+
+impl PartialEq<String> for ChatId {
+    fn eq(&self, other: &String) -> bool {
+        &self.peer == other
+    }
+}
+
+impl PartialEq<ChatId> for &str {
+    fn eq(&self, other: &ChatId) -> bool {
+        *self == other.peer
+    }
+}
+
+impl PartialEq<ChatId> for String {
+    fn eq(&self, other: &ChatId) -> bool {
+        self == &other.peer
+    }
+}
+
+impl Serialize for ChatId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.peer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ChatId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::whatsapp(String::deserialize(deserializer)?))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -186,7 +320,7 @@ impl Chat {
 
     /// Newsletter publishing permissions are not supported by this client.
     pub fn can_send(&self) -> bool {
-        !self.locked && !self.read_only && !self.left && self.kind != ChatKind::Broadcast
+        crate::account::Capabilities::whatsapp(self).text
     }
 
     /// A followed WhatsApp channel (newsletter).
@@ -1257,6 +1391,9 @@ pub enum Action {
     Open(Page),
     /// Opens settings, or closes them when they are already showing.
     ToggleSettings,
+    /// Shows the chats of another account. The open conversation belongs to
+    /// one account, so a conversation from another account closes.
+    SwitchAccount(AccountId),
     OpenChat(ChatId),
     /// Creates and opens a chat for a contact without one.
     StartChat {

@@ -397,7 +397,7 @@ pub async fn run(
     waker: Waker,
 ) {
     let archive = loop {
-        let path = dirs.archive_db();
+        let path = dirs.archive_db(crate::account::AccountId::WHATSAPP);
         let opened = tokio::task::spawn_blocking(move || Archive::open(&path)).await;
         match opened {
             Ok(Ok(archive)) => break archive,
@@ -610,7 +610,7 @@ enum RuntimeEvent {
 /// archive. Nothing is deleted from the archive: restoring the original
 /// keyring and renaming the file back recovers it.
 fn set_aside_unreadable_archive(dirs: &AppDirs) -> std::io::Result<PathBuf> {
-    let archive = dirs.archive_db();
+    let archive = dirs.archive_db(crate::account::AccountId::WHATSAPP);
     let stamp = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
     let kept = archive.with_file_name(format!("archive-unreadable-{stamp}.db"));
     std::fs::rename(&archive, &kept)?;
@@ -624,7 +624,7 @@ fn set_aside_unreadable_archive(dirs: &AppDirs) -> std::io::Result<PathBuf> {
             _ => {}
         }
     }
-    let session = dirs.session_db();
+    let session = dirs.session_db(crate::account::AccountId::WHATSAPP);
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut path = session.clone().into_os_string();
         path.push(suffix);
@@ -1035,7 +1035,7 @@ impl Worker {
         self.group_info_tries.remove(chat);
         match self.archive.remove_chat_through(chat, through, true) {
             Ok(removed) => {
-                self.pending_older.remove(chat);
+                self.pending_older.remove(&ChatId::whatsapp(chat));
                 if delete_media {
                     self.drop_cached_media(&removed.media);
                 }
@@ -1043,12 +1043,12 @@ impl Worker {
                     if self.archive.chat(chat).ok().flatten().is_none() {
                         log::info!("chat removal: deleted cached chat");
                         self.emit(Event::ChatRemoved {
-                            chat: chat.to_owned(),
+                            chat: ChatId::whatsapp(chat),
                         });
                     } else {
                         log::info!("chat removal: retained messages newer than deletion boundary");
                         self.emit(Event::ChatCleared {
-                            chat: chat.to_owned(),
+                            chat: ChatId::whatsapp(chat),
                             through,
                         });
                         self.emit_chat(chat);
@@ -1066,13 +1066,13 @@ impl Worker {
     fn empty_chat(&mut self, chat: &str, through: i64, delete_media: bool) -> bool {
         match self.archive.remove_chat_through(chat, through, false) {
             Ok(removed) => {
-                self.pending_older.remove(chat);
+                self.pending_older.remove(&ChatId::whatsapp(chat));
                 if delete_media {
                     self.drop_cached_media(&removed.media);
                 }
                 if removed.existed {
                     self.emit(Event::ChatCleared {
-                        chat: chat.to_owned(),
+                        chat: ChatId::whatsapp(chat),
                         through,
                     });
                     self.emit_chat(chat);
@@ -1480,7 +1480,7 @@ impl Worker {
     }
 
     async fn start_bot(&mut self) {
-        let path = self.dirs.session_db();
+        let path = self.dirs.session_db(crate::account::AccountId::WHATSAPP);
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -2138,7 +2138,7 @@ impl Worker {
                     }
                     let _ = commands.send(Command::GroupInfo {
                         leave_generation,
-                        chat,
+                        chat: ChatId::whatsapp(chat),
                         // Empty subjects leave cached titles intact and retry.
                         name: Some(metadata.subject.clone().unwrap_or_default()),
                         participants,
@@ -2164,7 +2164,10 @@ impl Worker {
                         .iter()
                         .any(|word| text.contains(word));
                     log::warn!("could not fetch group metadata");
-                    let _ = commands.send(Command::GroupInfoFailed { chat, permanent });
+                    let _ = commands.send(Command::GroupInfoFailed {
+                        chat: ChatId::whatsapp(chat),
+                        permanent,
+                    });
                 }
             }
         });
@@ -2246,7 +2249,7 @@ impl Worker {
                                     .iter()
                                     .map(|channel| {
                                         (
-                                            channel.jid.to_string(),
+                                            ChatId::whatsapp(channel.jid.to_string()),
                                             super::ChannelPicture::of(channel),
                                         )
                                     })
@@ -2345,7 +2348,7 @@ impl Worker {
                     return;
                 }
                 self.emit(Event::Typing {
-                    chat: self.canonical(&presence.source.chat),
+                    chat: ChatId::whatsapp(self.canonical(&presence.source.chat)),
                     sender: self.canonical(&presence.source.sender),
                     composing: matches!(presence.state, ChatPresence::Composing),
                 });
@@ -2627,7 +2630,7 @@ impl Worker {
         self.pair_code = None;
         self.pairing_phone = None;
         self.set_syncing(false);
-        let session = self.dirs.session_db();
+        let session = self.dirs.session_db(crate::account::AccountId::WHATSAPP);
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let mut path = session.clone().into_os_string();
             path.push(suffix);
@@ -3082,7 +3085,7 @@ impl Worker {
         let mentions = self.mentions_of(&mentioned_of(base));
         let row = Message {
             id: info.id.to_string(),
-            chat: chat.clone(),
+            chat: chat.clone().into(),
             sender,
             sender_name: if from_me {
                 None
@@ -3493,7 +3496,7 @@ impl Worker {
         }
         let row = Message {
             id: info.id.to_string(),
-            chat,
+            chat: chat.into(),
             sender,
             sender_name: if from_me {
                 None
@@ -3841,7 +3844,7 @@ impl Worker {
                 self.learn_pair(&lid, &pn);
             }
         }
-        let mut filed = Vec::new();
+        let mut filed: Vec<(ChatId, usize, Option<bool>)> = Vec::new();
         for (id, name) in &parsed.push_names {
             let id = self.canonical_str(id);
             self.remember_push_name(&id, name);
@@ -3890,7 +3893,7 @@ impl Worker {
                         .as_ref()
                         .map_or_else(|| self.chat_name(&id, None), |chat| chat.name.clone()),
                 };
-                let mut row = Chat::new(id.clone(), name);
+                let mut row = Chat::new(id.clone().into(), name);
                 row.group_subject_known = subject_known;
                 row.last_activity = chat.last_activity;
                 row.unread = existing.as_ref().map_or(0, |existing| existing.unread);
@@ -3995,7 +3998,7 @@ impl Worker {
                 let read_at = first(|receipt| receipt.read_timestamp).filter(|_| !group && read);
                 let mut row = Message {
                     id: message.id,
-                    chat: id.clone(),
+                    chat: id.clone().into(),
                     sender,
                     sender_name: if message.from_me {
                         None
@@ -4093,7 +4096,7 @@ impl Worker {
             {
                 let _ = self.archive.history_marked_unread(&id, marked);
             }
-            filed.push((id, count, chat.more_on_phone));
+            filed.push((id.into(), count, chat.more_on_phone));
         }
         self.pump_poll_votes();
         self.pump_poll_history();
@@ -4965,7 +4968,7 @@ impl Worker {
                         .get_invite_info(&code)
                         .await
                         .map(|group| crate::model::InviteInfo {
-                            id: group.id.to_string(),
+                            id: ChatId::whatsapp(group.id.to_string()),
                             subject: group.subject.unwrap_or_default(),
                             description: group.description.filter(|text| !text.trim().is_empty()),
                             members: group
@@ -4990,8 +4993,12 @@ impl Worker {
                 tokio::spawn(async move {
                     use whatsapp_rust::JoinGroupResult;
                     let result = match client.groups().join_with_invite_code(&code).await {
-                        Ok(JoinGroupResult::Joined(jid)) => Ok((jid.to_string(), false)),
-                        Ok(JoinGroupResult::PendingApproval(jid)) => Ok((jid.to_string(), true)),
+                        Ok(JoinGroupResult::Joined(jid)) => {
+                            Ok((ChatId::whatsapp(jid.to_string()), false))
+                        }
+                        Ok(JoinGroupResult::PendingApproval(jid)) => {
+                            Ok((ChatId::whatsapp(jid.to_string()), true))
+                        }
                         Err(error) => Err(invite_error(&error.to_string())),
                     };
                     let _ = commands.send(Command::InviteJoined { code, result });
@@ -5420,7 +5427,7 @@ impl Worker {
                 self.emit(Event::Error(error));
             }
             Command::GroupInfoFailed { chat, permanent } => {
-                self.handle_failed_group(chat, permanent);
+                self.handle_failed_group(chat.to_string(), permanent);
             }
             Command::Sent { chat, id, error } => {
                 let completed = self.interactive_sending.iter().find_map(
@@ -5498,12 +5505,17 @@ impl Worker {
                 // A snapshot asked for before a rename made here was confirmed
                 // may still carry the old subject: keep ours.
                 let name = name.filter(|_| {
-                    subject_generation >= self.subject_generation.get(&chat).copied().unwrap_or(0)
+                    subject_generation
+                        >= self
+                            .subject_generation
+                            .get(chat.as_str())
+                            .copied()
+                            .unwrap_or(0)
                 });
                 if name.as_deref().is_none_or(|name| name.trim().is_empty()) {
-                    self.handle_failed_group(chat.clone(), false);
+                    self.handle_failed_group(chat.to_string(), false);
                 } else {
-                    self.group_info_tries.remove(&chat);
+                    self.group_info_tries.remove(chat.as_str());
                     self.group_info_retry.retain(|(_, id)| id != &chat);
                 }
                 let _ =
@@ -5514,7 +5526,12 @@ impl Worker {
                 // remembered leave no longer holds. Only a snapshot asked for
                 // after the leave counts: one already in flight when it was
                 // confirmed still lists us and would undo it.
-                if leave_generation >= self.leave_generation.get(&chat).copied().unwrap_or(0)
+                if leave_generation
+                    >= self
+                        .leave_generation
+                        .get(chat.as_str())
+                        .copied()
+                        .unwrap_or(0)
                     && participants.iter().any(|id| self.is_me(id))
                 {
                     let _ = self.archive.set_left(&chat, false);
@@ -5643,11 +5660,13 @@ impl Worker {
         match (result, edit) {
             (Ok(()), GroupEdit::Name(name)) => {
                 // Metadata asked for before now may still name the old subject.
-                *self.subject_generation.entry(chat.clone()).or_default() += 1;
+                *self.subject_generation.entry(chat.to_string()).or_default() += 1;
                 let _ = self.archive.rename_chat(&chat, &name);
                 self.emit_chat(&chat);
             }
-            (Ok(()), GroupEdit::Picture { removed }) => self.refresh_avatar(chat, removed),
+            (Ok(()), GroupEdit::Picture { removed }) => {
+                self.refresh_avatar(chat.to_string(), removed)
+            }
             (Err(error), edit) => {
                 let refused = group_edit_refused(&error);
                 log::warn!(
@@ -6127,7 +6146,7 @@ impl Worker {
                     log::debug!("chat read state not synced: {error}");
                 }
                 let _ = commands.send(Command::ReadSyncFinished {
-                    chat,
+                    chat: chat.into(),
                     through,
                     success: result.is_ok(),
                 });
@@ -6160,7 +6179,7 @@ impl Worker {
                     log::debug!("chat unread mark not synced: {error}");
                 }
                 let _ = commands.send(Command::UnreadSyncFinished {
-                    chat,
+                    chat: chat.into(),
                     marked_at,
                     success: result.is_ok(),
                 });
@@ -6229,7 +6248,7 @@ impl Worker {
         if before.is_none()
             && ChatKind::from_id(&chat) == ChatKind::Direct
             && chat != self.me()
-            && self.presence_subscribed.insert(chat.clone())
+            && self.presence_subscribed.insert(chat.to_string())
             && let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat))
         {
             tokio::spawn(async move {
@@ -6519,8 +6538,11 @@ impl Worker {
         match self.archive.stickers_without_file(STICKER_FETCH_LIMIT) {
             Ok(list) => {
                 for (chat, id) in list {
-                    if self.sticker_downloads.insert((chat.clone(), id.clone())) {
-                        self.download(chat, id);
+                    if self
+                        .sticker_downloads
+                        .insert((chat.clone().into(), id.clone()))
+                    {
+                        self.download(chat.into(), id);
                     }
                 }
             }
@@ -7232,7 +7254,7 @@ impl Worker {
             self.emit(Event::MessageUpdated(Box::new(updated)));
         }
         let key = wa::MessageKey {
-            remote_jid: Some(chat.clone()),
+            remote_jid: Some(chat.to_string()),
             from_me: Some(target.from_me),
             id: Some(id),
             participant: (jid.is_group() && !target.from_me).then(|| target.sender.clone()),
@@ -8471,7 +8493,7 @@ pub(super) async fn file_outbound(
     }
     let row = Message {
         id,
-        chat: chat.to_owned(),
+        chat: ChatId::whatsapp(chat),
         sender: me.to_owned(),
         sender_name: None,
         from_me: true,
@@ -10287,18 +10309,38 @@ mod tests {
         let root = std::env::temp_dir().join(format!("zapfast-start-over-{}", std::process::id()));
         let dirs = AppDirs::under(&root);
         dirs.ensure().unwrap();
-        std::fs::write(dirs.archive_db(), b"encrypted").unwrap();
-        let mut wal = dirs.archive_db().into_os_string();
+        crate::paths::create_private_dir(&dirs.account_dir(crate::account::AccountId::WHATSAPP))
+            .unwrap();
+        std::fs::write(
+            dirs.archive_db(crate::account::AccountId::WHATSAPP),
+            b"encrypted",
+        )
+        .unwrap();
+        let mut wal = dirs
+            .archive_db(crate::account::AccountId::WHATSAPP)
+            .into_os_string();
         wal.push("-wal");
         std::fs::write(&wal, b"log").unwrap();
-        std::fs::write(dirs.session_db(), b"keys").unwrap();
+        std::fs::write(
+            dirs.session_db(crate::account::AccountId::WHATSAPP),
+            b"keys",
+        )
+        .unwrap();
         let kept = set_aside_unreadable_archive(&dirs).unwrap();
         assert_eq!(std::fs::read(&kept).unwrap(), b"encrypted");
         let mut kept_wal = kept.clone().into_os_string();
         kept_wal.push("-wal");
         assert_eq!(std::fs::read(kept_wal).unwrap(), b"log");
-        assert!(!dirs.archive_db().exists());
-        assert!(!dirs.session_db().exists());
+        assert!(
+            !dirs
+                .archive_db(crate::account::AccountId::WHATSAPP)
+                .exists()
+        );
+        assert!(
+            !dirs
+                .session_db(crate::account::AccountId::WHATSAPP)
+                .exists()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -11111,7 +11153,7 @@ mod receipt_tests {
     #[tokio::test]
     async fn stopping_the_bot_drops_a_running_forward_batch() {
         let (mut worker, _events, _inbox, _wa) = worker();
-        let to_chat = PEER.to_owned();
+        let to_chat = ChatId::whatsapp(PEER);
         let jid = Jid::pn(PEER);
         let mut queue = ForwardQueue::new();
         let running = queue

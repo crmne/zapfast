@@ -374,7 +374,7 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
             palette.secondary,
         );
     }
-    if let Some(presence) = app.presence.get(&chat.id) {
+    if let Some(presence) = app.presence.get(chat.id.as_str()) {
         if presence.online {
             return ("online".to_owned(), palette.accent);
         }
@@ -2567,7 +2567,7 @@ fn reaction_affordance_visible(pointer: Option<egui::Pos2>, bubble: Rect, button
 
 fn open_reaction_picker_action(chat: &str, message: &str) -> Action {
     Action::OpenReactionPicker {
-        chat: chat.to_owned(),
+        chat: crate::model::ChatId::whatsapp(chat),
         message: message.to_owned(),
         beside_menu: false,
     }
@@ -2763,7 +2763,9 @@ fn bubble(
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                     {
-                        actions.push(Action::ShowDialog(Dialog::ChatInfo(message.sender.clone())));
+                        actions.push(Action::ShowDialog(Dialog::ChatInfo(
+                            crate::model::ChatId::whatsapp(message.sender.clone()),
+                        )));
                     }
                     if show_sender && ui.is_rect_visible(rect) {
                         let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
@@ -3181,7 +3183,9 @@ fn bubble_frame(
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if response.clicked() {
-                    actions.push(Action::ShowDialog(Dialog::ChatInfo(message.sender.clone())));
+                    actions.push(Action::ShowDialog(Dialog::ChatInfo(
+                        crate::model::ChatId::whatsapp(message.sender.clone()),
+                    )));
                 }
             }
             // Reserve the label's line now and paint it once the contents
@@ -4594,7 +4598,7 @@ fn content(
                                 .clicked()
                                 {
                                     actions.push(Action::StartChat {
-                                        id: id.clone(),
+                                        id: crate::model::ChatId::whatsapp(id.clone()),
                                         name: name.to_owned(),
                                     });
                                 }
@@ -6863,7 +6867,7 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if theme::pill_button(ui, &palette, "Forward…", true).clicked() {
                 app.actions.push(Action::ShowDialog(Dialog::Forward {
-                    chat: chat.to_owned(),
+                    chat: crate::model::ChatId::whatsapp(chat),
                     messages: selected.to_vec(),
                 }));
             }

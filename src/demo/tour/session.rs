@@ -202,7 +202,10 @@ pub fn respond(app: &mut App) {
 }
 
 fn quote(app: &App, chat: &str, id: String) -> Option<Quoted> {
-    let row = app.conversations.get(chat)?.message(&id)?;
+    let row = app
+        .conversations
+        .get(&crate::model::ChatId::whatsapp(chat))?
+        .message(&id)?;
     Some(Quoted {
         sender: row.sender.clone(),
         sender_name: row.sender_name.clone(),
@@ -215,7 +218,7 @@ fn quote(app: &App, chat: &str, id: String) -> Option<Quoted> {
 fn outgoing(app: &App, chat: &str, content: Content) -> Message {
     let count = app
         .conversations
-        .get(chat)
+        .get(&crate::model::ChatId::whatsapp(chat))
         .map_or(0, |chat| chat.messages.len());
     super::super::message(
         chat,

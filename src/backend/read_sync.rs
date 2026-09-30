@@ -35,7 +35,7 @@ impl ReadSync {
         if !self.ready(now) {
             return false;
         }
-        self.in_flight = Some((chat.to_owned(), position, read));
+        self.in_flight = Some((crate::model::ChatId::whatsapp(chat), position, read));
         true
     }
 

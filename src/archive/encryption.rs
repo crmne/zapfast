@@ -20,37 +20,110 @@ fn plaintext(path: &Path) -> Result<bool> {
         return Ok(true);
     }
     let mut header = [0; 16];
-    file.read_exact(&mut header)?;
-    Ok(&header == HEADER)
+    let read = file.read(&mut header)?;
+    Ok(read < 16 || &header == HEADER)
 }
 
-pub(super) fn key_for(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
+#[cfg(target_os = "linux")]
+type PlatformStore = zbus_secret_service_keyring_store::Store;
+#[cfg(target_os = "macos")]
+type PlatformStore = apple_native_keyring_store::keychain::Store;
+#[cfg(windows)]
+type PlatformStore = windows_native_keyring_store::Store;
+
+/// The keyring credential label for an archive: a digest of its directory,
+/// never a user path, phone number, or message data. Separate profiles must
+/// not overwrite each other's keys.
+fn identity(path: &Path) -> Result<String> {
     let parent = path.parent().context("Archive has no parent directory")?;
-    fs::create_dir_all(parent)?;
-    // Separate profiles must not overwrite each other's keys. The credential
-    // label contains a digest, never a user path, phone number or message data.
     let digest = Sha256::digest(parent.canonicalize()?.as_os_str().as_encoded_bytes());
-    let identity = format!(
+    Ok(format!(
         "archive-{}",
         digest
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
-    );
+    ))
+}
+
+fn platform_store() -> Result<std::sync::Arc<PlatformStore>> {
     #[cfg(target_os = "linux")]
     let store = zbus_secret_service_keyring_store::Store::new();
     #[cfg(target_os = "macos")]
     let store = apple_native_keyring_store::keychain::Store::new();
     #[cfg(windows)]
     let store = windows_native_keyring_store::Store::new();
-    let store = store
+    store
         .map_err(keyring_error)
-        .context("Unlock your OS keyring and restart ZapFast")?;
-    let entry = store
-        .build("rocks.zapfast.ZapFast", &identity, None)
+        .context("Unlock your OS keyring and restart ZapFast")
+}
+
+fn entry_for(store: &impl CredentialStoreApi, path: &Path) -> Result<keyring_core::Entry> {
+    store
+        .build("rocks.zapfast.ZapFast", &identity(path)?, None)
         .map_err(keyring_error)
-        .context("The OS keyring could not open ZapFast's archive key")?;
+        .context("The OS keyring could not open ZapFast's archive key")
+}
+
+pub(super) fn key_for(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let store = platform_store()?;
+    let entry = entry_for(&*store, path)?;
     key_from_entry(path, &entry)
+}
+
+/// Moves an encrypted archive's keyring credential to the new path before its
+/// file moves there. A plaintext or empty archive has no key: opening it at
+/// the new path creates one there, and this returns without touching the
+/// keyring.
+pub(super) fn move_key(from: &Path, to: &Path) -> Result<()> {
+    if plaintext(from)? {
+        return Ok(());
+    }
+    let store = platform_store()?;
+    move_key_in(&*store, from, to)
+}
+
+/// The credential move itself. The old entry is removed only after the new
+/// one reads back, so an interruption leaves the key reachable from both
+/// paths.
+fn move_key_in(store: &impl CredentialStoreApi, from: &Path, to: &Path) -> Result<()> {
+    let old = entry_for(store, from)?;
+    let secret = match old.get_secret() {
+        Ok(secret) => Zeroizing::new(secret),
+        Err(keyring_core::Error::NoEntry) => {
+            anyhow::bail!(
+                "The archive is encrypted but its OS keyring key is missing. Restore the original keyring; the archive has not been changed"
+            )
+        }
+        Err(error) => {
+            return Err(keyring_error(error)).context("Unlock your OS keyring and restart ZapFast");
+        }
+    };
+    ensure!(
+        secret.len() == 32,
+        "The archive key in the OS keyring is invalid"
+    );
+    let new = entry_for(store, to)?;
+    new.set_secret(&secret)
+        .map_err(keyring_error)
+        .context("Could not save the archive key in the OS keyring")?;
+    // Read back before removing the only other copy.
+    let saved = Zeroizing::new(
+        new.get_secret()
+            .map_err(keyring_error)
+            .context("Could not verify the saved archive key")?,
+    );
+    ensure!(
+        saved.as_slice() == secret.as_slice(),
+        "The OS keyring did not retain the archive key"
+    );
+    old.delete_credential()
+        .map_err(keyring_error)
+        .context("Could not remove the old archive key from the OS keyring")?;
+    Ok(())
 }
 
 fn key_from_entry(path: &Path, entry: &keyring_core::Entry) -> Result<Zeroizing<[u8; 32]>> {
@@ -486,5 +559,67 @@ mod tests {
         assert_eq!(read_secret(&Connection::open(&path).unwrap()), "keep me");
         fs::remove_dir(path.with_extension("db.encrypting")).unwrap();
         assert_eq!(read_secret(&open(&path, &[9; 32]).unwrap()), "keep me");
+    }
+
+    #[test]
+    fn a_plaintext_archive_has_no_key_to_move() {
+        let directory = directory();
+        let from = directory.path().join("state/archive.db");
+        let to = directory.path().join("state/accounts/1/archive.db");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::create_dir_all(to.parent().unwrap()).unwrap();
+        for bytes in [b"".as_slice(), b"short".as_slice(), HEADER.as_slice()] {
+            fs::write(&from, bytes).unwrap();
+            move_key(&from, &to).unwrap();
+            assert!(!to.exists());
+        }
+    }
+
+    #[test]
+    fn moving_an_encrypted_archives_key_keeps_it_readable_at_the_new_path() {
+        let directory = directory();
+        let store = keyring_core::mock::Store::new().unwrap();
+        let old_path = directory.path().join("state/archive.db");
+        let new_path = directory.path().join("state/accounts/1/archive.db");
+        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(new_path.parent().unwrap()).unwrap();
+        let old_entry = entry_for(&*store, &old_path).unwrap();
+        let key = key_from_entry(&old_path, &old_entry).unwrap();
+        let connection = open(&old_path, &key).unwrap();
+        connection
+            .execute_batch("CREATE TABLE secrets(value TEXT); INSERT INTO secrets VALUES ('kept');")
+            .unwrap();
+        drop(connection);
+        fs::rename(&old_path, &new_path).unwrap();
+        move_key_in(&*store, &old_path, &new_path).unwrap();
+        assert!(matches!(
+            old_entry.get_secret(),
+            Err(keyring_core::Error::NoEntry)
+        ));
+        let moved = key_from_entry(&new_path, &entry_for(&*store, &new_path).unwrap()).unwrap();
+        assert_eq!(*moved, *key);
+        assert_eq!(read_secret(&open(&new_path, &key).unwrap()), "kept");
+    }
+
+    #[test]
+    fn moving_an_encrypted_archive_without_its_key_stops_before_touching_it() {
+        let directory = directory();
+        let store = keyring_core::mock::Store::new().unwrap();
+        let old_path = directory.path().join("state/archive.db");
+        let new_path = directory.path().join("state/accounts/1/archive.db");
+        fs::create_dir_all(old_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(new_path.parent().unwrap()).unwrap();
+        let entry = entry_for(&*store, &old_path).unwrap();
+        let key = key_from_entry(&old_path, &entry).unwrap();
+        let connection = open(&old_path, &key).unwrap();
+        connection
+            .execute_batch("CREATE TABLE secrets(value TEXT); INSERT INTO secrets VALUES ('kept');")
+            .unwrap();
+        drop(connection);
+        entry.delete_credential().unwrap();
+        let error = move_key_in(&*store, &old_path, &new_path).unwrap_err();
+        assert!(error.to_string().contains("missing"));
+        assert!(!new_path.exists());
+        assert!(open(&old_path, &key).is_ok());
     }
 }

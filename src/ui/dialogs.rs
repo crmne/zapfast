@@ -3,7 +3,7 @@
 use egui::{Align, CornerRadius, Frame, Layout, Margin, Sense, Stroke, pos2, vec2};
 
 use crate::app::App;
-use crate::model::{Action, Dialog};
+use crate::model::{Action, ChatId, Dialog};
 use crate::theme::{self, Icon};
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
@@ -98,7 +98,7 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
     let palette = app.palette;
     let row = app
         .conversations
-        .get(chat)
+        .get(&ChatId::whatsapp(chat))
         .and_then(|c| c.message(message))
         .cloned();
     let selected = row.as_ref().and_then(|row| match &row.content {
@@ -140,7 +140,7 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
         && app.chat(chat).is_some_and(|chat| chat.can_send());
     let pending = app
         .interactive_sending
-        .contains(&(chat.to_owned(), message.to_owned()));
+        .contains(&(ChatId::whatsapp(chat), message.to_owned()));
     let enabled = available && app.link.is_connected() && !pending;
     if !enabled {
         let reason = if !available {
@@ -184,7 +184,7 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
                     ));
                     if interactive_option(ui, &palette, option, id).clicked() {
                         app.actions.push(Action::ReplyInteractive {
-                            chat: chat.to_owned(),
+                            chat: ChatId::whatsapp(chat),
                             message: message.to_owned(),
                             button,
                             choice: Some(choice),
@@ -366,7 +366,8 @@ fn confirm_lock_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
     );
     ui.horizontal(|ui| {
         if theme::pill_button(ui, &palette, "Lock chat", true).clicked() {
-            app.actions.push(Action::SetLocked(id.to_owned(), true));
+            app.actions
+                .push(Action::SetLocked(ChatId::whatsapp(id), true));
             app.actions.push(Action::CloseDialog);
             if app.settings.chat_lock_code_hash.is_none() {
                 app.actions.push(Action::OpenLockedFolder);
@@ -404,9 +405,9 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     for chat in &app.chats {
         if chat.kind == crate::model::ChatKind::Direct {
             contacts
-                .entry(chat.id.clone())
+                .entry(chat.id.peer().to_owned())
                 .or_insert_with(|| crate::model::Contact {
-                    id: chat.id.clone(),
+                    id: chat.id.peer().to_owned(),
                     full_name: Some(app.chat_title(chat)),
                     ..Default::default()
                 });
@@ -553,7 +554,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String
     }
     if let Some(to_chat) = destination {
         app.actions.push(Action::Forward {
-            from_chat: from_chat.to_owned(),
+            from_chat: ChatId::whatsapp(from_chat),
             messages: messages.to_vec(),
             to_chat,
         });
@@ -699,7 +700,7 @@ fn confirm_delete_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if danger_button(ui, app, "Delete") {
-                app.actions.push(Action::DeleteChat(id.to_owned()));
+                app.actions.push(Action::DeleteChat(ChatId::whatsapp(id)));
                 app.actions.push(Action::CloseDialog);
             }
             if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
@@ -727,7 +728,7 @@ fn confirm_clear_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if danger_button(ui, app, "Clear chat") {
-                app.actions.push(Action::ClearChat(id.to_owned()));
+                app.actions.push(Action::ClearChat(ChatId::whatsapp(id)));
                 app.actions.push(Action::CloseDialog);
             }
             if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
@@ -1071,7 +1072,7 @@ fn confirm_delete_message(
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if danger_button(ui, app, "Delete") {
-                let (chat, id) = (chat.to_owned(), id.to_owned());
+                let (chat, id) = (ChatId::whatsapp(chat), id.to_owned());
                 let action = if for_everyone {
                     Action::DeleteForEveryone { chat, id }
                 } else {
@@ -1138,7 +1139,7 @@ fn confirm_leave_group(app: &mut App, ui: &mut egui::Ui, id: &str) {
     };
     if danger_button(ui, app, leave_label.as_ref()) {
         app.actions.push(Action::LeaveGroup {
-            chat: id.to_owned(),
+            chat: ChatId::whatsapp(id),
             archive: false,
         });
     }
@@ -1151,7 +1152,7 @@ fn confirm_leave_group(app: &mut App, ui: &mut egui::Ui, id: &str) {
         };
         if theme::pill_button(ui, &palette, archive_label.as_ref(), false).clicked() {
             app.actions.push(Action::LeaveGroup {
-                chat: id.to_owned(),
+                chat: ChatId::whatsapp(id),
                 archive: true,
             });
         }
@@ -1433,7 +1434,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
     let chat = app
         .chat(id)
         .cloned()
-        .unwrap_or_else(|| crate::model::Chat::new(id.to_owned(), app.display_name(id)));
+        .unwrap_or_else(|| crate::model::Chat::new(ChatId::whatsapp(id), app.display_name(id)));
     let has_chat = app.chat(id).is_some();
     let name = app.chat_title(&chat);
     let heading = if chat.is_group() {
@@ -1457,7 +1458,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
     let can_leave = chat.can_leave(&app.our_ids());
     // A group's name and photo, when WhatsApp lets us change them. Nothing is
     // offered while a change is on its way.
-    let saving = app.group_saving.contains(id);
+    let saving = app.group_saving.contains(&ChatId::whatsapp(id));
     let group_editable = chat.can_edit_info() && !saving;
     let mut renaming = app.group_name_edit.take().filter(|_| group_editable);
     let mut group_action = None;
@@ -1477,7 +1478,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
                         Action::CloseGroupName
                     } else {
                         Action::SetGroupName {
-                            chat: id.to_owned(),
+                            chat: ChatId::whatsapp(id),
                             name: typed.to_owned(),
                         }
                     });
@@ -1674,7 +1675,9 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
     }
     if leave {
         app.actions
-            .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(id.to_owned())));
+            .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
+                ChatId::whatsapp(id),
+            )));
     }
     ui.add_space(8.0);
     if chat.is_group() && !chat.participants.is_empty() {
@@ -1746,7 +1749,9 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             && Some(member.as_str()) != app.me.as_deref()
         {
             app.actions
-                .push(Action::ShowDialog(Dialog::ChatInfo(member)));
+                .push(Action::ShowDialog(Dialog::ChatInfo(ChatId::whatsapp(
+                    member,
+                ))));
         }
         ui.add_space(6.0);
     }
@@ -1901,14 +1906,14 @@ fn group_photo(
         .frame(super::widgets::menu_frame(&palette))
         .show(|ui| {
             if super::widgets::menu_item(ui, &palette, Some(Icon::Image), &change) {
-                chosen = Some(Action::PickGroupPicture(id.to_owned()));
+                chosen = Some(Action::PickGroupPicture(ChatId::whatsapp(id)));
                 ui.close();
             }
             // Only a photo that is there can be removed.
             if picture.is_some()
                 && super::widgets::menu_item(ui, &palette, Some(Icon::Trash), &remove)
             {
-                chosen = Some(Action::RemoveGroupPicture(id.to_owned()));
+                chosen = Some(Action::RemoveGroupPicture(ChatId::whatsapp(id)));
                 ui.close();
             }
         });

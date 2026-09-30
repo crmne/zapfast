@@ -1192,7 +1192,7 @@ mod tests {
     #[tokio::test]
     async fn the_shelves_update_once_their_batch_of_downloads_is_in() {
         let (mut worker, _root, events, _commands) = sticker_worker();
-        let chat = "a@s.whatsapp.net".to_owned();
+        let chat = ChatId::whatsapp("a@s.whatsapp.net");
         worker.sticker_downloads = [(chat.clone(), "1".into()), (chat.clone(), "2".into())].into();
         let listed = |events: &std::sync::mpsc::Receiver<Event>| {
             events

@@ -61,7 +61,7 @@ impl Worker {
                 .insert(chat.clone(), picture.clone());
             if previous.is_some_and(|previous| previous != picture) {
                 let removed = picture.path(true).is_none();
-                self.refresh_avatar(chat, removed);
+                self.refresh_avatar(chat.to_string(), removed);
             }
         }
     }
@@ -69,7 +69,11 @@ impl Worker {
     /// Fetches a channel's picture from its metadata. `fetch_avatar` has
     /// already found no fresh copy on disk.
     pub(super) fn fetch_channel_avatar(&mut self, id: String, full: bool) {
-        let known = self.channel_pictures.known.get(&id).cloned();
+        let known = self
+            .channel_pictures
+            .known
+            .get(&crate::model::ChatId::whatsapp(id.as_str()))
+            .cloned();
         let connected = self
             .client
             .as_ref()

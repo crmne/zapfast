@@ -267,10 +267,15 @@ pub const RTL_SELF_CHAT: [&str; 3] = [
 /// European digits, a time, and a phone number, each reading left to right.
 const RTL_NUMBERS: &str = "لدي ٤٥ رسالة، الساعة ١٢:٣٠\nعندي 45 رسالة\nاتصل على +49 170 1234567";
 
+/// Every demo chat belongs to the linked WhatsApp account.
+pub(crate) fn chat_id(peer: &str) -> crate::model::ChatId {
+    crate::model::ChatId::whatsapp(peer)
+}
+
 fn message(chat: &str, id: &str, from_me: bool, timestamp: i64, content: Content) -> Message {
     Message {
         id: id.to_owned(),
-        chat: chat.to_owned(),
+        chat: crate::model::ChatId::whatsapp(chat),
         sender: if from_me {
             ME.to_owned()
         } else {
@@ -302,7 +307,7 @@ fn plant_avatars(app: &mut App) {
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    let mut everyone: Vec<String> = sample_ids().iter().map(|id| (*id).to_owned()).collect();
+    let mut everyone: Vec<String> = sample_ids().iter().map(|id| id.to_string()).collect();
     everyone.push(ME.to_owned());
     for chat in &app.chats {
         everyone.extend(chat.participants.iter().cloned());
@@ -499,7 +504,7 @@ pub fn populate(app: &mut App) {
         },
     );
     for sample in SAMPLES {
-        let mut chat = Chat::new(sample.id.to_owned(), sample.name.to_owned());
+        let mut chat = Chat::new(chat_id(sample.id), sample.name.to_owned());
         chat.last_activity = now - sample.minutes_ago * 60;
         chat.unread = sample.unread;
         // Two favorites, in the phone's order rather than by recency.
@@ -570,7 +575,7 @@ pub fn populate(app: &mut App) {
                 full: last.content.full_summary(),
                 status: last.status,
             });
-        app.conversations.insert(sample.id.to_owned(), conversation);
+        app.conversations.insert(chat_id(sample.id), conversation);
         app.chats.push(chat);
     }
 
@@ -793,7 +798,10 @@ pub fn populate(app: &mut App) {
         ),
         message(ada, "ada-deleted", false, older + 60 * 25, Content::Revoked),
     ];
-    let conversation = app.conversations.get_mut(ada).expect("sample chat");
+    let conversation = app
+        .conversations
+        .get_mut(&chat_id(ada))
+        .expect("sample chat");
     conversation.messages.splice(0..0, extra);
     conversation.messages.extend(latest);
 
@@ -880,7 +888,7 @@ pub fn populate(app: &mut App) {
         ),
     ];
     app.conversations
-        .get_mut(group)
+        .get_mut(&chat_id(group))
         .expect("sample group")
         .messages
         .extend(group_extra);
@@ -904,7 +912,7 @@ pub fn populate(app: &mut App) {
         }
     }
     app.typing.insert(
-        SAMPLES[1].id.to_owned(),
+        chat_id(SAMPLES[1].id),
         vec![(group_members[1].0.to_owned(), std::time::Instant::now())],
     );
     app.presence.insert(
@@ -914,7 +922,7 @@ pub fn populate(app: &mut App) {
             last_seen: None,
         },
     );
-    app.open_chat = Some(ada.to_owned());
+    app.open_chat = Some(chat_id(ada));
     // Mark the open chat as read.
     if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == ada) {
         chat.unread = 0;
@@ -930,7 +938,7 @@ pub fn populate(app: &mut App) {
 /// the dialog that adds it.
 fn shared_pack_sample(app: &mut App, open: bool) {
     let id = SAMPLES[0].id;
-    let Some(conversation) = app.conversations.get_mut(id) else {
+    let Some(conversation) = app.conversations.get_mut(&chat_id(id)) else {
         return;
     };
     let Some(mut row) = conversation.messages.last().cloned() else {
@@ -1024,8 +1032,8 @@ fn sticker_sample(app: &mut App, shelf: crate::model::StickerShelf, search: &str
 /// the member's reply quoting a third.
 fn quote_sample(app: &mut App) {
     let group = SAMPLES[1].id;
-    app.open_chat = Some(group.to_owned());
-    let Some(conversation) = app.conversations.get_mut(group) else {
+    app.open_chat = Some(chat_id(group));
+    let Some(conversation) = app.conversations.get_mut(&chat_id(group)) else {
         return;
     };
     let quoted = conversation
@@ -1223,7 +1231,7 @@ fn interactive_sample(app: &mut App, with_image: bool) {
             status: last.status,
         });
     }
-    app.conversations.get_mut(id).unwrap().messages = messages;
+    app.conversations.get_mut(&chat_id(id)).unwrap().messages = messages;
     app.open_chat = Some(id.into());
     app.typing.clear();
     app.scroll_to_bottom = true;
@@ -1232,7 +1240,11 @@ fn interactive_sample(app: &mut App, with_image: bool) {
 fn interactive_actions_sample(app: &mut App) {
     use crate::model::{InteractiveAction, InteractiveButton, InteractiveCard, InteractiveOption};
     interactive_sample(app, false);
-    let source = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+    let source = &mut app
+        .conversations
+        .get_mut(&chat_id(SAMPLES[0].id))
+        .unwrap()
+        .messages[0];
     let body =
         "Your *creative workshop* is ready. 🎨\n\nChoose a session or copy your invitation code.";
     let buttons = vec![
@@ -1279,14 +1291,24 @@ fn interactive_actions_sample(app: &mut App) {
             ..Default::default()
         })),
     };
-    if let Some(quote) = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[1].quoted {
+    if let Some(quote) = &mut app
+        .conversations
+        .get_mut(&chat_id(SAMPLES[0].id))
+        .unwrap()
+        .messages[1]
+        .quoted
+    {
         quote.summary = body.lines().next().unwrap().into();
     }
 }
 
 fn interactive_list_sample(app: &mut App) {
     interactive_actions_sample(app);
-    let row = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+    let row = &mut app
+        .conversations
+        .get_mut(&chat_id(SAMPLES[0].id))
+        .unwrap()
+        .messages[0];
     let Content::Interactive {
         text,
         card: Some(card),
@@ -1334,7 +1356,7 @@ fn interactive_list_sample(app: &mut App) {
     }];
     *text = card.body.clone();
     app.conversations
-        .get_mut(SAMPLES[0].id)
+        .get_mut(&chat_id(SAMPLES[0].id))
         .unwrap()
         .messages
         .truncate(1);
@@ -1385,7 +1407,7 @@ fn carousel_sample(app: &mut App, count: usize) {
         }
     })
     .collect();
-    let c = app.conversations.get_mut(SAMPLES[0].id).unwrap();
+    let c = app.conversations.get_mut(&chat_id(SAMPLES[0].id)).unwrap();
     c.messages.truncate(1);
     c.messages[0].content = Content::Interactive {
         text: "Explore our creative sessions".into(),
@@ -1400,7 +1422,7 @@ fn carousel_sample(app: &mut App, count: usize) {
 fn poll_sample(app: &mut App, voted: bool, results: bool) {
     interactive_sample(app, false);
     let now = crate::util::now();
-    let c = app.conversations.get_mut(SAMPLES[0].id).unwrap();
+    let c = app.conversations.get_mut(&chat_id(SAMPLES[0].id)).unwrap();
     c.messages.truncate(1);
     c.messages[0].id = "poll-demo".into();
     c.messages[0].content = Content::Poll {
@@ -1486,7 +1508,7 @@ fn message_info_sample(app: &mut App, recorded: bool) {
     let now = crate::util::now();
     app.open_chat = Some(chat.into());
     app.typing.clear();
-    let c = app.conversations.get_mut(chat).unwrap();
+    let c = app.conversations.get_mut(&chat_id(chat)).unwrap();
     let message = c
         .messages
         .iter_mut()
@@ -1889,7 +1911,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "message-info-direct" => {
                 let chat = SAMPLES[0].id;
-                let c = app.conversations.get_mut(chat).unwrap();
+                let c = app.conversations.get_mut(&chat_id(chat)).unwrap();
                 let message = c
                     .messages
                     .iter_mut()
@@ -1938,7 +1960,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     });
                     messages.push(reply);
                 }
-                app.conversations.get_mut(chat).unwrap().messages = messages;
+                app.conversations.get_mut(&chat_id(chat)).unwrap().messages = messages;
                 app.open_chat = Some(chat.into());
                 app.reply_to = Some("arabic-original".into());
                 app.typing.clear();
@@ -1997,7 +2019,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         last.summary = "٤٥".into();
                     }
                 }
-                app.conversations.get_mut(id).expect("demo group").messages = messages;
+                app.conversations
+                    .get_mut(&chat_id(id))
+                    .expect("demo group")
+                    .messages = messages;
                 app.composer = "١٢:٣٠".into();
                 app.open_chat = Some(id.into());
                 app.typing.clear();
@@ -2169,13 +2194,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 } else {
                     SAMPLES[1].id
                 };
-                app.open_chat = Some(group.to_owned());
-                app.dialog = Some(Dialog::ChatInfo(group.to_owned()));
+                app.open_chat = Some(chat_id(group));
+                app.dialog = Some(Dialog::ChatInfo(chat_id(group)));
                 if part == "group-info-rename" {
                     app.group_name_edit = Some("Rust Berlin 🦀".to_owned());
                 }
                 if part == "group-info-saving" {
-                    app.group_saving.insert(group.to_owned());
+                    app.group_saving.insert(chat_id(group));
                 }
             }
             "forward" => {
@@ -2186,13 +2211,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "unlink" => app.dialog = Some(Dialog::ConfirmUnlink),
             "leave-group" => {
-                let group = SAMPLES[1].id.to_owned();
+                let group = chat_id(SAMPLES[1].id);
                 app.open_chat = Some(group.clone());
                 app.dialog = Some(Dialog::ConfirmLeaveGroup(group));
             }
             "left-group" => {
                 // The chat after the phone confirmed the leave.
-                let group = SAMPLES[1].id.to_owned();
+                let group = chat_id(SAMPLES[1].id);
                 let ours: Vec<String> = app.our_ids().into_iter().map(str::to_owned).collect();
                 if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == group) {
                     chat.left = true;
@@ -2202,12 +2227,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.open_chat = Some(group);
             }
             "leave-channel" => {
-                let channel = SAMPLES
-                    .iter()
-                    .find(|sample| sample.id.ends_with("@newsletter"))
-                    .expect("channel sample")
-                    .id
-                    .to_owned();
+                let channel = chat_id(
+                    SAMPLES
+                        .iter()
+                        .find(|sample| sample.id.ends_with("@newsletter"))
+                        .expect("channel sample")
+                        .id,
+                );
                 app.open_chat = Some(channel.clone());
                 app.dialog = Some(Dialog::ConfirmLeaveGroup(channel));
             }
@@ -2258,10 +2284,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = false;
                 app.at_bottom = false;
                 app.scroll_anchor = Some(target.clone());
-                app.jump_highlight = Some(crate::app::JumpHighlight::new(group.to_owned(), target));
+                app.jump_highlight = Some(crate::app::JumpHighlight::new(chat_id(group), target));
             }
             "unread-divider" => {
-                let id = SAMPLES[1].id.to_owned();
+                let id = chat_id(SAMPLES[1].id);
                 app.open_chat = Some(id.clone());
                 app.unread_divider = Some(crate::app::UnreadDivider {
                     chat: id,
@@ -2374,11 +2400,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         address: None,
                     },
                 );
-                if let Some(conversation) = app.conversations.get_mut(ada) {
+                if let Some(conversation) = app.conversations.get_mut(&chat_id(ada)) {
                     conversation.messages.push(row);
                     conversation.messages.push(pinned);
                 }
-                app.open_chat = Some(ada.to_owned());
+                app.open_chat = Some(chat_id(ada));
                 app.scroll_to_bottom = true;
             }
             // Our phone shares a live location in our own chat, masked from
@@ -2438,13 +2464,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.focus_composer = true;
             }
             "composer-tools" => {
-                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                app.open_chat = Some(chat_id(SAMPLES[0].id));
                 app.composer_tools_open = true;
                 app.focus_composer = true;
             }
             "mention" => {
                 let group = SAMPLES[1].id;
-                app.open_chat = Some(group.to_owned());
+                app.open_chat = Some(chat_id(group));
                 app.composer = "@mi".to_owned();
                 app.mention_start = Some(0);
                 app.mention_selected = 0;
@@ -2459,15 +2485,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // The strips above the composer: a reply, an edit, and a voice
             // message WhatsApp refused.
             "reply" => {
-                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                app.open_chat = Some(chat_id(SAMPLES[0].id));
                 app.reply_to = Some("ada-photo".into());
                 app.focus_composer = true;
             }
             "edit" => {
-                let chat = SAMPLES[0].id;
-                app.open_chat = Some(chat.to_owned());
+                let chat = chat_id(SAMPLES[0].id);
+                app.open_chat = Some(chat.clone());
                 let own =
-                    app.conversations.get(chat).and_then(|conversation| {
+                    app.conversations.get(&chat).and_then(|conversation| {
                         conversation.messages.iter().rev().find_map(|message| {
                             match &message.content {
                                 Content::Text { text, .. } if message.from_me => {
@@ -2486,38 +2512,37 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // Reading back through the first chat, away from its end: the
             // button back to the newest message shows.
             "scrolled" => {
-                let chat = SAMPLES[0].id;
-                app.open_chat = Some(chat.to_owned());
+                let chat = chat_id(SAMPLES[0].id);
+                app.open_chat = Some(chat.clone());
                 app.scroll_to_bottom = false;
                 app.at_bottom = false;
                 app.scroll_anchor = app
                     .conversations
-                    .get(chat)
+                    .get(&chat)
                     .and_then(|conversation| conversation.messages.get(4))
                     .map(|message| message.id.clone());
             }
             // The group photo with its reactions, and the day above it.
             "reactions" => {
-                app.open_chat = Some(SAMPLES[1].id.to_owned());
+                app.open_chat = Some(chat_id(SAMPLES[1].id));
                 app.scroll_to_bottom = false;
                 app.at_bottom = false;
                 app.scroll_anchor = Some("group-photo".into());
             }
             "unsent-voice" => {
-                let chat = SAMPLES[0].id;
-                app.open_chat = Some(chat.to_owned());
-                app.unsent_voice =
-                    Some((chat.to_owned(), vec![0.0; crate::voice::RATE as usize * 6]));
+                let chat = chat_id(SAMPLES[0].id);
+                app.open_chat = Some(chat.clone());
+                app.unsent_voice = Some((chat, vec![0.0; crate::voice::RATE as usize * 6]));
             }
             // Show two simultaneous group typers.
             "typers" => {
                 let group = SAMPLES[1].id;
-                app.open_chat = Some(group.to_owned());
+                app.open_chat = Some(chat_id(group));
                 if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == group) {
                     chat.unread = 0;
                 }
                 app.typing.insert(
-                    group.to_owned(),
+                    chat_id(group),
                     vec![
                         (
                             "491702222222@s.whatsapp.net".to_owned(),
@@ -2545,7 +2570,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 ] {
                     if let Some(message) = app
                         .conversations
-                        .get(chat)
+                        .get(&chat_id(chat))
                         .and_then(|conversation| conversation.message(id))
                     {
                         hits.push(message.clone());
@@ -2705,7 +2730,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.open_message_menu = Some("ada-link".into());
                 if let Some(row) = app
                     .conversations
-                    .get_mut(SAMPLES[0].id)
+                    .get_mut(&chat_id(SAMPLES[0].id))
                     .and_then(|conversation| conversation.message_mut("ada-link"))
                 {
                     row.delivered_at = Some(row.timestamp);
@@ -2713,7 +2738,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 }
             }
             "react-picker" => {
-                let chat = SAMPLES[0].id.to_owned();
+                let chat = chat_id(SAMPLES[0].id);
                 app.reaction_target = Some((chat, "ada-link".into()));
                 app.reaction_beside_menu = true;
                 app.scroll_to_bottom = false;
@@ -2735,7 +2760,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     .collect();
             }
             "react-picker-empty" => {
-                let chat = SAMPLES[0].id.to_owned();
+                let chat = chat_id(SAMPLES[0].id);
                 app.reaction_target = Some((chat, "ada-link".into()));
                 app.reaction_beside_menu = true;
                 app.scroll_to_bottom = false;
@@ -2746,7 +2771,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "react-custom" => {
                 if let Some(row) = app
                     .conversations
-                    .get_mut(SAMPLES[0].id)
+                    .get_mut(&chat_id(SAMPLES[0].id))
                     .and_then(|conversation| conversation.message_mut("ada-link"))
                 {
                     row.reactions.retain(|reaction| !reaction.from_me);
@@ -2759,7 +2784,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "react-other" => {
                 let group = SAMPLES[1].id;
-                app.open_chat = Some(group.to_owned());
+                app.open_chat = Some(chat_id(group));
                 if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == group) {
                     chat.unread = 0;
                 }
@@ -2767,7 +2792,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             other => {
                 if app.chat(other).is_some() {
-                    app.open_chat = Some(other.to_owned());
+                    app.open_chat = Some(chat_id(other));
                     if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == other) {
                         chat.unread = 0;
                     }
@@ -2794,8 +2819,11 @@ fn sample_qr() -> String {
 }
 
 /// Names of all sample chats.
-pub fn sample_ids() -> Vec<&'static str> {
-    SAMPLES.iter().map(|sample| sample.id).collect()
+pub fn sample_ids() -> Vec<crate::model::ChatId> {
+    SAMPLES
+        .iter()
+        .map(|sample| crate::model::ChatId::whatsapp(sample.id))
+        .collect()
 }
 
 #[allow(dead_code)]
@@ -2851,7 +2879,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let chat = SAMPLES[0].id;
-        let conversation = app.conversations.get_mut(chat).unwrap();
+        let conversation = app.conversations.get_mut(&chat_id(chat)).unwrap();
         let mut template = conversation.messages.last().unwrap().clone();
         template.from_me = false;
         for n in 0..40 {
@@ -2923,7 +2951,7 @@ mod tests {
             collect(&shape.shape, &mut texts, &mut images);
         }
         let atlas = ctx.fonts(|fonts| fonts.image());
-        let clocks: Vec<String> = app.conversations[ME]
+        let clocks: Vec<String> = app.conversations[&chat_id(ME)]
             .messages
             .iter()
             .map(|message| crate::util::clock(message.timestamp))
@@ -3049,7 +3077,11 @@ mod tests {
         for (single, body) in [(true, false), (false, false), (true, true), (false, true)] {
             let mut app = app();
             carousel_sample(&mut app, 2);
-            let message = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+            let message = &mut app
+                .conversations
+                .get_mut(&chat_id(SAMPLES[0].id))
+                .unwrap()
+                .messages[0];
             message.reactions = vec![crate::model::Reaction {
                 sender: SAMPLES[0].id.into(),
                 from_me: false,
@@ -3142,7 +3174,7 @@ mod tests {
             };
             run(&mut app, vec![egui::Event::PointerMoved(pos), press(true)]);
             assert_eq!(run(&mut app, vec![press(false)]), expected);
-            assert_eq!(app.conversations[SAMPLES[0].id].messages.len(), 3);
+            assert_eq!(app.conversations[&chat_id(SAMPLES[0].id)].messages.len(), 3);
         }
         let commands = app.backend.take_demo_commands();
         assert_eq!(commands.iter().filter(|command| matches!(command, crate::backend::Command::ReplyInteractive { chat, message, button: 0, choice: None } if chat == SAMPLES[0].id && message == "interactive-card")).count(), 1);
@@ -3290,7 +3322,11 @@ mod tests {
                         .read_only = true
                 }
                 "own" => {
-                    app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0].from_me = true
+                    app.conversations
+                        .get_mut(&chat_id(SAMPLES[0].id))
+                        .unwrap()
+                        .messages[0]
+                        .from_me = true
                 }
                 "pending" => {
                     app.interactive_sending
@@ -3337,7 +3373,11 @@ mod tests {
             let mut app = app();
             apply_flags(&mut app, Some("interactive-media"));
             if own {
-                let message = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+                let message = &mut app
+                    .conversations
+                    .get_mut(&chat_id(SAMPLES[0].id))
+                    .unwrap()
+                    .messages[0];
                 message.from_me = true;
                 message.sender = ME.into();
             }
@@ -3461,11 +3501,15 @@ mod tests {
                         .insert((SAMPLES[0].id.into(), "interactive-card".into()));
                 }
                 "edited" => {
-                    app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0].edited = true
+                    app.conversations
+                        .get_mut(&chat_id(SAMPLES[0].id))
+                        .unwrap()
+                        .messages[0]
+                        .edited = true
                 }
                 "removed" => app
                     .conversations
-                    .get_mut(SAMPLES[0].id)
+                    .get_mut(&chat_id(SAMPLES[0].id))
                     .unwrap()
                     .messages
                     .clear(),
@@ -3614,8 +3658,9 @@ mod tests {
                     })
                     .unwrap();
                 let output = run(&mut app, vec![]);
-                let stamp =
-                    crate::util::clock(app.conversations[SAMPLES[0].id].messages[0].timestamp);
+                let stamp = crate::util::clock(
+                    app.conversations[&chat_id(SAMPLES[0].id)].messages[0].timestamp,
+                );
                 let time = output
                     .shapes
                     .iter()
@@ -3660,7 +3705,12 @@ mod tests {
         // Put action rows beneath the arrows to catch clicks reaching a card.
         if let Content::Interactive {
             card: Some(card), ..
-        } = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0].content
+        } = &mut app
+            .conversations
+            .get_mut(&chat_id(SAMPLES[0].id))
+            .unwrap()
+            .messages[0]
+            .content
         {
             for child in &mut card.carousel {
                 child.image = None;
@@ -3942,7 +3992,7 @@ mod tests {
         assert!(app.chats.iter().any(|chat| chat.is_channel()));
         assert!(app.chats.iter().any(|chat| chat.archived));
         assert!(app.chats.iter().any(|chat| chat.pinned));
-        let ada = app.conversations.get(sample_ids()[0]).expect("first chat");
+        let ada = app.conversations.get(&sample_ids()[0]).expect("first chat");
         assert!(
             ada.messages
                 .iter()
@@ -3959,7 +4009,7 @@ mod tests {
     #[test]
     fn demo_assets_stay_in_the_demo_directories() {
         let mut app = app();
-        let avatar = app.avatar(sample_ids()[0]).expect("sample avatar");
+        let avatar = app.avatar(&sample_ids()[0]).expect("sample avatar");
         assert!(avatar.starts_with(app.dirs.avatar_cache_dir()));
         assert!(avatar.is_file());
         apply_flags(&mut app, Some("voice"));
@@ -4124,7 +4174,7 @@ mod tests {
         app.attach(&ctx);
         render(&mut app, &ctx);
         for id in sample_ids() {
-            apply_flags(&mut app, Some(id));
+            apply_flags(&mut app, Some(id.as_str()));
             render(&mut app, &ctx);
         }
         for page in [
@@ -4675,8 +4725,8 @@ mod tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         app.backend.record_demo_commands();
-        let own = SAMPLES[0].id.to_owned();
-        let other = SAMPLES[2].id.to_owned();
+        let own = chat_id(SAMPLES[0].id);
+        let other = chat_id(SAMPLES[2].id);
         let clip = vec![0.25; crate::voice::RATE as usize * 6];
         app.actions.push(crate::model::Action::OpenChat(other));
         render(&mut app, &ctx);
@@ -5668,7 +5718,7 @@ mod tests {
         app.attach(&ctx);
         render(&mut app, &ctx);
         render(&mut app, &ctx);
-        (app, ctx, chat)
+        (app, ctx, chat.to_string())
     }
 
     fn drawn_rect(ctx: &egui::Context, chat: &str, message: &str, part: &str) -> egui::Rect {
@@ -6167,7 +6217,7 @@ mod tests {
         app.attach(&ctx);
         render(&mut app, &ctx);
         let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
-        let id = crate::ui::conversation::bubble_id(sample_ids()[0], "ada-link");
+        let id = crate::ui::conversation::bubble_id(&sample_ids()[0], "ada-link");
         let target = ctx
             .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
             .unwrap()
@@ -6453,7 +6503,7 @@ mod tests {
         app.attach(&ctx);
         render(&mut app, &ctx);
         apply_flags(&mut app, Some("live"));
-        let id = crate::ui::conversation::bubble_id(sample_ids()[0], "ada-location-now");
+        let id = crate::ui::conversation::bubble_id(&sample_ids()[0], "ada-location-now");
         let rect =
             |ctx: &egui::Context| ctx.data(|data| data.get_temp::<egui::Rect>(id.with("rect")));
         for _ in 0..3 {
@@ -6475,13 +6525,13 @@ mod tests {
         app.attach(&ctx);
         render(&mut app, &ctx);
         assert!(app.reaction_target.is_some());
-        assert_eq!(app.open_chat.as_deref(), Some(sample_ids()[0]));
+        assert_eq!(app.open_chat.as_deref(), Some(sample_ids()[0].as_str()));
 
         app.actions
-            .push(crate::model::Action::OpenChat(sample_ids()[1].into()));
+            .push(crate::model::Action::OpenChat(sample_ids()[1].clone()));
         render(&mut app, &ctx);
 
-        assert_eq!(app.open_chat.as_deref(), Some(sample_ids()[1]));
+        assert_eq!(app.open_chat.as_deref(), Some(sample_ids()[1].as_str()));
         assert!(
             app.reaction_target.is_none(),
             "switching chats must drop the previous reaction target"
@@ -6499,7 +6549,7 @@ mod tests {
         for _ in 0..3 {
             render(&mut app, &ctx);
         }
-        let id = crate::ui::conversation::bubble_id(sample_ids()[0], "ada-link");
+        let id = crate::ui::conversation::bubble_id(&sample_ids()[0], "ada-link");
         let menu = ctx
             .data(|data| data.get_temp::<egui::Rect>(id.with("menu-rect")))
             .unwrap();
@@ -6812,10 +6862,10 @@ mod tests {
     fn another_users_trophy_reaction_is_on_the_group_photo() {
         let mut app = app();
         apply_flags(&mut app, Some("react-other"));
-        assert_eq!(app.open_chat.as_deref(), Some(sample_ids()[1]));
+        assert_eq!(app.open_chat.as_deref(), Some(sample_ids()[1].as_str()));
         let photo = app
             .conversations
-            .get(sample_ids()[1])
+            .get(&sample_ids()[1])
             .and_then(|conversation| conversation.message("group-photo"))
             .expect("group photo");
         assert!(
@@ -6928,7 +6978,7 @@ mod tests {
         let listed: Vec<String> = app
             .visible_chats()
             .iter()
-            .map(|chat| chat.id.clone())
+            .map(|chat| chat.id.to_string())
             .collect();
         assert!(listed.len() >= 2, "the sample has several unread chats");
         for id in &listed {
@@ -6960,7 +7010,7 @@ mod tests {
         let after: Vec<String> = app
             .visible_chats()
             .iter()
-            .map(|chat| chat.id.clone())
+            .map(|chat| chat.id.to_string())
             .collect();
         assert_eq!(after, listed, "every opened chat is still listed");
     }
@@ -6978,7 +7028,7 @@ mod tests {
             assert_eq!(
                 app.dialog,
                 Some(crate::model::Dialog::ConfirmDeleteMessage {
-                    chat: SAMPLES[0].id.to_owned(),
+                    chat: chat_id(SAMPLES[0].id),
                     message: message.to_owned(),
                     for_everyone: expected_everyone,
                 })
@@ -7039,14 +7089,14 @@ mod tests {
     /// from, not in whichever chat is open by then.
     #[test]
     fn a_message_deletion_confirmed_after_switching_chats_stays_in_its_chat() {
-        let own_chat = SAMPLES[0].id;
+        let own_chat = chat_id(SAMPLES[0].id);
         for (page, message, everyone) in [
             ("delete-message", "ada-emoji", true),
             ("delete-message-mine", "ada-format", false),
         ] {
             let mut app = app();
             apply_flags(&mut app, Some(page));
-            app.open_chat = Some(SAMPLES[1].id.to_owned());
+            app.open_chat = Some(chat_id(SAMPLES[1].id));
             let ctx = egui::Context::default();
             ctx.enable_accesskit();
             app.attach(&ctx);
@@ -7072,7 +7122,7 @@ mod tests {
             );
             frame_with(&mut app, &ctx, vec![press(false)]);
 
-            let row = app.conversations[own_chat].message(message);
+            let row = app.conversations[&own_chat].message(message);
             if everyone {
                 assert!(
                     matches!(
@@ -7327,7 +7377,10 @@ mod tests {
     /// its message list needs several pages to scroll through.
     fn lengthen_chat(app: &mut App, chat: &str, count: i32, prefix: &str) {
         let when = crate::util::now();
-        let conversation = app.conversations.get_mut(chat).expect("open chat");
+        let conversation = app
+            .conversations
+            .get_mut(&chat_id(chat))
+            .expect("open chat");
         for n in 0..count {
             conversation.messages.push(message(
                 chat,
@@ -7353,7 +7406,7 @@ mod tests {
     /// The open chat's message list scroll offset and viewport height, as
     /// stashed by `conversation::scroll_metrics_id`.
     fn scroll_metrics(ctx: &egui::Context, chat: &str) -> (f32, f32) {
-        ctx.data(|data| data.get_temp(crate::ui::conversation::scroll_metrics_id(&chat.to_owned())))
+        ctx.data(|data| data.get_temp(crate::ui::conversation::scroll_metrics_id(&chat_id(chat))))
             .expect("the message list has drawn")
     }
 
@@ -7361,7 +7414,10 @@ mod tests {
     /// focusable control inside its bubble's rect (a message bubble itself
     /// uses `Sense::CLICK`, which egui never focuses).
     fn insert_poll_message(app: &mut App, chat: &str, index: usize, id: &str, when: i64) {
-        let conversation = app.conversations.get_mut(chat).expect("open chat");
+        let conversation = app
+            .conversations
+            .get_mut(&chat_id(chat))
+            .expect("open chat");
         let poll = message(
             chat,
             id,
@@ -8898,7 +8954,7 @@ mod tests {
         for _ in 0..3 {
             shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
         }
-        let quote = app.conversations[SAMPLES[1].id]
+        let quote = app.conversations[&chat_id(SAMPLES[1].id)]
             .messages
             .iter()
             .find(|row| row.id == "quote-own")
@@ -8946,7 +9002,7 @@ mod tests {
         }
         let group = SAMPLES[1].id;
         let quoted = |id: &str| {
-            app.conversations[group]
+            app.conversations[&chat_id(group)]
                 .messages
                 .iter()
                 .find(|row| row.id == id)
@@ -9882,7 +9938,7 @@ mod tests {
             .push(crate::model::Action::SetComposerTools(true));
         render(&mut app, &ctx);
         assert!(app.picker.is_none(), "the menu closes the emoji picker");
-        let own = app.conversations[app.open_chat.as_deref().unwrap()]
+        let own = app.conversations[app.open_chat.as_ref().unwrap()]
             .messages
             .iter()
             .rev()
@@ -10283,7 +10339,7 @@ mod tests {
         let row = |ctx: &egui::Context, id: &str| {
             ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::chat_row_id(id)))
         };
-        let ids: Vec<String> = app.chats.iter().map(|chat| chat.id.clone()).collect();
+        let ids: Vec<String> = app.chats.iter().map(|chat| chat.id.to_string()).collect();
         let hidden: Vec<&String> = ids
             .iter()
             .filter(|id| row(&ctx, id).is_none_or(|rect| rect.top() >= height))
@@ -10330,7 +10386,7 @@ mod tests {
         let avatar = |ctx: &egui::Context, id: &str| {
             ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::compact_chat_id(id)))
         };
-        let ids: Vec<String> = app.chats.iter().map(|chat| chat.id.clone()).collect();
+        let ids: Vec<String> = app.chats.iter().map(|chat| chat.id.to_string()).collect();
         let hidden: Vec<&String> = ids
             .iter()
             .filter(|id| avatar(&ctx, id).is_none_or(|rect| rect.top() >= height))
@@ -10510,7 +10566,7 @@ mod tests {
         assert!(!app.sidebar_visible);
         app.composer = "hello".into();
         app.actions.push(crate::model::Action::SendText {
-            chat: sample_ids()[0].into(),
+            chat: sample_ids()[0].clone(),
             text: "hello".into(),
             quoting: None,
         });
@@ -10521,9 +10577,11 @@ mod tests {
     /// Where the chat list's right edge is: the first chat row spans the
     /// list's width.
     fn chat_list_right(ctx: &egui::Context) -> f32 {
-        ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::chat_row_id(sample_ids()[0])))
-            .expect("the first chat is listed")
-            .right()
+        ctx.data(|data| {
+            data.get_temp::<egui::Rect>(crate::ui::chats::chat_row_id(&sample_ids()[0]))
+        })
+        .expect("the first chat is listed")
+        .right()
     }
 
     /// Drags from `from` through each x in `path` at one height, returning
@@ -10766,7 +10824,12 @@ mod long_chat_tests {
     /// places the day separators, and the clock format sets each footer's
     /// width and so where a text wraps. The time, zone, and format are fixed
     /// until the returned guard drops, so every run lays out the same rows.
-    fn long_chat() -> (App, egui::Context, String, crate::util::fixed_clock::Guard) {
+    fn long_chat() -> (
+        App,
+        egui::Context,
+        crate::model::ChatId,
+        crate::util::fixed_clock::Guard,
+    ) {
         let clock = crate::util::fixed_clock::set(crate::util::fixed_clock::Clock {
             // 14:00 UTC on Wednesday 11 March 2026.
             now: 1_773_237_600,
@@ -10776,7 +10839,7 @@ mod long_chat_tests {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
-        let chat = SAMPLES[0].id.to_owned();
+        let chat = chat_id(SAMPLES[0].id);
         let conversation = app.conversations.get_mut(&chat).unwrap();
         let template = conversation.messages.last().unwrap().clone();
         conversation.messages.clear();
@@ -10988,7 +11051,7 @@ mod long_chat_tests {
         let template = app.chats[1].clone();
         for n in 0..60 {
             let mut extra = template.clone();
-            extra.id = format!("39000000{n:04}@s.whatsapp.net");
+            extra.id = crate::model::ChatId::whatsapp(format!("39000000{n:04}@s.whatsapp.net"));
             app.chats.push(extra);
         }
         for _ in 0..3 {
@@ -11080,7 +11143,7 @@ mod picture_edge_tests {
         app.attach(&ctx);
         app.typing.clear();
         let (photo, _) = sample_files(&app);
-        let chat = SAMPLES[0].id.to_owned();
+        let chat = chat_id(SAMPLES[0].id);
         let conversation = app.conversations.get_mut(&chat).unwrap();
         let template = conversation.messages.last().unwrap().clone();
         conversation.messages.clear();

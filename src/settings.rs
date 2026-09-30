@@ -4,6 +4,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::account::AccountId;
+use crate::model::ChatId;
+
 /// Verifying the locked-chat code costs about 20 ms, paid once per distinct
 /// typed string. ponytail: fixed cost, revisit if it lags the search field.
 const CHAT_LOCK_ROUNDS: std::num::NonZeroU32 = std::num::NonZeroU32::new(200_000).unwrap();
@@ -387,8 +390,12 @@ pub struct Settings {
     /// ZapFast's own copy of the chosen wallpaper image, drawn in place of the
     /// colour and doodles in light and dark mode alike.
     pub wallpaper_image: Option<std::path::PathBuf>,
-    /// Last open chat, restored at startup.
-    pub last_chat: Option<String>,
+    /// Last open chat, restored at startup. It belongs to the account that was
+    /// showing, so another account does not reopen it.
+    pub last_chat: Option<ChatId>,
+    /// Account whose chats were showing, restored at startup.
+    #[serde(default)]
+    pub last_account: AccountId,
     /// The hint bar under the composer, hidden with its × and shown again
     /// from the Keyboard shortcuts dialog.
     pub show_shortcut_hints: bool,
@@ -469,6 +476,7 @@ impl Default for Settings {
             dark_wallpaper_color: WallpaperColor::Theme,
             wallpaper_image: None,
             last_chat: None,
+            last_account: AccountId::WHATSAPP,
             show_shortcut_hints: true,
             recent_emoji: Vec::new(),
             reaction_emoji: Vec::new(),

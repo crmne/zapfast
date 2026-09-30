@@ -87,7 +87,7 @@ pub fn prepare(app: &mut App) {
     show_photos(app, PHOTO_CAPTION);
     if let Some(quote) = app
         .conversations
-        .get_mut(super::SAMPLES[0].id)
+        .get_mut(&super::chat_id(super::SAMPLES[0].id))
         .and_then(|chat| chat.message_mut("ada-reply"))
         .and_then(|row| row.quoted.as_mut())
     {
@@ -96,7 +96,7 @@ pub fn prepare(app: &mut App) {
     // Keep the launch footage focused on this app.
     if let Some(row) = app
         .conversations
-        .get_mut(super::SAMPLES[0].id)
+        .get_mut(&super::chat_id(super::SAMPLES[0].id))
         .and_then(|chat| chat.message_mut("ada-link"))
     {
         row.content = Content::text("The desktop app is ready! https://zapfast.rocks");
@@ -124,7 +124,7 @@ fn common_setup(app: &mut App) {
     app.reply_to = None;
     app.typing.clear();
     app.actions.clear();
-    app.open_chat = Some(super::SAMPLES[0].id.to_owned());
+    app.open_chat = Some(super::chat_id(super::SAMPLES[0].id));
     app.scroll_to_bottom = true;
     app.scroll_anchor = None;
     app.focus_composer = false;
@@ -134,7 +134,7 @@ fn common_setup(app: &mut App) {
     media::populate(app).expect("bundled demo media");
     if let Some(row) = app
         .conversations
-        .get_mut(super::SAMPLES[0].id)
+        .get_mut(&super::chat_id(super::SAMPLES[0].id))
         .and_then(|chat| chat.message_mut("ada-sticker"))
         && let Content::Sticker { media, animated } = &mut row.content
     {
@@ -157,7 +157,7 @@ fn show_photos(app: &mut App, caption: &str) {
     ] {
         if let Some(row) = app
             .conversations
-            .get_mut(chat)
+            .get_mut(&super::chat_id(chat))
             .and_then(|chat| chat.message_mut(id))
             && let Content::Image {
                 media,
@@ -1393,7 +1393,9 @@ mod tests {
                         && tour.labels.contains_key("Follow up")
                         && egui::Popup::is_any_open(&ctx),
                     app.recording.is_some(),
-                    app.conversations[group].message("tour-voice").is_some(),
+                    app.conversations[&super::super::chat_id(group)]
+                        .message("tour-voice")
+                        .is_some(),
                     app.player.speed() == 1.75,
                     app.sidebar_mode() == crate::model::SidebarDisplayMode::CollapsedIconsOnly,
                     hovered && app.selection.is_none(),
@@ -1481,7 +1483,7 @@ mod tests {
             seen, [true; 7],
             "every advertised interaction must be visible"
         );
-        let ada = &app.conversations[super::super::SAMPLES[0].id];
+        let ada = &app.conversations[&super::super::chat_id(super::super::SAMPLES[0].id)];
         let sent: Vec<_> = ada
             .messages
             .iter()
@@ -1505,7 +1507,7 @@ mod tests {
                 Content::Sticker { animated: true, .. }
             ));
         }
-        let group = &app.conversations[super::super::SAMPLES[1].id];
+        let group = &app.conversations[&super::super::chat_id(super::super::SAMPLES[1].id)];
         assert_eq!(group.messages.last().unwrap().mentions.len(), 1);
         assert_eq!(app.settings.theme, ThemeChoice::Dark);
         assert!(app.backend.is_offline());
@@ -1524,7 +1526,7 @@ mod tests {
         tour.input(&mut app, &ctx, &mut input);
         assert_eq!(tour.next, 1, "replay immediately runs the first shortcut");
         assert!(
-            app.conversations[super::super::SAMPLES[0].id]
+            app.conversations[&super::super::chat_id(super::super::SAMPLES[0].id)]
                 .messages
                 .iter()
                 .all(|row| !row.id.starts_with("tour-"))

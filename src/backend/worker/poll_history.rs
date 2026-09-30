@@ -17,7 +17,7 @@ pub(super) struct Requests {
 impl Requests {
     /// Pending, requested this session, and waiting after a failed attempt.
     pub fn state(&self, chat: &str, poll: &str) -> (bool, bool, bool) {
-        let key = (chat.to_owned(), poll.to_owned());
+        let key = (crate::model::ChatId::whatsapp(chat), poll.to_owned());
         let queued = self.queue.iter().any(|(pending, _)| pending == &key);
         (
             queued
@@ -31,7 +31,7 @@ impl Requests {
     }
 
     pub fn request(&mut self, chat: &str, poll: &str, now: Instant) {
-        let key = (chat.to_owned(), poll.to_owned());
+        let key = (crate::model::ChatId::whatsapp(chat), poll.to_owned());
         if self.state(chat, poll).0 || self.queue.len() >= 64 {
             return;
         }
@@ -50,7 +50,7 @@ impl Requests {
     }
 
     pub fn finish(&mut self, chat: &str, poll: &str) {
-        let key = (chat.to_owned(), poll.to_owned());
+        let key = (crate::model::ChatId::whatsapp(chat), poll.to_owned());
         self.queue.retain(|(pending, _)| pending != &key);
         if self
             .active

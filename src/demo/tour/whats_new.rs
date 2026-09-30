@@ -95,7 +95,10 @@ fn videos(app: &mut App) {
             .ok()?;
         Some(jpeg)
     });
-    let Some(conversation) = app.conversations.get_mut(grace) else {
+    let Some(conversation) = app
+        .conversations
+        .get_mut(&crate::model::ChatId::whatsapp(grace))
+    else {
         return;
     };
     let last = conversation

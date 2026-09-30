@@ -182,6 +182,8 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             theme::bold(20.0),
                             palette.text,
                         );
+                        ui.add_space(6.0);
+                        account_switcher(app, ui);
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if theme::icon_button(
@@ -268,6 +270,43 @@ pub(crate) fn header_row_id() -> egui::Id {
     egui::Id::new("chat-list-header-row")
 }
 
+/// The account whose chats are showing, as a menu beside the title. With one
+/// account it names the linked device; more accounts join it there.
+fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let name = app
+        .accounts
+        .iter()
+        .find(|account| account.id == app.active_account)
+        .map(|account| account.name.clone())
+        .unwrap_or_else(|| crate::account::Account::whatsapp().name);
+    let response = theme::soft_button(ui, &palette, Some(Icon::ChevronDown), &name, false)
+        .on_hover_text(crate::i18n::gettext(app.locale, "Accounts"));
+    let names: Vec<&str> = app
+        .accounts
+        .iter()
+        .map(|account| account.name.as_str())
+        .collect();
+    let width = widgets::menu_width(ui, &names, true);
+    let mut switch = None;
+    egui::Popup::menu(&response)
+        .width(width)
+        .frame(widgets::menu_frame(&palette))
+        .show(|ui| {
+            for account in &app.accounts {
+                let selected = account.id == app.active_account;
+                let icon = selected.then_some(Icon::Check);
+                if widgets::menu_item(ui, &palette, icon, &account.name) && !selected {
+                    switch = Some(account.id);
+                    ui.close();
+                }
+            }
+        });
+    if let Some(id) = switch {
+        app.actions.push(Action::SwitchAccount(id));
+    }
+}
+
 fn macos_header(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let inset = theme::traffic_light_inset(ui.ctx());
@@ -315,6 +354,8 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         theme::bold(20.0),
                         palette.text,
                     );
+                    ui.add_space(6.0);
+                    account_switcher(app, ui);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -868,7 +909,7 @@ pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
     let detail = crate::model::phone_of(&contact.id).map(crate::util::phone);
     if person_row(app, ui, &contact.id, &name, detail.as_deref()).clicked() {
         app.actions.push(Action::StartChat {
-            id: contact.id.clone(),
+            id: crate::model::ChatId::whatsapp(contact.id.clone()),
             name,
         });
     }
@@ -1712,10 +1753,10 @@ mod tests {
             std::thread::current().id()
         ));
         let (mut app, _events) = App::headless(AppDirs::under(&root), Settings::default());
-        let mut first = String::new();
-        let mut last = String::new();
+        let mut first = crate::model::ChatId::whatsapp("");
+        let mut last = crate::model::ChatId::whatsapp("");
         for index in 0..24 {
-            let id = format!("49170000{index:04}@s.whatsapp.net");
+            let id = crate::model::ChatId::whatsapp(format!("49170000{index:04}@s.whatsapp.net"));
             let mut chat = Chat::new(id.clone(), format!("Chat {index:02}"));
             chat.last_activity = 100 - i64::from(index);
             if index == 0 {
@@ -1818,13 +1859,20 @@ mod tests {
     }
 
     /// An app with `count` chats, newest first, and a context to draw it in.
-    fn rail_app(count: usize) -> (tempfile::TempDir, App, Vec<String>, egui::Context) {
+    fn rail_app(
+        count: usize,
+    ) -> (
+        tempfile::TempDir,
+        App,
+        Vec<crate::model::ChatId>,
+        egui::Context,
+    ) {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _events) =
             App::headless(AppDirs::under(directory.path()), Settings::default());
         let mut ids = Vec::new();
         for index in 0..count {
-            let id = format!("49170000{index:04}@s.whatsapp.net");
+            let id = crate::model::ChatId::whatsapp(format!("49170000{index:04}@s.whatsapp.net"));
             let mut chat = Chat::new(id.clone(), format!("Chat {index:03}"));
             chat.last_activity = 10_000 - index as i64;
             app.chats.push(chat);
