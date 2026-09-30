@@ -488,7 +488,7 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let app = &mut *self.app;
         app.frame_ui(ui);
-        let startup = app.backend.take_startup();
+        let startup = app.host.take_startup();
         if let Some(receipt) = self.update_receipt.take() {
             std::thread::spawn(move || {
                 if let Err(error) = receipt.acknowledge() {

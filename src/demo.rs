@@ -468,7 +468,7 @@ fn sample_files(app: &App) -> (std::path::PathBuf, std::path::PathBuf) {
 
 /// Loads the sample account and opens its first chat.
 pub fn populate(app: &mut App) {
-    app.backend.set_offline(true);
+    app.host.set_offline(true);
     // Demo mode has no backend to handle downloads.
     app.settings.auto_download = false;
     app.link = LinkStatus::Connected;
@@ -3155,7 +3155,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         for (id, expected) in [
             ("interactive-card", Vec::new()),
             ("interactive-link", vec!["https://example.com/".to_owned()]),
@@ -3176,25 +3176,20 @@ mod tests {
             assert_eq!(run(&mut app, vec![press(false)]), expected);
             assert_eq!(app.conversations[&chat_id(SAMPLES[0].id)].messages.len(), 3);
         }
-        let commands = app.backend.take_demo_commands();
+        let commands = app.host.take_demo_commands();
         assert_eq!(commands.iter().filter(|command| matches!(command, crate::backend::Command::ReplyInteractive { chat, message, button: 0, choice: None } if chat == SAMPLES[0].id && message == "interactive-card")).count(), 1);
         let reply_button = crate::ui::conversation::bubble_id(SAMPLES[0].id, "interactive-card")
             .with(("interactive-action", 0usize));
         ctx.memory_mut(|memory| memory.request_focus(reply_button));
         run(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
-        assert!(
-            app.backend
-                .take_demo_commands()
-                .iter()
-                .any(|command| matches!(
-                    command,
-                    crate::backend::Command::ReplyInteractive {
-                        button: 0,
-                        choice: None,
-                        ..
-                    }
-                ))
-        );
+        assert!(app.host.take_demo_commands().iter().any(|command| matches!(
+            command,
+            crate::backend::Command::ReplyInteractive {
+                button: 0,
+                choice: None,
+                ..
+            }
+        )));
         let button = crate::ui::conversation::bubble_id(SAMPLES[0].id, "interactive-link")
             .with(("interactive-action", 0usize));
         ctx.memory_mut(|memory| memory.request_focus(button));
@@ -3208,7 +3203,7 @@ mod tests {
     fn interactive_lists_copy_codes_and_unavailable_actions_use_the_correct_paths() {
         let mut app = app();
         apply_flags(&mut app, Some("interactive-actions"));
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         let ctx = egui::Context::default();
         app.attach(&ctx);
         render(&mut app, &ctx);
@@ -3237,7 +3232,7 @@ mod tests {
         run(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
         render(&mut app, &ctx);
         assert!(
-            !app.backend
+            !app.host
                 .take_demo_commands()
                 .iter()
                 .any(|c| matches!(c, crate::backend::Command::ReplyInteractive { .. }))
@@ -3253,7 +3248,7 @@ mod tests {
         );
         ctx.memory_mut(|memory| memory.request_focus(option));
         run(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
-        assert!(app.backend.take_demo_commands().iter().any(|c| matches!(
+        assert!(app.host.take_demo_commands().iter().any(|c| matches!(
             c,
             crate::backend::Command::ReplyInteractive {
                 button: 1,
@@ -3298,7 +3293,7 @@ mod tests {
                     Vec::new()
                 }
             );
-            assert!(!app.backend.take_demo_commands().iter().any(|c| matches!(
+            assert!(!app.host.take_demo_commands().iter().any(|c| matches!(
                 c,
                 crate::backend::Command::ReplyInteractive { .. }
                     | crate::backend::Command::SendText { .. }
@@ -3311,7 +3306,7 @@ mod tests {
         for state in ["offline", "readonly", "own", "pending", "available"] {
             let mut app = app();
             apply_flags(&mut app, Some("interactive"));
-            app.backend.record_demo_commands();
+            app.host.record_demo_commands();
             match state {
                 "offline" => app.link = crate::backend::LinkStatus::Connecting,
                 "readonly" => {
@@ -3353,7 +3348,7 @@ mod tests {
             );
             frame_with(&mut app, &ctx, vec![press(false)]);
             let sent = app
-                .backend
+                .host
                 .take_demo_commands()
                 .iter()
                 .any(|c| matches!(c, crate::backend::Command::ReplyInteractive { .. }));
@@ -3477,7 +3472,7 @@ mod tests {
         for state in ["escape", "disconnected", "pending", "edited", "removed"] {
             let mut app = app();
             interactive_list_sample(&mut app);
-            app.backend.record_demo_commands();
+            app.host.record_demo_commands();
             let ctx = egui::Context::default();
             app.attach(&ctx);
             render(&mut app, &ctx);
@@ -3530,7 +3525,7 @@ mod tests {
                 )],
             );
             assert!(
-                !app.backend
+                !app.host
                     .take_demo_commands()
                     .iter()
                     .any(|c| matches!(c, crate::backend::Command::ReplyInteractive { .. })),
@@ -3547,7 +3542,7 @@ mod tests {
         for voted in [false, true] {
             let mut app = app();
             poll_sample(&mut app, voted, false);
-            app.backend.record_demo_commands();
+            app.host.record_demo_commands();
             let ctx = egui::Context::default();
             app.attach(&ctx);
             render(&mut app, &ctx);
@@ -3572,7 +3567,7 @@ mod tests {
                 voted
             );
             assert!(
-                !app.backend
+                !app.host
                     .take_demo_commands()
                     .iter()
                     .any(|c| matches!(c, crate::backend::Command::VotePoll { .. }))
@@ -3593,7 +3588,7 @@ mod tests {
                     vec![egui::Event::PointerMoved(rect.center()), click(true)],
                 );
                 frame_with(&mut app, &ctx, vec![click(false)]);
-                assert!(app.backend.take_demo_commands().iter().any(|c| matches!(c, crate::backend::Command::VotePoll { choices, .. } if choices == &[1])));
+                assert!(app.host.take_demo_commands().iter().any(|c| matches!(c, crate::backend::Command::VotePoll { choices, .. } if choices == &[1])));
             }
         }
     }
@@ -3603,7 +3598,7 @@ mod tests {
         for (width, cards) in [(640.0, 3), (1180.0, 3), (1180.0, 2), (1180.0, 1)] {
             let mut app = app();
             carousel_sample(&mut app, cards);
-            app.backend.record_demo_commands();
+            app.host.record_demo_commands();
             let ctx = egui::Context::default();
             app.attach(&ctx);
             let run = |app: &mut App, events| {
@@ -3690,7 +3685,7 @@ mod tests {
                     .iter()
                     .any(|c| matches!(c, egui::OutputCommand::CopyText(text) if text == "DRAW20"))
             );
-            assert!(!app.backend.take_demo_commands().iter().any(|c| matches!(
+            assert!(!app.host.take_demo_commands().iter().any(|c| matches!(
                 c,
                 crate::backend::Command::ReplyInteractive { .. }
                     | crate::backend::Command::SendText { .. }
@@ -3716,7 +3711,7 @@ mod tests {
                 child.image = None;
             }
         }
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let time = std::cell::Cell::new(0.0);
@@ -3855,14 +3850,11 @@ mod tests {
             "arrows do not trigger a message reply"
         );
         assert!(
-            !app.backend
-                .take_demo_commands()
-                .iter()
-                .any(|command| matches!(
-                    command,
-                    crate::backend::Command::ReplyInteractive { .. }
-                        | crate::backend::Command::SendText { .. }
-                ))
+            !app.host.take_demo_commands().iter().any(|command| matches!(
+                command,
+                crate::backend::Command::ReplyInteractive { .. }
+                    | crate::backend::Command::SendText { .. }
+            ))
         );
     }
 
@@ -4569,7 +4561,7 @@ mod tests {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         apply_flags(&mut app, Some("group-info"));
         render(&mut app, &ctx);
         let group = SAMPLES[1].id;
@@ -4595,7 +4587,7 @@ mod tests {
                 vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
             );
             render(app, &ctx);
-            app.backend.take_demo_commands()
+            app.host.take_demo_commands()
         };
 
         click(&mut app, group_name_button_id());
@@ -4647,13 +4639,10 @@ mod tests {
             .push(crate::model::Action::RemoveGroupPicture(group.into()));
         render(&mut app, &ctx);
         assert!(
-            app.backend
-                .take_demo_commands()
-                .iter()
-                .any(|command| matches!(
-                    command,
-                    Command::SetGroupPicture { chat, jpeg: None } if chat == group
-                )),
+            app.host.take_demo_commands().iter().any(|command| matches!(
+                command,
+                Command::SetGroupPicture { chat, jpeg: None } if chat == group
+            )),
             "Remove photo asks WhatsApp to remove it"
         );
     }
@@ -4724,7 +4713,7 @@ mod tests {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         let own = chat_id(SAMPLES[0].id);
         let other = chat_id(SAMPLES[2].id);
         let clip = vec![0.25; crate::voice::RATE as usize * 6];
@@ -4743,7 +4732,7 @@ mod tests {
                 vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
             );
             render(app, &ctx);
-            app.backend.take_demo_commands()
+            app.host.take_demo_commands()
         };
         let sent = enter(&mut app);
         assert!(
@@ -4788,7 +4777,7 @@ mod tests {
         render(&mut app, &ctx);
         assert!(app.unsent_voice.is_none());
         assert!(
-            !app.backend
+            !app.host
                 .take_demo_commands()
                 .iter()
                 .any(|command| matches!(command, crate::backend::Command::SendVoice { .. }))
@@ -6079,19 +6068,14 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = app();
         app.attach(&ctx);
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         let log = app.dirs.log_file();
         app.actions.push(crate::model::Action::OpenLog(log.clone()));
         render(&mut app, &ctx);
-        assert!(
-            app.backend
-                .take_demo_commands()
-                .iter()
-                .any(|command| matches!(
-                    command,
-                    crate::backend::Command::OpenLog(path) if path == &log
-                ))
-        );
+        assert!(app.host.take_demo_commands().iter().any(|command| matches!(
+            command,
+            crate::backend::Command::OpenLog(path) if path == &log
+        )));
     }
 
     /// A downloaded image's menu copies the picture itself, as the preview
@@ -6105,7 +6089,7 @@ mod tests {
         for downloaded in [true, false] {
             let mut app = app();
             app.attach(&ctx);
-            app.backend.record_demo_commands();
+            app.host.record_demo_commands();
             let mut photo = media("image/jpeg", 120_000, Some(800), Some(600));
             photo.path = downloaded.then(|| path.clone());
             app.conversations.get_mut(&chat).unwrap().messages = vec![message(
@@ -6144,13 +6128,10 @@ mod tests {
             );
             accessible_nodes(&mut app, &ctx, vec![press(false)]);
             assert!(
-                app.backend
-                    .take_demo_commands()
-                    .iter()
-                    .any(|command| matches!(
-                        command,
-                        crate::backend::Command::PrepareClipboardImage(copied) if copied == &path
-                    )),
+                app.host.take_demo_commands().iter().any(|command| matches!(
+                    command,
+                    crate::backend::Command::PrepareClipboardImage(copied) if copied == &path
+                )),
                 "the image goes to the clipboard"
             );
         }
@@ -6260,7 +6241,7 @@ mod tests {
     #[test]
     fn a_reaction_picker_choice_uses_the_same_react_path() {
         let mut app = app();
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         apply_flags(&mut app, Some("react-picker"));
         let ctx = egui::Context::default();
         app.attach(&ctx);
@@ -6282,7 +6263,7 @@ mod tests {
         });
         render(&mut app, &ctx);
         assert!(app.reaction_target.is_none());
-        let commands = app.backend.take_demo_commands();
+        let commands = app.host.take_demo_commands();
         assert!(commands.iter().any(|command| matches!(
             command,
             crate::backend::Command::React { emoji, .. } if emoji == "🦀"
@@ -6602,12 +6583,12 @@ mod tests {
     #[test]
     fn opening_settings_does_not_write_account_privacy() {
         let mut app = app();
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         apply_flags(&mut app, Some("settings"));
         let ctx = egui::Context::default();
         app.attach(&ctx);
         render(&mut app, &ctx);
-        let commands = app.backend.take_demo_commands();
+        let commands = app.host.take_demo_commands();
         assert!(
             !commands.iter().any(|command| matches!(
                 command,
@@ -6620,7 +6601,7 @@ mod tests {
     #[test]
     fn set_account_privacy_enqueues_the_phone_write() {
         let mut app = app();
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         let ctx = egui::Context::default();
         app.attach(&ctx);
         app.actions.push(crate::model::Action::SetAccountPrivacy {
@@ -6628,7 +6609,7 @@ mod tests {
             choice: crate::privacy::PrivacyChoice::Nobody,
         });
         render(&mut app, &ctx);
-        let commands = app.backend.take_demo_commands();
+        let commands = app.host.take_demo_commands();
         assert!(
             commands.iter().any(|command| matches!(
                 command,
@@ -6656,13 +6637,10 @@ mod tests {
         });
         render(&mut app, &ctx);
         assert!(
-            !app.backend
-                .take_demo_commands()
-                .iter()
-                .any(|command| matches!(
-                    command,
-                    crate::backend::Command::SetAccountPrivacy { .. }
-                )),
+            !app.host.take_demo_commands().iter().any(|command| matches!(
+                command,
+                crate::backend::Command::SetAccountPrivacy { .. }
+            )),
             "nothing else is written"
         );
     }
@@ -6670,14 +6648,14 @@ mod tests {
     #[test]
     fn opening_settings_reads_account_privacy_again() {
         let mut app = app();
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         let ctx = egui::Context::default();
         app.attach(&ctx);
         app.actions
             .push(crate::model::Action::Open(crate::model::Page::Settings));
         render(&mut app, &ctx);
         assert!(
-            app.backend
+            app.host
                 .take_demo_commands()
                 .iter()
                 .any(|command| matches!(command, crate::backend::Command::FetchAccountPrivacy))
@@ -9882,7 +9860,7 @@ mod tests {
             let mut app = app();
             app.settings.show_shortcut_hints = false;
             let chat = app.open_chat.clone().unwrap();
-            app.backend.record_demo_commands();
+            app.host.record_demo_commands();
             let ctx = egui::Context::default();
             app.attach(&ctx);
             render(&mut app, &ctx);
@@ -9905,7 +9883,7 @@ mod tests {
                 !app.composer_tools_open,
                 "choosing an entry closes the menu"
             );
-            let commands = app.backend.take_demo_commands();
+            let commands = app.host.take_demo_commands();
             let picked = commands.iter().any(
                 |command| matches!(command, crate::backend::Command::PickFiles(id) if *id == chat),
             );

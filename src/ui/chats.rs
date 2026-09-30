@@ -275,7 +275,8 @@ pub(crate) fn header_row_id() -> egui::Id {
 fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let name = app
-        .accounts
+        .host
+        .accounts()
         .iter()
         .find(|account| account.id == app.active_account)
         .map(|account| account.name.clone())
@@ -283,7 +284,8 @@ fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
     let response = theme::soft_button(ui, &palette, Some(Icon::ChevronDown), &name, false)
         .on_hover_text(crate::i18n::gettext(app.locale, "Accounts"));
     let names: Vec<&str> = app
-        .accounts
+        .host
+        .accounts()
         .iter()
         .map(|account| account.name.as_str())
         .collect();
@@ -293,7 +295,7 @@ fn account_switcher(app: &mut App, ui: &mut egui::Ui) {
         .width(width)
         .frame(widgets::menu_frame(&palette))
         .show(|ui| {
-            for account in &app.accounts {
+            for account in app.host.accounts() {
                 let selected = account.id == app.active_account;
                 let icon = selected.then_some(Icon::Check);
                 if widgets::menu_item(ui, &palette, icon, &account.name) && !selected {

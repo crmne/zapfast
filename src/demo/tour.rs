@@ -111,7 +111,7 @@ pub fn prepare(app: &mut App) {
 /// The state every tour opens from: offline, dark, the first chat open, and
 /// local stickers and GIFs in place of downloads.
 fn common_setup(app: &mut App) {
-    assert!(app.backend.is_offline(), "a tour requires an offline app");
+    assert!(app.host.is_offline(), "a tour requires an offline app");
     app.settings.theme = ThemeChoice::Dark;
     app.settings.keep_running_in_background = false;
     app.page = Page::Chats;
@@ -130,7 +130,7 @@ fn common_setup(app: &mut App) {
     app.focus_composer = false;
     app.sidebar_visible = true;
     app.show_archived = false;
-    app.backend.record_demo_commands();
+    app.host.record_demo_commands();
     media::populate(app).expect("bundled demo media");
     if let Some(row) = app
         .conversations
@@ -1079,7 +1079,7 @@ mod tests {
     #[test]
     fn polls_are_created_and_voted_through_real_controls() {
         let mut app = super::super::tests::app();
-        app.backend.record_demo_commands();
+        app.host.record_demo_commands();
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let mut tour = Tour::new(None, None);
@@ -1438,7 +1438,7 @@ mod tests {
         assert!(app.selection.is_none());
         assert!(app.recording.is_none());
         assert!(app.image_preview.is_none());
-        assert!(app.backend.is_offline());
+        assert!(app.host.is_offline());
     }
 
     #[test]
@@ -1510,7 +1510,7 @@ mod tests {
         let group = &app.conversations[&super::super::chat_id(super::super::SAMPLES[1].id)];
         assert_eq!(group.messages.last().unwrap().mentions.len(), 1);
         assert_eq!(app.settings.theme, ThemeChoice::Dark);
-        assert!(app.backend.is_offline());
+        assert!(app.host.is_offline());
         assert!(app.composer.is_empty());
         assert!(app.dialog.is_none());
 

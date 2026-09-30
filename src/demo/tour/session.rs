@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub fn respond(app: &mut App) {
-    for command in app.backend.take_demo_commands() {
+    for command in app.host.take_demo_commands() {
         match command {
             Command::CreatePoll { chat, draft } => {
                 let state = crate::model::PollState {

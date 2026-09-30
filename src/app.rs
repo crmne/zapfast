@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::audio::{Player, Recorder};
-use crate::backend::{Backend, Command, Event, LinkStatus, Refusal, Unsent, Waker};
+#[cfg(test)]
+use crate::backend::Backend;
+use crate::backend::{Command, Event, LinkStatus, Refusal, Unsent, Waker};
 use crate::i18n::Locale;
 use crate::image_preview::PreviewState;
 use crate::model::{
@@ -348,7 +350,7 @@ pub struct App {
     pub locale: Locale,
     settings_dirty: bool,
     last_settings_save: Instant,
-    pub backend: Backend,
+    pub host: crate::host::Host,
     pub palette: Palette,
     pub custom_themes: theme::Catalog,
     applied_dark: Option<bool>,
@@ -372,8 +374,6 @@ pub struct App {
     /// Account about text.
     pub me_about: Option<String>,
 
-    /// Accounts the switcher can show, in order.
-    pub accounts: Vec<crate::account::Account>,
     /// The account whose chats are showing.
     pub active_account: crate::account::AccountId,
 
@@ -840,8 +840,8 @@ impl Default for AppOptions {
 impl App {
     pub fn new(waker: &Waker, dirs: AppDirs, settings: Settings, options: AppOptions) -> Self {
         crate::proxy::configure(&settings.proxy);
-        let backend = Backend::spawn(dirs.clone(), waker.clone());
-        let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
+        let host = crate::host::Host::spawn(dirs.clone(), waker.clone());
+        let mut app = Self::with_backend(dirs, settings, host, waker.clone());
         app.pauses_media = true;
         app.badge = Some(Default::default());
         app.custom_themes
@@ -867,7 +867,7 @@ impl App {
                 crate::util::twelve_hour_clock();
             })
             .ok();
-        app.backend.send(Command::SetDownloadFolder(
+        app.host.send(Command::SetDownloadFolder(
             app.settings.download_folder.clone(),
         ));
         if crate::autostart::supported() {
@@ -883,9 +883,10 @@ impl App {
 
     /// Creates a disconnected app and event sender for demos and tests.
     pub fn headless(dirs: AppDirs, settings: Settings) -> (Self, std::sync::mpsc::Sender<Event>) {
-        let (backend, events) = Backend::detached();
+        let (backend, events) = crate::backend::Backend::detached();
+        let host = crate::host::Host::of(crate::account::load(&dirs.accounts_file()), backend);
         (
-            Self::with_backend(dirs, settings, backend, Waker::default()),
+            Self::with_backend(dirs, settings, host, Waker::default()),
             events,
         )
     }
@@ -895,19 +896,24 @@ impl App {
     /// only draws once the tray or another launch shows the window.
     pub fn start_hidden(&mut self) {
         self.hide_intent = true;
-        if let Some(startup) = self.backend.take_startup() {
+        if let Some(startup) = self.host.take_startup() {
             let _ = startup.send(());
         }
     }
 
-    fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
+    fn with_backend(
+        dirs: AppDirs,
+        settings: Settings,
+        host: crate::host::Host,
+        waker: Waker,
+    ) -> Self {
         let palette = settings
             .cached_palette()
             .unwrap_or_else(|| match settings.theme {
                 ThemeChoice::Light => Palette::light(),
                 _ => Palette::dark(),
             });
-        let accounts = crate::account::load(&dirs.accounts_file());
+        let accounts = host.accounts();
         let active_account = if accounts
             .iter()
             .any(|account| account.id == settings.last_account)
@@ -935,7 +941,7 @@ impl App {
             locale,
             settings_dirty: false,
             last_settings_save: Instant::now(),
-            backend,
+            host,
             palette,
             custom_themes: theme::Catalog::default(),
             applied_dark: None,
@@ -950,7 +956,6 @@ impl App {
             me_lid: None,
             me_name: None,
             me_about: None,
-            accounts,
             active_account,
             chats: Vec::new(),
             contacts: HashMap::new(),
@@ -2022,7 +2027,7 @@ impl App {
             return known.clone();
         }
         if self.avatar_requests.insert(id.to_owned()) {
-            self.backend.send(Command::FetchAvatar {
+            self.host.send(Command::FetchAvatar {
                 id: id.to_owned(),
                 full: false,
             });
@@ -2036,7 +2041,7 @@ impl App {
             return known.clone();
         }
         if self.avatar_full_requests.insert(id.to_owned()) {
-            self.backend.send(Command::FetchAvatar {
+            self.host.send(Command::FetchAvatar {
                 id: id.to_owned(),
                 full: true,
             });
@@ -2083,7 +2088,7 @@ impl App {
     }
 
     fn handle_events(&mut self) {
-        for event in self.backend.poll() {
+        for event in self.host.poll() {
             match event {
                 Event::Link(status) => self.handle_link(status),
                 Event::Me {
@@ -2169,7 +2174,7 @@ impl App {
                             && let Some(oldest) = conversation.messages.first()
                         {
                             conversation.loading_older = true;
-                            self.backend.send(Command::LoadUntil {
+                            self.host.send(Command::LoadUntil {
                                 chat,
                                 id: anchor,
                                 before: (oldest.timestamp, oldest.id.clone()),
@@ -2835,7 +2840,7 @@ impl App {
         // The earlier matches stay listed until the answer replaces them, so
         // the list does not blink empty on every keystroke.
         self.chat_search_pending = true;
-        self.backend.send(Command::SearchChatMessages {
+        self.host.send(Command::SearchChatMessages {
             chat,
             query,
             from,
@@ -2961,7 +2966,7 @@ impl App {
     /// Mirrors a chat's draft into the encrypted archive, so unsent text
     /// survives a restart. An empty text clears the stored row.
     fn store_draft(&self, chat: &str, text: &str) {
-        self.backend.send(Command::SaveDraft {
+        self.host.send(Command::SaveDraft {
             chat: ChatId::whatsapp(chat),
             text: text.to_owned(),
         });
@@ -3041,7 +3046,7 @@ impl App {
             .or_default();
         if !conversation.requested {
             conversation.requested = true;
-            self.backend.send(Command::LoadChat {
+            self.host.send(Command::LoadChat {
                 chat: ChatId::whatsapp(chat),
                 before: None,
             });
@@ -3065,7 +3070,7 @@ impl App {
         conversation.loading_older = true;
         let before = (oldest.timestamp, oldest.id.clone());
         self.scroll_anchor = Some(oldest.id.clone());
-        self.backend.send(Command::LoadChat {
+        self.host.send(Command::LoadChat {
             chat: ChatId::whatsapp(chat),
             before: Some(before),
         });
@@ -3096,8 +3101,7 @@ impl App {
             .messages
             .first()
             .map(|oldest| oldest.id.clone());
-        self.backend
-            .send(Command::FetchOlder(ChatId::whatsapp(chat)));
+        self.host.send(Command::FetchOlder(ChatId::whatsapp(chat)));
     }
 
     fn mark_read(&mut self, chat: &str) {
@@ -3107,7 +3111,7 @@ impl App {
             known.marked_unread = false;
         }
         // Clear local unread state regardless of receipt settings.
-        self.backend.send(Command::MarkRead {
+        self.host.send(Command::MarkRead {
             chat: ChatId::whatsapp(chat),
             receipts: self.settings.send_read_receipts,
         });
@@ -3123,8 +3127,7 @@ impl App {
             return;
         }
         known.marked_unread = true;
-        self.backend
-            .send(Command::MarkUnread(ChatId::whatsapp(chat)));
+        self.host.send(Command::MarkUnread(ChatId::whatsapp(chat)));
     }
 
     fn open_chat(&mut self, id: ChatId) {
@@ -3252,7 +3255,7 @@ impl App {
             && let Some(chat) = self.open_chat.clone()
         {
             self.composing = true;
-            self.backend.send(Command::Composing {
+            self.host.send(Command::Composing {
                 chat,
                 composing: true,
             });
@@ -3262,7 +3265,7 @@ impl App {
     fn stop_composing(&mut self, chat: &str) {
         if self.composing {
             self.composing = false;
-            self.backend.send(Command::Composing {
+            self.host.send(Command::Composing {
                 chat: ChatId::whatsapp(chat),
                 composing: false,
             });
@@ -3297,7 +3300,7 @@ impl App {
                 message.edited = true;
                 message.mentions = mention_refs(&mentions);
             }
-            self.backend.send(Command::EditText {
+            self.host.send(Command::EditText {
                 chat,
                 id,
                 text,
@@ -3307,7 +3310,7 @@ impl App {
         }
         // The text is on its way, so there is nothing left to restore.
         self.store_draft(&chat, "");
-        self.backend.send(Command::SendText {
+        self.host.send(Command::SendText {
             chat,
             text,
             quoting,
@@ -3385,7 +3388,7 @@ impl App {
                     rgba,
                     ..
                 } => {
-                    self.backend.send(Command::SendImage {
+                    self.host.send(Command::SendImage {
                         chat: chat.clone(),
                         width: width as u32,
                         height: height as u32,
@@ -3399,7 +3402,7 @@ impl App {
             }
         }
         if !files.is_empty() {
-            self.backend.send(Command::SendFiles {
+            self.host.send(Command::SendFiles {
                 chat,
                 paths: files,
                 caption: caption.take(),
@@ -3424,7 +3427,7 @@ impl App {
             paths.len(),
             if paths.len() == 1 { "" } else { "s" }
         ));
-        self.backend.send(Command::SendFiles {
+        self.host.send(Command::SendFiles {
             chat,
             paths,
             caption: None,
@@ -3451,13 +3454,13 @@ impl App {
             toast.kind == ToastKind::Error || toast.created.elapsed() < INFO_TOAST_LIFETIME
         });
         if self.settings.check_for_updates
-            && !self.backend.is_offline()
+            && !self.host.is_offline()
             && self
                 .last_update_check
                 .is_none_or(|at| at.elapsed() >= crate::updates::CHECK_INTERVAL)
         {
             self.last_update_check = Some(now);
-            self.backend.send(Command::CheckForUpdates);
+            self.host.send(Command::CheckForUpdates);
         }
         self.maybe_download_update();
         if self.settings_dirty && self.last_settings_save.elapsed() > Duration::from_secs(2) {
@@ -3471,7 +3474,7 @@ impl App {
     fn inspect_update(&mut self) {
         if self.update_support.is_none() && !self.update_inspecting {
             self.update_inspecting = true;
-            self.backend.send(Command::InspectUpdate);
+            self.host.send(Command::InspectUpdate);
         }
     }
 
@@ -3502,7 +3505,7 @@ impl App {
                 received: 0,
                 total: 0,
             };
-            self.backend.send(Command::DownloadUpdate {
+            self.host.send(Command::DownloadUpdate {
                 release,
                 source: crate::updates::Source::github(),
             });
@@ -3648,7 +3651,7 @@ impl App {
                 // Privacy can change on the phone at any time, and nothing
                 // announces it: read it again whenever Settings opens.
                 if page == Page::Settings && self.page != Page::Settings && self.is_connected() {
-                    self.backend.send(Command::FetchAccountPrivacy);
+                    self.host.send(Command::FetchAccountPrivacy);
                 }
                 // Typed passwords do not wait in a form nobody sees.
                 if page != Page::Settings && !self.app_lock.checking() {
@@ -3693,7 +3696,7 @@ impl App {
             Action::StartChat { id, name } => {
                 if self.chat(&id).is_none() {
                     self.chats.push(Chat::new(id.clone(), name.clone()));
-                    self.backend.send(Command::EnsureChat {
+                    self.host.send(Command::EnsureChat {
                         chat: id.clone(),
                         name,
                     });
@@ -3743,7 +3746,7 @@ impl App {
                 {
                     // Load older archive pages toward the search result.
                     conversation.loading_older = true;
-                    self.backend.send(Command::LoadUntil {
+                    self.host.send(Command::LoadUntil {
                         chat,
                         id: message,
                         before: (oldest.timestamp, oldest.id.clone()),
@@ -3786,7 +3789,7 @@ impl App {
                 {
                     state.refreshing = true;
                 }
-                self.backend.send(Command::RefreshPoll { chat, message });
+                self.host.send(Command::RefreshPoll { chat, message });
             }
             Action::ReplyInteractive {
                 chat,
@@ -3796,7 +3799,7 @@ impl App {
             } => {
                 if self.link.is_connected() && self.chat(&chat).is_some_and(|chat| chat.can_send())
                 {
-                    self.backend.send(Command::ReplyInteractive {
+                    self.host.send(Command::ReplyInteractive {
                         chat,
                         message,
                         button,
@@ -3810,7 +3813,7 @@ impl App {
                     match draft.validated() {
                         Ok(draft) => {
                             self.poll_creating = true;
-                            self.backend.send(Command::CreatePoll { chat, draft });
+                            self.host.send(Command::CreatePoll { chat, draft });
                         }
                         Err(error) => self.toast_error(error),
                     }
@@ -3822,7 +3825,7 @@ impl App {
                 choices,
             } => {
                 if self.poll_voting.insert((chat.clone(), message.clone())) {
-                    self.backend.send(Command::VotePoll {
+                    self.host.send(Command::VotePoll {
                         chat,
                         message,
                         choices,
@@ -3863,7 +3866,7 @@ impl App {
                     return;
                 }
                 media.state = MediaState::Downloading;
-                self.backend.send(Command::Download {
+                self.host.send(Command::Download {
                     card,
                     chat,
                     message,
@@ -3927,9 +3930,9 @@ impl App {
                     }
                 }
             }
-            Action::OpenLog(path) => self.backend.send(Command::OpenLog(path)),
+            Action::OpenLog(path) => self.host.send(Command::OpenLog(path)),
             Action::SaveAttachmentAs { path, name } => {
-                self.backend
+                self.host
                     .send(Command::SaveAttachmentAs { source: path, name });
             }
             Action::OpenFolder(path) => {
@@ -3948,7 +3951,7 @@ impl App {
                         state: crate::model::InviteState::Loading,
                     });
                     self.dialog = Some(Dialog::JoinGroup);
-                    self.backend.send(Command::PreviewInvite(code));
+                    self.host.send(Command::PreviewInvite(code));
                 } else if let Some(url) = crate::safety::external_url(&url) {
                     ctx.open_url(egui::OpenUrl::new_tab(url));
                 } else {
@@ -3960,7 +3963,7 @@ impl App {
                 self.toast("Copied");
             }
             Action::CopyImage(path) => {
-                self.backend.send(Command::PrepareClipboardImage(path));
+                self.host.send(Command::PrepareClipboardImage(path));
             }
             Action::DismissToast(index) => {
                 if index < self.toasts.len() {
@@ -3985,7 +3988,7 @@ impl App {
                 messages,
                 to_chat,
             } => {
-                self.backend.send(Command::Forward {
+                self.host.send(Command::Forward {
                     from_chat,
                     messages,
                     to_chat,
@@ -4113,17 +4116,17 @@ impl App {
                 {
                     message.content = Content::Revoked;
                 }
-                self.backend.send(Command::Revoke { chat, id });
+                self.host.send(Command::Revoke { chat, id });
             }
             Action::DeleteForMe { chat, id } => {
                 if let Some(conversation) = self.conversations.get_mut(&chat) {
                     conversation.messages.retain(|message| message.id != id);
                 }
-                self.backend.send(Command::DeleteLocal { chat, id });
+                self.host.send(Command::DeleteLocal { chat, id });
             }
             Action::Attach => {
                 if let Some(chat) = self.open_chat.clone() {
-                    self.backend.send(Command::PickFiles(chat));
+                    self.host.send(Command::PickFiles(chat));
                 }
             }
             Action::SetComposerTools(open) => {
@@ -4175,7 +4178,7 @@ impl App {
                     self.composer_tools_open = false;
                     // An offline demo never opens the microphone.
                     #[cfg(any(test, feature = "demo"))]
-                    let recorder = if self.backend.is_offline() {
+                    let recorder = if self.host.is_offline() {
                         Recorder::simulated(self.waker.clone())
                     } else {
                         Recorder::start(self.waker.clone())
@@ -4198,7 +4201,7 @@ impl App {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.muted_until = until;
                 }
-                self.backend.send(Command::SetMuted(chat, until));
+                self.host.send(Command::SetMuted(chat, until));
             }
             Action::SetLocked(chat, locked) => {
                 if let Some(known) = self.chat_mut(&chat) {
@@ -4208,7 +4211,7 @@ impl App {
                 if locked && self.open_chat.as_deref() == Some(chat.as_str()) {
                     self.hide_locked_chat(&chat);
                 }
-                self.backend.send(Command::SetLocked(chat, locked));
+                self.host.send(Command::SetLocked(chat, locked));
             }
             Action::TogglePicker(tab) => {
                 self.composer_tools_open = false;
@@ -4235,7 +4238,7 @@ impl App {
                         self.stickers_pending = self.stickers.is_empty()
                             && self.stickers_saved.is_empty()
                             && self.sticker_packs.is_empty();
-                        self.backend.send(Command::RecentStickers);
+                        self.host.send(Command::RecentStickers);
                     }
                     if tab == PickerTab::Gifs && self.gif_results.is_empty() {
                         self.actions.push(Action::SearchGifs(String::new()));
@@ -4348,30 +4351,30 @@ impl App {
             }
             Action::CloseMentions => self.mention_start = None,
             Action::SaveSticker(path) => {
-                self.backend.send(Command::SaveSticker { path });
+                self.host.send(Command::SaveSticker { path });
                 self.toast(crate::i18n::gettext(self.locale, "Added to favorites"));
             }
             Action::RemoveRecentSticker(path) => {
                 self.stickers.retain(|recent| *recent != path);
-                self.backend.send(Command::RemoveRecentSticker { path });
+                self.host.send(Command::RemoveRecentSticker { path });
             }
             Action::ForgetSticker(path) => {
-                self.backend.send(Command::ForgetSticker { path });
+                self.host.send(Command::ForgetSticker { path });
             }
             Action::ImportStickerUrl(url) => {
                 self.sticker_import_pending = true;
                 self.sticker_link.clear();
-                self.backend.send(Command::ImportStickerUrl { url });
+                self.host.send(Command::ImportStickerUrl { url });
             }
             Action::PickStickerArchive => {
                 self.sticker_import_pending = true;
-                self.backend.send(Command::PickStickerArchive);
+                self.host.send(Command::PickStickerArchive);
             }
             Action::DeleteStickerPack(dir) => {
                 if self.sticker_shelf == StickerShelf::Pack(dir.clone()) {
                     self.sticker_shelf = StickerShelf::Recent;
                 }
-                self.backend.send(Command::DeleteStickerPack { dir });
+                self.host.send(Command::DeleteStickerPack { dir });
             }
             Action::CreateStickerPack(name) => {
                 let name = name.trim().to_owned();
@@ -4379,7 +4382,7 @@ impl App {
                     // The backend picks the folder; select the pack once the
                     // next Stickers event lists it.
                     self.sticker_pack_created = Some(name.clone());
-                    self.backend.send(Command::CreateStickerPack { name });
+                    self.host.send(Command::CreateStickerPack { name });
                 }
             }
             Action::SelectStickerShelf(shelf) => {
@@ -4390,17 +4393,16 @@ impl App {
                     self.sticker_preview = None;
                     self.sticker_preview_pending = true;
                     self.dialog = Some(Dialog::StickerPack);
-                    self.backend
-                        .send(Command::ViewStickerPack { chat, message });
+                    self.host.send(Command::ViewStickerPack { chat, message });
                 }
             }
             Action::PickStickerPicture => {
-                self.backend.send(Command::PickStickerPicture);
+                self.host.send(Command::PickStickerPicture);
             }
             Action::MakeSticker { send } => {
                 if let Some(draft) = self.sticker_draft.take() {
                     let chat = if send { self.open_chat.clone() } else { None };
-                    self.backend.send(Command::MakeSticker {
+                    self.host.send(Command::MakeSticker {
                         source: draft.source,
                         crop: draft.crop,
                         transparent: draft.transparent && draft.keep_transparent,
@@ -4412,7 +4414,7 @@ impl App {
             }
             Action::AddStickerPack => {
                 if let Some((pack, _)) = &self.sticker_preview {
-                    self.backend.send(Command::AddStickerPack {
+                    self.host.send(Command::AddStickerPack {
                         dir: pack.dir.clone(),
                         name: pack.name.clone(),
                     });
@@ -4426,7 +4428,7 @@ impl App {
                         self.locale,
                         "Sending the sticker pack…",
                     ));
-                    self.backend.send(Command::SendStickerPack { chat, dir });
+                    self.host.send(Command::SendStickerPack { chat, dir });
                 }
             }
             Action::SetStickerPack {
@@ -4434,7 +4436,7 @@ impl App {
                 sticker,
                 member,
             } => {
-                self.backend.send(Command::SetStickerPack {
+                self.host.send(Command::SetStickerPack {
                     pack,
                     sticker,
                     member,
@@ -4443,7 +4445,7 @@ impl App {
             Action::SendSticker(path) => {
                 if let Some(chat) = self.open_chat.clone() {
                     let quoting = self.reply_to.take();
-                    self.backend.send(Command::SendSticker {
+                    self.host.send(Command::SendSticker {
                         chat,
                         path,
                         quoting,
@@ -4457,7 +4459,7 @@ impl App {
                 self.gif_query = query.clone();
                 self.gif_pending = true;
                 self.gif_error = None;
-                self.backend.send(Command::SearchGifs {
+                self.host.send(Command::SearchGifs {
                     query,
                     key: self.settings.effective_giphy_key().unwrap_or_default(),
                 });
@@ -4466,7 +4468,7 @@ impl App {
                 if let Some(chat) = self.open_chat.clone() {
                     self.toast("Sending GIF…");
                     let quoting = self.reply_to.take();
-                    self.backend.send(Command::SendGif { chat, gif, quoting });
+                    self.host.send(Command::SendGif { chat, gif, quoting });
                     self.picker = None;
                     self.follow_outgoing();
                     self.refocus_composer(ctx);
@@ -4518,7 +4520,7 @@ impl App {
                 );
                 self.reaction_target = None;
                 self.reaction_anchor = None;
-                self.backend.send(Command::React {
+                self.host.send(Command::React {
                     chat,
                     message,
                     emoji,
@@ -4536,7 +4538,7 @@ impl App {
                 // phone: a refused leave rolls the mark back, and a chat that
                 // archived and closed itself would not come back. The
                 // confirmed update does both.
-                self.backend.send(Command::LeaveGroup { chat, archive });
+                self.host.send(Command::LeaveGroup { chat, archive });
             }
             Action::SetArchived(chat, archived) => {
                 if let Some(known) = self.chat_mut(&chat) {
@@ -4545,14 +4547,14 @@ impl App {
                 if archived && self.open_chat.as_deref() == Some(chat.as_str()) {
                     self.actions.push(Action::CloseChat);
                 }
-                self.backend.send(Command::SetArchived(chat, archived));
+                self.host.send(Command::SetArchived(chat, archived));
             }
             // The chat leaves the list once the phone confirmed, through
             // `Event::ChatRemoved`.
-            Action::DeleteChat(chat) => self.backend.send(Command::DeleteChat(chat)),
+            Action::DeleteChat(chat) => self.host.send(Command::DeleteChat(chat)),
             // The messages go once the phone confirmed, through
             // `Event::ChatCleared`; the chat stays either way.
-            Action::ClearChat(chat) => self.backend.send(Command::ClearChat(chat)),
+            Action::ClearChat(chat) => self.host.send(Command::ClearChat(chat)),
             Action::SetPinned(chat, pinned) => {
                 if pinned && self.pinned_count() >= self.pin_limit {
                     self.toast(format!("You can only pin {} chats", self.pin_limit));
@@ -4566,7 +4568,7 @@ impl App {
                         0
                     };
                 }
-                self.backend.send(Command::SetPinned(chat, pinned));
+                self.host.send(Command::SetPinned(chat, pinned));
             }
             Action::SetFavorite(chat, favorite) => {
                 if let Some(known) = self.chat_mut(&chat) {
@@ -4574,7 +4576,7 @@ impl App {
                     // A new favorite joins the end until the archive numbers it.
                     known.favorite_position = u32::MAX;
                 }
-                self.backend.send(Command::SetFavorite(chat, favorite));
+                self.host.send(Command::SetFavorite(chat, favorite));
             }
             Action::ShowDialog(dialog) => {
                 self.clear_chat_lock_entry();
@@ -4621,7 +4623,7 @@ impl App {
                 let Some(full_name) = full_name else {
                     return;
                 };
-                self.backend.send(Command::SaveContact {
+                self.host.send(Command::SaveContact {
                     id,
                     full_name,
                     first_name,
@@ -4644,7 +4646,7 @@ impl App {
                     self.settings.save_contacts_to_phone = to_phone;
                     self.mark_settings_dirty();
                 }
-                self.backend.send(Command::NewContact {
+                self.host.send(Command::NewContact {
                     phone,
                     full_name,
                     first_name,
@@ -4675,7 +4677,7 @@ impl App {
                         self.actions.push(Action::OpenChat(id));
                     } else {
                         invite.state = InviteState::Joining(info.clone());
-                        self.backend.send(Command::JoinInvite(invite.code.clone()));
+                        self.host.send(Command::JoinInvite(invite.code.clone()));
                     }
                 }
             }
@@ -4701,7 +4703,7 @@ impl App {
             }
             Action::SelectLabel(label) => self.select_label(label),
             Action::SetChatLabels { chat, labels } => {
-                self.backend.send(Command::SetChatLabels { chat, labels });
+                self.host.send(Command::SetChatLabels { chat, labels });
             }
             Action::CreateLabel { name, color_hex } => {
                 let name = name.trim().to_owned();
@@ -4722,7 +4724,7 @@ impl App {
                     self.toast_error(refusal);
                     return;
                 }
-                self.backend.send(Command::CreateLabel { name, color_hex });
+                self.host.send(Command::CreateLabel { name, color_hex });
                 self.label_name.clear();
                 self.label_color = crate::archive::DEFAULT_COLOR.to_owned();
             }
@@ -4739,14 +4741,14 @@ impl App {
                     self.toast_error(refusal);
                     return;
                 }
-                self.backend.send(Command::UpdateLabel {
+                self.host.send(Command::UpdateLabel {
                     id,
                     name,
                     color_hex,
                 });
             }
             Action::DeleteLabel(id) => {
-                self.backend.send(Command::DeleteLabel(id));
+                self.host.send(Command::DeleteLabel(id));
                 self.label_editing = None;
             }
             // Reading a chat must not pull its row out from under the pointer.
@@ -4806,7 +4808,7 @@ impl App {
                 {
                     // Load older archive pages toward the target.
                     conversation.loading_older = true;
-                    self.backend.send(Command::LoadUntil {
+                    self.host.send(Command::LoadUntil {
                         chat: chat.clone(),
                         id: id.clone(),
                         before: (oldest.timestamp, oldest.id.clone()),
@@ -4827,7 +4829,7 @@ impl App {
                 if query.is_empty() || self.locked_folder_open() || self.secret_code_matched() {
                     self.search_hits.clear();
                 } else {
-                    self.backend.send(Command::SearchMessages { query });
+                    self.host.send(Command::SearchMessages { query });
                 }
             }
             Action::OpenChatSearch => self.open_chat_search(),
@@ -4864,7 +4866,7 @@ impl App {
                     ) else {
                         unreachable!()
                     };
-                    self.backend.send(Command::InstallUpdate {
+                    self.host.send(Command::InstallUpdate {
                         prepared,
                         arguments: self.update_arguments.clone(),
                     });
@@ -4902,13 +4904,13 @@ impl App {
                 self.settings.show_wallpaper = show;
                 self.mark_settings_dirty();
             }
-            Action::PickWallpaperImage => self.backend.send(Command::PickWallpaperImage),
+            Action::PickWallpaperImage => self.host.send(Command::PickWallpaperImage),
             Action::RemoveWallpaperImage => {
                 if self.settings.wallpaper_image.take().is_some() {
                     self.mark_settings_dirty();
                 }
                 crate::wallpaper::forget_image(ctx);
-                self.backend.send(Command::RemoveWallpaperImage);
+                self.host.send(Command::RemoveWallpaperImage);
             }
             Action::ReloadThemes => self.load_custom_themes(),
             Action::OpenThemesFolder => {
@@ -4970,8 +4972,7 @@ impl App {
                     && self.account_privacy.editable()
                     && self.account_privacy.begin_set(kind, choice)
                 {
-                    self.backend
-                        .send(Command::SetAccountPrivacy { kind, choice });
+                    self.host.send(Command::SetAccountPrivacy { kind, choice });
                 }
             }
             Action::SetNotificationSound { mention, sound } => {
@@ -4983,37 +4984,36 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::PickNotificationSound { mention } => {
-                self.backend
-                    .send(Command::PickNotificationSound { mention });
+                self.host.send(Command::PickNotificationSound { mention });
             }
             Action::PreviewSound(sound) => crate::notify::play_sound(sound),
-            Action::PickDownloadFolder => self.backend.send(Command::PickDownloadFolder),
+            Action::PickDownloadFolder => self.host.send(Command::PickDownloadFolder),
             Action::SetProfile { name, about } => {
-                self.backend.send(Command::SetProfile { name, about });
+                self.host.send(Command::SetProfile { name, about });
             }
-            Action::PickProfilePicture => self.backend.send(Command::PickProfilePicture),
+            Action::PickProfilePicture => self.host.send(Command::PickProfilePicture),
             Action::EditGroupName(name) => self.group_name_edit = Some(name),
             Action::CloseGroupName => self.group_name_edit = None,
             Action::SetGroupName { chat, name } => {
                 self.group_name_edit = None;
-                self.backend.send(Command::SetGroupName { chat, name });
+                self.host.send(Command::SetGroupName { chat, name });
             }
-            Action::PickGroupPicture(chat) => self.backend.send(Command::PickGroupPicture(chat)),
+            Action::PickGroupPicture(chat) => self.host.send(Command::PickGroupPicture(chat)),
             Action::RemoveGroupPicture(chat) => {
-                self.backend
+                self.host
                     .send(Command::SetGroupPicture { chat, jpeg: None });
             }
             Action::SetChatSound { chat, sound } => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.notification_sound = sound.clone();
                 }
-                self.backend.send(Command::SetChatSound { chat, sound });
+                self.host.send(Command::SetChatSound { chat, sound });
             }
-            Action::PickChatSound(chat) => self.backend.send(Command::PickChatSound(chat)),
+            Action::PickChatSound(chat) => self.host.send(Command::PickChatSound(chat)),
             Action::SetDownloadFolder(folder) => {
                 self.settings.download_folder = folder.clone();
                 self.mark_settings_dirty();
-                self.backend.send(Command::SetDownloadFolder(folder));
+                self.host.send(Command::SetDownloadFolder(folder));
             }
             Action::SetProxy(value) => {
                 let value = value.trim().to_owned();
@@ -5029,7 +5029,7 @@ impl App {
                 self.settings.proxy = value.clone();
                 self.mark_settings_dirty();
                 crate::proxy::configure(&value);
-                self.backend.send(Command::SetProxy(value));
+                self.host.send(Command::SetProxy(value));
             }
             Action::SetStartWithSystem(enabled) => match crate::autostart::set(enabled) {
                 Ok(()) => self.start_with_system = Some(crate::autostart::enabled()),
@@ -5052,12 +5052,12 @@ impl App {
                         "Enter the phone number with its country code, using digits only",
                     );
                 } else {
-                    self.backend.send(Command::PairWithPhone(digits));
+                    self.host.send(Command::PairWithPhone(digits));
                 }
             }
             Action::Unlink => {
                 self.dialog = None;
-                self.backend.send(Command::Unlink);
+                self.host.send(Command::Unlink);
             }
             Action::LockApp => self.lock_app(),
             Action::UnlockApp => {
@@ -5081,7 +5081,7 @@ impl App {
                 // chats are gone (`LinkStatus::LoggedOut`), never before.
                 if self.app_lock.is_locked() {
                     self.app_lock.forgetting = crate::app_lock::Forgetting::Unlinking;
-                    self.backend.send(Command::Unlink);
+                    self.host.send(Command::Unlink);
                 }
             }
             Action::AppLockForm(mode) => {
@@ -5116,10 +5116,10 @@ impl App {
                 self.app_lock.note_input();
                 self.mark_settings_dirty();
             }
-            Action::Reconnect => self.backend.send(Command::Reconnect),
+            Action::Reconnect => self.host.send(Command::Reconnect),
             Action::StartOverArchive => {
                 self.dialog = None;
-                self.backend.send(Command::StartOverArchive);
+                self.host.send(Command::StartOverArchive);
             }
             Action::Quit => {
                 self.quit_requested = true;
@@ -5212,7 +5212,7 @@ impl App {
         let online = self.window_focused && !self.window_hidden;
         if self.reported_online != Some(online) {
             self.reported_online = Some(online);
-            self.backend.send(Command::SetOnline(online));
+            self.host.send(Command::SetOnline(online));
         }
     }
 
@@ -5423,7 +5423,7 @@ impl App {
         }
         self.message_receipts = None;
         self.receipts_watch = wanted.clone();
-        self.backend.send(Command::WatchReceipts(wanted));
+        self.host.send(Command::WatchReceipts(wanted));
     }
 
     /// Polls audio state and schedules repaints while it changes.
@@ -5519,7 +5519,7 @@ impl App {
         }
         let sender = row.sender.clone();
         self.played_told.insert(message.clone());
-        self.backend.send(Command::MarkPlayed {
+        self.host.send(Command::MarkPlayed {
             chat,
             message,
             sender,
@@ -5607,7 +5607,7 @@ impl App {
                 && let Some((_, samples)) = self.unsent_voice.take()
             {
                 let quoting = self.reply_to.take();
-                self.backend.send(Command::SendVoice {
+                self.host.send(Command::SendVoice {
                     chat,
                     samples,
                     quoting,
@@ -5623,7 +5623,7 @@ impl App {
             Ok(samples) if samples.len() < crate::voice::RATE as usize / 2 => {}
             Ok(samples) => {
                 let quoting = self.reply_to.take();
-                self.backend.send(Command::SendVoice {
+                self.host.send(Command::SendVoice {
                     chat,
                     samples,
                     quoting,
@@ -5969,7 +5969,7 @@ impl App {
         if self.media_hold.take().is_some() {
             crate::media_pause::settle(Duration::from_secs(2));
         }
-        self.backend.shutdown();
+        self.host.shutdown();
     }
 
     /// Stores the open chat's unsent text, which otherwise only moves into
@@ -6383,7 +6383,7 @@ mod tests {
     fn a_remote_removal_or_clear_closes_the_confirmation() {
         let mut app = app();
         let (backend, events) = Backend::detached();
-        app.backend = backend;
+        app.host.replace(backend);
         let chat = "peer@s.whatsapp.net";
         app.chats.push(Chat::new(chat.into(), "Peer".into()));
 
@@ -6425,7 +6425,7 @@ mod tests {
     fn the_new_contact_box_remembers_whether_to_save_to_the_phone() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         let to_phone = |commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>| {
             std::iter::from_fn(|| commands.try_recv().ok())
@@ -6899,7 +6899,7 @@ mod tests {
     fn copying_an_image_dispatches_background_decode() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         let path = std::path::PathBuf::from("sample-photo.png");
 
@@ -6963,7 +6963,7 @@ mod tests {
         let mut app = App::with_backend(
             AppDirs::under(root.path()),
             Settings::default(),
-            backend,
+            crate::host::Host::of(Vec::new(), backend),
             Waker::default(),
         );
         assert!(started.try_recv().is_err(), "nothing starts before asked");
@@ -7619,7 +7619,7 @@ mod tests {
     fn message_info_follows_a_group_messages_receipts_only_while_open() {
         let mut app = app();
         let (backend, mut commands, events) = Backend::recording_with_events();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         let group = "123-456@g.us";
         let watches = |commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>| {
@@ -7675,7 +7675,7 @@ mod tests {
     fn drafts_come_back_after_a_restart_and_leave_with_the_account() {
         let mut app = app();
         let (backend, mut commands, events) = Backend::recording_with_events();
-        app.backend = backend;
+        app.host.replace(backend);
         let (open, other) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
         app.open_chat = Some(open.into());
         events
@@ -7714,7 +7714,7 @@ mod tests {
     fn selected_messages_forward_together_in_chat_order() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         let chat = "1@s.whatsapp.net";
         app.chats = vec![Chat::new(chat.into(), "Ada".into())];
@@ -7964,7 +7964,7 @@ mod tests {
         use crate::model::{InviteInfo, InviteState};
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         app.apply(
             Action::OpenUrl("https://chat.whatsapp.com/AbCdEf1234567890XyZ".into()),
@@ -7998,7 +7998,7 @@ mod tests {
     fn a_fourth_pin_is_refused_like_on_the_phone() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         for index in 0..5 {
             let mut chat = Chat::new(
                 ChatId::whatsapp(format!("{index}@s.whatsapp.net")),
@@ -8029,7 +8029,7 @@ mod tests {
     fn whatsapp_plus_raises_the_pin_limit() {
         let mut app = app();
         let (backend, _commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         for index in 0..4 {
             let mut chat = Chat::new(
                 ChatId::whatsapp(format!("{index}@s.whatsapp.net")),
@@ -8050,7 +8050,7 @@ mod tests {
     fn presence_follows_focus_and_the_hidden_window() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let mut reported = || {
             std::iter::from_fn(|| commands.try_recv().ok())
                 .filter_map(|command| match command {
@@ -8076,7 +8076,7 @@ mod tests {
     fn a_deleted_chat_leaves_only_after_the_phone_confirmed_it() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let chat = "peer@s.whatsapp.net";
         let other = "friend@s.whatsapp.net";
         app.chats.push(Chat::new(chat.into(), "Peer".into()));
@@ -8106,7 +8106,7 @@ mod tests {
         );
 
         let (backend, events) = Backend::detached();
-        app.backend = backend;
+        app.host.replace(backend);
         events
             .send(Event::ChatRemoved { chat: chat.into() })
             .unwrap();
@@ -8167,7 +8167,7 @@ mod tests {
     fn a_cleared_chat_keeps_its_row_until_the_phone_confirmed_it() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let chat = "peer@s.whatsapp.net";
         let other = "friend@s.whatsapp.net";
         app.chats.push(Chat::new(chat.into(), "Peer".into()));
@@ -8198,7 +8198,7 @@ mod tests {
         );
 
         let (backend, events) = Backend::detached();
-        app.backend = backend;
+        app.host.replace(backend);
         events
             .send(Event::ChatCleared {
                 chat: chat.into(),
@@ -8293,7 +8293,7 @@ mod tests {
     fn read_receipt_preference_applies_to_both_reading_and_voice_playback() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let chat = "peer@s.whatsapp.net";
         app.open_chat = Some(chat.into());
         app.conversations
@@ -8408,7 +8408,7 @@ mod tests {
     fn a_finished_voice_message_carries_on_with_the_next_unplayed_one() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         let chat = "1@s.whatsapp.net";
         app.chats = vec![Chat::new(chat.into(), "Ada".into())];
@@ -8671,7 +8671,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.apply(Action::PlayVideoWhenDownloaded("clip".into()), &ctx);
         let (backend, events) = Backend::detached();
-        app.backend = backend;
+        app.host.replace(backend);
         let path = PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/video/sample.mp4"
@@ -8686,7 +8686,7 @@ mod tests {
             .unwrap();
         app.handle_events();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         app.apply_actions(&ctx);
         assert_eq!(app.video.message(), Some("clip"));
         // A round video message is played like a voice message.
@@ -8704,7 +8704,7 @@ mod tests {
     fn repeated_download_clicks_do_not_queue_more_requests() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let chat = "fixture@s.whatsapp.net";
         let mut attachment = message(chat, "picture", 1);
         attachment.content = Content::Image {
@@ -8736,7 +8736,7 @@ mod tests {
         assert!(matches!(commands.try_recv(), Ok(Command::Download { .. })));
         assert!(commands.try_recv().is_err());
         let (backend, events) = Backend::detached();
-        app.backend = backend;
+        app.host.replace(backend);
         events
             .send(Event::Media {
                 card: None,
@@ -8752,7 +8752,7 @@ mod tests {
         ));
         assert!(app.toasts.is_empty());
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         app.apply(
             Action::Download {
                 card: None,
@@ -8768,7 +8768,7 @@ mod tests {
     fn carousel_downloads_track_each_card_separately() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let chat = "fixture@s.whatsapp.net";
         let card = || crate::model::InteractiveCard {
             image: Some(Media {
@@ -8831,7 +8831,7 @@ mod tests {
         assert_eq!(states(&app), [MediaState::Idle, MediaState::Downloading]);
         // A worker update carries no download state; the card keeps its own.
         let (backend, events) = Backend::detached();
-        app.backend = backend;
+        app.host.replace(backend);
         events
             .send(Event::MessageUpdated(Box::new(carousel)))
             .unwrap();
@@ -8875,7 +8875,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
         let (backend, mut commands, events) = Backend::recording_with_events();
-        app.backend = backend;
+        app.host.replace(backend);
         let chat = "fixture@s.whatsapp.net";
         app.open_chat = Some(chat.into());
         app.reply_to = Some("original".into());
@@ -8932,7 +8932,7 @@ mod tests {
     fn sending_a_reply_keeps_older_messages_in_view() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let chat = "fixture@s.whatsapp.net";
         app.open_chat = Some(chat.into());
         app.at_bottom = false;
@@ -8979,7 +8979,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
         let (backend, mut commands, events) = Backend::recording_with_events();
-        app.backend = backend;
+        app.host.replace(backend);
         app.open_chat = Some("other@s.whatsapp.net".into());
         app.composer = "Other chat's text".into();
         let chat = "fixture@s.whatsapp.net";
@@ -9026,7 +9026,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
         let (backend, mut commands, events) = Backend::recording_with_events();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         let chat = "fixture@s.whatsapp.net";
         app.open_chat = Some(chat.into());
@@ -9112,7 +9112,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
         let (backend, mut commands, events) = Backend::recording_with_events();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         let chat = "fixture@s.whatsapp.net";
         let other = "other@s.whatsapp.net";
@@ -9202,7 +9202,7 @@ mod tests {
     fn sending_a_sticker_consumes_the_pending_reply() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         app.open_chat = Some("fixture@s.whatsapp.net".into());
         app.reply_to = Some("quoted-message".into());
 
@@ -9226,7 +9226,7 @@ mod tests {
     fn clicking_an_oversized_attachment_does_not_start_a_download() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let chat = "peer@s.whatsapp.net";
         let mut attachment = message(chat, "picture", 1);
         attachment.content = Content::Image {
@@ -9392,7 +9392,7 @@ mod tests {
     fn the_pane_lists_only_the_answer_to_the_query_and_day_in_force() {
         let mut app = app();
         let (backend, mut commands, events) = Backend::recording_with_events();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         let chat = "1@s.whatsapp.net";
         app.open_chat = Some(chat.into());
@@ -9558,7 +9558,7 @@ mod tests {
     fn muting_all_channels_leaves_other_chats_alone() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
+        app.host.replace(backend);
         let ctx = egui::Context::default();
         app.chats = vec![
             Chat::new("1@newsletter".into(), "News".into()),
