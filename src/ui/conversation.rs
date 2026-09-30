@@ -5420,7 +5420,7 @@ fn rich_body(
     // Click links and drag to select text.
     // Text selection and pointer links do not need a sequential Tab stop.
     // The surrounding transcript remains available to accessibility readers.
-    let (rect, _) = ui.allocate_exact_size(allocation, Sense::hover());
+    let (_, rect) = ui.allocate_space(allocation);
     // egui matches selection endpoints to widgets by id every frame and drops
     // the selection when one is missed. A positional auto id shifts whenever
     // a sibling allocates differently (virtualized rows), killing the
