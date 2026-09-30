@@ -72,7 +72,7 @@ matrix-sdk = { version = "0.19", default-features = false, features = ["e2e-encr
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # The upload content type the Matrix SDK's attachment API takes.
 mime = "0.3"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util", "process"] }
 # Opens the WhatsApp WebSocket through a proxy, and Slack's Socket Mode
 # connection. The TLS stack is already in the tree.
 tokio-websockets = { version = "0.13.3", default-features = false, features = ["client", "rustls-webpki-roots"] }

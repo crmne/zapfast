@@ -792,6 +792,78 @@ pub(super) fn x(app: &mut App, ui: &mut egui::Ui) {
 
 /// The emoji comparison card for Matrix session verification. It stays up
 /// until the other device is confirmed or the request ends.
+/// The sign-in card for a Delta Chat account. The address is ordinary text;
+/// the password is masked and used once for the sign-in.
+pub(super) fn delta(app: &mut App, ui: &mut egui::Ui) {
+    let Some((account, state)) = app.sign_in() else {
+        return;
+    };
+    let palette = app.palette;
+    let card_width = 460.0_f32.min(ui.available_width() - 24.0).max(0.0);
+    ui.vertical_centered(|ui| {
+        ui.add_space(60.0);
+        Frame::new()
+            .fill(palette.panel)
+            .stroke(Stroke::new(1.0, palette.outline))
+            .corner_radius(CornerRadius::same(theme::RADIUS + 8))
+            .inner_margin(Margin::same(32))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 16],
+                blur: 48,
+                spread: 0,
+                color: palette.shadow,
+            })
+            .show(ui, |ui| {
+                ui.set_width((card_width - 64.0).max(0.0));
+                ui.spacing_mut().item_spacing.y = 8.0;
+                theme::text(ui, "ZapFast", theme::bold(28.0), palette.text);
+                theme::text(
+                    ui,
+                    "Connect Delta Chat.",
+                    theme::regular(14.5),
+                    palette.secondary,
+                );
+                ui.add_space(16.0);
+                if let crate::account::AuthState::Failed { reason } = &state {
+                    theme::paragraph(ui, reason, theme::regular(13.0), palette.danger);
+                    ui.add_space(4.0);
+                }
+                theme::paragraph(
+                    ui,
+                    "Delta Chat is email underneath. Enter the address and password of the account you want; any standard mail server works, and addresses on a chatmail server are the quickest. The password is used once and is not kept.",
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+                field(ui, &palette, "delta-addr", &mut app.delta_addr, false);
+                let submit = field(
+                    ui,
+                    &palette,
+                    "delta-password",
+                    &mut app.delta_password,
+                    true,
+                );
+                let ready =
+                    !app.delta_addr.trim().is_empty() && !app.delta_password.is_empty();
+                let mut pressed = false;
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    pressed = ui
+                        .add_enabled_ui(ready, |ui| {
+                            theme::pill_button(ui, &palette, "Sign in", true)
+                        })
+                        .inner
+                        .clicked();
+                });
+                if (submit && ready) || pressed {
+                    let step = crate::backend::LoginStep::DeltaCredentials {
+                        addr: app.delta_addr.trim().to_owned(),
+                        password: std::mem::take(&mut app.delta_password),
+                    };
+                    app.actions.push(Action::Login { account, step });
+                }
+            });
+    });
+}
+
 pub(super) fn verification(app: &mut App, ui: &mut egui::Ui) {
     let account = app.active_account;
     let Some(prompt) = app.verification.get(&account).cloned() else {

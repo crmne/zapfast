@@ -162,6 +162,10 @@ pub enum LoginStep {
     /// X: begins the OAuth 2.0 PKCE sign-in. The window shows the browser
     /// link, and the tokens land in the OS keyring.
     XConnect,
+    /// Delta Chat: the email address and password of the account. The mail
+    /// server keeps the account state; the password is used once and is never
+    /// stored by ZapFast.
+    DeltaCredentials { addr: String, password: String },
 }
 
 /// What the reader answered to an interactive session verification. The emoji
@@ -1136,6 +1140,7 @@ impl Backend {
             crate::account::NetworkKind::Zulip => Self::spawn_zulip(dirs, account.id, waker),
             crate::account::NetworkKind::DiscordBot => Self::spawn_discord(dirs, account.id, waker),
             crate::account::NetworkKind::X => Self::spawn_x(dirs, account.id, waker),
+            crate::account::NetworkKind::DeltaChat => Self::spawn_delta(dirs, account.id, waker),
             _ => Self::spawn(dirs, waker),
         }
     }
@@ -1392,6 +1397,48 @@ impl Backend {
                 runtime.shutdown_timeout(Duration::from_secs(3));
             })
             .expect("unable to start the X thread");
+
+        Self {
+            startup: Some(startup),
+            commands: command_tx,
+            events: event_rx,
+            thread: Some(thread),
+            offline: false,
+            #[cfg(any(test, feature = "demo"))]
+            demo_commands: None,
+        }
+    }
+
+    fn spawn_delta(dirs: AppDirs, account: crate::account::AccountId, waker: Waker) -> Self {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("zapfast-delta-runtime")
+            .enable_all()
+            .build()
+            .expect("unable to start the async runtime");
+        let (startup, started) = tokio::sync::oneshot::channel();
+        let worker_commands = command_tx.clone();
+        let thread = std::thread::Builder::new()
+            .name("zapfast-delta".to_string())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    if started.await.is_ok() {
+                        crate::adapter::delta::run(
+                            dirs,
+                            account,
+                            event_tx,
+                            worker_commands,
+                            command_rx,
+                            waker,
+                        )
+                        .await;
+                    }
+                });
+                runtime.shutdown_timeout(Duration::from_secs(3));
+            })
+            .expect("unable to start the Delta Chat thread");
 
         Self {
             startup: Some(startup),

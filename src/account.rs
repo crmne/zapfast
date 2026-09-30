@@ -92,6 +92,7 @@ impl NetworkKind {
                 | Self::Zulip
                 | Self::DiscordBot
                 | Self::X
+                | Self::DeltaChat
         )
     }
 }
@@ -157,6 +158,17 @@ impl Account {
             id,
             kind: NetworkKind::X,
             name: NetworkKind::X.label().to_owned(),
+        }
+    }
+
+    /// A Delta Chat account the user is about to sign in with an email
+    /// address and password. The server keeps the mail state in the account
+    /// directory.
+    pub fn delta(id: AccountId) -> Self {
+        Self {
+            id,
+            kind: NetworkKind::DeltaChat,
+            name: NetworkKind::DeltaChat.label().to_owned(),
         }
     }
 

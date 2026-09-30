@@ -845,6 +845,30 @@ streaming endpoint, so new messages arrive within a minute. Reactions,
 typing notices, stickers, voice notes, and GIF search are not available
 through the API and stay out of this account.
 
+### Delta Chat
+
+A Delta Chat account is an email address. Enter it with its password in the
+switcher, and the window runs the official `deltachat-rpc-server` beside it,
+one server per account. ZapFast does not bundle the binary: install it from
+the pinned revision
+
+```sh
+cargo install --locked --git https://github.com/chatmail/core \
+  --rev c41cac76d284f44094341c5d9f4eb3a847e2c34b deltachat-rpc-server
+```
+
+or download the matching release binary and put it on `PATH`; `ZAPFAST_DELTA_RPC`
+can point at it instead. Any standard mail server works, and addresses on a
+chatmail server are the quickest; the password is used once for the sign-in
+and is not stored by ZapFast.
+
+Chats, groups, and broadcast channels appear beside the WhatsApp chats.
+Text, images, files, and voice notes can be sent and received, and messages
+between Delta Chat clients are protected end to end by the mail client
+itself. Mail to contacts who do not use Delta Chat arrives as ordinary email
+and is shown as text. Reactions, edits, typing notices, read receipts, and
+search are not wired to this account yet.
+
 ## Files
 
 | What | Linux | Notes |
@@ -856,6 +880,7 @@ through the API and stay out of this account.
 | Matrix store | `~/.local/state/zapfast/accounts/<id>/matrix/` | matrix-sdk state, crypto keys, and the homeserver address; deleting it signs that account out and drops its keys |
 | Slack tokens | OS keyring | The app-level token and bot token; no Slack state is kept on disk |
 | Zulip credentials | OS keyring | The server, email, and API key; no Zulip state is kept on disk |
+| Delta Chat mail | `~/.local/state/zapfast/accounts/<id>/delta/` | The mail account database kept by the `deltachat-rpc-server` sidecar; deleting it removes that account's messages and signs it out |
 | Messages | `~/.local/state/zapfast/accounts/1/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |

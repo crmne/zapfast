@@ -88,6 +88,10 @@ impl Host {
             crate::account::NetworkKind::DiscordBot => {
                 Account::discord(crate::account::next_id(&self.accounts))
             }
+            crate::account::NetworkKind::X => Account::x(crate::account::next_id(&self.accounts)),
+            crate::account::NetworkKind::DeltaChat => {
+                Account::delta(crate::account::next_id(&self.accounts))
+            }
             _ => return None,
         };
         self.accounts.push(account.clone());

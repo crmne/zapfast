@@ -157,6 +157,7 @@ async fn serve(
                 LoginStep::ZulipCredentials { .. } => {}
                 LoginStep::DiscordToken { .. } => {}
                 LoginStep::XConnect => {}
+                LoginStep::DeltaCredentials { .. } => {}
             },
             _ => {}
         }

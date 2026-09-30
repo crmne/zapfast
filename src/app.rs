@@ -622,6 +622,10 @@ pub struct App {
     pub zulip_key: String,
     /// Discord bot token, kept only while the card is showing.
     pub discord_token: String,
+    /// Delta Chat sign-in fields, kept only while the card is showing. The
+    /// server keeps the mail account; the password is never stored here.
+    pub delta_addr: String,
+    pub delta_password: String,
     pub sidebar_visible: bool,
     pub show_archived: bool,
     /// Chat-list filter; applies to the main list, not to search or the archive.
@@ -1124,6 +1128,8 @@ impl App {
             zulip_email: String::new(),
             zulip_key: String::new(),
             discord_token: String::new(),
+            delta_addr: String::new(),
+            delta_password: String::new(),
             sidebar_visible: true,
             show_archived: false,
             chat_filter: ChatFilter::All,
