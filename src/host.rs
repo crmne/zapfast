@@ -85,6 +85,9 @@ impl Host {
             crate::account::NetworkKind::Zulip => {
                 Account::zulip(crate::account::next_id(&self.accounts))
             }
+            crate::account::NetworkKind::DiscordBot => {
+                Account::discord(crate::account::next_id(&self.accounts))
+            }
             _ => return None,
         };
         self.accounts.push(account.clone());

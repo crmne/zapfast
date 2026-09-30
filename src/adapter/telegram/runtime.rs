@@ -155,6 +155,7 @@ async fn serve(
                 LoginStep::MatrixPassword { .. } => {}
                 LoginStep::SlackTokens { .. } => {}
                 LoginStep::ZulipCredentials { .. } => {}
+                LoginStep::DiscordToken { .. } => {}
             },
             _ => {}
         }

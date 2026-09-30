@@ -92,6 +92,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         Some(crate::account::NetworkKind::Matrix) => login::matrix(app, ui),
                         Some(crate::account::NetworkKind::Slack) => login::slack(app, ui),
                         Some(crate::account::NetworkKind::Zulip) => login::zulip(app, ui),
+                        Some(crate::account::NetworkKind::DiscordBot) => login::discord(app, ui),
                         _ => login::telegram(app, ui),
                     }
                 } else {

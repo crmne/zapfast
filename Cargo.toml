@@ -77,6 +77,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"
 # connection. The TLS stack is already in the tree.
 tokio-websockets = { version = "0.13.3", default-features = false, features = ["client", "rustls-webpki-roots"] }
 http = "1"
+# The Discord bot API. Bot tokens only; the gateway and REST client use
+# rustls, and no voice crates are pulled in.
+twilight-gateway = { version = "0.17", default-features = false, features = ["rustls-webpki-roots", "twilight-http"] }
+twilight-http = { version = "0.17", default-features = false, features = ["rustls-webpki-roots"] }
+twilight-model = { version = "0.17", default-features = false }
 # Encodes HTTP proxy credentials. Already included through several crates.
 base64 = "0.22"
 # SQLCipher encrypts the archive; the device store shares the same library.

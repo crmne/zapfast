@@ -813,6 +813,23 @@ and editing and deleting a message works.
 Zulip search, custom emoji images, the voice-note flag, and sticker packs are
 not wired to Zulip yet.
 
+### Discord
+
+A Discord account here is a bot, never a personal account. Create an
+application at [discord.com/developers](https://discord.com/developers), turn
+on the Message Content intent, invite its bot to your servers with the `bot`
+scope, and paste its bot token in the account switcher. The token is kept in
+the OS keyring.
+
+Servers appear in the rail like spaces. Their text channels, threads, and
+your direct messages sit beside the WhatsApp chats. Text, replies, edits,
+deletes, attachments, guild stickers, and reactions with counts arrive as
+they happen. Bots cannot send typing notices, and Discord keeps no read
+state for them, so those controls are absent.
+
+Search, forwarding, sending voice notes, uploading stickers, and content
+from channels the bot was not invited to are not wired to Discord yet.
+
 ## Files
 
 | What | Linux | Notes |

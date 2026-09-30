@@ -85,7 +85,12 @@ impl NetworkKind {
     pub fn supported(self) -> bool {
         matches!(
             self,
-            Self::WhatsApp | Self::Telegram | Self::Matrix | Self::Slack | Self::Zulip
+            Self::WhatsApp
+                | Self::Telegram
+                | Self::Matrix
+                | Self::Slack
+                | Self::Zulip
+                | Self::DiscordBot
         )
     }
 }
@@ -133,6 +138,15 @@ impl Account {
             id,
             kind: NetworkKind::Zulip,
             name: NetworkKind::Zulip.label().to_owned(),
+        }
+    }
+
+    /// A Discord bot account the user is about to connect.
+    pub fn discord(id: AccountId) -> Self {
+        Self {
+            id,
+            kind: NetworkKind::DiscordBot,
+            name: NetworkKind::DiscordBot.label().to_owned(),
         }
     }
 

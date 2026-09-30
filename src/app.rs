@@ -620,6 +620,8 @@ pub struct App {
     pub zulip_server: String,
     pub zulip_email: String,
     pub zulip_key: String,
+    /// Discord bot token, kept only while the card is showing.
+    pub discord_token: String,
     pub sidebar_visible: bool,
     pub show_archived: bool,
     /// Chat-list filter; applies to the main list, not to search or the archive.
@@ -1121,6 +1123,7 @@ impl App {
             zulip_server: String::new(),
             zulip_email: String::new(),
             zulip_key: String::new(),
+            discord_token: String::new(),
             sidebar_visible: true,
             show_archived: false,
             chat_filter: ChatFilter::All,
