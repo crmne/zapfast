@@ -153,6 +153,7 @@ async fn serve(
                     }
                 }
                 LoginStep::MatrixPassword { .. } => {}
+                LoginStep::SlackTokens { .. } => {}
             },
             _ => {}
         }

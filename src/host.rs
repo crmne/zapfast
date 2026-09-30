@@ -79,6 +79,9 @@ impl Host {
             crate::account::NetworkKind::Matrix => {
                 Account::matrix(crate::account::next_id(&self.accounts))
             }
+            crate::account::NetworkKind::Slack => {
+                Account::slack(crate::account::next_id(&self.accounts))
+            }
             _ => return None,
         };
         self.accounts.push(account.clone());

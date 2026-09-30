@@ -3,4 +3,5 @@
 //! shared chat and message models.
 
 pub mod matrix;
+pub mod slack;
 pub mod telegram;

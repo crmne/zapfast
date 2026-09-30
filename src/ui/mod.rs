@@ -82,14 +82,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 if app.verification.contains_key(&app.active_account) {
                     login::verification(app, ui);
                 } else if app.sign_in().is_some() {
-                    let matrix = app.host.accounts().iter().any(|account| {
-                        account.id == app.active_account
-                            && account.kind == crate::account::NetworkKind::Matrix
-                    });
-                    if matrix {
-                        login::matrix(app, ui);
-                    } else {
-                        login::telegram(app, ui);
+                    let kind = app
+                        .host
+                        .accounts()
+                        .iter()
+                        .find(|account| account.id == app.active_account)
+                        .map(|account| account.kind);
+                    match kind {
+                        Some(crate::account::NetworkKind::Matrix) => login::matrix(app, ui),
+                        Some(crate::account::NetworkKind::Slack) => login::slack(app, ui),
+                        _ => login::telegram(app, ui),
                     }
                 } else {
                     conversation::show(app, ui);

@@ -611,6 +611,10 @@ pub struct App {
     pub matrix_homeserver: String,
     pub matrix_user: String,
     pub matrix_password: String,
+    /// Slack tokens, kept only while the card is showing; stored in the OS
+    /// keyring once they work.
+    pub slack_app_token: String,
+    pub slack_bot_token: String,
     pub sidebar_visible: bool,
     pub show_archived: bool,
     /// Chat-list filter; applies to the main list, not to search or the archive.
@@ -1107,6 +1111,8 @@ impl App {
             matrix_homeserver: String::new(),
             matrix_user: String::new(),
             matrix_password: String::new(),
+            slack_app_token: String::new(),
+            slack_bot_token: String::new(),
             sidebar_visible: true,
             show_archived: false,
             chat_filter: ChatFilter::All,

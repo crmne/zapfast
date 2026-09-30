@@ -146,6 +146,9 @@ pub enum LoginStep {
         user: String,
         password: String,
     },
+    /// Slack: the app-level token that opens the Socket Mode connection and
+    /// the bot token that calls the Web API. Both go to the OS keyring.
+    SlackTokens { app: String, bot: String },
 }
 
 /// What the reader answered to an interactive session verification. The emoji
@@ -1116,6 +1119,7 @@ impl Backend {
         match account.kind {
             crate::account::NetworkKind::Telegram => Self::spawn_telegram(dirs, account.id, waker),
             crate::account::NetworkKind::Matrix => Self::spawn_matrix(dirs, account.id, waker),
+            crate::account::NetworkKind::Slack => Self::spawn_slack(dirs, account.id, waker),
             _ => Self::spawn(dirs, waker),
         }
     }
@@ -1196,6 +1200,50 @@ impl Backend {
                 runtime.shutdown_timeout(Duration::from_secs(3));
             })
             .expect("unable to start the Matrix thread");
+
+        Self {
+            startup: Some(startup),
+            commands: command_tx,
+            events: event_rx,
+            thread: Some(thread),
+            offline: false,
+            #[cfg(any(test, feature = "demo"))]
+            demo_commands: None,
+        }
+    }
+
+    /// Starts the Slack adapter in its own thread, the way the WhatsApp
+    /// worker runs.
+    fn spawn_slack(dirs: AppDirs, account: crate::account::AccountId, waker: Waker) -> Self {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("zapfast-slack-runtime")
+            .enable_all()
+            .build()
+            .expect("unable to start the async runtime");
+        let (startup, started) = tokio::sync::oneshot::channel();
+        let worker_commands = command_tx.clone();
+        let thread = std::thread::Builder::new()
+            .name("zapfast-slack".to_string())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    if started.await.is_ok() {
+                        crate::adapter::slack::run(
+                            dirs,
+                            account,
+                            event_tx,
+                            worker_commands,
+                            command_rx,
+                            waker,
+                        )
+                        .await;
+                    }
+                });
+                runtime.shutdown_timeout(Duration::from_secs(3));
+            })
+            .expect("unable to start the Slack thread");
 
         Self {
             startup: Some(startup),

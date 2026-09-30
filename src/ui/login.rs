@@ -507,6 +507,81 @@ pub(super) fn matrix(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// The sign-in card for a Slack account. The tokens go straight to the OS
+/// keyring after the adapter has checked them; they are never stored in the
+/// settings file.
+pub(super) fn slack(app: &mut App, ui: &mut egui::Ui) {
+    let Some((account, state)) = app.sign_in() else {
+        return;
+    };
+    let palette = app.palette;
+    let card_width = 460.0_f32.min(ui.available_width() - 24.0).max(0.0);
+    ui.vertical_centered(|ui| {
+        ui.add_space(60.0);
+        Frame::new()
+            .fill(palette.panel)
+            .stroke(Stroke::new(1.0, palette.outline))
+            .corner_radius(CornerRadius::same(theme::RADIUS + 8))
+            .inner_margin(Margin::same(32))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 16],
+                blur: 48,
+                spread: 0,
+                color: palette.shadow,
+            })
+            .show(ui, |ui| {
+                ui.set_width((card_width - 64.0).max(0.0));
+                ui.spacing_mut().item_spacing.y = 8.0;
+                theme::text(ui, "ZapFast", theme::bold(28.0), palette.text);
+                theme::text(
+                    ui,
+                    "Connect Slack.",
+                    theme::regular(14.5),
+                    palette.secondary,
+                );
+                ui.add_space(16.0);
+                if let crate::account::AuthState::Failed { reason } = &state {
+                    theme::paragraph(ui, reason, theme::regular(13.0), palette.danger);
+                    ui.add_space(4.0);
+                }
+                theme::paragraph(
+                    ui,
+                    "Both tokens come from api.slack.com: the app-level token (xapp-) for Socket Mode, and the bot token (xoxb-) for the messages.",
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+                field(ui, &palette, "slack-app-token", &mut app.slack_app_token, true);
+                let submit = field(
+                    ui,
+                    &palette,
+                    "slack-bot-token",
+                    &mut app.slack_bot_token,
+                    true,
+                );
+                let ready = !app.slack_app_token.trim().is_empty()
+                    && !app.slack_bot_token.trim().is_empty();
+                let mut pressed = false;
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    pressed = ui
+                        .add_enabled_ui(ready, |ui| {
+                            theme::pill_button(ui, &palette, "Connect", true)
+                        })
+                        .inner
+                        .clicked();
+                });
+                if (submit && ready) || pressed {
+                    let step = crate::backend::LoginStep::SlackTokens {
+                        app: app.slack_app_token.trim().to_owned(),
+                        bot: app.slack_bot_token.trim().to_owned(),
+                    };
+                    app.slack_app_token.clear();
+                    app.slack_bot_token.clear();
+                    app.actions.push(Action::Login { account, step });
+                }
+            });
+    });
+}
+
 /// The emoji comparison card for Matrix session verification. It stays up
 /// until the other device is confirmed or the request ends.
 pub(super) fn verification(app: &mut App, ui: &mut egui::Ui) {

@@ -73,9 +73,9 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # The upload content type the Matrix SDK's attachment API takes.
 mime = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
-# Opens the WhatsApp WebSocket through a proxy. Both crates are already
-# included through the Tokio transport at these versions.
-tokio-websockets = { version = "0.13.3", default-features = false, features = ["client"] }
+# Opens the WhatsApp WebSocket through a proxy, and Slack's Socket Mode
+# connection. The TLS stack is already in the tree.
+tokio-websockets = { version = "0.13.3", default-features = false, features = ["client", "rustls-webpki-roots"] }
 http = "1"
 # Encodes HTTP proxy credentials. Already included through several crates.
 base64 = "0.22"
@@ -87,7 +87,7 @@ getrandom = "0.4"
 zeroize = "1"
 rand = "0.10"
 # The updater's HTTP client, with the proxy setting.
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "socks"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "socks"] }
 qrcode = { version = "0.14", default-features = false }
 # Downloads profile pictures. The protocol library already includes this crate
 # and TLS stack.

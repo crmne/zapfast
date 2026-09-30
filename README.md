@@ -780,6 +780,23 @@ threads, and forwarding are not wired to Matrix yet. GIF and sticker
 messages received from other clients show their file or a placeholder where
 the window cannot paint them.
 
+### Slack
+
+Add a Slack account from the account switcher in the chat-list header. Create
+an app at api.slack.com with Socket Mode enabled and both token kinds, then
+paste the app-level token (`xapp-`) and the bot token (`xoxb-`). Socket Mode
+means no public request URL is needed, and the tokens are kept in the OS
+keyring rather than the settings file.
+
+Channels, direct messages, and group messages show beside the WhatsApp chats;
+a thread appears as its own row under the channel it belongs to. Files and
+images download into the media cache, reactions show their counts, and
+editing and deleting a message works. A bot token sees the channels it was
+invited to; it cannot mark chats read and gets no typing indicator.
+
+Slack search, custom emoji images, the voice-note flag, huddles, and calls
+are not wired to Slack yet.
+
 ## Files
 
 | What | Linux | Notes |
@@ -789,6 +806,7 @@ the window cannot paint them.
 | Device keys | `~/.local/state/zapfast/accounts/1/session.db` | Owned by whatsapp-rust; deleting it unlinks |
 | Telegram session | `~/.local/state/zapfast/accounts/<id>/grammers/session.db` | Telegram device keys, peer cache, and update state; deleting it signs that account out here |
 | Matrix store | `~/.local/state/zapfast/accounts/<id>/matrix/` | matrix-sdk state, crypto keys, and the homeserver address; deleting it signs that account out and drops its keys |
+| Slack tokens | OS keyring | The app-level token and bot token; no Slack state is kept on disk |
 | Messages | `~/.local/state/zapfast/accounts/1/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |

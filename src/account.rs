@@ -83,7 +83,10 @@ impl NetworkKind {
     /// Whether ZapFast ships an adapter for this network. Line stays a
     /// reserved name with no adapter.
     pub fn supported(self) -> bool {
-        matches!(self, Self::WhatsApp | Self::Telegram | Self::Matrix)
+        matches!(
+            self,
+            Self::WhatsApp | Self::Telegram | Self::Matrix | Self::Slack
+        )
     }
 }
 
@@ -112,6 +115,15 @@ impl Account {
             id,
             kind: NetworkKind::Telegram,
             name: NetworkKind::Telegram.label().to_owned(),
+        }
+    }
+
+    /// A Slack account the user is about to connect.
+    pub fn slack(id: AccountId) -> Self {
+        Self {
+            id,
+            kind: NetworkKind::Slack,
+            name: NetworkKind::Slack.label().to_owned(),
         }
     }
 
