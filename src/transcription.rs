@@ -129,7 +129,17 @@ impl Transcription {
         self.revisions.clear();
     }
 
-    pub fn poll(&mut self) {
+    pub fn restore(&mut self, chat: &str, transcripts: Vec<(String, String)>) {
+        for (message, text) in transcripts {
+            let key = (chat.to_owned(), message);
+            if !self.states.contains_key(&key) {
+                self.set_state(key, State::Ready(text));
+            }
+        }
+    }
+
+    pub fn poll(&mut self) -> Vec<(String, String, String)> {
+        let mut completed = Vec::new();
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 ResultEvent::Detected(available) => self.available = available,
@@ -138,11 +148,15 @@ impl Transcription {
                     key,
                     result,
                 } if generation == self.generation => {
+                    if let State::Ready(text) = &result {
+                        completed.push((key.0.clone(), key.1.clone(), text.clone()));
+                    }
                     self.set_state(key, result);
                 }
                 _ => {}
             }
         }
+        completed
     }
 
     pub fn start(
@@ -201,9 +215,42 @@ mod tests {
             })
             .unwrap();
         transcription.clear();
-        transcription.poll();
+        assert!(transcription.poll().is_empty());
         assert!(transcription.available());
         assert_eq!(transcription.state("chat", "voice"), None);
+    }
+
+    #[test]
+    fn saved_transcripts_restore_without_yapsnap_and_do_not_get_saved_again() {
+        let mut transcription = Transcription::default();
+        transcription.restore("chat", vec![("voice".into(), "Synthetic speech".into())]);
+        assert!(!transcription.available());
+        assert_eq!(
+            transcription.state("chat", "voice"),
+            Some(&State::Ready("Synthetic speech".into()))
+        );
+        let revision = transcription.revision("chat");
+        transcription.restore("chat", vec![("voice".into(), "Synthetic speech".into())]);
+        assert_eq!(transcription.revision("chat"), revision);
+        assert!(transcription.poll().is_empty());
+    }
+
+    #[test]
+    fn completed_transcripts_are_saved_once() {
+        let mut transcription = Transcription::default();
+        transcription
+            .tx
+            .send(ResultEvent::Finished {
+                generation: 0,
+                key: ("chat".into(), "voice".into()),
+                result: State::Ready("Synthetic speech".into()),
+            })
+            .unwrap();
+        assert_eq!(
+            transcription.poll(),
+            vec![("chat".into(), "voice".into(), "Synthetic speech".into())]
+        );
+        assert!(transcription.poll().is_empty());
     }
 
     #[cfg(unix)]

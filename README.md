@@ -210,10 +210,12 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Voice transcription.** Install [yapsnap](https://github.com/kouhxp/yapsnap)
   and its ffmpeg dependency on your PATH, then restart ZapFast. Click the
   speech-to-text icon beside Play on a downloaded voice message to show text
-  below its waveform. Transcription runs locally without sending audio to a service;
-  yapsnap may download language models on first use. Transcripts last for the
-  current session and are cleared when you unlink. Temporary transcript files
-  in the app cache are removed after processing.
+  below its waveform. Transcription runs locally without sending audio to a
+  service; yapsnap may download language models on first use. Transcripts are
+  saved in the encrypted message archive and restored after restarting, even
+  without yapsnap installed. Deleting a message or unlinking removes its saved
+  transcript. Temporary transcript files in the app cache are removed after
+  processing.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation, and clicking empty conversation space returns

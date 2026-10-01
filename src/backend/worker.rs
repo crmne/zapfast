@@ -981,6 +981,7 @@ impl Worker {
                     | Event::ChatHits { .. }
                     | Event::ChatUpdated(_)
                     | Event::Messages { .. }
+                    | Event::VoiceTranscripts { .. }
                     | Event::MessageUpdated(_)
                     | Event::Incoming { .. }
                     | Event::Contacts(_)
@@ -990,6 +991,19 @@ impl Worker {
             )
         {
             return;
+        }
+        if let Event::Messages { chat, messages, .. } = &event {
+            let ids: Vec<String> = messages.iter().map(|message| message.id.clone()).collect();
+            match self.archive.voice_transcripts(chat, &ids) {
+                Ok(transcripts) if !transcripts.is_empty() => self.emit(Event::VoiceTranscripts {
+                    chat: chat.clone(),
+                    transcripts,
+                }),
+                Err(_) => self.emit(Event::Error(
+                    "Could not load saved voice transcripts".into(),
+                )),
+                _ => {}
+            }
         }
         let _ = self.events.send(event);
         self.waker.wake();
@@ -4351,6 +4365,20 @@ impl Worker {
                 if success {
                     let _ = self.archive.finish_unread_sync(&chat, marked_at);
                     self.pump_read_sync();
+                }
+            }
+            Command::SaveVoiceTranscript {
+                chat,
+                message,
+                text,
+            } => {
+                let chat = self.canonical_str(&chat);
+                if self
+                    .archive
+                    .save_voice_transcript(&chat, &message, &text)
+                    .is_err()
+                {
+                    self.emit(Event::Error("Could not save the voice transcript".into()));
                 }
             }
             Command::LoadChat { chat, before } => self.load_chat(chat, before),
@@ -13728,5 +13756,61 @@ mod chat_removal_tests {
             clear_boundary(Ok(empty)).is_some(),
             "an empty archive clears through now"
         );
+    }
+}
+
+#[cfg(test)]
+mod transcription_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn saved_transcripts_accompany_pages_and_wait_for_privacy_recovery() {
+        let (mut worker, events, _inbox, _wa) = receipt_tests::worker();
+        let mut message = receipt_tests::own_message("voice", 1);
+        message.content = Content::Audio {
+            media: crate::model::Media {
+                mime: "audio/ogg".into(),
+                size: 0,
+                width: None,
+                height: None,
+                path: None,
+                state: crate::model::MediaState::Idle,
+            },
+            seconds: Some(10),
+            voice_note: true,
+            waveform: Vec::new(),
+        };
+        let chat = message.chat.clone();
+        worker.archive.ensure_chat(&chat, "Fixture").unwrap();
+        worker.archive.insert_message(&message, None).unwrap();
+        worker
+            .handle_command(Command::SaveVoiceTranscript {
+                chat: chat.clone(),
+                message: message.id.clone(),
+                text: "Synthetic speech".into(),
+            })
+            .await;
+        worker.load_chat(chat.clone(), None);
+        let emitted: Vec<Event> = events.try_iter().collect();
+        assert!(
+            matches!(emitted.first(), Some(Event::VoiceTranscripts { chat: restored_chat, transcripts }) if restored_chat == &chat && transcripts == &vec![("voice".into(), "Synthetic speech".into())])
+        );
+        assert!(
+            emitted
+                .iter()
+                .any(|event| matches!(event, Event::Messages { .. }))
+        );
+        worker.privacy_ready = false;
+        worker.emit(Event::Messages {
+            chat: chat.clone(),
+            messages: vec![message],
+            older: false,
+            complete: true,
+        });
+        worker.emit(Event::VoiceTranscripts {
+            chat,
+            transcripts: vec![("voice".into(), "Synthetic speech".into())],
+        });
+        assert!(events.try_recv().is_err());
     }
 }

@@ -2120,6 +2120,9 @@ impl App {
                         }
                     }
                 }
+                Event::VoiceTranscripts { chat, transcripts } => {
+                    self.transcription.restore(&chat, transcripts)
+                }
                 Event::ChatUpdated(chat) => self.handle_chat_updated(*chat),
                 Event::Messages {
                     chat,
@@ -5237,7 +5240,13 @@ impl App {
         #[cfg(target_os = "macos")]
         self.actions.extend(crate::macos::drain(self.window_hidden));
         self.handle_control_commands();
-        self.transcription.poll();
+        for (chat, message, text) in self.transcription.poll() {
+            self.backend.send(Command::SaveVoiceTranscript {
+                chat,
+                message,
+                text,
+            });
+        }
         self.poll_custom_themes();
         self.wallpaper_image
             .sync(self.settings.wallpaper_image.as_deref(), &self.waker);

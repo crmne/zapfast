@@ -18,6 +18,7 @@ pub use labels::{DEFAULT_COLOR, LABEL_LIMIT, NAME_LIMIT};
 mod polls;
 mod receipts;
 mod stickers;
+mod transcriptions;
 pub use polls::PollVote;
 pub use stickers::FavoriteSticker;
 
@@ -133,6 +134,7 @@ const CHAT_COLUMNS: &str =
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
+    ("messages", "transcription", "TEXT"),
     ("messages", "thumbnail", "BLOB"),
     ("messages", "mentions", "TEXT NOT NULL DEFAULT '[]'"),
     ("chats", "participants", "TEXT NOT NULL DEFAULT '[]'"),
@@ -361,6 +363,7 @@ impl Archive {
                 ))?;
             }
         }
+        connection.execute_batch(transcriptions::SCHEMA)?;
         favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
