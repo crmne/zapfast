@@ -983,6 +983,10 @@ impl Worker {
         // An upgraded archive has no reliable lock state until the library's
         // authenticated replay has completed. Keep private content off the UI
         // and out of notifications during recovery, including failed retries.
+        // A call is withheld too: its chat may be locked, and until the lock collection is loaded
+        // the interface cannot know it, so an incoming call would take the window and name a
+        // hidden caller. It is re-sent from `reveal_private_content` once the locks are known, so
+        // a call that arrived mid-recovery still rings rather than being lost.
         if !self.privacy_ready
             && matches!(
                 event,
@@ -997,6 +1001,8 @@ impl Worker {
                     | Event::SearchHits { .. }
                     | Event::Labels(_)
                     | Event::Typing { .. }
+                    | Event::Call(_)
+                    | Event::CallDevices(_)
             )
         {
             return;
@@ -1704,6 +1710,10 @@ impl Worker {
         self.privacy_ready = true;
         self.load_state();
         self.emit(Event::Syncing(self.syncing));
+        // A call that was withheld while the locks were unknown is re-sent now that they are: the
+        // chat it belongs to can finally be judged private or not, so it rings against the right
+        // lock state instead of being dropped for the whole recovery.
+        self.replay_call();
         // The picker may have been sent an empty Received shelf meanwhile.
         self.emit_stickers();
         // Answer the reads made while content was withheld, now that the
@@ -4090,7 +4100,7 @@ impl Worker {
             Command::SetCallSpeaker(device) => self.set_call_speaker(device),
             Command::SetCallCameraDevice(device) => self.set_call_camera_device(device),
             Command::RefreshCallDevices => {
-                self.emit_call_devices();
+                self.emit_call_devices().await;
             }
             Command::SetCallDevices {
                 microphone,
@@ -9602,6 +9612,35 @@ mod tests {
             })
             .unwrap();
         assert!(chats[0].locked);
+    }
+
+    /// A call that arrives while the lock state is unknown waits, then rings once it is known.
+    ///
+    /// Emitting it during recovery would take the window with a chat the interface cannot yet
+    /// judge private, naming a hidden caller. It is withheld instead and re-sent by
+    /// `reveal_private_content`, so the call still rings rather than being dropped for the whole
+    /// recovery.
+    #[test]
+    fn a_call_withheld_during_privacy_recovery_rings_once_the_locks_are_known() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        const PEER: &str = "fixture@s.whatsapp.net";
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        let call = crate::calls::Call::test_snapshot(PEER);
+        let update = call.update();
+        worker.call = Some(calls::CallRuntime::new(call));
+        unconfirmed(&mut worker);
+        // The update is withheld: the chat's lock state is not known yet.
+        worker.emit(Event::Call(Box::new(update)));
+        assert!(events.try_recv().is_err(), "the call waits for the locks");
+        // Recovery completes and re-sends it, so a call that arrived mid-recovery still rings.
+        worker.preferences_recovered(0, true, true);
+        assert!(worker.privacy_ready);
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Call(_))),
+            "the withheld call is re-sent once the locks are known"
+        );
     }
 
     /// A chat opened while lock state was still being recovered asked for its

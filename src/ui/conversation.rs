@@ -121,8 +121,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
                 // The call buttons reflect the backend's own state: this chat's call is the one
-                // the worker owns, and nothing about it is inferred here.
-                let call_here = app.call.as_ref().is_some_and(|call| call.chat == chat.id);
+                // the worker owns and that is still up, and nothing about it is inferred here. A
+                // finished call keeps its snapshot for the farewell, but the header does not count
+                // it, so it offers a new call rather than a Hang up that would do nothing.
+                let call_here = app.call_live_here(&chat.id);
                 let right_controls = 108.0;
                 // Treat the avatar, name, and subtitle as one info button.
                 let block = ui

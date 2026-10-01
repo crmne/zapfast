@@ -519,8 +519,12 @@ fn captures(node: &str) -> bool {
 pub use crate::call_audio::{AudioInput, AudioOutput, RATE};
 
 /// What a call still cannot open on this machine, if anything.
-fn missing_audio_device() -> Option<&'static str> {
-    crate::call_audio::unavailable()
+///
+/// Read against the devices this call would really open rather than the system defaults alone: a
+/// machine whose default microphone is busy still takes a call aimed at one the user picked, so
+/// the check follows the same selections the streams will.
+fn missing_audio_device(microphone: Option<&str>, speaker: Option<&str>) -> Option<&'static str> {
+    crate::call_audio::unavailable(microphone, speaker)
 }
 
 /// Whether a requested video path really came up.
@@ -1064,7 +1068,7 @@ impl Call {
         if !capabilities().voice {
             return Err(anyhow!("calling is not available on this platform yet"));
         }
-        if let Some(missing) = missing_audio_device() {
+        if let Some(missing) = missing_audio_device(microphone.as_deref(), speaker.as_deref()) {
             return Err(anyhow!("no {missing} is available; a call needs one"));
         }
         // Video first: a camera or encoder that will not start refuses the call before any stream
@@ -1171,6 +1175,30 @@ impl Call {
             camera: devices.camera,
             lost_devices: Vec::new(),
             camera_wanted: false,
+        }
+    }
+
+    /// A call for a test: a snapshot with no signaling and no engine behind it, so a test can put
+    /// one on the worker and check what privacy recovery does with its update.
+    #[cfg(test)]
+    pub(crate) fn test_snapshot(chat: &str) -> Self {
+        Self {
+            generation: next_generation(),
+            call_id: "test-call".to_owned(),
+            chat: chat.to_owned(),
+            direction: CallDirection::Incoming,
+            phase: CallPhase::Incoming,
+            started: None,
+            outcome: None,
+            peer_audio: None,
+            incoming: None,
+            handle: None,
+            media_ready: false,
+            mic: None,
+            speaker: None,
+            microphone: None,
+            speaker_device: None,
+            lost_devices: Vec::new(),
         }
     }
 
@@ -1344,7 +1372,7 @@ impl Call {
         if !capabilities().voice {
             return Err(anyhow!("calling is not available on this platform yet"));
         }
-        if let Some(missing) = missing_audio_device() {
+        if let Some(missing) = missing_audio_device(microphone.as_deref(), speaker.as_deref()) {
             return Err(anyhow!("no {missing} is available; a call needs one"));
         }
         // The same rule as placing a call: a video offer that cannot start video is not accepted as

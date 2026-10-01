@@ -96,11 +96,34 @@ impl Worker {
 
     /// Hands the call screen the microphones, speakers and cameras it can offer, and keeps them:
     /// they are how a device that goes away is named by the description the user saw.
-    pub(super) fn emit_call_devices(&mut self) -> calls::DeviceList {
-        let devices = calls::devices();
-        self.call_devices = devices.clone();
-        self.emit(Event::CallDevices(Box::new(devices.clone())));
+    pub(super) async fn emit_call_devices(&mut self) -> calls::DeviceList {
+        let devices = discover_devices().await;
+        self.publish_call_devices(devices.clone());
         devices
+    }
+
+    /// Stores and publishes a device list, so the pickers and the fallback naming share one
+    /// snapshot of the machine.
+    pub(super) fn publish_call_devices(&mut self, devices: calls::DeviceList) {
+        self.call_devices = devices.clone();
+        self.emit(Event::CallDevices(Box::new(devices)));
+    }
+
+    /// Re-sends the current call after privacy recovery, since call updates are withheld while the
+    /// lock state is unknown.
+    ///
+    /// Nothing is rediscovered: the last published list is what the picker already had, and the
+    /// runtime's own snapshot is what the surface should draw. The chat can finally be judged
+    /// private or not, so a call that arrived mid-recovery rings behind the right lock state rather
+    /// than being dropped for the whole recovery.
+    pub(super) fn replay_call(&mut self) {
+        let Some(runtime) = self.call.as_ref() else {
+            return;
+        };
+        let devices = self.call_devices.clone();
+        let update = runtime.last.clone();
+        self.publish_call_devices(devices);
+        self.emit_call(update);
     }
 
     /// Publishes one call state, and lets the call go once it reaches a terminal phase.
@@ -149,7 +172,7 @@ impl Worker {
         // The devices the settings remember, checked against the machine first: a headset that was
         // switched off since the last call falls back to the system default and says so, instead of
         // opening a stream that can never deliver a frame.
-        let devices = self.emit_call_devices();
+        let devices = self.emit_call_devices().await;
         let wanted = self.call_defaults.clone();
         let resolved =
             calls::resolve_devices(&devices, wanted.microphone, wanted.speaker, wanted.camera);
@@ -190,8 +213,12 @@ impl Worker {
                 // checked against the machine so one that vanished falls back rather than opening a
                 // stream that can never deliver.
                 let (microphone, speaker, camera) = runtime.call.selections();
-                let resolved =
-                    calls::resolve_devices(&calls::devices(), microphone, speaker, camera);
+                let resolved = calls::resolve_devices(
+                    &discover_devices().await,
+                    microphone,
+                    speaker,
+                    camera,
+                );
                 let answered = runtime
                     .call
                     .answer(
@@ -435,7 +462,7 @@ impl Worker {
         );
         let update = call.update();
         self.call = Some(CallRuntime::new(call, None));
-        self.emit_call_devices();
+        self.emit_call_devices().await;
         self.emit_call(update);
     }
 
@@ -485,9 +512,7 @@ impl Worker {
         // Discovery opens every audio device to name it and runs `v4l2-ctl` with a format probe per
         // camera node, so it runs on a blocking thread rather than on the worker's async loop: a
         // slow device or a stuck helper must not hold up message handling or the call's own events.
-        let devices = tokio::task::spawn_blocking(calls::devices)
-            .await
-            .unwrap_or_default();
+        let devices = discover_devices().await;
         // Read before the fresh list replaces it: a device that just went away is still named in
         // here by the description the user saw.
         let known = self.call_devices.clone();
@@ -531,6 +556,15 @@ impl Worker {
             self.emit_call(update);
         }
     }
+}
+
+/// Device discovery off the worker thread: enumerating opens every audio device to name it, so it
+/// runs on a blocking thread rather than on the async loop, where a slow device would hold up
+/// message handling and the call's own events.
+async fn discover_devices() -> calls::DeviceList {
+    tokio::task::spawn_blocking(calls::devices)
+        .await
+        .unwrap_or_default()
 }
 
 /// Whether a chat can be called at all.
