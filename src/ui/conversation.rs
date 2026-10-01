@@ -6708,7 +6708,8 @@ fn voice_player(
                 ..
             }
         );
-    const TRANSCRIPTION_SPACE: f32 = 28.0;
+    const TRANSCRIPTION_ICON_SIZE: f32 = 20.0;
+    const TRANSCRIPTION_SPACE: f32 = 32.0;
     let transcription_space = if can_transcribe {
         TRANSCRIPTION_SPACE + 10.0
     } else {
@@ -6805,7 +6806,7 @@ fn voice_player(
                         theme::icon_button(
                             ui,
                             Icon::SpeechText,
-                            16.0,
+                            TRANSCRIPTION_ICON_SIZE,
                             palette.secondary,
                             palette.text,
                             "Transcribe voice message",
