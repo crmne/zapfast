@@ -481,7 +481,7 @@ impl eframe::App for Shell {
         };
         fastframe_macos::align_traffic_lights(frame, ctx, title_bar);
         #[cfg(target_os = "macos")]
-        zapfast::macos::vibrancy(frame, app.palette.vibrant());
+        zapfast::macos::vibrancy(frame, &app.palette);
         #[cfg(feature = "demo")]
         {
             // Keep requesting the configured screenshot size until it is applied.

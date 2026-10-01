@@ -3547,9 +3547,10 @@ impl App {
     fn apply_theme(&mut self, ctx: &egui::Context) {
         let preference = self.settings.cached_palette().map_or_else(
             || match self.settings.theme {
-                ThemeChoice::Dark | ThemeChoice::Messages => egui::ThemePreference::Dark,
+                ThemeChoice::Dark => egui::ThemePreference::Dark,
                 ThemeChoice::Light => egui::ThemePreference::Light,
-                ThemeChoice::System => egui::ThemePreference::System,
+                // Messages follows the system's appearance, as Messages does.
+                ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
             },
             |palette| {
                 if palette.dark {
@@ -3576,7 +3577,11 @@ impl App {
         };
         let palette = self.settings.cached_palette().unwrap_or_else(|| {
             if self.settings.theme == ThemeChoice::Messages {
-                Palette::messages()
+                if dark {
+                    Palette::messages()
+                } else {
+                    Palette::messages_light()
+                }
             } else if dark {
                 Palette::dark()
             } else {

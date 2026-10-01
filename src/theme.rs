@@ -135,7 +135,8 @@ impl Palette {
     }
 
     /// A dark theme in the neutral greys of macOS, with bubbles shaped as
-    /// Messages draws them and WhatsApp's green for your own.
+    /// Messages draws them and a green of its own for yours, livelier than
+    /// WhatsApp's `#005c4b` and still readable under white text.
     pub fn messages() -> Self {
         Self {
             dark: true,
@@ -160,6 +161,37 @@ impl Palette {
             bubble_out: Color32::from_rgb(0x13, 0x7a, 0x48),
             link: Color32::from_rgb(0x64, 0xd2, 0xff),
             read: Color32::from_rgb(0x64, 0xd2, 0xff),
+            bubbles: BubbleStyle::Messages,
+        }
+    }
+
+    /// The Messages theme in macOS's light greys. Your own bubbles keep
+    /// the dark theme's green, with white text on it, as Messages draws its
+    /// blue ones.
+    pub fn messages_light() -> Self {
+        Self {
+            dark: false,
+            window: Color32::WHITE,
+            panel: Color32::from_rgb(0xf2, 0xf2, 0xf4),
+            surface: Color32::from_rgb(0xe8, 0xe8, 0xea),
+            surface_hover: Color32::from_rgb(0xde, 0xde, 0xe0),
+            surface_active: Color32::from_rgb(0xd1, 0xd1, 0xd6),
+            outline: Color32::from_rgb(0xd8, 0xd8, 0xdc),
+            text: Color32::from_rgb(0x1d, 0x1d, 0x1f),
+            secondary: Color32::from_rgb(0x5e, 0x5e, 0x63),
+            dim: Color32::from_rgb(0x64, 0x64, 0x69),
+            accent: Color32::from_rgb(0x13, 0x7a, 0x48),
+            accent_hover: Color32::from_rgb(0x0f, 0x6a, 0x3d),
+            on_accent: Color32::WHITE,
+            danger: Color32::from_rgb(0xd7, 0x00, 0x15),
+            warning: Color32::from_rgb(0xa0, 0x5a, 0x00),
+            overlay: Color32::WHITE,
+            shadow: Color32::from_black_alpha(LIGHT_SHADOW_ALPHA),
+            chat: Color32::WHITE,
+            bubble_in: Color32::from_rgb(0xe9, 0xe9, 0xeb),
+            bubble_out: Color32::from_rgb(0x13, 0x7a, 0x48),
+            link: Color32::from_rgb(0x00, 0x66, 0xcc),
+            read: Color32::from_rgb(0x00, 0x66, 0xcc),
             bubbles: BubbleStyle::Messages,
         }
     }
@@ -225,11 +257,45 @@ impl Palette {
     /// on the outgoing bubble. Works for custom themes as well.
     pub fn on_bubble(&self, own: bool) -> Self {
         let fill = if own { self.bubble_out } else { self.bubble_in };
+        // Buttons and icons inside a bubble tint it with the accent, which in
+        // Messages is the bubble's own green: draw them white on your own.
+        let own_messages = own && self.bubbles == BubbleStyle::Messages;
+        // Light Messages draws your own bubble saturated, with white on it.
+        if own_messages && !self.dark {
+            let soft = Color32::WHITE.lerp_to_gamma(fill, 0.2);
+            return Self {
+                text: Color32::WHITE,
+                secondary: readable_on(fill, soft, Color32::WHITE, 4.5),
+                dim: readable_on(fill, soft, Color32::WHITE, 4.5),
+                link: Color32::WHITE,
+                read: Color32::WHITE,
+                // Cards inside the bubble wash it with the window colour,
+                // and buttons tint it with the accent: darker green and white
+                // keep both visible under white text.
+                window: fill.lerp_to_gamma(Color32::BLACK, 0.55),
+                accent: Color32::WHITE,
+                accent_hover: Color32::WHITE,
+                on_accent: fill,
+                ..*self
+            };
+        }
+        let (accent, on_accent) = if own_messages {
+            (Color32::WHITE, fill)
+        } else {
+            (self.accent, self.on_accent)
+        };
         Self {
             secondary: readable_on(fill, self.secondary, self.text, 4.5),
             dim: readable_on(fill, self.dim, self.text, 4.5),
             // Icons need 3:1 (WCAG 1.4.11).
             read: readable_on(fill, self.read, self.text, 3.0),
+            accent,
+            accent_hover: if own_messages {
+                accent
+            } else {
+                self.accent_hover
+            },
+            on_accent,
             ..*self
         }
     }
@@ -1371,6 +1437,7 @@ mod tests {
             ("dark", Palette::dark()),
             ("light", Palette::light()),
             ("messages", Palette::messages()),
+            ("messages light", Palette::messages_light()),
         ] {
             let mut pairs = Vec::new();
             for (surface, background) in [
@@ -1412,6 +1479,7 @@ mod tests {
             ("dark", Palette::dark()),
             ("light", Palette::light()),
             ("messages", Palette::messages()),
+            ("messages light", Palette::messages_light()),
         ]
         .into_iter()
         .map(|(name, palette)| (name.to_owned(), palette))
@@ -1428,6 +1496,7 @@ mod tests {
                 assert_readable(
                     &name,
                     &[
+                        ("text", bubble.text, fill),
                         ("secondary", bubble.secondary, fill),
                         ("dim", bubble.dim, fill),
                     ],

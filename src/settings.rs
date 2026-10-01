@@ -32,7 +32,8 @@ pub enum ThemeChoice {
     Dark,
     Light,
     System,
-    /// Dark, in macOS greys with bubbles shaped as Messages draws them.
+    /// macOS's greys, light or dark as the system is, with bubbles shaped as
+    /// Messages draws them.
     Messages,
 }
 

@@ -322,24 +322,26 @@ mod tests {
 }
 
 thread_local! {
-    /// The vibrancy behind the current window, while the theme asks for it.
-    static VIBRANCY: RefCell<Option<objc2::rc::Retained<objc2_app_kit::NSVisualEffectView>>> =
+    /// The vibrancy behind the current window, while the theme asks for it,
+    /// and whether it is drawn dark.
+    static VIBRANCY: RefCell<Option<(objc2::rc::Retained<objc2_app_kit::NSVisualEffectView>, bool)>> =
         const { RefCell::new(None) };
 }
 
-/// Puts AppKit's dark sidebar material behind the window's content, or takes
-/// it away. The window is transparent; whatever egui leaves translucent, the
+/// Puts AppKit's sidebar material behind the window's content, light or
+/// dark as `palette` is, or takes it away when the palette is not vibrant. The window is transparent; whatever egui leaves translucent, the
 /// sidebar in the Messages theme, shows the blurred desktop as Messages does.
-/// Cheap to call every frame: it changes the view only when `on` changes or
-/// the window was made anew.
-pub fn vibrancy(frame: &eframe::Frame, on: bool) {
+/// Cheap to call every frame: it changes the view only when the palette
+/// does or the window was made anew.
+pub fn vibrancy(frame: &eframe::Frame, palette: &crate::theme::Palette) {
     use objc2_app_kit::{
-        NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua,
+        NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSAutoresizingMaskOptions, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
         NSVisualEffectState, NSVisualEffectView, NSWindowOrderingMode,
     };
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+    let on = palette.vibrant();
     let Some(mtm) = objc2::MainThreadMarker::new() else {
         return;
     };
@@ -357,7 +359,7 @@ pub fn vibrancy(frame: &eframe::Frame, on: bool) {
     };
     VIBRANCY.with_borrow_mut(|slot| {
         // A closed window took its view with it.
-        let current = slot.as_ref().is_some_and(|view| {
+        let current = slot.as_ref().is_some_and(|(view, _)| {
             // SAFETY: the view is ours and alive; read on the main thread.
             unsafe { view.superview() }.is_some_and(|parent| parent == frame_view)
         });
@@ -374,23 +376,36 @@ pub fn vibrancy(frame: &eframe::Frame, on: bool) {
                     NSAutoresizingMaskOptions::ViewWidthSizable
                         | NSAutoresizingMaskOptions::ViewHeightSizable,
                 );
-                // The theme is dark whatever the system's appearance is.
-                // SAFETY: AppKit's constant, read on the main thread.
-                let dark = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua });
-                view.setAppearance(dark.as_deref());
                 frame_view.addSubview_positioned_relativeTo(
                     &view,
                     NSWindowOrderingMode::Below,
                     Some(content),
                 );
-                *slot = Some(view);
+                // Flipped below to the palette's appearance.
+                *slot = Some((view, !palette.dark));
             }
             (false, true) => {
-                if let Some(view) = slot.take() {
+                if let Some((view, _)) = slot.take() {
                     view.removeFromSuperview();
                 }
             }
             _ => {}
+        }
+        // The material follows the palette rather than the system, which a
+        // cached choice can lag behind for a frame.
+        if let Some((view, dark)) = slot.as_mut()
+            && *dark != palette.dark
+        {
+            // SAFETY: AppKit's constants, read on the main thread.
+            let name = unsafe {
+                if palette.dark {
+                    NSAppearanceNameDarkAqua
+                } else {
+                    NSAppearanceNameAqua
+                }
+            };
+            view.setAppearance(NSAppearance::appearanceNamed(name).as_deref());
+            *dark = palette.dark;
         }
     });
 }
