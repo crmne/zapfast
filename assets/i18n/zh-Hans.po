@@ -1431,22 +1431,19 @@ msgstr ""
 
 #: src/ui/info.rs:38
 msgid "Media, links and docs"
-msgstr ""
+msgstr "媒体、链接和文档"
 
 #: src/ui/info.rs:211
-#, fuzzy
 msgid "Group info"
-msgstr "群组名称"
+msgstr "群组信息"
 
 #: src/ui/info.rs:213
-#, fuzzy
 msgid "Channel info"
-msgstr "频道"
+msgstr "频道信息"
 
 #: src/ui/info.rs:215
-#, fuzzy
 msgid "Contact info"
-msgstr "联系人"
+msgstr "联系人信息"
 
 #: src/ui/info.rs:278
 msgid "Edit group name"
@@ -1465,77 +1462,76 @@ msgstr[0] "{} 位成员"
 #: src/ui/info.rs:745
 #, rust-format
 msgid "{}+"
-msgstr ""
+msgstr "{}+"
 
 #: src/ui/info.rs:798
-#, fuzzy
 msgid "Could not list the media."
-msgstr "无法使用此图片"
+msgstr "无法列出媒体。"
 
 #: src/ui/info.rs:806
 msgid "Try again"
-msgstr ""
+msgstr "重试"
 
 #: src/ui/info.rs:820
 msgid "Back"
-msgstr ""
+msgstr "返回"
 
 #: src/ui/info.rs:918
 msgid "No media"
-msgstr ""
+msgstr "暂无媒体"
 
 #: src/ui/info.rs:921
 msgid "Photos and videos shared in this chat will show here."
-msgstr ""
+msgstr "此聊天中分享的照片和视频将显示在这里。"
 
 #: src/ui/info.rs:986
 msgid "Video"
-msgstr ""
+msgstr "视频"
 
 #: src/ui/info.rs:988
 msgid "Photo"
-msgstr ""
+msgstr "照片"
 
 #: src/ui/info.rs:1095
 msgid "No documents"
-msgstr ""
+msgstr "暂无文档"
 
 #: src/ui/info.rs:1096
 msgid "Files shared in this chat will show here."
-msgstr ""
+msgstr "此聊天中分享的文件将显示在这里。"
 
 #: src/ui/info.rs:1119
 #, rust-format
 msgid "{} page"
 msgid_plural "{} pages"
-msgstr[0] ""
+msgstr[0] "{} 页"
 
 #: src/ui/info.rs:1141
 msgid "No links"
-msgstr ""
+msgstr "暂无链接"
 
 #: src/ui/info.rs:1142
 msgid "Links shared in this chat will show here."
-msgstr ""
+msgstr "此聊天中分享的链接将显示在这里。"
 
 #: src/ui/info.rs:1215
 msgid "Only the newest items are listed."
-msgstr ""
+msgstr "仅列出最新项目。"
 
 #: src/ui/info.rs:1231
 msgctxt "info tab"
 msgid "Media"
-msgstr ""
+msgstr "媒体"
 
 #: src/ui/info.rs:1232
 msgctxt "info tab"
 msgid "Docs"
-msgstr ""
+msgstr "文档"
 
 #: src/ui/info.rs:1233
 msgctxt "info tab"
 msgid "Links"
-msgstr ""
+msgstr "链接"
 
 #: src/ui/info.rs:1267
 msgid "Change group photo"

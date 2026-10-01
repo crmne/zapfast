@@ -1488,22 +1488,19 @@ msgstr ""
 
 #: src/ui/info.rs:38
 msgid "Media, links and docs"
-msgstr ""
+msgstr "Médias, liens et documents"
 
 #: src/ui/info.rs:211
-#, fuzzy
 msgid "Group info"
-msgstr "Nom du groupe"
+msgstr "Infos du groupe"
 
 #: src/ui/info.rs:213
-#, fuzzy
 msgid "Channel info"
-msgstr "Chaîne"
+msgstr "Infos de la chaîne"
 
 #: src/ui/info.rs:215
-#, fuzzy
 msgid "Contact info"
-msgstr "Contact"
+msgstr "Infos du contact"
 
 #: src/ui/info.rs:278
 msgid "Edit group name"
@@ -1523,78 +1520,77 @@ msgstr[1] "{} membres"
 #: src/ui/info.rs:745
 #, rust-format
 msgid "{}+"
-msgstr ""
+msgstr "{}+"
 
 #: src/ui/info.rs:798
-#, fuzzy
 msgid "Could not list the media."
-msgstr "Impossible d’utiliser cette image"
+msgstr "Impossible de lister les médias."
 
 #: src/ui/info.rs:806
 msgid "Try again"
-msgstr ""
+msgstr "Réessayer"
 
 #: src/ui/info.rs:820
 msgid "Back"
-msgstr ""
+msgstr "Retour"
 
 #: src/ui/info.rs:918
 msgid "No media"
-msgstr ""
+msgstr "Aucun média"
 
 #: src/ui/info.rs:921
 msgid "Photos and videos shared in this chat will show here."
-msgstr ""
+msgstr "Les photos et vidéos partagées dans cette discussion apparaîtront ici."
 
 #: src/ui/info.rs:986
 msgid "Video"
-msgstr ""
+msgstr "Vidéo"
 
 #: src/ui/info.rs:988
 msgid "Photo"
-msgstr ""
+msgstr "Photo"
 
 #: src/ui/info.rs:1095
 msgid "No documents"
-msgstr ""
+msgstr "Aucun document"
 
 #: src/ui/info.rs:1096
 msgid "Files shared in this chat will show here."
-msgstr ""
+msgstr "Les fichiers partagés dans cette discussion apparaîtront ici."
 
 #: src/ui/info.rs:1119
 #, rust-format
 msgid "{} page"
 msgid_plural "{} pages"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{} page"
+msgstr[1] "{} pages"
 
 #: src/ui/info.rs:1141
 msgid "No links"
-msgstr ""
+msgstr "Aucun lien"
 
 #: src/ui/info.rs:1142
 msgid "Links shared in this chat will show here."
-msgstr ""
+msgstr "Les liens partagés dans cette discussion apparaîtront ici."
 
 #: src/ui/info.rs:1215
 msgid "Only the newest items are listed."
-msgstr ""
+msgstr "Seuls les éléments les plus récents sont affichés."
 
 #: src/ui/info.rs:1231
 msgctxt "info tab"
 msgid "Media"
-msgstr ""
+msgstr "Médias"
 
 #: src/ui/info.rs:1232
 msgctxt "info tab"
 msgid "Docs"
-msgstr ""
+msgstr "Documents"
 
 #: src/ui/info.rs:1233
 msgctxt "info tab"
 msgid "Links"
-msgstr ""
+msgstr "Liens"
 
 #: src/ui/info.rs:1267
 msgid "Change group photo"

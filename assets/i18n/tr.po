@@ -1482,19 +1482,19 @@ msgstr "1 saat sonra"
 
 #: src/ui/info.rs:38
 msgid "Media, links and docs"
-msgstr ""
+msgstr "Medya, bağlantılar ve belgeler"
 
 #: src/ui/info.rs:211
 msgid "Group info"
-msgstr ""
+msgstr "Grup bilgisi"
 
 #: src/ui/info.rs:213
 msgid "Channel info"
-msgstr ""
+msgstr "Kanal bilgisi"
 
 #: src/ui/info.rs:215
 msgid "Contact info"
-msgstr ""
+msgstr "Kişi bilgisi"
 
 #: src/ui/info.rs:278
 msgid "Edit group name"
@@ -1514,77 +1514,77 @@ msgstr[1] "{} üye"
 #: src/ui/info.rs:745
 #, rust-format
 msgid "{}+"
-msgstr ""
+msgstr "{}+"
 
 #: src/ui/info.rs:798
 msgid "Could not list the media."
-msgstr ""
+msgstr "Medya listelenemedi."
 
 #: src/ui/info.rs:806
 msgid "Try again"
-msgstr ""
+msgstr "Tekrar deneyin"
 
 #: src/ui/info.rs:820
 msgid "Back"
-msgstr ""
+msgstr "Geri"
 
 #: src/ui/info.rs:918
 msgid "No media"
-msgstr ""
+msgstr "Medya yok"
 
 #: src/ui/info.rs:921
 msgid "Photos and videos shared in this chat will show here."
-msgstr ""
+msgstr "Bu sohbette paylaşılan fotoğraflar ve videolar burada görünür."
 
 #: src/ui/info.rs:986
 msgid "Video"
-msgstr ""
+msgstr "Video"
 
 #: src/ui/info.rs:988
 msgid "Photo"
-msgstr ""
+msgstr "Fotoğraf"
 
 #: src/ui/info.rs:1095
 msgid "No documents"
-msgstr ""
+msgstr "Belge yok"
 
 #: src/ui/info.rs:1096
 msgid "Files shared in this chat will show here."
-msgstr ""
+msgstr "Bu sohbette paylaşılan dosyalar burada görünür."
 
 #: src/ui/info.rs:1119
 #, rust-format
 msgid "{} page"
 msgid_plural "{} pages"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{} sayfa"
+msgstr[1] "{} sayfa"
 
 #: src/ui/info.rs:1141
 msgid "No links"
-msgstr ""
+msgstr "Bağlantı yok"
 
 #: src/ui/info.rs:1142
 msgid "Links shared in this chat will show here."
-msgstr ""
+msgstr "Bu sohbette paylaşılan bağlantılar burada görünür."
 
 #: src/ui/info.rs:1215
 msgid "Only the newest items are listed."
-msgstr ""
+msgstr "Yalnızca en yeni öğeler listelenir."
 
 #: src/ui/info.rs:1231
 msgctxt "info tab"
 msgid "Media"
-msgstr ""
+msgstr "Medya"
 
 #: src/ui/info.rs:1232
 msgctxt "info tab"
 msgid "Docs"
-msgstr ""
+msgstr "Belgeler"
 
 #: src/ui/info.rs:1233
 msgctxt "info tab"
 msgid "Links"
-msgstr ""
+msgstr "Bağlantılar"
 
 #: src/ui/info.rs:1267
 msgid "Change group photo"
