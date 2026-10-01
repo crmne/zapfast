@@ -41,16 +41,45 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
     wallpaper::paint(ui, &app.wallpaper());
+    // On a vibrant window the messages scroll on under the header, as in
+    // Messages: the header and any banner go on a layer above them.
+    if app.palette.vibrant() {
+        let layer = egui::LayerId::new(egui::Order::Middle, ui.id().with("chat-header"));
+        let bar = ui
+            .scope_builder(egui::UiBuilder::new().layer_id(layer), |ui| {
+                // Beneath the header: the messages under it, frosted, and a
+                // veil of the chat's colour that keeps the title readable.
+                let glass = ui.painter().add(egui::Shape::Noop);
+                let veil = ui.painter().add(egui::Shape::Noop);
+                header(app, ui, &chat);
+                if theme::macos_chrome(ui.ctx()) {
+                    super::banner(app, ui);
+                }
+                let bar = ui.min_rect();
+                // Strongest at the top, both ease off from within the bar to
+                // a little below it, so where they start never shows.
+                let frosted = bar.with_max_y(bar.bottom() + HEADER_TAIL);
+                let ease = HEADER_TAIL + bar.height() * HEADER_EASE;
+                ui.painter().set(glass, super::glass::shape(frosted, ease));
+                ui.painter()
+                    .set(veil, header_veil(&app.palette, frosted, ease));
+                bar
+            })
+            .inner;
+        composer(app, ui, &chat);
+        let list = ui.available_rect_before_wrap().with_min_y(bar.top());
+        ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
+            messages(app, ui, &chat, bar.height());
+        });
+        // A vibrant window is flat, as Messages is: no shadows over the chat.
+        return;
+    }
     let header = header(app, ui, &chat);
     if theme::macos_chrome(ui.ctx()) {
         super::banner(app, ui);
     }
     composer(app, ui, &chat);
-    messages(app, ui, &chat);
-    // A vibrant window is flat, as Messages is: no shadows over the chat.
-    if app.palette.vibrant() {
-        return;
-    }
+    messages(app, ui, &chat, 0.0);
     // Over the messages, which scroll under the header.
     widgets::paint_shadow_below(
         ui,
@@ -114,6 +143,41 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// The share of a vibrant header, from its bottom, over which its frost and
+/// veil begin to ease off.
+const HEADER_EASE: f32 = 0.35;
+/// How far below a vibrant header its frost and veil carry on, easing off.
+const HEADER_TAIL: f32 = 24.0;
+/// Rows of the veil's ease, enough for its curve to look smooth.
+const VEIL_STEPS: usize = 8;
+
+/// The veil over a vibrant header's frost: the palette's at the top, then
+/// easing to nothing over the bottom `ease` points of `rect` along the same
+/// curve as the frost, so the messages under it never stop at a line.
+fn header_veil(palette: &Palette, rect: Rect, ease: f32) -> egui::Shape {
+    let top = palette.vibrant_header(palette.chat);
+    let start = rect.bottom() - ease;
+    let mut mesh = egui::Mesh::default();
+    let mut row = |y: f32, color: Color32| {
+        mesh.colored_vertex(pos2(rect.left(), y), color);
+        mesh.colored_vertex(pos2(rect.right(), y), color);
+    };
+    row(rect.top(), top);
+    for step in 0..=VEIL_STEPS {
+        let t = step as f32 / VEIL_STEPS as f32;
+        // smoothstep, as the frost's shader eases.
+        let strength = 1.0 - t * t * (3.0 - 2.0 * t);
+        row(start + ease * t, top.gamma_multiply(strength));
+    }
+    let rows = mesh.vertices.len() as u32 / 2;
+    for row in 0..rows - 1 {
+        let at = row * 2;
+        mesh.add_triangle(at, at + 1, at + 3);
+        mesh.add_triangle(at, at + 3, at + 2);
+    }
+    egui::Shape::mesh(mesh)
+}
+
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -121,7 +185,8 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
         .show_separator_line(false)
         .frame(
             Frame::new()
-                // On a vibrant window the translucent chat runs under it.
+                // On a vibrant window the messages scroll on under it,
+                // frosted, with the veil drawn beneath the header instead.
                 .fill(if palette.vibrant() {
                     Color32::TRANSPARENT
                 } else {
@@ -1708,7 +1773,9 @@ fn shows_sender_pictures(chat: &Chat) -> bool {
     chat.is_group()
 }
 
-fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+/// The conversation's messages. `under` is how much of the list's top lies
+/// beneath the header, which a vibrant window lays over it.
+fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let palette = app.palette;
     // Taken up front: `names_or` below borrows the rest of `app` for the
     // whole function, so a pending scroll must come out before that.
@@ -1955,6 +2022,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 3.0;
+                    if under > 0.0 {
+                        ui.add_space(under);
+                    }
                     top_of_history(ui, &palette, &conversation, chat, &mut actions);
                     let mut previous: Option<&Message> = None;
                     // Rows within a few viewports of the screen are laid out
@@ -2044,7 +2114,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 .vertical_centered(|ui| widgets::chip(ui, &palette, &label))
                                 .inner;
                             if !placed && view.anchor.is_none() {
-                                response.scroll_to_me(Some(Align::Min));
+                                // Clear of the header that may lie over the top.
+                                ui.scroll_to_rect(
+                                    response.rect.with_min_y(response.rect.top() - under),
+                                    Some(Align::Min),
+                                );
                                 divider_placed = true;
                             }
                             ui.add_space(4.0);

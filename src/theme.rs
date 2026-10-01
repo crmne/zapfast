@@ -251,6 +251,12 @@ impl Palette {
         color.gamma_multiply(CHAT_TINT)
     }
 
+    /// The veil of a vibrant header over the frosted messages under it:
+    /// enough of `color` that its title reads over any bubble.
+    pub fn vibrant_header(&self, color: Color32) -> Color32 {
+        color.gamma_multiply(HEADER_TINT)
+    }
+
     /// The palette for a message bubble's contents. Secondary and dim text,
     /// and the read ticks, move toward the text colour just far enough to
     /// stay readable on the bubble: a grey that reads on the panel can vanish
@@ -442,6 +448,8 @@ impl fastframe_theme::Palette for Palette {
     }
 }
 
+/// How opaque a vibrant theme's header is over the messages under it.
+const HEADER_TINT: f32 = 0.65;
 /// How opaque a vibrant theme's conversation background is.
 const CHAT_TINT: f32 = 0.82;
 /// How much of the panel colour tints a vibrant sidebar.
