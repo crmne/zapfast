@@ -251,10 +251,27 @@ impl Palette {
         color.gamma_multiply(CHAT_TINT)
     }
 
-    /// The veil of a vibrant header over the frosted messages under it:
-    /// enough of `color` that its title reads over any bubble.
+    /// The veil of a vibrant header over the frosted messages under it, a
+    /// light one: its name and buttons sit on pills of their own.
     pub fn vibrant_header(&self, color: Color32) -> Color32 {
-        color.gamma_multiply(HEADER_TINT)
+        // A light veil over dark content reads as fog where a dark one
+        // reads as shade, so the light palette's is thinner.
+        color.gamma_multiply(if self.dark {
+            HEADER_TINT
+        } else {
+            LIGHT_HEADER_TINT
+        })
+    }
+
+    /// A glass pill under a vibrant header's name or buttons: much more of
+    /// `color` than the veil, so text on it reads over any picture.
+    pub fn vibrant_pill(&self, color: Color32) -> Color32 {
+        // White glass reads as an opaque box well before dark glass does.
+        color.gamma_multiply(if self.dark {
+            PILL_TINT
+        } else {
+            LIGHT_PILL_TINT
+        })
     }
 
     /// The palette for a message bubble's contents. Secondary and dim text,
@@ -449,7 +466,13 @@ impl fastframe_theme::Palette for Palette {
 }
 
 /// How opaque a vibrant theme's header is over the messages under it.
-const HEADER_TINT: f32 = 0.65;
+const HEADER_TINT: f32 = 0.3;
+/// The same in a light palette, where a veil over dark content reads as fog.
+const LIGHT_HEADER_TINT: f32 = 0.2;
+/// How opaque the glass pills under a vibrant header's name and buttons are.
+const PILL_TINT: f32 = 0.72;
+/// The same in a light palette.
+const LIGHT_PILL_TINT: f32 = 0.5;
 /// How opaque a vibrant theme's conversation background is.
 const CHAT_TINT: f32 = 0.82;
 /// How much of the panel colour tints a vibrant sidebar.

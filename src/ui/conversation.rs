@@ -178,6 +178,46 @@ fn header_veil(palette: &Palette, rect: Rect, ease: f32) -> egui::Shape {
     egui::Shape::mesh(mesh)
 }
 
+/// How round the glass under a vibrant header's name is: straight-sided,
+/// leaving room around the text, rather than a capsule.
+const NAME_GLASS_RADIUS: f32 = 12.0;
+/// The room around the name and status on their glass: wide at the sides,
+/// and little above, so the glass keeps clear of the window's top edge.
+const NAME_GLASS_PADDING: Vec2 = vec2(14.0, 3.5);
+/// The room above and below a name alone on its glass.
+const NAME_GLASS_SINGLE: f32 = 7.0;
+/// How tall the name and status stand together on glass: less than the
+/// avatar, so the two lines sit a little closer around its middle.
+const NAME_GLASS_LINES: f32 = 32.0;
+/// How wide the round glass under each of a vibrant header's buttons is.
+const BUTTON_GLASS: f32 = 36.0;
+/// The space between two of a vibrant header's buttons, beyond their glass.
+const BUTTON_GAP: f32 = 10.0;
+
+/// The round glass under one of a vibrant header's buttons.
+fn glass_button(palette: &Palette, button: Rect) -> egui::Shape {
+    glass(
+        palette,
+        Rect::from_center_size(button.center(), Vec2::splat(BUTTON_GLASS)),
+        BUTTON_GLASS / 2.0,
+    )
+}
+
+/// Glass under a vibrant header's name or one of its buttons: the veil
+/// thickened where they sit, with a faint edge, as Messages floats them.
+fn glass(palette: &Palette, rect: Rect, radius: f32) -> egui::Shape {
+    let radius = CornerRadius::from(radius);
+    egui::Shape::Vec(vec![
+        egui::Shape::rect_filled(rect, radius, palette.vibrant_pill(palette.chat)),
+        egui::Shape::rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, palette.text.gamma_multiply(0.08)),
+            egui::StrokeKind::Inside,
+        ),
+    ])
+}
+
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -204,7 +244,18 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 ui.set_min_height(HEADER_ROW);
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
-                let right_controls = 72.0;
+                // The buttons' width, with their glass and its spacing on a
+                // vibrant window.
+                let right_controls = if palette.vibrant() {
+                    72.0 + 1.5 * BUTTON_GAP + (BUTTON_GLASS - 30.0)
+                } else {
+                    72.0
+                };
+                // On a vibrant window the name and the buttons sit on glass
+                // pills, drawn beneath them once they are measured.
+                let name_pill = ui.painter().add(egui::Shape::Noop);
+                let mut text = Rect::NOTHING;
+                let mut avatar = Rect::NOTHING;
                 // Treat the avatar, name, and subtitle as one info button.
                 let block = ui
                     .scope(|ui| {
@@ -224,6 +275,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                     40.0,
                                     picture.as_deref(),
                                 );
+                                avatar = avatar_response.rect;
                                 if chat.ephemeral_expiration.is_some() {
                                     widgets::paint_disappearing_badge(
                                         ui,
@@ -231,44 +283,84 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                         avatar_response.rect,
                                     );
                                 }
-                                ui.add_space(4.0);
+                                // Room for the name's glass pill to clear the avatar.
+                                ui.add_space(if palette.vibrant() { 14.0 } else { 4.0 });
                                 ui.vertical(|ui| {
                                     let width = (ui.available_width() - right_controls).max(80.0);
                                     ui.set_max_width(width);
+                                    // On glass the lines centre on the avatar: the
+                                    // column starts at the row's top otherwise.
+                                    if palette.vibrant() {
+                                        let column = if subtitle.is_empty() {
+                                            40.0
+                                        } else {
+                                            NAME_GLASS_LINES
+                                        };
+                                        let top = avatar.center().y - column / 2.0;
+                                        ui.add_space((top - ui.cursor().top()).max(0.0));
+                                    }
                                     if subtitle.is_empty() {
                                         // Center the name on the avatar.
                                         ui.allocate_ui_with_layout(
                                             vec2(width, 40.0),
                                             Layout::left_to_right(Align::Center),
                                             |ui| {
-                                                widgets::rich_text(
+                                                text = widgets::rich_text(
                                                     ui,
                                                     &title,
-                                                    theme::semibold(17.0),
+                                                    // Lighter on glass, as Apple's.
+                                                    if palette.vibrant() {
+                                                        theme::medium(15.0)
+                                                    } else {
+                                                        theme::semibold(17.0)
+                                                    },
                                                     palette.text,
-                                                );
+                                                )
+                                                .rect;
                                             },
                                         );
                                     } else {
-                                        // Align the name and subtitle with the avatar edges.
+                                        // Align the name and subtitle with the avatar edges,
+                                        // or on glass a little closer, around its middle.
                                         ui.allocate_ui_with_layout(
-                                            vec2(width, 40.0),
+                                            vec2(
+                                                width,
+                                                if palette.vibrant() {
+                                                    NAME_GLASS_LINES
+                                                } else {
+                                                    40.0
+                                                },
+                                            ),
                                             Layout::top_down(Align::Min),
                                             |ui| {
-                                                widgets::rich_text(
+                                                text = widgets::rich_text(
                                                     ui,
                                                     &title,
-                                                    theme::semibold(15.0),
+                                                    theme::semibold(if palette.vibrant() {
+                                                        14.0
+                                                    } else {
+                                                        15.0
+                                                    }),
                                                     palette.text,
-                                                );
+                                                )
+                                                .rect;
                                                 ui.with_layout(
                                                     Layout::bottom_up(Align::Min),
                                                     |ui| {
-                                                        widgets::rich_text(
-                                                            ui,
-                                                            &subtitle,
-                                                            theme::regular(12.5),
-                                                            color,
+                                                        text = text.union(
+                                                            widgets::rich_text(
+                                                                ui,
+                                                                &subtitle,
+                                                                theme::regular(
+                                                                    if palette.vibrant() {
+                                                                        11.5
+                                                                    } else {
+                                                                        12.5
+                                                                    },
+                                                                ),
+                                                                color,
+                                                            )
+                                                            .rect,
                                                         );
                                                     },
                                                 );
@@ -280,6 +372,25 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         );
                     })
                     .response;
+                if palette.vibrant() && text.is_positive() {
+                    // A lone name gets Apple's roomier padding.
+                    let padding = vec2(
+                        NAME_GLASS_PADDING.x,
+                        if subtitle.is_empty() {
+                            NAME_GLASS_SINGLE
+                        } else {
+                            NAME_GLASS_PADDING.y
+                        },
+                    );
+                    // Centred on the avatar, whatever room the lines leave
+                    // above and below their glyphs.
+                    let glass_rect = Rect::from_center_size(
+                        pos2(text.center().x, avatar.center().y),
+                        text.size() + 2.0 * padding,
+                    );
+                    ui.painter()
+                        .set(name_pill, glass(&palette, glass_rect, NAME_GLASS_RADIUS));
+                }
                 let block = ui
                     .interact(block.rect, ui.id().with("chat-header-info"), Sense::click())
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -296,6 +407,12 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     crate::i18n::gettext(app.locale, "Leave group")
                 };
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    // Each button on a vibrant window floats on its own glass,
+                    // with room around it.
+                    if palette.vibrant() {
+                        ui.add_space(BUTTON_GAP / 2.0);
+                    }
+                    let more_glass = ui.painter().add(egui::Shape::Noop);
                     let more = theme::icon_button(
                         ui,
                         Icon::Ellipsis,
@@ -304,6 +421,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         palette.text,
                         "More",
                     );
+                    if palette.vibrant() {
+                        ui.painter()
+                            .set(more_glass, glass_button(&palette, more.rect));
+                    }
                     let width = widgets::menu_width(
                         ui,
                         &[
@@ -395,7 +516,11 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         crate::i18n::gettext(app.locale, "Search messages"),
                         super::keys::label("Ctrl+F")
                     );
-                    if theme::icon_button(
+                    if palette.vibrant() {
+                        ui.add_space(BUTTON_GAP);
+                    }
+                    let search_glass = ui.painter().add(egui::Shape::Noop);
+                    let search = theme::icon_button(
                         ui,
                         Icon::Search,
                         18.0,
@@ -407,9 +532,12 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         palette.text,
                         &tip,
                     )
-                    .tab_stop(Stop::ChatSearch)
-                    .clicked()
-                    {
+                    .tab_stop(Stop::ChatSearch);
+                    if palette.vibrant() {
+                        ui.painter()
+                            .set(search_glass, glass_button(&palette, search.rect));
+                    }
+                    if search.clicked() {
                         app.actions.push(if searching {
                             Action::CloseChatSearch
                         } else {
