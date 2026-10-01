@@ -213,12 +213,8 @@ impl Worker {
                 // checked against the machine so one that vanished falls back rather than opening a
                 // stream that can never deliver.
                 let (microphone, speaker, camera) = runtime.call.selections();
-                let resolved = calls::resolve_devices(
-                    &discover_devices().await,
-                    microphone,
-                    speaker,
-                    camera,
-                );
+                let resolved =
+                    calls::resolve_devices(&discover_devices().await, microphone, speaker, camera);
                 let answered = runtime
                     .call
                     .answer(

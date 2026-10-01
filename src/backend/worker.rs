@@ -9627,7 +9627,7 @@ mod tests {
         worker.archive.ensure_chat(PEER, "Fixture").unwrap();
         let call = crate::calls::Call::test_snapshot(PEER);
         let update = call.update();
-        worker.call = Some(calls::CallRuntime::new(call));
+        worker.call = Some(calls::CallRuntime::new(call, None));
         unconfirmed(&mut worker);
         // The update is withheld: the chat's lock state is not known yet.
         worker.emit(Event::Call(Box::new(update)));

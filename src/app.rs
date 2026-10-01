@@ -522,6 +522,11 @@ pub struct App {
     /// The newest local camera preview and peer picture for the call screen.
     pub call_local_frame: Option<std::sync::Arc<egui::ColorImage>>,
     pub call_remote_frame: Option<std::sync::Arc<egui::ColorImage>>,
+    /// The GPU textures those pictures are drawn through. Kept between frames and updated in place
+    /// rather than allocated afresh: a video call repaints per frame, and a new texture each time
+    /// churns GPU memory and uploads at the call's own rate.
+    pub call_local_texture: Option<egui::TextureHandle>,
+    pub call_remote_texture: Option<egui::TextureHandle>,
     /// Set when a call event or a video frame arrived, so the frame is drawn now instead of when
     /// something else happens to ask for a repaint.
     call_repaint: bool,
@@ -961,6 +966,8 @@ impl App {
             call_notified: None,
             call_local_frame: None,
             call_remote_frame: None,
+            call_local_texture: None,
+            call_remote_texture: None,
             call_repaint: false,
             start_with_system: None,
             waker,
