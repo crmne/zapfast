@@ -1535,6 +1535,18 @@ impl App {
         }) && !self.call_surface_hidden
     }
 
+    /// Whether this chat is the one with a live call, which is what the chat header's own call
+    /// button reflects.
+    ///
+    /// A finished call keeps its snapshot for the four-second farewell, but that is not a call the
+    /// header can hang up: counting it here left a dead Hang up button over the chat instead of
+    /// letting the reader start another call.
+    pub fn call_live_here(&self, id: &str) -> bool {
+        self.call
+            .as_ref()
+            .is_some_and(|call| call.chat == id && call.phase.is_live())
+    }
+
     /// Takes the window in or out of full screen for the call surface.
     ///
     /// Only the window moves: a call that is up, its audio, and its signaling are all left alone,
@@ -10167,6 +10179,22 @@ mod tests {
         assert_eq!(
             app.conversations[chat].calls, logged,
             "and the log is still only what the call's own ending wrote"
+        );
+    }
+
+    #[test]
+    fn a_finished_call_leaves_the_header_offering_a_new_call() {
+        let mut app = app();
+        let id = "1@s.whatsapp.net";
+        app.handle_call_update(active_call(id));
+        assert!(app.call_live_here(id), "a live call offers hang up");
+        let mut ended = call_for(id, 1, crate::calls::CallPhase::Ended);
+        ended.outcome = Some(crate::calls::CallOutcome::Answered);
+        app.handle_call_update(ended);
+        assert!(app.call.is_some(), "the farewell is still drawn");
+        assert!(
+            !app.call_live_here(id),
+            "but the header offers a new call rather than a dead hang up"
         );
     }
 

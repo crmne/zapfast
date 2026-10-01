@@ -9995,6 +9995,14 @@ mod call_surface_tests {
 
     /// The labels one frame publishes to a screen reader, after the surface has settled.
     fn labels(app: &mut App, ctx: &egui::Context) -> Vec<String> {
+        labelled(app, ctx)
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect()
+    }
+
+    /// The labels one frame publishes, with whether each control is disabled.
+    fn labelled(app: &mut App, ctx: &egui::Context) -> Vec<(String, bool)> {
         let mut labels = Vec::new();
         for _ in 0..3 {
             let mut output = ctx.run_ui(
@@ -10018,7 +10026,10 @@ mod call_surface_tests {
                 .expect("accessibility tree")
                 .nodes
                 .iter()
-                .filter_map(|(_, node)| node.label().map(str::to_owned))
+                .filter_map(|(_, node)| {
+                    node.label()
+                        .map(|label| (label.to_owned(), node.is_disabled()))
+                })
                 .collect();
         }
         labels
@@ -10175,6 +10186,51 @@ mod call_surface_tests {
             !after.contains(&"Return to the call".to_owned()),
             "a call that is over has no way back: {after:?}"
         );
+    }
+
+    /// A locked chat's farewell, and any call the reader put aside, still ends behind the bar.
+    ///
+    /// `call_surface_hidden` is set for a locked call's terminal snapshot, but the surface only
+    /// looked at the bar while the phase was live, so the four-second farewell painted the whole
+    /// window once more and announced that a hidden chat had a call. A hidden snapshot stays behind
+    /// the bar whatever the phase.
+    #[test]
+    fn a_hidden_farewell_stays_behind_the_bar() {
+        let (mut app, ctx) = on_a_call();
+        ctx.enable_accesskit();
+        app.call_surface_hidden = true;
+        let call = app.call.as_mut().expect("a call is up");
+        call.phase = CallPhase::Ended;
+        call.outcome = Some(crate::calls::CallOutcome::Answered);
+        let shown = labels(&mut app, &ctx);
+        for absent in ["Full screen", "Mute", "Hang up"] {
+            assert!(
+                !shown.contains(&absent.to_owned()),
+                "a hidden farewell must not paint the call surface: {absent} in {shown:?}"
+            );
+        }
+    }
+
+    /// A call that is over offers no control: the backend has already released the runtime.
+    ///
+    /// The farewell keeps the controls it was drawn with so the outcome reads where the call was,
+    /// but the red Hang up stayed enabled, so a click sent a command nobody was listening for and
+    /// the screen offered an action for a call that had ended.
+    #[test]
+    fn the_farewell_offers_no_action_for_a_call_that_is_over() {
+        let (mut app, ctx) = on_a_call();
+        ctx.enable_accesskit();
+        let call = app.call.as_mut().expect("a call is up");
+        call.phase = CallPhase::Ended;
+        call.outcome = Some(crate::calls::CallOutcome::Answered);
+        let shown = labelled(&mut app, &ctx);
+        for tip in ["Mute", "Hang up"] {
+            let control = shown.iter().find(|(label, _)| label == tip);
+            assert!(
+                matches!(control, Some((_, true))),
+                "{tip} is disabled once the call is over: {shown:?}"
+            );
+        }
     }
 
     #[test]

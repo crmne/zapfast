@@ -44,7 +44,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     // for a chat the lock is hiding.
     let peer = app.call_name(&call.chat);
     let picture = app.call_avatar(&call.chat);
-    if app.call_surface_hidden && call.phase.is_live() {
+    // A call the reader stepped away from keeps the bar; so does a locked chat's call, including
+    // the moment it ends. The farewell is the same disclosure as the ring, so a hidden call stays
+    // behind the bar rather than painting the window one last time to announce its outcome. Only a
+    // call that should really be seen — including a visible chat's four-second farewell — reaches
+    // the full surface below.
+    if app.call_surface_hidden {
         bar(app, ctx, &call, &peer, &palette);
         return;
     }
@@ -285,10 +290,14 @@ fn bar(app: &mut App, ctx: &egui::Context, call: &CallUpdate, peer: &str, palett
                             palette.secondary,
                         );
                         ui.add_space(8.0);
-                        if ui
-                            .button(gettext(locale, "Return to the call"))
-                            .on_hover_text(gettext(locale, "Return to the call"))
-                            .clicked()
+                        // Only a call that is still up can be returned to: a hidden farewell is
+                        // the end of the call, and an actionable button would promise a screen
+                        // that is already gone.
+                        if call.phase.is_live()
+                            && ui
+                                .button(gettext(locale, "Return to the call"))
+                                .on_hover_text(gettext(locale, "Return to the call"))
+                                .clicked()
                         {
                             app.actions.push(Action::ReturnToCall);
                         }
@@ -477,6 +486,9 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
     let locale = app.locale;
     let connected = call.phase.is_connected();
     let live = call.phase.is_live();
+    // Five controls on a video call — microphone, camera, screen share, speaker/devices, and hang
+    // up — and four on a voice call, where the screen-share button is not drawn. The row is centred
+    // on what is really rendered.
     let buttons = if call.video { 5.0 } else { 4.0 };
     ui.horizontal(|ui| {
         let spacing = 14.0;
@@ -590,6 +602,9 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
             app.call_devices_open = !app.call_devices_open;
         }
 
+        // Hang up belongs to a call that is still up. The farewell screen keeps the controls it
+        // was drawn with, but this one is no longer actionable: the backend has already released
+        // the call, so a click would only send a command nobody is listening for.
         let tip = gettext(locale, "Hang up").into_owned();
         let response = control(
             ui,
@@ -598,7 +613,7 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
             palette.danger,
             Color32::WHITE,
             &tip,
-            true,
+            live,
         );
         if response.clicked() {
             app.actions.push(Action::HangupCall);
