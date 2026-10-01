@@ -644,9 +644,9 @@ Offline previews for these states use `--demo --demo-page channel`,
 Use `--demo-page locked-prompt`, `locked-setup`, `new-chat`, `unnamed-group`,
 or `react-picker` for the new dialogs, shared group summaries, and reactions.
 `info` shows a contact's info panel beside the chat, and `info-media`,
-`info-docs`, and `info-links` its media view on each tab. When the window has
-no room for the chat list, the chat and the panel side by side, the panel
-lies over the chat.
+`info-docs`, and `info-links` its media view on each tab. When the window cannot
+fit the chat list, conversation, and panel side by side, the panel overlays
+the conversation.
 `group-info`, `group-info-rename`, `group-info-saving`, and `group-info-locked`
 show a group's info with its name and photo editable, being renamed, saving,
 and locked to admins. `meta-ai` shows a Meta AI reply with code and a table.
