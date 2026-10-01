@@ -539,10 +539,16 @@ impl Worker {
         }
     }
 
-    /// Releases the call on the way out, so quitting leaves no child process or task behind.
+    /// Releases the call on the way out, so quitting leaves no child process or task behind, and
+    /// records how the call ended rather than dropping it from the history.
     pub(super) async fn shutdown_call(&mut self) {
         if let Some(mut runtime) = self.call.take() {
             runtime.call.hangup(self.client.as_ref()).await;
+            // Quitting during a ringing or active call still writes its ending: `hangup` set the
+            // terminal phase, and the record is the call's own account of itself.
+            if let Some(record) = runtime.call.record() {
+                self.log_call(record);
+            }
         }
     }
 

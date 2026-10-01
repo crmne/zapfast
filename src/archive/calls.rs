@@ -140,6 +140,7 @@ fn status_key(status: CallStatus) -> &'static str {
         CallStatus::AnsweredElsewhere => "answered_elsewhere",
         CallStatus::Missed => "missed",
         CallStatus::Declined => "declined",
+        CallStatus::DeclinedElsewhere => "declined_elsewhere",
         CallStatus::Busy => "busy",
         CallStatus::Failed => "failed",
         CallStatus::NoAnswer => "no_answer",
@@ -155,6 +156,7 @@ fn status_from_key(key: &str) -> CallStatus {
         "answered_elsewhere" => CallStatus::AnsweredElsewhere,
         "missed" => CallStatus::Missed,
         "declined" => CallStatus::Declined,
+        "declined_elsewhere" => CallStatus::DeclinedElsewhere,
         "busy" => CallStatus::Busy,
         "no_answer" => CallStatus::NoAnswer,
         "connection_lost" => CallStatus::ConnectionLost,
@@ -177,6 +179,25 @@ mod tests {
             status,
             duration: 60,
         }
+    }
+
+    #[test]
+    fn clearing_the_archive_drops_the_call_log_too() {
+        let archive = Archive::in_memory().unwrap();
+        archive
+            .save_call(&record(
+                "call-1",
+                "1@s.whatsapp.net",
+                100,
+                CallStatus::Answered,
+            ))
+            .unwrap();
+        assert_eq!(archive.calls().unwrap().len(), 1);
+        archive.clear().unwrap();
+        assert!(
+            archive.calls().unwrap().is_empty(),
+            "unlinking leaves no call row for the next account to read"
+        );
     }
 
     #[test]
@@ -245,6 +266,7 @@ mod tests {
             CallStatus::Failed,
             CallStatus::NoAnswer,
             CallStatus::ConnectionLost,
+            CallStatus::DeclinedElsewhere,
         ] {
             assert_eq!(status_from_key(status_key(status)), status);
             assert_eq!(

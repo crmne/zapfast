@@ -148,7 +148,10 @@ impl CallOutcome {
             // Answered here? No: another device took it, so this device has no length to record.
             Self::AnsweredElsewhere => CallStatus::AnsweredElsewhere,
             Self::Missed => CallStatus::Missed,
-            Self::Declined | Self::DeclinedElsewhere => CallStatus::Declined,
+            Self::Declined => CallStatus::Declined,
+            // A decline on another device is its own outcome, so it is not collapsed into an
+            // ordinary one: after a restart the Calls view still says where the call was declined.
+            Self::DeclinedElsewhere => CallStatus::DeclinedElsewhere,
             Self::Busy => CallStatus::Busy,
             Self::Failed => CallStatus::Failed,
             Self::NoAnswer => CallStatus::NoAnswer,
@@ -2768,6 +2771,21 @@ mod tests {
         assert_eq!(rejection_outcome(None), CallOutcome::Declined);
         // A reason we do not know is still a refusal, not a failure to connect.
         assert_eq!(rejection_outcome(Some("unknown")), CallOutcome::Declined);
+    }
+
+    #[test]
+    fn a_decline_on_another_device_keeps_its_own_status() {
+        // The outcome and the stored status agree, so the Calls view can still show that the call
+        // was declined on another device after a restart rather than collapsing it into an
+        // ordinary decline.
+        assert_eq!(
+            CallOutcome::DeclinedElsewhere.status(),
+            crate::model::CallStatus::DeclinedElsewhere
+        );
+        assert_eq!(
+            CallOutcome::Declined.status(),
+            crate::model::CallStatus::Declined
+        );
     }
 
     #[test]

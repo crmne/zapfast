@@ -2540,6 +2540,11 @@ impl App {
                 self.account_privacy = crate::privacy::Snapshot::default();
                 self.account_receipts_off = false;
                 self.open_chat = None;
+                // The call log belongs to the account that was unlinked too, and so does the flag
+                // that says it has been read: leaving them would show the previous account's calls
+                // in the Calls view until the next account happens to load its own.
+                self.call_log.clear();
+                self.call_log_loaded = false;
                 // Unsent text belongs to the account that was unlinked.
                 self.drafts.clear();
                 self.draft_mentions.clear();
@@ -10121,6 +10126,24 @@ mod tests {
         app.call_surface_until = Some(Instant::now() - Duration::from_secs(1));
         app.background_frame(&ctx);
         assert!(app.call.is_none(), "and then the bar has nothing to show");
+    }
+
+    #[test]
+    fn unlinking_forgets_the_previous_accounts_calls() {
+        let mut app = app();
+        let chat = "1@s.whatsapp.net";
+        app.apply_call_log(vec![call_record("call-1", chat)]);
+        assert!(app.call_log_loaded, "the log was read");
+        assert_eq!(app.call_log.len(), 1);
+        app.handle_link(LinkStatus::LoggedOut);
+        assert!(
+            app.call_log.is_empty(),
+            "the unlinked account's calls are not shown to the next one"
+        );
+        assert!(
+            !app.call_log_loaded,
+            "and the log reads as unread until the new account's arrives"
+        );
     }
 
     #[test]

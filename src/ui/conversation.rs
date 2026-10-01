@@ -2002,6 +2002,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     // would have taken.
                     let calls = &conversation.calls;
                     let mut next_call = calls.len();
+                    // When the archive has no earlier messages, a call older than the oldest loaded
+                    // one would be drawn as if it belonged immediately before it, jumping the
+                    // messages still on the phone and breaking the order. It stays out until older
+                    // pages load, which is when it really belongs there.
+                    let oldest_loaded = conversation.messages.first().map(|m| m.timestamp);
+                    let history_complete = conversation.complete;
                     // Rows within a few viewports of the screen are laid out
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
@@ -2015,6 +2021,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         while next_call > 0 && calls[next_call - 1].started_at <= message.timestamp
                         {
                             next_call -= 1;
+                            if !history_complete
+                                && oldest_loaded
+                                    .is_some_and(|oldest| calls[next_call].started_at < oldest)
+                            {
+                                continue;
+                            }
                             if call_near(ui.cursor().top()) {
                                 call_entry(app, ui, &palette, &calls[next_call]);
                             } else {

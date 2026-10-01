@@ -30,17 +30,24 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .cloned()
         .collect();
     if calls.is_empty() {
-        widgets::empty_state(
-            ui,
-            &palette,
-            Icon::Phone,
-            gettext(app.locale, "No calls yet").as_ref(),
-            gettext(
-                app.locale,
-                "Calls you make and take with ZapFast are listed here.",
+        // A log that has not been read yet is not an empty one: privacy recovery can delay the
+        // read, and "No calls yet" would tell someone with a history that it is gone. The loading
+        // state holds until the backend has really answered.
+        let (title, body) = if app.call_log_loaded {
+            (
+                gettext(app.locale, "No calls yet"),
+                gettext(
+                    app.locale,
+                    "Calls you make and take with ZapFast are listed here.",
+                ),
             )
-            .as_ref(),
-        );
+        } else {
+            (
+                gettext(app.locale, "Loading…"),
+                gettext(app.locale, "Reading this account's call history."),
+            )
+        };
+        widgets::empty_state(ui, &palette, Icon::Phone, title.as_ref(), body.as_ref());
         return;
     }
     let mut actions = Vec::new();
@@ -166,25 +173,35 @@ fn row(app: &mut App, ui: &mut egui::Ui, record: &CallRecord, actions: &mut Vec<
                             video: false,
                         });
                     }
-                    let video = gettext(locale, "Call back with video").into_owned();
-                    if theme::icon_button(
-                        ui,
-                        Icon::Video,
-                        16.0,
-                        palette.secondary,
-                        palette.text,
-                        &video,
-                    )
-                    .clicked()
-                    {
-                        actions.push(Action::CallBack {
-                            chat: record.chat.clone(),
-                            video: true,
-                        });
+                    // Only where the backend can really carry video: the same capability gate the
+                    // chat header uses, so an unsupported platform is not offered an action that
+                    // can only fail.
+                    if crate::calls::capabilities().video {
+                        let video = gettext(locale, "Call back with video").into_owned();
+                        if theme::icon_button(
+                            ui,
+                            Icon::Video,
+                            16.0,
+                            palette.secondary,
+                            palette.text,
+                            &video,
+                        )
+                        .clicked()
+                        {
+                            actions.push(Action::CallBack {
+                                chat: record.chat.clone(),
+                                video: true,
+                            });
+                        }
                     }
                 });
             });
         });
+    // The whole row is a control, so a screen reader has to be told what it does and the keyboard
+    // has to be able to reach it: a painted hit target is invisible to both otherwise.
+    let label = gettext(app.locale, "Open the chat with {name}").replace("{name}", &name);
+    row.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.as_str()));
+    theme::reveal_focus(&row);
     if row.clicked() {
         actions.push(Action::OpenCallChat(record.chat.clone()));
     }
@@ -222,6 +239,7 @@ pub(crate) fn outcome(locale: Locale, record: &CallRecord) -> String {
         CallStatus::AnsweredElsewhere => gettext(locale, "Answered elsewhere").into_owned(),
         CallStatus::Missed => gettext(locale, "Missed").into_owned(),
         CallStatus::Declined => gettext(locale, "Declined").into_owned(),
+        CallStatus::DeclinedElsewhere => gettext(locale, "Declined elsewhere").into_owned(),
         CallStatus::Busy => gettext(locale, "Busy").into_owned(),
         CallStatus::Failed => gettext(locale, "Could not connect").into_owned(),
         CallStatus::NoAnswer => gettext(locale, "No answer").into_owned(),

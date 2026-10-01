@@ -910,6 +910,9 @@ pub enum CallStatus {
     Missed,
     /// The peer rejected it, or we did.
     Declined,
+    /// Another of this account's devices rejected the call, so this one never did. Kept apart from
+    /// an ordinary `Declined` so the Calls view can still say so after a restart.
+    DeclinedElsewhere,
     /// The peer's phone was already on a call.
     Busy,
     /// It never came up, and not for any of the reasons above.
