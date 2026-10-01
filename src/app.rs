@@ -498,6 +498,7 @@ pub struct App {
     pub composer_tools_open: bool,
     /// In-chat audio player.
     pub player: Player,
+    pub transcription: crate::transcription::Transcription,
     /// In-chat video player.
     pub video: crate::video::Player,
     /// Chat of the loaded video; leaving it stops the video.
@@ -843,6 +844,7 @@ impl App {
         crate::proxy::configure(&settings.proxy);
         let backend = Backend::spawn(dirs.clone(), waker.clone());
         let mut app = Self::with_backend(dirs, settings, backend, waker.clone());
+        app.transcription.detect(waker.clone());
         app.pauses_media = true;
         app.badge = Some(Default::default());
         app.custom_themes
@@ -1007,6 +1009,7 @@ impl App {
             pending: Vec::new(),
             composer_tools_open: false,
             player: Player::new(waker.clone()),
+            transcription: Default::default(),
             video: crate::video::Player::new(waker.clone()),
             video_chat: None,
             video_wanted: None,
@@ -2601,6 +2604,7 @@ impl App {
                 }
             }
             LinkStatus::LoggedOut => {
+                self.transcription.clear();
                 self.poll_voting.clear();
                 self.interactive_sending.clear();
                 self.poll_creating = false;
@@ -4099,6 +4103,27 @@ impl App {
                 }
             }
             Action::ClearPending => self.pending.clear(),
+            Action::TranscribeVoice { chat, message } => {
+                if let Some(crate::model::Content::Audio {
+                    media,
+                    voice_note: true,
+                    ..
+                }) = self
+                    .conversations
+                    .get(&chat)
+                    .and_then(|conversation| conversation.message(&message))
+                    .map(|row| &row.content)
+                    && let Some(path) = &media.path
+                {
+                    self.transcription.start(
+                        chat,
+                        message,
+                        path.clone(),
+                        self.dirs.cache.clone(),
+                        self.waker.clone(),
+                    );
+                }
+            }
             Action::PlayVoice { message, path } => self.play_voice(message, path),
             Action::PlayVideo { message, path } => self.play_video(message, path),
             Action::PlayVideoWhenDownloaded(message) => {
@@ -5212,6 +5237,7 @@ impl App {
         #[cfg(target_os = "macos")]
         self.actions.extend(crate::macos::drain(self.window_hidden));
         self.handle_control_commands();
+        self.transcription.poll();
         self.poll_custom_themes();
         self.wallpaper_image
             .sync(self.settings.wallpaper_image.as_deref(), &self.waker);

@@ -19,6 +19,7 @@ name = "zapfast"
 path = "src/main.rs"
 
 [dependencies]
+tempfile = "3"
 anyhow = "1"
 # Hashes saved stickers by content. Already included through wacore.
 sha2 = "0.11"
@@ -212,7 +213,6 @@ windows = { version = "0.62", features = ["Media_Control", "Foundation_Collectio
 winresource = "0.1"
 
 [dev-dependencies]
-tempfile = "3"
 # Checks the default log filter the way fastframe-log's logger reads it.
 # Already in the tree through fastframe-log, at this version.
 env_logger = { version = "0.11", default-features = false }

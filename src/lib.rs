@@ -34,6 +34,7 @@ pub mod sticker_search;
 pub mod theme;
 pub mod timestretch;
 pub mod transcript;
+pub mod transcription;
 pub mod transport;
 pub mod ui;
 pub mod updates;

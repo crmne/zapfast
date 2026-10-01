@@ -207,6 +207,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   playing are resumed. **Pause other media while recording or playing** in
   Settings turns this off. Linux uses MPRIS, so any player that implements it
   works; macOS has no public API for this, so the switch is hidden there.
+- **Voice transcription.** Install [yapsnap](https://github.com/kouhxp/yapsnap)
+  and its ffmpeg dependency on your PATH, then restart ZapFast. Click the
+  speech-to-text icon beside Play on a downloaded voice message to show text
+  below its waveform. Transcription runs locally without sending audio to a service;
+  yapsnap may download language models on first use. Transcripts last for the
+  current session and are cleared when you unlink. Temporary transcript files
+  in the app cache are removed after processing.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
   You can swap these keys in Settings. The composer is focused when you open
   or return to a conversation, and clicking empty conversation space returns
