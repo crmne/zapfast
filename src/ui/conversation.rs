@@ -47,6 +47,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
     composer(app, ui, &chat);
     messages(app, ui, &chat);
+    // A vibrant window is flat, as Messages is: no shadows over the chat.
+    if app.palette.vibrant() {
+        return;
+    }
     // Over the messages, which scroll under the header.
     widgets::paint_shadow_below(
         ui,
@@ -117,7 +121,12 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
         .show_separator_line(false)
         .frame(
             Frame::new()
-                .fill(palette.panel)
+                // On a vibrant window the translucent chat runs under it.
+                .fill(if palette.vibrant() {
+                    Color32::TRANSPARENT
+                } else {
+                    palette.panel
+                })
                 .inner_margin(Margin::symmetric(14, 8)),
         )
         .show(ui, |ui| {

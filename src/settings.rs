@@ -37,7 +37,13 @@ pub enum ThemeChoice {
 }
 
 impl ThemeChoice {
-    pub const ALL: [ThemeChoice; 4] = [Self::System, Self::Light, Self::Dark, Self::Messages];
+    /// The choices Settings offers. Messages is macOS's look, and only
+    /// macOS can draw its translucent sidebar.
+    pub const ALL: &[ThemeChoice] = if cfg!(target_os = "macos") {
+        &[Self::System, Self::Light, Self::Dark, Self::Messages]
+    } else {
+        &[Self::System, Self::Light, Self::Dark]
+    };
 
     pub fn label(self) -> &'static str {
         match self {

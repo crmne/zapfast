@@ -941,7 +941,7 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
             .width(200.0_f32.min(ui.available_width()))
             .height(320.0)
             .show_ui(ui, |ui| {
-                for choice in ThemeChoice::ALL {
+                for &choice in ThemeChoice::ALL {
                     if theme_option(
                         ui,
                         &palette,

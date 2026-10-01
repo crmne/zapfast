@@ -197,6 +197,28 @@ impl Palette {
         }
     }
 
+    /// Whether the window shows the desktop, blurred, through the sidebar:
+    /// the Messages theme on macOS, where AppKit provides the material.
+    pub fn vibrant(&self) -> bool {
+        cfg!(target_os = "macos") && self.bubbles == BubbleStyle::Messages
+    }
+
+    /// The chat list's background. On a vibrant theme it only darkens the
+    /// material behind it a little.
+    pub fn sidebar(&self) -> Color32 {
+        if self.vibrant() {
+            self.panel.gamma_multiply(SIDEBAR_TINT)
+        } else {
+            self.panel
+        }
+    }
+
+    /// The conversation's background on a vibrant theme: mostly `color`,
+    /// with a little of the material behind the window showing through.
+    pub fn vibrant_chat(&self, color: Color32) -> Color32 {
+        color.gamma_multiply(CHAT_TINT)
+    }
+
     /// The palette for a message bubble's contents. Secondary and dim text,
     /// and the read ticks, move toward the text colour just far enough to
     /// stay readable on the bubble: a grey that reads on the panel can vanish
@@ -354,6 +376,10 @@ impl fastframe_theme::Palette for Palette {
     }
 }
 
+/// How opaque a vibrant theme's conversation background is.
+const CHAT_TINT: f32 = 0.82;
+/// How much of the panel colour tints a vibrant sidebar.
+const SIDEBAR_TINT: f32 = 0.35;
 /// How much denser than the palette's shadow colour a bubble's shadow is.
 const SHADOW_DENSITY: f32 = 1.04;
 /// How far a dark theme's raised edge moves from the surface toward the text.

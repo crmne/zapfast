@@ -1,6 +1,7 @@
 //! Main-thread AppKit application menus. The menu outlives windows, just like
 //! the link and tray; reopening replaces only its repaint callback. The
-//! traffic lights are placed by fastframe-macos.
+//! traffic lights are placed by fastframe-macos. The Messages theme's
+//! translucent sidebar is AppKit's own sidebar material, behind the window.
 
 use std::cell::RefCell;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -318,4 +319,78 @@ mod tests {
                 .unwrap();
         }
     }
+}
+
+thread_local! {
+    /// The vibrancy behind the current window, while the theme asks for it.
+    static VIBRANCY: RefCell<Option<objc2::rc::Retained<objc2_app_kit::NSVisualEffectView>>> =
+        const { RefCell::new(None) };
+}
+
+/// Puts AppKit's dark sidebar material behind the window's content, or takes
+/// it away. The window is transparent; whatever egui leaves translucent, the
+/// sidebar in the Messages theme, shows the blurred desktop as Messages does.
+/// Cheap to call every frame: it changes the view only when `on` changes or
+/// the window was made anew.
+pub fn vibrancy(frame: &eframe::Frame, on: bool) {
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua,
+        NSAutoresizingMaskOptions, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+        NSVisualEffectState, NSVisualEffectView, NSWindowOrderingMode,
+    };
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Some(mtm) = objc2::MainThreadMarker::new() else {
+        return;
+    };
+    let Ok(handle) = frame.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: eframe supplies a live NSView, and this runs on its main thread.
+    let content = unsafe { &*handle.ns_view.as_ptr().cast::<NSView>() };
+    // SAFETY: as above; the content view's parent is the window's frame view.
+    let Some(frame_view) = (unsafe { content.superview() }) else {
+        return;
+    };
+    VIBRANCY.with_borrow_mut(|slot| {
+        // A closed window took its view with it.
+        let current = slot.as_ref().is_some_and(|view| {
+            // SAFETY: the view is ours and alive; read on the main thread.
+            unsafe { view.superview() }.is_some_and(|parent| parent == frame_view)
+        });
+        if !current {
+            *slot = None;
+        }
+        match (on, slot.is_some()) {
+            (true, false) => {
+                let view = NSVisualEffectView::initWithFrame(mtm.alloc(), frame_view.bounds());
+                view.setMaterial(NSVisualEffectMaterial::Sidebar);
+                view.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+                view.setState(NSVisualEffectState::FollowsWindowActiveState);
+                view.setAutoresizingMask(
+                    NSAutoresizingMaskOptions::ViewWidthSizable
+                        | NSAutoresizingMaskOptions::ViewHeightSizable,
+                );
+                // The theme is dark whatever the system's appearance is.
+                // SAFETY: AppKit's constant, read on the main thread.
+                let dark = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua });
+                view.setAppearance(dark.as_deref());
+                frame_view.addSubview_positioned_relativeTo(
+                    &view,
+                    NSWindowOrderingMode::Below,
+                    Some(content),
+                );
+                *slot = Some(view);
+            }
+            (false, true) => {
+                if let Some(view) = slot.take() {
+                    view.removeFromSuperview();
+                }
+            }
+            _ => {}
+        }
+    });
 }

@@ -1134,8 +1134,12 @@ impl App {
     /// What the conversation shows behind its bubbles, for the chat and the
     /// wallpaper preview alike.
     pub fn wallpaper(&self) -> crate::wallpaper::Look {
+        let mut color = self.settings.wallpaper_background(&self.palette);
+        if self.palette.vibrant() {
+            color = self.palette.vibrant_chat(color);
+        }
         crate::wallpaper::Look {
-            color: self.settings.wallpaper_background(&self.palette),
+            color,
             // Messages draws its conversations on a plain background.
             doodles: self.settings.show_wallpaper
                 && self.palette.bubbles != crate::theme::BubbleStyle::Messages,
@@ -3585,7 +3589,14 @@ impl App {
         // A change of colours after the window's first is revealed from the
         // middle outwards, as Omarchy does; the old palette stays until the
         // window's picture of it arrives.
-        if self.applied_dark.is_some() && self.palette != palette && self.reveal_theme_changes {
+        // A vibrant window's picture misses the desktop behind it, so changes
+        // to or from one switch at once.
+        if self.applied_dark.is_some()
+            && self.palette != palette
+            && self.reveal_theme_changes
+            && !self.palette.vibrant()
+            && !palette.vibrant()
+        {
             self.theme_transition.begin(ctx);
             if self.theme_transition.holding(ctx) {
                 return;
