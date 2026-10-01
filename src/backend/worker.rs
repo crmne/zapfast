@@ -4521,6 +4521,26 @@ impl Worker {
                 });
             }
             Command::RemoveWallpaperImage => crate::wallpaper::remove(&self.dirs),
+            Command::PickCustomFont => {
+                let dirs = self.dirs.clone();
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Choose a font file")
+                        .add_filter("Fonts", &crate::custom_font::EXTENSIONS);
+                    if let Some(directory) = crate::custom_font::system_directory() {
+                        dialog = dialog.set_directory(directory);
+                    }
+                    let Some(path) = dialog.pick_file() else {
+                        return;
+                    };
+                    let result = crate::custom_font::import(&path, &dirs);
+                    let _ = events.send(Event::CustomFontPicked(result));
+                    waker.wake();
+                });
+            }
+            Command::RemoveCustomFont => crate::custom_font::remove(&self.dirs),
             Command::SetProfile { name, about } => self.set_profile(name, about),
             Command::PickProfilePicture => {
                 let commands = self.commands.clone();

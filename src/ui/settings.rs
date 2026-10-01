@@ -1015,24 +1015,42 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
 /// The website's page on writing a theme.
 const THEMES_GUIDE: &str = "https://zapfast.rocks/themes/";
 
-/// The interface language menu.
+/// The interface font menu: System, Inter, and a font file of the person's own.
 fn font_picker(ui: &mut egui::Ui, app: &mut App) {
     use crate::settings::FontChoice;
     let palette = app.palette;
     let selected = app.settings.font;
+    // A file's name is the person's own; keep it as it is.
+    let custom = app
+        .settings
+        .custom_font
+        .as_deref()
+        .and_then(std::path::Path::file_stem)
+        .map(|stem| stem.to_string_lossy().into_owned());
     // "Inter" is a name; "System" is a word.
     let label = |choice: FontChoice| match choice {
         FontChoice::System => crate::i18n::gettext(app.locale, choice.label()).into_owned(),
         FontChoice::Inter => choice.label().to_owned(),
     };
     let response = egui::ComboBox::from_id_salt("interface_font")
-        .selected_text(label(selected))
+        .selected_text(custom.clone().unwrap_or_else(|| label(selected)))
         .width(200.0_f32.min(ui.available_width()))
         .show_ui(ui, |ui| {
             for choice in FontChoice::ALL {
-                if theme_option(ui, &palette, &label(choice), selected == choice) {
+                let chosen = custom.is_none() && selected == choice;
+                if theme_option(ui, &palette, &label(choice), chosen) {
                     app.actions.push(Action::SetFont(choice));
                 }
+            }
+            let pick = match &custom {
+                Some(name) => {
+                    theme_option(ui, &palette, name, true);
+                    crate::i18n::gettext(app.locale, "Choose another font file")
+                }
+                None => crate::i18n::gettext(app.locale, "Choose a font file"),
+            };
+            if theme_option(ui, &palette, &pick, false) {
+                app.actions.push(Action::PickCustomFont);
             }
         });
     theme::reveal_focus(&response.response);

@@ -492,13 +492,33 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
 /// platform's font (Settings, Appearance, Font).
 static INTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Chooses the interface's typeface and installs it. Call it before
-/// [`install`] with the saved choice, and again when the choice changes.
-pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
-    let inter = font == crate::settings::FontChoice::Inter;
-    if INTER.swap(inter, std::sync::atomic::Ordering::AcqRel) != inter {
-        install_fonts(ctx);
-    }
+/// The font file chosen in Settings, which leads the interface fonts.
+static CUSTOM_FONT: std::sync::Mutex<Option<std::sync::Arc<crate::custom_font::Face>>> =
+    std::sync::Mutex::new(None);
+
+/// Chooses the interface's typeface and installs it: `custom`, when given,
+/// leads `font`. Call it before [`install`] with the saved choice, and again
+/// when the choice changes. When the custom font cannot be read the fonts
+/// are installed without it and the error comes back.
+pub fn set_font(
+    ctx: &egui::Context,
+    font: crate::settings::FontChoice,
+    custom: Option<&std::path::Path>,
+) -> Result<(), String> {
+    INTER.store(
+        font == crate::settings::FontChoice::Inter,
+        std::sync::atomic::Ordering::Release,
+    );
+    let (face, result) = match custom.map(crate::custom_font::load) {
+        Some(Ok(face)) => (Some(std::sync::Arc::new(face)), Ok(())),
+        Some(Err(error)) => (None, Err(error)),
+        None => (None, Ok(())),
+    };
+    *CUSTOM_FONT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = face;
+    install_fonts(ctx);
+    result
 }
 
 /// Whether Inter is the chosen typeface.
@@ -517,15 +537,22 @@ fn primary_font() -> fastframe_fonts::Primary {
     }
 }
 
-/// The chosen interface font at four weights (the platform's, or Inter
-/// where there is none), egui's own fonts behind it, and installed fonts
-/// for the scripts it lacks, hinted as the desktop asks. Inter also draws
-/// the [`tabular`] timers.
+/// The custom font, when one is chosen, then the chosen interface font at
+/// four weights (the platform's, or Inter where there is none), egui's own
+/// fonts behind it, and installed fonts for the scripts it lacks, hinted as
+/// the desktop asks. Inter also draws the [`tabular`] timers.
 fn install_fonts(ctx: &egui::Context) {
     let primary = primary_font();
     let mut fonts = fastframe_fonts::FontSetup::default()
         .primary(primary)
         .definitions();
+    if let Some(face) = CUSTOM_FONT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+    {
+        face.lead(&mut fonts);
+    }
     add_tabular(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
