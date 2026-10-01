@@ -3162,7 +3162,7 @@ fn bubble_frame(
     let bare = matches!(
         message.content,
         Content::Sticker { .. } | Content::Video { note: true, .. }
-    );
+    ) || bare_picture(&palette, message);
     let fill = if carousel || bare {
         Color32::TRANSPARENT
     } else if own {
@@ -3189,11 +3189,15 @@ fn bubble_frame(
     // the bubble closes under it as evenly as it opens above it.
     let over_picture = time_over_picture(message);
     let inner = Frame::new()
-        .inner_margin(Margin {
-            left: 10,
-            right: 10,
-            top: 6,
-            bottom: if over_picture { 6 } else { 5 },
+        .inner_margin(if bare_picture(&palette, message) {
+            Margin::ZERO
+        } else {
+            Margin {
+                left: 10,
+                right: 10,
+                top: 6,
+                bottom: if over_picture { 6 } else { 5 },
+            }
         })
         .show(ui, |ui| {
             ui.set_max_width(max_width);
@@ -3702,6 +3706,25 @@ fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
 /// on a line of their own: a picture without a caption, as in WhatsApp.
 fn time_over_picture(message: &Message) -> bool {
     matches!(message.content, Content::Image { caption: None, .. })
+}
+
+/// Whether a picture stands without a bubble, as Messages draws a photo
+/// with nothing else in its message: it takes the bubble's round shape
+/// itself. A quote or the forwarded label keeps the bubble around it.
+fn bare_picture(palette: &Palette, message: &Message) -> bool {
+    palette.bubbles == theme::BubbleStyle::Messages
+        && time_over_picture(message)
+        && message.quoted.is_none()
+        && !message.forwarded
+}
+
+/// How round a picture's corners are: a bubble's, when it has none.
+fn picture_radius(palette: &Palette, message: &Message) -> f32 {
+    if bare_picture(palette, message) {
+        f32::from(widgets::MESSAGES_BUBBLE_RADIUS)
+    } else {
+        6.0
+    }
 }
 
 /// Space between a picture's edges and the time drawn over it: the scrim
@@ -5729,6 +5752,7 @@ fn picture(
     actions: &mut Vec<Action>,
 ) -> Rect {
     let palette = view.palette;
+    let radius = picture_radius(&palette, message);
     let (max_width, max_height) = match sticker {
         Some(_) => (STICKER_SIDE, STICKER_SIDE),
         None => (width.min(PICTURE_WIDTH), PICTURE_HEIGHT),
@@ -5751,7 +5775,7 @@ fn picture(
                         );
                     }
                     _ => {
-                        ui.painter().rect_filled(rect, 6.0, palette.surface);
+                        ui.painter().rect_filled(rect, radius, palette.surface);
                         theme::paint_icon(ui, Icon::Sticker, rect, 32.0, palette.secondary);
                     }
                 }
@@ -5797,7 +5821,7 @@ fn picture(
                 let response = ui.add(
                     image
                         .fit_to_exact_size(size)
-                        .corner_radius(if sticker.is_some() { 0.0 } else { 6.0 })
+                        .corner_radius(if sticker.is_some() { 0.0 } else { radius })
                         .sense(Sense::click()),
                 );
                 let rect = response.rect;
@@ -5826,7 +5850,7 @@ fn picture(
                 };
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                 if ui.is_rect_visible(rect) {
-                    ui.painter().rect_filled(rect, 6.0, palette.surface);
+                    ui.painter().rect_filled(rect, radius, palette.surface);
                     theme::paint_spinner(ui, rect, 22.0, palette.accent);
                 }
                 rect
@@ -5839,7 +5863,7 @@ fn picture(
                 };
                 let (rect, response) = ui.allocate_exact_size(size, Sense::click());
                 if ui.is_rect_visible(rect) {
-                    ui.painter().rect_filled(rect, 6.0, palette.surface);
+                    ui.painter().rect_filled(rect, radius, palette.surface);
                     theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, palette.danger);
                     ui.painter().text(
                         rect.center() + vec2(0.0, 24.0),
@@ -5868,13 +5892,13 @@ fn picture(
             Some(uri) => {
                 egui::Image::new(uri)
                     .fit_to_exact_size(size)
-                    .corner_radius(6.0)
+                    .corner_radius(radius)
                     .paint_at(ui, rect);
                 ui.painter()
-                    .rect_filled(rect, 6.0, Color32::from_black_alpha(60));
+                    .rect_filled(rect, radius, Color32::from_black_alpha(60));
             }
             None => {
-                ui.painter().rect_filled(rect, 6.0, palette.surface);
+                ui.painter().rect_filled(rect, radius, palette.surface);
             }
         }
         let disc = Rect::from_center_size(rect.center(), Vec2::splat(44.0));
@@ -7402,6 +7426,51 @@ mod reaction_tests {
             from_me,
             emoji: emoji.into(),
         }
+    }
+
+    /// Messages draws a photo alone in its message without a bubble, with
+    /// a bubble's corners; anything else in the message keeps the bubble.
+    #[test]
+    fn only_lone_pictures_stand_without_a_bubble_in_messages() {
+        let photo = |caption: Option<&str>| Message {
+            content: Content::Image {
+                caption: caption.map(Into::into),
+                media: crate::model::Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    path: None,
+                    state: crate::model::MediaState::Idle,
+                },
+            },
+            ..with_reactions(Vec::new())
+        };
+        let messages = Palette::messages();
+        assert!(bare_picture(&messages, &photo(None)));
+        assert_eq!(
+            picture_radius(&messages, &photo(None)),
+            f32::from(widgets::MESSAGES_BUBBLE_RADIUS)
+        );
+        assert!(bare_picture(&Palette::messages_light(), &photo(None)));
+        // WhatsApp's bubbles keep their frame around every picture.
+        assert!(!bare_picture(&Palette::dark(), &photo(None)));
+        assert_eq!(picture_radius(&Palette::dark(), &photo(None)), 6.0);
+        // A caption, a quote or the forwarded label keep the bubble.
+        assert!(!bare_picture(&messages, &photo(Some("Look"))));
+        let mut forwarded = photo(None);
+        forwarded.forwarded = true;
+        assert!(!bare_picture(&messages, &forwarded));
+        let mut quoting = photo(None);
+        quoting.quoted = Some(crate::model::Quoted {
+            id: "q".into(),
+            sender: "a@s.whatsapp.net".into(),
+            sender_name: None,
+            summary: "hi".into(),
+            mentions: Vec::new(),
+        });
+        assert!(!bare_picture(&messages, &quoting));
+        assert!(!bare_picture(&messages, &with_reactions(Vec::new())));
     }
 
     #[test]
