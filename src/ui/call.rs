@@ -6,7 +6,7 @@
 //! user presses something.
 
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use egui::{Align, Color32, CornerRadius, Layout, Rect, Sense, TextureOptions, Vec2, pos2, vec2};
 
@@ -28,6 +28,16 @@ const CONTROL: f32 = 58.0;
 /// How much of the surface the corner preview may take, so a portrait camera stays a preview.
 const PREVIEW_WIDTH_SHARE: f32 = 0.34;
 const PREVIEW_HEIGHT_SHARE: f32 = 0.38;
+/// The seconds of one ringing breath, and how far the icon and the ring around the picture move
+/// within it. Deliberately small: a call should catch the eye, not shake the window.
+const RING_PERIOD: f64 = 1.6;
+/// The part of the period spent moving; the rest is a still pause before the next breath.
+const RING_ACTIVE_SHARE: f64 = 0.6;
+const RING_ICON_AMPLITUDE: f32 = 0.12;
+const RING_HALO_GROWTH: f32 = 16.0;
+/// An outgoing call's own, fainter breath: a call this side placed can wait more quietly.
+const OUTGOING_PERIOD: f64 = 2.4;
+const OUTGOING_ICON_AMPLITUDE: f32 = 0.05;
 
 /// Draws the call surface, if there is one.
 ///
@@ -165,12 +175,42 @@ fn live(
             ui.add_space(18.0);
             theme::text(ui, peer, theme::bold(26.0), palette.text);
             ui.add_space(6.0);
-            theme::text(
-                ui,
-                status(app, call),
-                theme::medium(15.0),
-                status_color(call, palette),
-            );
+            // A call going out breathes too, but slower and shallower than one coming in: this
+            // side already knows it is waiting, so the screen need not work as hard for it.
+            if matches!(call.phase, CallPhase::Dialing | CallPhase::Ringing) {
+                let breath = pulse_phase(ui, app.settings.call_animations, OUTGOING_PERIOD);
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(15.0), Sense::hover());
+                    if ui.is_rect_visible(rect) {
+                        let scale = breath.map_or(1.0, |share| {
+                            1.0
+                                + OUTGOING_ICON_AMPLITUDE
+                                    * (share * std::f32::consts::PI).sin()
+                        });
+                        theme::paint_icon(
+                            ui,
+                            outgoing_icon(call.video),
+                            rect,
+                            15.0 * scale,
+                            palette.accent,
+                        );
+                    }
+                    ui.add_space(6.0);
+                    theme::text(
+                        ui,
+                        status(app, call),
+                        theme::medium(15.0),
+                        status_color(call, palette),
+                    );
+                });
+            } else {
+                theme::text(
+                    ui,
+                    status(app, call),
+                    theme::medium(15.0),
+                    status_color(call, palette),
+                );
+            }
             under_status(ui, app, call, palette, false);
         });
     } else {
@@ -280,7 +320,15 @@ fn bar(app: &mut App, ctx: &egui::Context, call: &CallUpdate, peer: &str, palett
                         // of call it is before it says who is on it.
                         theme::icon(
                             ui,
-                            if call.video { Icon::Video } else { Icon::Phone },
+                            if !live {
+                                // A farewell behind the bar is a call that is over: the slashed
+                                // handset, not the receiver that is still up.
+                                Icon::PhoneOff
+                            } else if call.video {
+                                Icon::Video
+                            } else {
+                                Icon::Phone
+                            },
                             13.0,
                             if live { palette.danger } else { palette.accent },
                         );
@@ -540,11 +588,7 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         };
         let response = control(
             ui,
-            if call.muted {
-                Icon::VolumeX
-            } else {
-                Icon::Mic
-            },
+            if call.muted { Icon::MicOff } else { Icon::Mic },
             CONTROL,
             if call.muted {
                 palette.danger
@@ -572,7 +616,11 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
             };
             let response = control(
                 ui,
-                Icon::Video,
+                if call.video && !call.camera_on {
+                    Icon::VideoOff
+                } else {
+                    Icon::Video
+                },
                 CONTROL,
                 if call.camera_on {
                     palette.accent
@@ -649,7 +697,7 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         let tip = gettext(locale, "Hang up").into_owned();
         let response = control(
             ui,
-            Icon::Phone,
+            Icon::PhoneOff,
             CONTROL,
             palette.danger,
             Color32::WHITE,
@@ -850,17 +898,43 @@ fn ringing(
     area: Rect,
 ) {
     let locale = app.locale;
+    // The ringing call is the one thing on this screen that moves, and the one that most needs a
+    // reader's eye. The status icon breathes and a ring swells out of the picture: both are
+    // painted, never laid out, so nothing around them shifts, and both hold still when the reader
+    // has turned call motion off.
+    let breath = pulse_phase(ui, app.settings.call_animations, RING_PERIOD);
     ui.vertical_centered(|ui| {
         ui.add_space(area.height() * 0.17);
-        theme::text(
-            ui,
-            gettext(locale, "Incoming call"),
-            theme::medium(13.0),
-            palette.accent,
-        );
+        ui.horizontal(|ui| {
+            // A fixed box with a growing glyph: the row is the same width at every phase.
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(15.0), Sense::hover());
+            if ui.is_rect_visible(rect) {
+                let scale = breath.map_or(1.0, |share| {
+                    1.0 + RING_ICON_AMPLITUDE * (share * std::f32::consts::PI).sin()
+                });
+                theme::paint_icon(ui, incoming_icon(call.video), rect, 15.0 * scale, palette.accent);
+            }
+            ui.add_space(6.0);
+            theme::text(
+                ui,
+                gettext(locale, "Incoming call"),
+                theme::medium(13.0),
+                palette.accent,
+            );
+        });
         ui.add_space(22.0);
         let size = (area.height() * 0.24).clamp(96.0, 160.0);
-        widgets::avatar(ui, palette, peer, &call.chat, size, picture);
+        let avatar = widgets::avatar(ui, palette, peer, &call.chat, size, picture);
+        // Drawn after the picture but outside it, so the ring never covers a face.
+        if let Some(share) = breath {
+            let radius = avatar.rect.width() / 2.0 + 4.0 + RING_HALO_GROWTH * share;
+            let alpha = (1.0 - share) * 0.55;
+            ui.painter().circle_stroke(
+                avatar.rect.center(),
+                radius,
+                egui::Stroke::new(2.0, palette.accent.gamma_multiply(alpha)),
+            );
+        }
         ui.add_space(18.0);
         theme::text(ui, peer, theme::bold(26.0), palette.text);
         ui.add_space(6.0);
@@ -880,10 +954,12 @@ fn ringing(
         ui.horizontal(|ui| {
             let width = 2.0 * CONTROL + 60.0;
             ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
+            // Answering lifts the receiver to the ear; the two answers are told apart by their
+            // shape as well as their colour, so green-and-red is never the only difference.
             let accept = gettext(locale, "Accept").into_owned();
             let response = control(
                 ui,
-                Icon::Phone,
+                incoming_icon(call.video),
                 CONTROL,
                 palette.accent,
                 palette.on_accent,
@@ -894,10 +970,11 @@ fn ringing(
                 app.actions.push(Action::AnswerCall);
             }
             ui.add_space(60.0);
+            // Refusing a call puts the receiver down: a slashed handset, not a red one.
             let decline = gettext(locale, "Decline").into_owned();
             let response = control(
                 ui,
-                Icon::Phone,
+                Icon::PhoneOff,
                 CONTROL,
                 palette.danger,
                 Color32::WHITE,
@@ -911,6 +988,49 @@ fn ringing(
     });
 }
 
+/// The shape that stands for a call coming in, in the medium it carries.
+fn incoming_icon(video: bool) -> Icon {
+    if video {
+        Icon::VideoIncoming
+    } else {
+        Icon::PhoneIncoming
+    }
+}
+
+/// The shape that stands for a call going out, in the medium it carries.
+fn outgoing_icon(video: bool) -> Icon {
+    if video {
+        Icon::VideoOutgoing
+    } else {
+        Icon::PhoneOutgoing
+    }
+}
+
+/// The share of one breath this frame sits at, `0.0..=1.0`, or `None` when call motion is off.
+///
+/// The value rises across the moving part of the cycle and holds at `1.0` through the still
+/// tail, so a caller's `sin(share * PI)` starts and ends at rest and nothing jumps between
+/// breaths. Returning `None` (rather than `Some(1.0)`) keeps the caller from asking the window to
+/// repaint for a picture that is not moving.
+fn pulse_phase(ui: &egui::Ui, on: bool, period: f64) -> Option<f32> {
+    if !on {
+        return None;
+    }
+    // A third of the display's rate is plenty for a slow breath, and the request is what keeps
+    // the window drawing while the call is on screen.
+    ui.ctx()
+        .request_repaint_after(Duration::from_millis(33));
+    Some(pulse_at(ui.input(|input| input.time), period))
+}
+
+/// The share of one breath at `time`, `0.0..=1.0`: it climbs across the moving part of the cycle
+/// and holds at `1.0` through the still tail. Pure, so the motion can be checked without a
+/// window.
+fn pulse_at(time: f64, period: f64) -> f32 {
+    let share = (time % period) / period;
+    (share / RING_ACTIVE_SHARE).min(1.0) as f32
+}
+
 /// The largest rect of `size`'s aspect ratio that fits inside `area`.
 fn fit_inside(area: Rect, size: Vec2) -> Rect {
     if size.x <= 0.0 || size.y <= 0.0 {
@@ -918,4 +1038,63 @@ fn fit_inside(area: Rect, size: Vec2) -> Rect {
     }
     let scale = (area.width() / size.x).min(area.height() / size.y);
     Rect::from_center_size(area.center(), Vec2::new(size.x * scale, size.y * scale))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The breath must start and end at rest, or the glyph would jump between cycles, and it must
+    /// have a still tail so the call reads as calm rather than as a flashing light.
+    #[test]
+    fn the_ringing_breath_rises_then_rests_before_the_next_one() {
+        assert_eq!(pulse_at(0.0, RING_PERIOD), 0.0, "the breath starts at rest");
+        assert_eq!(
+            pulse_at(RING_PERIOD, RING_PERIOD),
+            0.0,
+            "and the next cycle starts where the last one did"
+        );
+        assert!(
+            (pulse_at(RING_PERIOD * 0.3, RING_PERIOD) - 0.5).abs() < 1e-6,
+            "the moving part is half over at its middle"
+        );
+        assert_eq!(
+            pulse_at(RING_PERIOD * (RING_ACTIVE_SHARE + 0.01), RING_PERIOD),
+            1.0,
+            "the tail holds still at the top of the share"
+        );
+        assert_eq!(pulse_at(RING_PERIOD * 0.99, RING_PERIOD), 1.0);
+    }
+
+    /// With call motion off there is no phase at all, so a caller draws one still frame and, the
+    /// early return being before the repaint request, never asks the window to keep drawing.
+    #[test]
+    fn motion_off_has_no_phase_and_draws_a_still_frame() {
+        let ctx = egui::Context::default();
+        let mut seen = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            seen.push(pulse_phase(ui, true, RING_PERIOD));
+            seen.push(pulse_phase(ui, false, RING_PERIOD));
+        });
+        // Headless tests must apply font-atlas updates themselves.
+        output.textures_delta.clear();
+        assert!(seen[0].is_some(), "motion on has a phase to draw");
+        assert!(seen[1].is_none(), "motion off has none, so nothing moves");
+    }
+
+    /// A slower, shallower breath for an outgoing call, and the same resting endpoints.
+    #[test]
+    fn an_outgoing_call_breathes_slower_and_shallower_than_a_ringing_one() {
+        let scale = |period: f64, amplitude: f32| {
+            1.0 + amplitude * (pulse_at(period * 0.3, period) * std::f32::consts::PI).sin()
+        };
+        let ringing = scale(RING_PERIOD, RING_ICON_AMPLITUDE);
+        let outgoing = scale(OUTGOING_PERIOD, OUTGOING_ICON_AMPLITUDE);
+        assert!(ringing > outgoing, "the ringing cue is the stronger one");
+        assert!(outgoing > 1.0, "and the outgoing cue still moves");
+        // A second in, the quicker breath has already settled while the slower one is still
+        // moving: the outgoing call never works as hard.
+        assert_eq!(pulse_at(1.0, RING_PERIOD), 1.0, "the ring has paused");
+        assert!(pulse_at(1.0, OUTGOING_PERIOD) < 1.0, "the dial is still waiting");
+    }
 }

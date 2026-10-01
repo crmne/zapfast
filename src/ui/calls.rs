@@ -103,7 +103,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, record: &CallRecord, actions: &mut Vec<
     let locale = app.locale;
     let name = app.call_name(&record.chat);
     let picture = app.call_avatar(&record.chat);
-    let missed = record.status.missed();
+    let bad = state_is_bad(record.status);
     // Register the whole-row hit target before the call-back buttons it contains, so a button keeps
     // its own click instead of the row also opening the chat. The row has a fixed height, so its
     // rectangle is known before it is drawn; the transcript uses the same parent-before-child order.
@@ -115,7 +115,11 @@ fn row(app: &mut App, ui: &mut egui::Ui, record: &CallRecord, actions: &mut Vec<
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     Frame::new()
-        .fill(palette.surface)
+        .fill(if row.hovered() {
+            palette.surface_hover
+        } else {
+            palette.surface
+        })
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
@@ -127,16 +131,31 @@ fn row(app: &mut App, ui: &mut egui::Ui, record: &CallRecord, actions: &mut Vec<
                     ui.add_space(2.0);
                     theme::text(ui, &name, theme::semibold(14.5), palette.text);
                     ui.add_space(1.0);
-                    theme::text(
-                        ui,
-                        direction_and_media(locale, record),
-                        theme::medium(12.5),
-                        if missed {
-                            palette.danger
-                        } else {
-                            palette.secondary
-                        },
-                    );
+                    ui.horizontal(|ui| {
+                        // One glyph for the whole state: the arrow says which way the call went
+                        // and the camera says what it carried, read at a glance before the text.
+                        theme::icon(
+                            ui,
+                            state_icon(record),
+                            13.0,
+                            if bad {
+                                palette.danger
+                            } else {
+                                palette.accent
+                            },
+                        );
+                        ui.add_space(5.0);
+                        theme::text(
+                            ui,
+                            direction_and_media(locale, record),
+                            theme::medium(12.5),
+                            if bad {
+                                palette.danger
+                            } else {
+                                palette.secondary
+                            },
+                        );
+                    });
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     theme::text(
@@ -150,7 +169,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, record: &CallRecord, actions: &mut Vec<
                         ui,
                         outcome(locale, record),
                         theme::medium(12.5),
-                        if missed {
+                        if bad {
                             palette.danger
                         } else {
                             palette.secondary
@@ -208,6 +227,53 @@ fn row(app: &mut App, ui: &mut egui::Ui, record: &CallRecord, actions: &mut Vec<
     ui.add_space(6.0);
 }
 
+/// The one shape that stands for a finished call: which way it went and what became of it, in a
+/// single glyph.
+///
+/// The shape answers "what happened"; the colour answers "did it connect". A call that rang and
+/// was never picked up gets the missed handset, a call that was put down or never came up gets
+/// the slashed one, and a call that connected gets the arrow that says which way — with the
+/// camera in place of the handset when it carried video. Shared with the transcript entry, which
+/// draws the same call.
+pub(crate) fn state_icon(record: &CallRecord) -> Icon {
+    use crate::model::{CallDirection, CallMedia, CallStatus};
+    match record.status {
+        // Rang out, whether the ring was here or on the far phone.
+        CallStatus::Missed | CallStatus::NoAnswer => Icon::PhoneMissed,
+        // Put down — by either side, on either device — or never came up at all.
+        CallStatus::Declined
+        | CallStatus::DeclinedElsewhere
+        | CallStatus::Busy
+        | CallStatus::Failed
+        | CallStatus::ConnectionLost => Icon::PhoneOff,
+        // Connected, here or on another of the account's devices.
+        CallStatus::Answered | CallStatus::AnsweredElsewhere => {
+            let video = record.media == CallMedia::Video;
+            match (record.direction, video) {
+                (CallDirection::Incoming, false) => Icon::PhoneIncoming,
+                (CallDirection::Outgoing, false) => Icon::PhoneOutgoing,
+                (CallDirection::Incoming, true) => Icon::VideoIncoming,
+                (CallDirection::Outgoing, true) => Icon::VideoOutgoing,
+            }
+        }
+    }
+}
+
+/// Whether a finished call reads with the destructive colour. A call the reader missed, refused,
+/// or that never connected is a call to notice; an answered one, here or elsewhere, is not.
+pub(crate) fn state_is_bad(status: CallStatus) -> bool {
+    matches!(
+        status,
+        CallStatus::Missed
+            | CallStatus::Declined
+            | CallStatus::DeclinedElsewhere
+            | CallStatus::Busy
+            | CallStatus::Failed
+            | CallStatus::NoAnswer
+            | CallStatus::ConnectionLost
+    )
+}
+
 /// Which way the call went and what it carried, as one phrase the reader's language owns.
 ///
 /// Shared with the transcript, which shows the same entry next to the messages it belongs to.
@@ -244,5 +310,106 @@ pub(crate) fn outcome(locale: Locale, record: &CallRecord) -> String {
         CallStatus::Failed => gettext(locale, "Could not connect").into_owned(),
         CallStatus::NoAnswer => gettext(locale, "No answer").into_owned(),
         CallStatus::ConnectionLost => gettext(locale, "Connection lost").into_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{CallDirection, CallMedia, CallRecord};
+
+    fn record(direction: CallDirection, media: CallMedia, status: CallStatus) -> CallRecord {
+        CallRecord {
+            id: "test".into(),
+            chat: "chat".into(),
+            started_at: 0,
+            ended_at: 0,
+            direction,
+            media,
+            status,
+            duration: 0,
+        }
+    }
+
+    /// The four states a reader has to tell apart before reading anything are four shapes, not one
+    /// handset in four colours.
+    #[test]
+    fn the_glanceable_call_states_are_four_different_glyphs() {
+        let shapes = [
+            state_icon(&record(
+                CallDirection::Incoming,
+                CallMedia::Voice,
+                CallStatus::Answered,
+            )),
+            state_icon(&record(
+                CallDirection::Outgoing,
+                CallMedia::Voice,
+                CallStatus::Answered,
+            )),
+            state_icon(&record(
+                CallDirection::Incoming,
+                CallMedia::Voice,
+                CallStatus::Missed,
+            )),
+            state_icon(&record(
+                CallDirection::Incoming,
+                CallMedia::Voice,
+                CallStatus::Declined,
+            )),
+        ];
+        for (index, first) in shapes.iter().enumerate() {
+            for second in &shapes[index + 1..] {
+                assert_ne!(first, second, "two call states share a glyph: {first:?}");
+            }
+        }
+    }
+
+    /// A video call keeps its direction, with the camera where the handset would be.
+    #[test]
+    fn a_video_call_keeps_its_direction_in_the_shape() {
+        assert_eq!(
+            state_icon(&record(
+                CallDirection::Incoming,
+                CallMedia::Video,
+                CallStatus::Answered
+            )),
+            Icon::VideoIncoming
+        );
+        assert_eq!(
+            state_icon(&record(
+                CallDirection::Outgoing,
+                CallMedia::Video,
+                CallStatus::Answered
+            )),
+            Icon::VideoOutgoing
+        );
+        // Video or not, a call that never connected still says so with the phone shapes.
+        assert_eq!(
+            state_icon(&record(
+                CallDirection::Outgoing,
+                CallMedia::Video,
+                CallStatus::Declined
+            )),
+            Icon::PhoneOff
+        );
+    }
+
+    /// Only a call that did not connect reads with the destructive colour; an answered call on
+    /// another device is a call that happened.
+    #[test]
+    fn a_call_that_never_connected_is_the_one_that_reads_red() {
+        for bad in [
+            CallStatus::Missed,
+            CallStatus::Declined,
+            CallStatus::DeclinedElsewhere,
+            CallStatus::Busy,
+            CallStatus::Failed,
+            CallStatus::NoAnswer,
+            CallStatus::ConnectionLost,
+        ] {
+            assert!(state_is_bad(bad), "{bad:?} should read red");
+        }
+        assert!(!state_is_bad(CallStatus::Answered));
+        assert!(!state_is_bad(CallStatus::AnsweredElsewhere));
     }
 }

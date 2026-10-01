@@ -498,6 +498,16 @@ fn sections(app: &App) -> Vec<Section> {
         });
     }
 
+    let mut calls = Section::new(translated(locale, "Calls"));
+    calls.toggle(
+        translated(locale, "Call animations"),
+        translated(
+            locale,
+            "A gentle pulse when a call rings. Off, the call screen stays still.",
+        ),
+        |settings| &mut settings.call_animations,
+    );
+
     let mut system = Section::new(translated(locale, "System"));
     system.toggle(
         translated(locale, "Keep running when the window closes"),
@@ -707,6 +717,7 @@ fn sections(app: &App) -> Vec<Section> {
     vec![
         appearance,
         chats,
+        calls,
         notifications,
         privacy,
         system,

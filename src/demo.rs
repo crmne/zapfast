@@ -1888,6 +1888,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // The call surface itself: the incoming call waiting to be answered, and a call that
             // has been up for a few minutes, in voice and with video.
             "call" => call_sample(app, true, false),
+            "call-outgoing" => outgoing_call_sample(app),
             "call-active" => call_sample(app, false, false),
             "call-video" => call_sample(app, false, true),
             "call-entries" => {
@@ -2638,6 +2639,19 @@ pub fn call_sample(app: &mut App, incoming: bool, video: bool) {
     if video && !incoming {
         app.call_remote_frame = Some(std::sync::Arc::new(test_pattern(1280, 720, false)));
         app.call_local_frame = Some(std::sync::Arc::new(test_pattern(640, 360, true)));
+    }
+}
+
+/// Puts a call this side placed, still ringing, on screen.
+///
+/// The incoming preview is the loud end of the call motion; this is the quiet one, so the two can
+/// be compared side by side in the previews.
+pub fn outgoing_call_sample(app: &mut App) {
+    call_sample(app, false, false);
+    if let Some(call) = app.call.as_mut() {
+        call.phase = CallPhase::Ringing;
+        // Nothing has been connected, so there is no duration to count from yet.
+        call.started = None;
     }
 }
 
@@ -4142,6 +4156,7 @@ mod tests {
             "calls",
             "call-entries",
             "call",
+            "call-outgoing",
             "call-active",
             "call-video",
             "call-video,light",

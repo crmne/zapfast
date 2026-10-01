@@ -418,6 +418,9 @@ pub struct Settings {
     pub call_speaker: Option<String>,
     /// Camera the next video call captures from, as a V4L2 capture node.
     pub call_camera: Option<String>,
+    /// Draw the call screen's motion cues: a ringing pulse and an outgoing breath. Off, the call
+    /// screen holds still with the same icons, colours and controls, so only the movement is lost.
+    pub call_animations: bool,
 }
 
 impl Default for Settings {
@@ -465,6 +468,7 @@ impl Default for Settings {
             call_microphone: None,
             call_speaker: None,
             call_camera: None,
+            call_animations: true,
         }
     }
 }
@@ -653,6 +657,21 @@ mod tests {
         assert_eq!(loaded.call_microphone, picked.call_microphone);
         assert_eq!(loaded.call_speaker, picked.call_speaker);
         assert_eq!(loaded.call_camera, picked.call_camera);
+    }
+
+    #[test]
+    fn call_motion_is_on_by_default_and_can_be_turned_off() {
+        assert!(Settings::default().call_animations);
+        let off = Settings {
+            call_animations: false,
+            ..Settings::default()
+        };
+        let text = serde_json::to_string(&off).expect("settings serialize");
+        let loaded: Settings = serde_json::from_str(&text).expect("settings load");
+        assert!(!loaded.call_animations, "the choice survives a save and load");
+        // A file written before the switch existed keeps the call screen moving.
+        let old: Settings = serde_json::from_str("{}").expect("settings load");
+        assert!(old.call_animations);
     }
 
     #[test]

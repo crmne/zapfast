@@ -330,7 +330,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         let (call_tooltip, call_icon, call_fill, call) = if call_here {
                             (
                                 crate::i18n::gettext(app.locale, "Hang up").into_owned(),
-                                Icon::Phone,
+                                // The receiver comes down: a slashed handset, not the same shape
+                                // the button has when it starts a call.
+                                Icon::PhoneOff,
                                 palette.danger,
                                 Action::HangupCall,
                             )
@@ -1702,8 +1704,7 @@ struct View<'a> {
 /// it went, how long it lasted) is on the tooltip rather than in a dialog of its own.
 fn call_entry(app: &App, ui: &mut egui::Ui, palette: &Palette, record: &CallRecord) {
     let locale = app.locale;
-    let missed = record.status.missed();
-    let tint = if missed {
+    let tint = if super::calls::state_is_bad(record.status) {
         palette.danger
     } else {
         palette.accent
@@ -1726,16 +1727,7 @@ fn call_entry(app: &App, ui: &mut egui::Ui, palette: &Palette, record: &CallReco
             .inner_margin(Margin::symmetric(10, 5))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    theme::icon(
-                        ui,
-                        if record.media == crate::model::CallMedia::Video {
-                            Icon::Video
-                        } else {
-                            Icon::Phone
-                        },
-                        13.0,
-                        tint,
-                    );
+                    theme::icon(ui, super::calls::state_icon(record), 13.0, tint);
                     ui.add_space(4.0);
                     theme::text(ui, &line, theme::medium(12.0), palette.secondary);
                 });
