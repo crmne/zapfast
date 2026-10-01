@@ -906,6 +906,7 @@ impl App {
             .cached_palette()
             .unwrap_or_else(|| match settings.theme {
                 ThemeChoice::Light => Palette::light(),
+                ThemeChoice::Messages => Palette::messages(),
                 _ => Palette::dark(),
             });
         let open_chat = settings.last_chat.clone();
@@ -1135,7 +1136,9 @@ impl App {
     pub fn wallpaper(&self) -> crate::wallpaper::Look {
         crate::wallpaper::Look {
             color: self.settings.wallpaper_background(&self.palette),
-            doodles: self.settings.show_wallpaper,
+            // Messages draws its conversations on a plain background.
+            doodles: self.settings.show_wallpaper
+                && self.palette.bubbles != crate::theme::BubbleStyle::Messages,
             image: self
                 .settings
                 .wallpaper_image
@@ -3540,7 +3543,7 @@ impl App {
     fn apply_theme(&mut self, ctx: &egui::Context) {
         let preference = self.settings.cached_palette().map_or_else(
             || match self.settings.theme {
-                ThemeChoice::Dark => egui::ThemePreference::Dark,
+                ThemeChoice::Dark | ThemeChoice::Messages => egui::ThemePreference::Dark,
                 ThemeChoice::Light => egui::ThemePreference::Light,
                 ThemeChoice::System => egui::ThemePreference::System,
             },
@@ -3568,7 +3571,9 @@ impl App {
             }
         };
         let palette = self.settings.cached_palette().unwrap_or_else(|| {
-            if dark {
+            if self.settings.theme == ThemeChoice::Messages {
+                Palette::messages()
+            } else if dark {
                 Palette::dark()
             } else {
                 Palette::light()

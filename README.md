@@ -772,7 +772,9 @@ logs or databases. Windows uses the permissions inherited from your user profile
 ### Local themes
 
 **Settings → Appearance → Theme** uses the same picker as Spotifast, with
-Follow system, Light, Dark, and its Catppuccin, Catppuccin Latte, Nord, Ristretto,
+Follow system, Light, Dark, Messages (a dark theme in macOS greys, with flat,
+round bubbles and a tail under the last message of a run, as Messages draws them,
+on a plain background), and its Catppuccin, Catppuccin Latte, Nord, Ristretto,
 Tokyo Night, Rose Pine, Rose Pine Moon, and Rose Pine Dawn palettes.
 Choose **Open themes folder** below the picker to add
 JSON palettes beside `settings.json`; **How to make a theme** opens

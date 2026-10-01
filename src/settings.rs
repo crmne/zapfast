@@ -32,16 +32,19 @@ pub enum ThemeChoice {
     Dark,
     Light,
     System,
+    /// Dark, in macOS greys with bubbles shaped as Messages draws them.
+    Messages,
 }
 
 impl ThemeChoice {
-    pub const ALL: [ThemeChoice; 3] = [Self::System, Self::Light, Self::Dark];
+    pub const ALL: [ThemeChoice; 4] = [Self::System, Self::Light, Self::Dark, Self::Messages];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Dark => "Dark",
             Self::Light => "Light",
             Self::System => "Follow system",
+            Self::Messages => "Messages",
         }
     }
 }
@@ -721,6 +724,18 @@ mod tests {
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();
         assert_eq!(saved["font"], "inter");
+    }
+
+    /// The Messages theme is saved by name, and palettes cached before
+    /// bubble styles existed keep WhatsApp's bubbles.
+    #[test]
+    fn messages_theme_round_trips_and_old_palettes_keep_whatsapp_bubbles() {
+        let parsed: Settings = serde_json::from_str(r#"{"theme":"messages"}"#).expect("parses");
+        assert_eq!(parsed.theme, ThemeChoice::Messages);
+        let mut cached = serde_json::to_value(crate::theme::Palette::dark()).unwrap();
+        cached.as_object_mut().unwrap().remove("bubbles");
+        let cached: crate::theme::Palette = serde_json::from_value(cached).unwrap();
+        assert_eq!(cached.bubbles, crate::theme::BubbleStyle::WhatsApp);
     }
 
     #[test]

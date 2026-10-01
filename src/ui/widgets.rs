@@ -925,6 +925,9 @@ pub fn bubble_shape(
     fill: Color32,
     tail: Option<Side>,
 ) -> egui::Shape {
+    if palette.bubbles == theme::BubbleStyle::Messages {
+        return messages_bubble_shape(rect, fill, tail);
+    }
     let corners = bubble_corners(tail);
     let shadow = palette.bubble_shadow();
     let mut shapes = vec![egui::Shape::Rect(shadow.as_shape(rect, corners))];
@@ -975,6 +978,57 @@ pub fn bubble_shape(
     }
     egui::Shape::Vec(shapes)
 }
+
+/// How round a Messages bubble is: a single line reads as a pill.
+pub const MESSAGES_BUBBLE_RADIUS: u8 = 17;
+
+/// A bubble as macOS Messages draws it: flat, round, and on the last message
+/// of a run a tail that curls out of its bottom corner toward the sender.
+fn messages_bubble_shape(rect: Rect, fill: Color32, tail: Option<Side>) -> egui::Shape {
+    let radius = f32::from(MESSAGES_BUBBLE_RADIUS).min(rect.height() / 2.0);
+    let body = egui::Shape::rect_filled(rect, CornerRadius::from(radius), fill);
+    let Some(side) = tail else {
+        return body;
+    };
+    // Drawn for the right side and mirrored for the left. The outline runs
+    // down the bubble's side, out to the tip, and back in along the bottom;
+    // it starts from a point inside the bubble, which sees all of it, so
+    // the fan egui fills it with stays inside.
+    let (edge, sign) = match side {
+        Side::Left => (rect.left(), -1.0),
+        Side::Right => (rect.right(), 1.0),
+    };
+    let bottom = rect.bottom();
+    let at = |out: f32, up: f32| pos2(edge + sign * out, bottom - up);
+    let curve = |from: egui::Pos2, control: egui::Pos2, to: egui::Pos2| {
+        (1..=8).map(move |step| {
+            let t = step as f32 / 8.0;
+            let u = 1.0 - t;
+            (from.to_vec2() * (u * u) + control.to_vec2() * (2.0 * u * t) + to.to_vec2() * (t * t))
+                .to_pos2()
+        })
+    };
+    let reach = radius.min(14.0);
+    let start = at(0.0, reach + 2.0);
+    let tip = at(MESSAGES_TAIL_REACH, 0.0);
+    let end = at(-(reach + 4.0), 0.0);
+    let mut points = vec![at(-reach * 0.6, reach * 0.6), start];
+    points.extend(curve(start, at(0.0, 3.0), tip));
+    points.extend(curve(tip, at(-4.0, 2.5), end));
+    if side == Side::Left {
+        // Clockwise winding either way.
+        points[1..].reverse();
+    }
+    let tail = egui::Shape::Path(egui::epaint::PathShape::convex_polygon(
+        points,
+        fill,
+        Stroke::NONE,
+    ));
+    egui::Shape::Vec(vec![body, tail])
+}
+
+/// How far a Messages tail's tip reaches out past the bubble's side.
+const MESSAGES_TAIL_REACH: f32 = 5.0;
 
 /// A triangle in `color` that fades out over `blur` points around its
 /// edges, like the blurred shadow of the bubble it belongs to: a sharp one
@@ -1331,6 +1385,45 @@ mod tests {
                 .iter()
                 .any(|shape| matches!(shape, egui::Shape::Path(_)))
         );
+    }
+
+    /// Messages bubbles are flat, and their tail curls out of the bottom
+    /// corner toward the sender, its tip level with the bubble's bottom.
+    #[test]
+    fn messages_bubbles_curl_their_tail_from_the_bottom() {
+        let palette = Palette::messages();
+        let rect = Rect::from_min_size(pos2(100.0, 100.0), vec2(200.0, 40.0));
+        for (side, outside) in [
+            (Side::Right, rect.right() + MESSAGES_TAIL_REACH),
+            (Side::Left, rect.left() - MESSAGES_TAIL_REACH),
+        ] {
+            let egui::Shape::Vec(shapes) =
+                bubble_shape(&palette, rect, palette.bubble_out, Some(side))
+            else {
+                panic!("a tailed bubble is a list of shapes");
+            };
+            // The body and its tail, with no shadow or raised edge.
+            assert_eq!(shapes.len(), 2);
+            let egui::Shape::Path(tail) = &shapes[1] else {
+                panic!("the tail is a path");
+            };
+            // Filled as a fan from its first point, which lies in the bubble.
+            assert!(rect.contains(tail.points[0]));
+            let tip = tail
+                .points
+                .iter()
+                .max_by(|a, b| {
+                    (a.x - rect.center().x)
+                        .abs()
+                        .total_cmp(&(b.x - rect.center().x).abs())
+                })
+                .unwrap();
+            assert!((tip.x - outside).abs() < 0.01 && (tip.y - rect.bottom()).abs() < 0.01);
+        }
+        assert!(matches!(
+            bubble_shape(&palette, rect, palette.bubble_in, None),
+            egui::Shape::Rect(_)
+        ));
     }
 
     /// The knob radius and the track outline a switch paints in one state.

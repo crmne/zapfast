@@ -85,6 +85,22 @@ pub struct Palette {
     pub link: Color32,
     /// Read-receipt blue.
     pub read: Color32,
+    /// How message bubbles are shaped. Palette files cannot set it, so
+    /// custom themes keep WhatsApp's.
+    #[serde(default)]
+    pub bubbles: BubbleStyle,
+}
+
+/// The shape of message bubbles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BubbleStyle {
+    /// Softly rounded, lifted by a shadow, with a tail at the top of a run.
+    #[default]
+    WhatsApp,
+    /// As macOS Messages draws them: rounder, flat, with a curled tail under
+    /// the last message of a run.
+    Messages,
 }
 
 impl Palette {
@@ -114,6 +130,37 @@ impl Palette {
             bubble_out: Color32::from_rgb(0x00, 0x5c, 0x4b),
             link: Color32::from_rgb(0x53, 0xbd, 0xeb),
             read: Color32::from_rgb(0x53, 0xbd, 0xeb),
+            bubbles: BubbleStyle::WhatsApp,
+        }
+    }
+
+    /// A dark theme in the neutral greys of macOS, with bubbles shaped as
+    /// Messages draws them and WhatsApp's green for your own.
+    pub fn messages() -> Self {
+        Self {
+            dark: true,
+            window: Color32::from_rgb(0x1e, 0x1e, 0x1e),
+            panel: Color32::from_rgb(0x26, 0x26, 0x27),
+            surface: Color32::from_rgb(0x32, 0x32, 0x34),
+            surface_hover: Color32::from_rgb(0x3a, 0x3a, 0x3c),
+            surface_active: Color32::from_rgb(0x46, 0x46, 0x49),
+            outline: Color32::from_rgb(0x38, 0x38, 0x3a),
+            text: Color32::from_rgb(0xf5, 0xf5, 0xf7),
+            secondary: Color32::from_rgb(0xae, 0xae, 0xb2),
+            dim: Color32::from_rgb(0xa4, 0xa4, 0xa9),
+            accent: Color32::from_rgb(0x30, 0xd1, 0x58),
+            accent_hover: Color32::from_rgb(0x5c, 0xe0, 0x7d),
+            on_accent: Color32::from_rgb(0x0b, 0x14, 0x1a),
+            danger: Color32::from_rgb(0xff, 0x45, 0x3a),
+            warning: Color32::from_rgb(0xff, 0xd6, 0x0a),
+            overlay: Color32::from_rgb(0x2c, 0x2c, 0x2e),
+            shadow: Color32::from_black_alpha(150),
+            chat: Color32::from_rgb(0x1e, 0x1e, 0x1e),
+            bubble_in: Color32::from_rgb(0x3a, 0x3a, 0x3c),
+            bubble_out: Color32::from_rgb(0x13, 0x7a, 0x48),
+            link: Color32::from_rgb(0x64, 0xd2, 0xff),
+            read: Color32::from_rgb(0x64, 0xd2, 0xff),
+            bubbles: BubbleStyle::Messages,
         }
     }
 
@@ -146,6 +193,7 @@ impl Palette {
             link: Color32::from_rgb(0x02, 0x7e, 0xb5),
             // The lighter blue vanished on the green outgoing bubble.
             read: Color32::from_rgb(0x02, 0x7e, 0xb5),
+            bubbles: BubbleStyle::WhatsApp,
         }
     }
 
@@ -1293,7 +1341,11 @@ mod tests {
     /// hints. They must reach WCAG AA wherever the built-in themes put them.
     #[test]
     fn built_in_text_colours_reach_aa() {
-        for (name, p) in [("dark", Palette::dark()), ("light", Palette::light())] {
+        for (name, p) in [
+            ("dark", Palette::dark()),
+            ("light", Palette::light()),
+            ("messages", Palette::messages()),
+        ] {
             let mut pairs = Vec::new();
             for (surface, background) in [
                 ("window", p.window),
@@ -1330,10 +1382,14 @@ mod tests {
     /// Bubble contents stay readable for every palette, custom ones included.
     #[test]
     fn bubble_text_is_readable_in_every_palette() {
-        let palettes = [("dark", Palette::dark()), ("light", Palette::light())]
-            .into_iter()
-            .map(|(name, palette)| (name.to_owned(), palette))
-            .chain(presets().map(|theme| (theme.filename.clone(), theme.palette)));
+        let palettes = [
+            ("dark", Palette::dark()),
+            ("light", Palette::light()),
+            ("messages", Palette::messages()),
+        ]
+        .into_iter()
+        .map(|(name, palette)| (name.to_owned(), palette))
+        .chain(presets().map(|theme| (theme.filename.clone(), theme.palette)));
         for (name, palette) in palettes {
             for own in [false, true] {
                 let fill = if own {

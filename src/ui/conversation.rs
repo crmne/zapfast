@@ -1952,7 +1952,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
                     let margin = (viewport.height() * 3.0).max(600.0);
-                    for message in &conversation.messages {
+                    for (index, message) in conversation.messages.iter().enumerate() {
+                        let next = conversation.messages.get(index + 1);
                         let before = ui.cursor().top();
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
@@ -2047,11 +2048,18 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }));
                         // The first message of a run from one side, as the
                         // phone draws it: a little apart, with a tail.
-                        let first_in_run = new_day
-                            || previous.is_none_or(|previous| {
-                                previous.from_me != message.from_me
-                                    || (!message.from_me && previous.sender != message.sender)
-                            });
+                        let first_in_run =
+                            new_day || previous.is_none_or(|previous| !same_run(previous, message));
+                        // Messages curls its tail under a run's last bubble.
+                        let tailed = if palette.bubbles == theme::BubbleStyle::Messages {
+                            next.is_none_or(|next| {
+                                !same_run(message, next)
+                                    || crate::util::day_key(message.timestamp)
+                                        != crate::util::day_key(next.timestamp)
+                            })
+                        } else {
+                            first_in_run
+                        };
                         if first_in_run && !new_day && previous.is_some() {
                             ui.add_space(RUN_GAP);
                         }
@@ -2060,7 +2068,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             .filter(|jump| jump.message == message.id)
                             .map(|_| (ui.painter().add(egui::Shape::Noop), ui.cursor().top()));
                         let response =
-                            bubble(ui, &view, message, show_sender, first_in_run, &mut actions);
+                            bubble(ui, &view, message, show_sender, tailed, &mut actions);
                         if let Some((slot, top)) = flash {
                             if view.anchor == Some(message.id.as_str()) && response.is_some() {
                                 jump_since.set(Some(time));
@@ -2714,7 +2722,7 @@ fn bubble(
     view: &View<'_>,
     message: &Message,
     show_sender: bool,
-    first_in_run: bool,
+    tailed: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let own = message.from_me;
@@ -2795,7 +2803,7 @@ fn bubble(
                             view,
                             message,
                             show_sender,
-                            first_in_run,
+                            tailed,
                             max_width,
                             actions,
                         ));
@@ -2807,7 +2815,7 @@ fn bubble(
                     view,
                     message,
                     show_sender,
-                    first_in_run,
+                    tailed,
                     max_width,
                     actions,
                 ));
@@ -3122,13 +3130,19 @@ fn speed_menu_row(
     );
 }
 
+/// Whether `next` continues the run `message` belongs to: the same side,
+/// and in a group the same sender.
+fn same_run(message: &Message, next: &Message) -> bool {
+    message.from_me == next.from_me && (message.from_me || message.sender == next.sender)
+}
+
 /// Draws a message bubble and its menu.
 fn bubble_frame(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
     show_sender: bool,
-    first_in_run: bool,
+    tailed: bool,
     max_width: f32,
     actions: &mut Vec<Action>,
 ) -> egui::Response {
@@ -3157,7 +3171,7 @@ fn bubble_frame(
     let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::CLICK));
     // Painted once the contents are measured, beneath them.
     let backdrop = ui.painter().add(egui::Shape::Noop);
-    let tail = (first_in_run && fill != Color32::TRANSPARENT).then_some(if own {
+    let tail = (tailed && fill != Color32::TRANSPARENT).then_some(if own {
         widgets::Side::Right
     } else {
         widgets::Side::Left

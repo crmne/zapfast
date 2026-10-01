@@ -2294,6 +2294,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
             }
+            "messages" => {
+                app.settings.theme = ThemeChoice::Messages;
+            }
             "login" => {
                 unlink(app);
                 app.link = LinkStatus::Unlinked {
