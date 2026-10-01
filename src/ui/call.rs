@@ -38,6 +38,12 @@ const RING_HALO_GROWTH: f32 = 16.0;
 /// An outgoing call's own, fainter breath: a call this side placed can wait more quietly.
 const OUTGOING_PERIOD: f64 = 2.4;
 const OUTGOING_ICON_AMPLITUDE: f32 = 0.05;
+/// The ringing icon rocks a few degrees to either side, then rests. The swing lives in the first
+/// part of the breath and is damped to nothing, so it reads as a handset being shaken rather than
+/// as a button that will not sit still.
+const SWAY_WINDOW_SHARE: f64 = 0.28;
+const SWAY_SWINGS: f32 = 3.0;
+const SWAY_MAX_ANGLE: f32 = 2.6 * std::f32::consts::PI / 180.0;
 
 /// Draws the call surface, if there is one.
 ///
@@ -576,8 +582,13 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         4.0
     };
     ui.horizontal(|ui| {
+        // One even gap between the controls that change the call, and a wider one before the
+        // hang-up, which ends it: the row reads as a group and a decision, not five equal dots.
+        // The row is drawn with the spacing it is centred on, so it sits exactly in the middle.
         let spacing = 14.0;
-        let width = buttons * CONTROL + (buttons - 1.0) * spacing;
+        let group_gap = 20.0;
+        ui.spacing_mut().item_spacing.x = spacing;
+        let width = buttons * CONTROL + (buttons - 1.0) * spacing + group_gap;
         ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
 
         // Microphone: the engine's own mute flag, which is what stops outgoing audio.
@@ -694,6 +705,8 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         // Hang up belongs to a call that is still up. The farewell screen keeps the controls it
         // was drawn with, but this one is no longer actionable: the backend has already released
         // the call, so a click would only send a command nobody is listening for.
+        // The wider gap that sets the hang-up apart from the controls above it.
+        ui.add_space(group_gap);
         let tip = gettext(locale, "Hang up").into_owned();
         let response = control(
             ui,
@@ -898,31 +911,18 @@ fn ringing(
     area: Rect,
 ) {
     let locale = app.locale;
-    // The ringing call is the one thing on this screen that moves, and the one that most needs a
-    // reader's eye. The status icon breathes and a ring swells out of the picture: both are
-    // painted, never laid out, so nothing around them shifts, and both hold still when the reader
-    // has turned call motion off.
+    // The whole surface says one thing — someone is calling — so the picture, the name and the
+    // state sit together in one centred column with the two answers under them. Nothing floats off
+    // to one side to be read on its own, and the state is never said twice.
+    //
+    // The ringing call is also the one thing here that moves, and it is the thing that most needs
+    // a reader's eye: a ring swells out of the picture and the state icon rocks a few degrees. Both
+    // are painted, never laid out, so nothing around them shifts, and both hold still when the
+    // reader has turned call motion off.
     let breath = pulse_phase(ui, app.settings.call_animations, RING_PERIOD);
+    let sway = sway_angle(ui, app.settings.call_animations, RING_PERIOD);
     ui.vertical_centered(|ui| {
-        ui.add_space(area.height() * 0.17);
-        ui.horizontal(|ui| {
-            // A fixed box with a growing glyph: the row is the same width at every phase.
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(15.0), Sense::hover());
-            if ui.is_rect_visible(rect) {
-                let scale = breath.map_or(1.0, |share| {
-                    1.0 + RING_ICON_AMPLITUDE * (share * std::f32::consts::PI).sin()
-                });
-                theme::paint_icon(ui, incoming_icon(call.video), rect, 15.0 * scale, palette.accent);
-            }
-            ui.add_space(6.0);
-            theme::text(
-                ui,
-                gettext(locale, "Incoming call"),
-                theme::medium(13.0),
-                palette.accent,
-            );
-        });
-        ui.add_space(22.0);
+        ui.add_space(area.height() * 0.20);
         let size = (area.height() * 0.24).clamp(96.0, 160.0);
         let avatar = widgets::avatar(ui, palette, peer, &call.chat, size, picture);
         // Drawn after the picture but outside it, so the ring never covers a face.
@@ -937,17 +937,37 @@ fn ringing(
         }
         ui.add_space(18.0);
         theme::text(ui, peer, theme::bold(26.0), palette.text);
-        ui.add_space(6.0);
-        theme::text(
-            ui,
-            if call.video {
-                gettext(locale, "Incoming video call")
-            } else {
-                gettext(locale, "Incoming voice call")
-            },
-            theme::medium(15.0),
-            palette.secondary,
-        );
+        ui.add_space(8.0);
+        // What kind of call this is, with its icon, on the line that belongs to the name: the
+        // screen's one moving part and the clearest thing on it. The glyph swings inside a fixed
+        // box, so the line neither moves nor changes width from one frame to the next.
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+            if ui.is_rect_visible(rect) {
+                let scale = breath.map_or(1.0, |share| {
+                    1.0 + RING_ICON_AMPLITUDE * (share * std::f32::consts::PI).sin()
+                });
+                paint_icon_sway(
+                    ui,
+                    incoming_icon(call.video),
+                    rect,
+                    18.0 * scale,
+                    sway.unwrap_or(0.0),
+                    palette.accent,
+                );
+            }
+            ui.add_space(7.0);
+            theme::text(
+                ui,
+                if call.video {
+                    gettext(locale, "Incoming video call")
+                } else {
+                    gettext(locale, "Incoming voice call")
+                },
+                theme::medium(15.0),
+                palette.secondary,
+            );
+        });
     });
     ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
         ui.add_space(10.0);
@@ -986,6 +1006,58 @@ fn ringing(
             }
         });
     });
+}
+
+/// How far the ringing icon leans this frame, in radians, or `None` when call motion is off.
+fn sway_angle(ui: &egui::Ui, on: bool, period: f64) -> Option<f32> {
+    if !on {
+        return None;
+    }
+    ui.ctx()
+        .request_repaint_after(Duration::from_millis(33));
+    Some(sway_at(ui.input(|input| input.time), period))
+}
+
+/// The lean at `time`, in radians: a few small swings at the start of the breath, damped to
+/// nothing, then still until the next breath. Pure, so the swing can be checked without a window.
+fn sway_at(time: f64, period: f64) -> f32 {
+    let share = (time % period) / period;
+    if share >= SWAY_WINDOW_SHARE {
+        return 0.0;
+    }
+    let progress = (share / SWAY_WINDOW_SHARE) as f32;
+    // The damping leaves the icon upright at both ends of the window, and makes the first swing
+    // the widest, the way a handset being shaken settles down.
+    SWAY_MAX_ANGLE
+        * (1.0 - progress)
+        * (progress * std::f32::consts::TAU * SWAY_SWINGS).sin()
+}
+
+/// Paints an icon leaning by `angle` radians about its own centre, without allocating space.
+///
+/// egui draws an image axis-aligned, so the glyph is turned through a one-quad mesh carrying the
+/// icon's own texture; for the frame or two before that texture is uploaded the upright glyph is
+/// drawn instead, so the icon never blinks out.
+fn paint_icon_sway(ui: &egui::Ui, icon: Icon, rect: Rect, size: f32, angle: f32, tint: Color32) {
+    if angle == 0.0 {
+        theme::paint_icon(ui, icon, rect, size, tint);
+        return;
+    }
+    let image = icon.image(tint, size);
+    match image.load_for_size(ui.ctx(), Vec2::splat(size)) {
+        Ok(egui::load::TexturePoll::Ready { texture }) => {
+            let at = Rect::from_center_size(rect.center(), Vec2::splat(size));
+            let mut mesh = egui::Mesh::with_texture(texture.id);
+            mesh.add_rect_with_uv(
+                at,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                tint,
+            );
+            mesh.rotate(egui::emath::Rot2::from_angle(angle), at.center());
+            ui.painter().add(egui::Shape::mesh(mesh));
+        }
+        _ => theme::paint_icon(ui, icon, rect, size, tint),
+    }
 }
 
 /// The shape that stands for a call coming in, in the medium it carries.
@@ -1075,11 +1147,64 @@ mod tests {
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             seen.push(pulse_phase(ui, true, RING_PERIOD));
             seen.push(pulse_phase(ui, false, RING_PERIOD));
+            seen.push(sway_angle(ui, true, RING_PERIOD));
+            seen.push(sway_angle(ui, false, RING_PERIOD));
         });
         // Headless tests must apply font-atlas updates themselves.
         output.textures_delta.clear();
         assert!(seen[0].is_some(), "motion on has a phase to draw");
         assert!(seen[1].is_none(), "motion off has none, so nothing moves");
+        assert!(seen[2].is_some(), "motion on leans the icon");
+        assert!(seen[3].is_none(), "motion off leaves it upright");
+    }
+
+    /// The ringing icon rocks both ways, a few times, inside a short window at the start of the
+    /// breath, and is upright again before the window closes: a handset being shaken, not a button
+    /// that will not sit still.
+    #[test]
+    fn the_ringing_icon_rocks_then_settles() {
+        assert_eq!(sway_at(0.0, RING_PERIOD), 0.0, "it starts upright");
+        assert_eq!(
+            sway_at(RING_PERIOD * (SWAY_WINDOW_SHARE + 0.01), RING_PERIOD),
+            0.0,
+            "and the window closes on an upright icon"
+        );
+        assert_eq!(
+            sway_at(RING_PERIOD * 0.9, RING_PERIOD),
+            0.0,
+            "the rest of the breath is still"
+        );
+
+        let window = RING_PERIOD * SWAY_WINDOW_SHARE;
+        let mut left = false;
+        let mut right = false;
+        let mut first_half = 0.0_f32;
+        let mut second_half = 0.0_f32;
+        // Sample the window: it must cross zero, stay under the small cap, and calm down.
+        for step in 0..=240 {
+            let at = window * f64::from(step) / 240.0;
+            let angle = sway_at(at, RING_PERIOD);
+            assert!(
+                angle.abs() <= SWAY_MAX_ANGLE + 1e-6,
+                "the lean never passes the small cap: {angle}"
+            );
+            left |= angle < -1e-4;
+            right |= angle > 1e-4;
+            if step <= 120 {
+                first_half = first_half.max(angle.abs());
+            } else {
+                second_half = second_half.max(angle.abs());
+            }
+        }
+        assert!(left && right, "it rocks to both sides");
+        assert!(
+            first_half > SWAY_MAX_ANGLE * 0.5,
+            "the first swing is visible: {first_half}"
+        );
+        assert!(
+            second_half < first_half,
+            "and the damping makes the last swings smaller"
+        );
     }
 
     /// A slower, shallower breath for an outgoing call, and the same resting endpoints.

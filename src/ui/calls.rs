@@ -132,28 +132,27 @@ fn row(app: &mut App, ui: &mut egui::Ui, record: &CallRecord, actions: &mut Vec<
                     theme::text(ui, &name, theme::semibold(14.5), palette.text);
                     ui.add_space(1.0);
                     ui.horizontal(|ui| {
-                        // One glyph for the whole state: the arrow says which way the call went
-                        // and the camera says what it carried, read at a glance before the text.
+                        // One glyph for the whole state, sized to be read before the words: the
+                        // arrow says which way the call went and the camera says what it carried.
+                        // The destructive accent lives on the glyph, while the description beside
+                        // it stays neutral, so a call that did not connect is marked rather than
+                        // shouted, and the list stays skimmable.
                         theme::icon(
                             ui,
                             state_icon(record),
-                            13.0,
+                            18.0,
                             if bad {
                                 palette.danger
                             } else {
                                 palette.accent
                             },
                         );
-                        ui.add_space(5.0);
+                        ui.add_space(6.0);
                         theme::text(
                             ui,
                             direction_and_media(locale, record),
                             theme::medium(12.5),
-                            if bad {
-                                palette.danger
-                            } else {
-                                palette.secondary
-                            },
+                            palette.secondary,
                         );
                     });
                 });
