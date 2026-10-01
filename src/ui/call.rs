@@ -104,18 +104,20 @@ fn live(
     area: Rect,
 ) {
     // The peer's picture fills the surface when there is one; everything else is drawn on top of
-    // it. Both textures are re-uploaded by name, so no handle is kept between frames.
+    // it. Both textures are kept between frames and updated in place, so a per-frame repaint does
+    // not allocate a new GPU texture every time.
     if call.video
         && let Some(image) = app.call_remote_frame.clone()
     {
         let at = fit_inside(area, vec2(image.width() as f32, image.height() as f32));
-        let texture = ui.ctx().load_texture(
+        let texture = call_texture(
+            ui,
+            &mut app.call_remote_texture,
             "zapfast-call-remote",
-            image.as_ref().clone(),
-            TextureOptions::LINEAR,
+            &image,
         );
         ui.painter().image(
-            texture.id(),
+            texture,
             at,
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE,
@@ -140,13 +142,14 @@ fn live(
         let at = Rect::from_min_size(pos2(area.right() - size.x, area.top()), size);
         ui.painter()
             .rect_filled(at.expand(3.0), CornerRadius::same(12), palette.outline);
-        let texture = ui.ctx().load_texture(
+        let texture = call_texture(
+            ui,
+            &mut app.call_local_texture,
             "zapfast-call-local",
-            image.as_ref().clone(),
-            TextureOptions::LINEAR,
+            &image,
         );
         ui.painter().image(
-            texture.id(),
+            texture,
             at,
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE,
@@ -304,6 +307,32 @@ fn bar(app: &mut App, ctx: &egui::Context, call: &CallUpdate, peer: &str, palett
                     });
                 });
         });
+}
+
+/// Draws `image` through the kept texture, updating it in place after the first frame.
+///
+/// A video call repaints once per frame, so allocating a fresh texture each time churns GPU memory
+/// and re-uploads the whole picture. `TextureHandle::set` resizes and refills the one already there.
+fn call_texture(
+    ui: &egui::Ui,
+    kept: &mut Option<egui::TextureHandle>,
+    name: &str,
+    image: &egui::ColorImage,
+) -> egui::TextureId {
+    match kept {
+        Some(texture) => {
+            texture.set(image.clone(), TextureOptions::LINEAR);
+            texture.id()
+        }
+        None => {
+            let texture = ui
+                .ctx()
+                .load_texture(name, image.clone(), TextureOptions::LINEAR);
+            let id = texture.id();
+            *kept = Some(texture);
+            id
+        }
+    }
 }
 
 /// The line under the peer's name, derived from the backend's phase and nothing else.
@@ -486,10 +515,18 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
     let locale = app.locale;
     let connected = call.phase.is_connected();
     let live = call.phase.is_live();
-    // Five controls on a video call — microphone, camera, screen share, speaker/devices, and hang
-    // up — and four on a voice call, where the screen-share button is not drawn. The row is centred
-    // on what is really rendered.
-    let buttons = if call.video { 5.0 } else { 4.0 };
+    // A platform whose backend cannot carry video offers no camera control at all, so the row is
+    // centred on what is really drawn: five on a video call (microphone, camera, screen share,
+    // speaker/devices, hang up), four on a voice call where screen share is not drawn, and three
+    // where there is no video capability to press.
+    let video = crate::calls::capabilities().video;
+    let buttons = if !video {
+        3.0
+    } else if call.video {
+        5.0
+    } else {
+        4.0
+    };
     ui.horizontal(|ui| {
         let spacing = 14.0;
         let width = buttons * CONTROL + (buttons - 1.0) * spacing;
@@ -522,33 +559,37 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
             app.actions.push(Action::SetCallMuted(!call.muted));
         }
 
-        // Camera: starts video on a voice call, and stops sending our picture on a video call.
-        let tip = if !call.video {
-            gettext(locale, "Start video").into_owned()
-        } else if call.camera_on {
-            gettext(locale, "Turn the camera off").into_owned()
-        } else {
-            gettext(locale, "Turn the camera on").into_owned()
-        };
-        let response = control(
-            ui,
-            Icon::Video,
-            CONTROL,
-            if call.camera_on {
-                palette.accent
+        // Camera: starts video on a voice call, and stops sending our picture on a video call. Only
+        // where the backend can really carry video, so macOS and Windows do not offer a control
+        // whose only possible outcome is a backend error; the chat header gates on the same flag.
+        if video {
+            let tip = if !call.video {
+                gettext(locale, "Start video").into_owned()
+            } else if call.camera_on {
+                gettext(locale, "Turn the camera off").into_owned()
             } else {
-                palette.surface_active
-            },
-            if call.camera_on {
-                palette.on_accent
-            } else {
-                palette.text
-            },
-            &tip,
-            connected,
-        );
-        if response.clicked() {
-            app.actions.push(Action::SetCallCamera(!call.camera_on));
+                gettext(locale, "Turn the camera on").into_owned()
+            };
+            let response = control(
+                ui,
+                Icon::Video,
+                CONTROL,
+                if call.camera_on {
+                    palette.accent
+                } else {
+                    palette.surface_active
+                },
+                if call.camera_on {
+                    palette.on_accent
+                } else {
+                    palette.text
+                },
+                &tip,
+                connected,
+            );
+            if response.clicked() {
+                app.actions.push(Action::SetCallCamera(!call.camera_on));
+            }
         }
 
         // Screen sharing has no 1:1 path in the protocol crate. The button is driven by the

@@ -334,7 +334,13 @@ pub fn resolve_devices(
         };
     let microphone = checked(DeviceKind::Microphone, microphone, &microphones, &mut lost);
     let speaker = checked(DeviceKind::Speaker, speaker, &speakers, &mut lost);
-    let camera = checked(DeviceKind::Camera, camera, &cameras, &mut lost);
+    // A camera has no system default the way an audio device does, so the picker's "Default device"
+    // has to mean the first camera the machine reports. Without this a fresh install — whose stored
+    // camera is `None` — could not start or answer a video call at all, and could not even reach the
+    // in-call picker to choose a node. A named camera the machine no longer has falls back the same
+    // way, and the fallback is reported, so the screen can say the old one is gone.
+    let camera = checked(DeviceKind::Camera, camera, &cameras, &mut lost)
+        .or_else(|| list.cameras.first().map(|camera| camera.id.clone()));
 
     ResolvedDevices {
         microphone,
@@ -589,7 +595,18 @@ struct CameraCapture {
     /// or `ffmpeg` that stalled while holding the device would keep the read, and the process,
     /// alive past [`VideoPipeline::shutdown`], and the next call would race it for the node.
     child: Arc<std::sync::Mutex<Option<std::process::Child>>>,
+    /// The capture thread, so `stop` can wait for it to leave before another camera opens the same
+    /// node: a resumed or switched camera otherwise races the old thread for the device and can
+    /// fail with a busy error.
+    thread: Option<std::thread::JoinHandle<()>>,
 }
+
+/// How long a camera is given to open and build its encoder before the video direction gives up.
+///
+/// The wait is what keeps a busy camera, a missing fallback, or an encoder that will not start from
+/// signaling a video call with no outgoing picture: the pipeline must know the camera really came
+/// up before the call is placed or answered.
+const CAMERA_STARTUP: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl CameraCapture {
     fn start(device: Option<String>, ticks: async_channel::Sender<VideoTick>) -> Result<Self> {
@@ -608,29 +625,55 @@ impl CameraCapture {
         let (frames, timed) = async_channel::bounded::<TimedVideoFrame>(4);
         let running = Arc::new(AtomicBool::new(true));
         let child = Arc::new(std::sync::Mutex::new(None));
+        // The capture thread reports whether the camera and the encoder really came up. Returning
+        // success the moment the thread is spawned would let a busy camera, a missing fallback or an
+        // encoder that will not initialize signal a video call with no outgoing picture at all.
+        let (ready, came_up) = std::sync::mpsc::channel::<Result<(), String>>();
         let alive = CaptureAlive(Arc::clone(&running));
         let slot = Arc::clone(&child);
         let stopping = Arc::clone(&running);
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("zapfast-camera".to_owned())
             .spawn(move || {
                 let _alive = alive;
-                capture(Some(device), frames, ticks, slot, stopping);
+                capture(Some(device), frames, ticks, slot, stopping, ready);
             })
             .context("camera thread could not be started")?;
-        Ok(Self {
-            timed,
-            running,
-            child,
-        })
+        match came_up.recv_timeout(CAMERA_STARTUP) {
+            Ok(Ok(())) => Ok(Self {
+                timed,
+                running,
+                child,
+                thread: Some(thread),
+            }),
+            Ok(Err(error)) => {
+                running.store(false, Ordering::Relaxed);
+                kill_camera_child(&child);
+                let _ = thread.join();
+                Err(anyhow!(error))
+            }
+            Err(_) => {
+                // The camera did not come up in time: end it here rather than leave the thread and
+                // any child behind for the next call to race.
+                running.store(false, Ordering::Relaxed);
+                kill_camera_child(&child);
+                let _ = thread.join();
+                Err(anyhow!("the camera did not start in time"))
+            }
+        }
     }
 
     /// Ends the camera. No frame has to arrive for the thread to stop: the flag is cleared, which
     /// is what the capture loop reads between reads, and the child, if there is one, is killed so a
-    /// read waiting on its stdout returns.
-    fn stop(&self) {
+    /// read waiting on its stdout returns. The thread is then joined, so a camera that opens again
+    /// straight afterwards — a resume, or a switch to another device — never races the old one for
+    /// the node.
+    fn stop(&mut self) {
         self.running.store(false, Ordering::Relaxed);
         kill_camera_child(&self.child);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 
     fn running(&self) -> bool {
@@ -751,14 +794,14 @@ impl VideoPipeline {
 
     /// Releases the camera. A resume builds a new source, so nothing here is kept.
     pub fn pause_camera(&mut self) {
-        if let Some(camera) = self.camera.take() {
+        if let Some(mut camera) = self.camera.take() {
             camera.stop();
         }
     }
 
     /// Starts capturing from `device` again, reusing the frame channel the UI already drains.
     pub fn resume_camera(&mut self, device: Option<String>) -> Result<()> {
-        if let Some(camera) = self.camera.take() {
+        if let Some(mut camera) = self.camera.take() {
             camera.stop();
         }
         self.device = device.clone();
@@ -774,7 +817,7 @@ impl VideoPipeline {
 
     /// Ends the video direction: the capture thread stops and the child is reaped.
     pub fn shutdown(&mut self) {
-        if let Some(camera) = self.camera.take() {
+        if let Some(mut camera) = self.camera.take() {
             camera.stop();
         }
     }
@@ -791,6 +834,7 @@ fn capture(
     ticks: async_channel::Sender<VideoTick>,
     child: Arc<std::sync::Mutex<Option<std::process::Child>>>,
     stopping: Arc<AtomicBool>,
+    ready: std::sync::mpsc::Sender<Result<(), String>>,
 ) {
     use openh264::encoder::{
         BitRate, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Profile,
@@ -798,6 +842,7 @@ fn capture(
 
     let Some(device) = device else {
         log::warn!("[CALL] no camera is available");
+        let _ = ready.send(Err("no camera is available".to_owned()));
         return;
     };
     // The camera's own shape decides the frame the encoder runs at: the driver is offered the
@@ -810,6 +855,7 @@ fn capture(
         Ok(source) => source,
         Err(error) => {
             log::error!("[CALL] camera capture could not start: {error}");
+            let _ = ready.send(Err(format!("the camera could not be opened: {error}")));
             return;
         }
     };
@@ -827,9 +873,13 @@ fn capture(
             source.stop();
             source.reap();
             ticks.close();
+            let _ = ready.send(Err(format!("the camera encoder could not start: {error}")));
             return;
         }
     };
+    // The camera and the encoder are both up: only now is a video call worth signaling, so the
+    // pipeline that is about to place or answer one can trust that there is really a picture.
+    let _ = ready.send(Ok(()));
 
     capture_frames(
         &mut source,
@@ -2276,6 +2326,7 @@ mod tests {
                 timed,
                 running: Arc::new(AtomicBool::new(true)),
                 child: Arc::new(std::sync::Mutex::new(None)),
+                thread: None,
             }),
             device: None,
         }
@@ -2575,6 +2626,23 @@ mod tests {
     }
 
     #[test]
+    fn a_call_with_no_camera_named_opens_with_the_machines_own() {
+        // A fresh install stores no camera, and the picker calls that "Default device". For a camera
+        // that has to mean the first one the machine reports, or a first video call could never
+        // start: there is no system default camera to fall back on.
+        let resolved = resolve_devices(&machine(), None, None, None);
+        assert_eq!(resolved.camera.as_deref(), Some("/dev/video0"));
+        assert!(
+            resolved.lost_devices.is_empty(),
+            "nothing moved, so the screen has nothing to say"
+        );
+        // A machine that reports no camera at all still resolves to none, which is what makes the
+        // video pipeline refuse the call rather than offer the peer an empty stream.
+        let none = resolve_devices(&DeviceList::default(), None, None, None);
+        assert_eq!(none.camera, None);
+    }
+
+    #[test]
     fn the_devices_a_person_picked_are_the_ones_a_call_opens_with() {
         let machine = machine();
         let resolved = resolve_devices(
@@ -2606,8 +2674,9 @@ mod tests {
         );
         assert_eq!(resolved.speaker, None, "and so does the speaker");
         assert_eq!(
-            resolved.camera, None,
-            "a camera the machine does not have is not opened"
+            resolved.camera.as_deref(),
+            Some("/dev/video0"),
+            "a camera the machine does not have falls back to the one it does"
         );
         assert_eq!(
             resolved.lost_devices,
