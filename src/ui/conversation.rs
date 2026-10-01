@@ -11,6 +11,7 @@ use egui::{
 
 use crate::animation;
 use crate::app::{App, Conversation, JumpHighlight, KeyScroll, RowHeight};
+use crate::geo::Spot;
 use crate::markup;
 use crate::model::{
     Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
@@ -1453,6 +1454,11 @@ fn composer_tools_menu(app: &mut App, chat: &Chat, plus: &egui::Response) {
                 let send_files = crate::i18n::gettext(app.locale, "Send files");
                 if widgets::menu_item(ui, &app.palette, Some(Icon::Paperclip), &send_files) {
                     app.actions.push(Action::Attach);
+                }
+                let send_location = crate::i18n::gettext(app.locale, "Send location");
+                if widgets::menu_item(ui, &app.palette, Some(Icon::MapPin), &send_location) {
+                    app.actions
+                        .push(Action::ShowDialog(Dialog::SendLocation(chat.id.clone())));
                 }
                 let create_poll = crate::i18n::gettext(app.locale, "Create poll");
                 if widgets::menu_item(ui, &app.palette, Some(Icon::ListChecks), &create_poll) {
@@ -4511,13 +4517,24 @@ fn content(
             let title = name
                 .clone()
                 .unwrap_or_else(|| crate::i18n::gettext(view.locale, "Location").into_owned());
+            // A spot sent from here names no place, so the coordinates take the
+            // line an address would.
+            let detail = address.clone().or_else(|| {
+                Some(
+                    Spot {
+                        latitude: *latitude,
+                        longitude: *longitude,
+                    }
+                    .text(),
+                )
+            });
             location_card(
                 ui,
                 view,
                 message,
                 &message.id,
                 &title,
-                address.clone(),
+                detail,
                 (*latitude, *longitude),
                 actions,
             );
@@ -5619,9 +5636,11 @@ fn location_card(
         )
         .clicked()
         {
-            actions.push(Action::OpenUrl(format!(
-                "https://www.openstreetmap.org/?mlat={latitude}&mlon={longitude}#map=16/{latitude}/{longitude}"
-            )));
+            let spot = Spot {
+                latitude,
+                longitude,
+            };
+            actions.push(Action::OpenUrl(crate::geo::map_url(spot)));
         }
     });
 }

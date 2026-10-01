@@ -3,6 +3,7 @@ src/util.rs
 src/ui/chats.rs
 src/ui/conversation.rs
 src/ui/dialogs.rs
+src/ui/locations.rs
 src/ui/settings.rs
 src/ui/widgets.rs
 src/ui/message_info.rs

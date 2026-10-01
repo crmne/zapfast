@@ -2124,6 +2124,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     multiple: false,
                 };
             }
+            // The location dialog, with a spot pasted in.
+            "location" => {
+                app.dialog = app.open_chat.clone().map(Dialog::SendLocation);
+                app.location_draft = "-23.5505, -46.6333".into();
+            }
             "shortcuts" => app.dialog = Some(Dialog::Shortcuts),
             "about" => app.dialog = Some(Dialog::About),
             "failed" => {
@@ -9807,8 +9812,8 @@ mod tests {
                 .expect("the plus button is a tab stop");
             (id, ctx.read_response(id).unwrap().rect.center())
         };
-        // Row 0 sends files, row 1 creates a poll.
-        for row in [0.0, 1.0] {
+        // Row 0 sends files, row 1 sends a location, row 2 creates a poll.
+        for row in [0.0, 1.0, 2.0] {
             let mut app = app();
             app.settings.show_shortcut_hints = false;
             let chat = app.open_chat.clone().unwrap();
@@ -9828,7 +9833,7 @@ mod tests {
             );
             let item = egui::pos2(
                 menu.center().x,
-                menu.top() + menu.height() * (1.0 + 2.0 * row) / 4.0,
+                menu.top() + menu.height() * (1.0 + 2.0 * row) / 6.0,
             );
             click(&mut app, &ctx, item);
             assert!(
@@ -9842,6 +9847,9 @@ mod tests {
             if row == 0.0 {
                 assert!(picked, "Send files opens the file picker");
                 assert_eq!(app.dialog, None);
+            } else if row == 1.0 {
+                assert!(!picked);
+                assert_eq!(app.dialog, Some(crate::model::Dialog::SendLocation(chat)));
             } else {
                 assert!(!picked);
                 assert_eq!(app.dialog, Some(crate::model::Dialog::CreatePoll(chat)));
@@ -10149,7 +10157,7 @@ mod tests {
 
     #[test]
     fn dialogs_keep_local_navigation_and_single_focus_borders() {
-        for page in ["locked-setup", "poll-create", "new-chat"] {
+        for page in ["locked-setup", "poll-create", "new-chat", "location"] {
             let mut app = app();
             apply_flags(&mut app, Some(page));
             let ctx = egui::Context::default();

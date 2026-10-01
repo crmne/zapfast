@@ -4208,6 +4208,7 @@ impl Worker {
             | Command::SendImage { chat, .. }
             | Command::SendSticker { chat, .. }
             | Command::SendGif { chat, .. }
+            | Command::SendLocation { chat, .. }
             | Command::CreatePoll { chat, .. } => Some(chat),
             Command::Forward { to_chat, .. } => Some(to_chat),
             _ => None,
@@ -4269,6 +4270,12 @@ impl Worker {
                 quoting,
                 mentions,
             } => self.send_text(chat, text, quoting, mentions),
+            Command::SendLocation {
+                chat,
+                latitude,
+                longitude,
+                quoting,
+            } => self.send_location(chat, latitude, longitude, quoting),
             Command::ReplyInteractive {
                 chat,
                 message,
@@ -5911,6 +5918,69 @@ impl Worker {
         ));
     }
 
+    /// Sends a spot as a location, keeping the row locally the way a phone
+    /// does, so the bubble shows before the phone acknowledges it.
+    fn send_location(
+        &mut self,
+        chat: ChatId,
+        latitude: f64,
+        longitude: f64,
+        quoting: Option<String>,
+    ) {
+        let unsent = || Unsent::Location {
+            latitude,
+            longitude,
+        };
+        let (context, shown) = match self.quote(&chat, quoting.as_deref()) {
+            Ok(Some((context, shown))) => (Some(context), Some(shown)),
+            Ok(None) => (None, None),
+            Err(reason) => {
+                self.refuse(chat, quoting, unsent(), reason);
+                return;
+            }
+        };
+        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
+            self.refuse(chat, quoting, unsent(), Refusal::Offline);
+            return;
+        };
+        let mut message = outgoing_location(latitude, longitude, context);
+        let expiration = self.apply_ephemeral(&chat, &mut message);
+        let id = client.generate_message_id();
+        let row = Message {
+            id: id.clone(),
+            chat: chat.clone(),
+            sender: self.me(),
+            sender_name: None,
+            from_me: true,
+            timestamp: crate::util::now(),
+            content: Content::Location {
+                latitude,
+                longitude,
+                name: None,
+                address: None,
+            },
+            status: Delivery::Pending,
+            delivered_at: None,
+            read_at: None,
+            quoted: shown,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        self.store_message(row, Some(message.encode_to_vec()), None);
+        tokio::spawn(send_outgoing(
+            client,
+            self.commands.clone(),
+            chat,
+            jid,
+            id,
+            message,
+            expiration,
+        ));
+    }
+
     fn forward_messages(&mut self, from_chat: ChatId, messages: Vec<String>, to_chat: ChatId) {
         let Some(client) = self.client.clone() else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
@@ -7507,6 +7577,26 @@ fn outgoing_text(
         Some(context) => wa::Message::text_with_context(text, context),
         None => wa::Message::text(text),
     }
+}
+
+/// A location message: the coordinates and nothing else, because a computer
+/// has no place name to send. A quote rides inside the location, where a
+/// phone puts it.
+fn outgoing_location(
+    latitude: f64,
+    longitude: f64,
+    context: Option<wa::ContextInfo>,
+) -> wa::Message {
+    let mut message = wa::Message::default();
+    message.location_message = MessageField::some(wa::message::LocationMessage {
+        degrees_latitude: Some(latitude),
+        degrees_longitude: Some(longitude),
+        ..Default::default()
+    });
+    if let Some(context) = context {
+        let _ = message.set_context_info(context);
+    }
+    message
 }
 
 /// Extracts quote and mention context from a message.
@@ -10429,6 +10519,72 @@ mod tests {
         let context = context_of(&message).expect("text context");
         assert_eq!(context.stanza_id.as_deref(), Some("quoted"));
         assert_eq!(context.mentioned_jid, mentions);
+    }
+
+    #[test]
+    fn a_spot_goes_out_as_a_location_and_comes_back_as_one() {
+        let message = outgoing_location(-23.5505, -46.6333, None);
+        let location = message.location_message.as_option().expect("a location");
+        assert_eq!(location.degrees_latitude, Some(-23.5505));
+        assert_eq!(location.degrees_longitude, Some(-46.6333));
+        assert_eq!(location.is_live, None, "a spot is not a share that moves");
+        assert_eq!(location.name, None);
+        assert_eq!(location.address, None);
+
+        // The reader on the other side reads the fields we wrote, so the spot
+        // arrives as the spot.
+        assert_eq!(
+            classify(&message),
+            Some(Content::Location {
+                latitude: -23.5505,
+                longitude: -46.6333,
+                name: None,
+                address: None,
+            })
+        );
+    }
+
+    #[test]
+    fn a_quoted_location_carries_the_quote_inside_it() {
+        let message = outgoing_location(
+            -23.5505,
+            -46.6333,
+            Some(wa::ContextInfo {
+                stanza_id: Some("quoted".to_owned()),
+                ..Default::default()
+            }),
+        );
+        let context = context_of(&message).expect("location context");
+        assert_eq!(context.stanza_id.as_deref(), Some("quoted"));
+    }
+
+    #[tokio::test]
+    async fn a_spot_sent_while_offline_goes_back_to_the_dialog() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker
+            .handle_command(Command::SendLocation {
+                chat: receipt_tests::PEER.into(),
+                latitude: -23.5505,
+                longitude: -46.6333,
+                quoting: None,
+            })
+            .await;
+        if let Event::SendRefused {
+            unsent:
+                Unsent::Location {
+                    latitude,
+                    longitude,
+                },
+            reason,
+            ..
+        } = events.try_recv().unwrap()
+        {
+            assert_eq!(latitude, -23.5505);
+            assert_eq!(longitude, -46.6333);
+            assert_eq!(reason, Refusal::Offline);
+        } else {
+            panic!("a refusal carries the spot back to the dialog");
+        }
     }
 
     #[test]

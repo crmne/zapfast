@@ -12,6 +12,7 @@ pub mod bidi;
 pub mod demo;
 pub mod diagnostics;
 pub mod emoji;
+pub mod geo;
 pub mod i18n;
 pub mod image_cache;
 pub mod image_preview;

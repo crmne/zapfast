@@ -192,6 +192,14 @@ msgid "Remove from favorites"
 msgstr "Retirer des favoris"
 
 #: src/ui/chats.rs:1143 src/ui/chats.rs:1510 src/ui/conversation.rs:4083
+#: src/ui/locations.rs:32
+msgid "Paste a map link or coordinates"
+msgstr "Collez un lien de carte ou des coordonnées"
+
+#: src/ui/locations.rs:53
+msgid "That is not a location."
+msgstr "Ce n'est pas une position."
+
 #: src/ui/dialogs.rs:1003 src/ui/picker.rs:1572
 msgid "Add to favorites"
 msgstr "Ajouter aux favoris"
@@ -271,6 +279,10 @@ msgstr "Envoyer des fichiers"
 #: src/ui/conversation.rs:1447
 msgid "Create poll"
 msgstr "Créer un sondage"
+
+#: src/ui/conversation.rs:1448 src/ui/locations.rs:16
+msgid "Send location"
+msgstr "Envoyer la position"
 
 #: src/ui/conversation.rs:1509
 #, rust-format
