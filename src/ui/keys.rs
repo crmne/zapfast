@@ -3,7 +3,7 @@
 use egui::{Key, Modifiers};
 
 use crate::app::App;
-use crate::model::{Action, Chat, Dialog, Page, Scroll};
+use crate::model::{Action, Chat, Dialog, InfoView, Page, Scroll};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
     if app.image_preview.is_some() {
@@ -117,9 +117,6 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     if escape {
         if app.show_update {
             actions.push(Action::CloseUpdate);
-        } else if app.dialog.is_some() && app.group_name_edit.is_some() {
-            // Cancels the group rename and keeps the dialog open.
-            actions.push(Action::CloseGroupName);
         } else if app.dialog.is_some() {
             actions.push(Action::CloseDialog);
         } else if app.recording.is_some() {
@@ -145,6 +142,23 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CancelEdit);
         } else if app.reply_to.is_some() {
             actions.push(Action::CancelReply);
+        } else if app.info_visible() && app.group_name_edit.is_some() {
+            // Cancels the group rename and keeps the panel open.
+            actions.push(Action::CloseGroupName);
+        } else if app.info_visible() && app.contact_edit.is_some() {
+            actions.push(Action::CloseContactEdit);
+        } else if app.info_visible() {
+            // After what the composer was in the middle of: the media view
+            // goes back to the overview, and the overview closes the panel.
+            let media = matches!(
+                app.info.as_ref().map(|info| info.view),
+                Some(InfoView::Media(_))
+            );
+            actions.push(if media {
+                Action::ShowInfo(InfoView::Overview)
+            } else {
+                Action::CloseInfo
+            });
         } else if app.page == Page::Wallpaper {
             actions.push(Action::Open(Page::Settings));
         } else if app.page == Page::Settings && !app.settings_search.is_empty() {
@@ -499,6 +513,109 @@ mod tests {
             app.actions.as_slice(),
             [Action::Open(Page::Chats)]
         ));
+    }
+
+    #[test]
+    fn escape_returns_from_the_media_view_then_closes_the_info_panel() {
+        use crate::model::{InfoPanel, InfoView, MediaTab};
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Chats;
+        app.open_chat = Some("fixture".into());
+        app.info = Some(InfoPanel {
+            chat: "fixture".into(),
+            view: InfoView::Media(MediaTab::Links),
+        });
+        let ctx = egui::Context::default();
+        escape(&mut app, &ctx);
+        assert!(matches!(
+            app.actions.as_slice(),
+            [Action::ShowInfo(InfoView::Overview)]
+        ));
+        app.actions.clear();
+        app.info.as_mut().unwrap().view = InfoView::Overview;
+        // A group rename in the panel is cancelled before the panel closes.
+        app.group_name_edit = Some("Rust".into());
+        escape(&mut app, &ctx);
+        assert!(matches!(app.actions.as_slice(), [Action::CloseGroupName]));
+        app.actions.clear();
+        app.group_name_edit = None;
+        escape(&mut app, &ctx);
+        assert!(matches!(app.actions.as_slice(), [Action::CloseInfo]));
+    }
+
+    /// What the composer is in the middle of goes first: a reply, an edit,
+    /// staged files and suggestions are cancelled before the panel closes,
+    /// and a focused composer with nothing to cancel still closes the panel
+    /// rather than the chat.
+    #[test]
+    fn escape_cancels_composer_state_before_closing_the_info_panel() {
+        use crate::model::{InfoPanel, InfoView};
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Chats;
+        app.open_chat = Some("fixture".into());
+        app.info = Some(InfoPanel {
+            chat: "fixture".into(),
+            view: InfoView::Overview,
+        });
+        let ctx = egui::Context::default();
+        app.reply_to = Some("reply".into());
+        escape(&mut app, &ctx);
+        assert!(matches!(app.actions.as_slice(), [Action::CancelReply]));
+        assert!(app.info.is_some(), "the panel stays");
+        app.actions.clear();
+        app.reply_to = None;
+        app.emoji_start = Some(0);
+        escape(&mut app, &ctx);
+        assert!(matches!(
+            app.actions.as_slice(),
+            [Action::CloseEmojiSuggestions]
+        ));
+        app.actions.clear();
+        app.emoji_start = None;
+        app.pending
+            .push(crate::app::Pending::File("unsent.png".into()));
+        escape(&mut app, &ctx);
+        assert!(matches!(app.actions.as_slice(), [Action::ClearPending]));
+        app.actions.clear();
+        app.pending.clear();
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("composer-text")));
+        escape(&mut app, &ctx);
+        assert!(
+            matches!(app.actions.as_slice(), [Action::CloseInfo]),
+            "the panel, not the chat: {:?}",
+            app.actions
+        );
+    }
+
+    #[test]
+    fn escape_cancels_a_contact_rename_and_keeps_the_info_panel() {
+        use crate::model::{InfoPanel, InfoView};
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Chats;
+        app.open_chat = Some("fixture".into());
+        app.info = Some(InfoPanel {
+            chat: "fixture".into(),
+            view: InfoView::Overview,
+        });
+        app.contact_edit = Some(("Ada".into(), String::new()));
+        let ctx = egui::Context::default();
+        escape(&mut app, &ctx);
+        assert!(matches!(app.actions.as_slice(), [Action::CloseContactEdit]));
     }
 
     #[test]

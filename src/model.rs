@@ -333,6 +333,78 @@ impl Message {
     }
 }
 
+/// A web link in a chat's messages, for the info panel's Links tab.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChatLink {
+    /// The message it was written in.
+    pub message: String,
+    pub timestamp: i64,
+    pub url: String,
+    /// The preview's title, when WhatsApp attached one for this address.
+    pub title: Option<String>,
+}
+
+/// How many pictures and videos, documents, and links the info panel lists
+/// for a chat, each. The worker asks the archive for one more, so a full
+/// list can be told apart from a cut one.
+pub const MEDIA_LIST_LIMIT: usize = 500;
+
+/// What the info panel lists for one chat: its pictures and videos, its
+/// documents, and the web links in its text, each newest first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ChatMedia {
+    pub chat: ChatId,
+    pub media: Vec<Message>,
+    pub docs: Vec<Message>,
+    pub links: Vec<ChatLink>,
+    /// Whether the archive held more than each list carries.
+    pub media_truncated: bool,
+    pub docs_truncated: bool,
+    pub links_truncated: bool,
+}
+
+impl ChatMedia {
+    /// Files `rows` under their tabs, newest first, each list cut at
+    /// `limit`. Stickers, audio, deleted and phone-only messages, and text
+    /// without a web link are left out.
+    pub fn collect(chat: ChatId, mut rows: Vec<Message>, limit: usize) -> Self {
+        rows.sort_by_key(|row| std::cmp::Reverse(row.timestamp));
+        let mut media = Self {
+            chat,
+            ..Self::default()
+        };
+        for row in rows {
+            match &row.content {
+                Content::Image { .. } | Content::Video { .. } => media.media.push(row),
+                Content::Document { .. } => media.docs.push(row),
+                Content::Text { .. } => {
+                    for (url, title) in row.content.web_links() {
+                        media.links.push(ChatLink {
+                            message: row.id.clone(),
+                            timestamp: row.timestamp,
+                            url,
+                            title,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        media.media_truncated = media.media.len() > limit;
+        media.docs_truncated = media.docs.len() > limit;
+        media.links_truncated = media.links.len() > limit;
+        media.media.truncate(limit);
+        media.docs.truncate(limit);
+        media.links.truncate(limit);
+        media
+    }
+
+    /// Whether any list was cut.
+    pub fn truncated(&self) -> bool {
+        self.media_truncated || self.docs_truncated || self.links_truncated
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Quoted {
     pub id: String,
@@ -687,6 +759,44 @@ impl Content {
                 caption, gif, note, ..
             } => captioned(video_label(*gif, *note), caption),
             _ => self.summary(),
+        }
+    }
+
+    /// The web addresses in a text message: the preview's, with its title,
+    /// then the others written in the text, each once.
+    pub fn web_links(&self) -> Vec<(String, Option<String>)> {
+        let Self::Text { text, preview } = self else {
+            return Vec::new();
+        };
+        // The preview's address was normalised when it was archived; the
+        // ones found in the text are normalised the same way, so an address
+        // typed without its scheme is not listed beside its preview.
+        let normalise =
+            |url: &str| crate::safety::preview_url(url).unwrap_or_else(|| url.to_owned());
+        let mut links: Vec<(String, Option<String>)> = Vec::new();
+        if let Some(preview) = preview {
+            let title = preview
+                .title
+                .clone()
+                .filter(|title| !title.trim().is_empty());
+            links.push((normalise(&preview.url), title));
+        }
+        for url in crate::markup::links(text) {
+            let url = normalise(&url);
+            if !links.iter().any(|(known, _)| *known == url) {
+                links.push((url, None));
+            }
+        }
+        links
+    }
+
+    /// Whether the info panel lists this message: a picture, a video, a
+    /// document, or text with a web link.
+    pub fn listable(&self) -> bool {
+        match self {
+            Self::Image { .. } | Self::Video { .. } | Self::Document { .. } => true,
+            Self::Text { .. } => !self.web_links().is_empty(),
+            _ => false,
         }
     }
 
@@ -1065,6 +1175,30 @@ pub struct Gif {
     pub height: u32,
 }
 
+/// The tab open in the info panel's media view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaTab {
+    Media,
+    Docs,
+    Links,
+}
+
+/// What the info panel shows: the chat's overview, or its media view on one
+/// of the tabs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InfoView {
+    Overview,
+    Media(MediaTab),
+}
+
+/// The info panel beside the conversation. It can show a member of the open
+/// group, so its chat is not always the open one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InfoPanel {
+    pub chat: ChatId,
+    pub view: InfoView,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Dialog {
     Shortcuts,
@@ -1078,7 +1212,6 @@ pub enum Dialog {
     NewContact,
     UnlockLockedChats,
     ConfirmLockChat(ChatId),
-    ChatInfo(ChatId),
     /// Manages the local labels.
     Labels,
     /// Confirms deleting a chat, which cannot be undone.
@@ -1272,6 +1405,16 @@ pub enum Action {
     OpenChatSearch,
     /// Closes the pane and drops its query and day.
     CloseChatSearch,
+    /// Opens the info panel beside the conversation for a chat or a group
+    /// member, on its overview.
+    OpenInfo(ChatId),
+    CloseInfo,
+    /// Moves the open info panel between its overview and its media view.
+    ShowInfo(InfoView),
+    /// Asks the worker again for the panel's listing after it failed.
+    RetryInfoMedia,
+    /// Closes the contact name editor without saving.
+    CloseContactEdit,
     /// Replaces the query of the open chat's search.
     ChatSearch(String),
     /// Restricts the in-chat search to a local calendar day.
@@ -2163,5 +2306,168 @@ mod tests {
         assert!(live(false).live_location_over(1_000, 1_001 + LIVE_LOCATION_LIMIT));
         assert!(live(true).live_location_over(1_000, 1_000));
         assert!(!Content::text("hi").live_location_over(0, i64::MAX));
+    }
+
+    fn row(id: &str, timestamp: i64, content: Content) -> Message {
+        Message {
+            id: id.into(),
+            chat: "1@s.whatsapp.net".into(),
+            sender: "1@s.whatsapp.net".into(),
+            sender_name: None,
+            from_me: false,
+            timestamp,
+            content,
+            status: Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        }
+    }
+
+    #[test]
+    fn chat_media_files_pictures_documents_and_links_newest_first() {
+        let video = |seconds| Content::Video {
+            caption: None,
+            media: media(),
+            seconds,
+            gif: false,
+            note: false,
+        };
+        let document = |name: &str| Content::Document {
+            media: media(),
+            file_name: name.into(),
+            caption: None,
+            pages: None,
+        };
+        let rows = vec![
+            row(
+                "old-photo",
+                10,
+                Content::Image {
+                    caption: None,
+                    media: media(),
+                },
+            ),
+            row(
+                "sticker",
+                11,
+                Content::Sticker {
+                    media: media(),
+                    animated: false,
+                },
+            ),
+            row(
+                "voice",
+                12,
+                Content::Audio {
+                    media: media(),
+                    seconds: None,
+                    voice_note: true,
+                    waveform: Vec::new(),
+                },
+            ),
+            row("deleted", 13, Content::Revoked),
+            row(
+                "view-once",
+                14,
+                Content::PhoneOnly {
+                    view_once: true,
+                    live_location: false,
+                    once: None,
+                },
+            ),
+            row("plain", 15, Content::text("no link here")),
+            row("notes", 16, document("Notes.pdf")),
+            row(
+                "bare",
+                17,
+                Content::text("read engine.rocks and https://a.b/c"),
+            ),
+            row("clip", 18, video(Some(5))),
+            row(
+                "preview",
+                19,
+                Content::Text {
+                    // Typed without the scheme, previewed with it: one link.
+                    text: "see spotifast.rocks".into(),
+                    preview: Some(LinkPreview {
+                        url: "https://spotifast.rocks/".into(),
+                        title: Some("Spotifast".into()),
+                        description: None,
+                    }),
+                },
+            ),
+            row(
+                "new-photo",
+                20,
+                Content::Image {
+                    caption: None,
+                    media: media(),
+                },
+            ),
+        ];
+        let listed = ChatMedia::collect("1@s.whatsapp.net".into(), rows, 10);
+        let ids = |rows: &[Message]| rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&listed.media), ["new-photo", "clip", "old-photo"]);
+        assert_eq!(ids(&listed.docs), ["notes"]);
+        assert_eq!(
+            listed
+                .links
+                .iter()
+                .map(|link| (
+                    link.message.as_str(),
+                    link.url.as_str(),
+                    link.title.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                ("preview", "https://spotifast.rocks/", Some("Spotifast")),
+                ("bare", "https://engine.rocks/", None),
+                ("bare", "https://a.b/c", None),
+            ]
+        );
+        assert!(!listed.media_truncated && !listed.docs_truncated && !listed.links_truncated);
+        // Each list is cut at the limit, and the panel is told.
+        let rows = (0..4)
+            .map(|index| {
+                row(
+                    &format!("photo-{index}"),
+                    index,
+                    Content::Image {
+                        caption: None,
+                        media: media(),
+                    },
+                )
+            })
+            .collect();
+        let cut = ChatMedia::collect("1@s.whatsapp.net".into(), rows, 3);
+        assert_eq!(ids(&cut.media), ["photo-3", "photo-2", "photo-1"]);
+        assert!(cut.media_truncated, "the pictures were cut");
+        assert!(
+            !cut.docs_truncated && !cut.links_truncated,
+            "the others were not"
+        );
+    }
+
+    #[test]
+    fn links_are_capped_per_address_and_each_list_reports_its_own_cut() {
+        let rows = (0..300)
+            .map(|index| {
+                row(
+                    &format!("linked-{index}"),
+                    index,
+                    Content::text(format!("https://a.b/{index} and https://c.d/{index}")),
+                )
+            })
+            .collect();
+        let listed = ChatMedia::collect("1@s.whatsapp.net".into(), rows, MEDIA_LIST_LIMIT);
+        assert_eq!(listed.links.len(), MEDIA_LIST_LIMIT, "cut to what is shown");
+        assert!(listed.links_truncated, "600 addresses do not fit");
+        assert!(!listed.media_truncated && !listed.docs_truncated);
     }
 }

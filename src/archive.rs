@@ -223,6 +223,10 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
 /// The columns [`searched_message`] reads, in its order.
 const SEARCH_COLUMNS: &str = "chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at";
 
+/// The same columns without the preview blob, for rows whose preview is
+/// never drawn.
+const BARE_COLUMNS: &str = "chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, NULL AS thumbnail, mentions, forwarded, delivered_at, read_at";
+
 /// The lowercased text a search matches: text, captions, file names, poll
 /// questions, contact names and places, one per line.
 /// `Content::text_matching` previews from the same fields.
@@ -1057,6 +1061,62 @@ impl Archive {
             ],
             searched_message,
         )?;
+        rows.collect()
+    }
+
+    /// The rows the info panel files as media, documents and links: this
+    /// chat's pictures and videos, its documents, and its text messages that
+    /// hold a web link, each kind newest first and cut at `limit`.
+    pub fn media_docs_links(&self, chat: &str, limit: usize) -> Result<Vec<Message>> {
+        let mut rows = self.rows_of_kind(chat, "IN ('image', 'video')", limit)?;
+        rows.extend(self.rows_of_kind(chat, "= 'document'", limit)?);
+        // Only text rows with a preview or an address that names its scheme
+        // or starts with `www.` are read: finding a bare domain the way the
+        // bubble underlines it would parse every text row of a long chat on
+        // the worker thread, so a bare domain without a preview is not
+        // listed. The bubble's parser then keeps the rows that do hold an
+        // address, and the reading stops at the newest `limit` of those, so
+        // text such as "http://x" never takes the place of an older link.
+        let sql = format!(
+            "SELECT {BARE_COLUMNS}
+             FROM messages
+             WHERE chat = ?1 AND json_valid(content)
+               AND json_extract(content, '$.kind') = 'text'
+               AND (json_extract(content, '$.preview') IS NOT NULL
+                    OR json_extract(content, '$.text') LIKE '%http://%'
+                    OR json_extract(content, '$.text') LIKE '%https://%'
+                    OR json_extract(content, '$.text') LIKE '%www.%')
+             ORDER BY timestamp DESC, rowid DESC"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let mut links = 0;
+        for row in statement.query_map(params![chat], searched_message)? {
+            let row = row?;
+            if !row.content.web_links().is_empty() {
+                rows.push(row);
+                links += 1;
+                if links == limit {
+                    break;
+                }
+            }
+        }
+        rows.sort_by_key(|row| std::cmp::Reverse(row.timestamp));
+        Ok(rows)
+    }
+
+    /// One chat's newest messages whose content kind matches the SQL
+    /// comparison `kinds`, such as `= 'document'`.
+    fn rows_of_kind(&self, chat: &str, kinds: &str, limit: usize) -> Result<Vec<Message>> {
+        let sql = format!(
+            "SELECT {SEARCH_COLUMNS}
+             FROM messages
+             WHERE chat = ?1 AND json_valid(content)
+               AND json_extract(content, '$.kind') {kinds}
+             ORDER BY timestamp DESC, rowid DESC
+             LIMIT ?2"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params![chat, limit as i64], searched_message)?;
         rows.collect()
     }
 
@@ -3478,5 +3538,162 @@ mod media_path_tests {
             .clear_media_path("a@s.whatsapp.net", "p1")
             .expect("cleared");
         assert!(archive.media_paths().expect("lists").is_empty());
+    }
+
+    /// The info panel's media, documents and links come from one chat only,
+    /// newest first, without stickers, audio, deleted or phone-only rows, and
+    /// without text that holds no link.
+    #[test]
+    fn a_chats_media_rows_are_scoped_filtered_and_ordered() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        let other = "2@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        archive.ensure_chat(other, "Grace").expect("chat");
+        let media = || crate::model::Media {
+            mime: "image/jpeg".into(),
+            size: 1,
+            width: None,
+            height: None,
+            path: None,
+            state: Default::default(),
+        };
+        let rows = [
+            (
+                chat,
+                "photo",
+                10,
+                Content::Image {
+                    caption: None,
+                    media: media(),
+                },
+            ),
+            (
+                chat,
+                "sticker",
+                11,
+                Content::Sticker {
+                    media: media(),
+                    animated: false,
+                },
+            ),
+            (
+                chat,
+                "voice",
+                12,
+                Content::Audio {
+                    media: media(),
+                    seconds: None,
+                    voice_note: true,
+                    waveform: Vec::new(),
+                },
+            ),
+            (chat, "deleted", 13, Content::Revoked),
+            (
+                chat,
+                "view-once",
+                14,
+                Content::PhoneOnly {
+                    view_once: true,
+                    live_location: false,
+                    once: None,
+                },
+            ),
+            (chat, "plain", 15, Content::text("nothing to open. really")),
+            (
+                chat,
+                "doc",
+                16,
+                Content::Document {
+                    media: media(),
+                    file_name: "Notes.pdf".into(),
+                    caption: None,
+                    pages: Some(2),
+                },
+            ),
+            // A bare domain is only listed with a preview: the query keeps
+            // to rows with a scheme or a preview.
+            (chat, "bare", 16, Content::text("see engine.rocks")),
+            (chat, "link", 17, Content::text("see https://engine.rocks")),
+            (
+                chat,
+                "clip",
+                18,
+                Content::Video {
+                    caption: None,
+                    media: media(),
+                    seconds: Some(3),
+                    gif: false,
+                    note: false,
+                },
+            ),
+            (
+                other,
+                "elsewhere",
+                19,
+                Content::Image {
+                    caption: None,
+                    media: media(),
+                },
+            ),
+            (
+                chat,
+                "preview",
+                20,
+                Content::Text {
+                    text: "look".into(),
+                    preview: Some(crate::model::LinkPreview {
+                        url: "https://spotifast.rocks/".into(),
+                        title: None,
+                        description: None,
+                    }),
+                },
+            ),
+        ];
+        for (chat, id, timestamp, content) in rows {
+            let mut row = super::tests::message(chat, id, timestamp, false);
+            row.content = content;
+            row.thumbnail = Some(vec![1, 2, 3]);
+            archive.insert_message(&row, None).expect("stored");
+        }
+        let ids = |rows: Vec<Message>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+        let rows = archive.media_docs_links(chat, 10).expect("rows");
+        // Text rows leave their preview blob behind: the panel never draws it.
+        for row in &rows {
+            let text = matches!(row.content, Content::Text { .. });
+            assert_eq!(row.thumbnail.is_none(), text, "{}", row.id);
+        }
+        assert_eq!(ids(rows), ["preview", "clip", "link", "doc", "photo"]);
+        // The limit applies to each kind, so a chat full of photos still
+        // lists its documents and links.
+        assert_eq!(
+            ids(archive.media_docs_links(chat, 1).expect("rows")),
+            ["preview", "clip", "doc"]
+        );
+    }
+
+    /// Text that only looks like a link in SQL never takes the place of an
+    /// older link: the limit counts rows that hold one.
+    #[test]
+    fn rows_that_hold_no_link_do_not_use_up_the_limit() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        let rows = [
+            ("link", 1, "see https://engine.rocks"),
+            ("scheme", 2, "type http:// first"),
+            ("prefix", 3, "a www. and nothing"),
+            ("bare", 4, "http://x"),
+        ];
+        for (id, timestamp, text) in rows {
+            let mut row = super::tests::message(chat, id, timestamp, false);
+            row.content = Content::text(text);
+            archive.insert_message(&row, None).expect("stored");
+        }
+        let ids = |rows: Vec<Message>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(archive.media_docs_links(chat, 2).expect("rows")),
+            ["link"]
+        );
     }
 }

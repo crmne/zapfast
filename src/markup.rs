@@ -197,6 +197,22 @@ pub fn paint_selectable(
     }
 }
 
+/// The web addresses in `text`, each once, in reading order, found the way
+/// a bubble underlines them. Mail addresses are left out: they do not open
+/// in a browser.
+pub fn links(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for span in parse(text, &[]) {
+        if let Some(link) = span.link
+            && !link.starts_with("mailto:")
+            && !found.contains(&link)
+        {
+            found.push(link);
+        }
+    }
+    found
+}
+
 /// Plain text with resolved mentions, used in previews.
 pub fn plain(text: &str, mentions: &[Mention]) -> String {
     parse(text, mentions)
@@ -838,5 +854,15 @@ mod monospace_tests {
         let spans = mono("```\ncode\n```\nafter");
         assert!(spans.iter().any(|(text, mono)| text == "code" && *mono));
         assert!(spans.iter().any(|(text, mono)| text == "after" && !*mono));
+    }
+
+    #[test]
+    fn web_links_are_listed_once_without_mail_addresses() {
+        assert_eq!(
+            links("see https://a.b/c, then spotifast.rocks and https://a.b/c again"),
+            vec!["https://a.b/c", "https://spotifast.rocks"]
+        );
+        assert!(links("mail hello@section8berlin.com or nothing").is_empty());
+        assert!(links("version 0.3.0 of main.rs").is_empty());
     }
 }

@@ -222,8 +222,15 @@ filter applies only to this list: search and the archive still show everything,
 and it resets when ZapFast restarts.
 
 Right-click a chat to pin, archive, or mute it for eight hours, one week, or
-indefinitely. These changes also apply on your phone. Click the chat header to
-see its picture, number, and group members.
+indefinitely. These changes also apply on your phone.
+
+Click the chat header, or choose **Info** in its menu, to open the info panel
+beside the chat. It shows the picture, the number or the members, and the
+chat's actions. **Media, links and docs** lists the photos and videos, the
+documents, and the links shared in the chat, newest first: click a photo or a
+document to go to its message, or a link to open it in the browser. Press
+Escape to go back to the overview, and again to close the panel. Drag its
+edge to change its width. In a narrow window the panel lies over the chat.
 
 ## Labels
 
