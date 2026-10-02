@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:34-0300\n"
+"POT-Creation-Date: 2026-10-02 11:39-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -1087,11 +1087,11 @@ msgstr "Вы"
 msgid "Could not use this image"
 msgstr "Не удалось использовать это изображение"
 
-#: src/app.rs:2979
+#: src/app.rs:2982
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
 
-#: src/app.rs:2983
+#: src/app.rs:2986
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1100,54 +1100,54 @@ msgstr ""
 "компьютере. Отмените ответ, чтобы отправить без цитаты."
 
 #
-#: src/app.rs:3344 src/app.rs:11390
+#: src/app.rs:3347 src/app.rs:11432
 msgid "This message can no longer be edited"
 msgstr "Это сообщение больше нельзя изменить"
 
-#: src/app.rs:4417
+#: src/app.rs:4420
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: src/app.rs:4492
+#: src/app.rs:4495
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:4780 src/ui/labels.rs:237
+#: src/app.rs:4783 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
 
-#: src/app.rs:5424
+#: src/app.rs:5427
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5432
+#: src/app.rs:5435
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5545
+#: src/app.rs:5548
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
 
-#: src/app.rs:6080
+#: src/app.rs:6083
 msgid "Copied image"
 msgstr "Изображение скопировано"
 
-#: src/app.rs:6083 src/app.rs:6088
+#: src/app.rs:6086 src/app.rs:6091
 msgid "Failed to copy image"
 msgstr "Не удалось скопировать изображение"
 
 #
-#: src/app.rs:11393
+#: src/app.rs:11435
 msgid "Not connected to WhatsApp"
 msgstr "Нет подключения к WhatsApp"
 
 #
-#: src/app.rs:11397
+#: src/app.rs:11439
 msgid "Could not send the edit"
 msgstr "Не удалось отправить изменение"
 
-#: src/app.rs:11400
+#: src/app.rs:11442
 msgid "The edit was sent but could not be saved locally"
 msgstr "Изменение отправлено, но не удалось сохранить его на этом компьютере"
 

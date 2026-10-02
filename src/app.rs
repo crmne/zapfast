@@ -2604,7 +2604,9 @@ impl App {
                     error,
                 } => {
                     if !matches!(error, EditFailure::Save) {
-                        self.refused_edits.retain(|(target_chat, target_id, _)| target_chat != &chat || target_id != &id);
+                        self.refused_edits.retain(|(target_chat, target_id, _)| {
+                            target_chat != &chat || target_id != &id
+                        });
                         self.refused_edits.push((chat, id, draft));
                     }
                     self.toast_error(edit_failure_message(self.locale, &error));
@@ -6579,14 +6581,29 @@ mod tests {
         app.open_chat = Some("fixture".into());
         let mut original = message("fixture", "sent", 0);
         original.from_me = true;
-        app.conversations.entry("fixture".into()).or_default().messages.push(original);
+        app.conversations
+            .entry("fixture".into())
+            .or_default()
+            .messages
+            .push(original);
         let (backend, _commands, events) = Backend::recording_with_events();
         app.backend = backend;
         app.composer = "New draft".into();
-        for (text, error) in [("Older correction", EditFailure::Expired), ("Latest correction", EditFailure::Offline)] {
-            events.send(Event::EditRefused { chat: "fixture".into(), id: "sent".into(),
-                draft: EditDraft { text: text.into(), mentions: vec![] }, error,
-            }).unwrap();
+        for (text, error) in [
+            ("Older correction", EditFailure::Expired),
+            ("Latest correction", EditFailure::Offline),
+        ] {
+            events
+                .send(Event::EditRefused {
+                    chat: "fixture".into(),
+                    id: "sent".into(),
+                    draft: EditDraft {
+                        text: text.into(),
+                        mentions: vec![],
+                    },
+                    error,
+                })
+                .unwrap();
         }
         app.handle_events();
         assert_eq!(app.refused_edits.len(), 1);
