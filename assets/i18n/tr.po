@@ -85,17 +85,17 @@ msgstr "Bugün"
 #: src/util.rs:330
 #, rust-format
 msgid "{day} {month}"
-msgstr ""
+msgstr "{day} {month}"
 
 #: src/util.rs:337
-#, fuzzy, rust-format
+#, rust-format
 msgid "{date}, {year}"
-msgstr "{date} {time}"
+msgstr "{date} {year}"
 
 #: src/util.rs:341
-#, fuzzy, rust-format
+#, rust-format
 msgid "{label} ({date})"
-msgstr "son görülme {date}"
+msgstr "{label} ({date})"
 
 #: src/util.rs:348
 msgid "Monday"
@@ -174,73 +174,61 @@ msgid "December"
 msgstr "Aralık"
 
 #: src/util.rs:408
-#, fuzzy
 msgctxt "date month"
 msgid "January"
 msgstr "Ocak"
 
 #: src/util.rs:409
-#, fuzzy
 msgctxt "date month"
 msgid "February"
 msgstr "Şubat"
 
 #: src/util.rs:410
-#, fuzzy
 msgctxt "date month"
 msgid "March"
 msgstr "Mart"
 
 #: src/util.rs:411
-#, fuzzy
 msgctxt "date month"
 msgid "April"
 msgstr "Nisan"
 
 #: src/util.rs:412
-#, fuzzy
 msgctxt "date month"
 msgid "May"
 msgstr "Mayıs"
 
 #: src/util.rs:413
-#, fuzzy
 msgctxt "date month"
 msgid "June"
 msgstr "Haziran"
 
 #: src/util.rs:414
-#, fuzzy
 msgctxt "date month"
 msgid "July"
 msgstr "Temmuz"
 
 #: src/util.rs:415
-#, fuzzy
 msgctxt "date month"
 msgid "August"
 msgstr "Ağustos"
 
 #: src/util.rs:416
-#, fuzzy
 msgctxt "date month"
 msgid "September"
 msgstr "Eylül"
 
 #: src/util.rs:417
-#, fuzzy
 msgctxt "date month"
 msgid "October"
 msgstr "Ekim"
 
 #: src/util.rs:418
-#, fuzzy
 msgctxt "date month"
 msgid "November"
 msgstr "Kasım"
 
 #: src/util.rs:419
-#, fuzzy
 msgctxt "date month"
 msgid "December"
 msgstr "Aralık"
