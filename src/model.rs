@@ -16,6 +16,8 @@ pub type ChatId = String;
 pub struct ReplyTarget {
     pub id: String,
     pub chat: Option<ChatId>,
+    /// Local destination lifetime; carried through refusals, never sent on the wire.
+    pub destination_generation: u64,
 }
 
 impl ReplyTarget {
@@ -28,7 +30,11 @@ impl ReplyTarget {
 impl From<String> for ReplyTarget {
     /// Wraps a same-chat message id without inventing a cross-chat source.
     fn from(id: String) -> Self {
-        Self { id, chat: None }
+        Self {
+            id,
+            chat: None,
+            destination_generation: 0,
+        }
     }
 }
 

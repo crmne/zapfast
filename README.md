@@ -230,7 +230,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   access to its source group, or cancelling the quote. A reply never goes out without its quote: if the
   original is no longer available on this computer, nothing is sent, the text
   or attachments return to the composer, and a voice message waits above it
-  to be sent again or discarded. Cancel the reply to send without a quote.
+  to be sent again or discarded. Deleting the recipient discards late private-reply
+  recovery, including after recreating the same recipient chat. Cancel the reply
+  to send without a quote.
   Quotes carry a bar and name in the quoted person's colour; clicking one
   scrolls back to the original, which flashes briefly, as a search result
   does. The same right-click menu copies a message's ID, which

@@ -2481,6 +2481,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     app.reply_to = Some(crate::model::ReplyTarget {
                         id: "group-photo".into(),
                         chat: Some(group.into()),
+                        destination_generation: 0,
                     });
                     app.chats
                         .iter_mut()

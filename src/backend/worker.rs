@@ -13078,6 +13078,7 @@ mod receipt_tests {
         let target = crate::model::ReplyTarget {
             id: "original".into(),
             chat: Some(group.into()),
+            destination_generation: 0,
         };
         let (context, shown) = worker.quote_target(PEER, Some(&target)).unwrap().unwrap();
         assert_eq!(context.remote_jid.as_deref(), Some(group));
@@ -13147,6 +13148,7 @@ mod receipt_tests {
             let target = crate::model::ReplyTarget {
                 id: id.into(),
                 chat: Some(group.into()),
+                destination_generation: 0,
             };
             for (command, unsent) in reply_sends(Some(target.clone())) {
                 worker.handle_command(command).await;

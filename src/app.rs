@@ -394,6 +394,10 @@ pub struct App {
     pub mention_selected: usize,
     /// Private quotes kept with their direct chat while switching conversations.
     private_reply_drafts: HashMap<ChatId, crate::model::ReplyTarget>,
+    /// Deletion tombstones prevent refused private sends from reviving a replacement chat.
+    private_reply_generations: HashMap<ChatId, u64>,
+    /// Account baseline, advanced on unlink without reusing an old destination lifetime.
+    private_reply_generation: u64,
     /// Reply target in the open chat.
     pub reply_to: Option<crate::model::ReplyTarget>,
     /// Outgoing message being edited.
@@ -981,6 +985,8 @@ impl App {
             mention_start: None,
             mention_selected: 0,
             private_reply_drafts: HashMap::new(),
+            private_reply_generations: HashMap::new(),
+            private_reply_generation: 0,
             reply_to: None,
             editing: None,
             unsent_voice: None,
@@ -1439,6 +1445,17 @@ impl App {
     /// locked chat this discards the draft, because there is nothing left to
     /// send it to, and it clears `last_chat` so a restart does not reopen it.
     fn forget_chat(&mut self, id: &str) {
+        let generation = self
+            .private_reply_generations
+            .get(id)
+            .copied()
+            .unwrap_or(self.private_reply_generation);
+        self.private_reply_generations.insert(
+            id.to_owned(),
+            generation
+                .checked_add(1)
+                .expect("private reply destination generation exhausted"),
+        );
         self.leave_chat(id);
         self.chats.retain(|chat| chat.id != id);
         self.conversations.remove(id);
@@ -2656,6 +2673,14 @@ impl App {
                 // Unsent text belongs to the account that was unlinked.
                 self.drafts.clear();
                 self.private_reply_drafts.clear();
+                self.private_reply_generation = self
+                    .private_reply_generations
+                    .values()
+                    .copied()
+                    .fold(self.private_reply_generation, u64::max)
+                    .checked_add(1)
+                    .expect("private reply account generation exhausted");
+                self.private_reply_generations.clear();
                 self.draft_mentions.clear();
                 self.composer.clear();
                 self.composer_mentions.clear();
@@ -2922,9 +2947,16 @@ impl App {
         reason: Refusal,
     ) {
         // Removing the destination also discards recovery of its private replies.
-        if quoting.as_ref().is_some_and(|target| target.chat.is_some())
-            && self.chat(&chat).is_none()
-        {
+        if quoting.as_ref().is_some_and(|target| {
+            target.chat.is_some()
+                && (self.chat(&chat).is_none()
+                    || target.destination_generation
+                        != self
+                            .private_reply_generations
+                            .get(&chat)
+                            .copied()
+                            .unwrap_or(self.private_reply_generation))
+        }) {
             return;
         }
         let open = self.open_chat.as_deref() == Some(chat.as_str());
@@ -4096,6 +4128,11 @@ impl App {
                     self.reply_to = Some(crate::model::ReplyTarget {
                         id: message,
                         chat: Some(chat),
+                        destination_generation: self
+                            .private_reply_generations
+                            .get(&recipient)
+                            .copied()
+                            .unwrap_or(self.private_reply_generation),
                     });
                     self.focus_composer = true;
                 }
@@ -9532,7 +9569,9 @@ mod tests {
     /// Late refusals cannot restore a deleted recipient's private quote, text or voice.
     #[test]
     fn private_reply_refusals_do_not_recreate_deleted_destination_drafts() {
-        for voice in [false, true] {
+        for (voice, recreate_before_refusal) in
+            [(false, false), (true, false), (false, true), (true, true)]
+        {
             let mut app = app();
             let (backend, mut commands) = Backend::recording();
             app.backend = backend;
@@ -9575,19 +9614,46 @@ mod tests {
             assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
                 Command::SendText { quoting: Some(quote), .. } | Command::SendVoice { quoting: Some(quote), .. } if quote == target
             )));
+            let target_generation = target.destination_generation;
             app.forget_chat(recipient);
+            if recreate_before_refusal {
+                app.chats.push(Chat::new(
+                    recipient.into(),
+                    "Replacement recipient fixture".into(),
+                ));
+            }
             app.send_refused(recipient.into(), Some(target), unsent, Refusal::Offline);
             assert!(!app.private_reply_drafts.contains_key(recipient));
             assert!(!app.drafts.contains_key(recipient));
             assert!(app.reply_to.is_none());
             assert!(app.unsent_voice.is_none());
-            app.chats.push(Chat::new(
-                recipient.into(),
-                "Recreated recipient fixture".into(),
-            ));
+            if !recreate_before_refusal {
+                app.chats.push(Chat::new(
+                    recipient.into(),
+                    "Recreated recipient fixture".into(),
+                ));
+            }
             app.open_chat(recipient.into());
             assert!(app.reply_to.is_none());
             assert!(app.composer.is_empty());
+            // A new private send in the replacement lifetime still recovers normally.
+            app.apply(
+                Action::ReplyPrivately {
+                    chat: group.into(),
+                    message: "original".into(),
+                },
+                &ctx,
+            );
+            let replacement = app.reply_to.take().unwrap();
+            assert_ne!(replacement.destination_generation, target_generation);
+            app.send_refused(
+                recipient.into(),
+                Some(replacement.clone()),
+                Unsent::Text("Replacement draft".into()),
+                Refusal::Offline,
+            );
+            assert_eq!(app.reply_to, Some(replacement));
+            assert_eq!(app.composer, "Replacement draft");
         }
     }
 
@@ -9603,6 +9669,7 @@ mod tests {
         let target = ReplyTarget {
             id: "original".into(),
             chat: Some("12345@g.us".into()),
+            destination_generation: 0,
         };
         app.reply_to = Some(target.clone());
         app.composer = "Private draft".into();
@@ -9630,6 +9697,7 @@ mod tests {
             let quote = ReplyTarget {
                 id: "original".into(),
                 chat: Some("12345@g.us".into()),
+                destination_generation: 0,
             };
             app.chats
                 .push(Chat::new(left.into(), "Left fixture".into()));
@@ -9779,6 +9847,7 @@ mod tests {
                 let target = ReplyTarget {
                     id: "original".into(),
                     chat: Some(group.into()),
+                    destination_generation: 0,
                 };
                 app.reply_to = Some(target.clone());
                 app.settings.chat_lock_code_hash = Some("synthetic authenticated verifier".into());
