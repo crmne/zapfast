@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:22-0300\n"
+"POT-Creation-Date: 2026-10-02 11:51-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -1135,40 +1135,40 @@ msgstr ""
 "ordinateur. Annulez la réponse pour l’envoyer sans citation."
 
 #
-#: src/app.rs:4028
+#: src/app.rs:4020
 msgid "A selected chat is no longer writable"
 msgstr "Une discussion sélectionnée ne permet plus d’envoyer des messages"
 
-#: src/app.rs:4416
+#: src/app.rs:4408
 msgid "Added to favorites"
 msgstr "Ajouté aux favoris"
 
-#: src/app.rs:4491
+#: src/app.rs:4483
 msgid "Sending the sticker pack…"
 msgstr "Envoi du pack de stickers…"
 
-#: src/app.rs:4783 src/ui/labels.rs:237
+#: src/app.rs:4775 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Vous avez {limit} étiquettes, le maximum que ZapFast conserve."
 
-#: src/app.rs:5427
+#: src/app.rs:5419
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5435
+#: src/app.rs:5427
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5548
+#: src/app.rs:5540
 msgid "This video opens in your system player"
 msgstr "Cette vidéo s'ouvre dans le lecteur du système"
 
-#: src/app.rs:6083
+#: src/app.rs:6075
 msgid "Copied image"
 msgstr "Image copiée"
 
-#: src/app.rs:6086 src/app.rs:6091
+#: src/app.rs:6078 src/app.rs:6083
 msgid "Failed to copy image"
 msgstr "Impossible de copier l'image"
 

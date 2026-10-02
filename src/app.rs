@@ -6393,42 +6393,43 @@ mod tests {
     #[test]
     fn forwarding_rechecks_destinations_before_sending() {
         for left in [false, true] {
-        let mut app = app();
-        app.locale = crate::i18n::Locale::PortugueseBrazil;
-        let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
-        let ctx = egui::Context::default();
-        app.chats.push(Chat::new("target".into(), "Target".into()));
-        app.chats.push(Chat::new("valid".into(), "Valid".into()));
-        app.apply(
-            Action::ShowDialog(Dialog::Forward {
-                chat: "source".into(),
-                messages: vec!["m".into()],
-            }),
-            &ctx,
-        );
-        app.apply(Action::ToggleForwardRecipient("target".into()), &ctx);
-        app.apply(Action::ToggleForwardRecipient("valid".into()), &ctx);
-        app.apply(Action::ReviewForward, &ctx);
-        let target = app.chats
-            .iter_mut()
-            .find(|chat| chat.id == "target")
-            .unwrap();
-        target.left = left;
-        target.locked = !left;
-        app.apply(Action::ConfirmForward, &ctx);
-        assert!(commands.try_recv().is_err());
-        assert!(app.dialog.is_some());
-        assert!(!app.forward_reviewing);
-        assert_eq!(app.forward_recipients, ["valid"]);
-        app.apply(Action::ReviewForward, &ctx);
-        app.apply(Action::ConfirmForward, &ctx);
-        assert!(
-            matches!(commands.try_recv().unwrap(), Command::Forward { to_chat, .. } if to_chat == "valid")
-        );
-        assert!(commands.try_recv().is_err());
-        assert!(app.toasts.iter().any(|toast| toast.message
-            == "Não é mais possível enviar mensagens para uma das conversas selecionadas"));
+            let mut app = app();
+            app.locale = crate::i18n::Locale::PortugueseBrazil;
+            let (backend, mut commands) = Backend::recording();
+            app.backend = backend;
+            let ctx = egui::Context::default();
+            app.chats.push(Chat::new("target".into(), "Target".into()));
+            app.chats.push(Chat::new("valid".into(), "Valid".into()));
+            app.apply(
+                Action::ShowDialog(Dialog::Forward {
+                    chat: "source".into(),
+                    messages: vec!["m".into()],
+                }),
+                &ctx,
+            );
+            app.apply(Action::ToggleForwardRecipient("target".into()), &ctx);
+            app.apply(Action::ToggleForwardRecipient("valid".into()), &ctx);
+            app.apply(Action::ReviewForward, &ctx);
+            let target = app
+                .chats
+                .iter_mut()
+                .find(|chat| chat.id == "target")
+                .unwrap();
+            target.left = left;
+            target.locked = !left;
+            app.apply(Action::ConfirmForward, &ctx);
+            assert!(commands.try_recv().is_err());
+            assert!(app.dialog.is_some());
+            assert!(!app.forward_reviewing);
+            assert_eq!(app.forward_recipients, ["valid"]);
+            app.apply(Action::ReviewForward, &ctx);
+            app.apply(Action::ConfirmForward, &ctx);
+            assert!(
+                matches!(commands.try_recv().unwrap(), Command::Forward { to_chat, .. } if to_chat == "valid")
+            );
+            assert!(commands.try_recv().is_err());
+            assert!(app.toasts.iter().any(|toast| toast.message
+                == "Não é mais possível enviar mensagens para uma das conversas selecionadas"));
         }
     }
 
@@ -6439,9 +6440,13 @@ mod tests {
         let mut target = Chat::new("left".into(), "Left".into());
         target.left = true;
         app.chats.push(target);
-        app.apply(Action::ShowDialog(Dialog::Forward {
-            chat: "source".into(), messages: vec!["m".into()],
-        }), &ctx);
+        app.apply(
+            Action::ShowDialog(Dialog::Forward {
+                chat: "source".into(),
+                messages: vec!["m".into()],
+            }),
+            &ctx,
+        );
         app.apply(Action::ToggleForwardRecipient("left".into()), &ctx);
         assert!(app.forward_recipients.is_empty());
     }
