@@ -107,7 +107,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   one you pass (the list scrolls when you hold the pointer at its top or
   bottom edge). A drag that starts beside the bubbles, off the text, starts a
   selection too; a drag over the text outside a selection still selects the
-  text to copy. Then **Forward…** sends them together,
+  text to copy. Then **Forward…** lets you select destination chats with checkboxes, review
+  the recipients, and confirm before sending them together,
   in their original order, or Escape cancels. A batch goes out one message at
   a time, each starting once the one before it reached WhatsApp, so a picture
   cannot overtake the text that came before it.
@@ -222,7 +223,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   message. Type `:name` to autocomplete an emoji without leaving the composer,
   or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
-  delivered, or read. Replies can be text, attachments, voice messages,
+  delivered, or read. Queued forwards recheck destination permissions before
+  sending; a chat that became locked, read-only, or left is marked failed.
+  Replies can be text, attachments, voice messages,
   stickers, or GIFs. A reply never goes out without its quote: if the
   original is no longer available on this computer, nothing is sent, the text
   or attachments return to the composer, and a voice message waits above it

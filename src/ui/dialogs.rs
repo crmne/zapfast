@@ -6,6 +6,7 @@ use crate::app::App;
 use crate::model::{Action, Dialog};
 use crate::theme::{self, Icon};
 
+/// Draws the active dialog and queues its actions for application after the frame.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(dialog) = app.dialog.clone() else {
         return;
@@ -76,7 +77,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     message,
                     for_everyone,
                 } => confirm_delete_message(app, ui, &chat, &message, for_everyone),
-                Dialog::Forward { chat, messages } => forward(app, ui, &chat, &messages),
+                Dialog::Forward { messages, .. } => forward(app, ui, &messages),
                 Dialog::JoinGroup => join_group(app, ui),
                 Dialog::ConfirmStartOver => confirm_start_over(app, ui),
                 Dialog::StickerPack => sticker_pack(app, ui),
@@ -450,14 +451,63 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
-fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String]) {
+/// Draws recipient selection or the review step; forwarding requires explicit confirmation.
+fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     let palette = app.palette;
     let heading = if messages.len() == 1 {
-        "Forward message".to_owned()
+        crate::i18n::gettext(app.locale, "Forward message").into_owned()
     } else {
-        format!("Forward {} messages", messages.len())
+        crate::i18n::ngettext(
+            app.locale,
+            "Forward {count} message",
+            "Forward {count} messages",
+            messages.len() as u32,
+        )
+        .replace("{count}", &messages.len().to_string())
     };
     title(ui, app, &heading);
+    if app.forward_reviewing {
+        theme::text(
+            ui,
+            crate::i18n::gettext(app.locale, "Forward to these chats?"),
+            theme::medium(14.5),
+            palette.text,
+        );
+        ui.add_space(8.0);
+        egui::ScrollArea::vertical()
+            .max_height(260.0)
+            .show(ui, |ui| {
+                for id in &app.forward_recipients {
+                    if let Some(chat) = app.chat(id) {
+                        theme::text(ui, app.chat_title(chat), theme::regular(14.0), palette.text);
+                    }
+                }
+            });
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if theme::pill_button(
+                ui,
+                &palette,
+                &crate::i18n::gettext(app.locale, "Back"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::BackToForwardSelection);
+            }
+            if theme::pill_button(
+                ui,
+                &palette,
+                &crate::i18n::gettext(app.locale, "Forward"),
+                true,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::ConfirmForward);
+            }
+        });
+        return;
+    }
     let width = ui.available_width();
     let search = super::widgets::search_field(
         ui,
@@ -488,7 +538,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String
 
     let row_height = 52.0;
     let max_height = (ui.ctx().content_rect().height() - 220.0).clamp(row_height * 3.0, 420.0);
-    let mut destination = None;
+
     egui::ScrollArea::vertical()
         .id_salt("forward-chats")
         .max_height(max_height)
@@ -499,9 +549,41 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String
                 let title = app.chat_title(chat);
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(ui.available_width(), row_height), Sense::click());
+                theme::reveal_focus(&response);
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::SelectableLabel,
+                        ui.is_enabled(),
+                        app.forward_recipients.contains(&chat.id),
+                        &title,
+                    )
+                });
+                #[cfg(any(test, feature = "demo"))]
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(egui::Id::new(("forward-recipient", &chat.id)), rect)
+                });
                 if ui.is_rect_visible(rect) {
-                    if response.hovered() {
+                    let selected = app.forward_recipients.contains(&chat.id);
+                    if response.hovered() || selected {
                         super::widgets::dialog_row_highlight(ui, rect, palette.surface_hover);
+                    }
+                    let check = egui::Rect::from_center_size(
+                        pos2(rect.right() - 18.0, rect.center().y),
+                        egui::Vec2::splat(20.0),
+                    );
+                    let mut checked = selected;
+                    let checkbox = ui.put(check, egui::Checkbox::without_text(&mut checked));
+                    checkbox.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::Checkbox,
+                            ui.is_enabled(),
+                            checked,
+                            &title,
+                        )
+                    });
+                    if checked != selected {
+                        app.actions
+                            .push(Action::ToggleForwardRecipient(chat.id.clone()));
                     }
                     let avatar = egui::Rect::from_center_size(
                         pos2(rect.left() + 23.0, rect.center().y),
@@ -521,7 +603,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String
                         &title,
                         theme::medium(14.5),
                         palette.text,
-                        rect.width() - 62.0,
+                        rect.width() - 90.0,
                         1,
                     );
                     line.paint(
@@ -534,7 +616,8 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
-                    destination = Some(chat.id.clone());
+                    app.actions
+                        .push(Action::ToggleForwardRecipient(chat.id.clone()));
                 }
             }
         });
@@ -551,17 +634,39 @@ fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String
         });
         ui.add_space(12.0);
     }
-    if let Some(to_chat) = destination {
-        app.actions.push(Action::Forward {
-            from_chat: from_chat.to_owned(),
-            messages: messages.to_vec(),
-            to_chat,
-        });
-    }
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::ngettext(
+                app.locale,
+                "{count} recipient selected",
+                "{count} recipients selected",
+                app.forward_recipients.len() as u32,
+            )
+            .replace("{count}", &app.forward_recipients.len().to_string()),
+            theme::regular(13.5),
+            palette.secondary,
+        );
+        let review = ui
+            .add_enabled_ui(!app.forward_recipients.is_empty(), |ui| {
+                theme::pill_button(
+                    ui,
+                    &palette,
+                    &crate::i18n::gettext(app.locale, "Review recipients"),
+                    true,
+                )
+            })
+            .inner;
+        if review.clicked() {
+            app.actions.push(Action::ReviewForward);
+        }
+    });
 }
 
+/// Uses the model's send permissions to reject unavailable forwarding destinations.
 fn forwardable(chat: &crate::model::Chat) -> bool {
-    chat.kind != crate::model::ChatKind::Broadcast && !chat.read_only && !chat.locked
+    chat.can_send()
 }
 
 fn title(ui: &mut egui::Ui, app: &mut App, label: &str) {

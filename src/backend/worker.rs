@@ -4263,6 +4263,7 @@ impl Worker {
 
     // --- commands --------------------------------------------------------
 
+    /// Applies a UI or task command after checking current send permissions.
     async fn handle_command(&mut self, command: Command) {
         let destination = match &command {
             Command::SendText { chat, .. }
@@ -4276,25 +4277,19 @@ impl Worker {
             Command::Forward { to_chat, .. } => Some(to_chat),
             _ => None,
         };
-        if let Some(chat) = destination {
-            let writable = self.privacy_ready
-                && match self.archive.chat(chat) {
-                    Ok(Some(chat)) => chat.can_send(),
-                    Ok(None) => ChatKind::from_id(chat) != ChatKind::Broadcast,
-                    Err(_) => false,
-                };
-            if !writable {
-                let error = "This conversation is read-only in ZapFast".to_owned();
-                if matches!(&command, Command::CreatePoll { .. }) {
-                    self.emit(Event::PollCreated {
-                        chat: chat.clone(),
-                        error: Some(error),
-                    });
-                } else {
-                    self.emit(Event::Error(error));
-                }
-                return;
+        if let Some(chat) = destination
+            && !self.destination_writable(chat)
+        {
+            let error = "This conversation is read-only in ZapFast".to_owned();
+            if matches!(&command, Command::CreatePoll { .. }) {
+                self.emit(Event::PollCreated {
+                    chat: chat.clone(),
+                    error: Some(error),
+                });
+            } else {
+                self.emit(Event::Error(error));
             }
+            return;
         }
         match command {
             Command::RefreshPoll { chat, message } => self.refresh_poll(chat, message),
@@ -5985,6 +5980,7 @@ impl Worker {
         ));
     }
 
+    /// Prepares archived copies and queues each destination behind active sends.
     fn forward_messages(&mut self, from_chat: ChatId, messages: Vec<String>, to_chat: ChatId) {
         let Some(client) = self.client.clone() else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
@@ -6033,17 +6029,8 @@ impl Worker {
     /// Starts the next queued forward once `id` reports its first tick, or its
     /// failure. An ack that is not the running job's is ignored.
     fn advance_serial_forward(&mut self, id: &str) {
-        let next = match self.forward_queue.as_mut() {
-            Some(queue) => queue.ack(id),
-            None => return,
-        };
-        let (id, job) = match next {
-            ForwardStep::Ignore => return,
-            ForwardStep::Next { id, payload } => (id, payload),
-            ForwardStep::Finished => {
-                self.forward_queue = None;
-                return;
-            }
+        let Some((id, job)) = self.next_writable_forward(id) else {
+            return;
         };
         let Some(client) = self.client.clone() else {
             // The link went away; the rest of the batch cannot be sent.
@@ -6062,6 +6049,45 @@ impl Worker {
             message,
             expiration,
         ));
+    }
+
+    /// Rechecks the current privacy and chat state at the worker's send boundary.
+    fn destination_writable(&self, chat: &str) -> bool {
+        self.privacy_ready
+            && match self.archive.chat(chat) {
+                Ok(Some(chat)) => chat.can_send(),
+                Ok(None) => ChatKind::from_id(chat) != ChatKind::Broadcast,
+                Err(_) => false,
+            }
+    }
+
+    /// Skips destinations that became unwritable while waiting, marking their
+    /// pending rows failed and continuing with the next authorized destination.
+    fn next_writable_forward(&mut self, completed: &str) -> Option<(String, ForwardJob)> {
+        let mut completed = completed.to_owned();
+        loop {
+            let next = self.forward_queue.as_mut()?.ack(&completed);
+            let (id, job) = match next {
+                ForwardStep::Ignore => return None,
+                ForwardStep::Next { id, payload } => (id, payload),
+                ForwardStep::Finished => {
+                    self.forward_queue = None;
+                    return None;
+                }
+            };
+            if self.destination_writable(&job.0) {
+                return Some((id, job));
+            }
+            let _ = self
+                .archive
+                .set_status(&job.0, &id, Delivery::Failed, crate::util::now());
+            self.emit_message(&job.0, &id);
+            self.emit_chat(&job.0);
+            self.emit(Event::Error(
+                "This conversation is read-only in ZapFast".to_owned(),
+            ));
+            completed = id;
+        }
     }
 
     /// Drops a batch whose session ended. Its queued messages are already in
@@ -11284,6 +11310,96 @@ mod receipt_tests {
         assert!(matches!(queue.ack("d"), ForwardStep::Finished));
         assert!(queue.current.is_none());
         assert!(queue.remaining.is_empty());
+    }
+
+    /// A later lock, departure, or privacy reset prevents a queued send and
+    /// leaves an explicit failure, without blocking other authorized recipients.
+    #[test]
+    fn queued_forwards_recheck_destination_authority_before_starting() {
+        for unavailable in ["locked", "left", "read-only", "privacy"] {
+            let (mut worker, _events, _inbox, _wa) = worker();
+            worker.privacy_ready = true;
+            let chat = Chat::new(PEER.to_owned(), "Fixture".to_owned());
+            worker.archive.upsert_chat(&chat).unwrap();
+            let mut queue = ForwardQueue::new();
+            let payload = || (PEER.to_owned(), Jid::pn(PEER), wa::Message::default(), None);
+            queue
+                .push(vec![
+                    ("running".to_owned(), payload()),
+                    ("queued".to_owned(), payload()),
+                ])
+                .unwrap();
+            worker.forward_queue = Some(queue);
+            worker.store_message(
+                Message {
+                    status: Delivery::Pending,
+                    ..own_message("queued", 1)
+                },
+                None,
+                None,
+            );
+            match unavailable {
+                "locked" => worker.archive.set_locked(PEER, true).unwrap(),
+                "left" => worker.archive.set_left(PEER, true).unwrap(),
+                "read-only" => worker
+                    .archive
+                    .set_group_info(PEER, None, &[], true)
+                    .unwrap(),
+                _ => worker.privacy_ready = false,
+            }
+            assert!(
+                worker.next_writable_forward("running").is_none(),
+                "{unavailable}"
+            );
+            assert!(worker.forward_queue.is_none());
+            assert_eq!(
+                worker
+                    .archive
+                    .message(PEER, "queued")
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                Delivery::Failed
+            );
+        }
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.privacy_ready = true;
+        let mut queue = ForwardQueue::new();
+        let blocked = "blocked@s.whatsapp.net".to_owned();
+        let chat = Chat::new(blocked.clone(), "Fixture".to_owned());
+        worker.archive.upsert_chat(&chat).unwrap();
+        worker.archive.set_locked(&blocked, true).unwrap();
+        queue
+            .push(vec![
+                (
+                    "running".to_owned(),
+                    (PEER.to_owned(), Jid::pn(PEER), wa::Message::default(), None),
+                ),
+                (
+                    "blocked".to_owned(),
+                    (
+                        blocked.clone(),
+                        Jid::pn(&blocked),
+                        wa::Message::default(),
+                        None,
+                    ),
+                ),
+                (
+                    "allowed".to_owned(),
+                    (PEER.to_owned(), Jid::pn(PEER), wa::Message::default(), None),
+                ),
+            ])
+            .unwrap();
+        worker.forward_queue = Some(queue);
+        let (id, job) = worker
+            .next_writable_forward("running")
+            .expect("the next authorized recipient");
+        assert_eq!(id, "allowed");
+        assert_eq!(job.0, PEER);
+        assert_eq!(
+            worker.forward_queue.as_ref().unwrap().current.as_deref(),
+            Some("allowed")
+        );
     }
 
     /// A batch belongs to the session that was sending it. The proxy-change
