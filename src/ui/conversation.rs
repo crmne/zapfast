@@ -5463,7 +5463,16 @@ fn rich_body(
                 })
                 .unwrap_or(bubble);
             if matches!(message.content, Content::Text { .. }) {
-                bubble.union(rect)
+                let mut target = bubble.union(rect);
+                // Quote and preview cards have their own click actions and
+                // were registered before the text. Keep their current-frame
+                // rectangles outside this later, enlarged input target.
+                for kind in ["quote", "preview"] {
+                    if let Some(card) = ui.ctx().data(|data| data.get_temp::<Rect>(id.with(kind))) {
+                        target.min.y = target.min.y.max(card.bottom());
+                    }
+                }
+                target
             } else {
                 rect.expand2(vec2(10.0, 6.0)).intersect(bubble).union(rect)
             }

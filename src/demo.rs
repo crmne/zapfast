@@ -8236,6 +8236,57 @@ mod tests {
     }
 
     #[test]
+    fn expanded_text_selection_preserves_quote_and_preview_clicks() {
+        for kind in ["quote", "preview"] {
+            let mut app = app();
+            let chat = sample_ids()[0].to_owned();
+            let mut row = message(&chat, "cards", false, 1_700_000_001,
+                Content::Text {
+                    text: "Text below a card".into(),
+                    preview: (kind == "preview").then(|| LinkPreview {
+                        url: "https://example.com/selection-fixture".into(),
+                        title: Some("Fixture preview".into()), description: None,
+                    }),
+                });
+            if kind == "quote" {
+                row.quoted = Some(Quoted {
+                    id: "original".into(), sender: chat.clone(),
+                    sender_name: Some("Fixture".into()), summary: "Original text".into(),
+                    mentions: Vec::new(),
+                });
+            }
+            app.conversations.get_mut(&chat).unwrap().messages = vec![
+                message(&chat, "original", false, 1_700_000_000, Content::text("Original text")), row,
+            ];
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            for _ in 0..3 { render(&mut app, &ctx); }
+            let id = crate::ui::conversation::bubble_id(&chat, "cards");
+            let card = ctx.data(|data| data.get_temp::<egui::Rect>(id.with(kind))).unwrap();
+            let target = ctx.read_response(id.with("body-text")).unwrap().rect;
+            assert!(!target.contains(card.center()), "{kind}: {target:?} overlaps {card:?}");
+            let pos = card.center();
+            let mut opened = Vec::new();
+            for pressed in [true, false] {
+                let mut output = ctx.run_ui(egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0,780.0))),
+                    events: vec![egui::Event::PointerMoved(pos), egui::Event::PointerButton {
+                        pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
+                    }], ..Default::default()
+                }, |ui| {
+                    let ctx = ui.ctx().clone(); app.background_frame(&ctx); app.frame_ui(ui);
+                });
+                output.textures_delta.clear();
+                opened.extend(output.platform_output.commands.into_iter().filter_map(|command| match command {
+                    egui::OutputCommand::OpenUrl(url) => Some(url.url), _ => None,
+                }));
+            }
+            if kind == "quote" { assert_eq!(app.scroll_anchor.as_deref(), Some("original")); }
+            else { assert_eq!(opened, ["https://example.com/selection-fixture"]); }
+        }
+    }
+
+    #[test]
     fn a_drag_selects_short_messages_on_opposite_sides_of_the_chat() {
         let mut app = app();
         let chat = sample_ids()[0].to_owned();
