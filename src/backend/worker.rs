@@ -738,6 +738,20 @@ struct EditTurn {
 }
 
 impl PendingEdits {
+    /// Rejects stale results and waiting turns without releasing an active network attempt.
+    fn invalidate(&mut self) {
+        self.dispatch_owner = Arc::new(());
+        self.latest = 0;
+        self.outstanding.clear();
+        self.accepted = None;
+    }
+
+    /// Reports whether the last reserved attempt has released its dispatch barrier.
+    fn dispatch_finished(&mut self) -> bool {
+        self.dispatch_tail.as_mut().is_none_or(|tail| {
+            matches!(tail.try_recv(), Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed))
+        })
+    }
     /// Chains the next dispatch to this message's previous attempt.
     fn reserve_dispatch(&mut self) -> EditTurn {
         let (completion, next) = tokio::sync::oneshot::channel();
@@ -3104,7 +3118,9 @@ impl Worker {
                     }
                 }
                 Some(Type::MESSAGE_EDIT) => {
-                    self.pending_edits.remove(&(chat.clone(), target.clone()));
+                    if let Some(pending) = self.pending_edits.get_mut(&(chat.clone(), target.clone())) {
+                        pending.invalidate();
+                    }
                     if let Some(edited) = protocol.edited_message.as_option()
                         && let Some(mut content) = classify(edited)
                     {
@@ -7031,10 +7047,9 @@ impl Worker {
         self.apply_ephemeral(&chat, &mut message);
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            if !turn.wait().await {
-                return;
-            }
-            let error = if !eligibility.editable_at(crate::util::now()) {
+            let error = if !turn.wait().await {
+                Some("Edit cancelled".to_owned())
+            } else if !eligibility.editable_at(crate::util::now()) {
                 Some("This message can no longer be edited".to_owned())
             } else {
                 with_edit_deadline(EDIT_TIMEOUT, async {
@@ -7046,6 +7061,9 @@ impl Worker {
                 })
                 .await
             };
+            // Signal first so even an invalidated completion can collect an idle
+            // entry. Cancelled queued turns also release their barrier here.
+            let _ = turn.completion.send(());
             let _ = commands.send(Command::EditedText {
                 chat,
                 id,
@@ -7055,8 +7073,6 @@ impl Worker {
                 version,
                 draft,
             });
-            // Release the following edit only after this attempt has finished.
-            let _ = turn.completion.send(());
         });
     }
 
@@ -7079,6 +7095,9 @@ impl Worker {
             return;
         };
         if !pending.outstanding.remove(&version.generation) {
+            if pending.outstanding.is_empty() && pending.dispatch_finished() {
+                self.pending_edits.remove(&key);
+            }
             return;
         }
         let successful = error.is_none();
@@ -9181,6 +9200,51 @@ mod tests {
         drop(pending);
         let _ = first.completion.send(());
         assert!(!second.wait().await);
+    }
+
+    /// A phone edit cancels stale turns but keeps new requests behind the active send.
+    #[tokio::test]
+    async fn phone_edit_invalidation_preserves_the_existing_dispatch_chain() {
+        let mut pending = PendingEdits::default();
+        let mut active = pending.reserve_dispatch();
+        assert!(active.wait().await);
+        let mut stale = pending.reserve_dispatch();
+        pending.invalidate();
+        let mut replacement = pending.reserve_dispatch();
+        let (started, mut observed) = tokio::sync::oneshot::channel();
+        let newer = tokio::spawn(async move {
+            assert!(replacement.wait().await);
+            let _ = started.send(());
+            let _ = replacement.completion.send(());
+        });
+        tokio::task::yield_now().await;
+        assert!(matches!(observed.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+        let _ = active.completion.send(());
+        assert!(!stale.wait().await);
+        assert!(matches!(observed.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+        let _ = stale.completion.send(());
+        observed.await.unwrap();
+        newer.await.unwrap();
+        assert!(pending.dispatch_finished());
+    }
+
+    /// A settled invalidated completion removes its idle barrier without changing the archive.
+    #[tokio::test]
+    async fn invalidated_edit_completion_collects_the_retained_dispatch_entry() {
+        let (mut worker, _, _, _) = super::receipt_tests::worker();
+        let row = super::receipt_tests::own_message("invalidated-edit", crate::util::now() - 60);
+        worker.archive.ensure_chat(&row.chat, "Fixture").unwrap();
+        worker.archive.insert_message(&row, None).unwrap();
+        let generation = worker.begin_edit(&row.chat, &row.id);
+        let pending = worker.pending_edits.get_mut(&(row.chat.clone(), row.id.clone())).unwrap();
+        let turn = pending.reserve_dispatch();
+        pending.invalidate();
+        let _ = turn.completion.send(());
+        worker.finish_edit(row.chat.clone(), row.id.clone(), EditRequest {
+            text: "Stale edit".into(), mentions: vec![], draft: EditDraft::default(),
+        }, None, EditVersion { generation, content: row.content.clone(), edited: row.edited });
+        assert!(worker.pending_edits.is_empty());
+        assert_eq!(worker.archive.message(&row.chat, &row.id).unwrap().unwrap().content, row.content);
     }
 
     /// Clearing older rows cancels their queued dispatches and keeps newer rows editable.
