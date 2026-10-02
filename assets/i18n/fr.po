@@ -467,13 +467,13 @@ msgstr "Annuler"
 msgid ""
 "This removes the message from this computer. Other people keep their copy. "
 "Your phone will not send it again, so it cannot be undone."
-msgstr ""
+msgstr "Le message est supprimé de cet ordinateur. Les autres personnes gardent leur copie. Votre téléphone ne le renverra pas, cette action est donc irréversible."
 
 #: src/ui/dialogs.rs:1121
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "Tout le monde dans cette discussion verra \"Ce message a été supprimé\" à la place. Cette action est irréversible."
 
 #: src/ui/dialogs.rs:1122
 #, rust-format
@@ -483,12 +483,8 @@ msgid ""
 msgid_plural ""
 "This removes the selected messages from this computer. Your phone will not "
 "send them again. This cannot be undone."
-msgstr[0] ""
-"Le message sélectionné est supprimé de cet ordinateur. Votre téléphone ne le "
-"renverra pas. Cette action est irréversible."
-msgstr[1] ""
-"Les messages sélectionnés sont supprimés de cet ordinateur. Votre téléphone "
-"ne les renverra pas. Cette action est irréversible."
+msgstr[0] "Le message sélectionné est supprimé de cet ordinateur. Votre téléphone ne le renverra pas. Cette action est irréversible."
+msgstr[1] "Les messages sélectionnés sont supprimés de cet ordinateur. Votre téléphone ne les renverra pas. Cette action est irréversible."
 
 #: src/ui/dialogs.rs:1123
 #, rust-format
@@ -498,12 +494,8 @@ msgid ""
 msgid_plural ""
 "Everyone in this chat will see \"This message was deleted\" in place of the "
 "selected messages. This cannot be undone."
-msgstr[0] ""
-"Tout le monde dans cette discussion verra « Ce message a été supprimé » à la "
-"place du message sélectionné. Cette action est irréversible."
-msgstr[1] ""
-"Tout le monde dans cette discussion verra « Ce message a été supprimé » à la "
-"place des messages sélectionnés. Cette action est irréversible."
+msgstr[0] "Tout le monde dans cette discussion verra « Ce message a été supprimé » à la place du message sélectionné. Cette action est irréversible."
+msgstr[1] "Tout le monde dans cette discussion verra « Ce message a été supprimé » à la place des messages sélectionnés. Cette action est irréversible."
 
 #: src/ui/dialogs.rs:1216
 msgid "Leave this channel?"

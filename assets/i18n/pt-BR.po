@@ -464,13 +464,13 @@ msgstr "Cancelar"
 msgid ""
 "This removes the message from this computer. Other people keep their copy. "
 "Your phone will not send it again, so it cannot be undone."
-msgstr ""
+msgstr "Isso remove a mensagem deste computador. Outras pessoas mantêm suas cópias. Seu telefone não a enviará novamente, então isso não pode ser desfeito."
 
 #: src/ui/dialogs.rs:1121
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "Todos nesta conversa verão \"Esta mensagem foi apagada\" no lugar dela. Isso não pode ser desfeito."
 
 #: src/ui/dialogs.rs:1122
 #, rust-format
@@ -480,12 +480,8 @@ msgid ""
 msgid_plural ""
 "This removes the selected messages from this computer. Your phone will not "
 "send them again. This cannot be undone."
-msgstr[0] ""
-"Isso remove a mensagem selecionada deste computador. Seu telefone não a "
-"enviará novamente. Isso não pode ser desfeito."
-msgstr[1] ""
-"Isso remove as mensagens selecionadas deste computador. Seu telefone não as "
-"enviará novamente. Isso não pode ser desfeito."
+msgstr[0] "Isso remove a mensagem selecionada deste computador. Seu telefone não a enviará novamente. Isso não pode ser desfeito."
+msgstr[1] "Isso remove as mensagens selecionadas deste computador. Seu telefone não as enviará novamente. Isso não pode ser desfeito."
 
 #: src/ui/dialogs.rs:1123
 #, rust-format
@@ -495,12 +491,8 @@ msgid ""
 msgid_plural ""
 "Everyone in this chat will see \"This message was deleted\" in place of the "
 "selected messages. This cannot be undone."
-msgstr[0] ""
-"Todos nesta conversa verão \"Esta mensagem foi apagada\" no lugar da "
-"mensagem selecionada. Isso não pode ser desfeito."
-msgstr[1] ""
-"Todos nesta conversa verão \"Esta mensagem foi apagada\" no lugar das "
-"mensagens selecionadas. Isso não pode ser desfeito."
+msgstr[0] "Todos nesta conversa verão \"Esta mensagem foi apagada\" no lugar da mensagem selecionada. Isso não pode ser desfeito."
+msgstr[1] "Todos nesta conversa verão \"Esta mensagem foi apagada\" no lugar das mensagens selecionadas. Isso não pode ser desfeito."
 
 #: src/ui/dialogs.rs:1216
 msgid "Leave this channel?"

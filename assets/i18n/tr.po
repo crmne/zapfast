@@ -467,13 +467,13 @@ msgstr "İptal"
 msgid ""
 "This removes the message from this computer. Other people keep their copy. "
 "Your phone will not send it again, so it cannot be undone."
-msgstr ""
+msgstr "Bu, mesajı bu bilgisayardan kaldırır. Diğer kişiler kendi kopyalarını saklar. Telefonunuz mesajı tekrar göndermeyeceği için bu işlem geri alınamaz."
 
 #: src/ui/dialogs.rs:1121
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "Bu sohbetteki herkes bunun yerine \"Bu mesaj silindi\" ifadesini görecek. Bu işlem geri alınamaz."
 
 #: src/ui/dialogs.rs:1122
 #, rust-format
@@ -483,12 +483,8 @@ msgid ""
 msgid_plural ""
 "This removes the selected messages from this computer. Your phone will not "
 "send them again. This cannot be undone."
-msgstr[0] ""
-"Seçilen mesaj bu bilgisayardan kaldırılır. Telefonunuz bunu yeniden "
-"göndermez. Bu işlem geri alınamaz."
-msgstr[1] ""
-"Seçilen mesajlar bu bilgisayardan kaldırılır. Telefonunuz bunları yeniden "
-"göndermez. Bu işlem geri alınamaz."
+msgstr[0] "Seçilen mesaj bu bilgisayardan kaldırılır. Telefonunuz bunu yeniden göndermez. Bu işlem geri alınamaz."
+msgstr[1] "Seçilen mesajlar bu bilgisayardan kaldırılır. Telefonunuz bunları yeniden göndermez. Bu işlem geri alınamaz."
 
 #: src/ui/dialogs.rs:1123
 #, rust-format
@@ -498,12 +494,8 @@ msgid ""
 msgid_plural ""
 "Everyone in this chat will see \"This message was deleted\" in place of the "
 "selected messages. This cannot be undone."
-msgstr[0] ""
-"Bu sohbetteki herkes seçilen mesajın yerine \"Bu mesaj silindi\" ifadesini "
-"görür. Bu işlem geri alınamaz."
-msgstr[1] ""
-"Bu sohbetteki herkes seçilen mesajların yerine \"Bu mesaj silindi\" "
-"ifadesini görür. Bu işlem geri alınamaz."
+msgstr[0] "Bu sohbetteki herkes seçilen mesajın yerine \"Bu mesaj silindi\" ifadesini görür. Bu işlem geri alınamaz."
+msgstr[1] "Bu sohbetteki herkes seçilen mesajların yerine \"Bu mesaj silindi\" ifadesini görür. Bu işlem geri alınamaz."
 
 #: src/ui/dialogs.rs:1119
 msgid "Leave this channel?"

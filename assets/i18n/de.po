@@ -469,13 +469,13 @@ msgstr "Abbrechen"
 msgid ""
 "This removes the message from this computer. Other people keep their copy. "
 "Your phone will not send it again, so it cannot be undone."
-msgstr ""
+msgstr "Die Nachricht wird von diesem Computer entfernt. Andere behalten ihre Kopie. Dein Telefon sendet sie nicht erneut, daher kann dies nicht rückgängig gemacht werden."
 
 #: src/ui/dialogs.rs:1121
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "Alle in diesem Chat sehen stattdessen \"Diese Nachricht wurde gelöscht\". Dies kann nicht rückgängig gemacht werden."
 
 #: src/ui/dialogs.rs:1122
 #, rust-format
@@ -485,12 +485,8 @@ msgid ""
 msgid_plural ""
 "This removes the selected messages from this computer. Your phone will not "
 "send them again. This cannot be undone."
-msgstr[0] ""
-"Die ausgewählte Nachricht wird von diesem Computer entfernt. Dein Telefon "
-"sendet sie nicht erneut. Dies kann nicht rückgängig gemacht werden."
-msgstr[1] ""
-"Die ausgewählten Nachrichten werden von diesem Computer entfernt. Dein "
-"Telefon sendet sie nicht erneut. Dies kann nicht rückgängig gemacht werden."
+msgstr[0] "Die ausgewählte Nachricht wird von diesem Computer entfernt. Dein Telefon sendet sie nicht erneut. Dies kann nicht rückgängig gemacht werden."
+msgstr[1] "Die ausgewählten Nachrichten werden von diesem Computer entfernt. Dein Telefon sendet sie nicht erneut. Dies kann nicht rückgängig gemacht werden."
 
 #: src/ui/dialogs.rs:1123
 #, rust-format
@@ -500,12 +496,8 @@ msgid ""
 msgid_plural ""
 "Everyone in this chat will see \"This message was deleted\" in place of the "
 "selected messages. This cannot be undone."
-msgstr[0] ""
-"Alle in diesem Chat sehen „Diese Nachricht wurde gelöscht“ anstelle der "
-"ausgewählten Nachricht. Dies kann nicht rückgängig gemacht werden."
-msgstr[1] ""
-"Alle in diesem Chat sehen „Diese Nachricht wurde gelöscht“ anstelle der "
-"ausgewählten Nachrichten. Dies kann nicht rückgängig gemacht werden."
+msgstr[0] "Alle in diesem Chat sehen „Diese Nachricht wurde gelöscht“ anstelle der ausgewählten Nachricht. Dies kann nicht rückgängig gemacht werden."
+msgstr[1] "Alle in diesem Chat sehen „Diese Nachricht wurde gelöscht“ anstelle der ausgewählten Nachrichten. Dies kann nicht rückgängig gemacht werden."
 
 #: src/ui/dialogs.rs:1216
 msgid "Leave this channel?"

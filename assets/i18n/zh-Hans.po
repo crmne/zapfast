@@ -449,13 +449,13 @@ msgstr "取消"
 msgid ""
 "This removes the message from this computer. Other people keep their copy. "
 "Your phone will not send it again, so it cannot be undone."
-msgstr ""
+msgstr "这会从此计算机删除消息。其他人仍保留其副本。你的手机不会再次发送，因此无法撤销。"
 
 #: src/ui/dialogs.rs:1121
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "此聊天中的所有人将看到\"此消息已删除\"。此操作无法撤销。"
 
 #: src/ui/dialogs.rs:1122
 #, rust-format
@@ -465,8 +465,7 @@ msgid ""
 msgid_plural ""
 "This removes the selected messages from this computer. Your phone will not "
 "send them again. This cannot be undone."
-msgstr[0] ""
-"这将从此计算机删除所选消息。手机不会再次发送这些消息。此操作无法撤销。"
+msgstr[0] "这将从此计算机删除所选消息。手机不会再次发送这些消息。此操作无法撤销。"
 
 #: src/ui/dialogs.rs:1123
 #, rust-format
@@ -476,8 +475,7 @@ msgid ""
 msgid_plural ""
 "Everyone in this chat will see \"This message was deleted\" in place of the "
 "selected messages. This cannot be undone."
-msgstr[0] ""
-"此聊天中的所有人将看到“此消息已删除”，替代所选消息。此操作无法撤销。"
+msgstr[0] "此聊天中的所有人将看到“此消息已删除”，替代所选消息。此操作无法撤销。"
 
 #: src/ui/dialogs.rs:1216
 msgid "Leave this channel?"

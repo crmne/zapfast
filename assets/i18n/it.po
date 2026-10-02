@@ -468,13 +468,13 @@ msgstr "Annulla"
 msgid ""
 "This removes the message from this computer. Other people keep their copy. "
 "Your phone will not send it again, so it cannot be undone."
-msgstr ""
+msgstr "Il messaggio viene rimosso da questo computer. Le altre persone mantengono la propria copia. Il telefono non lo invierà di nuovo, quindi non è possibile annullare questa operazione."
 
 #: src/ui/dialogs.rs:1121
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "Tutti in questa chat vedranno invece \"Questo messaggio è stato eliminato\". Non è possibile annullare questa operazione."
 
 #: src/ui/dialogs.rs:1122
 #, rust-format
@@ -484,12 +484,8 @@ msgid ""
 msgid_plural ""
 "This removes the selected messages from this computer. Your phone will not "
 "send them again. This cannot be undone."
-msgstr[0] ""
-"Il messaggio selezionato viene rimosso dal computer. Il telefono non lo "
-"invierà di nuovo. Questa operazione non può essere annullata."
-msgstr[1] ""
-"I messaggi selezionati vengono rimossi dal computer. Il telefono non li "
-"invierà di nuovo. Questa operazione non può essere annullata."
+msgstr[0] "Il messaggio selezionato viene rimosso dal computer. Il telefono non lo invierà di nuovo. Questa operazione non può essere annullata."
+msgstr[1] "I messaggi selezionati vengono rimossi dal computer. Il telefono non li invierà di nuovo. Questa operazione non può essere annullata."
 
 #: src/ui/dialogs.rs:1123
 #, rust-format
@@ -499,12 +495,8 @@ msgid ""
 msgid_plural ""
 "Everyone in this chat will see \"This message was deleted\" in place of the "
 "selected messages. This cannot be undone."
-msgstr[0] ""
-"Tutti in questa chat vedranno \"Questo messaggio è stato eliminato\" al "
-"posto del messaggio selezionato. Questa operazione non può essere annullata."
-msgstr[1] ""
-"Tutti in questa chat vedranno \"Questo messaggio è stato eliminato\" al "
-"posto dei messaggi selezionati. Questa operazione non può essere annullata."
+msgstr[0] "Tutti in questa chat vedranno \"Questo messaggio è stato eliminato\" al posto del messaggio selezionato. Questa operazione non può essere annullata."
+msgstr[1] "Tutti in questa chat vedranno \"Questo messaggio è stato eliminato\" al posto dei messaggi selezionati. Questa operazione non può essere annullata."
 
 #: src/ui/dialogs.rs:1216
 msgid "Leave this channel?"

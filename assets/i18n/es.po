@@ -464,13 +464,13 @@ msgstr "Cancelar"
 msgid ""
 "This removes the message from this computer. Other people keep their copy. "
 "Your phone will not send it again, so it cannot be undone."
-msgstr ""
+msgstr "Esto elimina el mensaje de este equipo. Las demás personas conservan su copia. Tu teléfono no lo enviará de nuevo, por lo que no se puede deshacer."
 
 #: src/ui/dialogs.rs:1121
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "Todos en este chat verán \"Este mensaje fue eliminado\" en su lugar. No se puede deshacer."
 
 #: src/ui/dialogs.rs:1122
 #, rust-format
@@ -480,12 +480,8 @@ msgid ""
 msgid_plural ""
 "This removes the selected messages from this computer. Your phone will not "
 "send them again. This cannot be undone."
-msgstr[0] ""
-"Esto elimina el mensaje seleccionado de este equipo. Tu teléfono no lo "
-"enviará de nuevo. No se puede deshacer."
-msgstr[1] ""
-"Esto elimina los mensajes seleccionados de este equipo. Tu teléfono no los "
-"enviará de nuevo. No se puede deshacer."
+msgstr[0] "Esto elimina el mensaje seleccionado de este equipo. Tu teléfono no lo enviará de nuevo. No se puede deshacer."
+msgstr[1] "Esto elimina los mensajes seleccionados de este equipo. Tu teléfono no los enviará de nuevo. No se puede deshacer."
 
 #: src/ui/dialogs.rs:1123
 #, rust-format
@@ -495,12 +491,8 @@ msgid ""
 msgid_plural ""
 "Everyone in this chat will see \"This message was deleted\" in place of the "
 "selected messages. This cannot be undone."
-msgstr[0] ""
-"Todos en este chat verán \"Este mensaje fue eliminado\" en lugar del mensaje "
-"seleccionado. No se puede deshacer."
-msgstr[1] ""
-"Todos en este chat verán \"Este mensaje fue eliminado\" en lugar de los "
-"mensajes seleccionados. No se puede deshacer."
+msgstr[0] "Todos en este chat verán \"Este mensaje fue eliminado\" en lugar del mensaje seleccionado. No se puede deshacer."
+msgstr[1] "Todos en este chat verán \"Este mensaje fue eliminado\" en lugar de los mensajes seleccionados. No se puede deshacer."
 
 #: src/ui/dialogs.rs:1216
 msgid "Leave this channel?"
