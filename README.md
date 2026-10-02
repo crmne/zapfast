@@ -223,11 +223,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   delivered, or read. Only your sent text can be edited, within 15 minutes of
   sending. Eligibility is checked again when submitting; the edited body is
   stored locally after WhatsApp accepts it. A rejected edit keeps its visible
-  correction, selected mentions and target, without replacing the original,
+  correction and selected mentions, without replacing the original,
   while the original message remains available. Deleting or revoking the
   original discards a queued correction.
   If you have started another draft, that draft stays first and the correction
   waits for an empty composer.
+  If the original is no longer editable, the correction becomes a normal
+  draft that you can send as a new message. It is never sent automatically.
   Replies can be text, attachments, voice messages,
   stickers, or GIFs. A reply never goes out without its quote: if the
   original is no longer available on this computer, nothing is sent, the text

@@ -2621,6 +2621,8 @@ impl App {
         self.restore_refused_edit();
     }
 
+    /// Restores an idle composer's refused correction, using a normal draft
+    /// when the original is still present but can no longer be edited.
     fn restore_refused_edit(&mut self) {
         if !self.composer.trim().is_empty()
             || self.editing.is_some()
@@ -2647,7 +2649,7 @@ impl App {
             .position(|(chat, _, _)| self.open_chat.as_ref() == Some(chat))
         {
             let (_, id, draft) = self.refused_edits.remove(index);
-            self.editing = Some(id);
+            self.editing = conversation.message(&id).filter(|message| self.can_edit(message)).map(|_| id);
             self.reply_to = None;
             self.composer_tools_open = false;
             self.composer = draft.text;
@@ -3329,6 +3331,8 @@ impl App {
         }
     }
 
+    /// Sends composer text or a valid edit. An ineligible edit returns its
+    /// correction to a normal draft without dispatching either kind of send.
     fn send_text(&mut self, chat: ChatId, text: String, quoting: Option<String>) {
         let text = text.trim().to_owned();
         if text.is_empty() {
@@ -3342,6 +3346,7 @@ impl App {
                     .and_then(|conversation| conversation.message(id))
                     .is_some_and(|message| self.can_edit(message));
             if !eligible {
+                self.editing = None;
                 self.composer = text;
                 self.toast_error(
                     crate::i18n::gettext(self.locale, "This message can no longer be edited")
@@ -6382,13 +6387,16 @@ mod tests {
             app.composer, "Correction",
             "keep the correction for copying"
         );
-        assert_eq!(app.editing.as_deref(), Some("sent"));
+        assert!(app.editing.is_none());
+        app.apply(Action::CancelEdit, &ctx);
+        assert_eq!(app.composer, "Correction", "cancel cannot discard a normal correction draft");
         app.conversations
             .get_mut("chat")
             .unwrap()
             .message_mut("sent")
             .unwrap()
             .timestamp = crate::util::now() - 60;
+        app.apply(Action::Edit("sent".into()), &ctx);
         app.send_text("chat".into(), "Correction".into(), None);
         assert!(matches!(
             commands.try_recv().unwrap(),
@@ -6544,7 +6552,7 @@ mod tests {
                 name: "Mira Example".into()
             }]
         );
-        assert_eq!(app.editing.as_deref(), Some("sent"));
+        assert!(app.editing.is_none(), "an expired correction is a normal draft");
         assert!(app.refused_edits.is_empty());
     }
 
