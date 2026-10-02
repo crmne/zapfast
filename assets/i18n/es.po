@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 00:01-0300\n"
+"POT-Creation-Date: 2026-10-02 10:25-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Spanish\n"
@@ -179,7 +179,7 @@ msgstr "Bloqueados"
 msgid "No favorites yet"
 msgstr "Aún no hay favoritos"
 
-#: src/ui/chats.rs:878 src/app.rs:1621
+#: src/ui/chats.rs:878 src/app.rs:1654
 msgid "Message yourself"
 msgstr "Envíate un mensaje"
 
@@ -1057,29 +1057,29 @@ msgstr[1] "{} pendientes"
 msgid "No one yet"
 msgstr "Nadie todavía"
 
-#: src/app.rs:1542
+#: src/app.rs:1575
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Ya existe una etiqueta llamada «{name}»."
 
-#: src/app.rs:1602
+#: src/app.rs:1635
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Tú)"
 
-#: src/app.rs:1603 src/app.rs:1622
+#: src/app.rs:1636 src/app.rs:1655
 msgid "You"
 msgstr "Tú"
 
-#: src/app.rs:2441
+#: src/app.rs:2474
 msgid "Could not use this image"
 msgstr "No se pudo usar esta imagen"
 
-#: src/app.rs:2907
+#: src/app.rs:2940
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "No enviado: ZapFast no está conectado a WhatsApp."
 
-#: src/app.rs:2911
+#: src/app.rs:2944
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1087,36 +1087,36 @@ msgstr ""
 "No enviado: el mensaje al que respondes no está disponible en este equipo. "
 "Cancela la respuesta para enviarlo sin cita."
 
-#: src/app.rs:4333
+#: src/app.rs:4366
 msgid "Added to favorites"
 msgstr "Añadido a favoritos"
 
-#: src/app.rs:4408
+#: src/app.rs:4441
 msgid "Sending the sticker pack…"
 msgstr "Enviando el paquete de stickers…"
 
-#: src/app.rs:4699 src/ui/labels.rs:237
+#: src/app.rs:4732 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Tienes {limit} etiquetas, el máximo que guarda ZapFast."
 
-#: src/app.rs:5335
+#: src/app.rs:5376
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5343
+#: src/app.rs:5384
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5456
+#: src/app.rs:5497
 msgid "This video opens in your system player"
 msgstr "Este vídeo se abre en el reproductor del sistema"
 
-#: src/app.rs:6095
+#: src/app.rs:6136
 msgid "Copied image"
 msgstr "Imagen copiada"
 
-#: src/app.rs:6098 src/app.rs:6103
+#: src/app.rs:6139 src/app.rs:6144
 msgid "Failed to copy image"
 msgstr "Error al copiar la imagen"
 
