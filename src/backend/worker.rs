@@ -4199,6 +4199,7 @@ impl Worker {
 
     // --- commands --------------------------------------------------------
 
+    /// Applies a UI or task command after checking current send permissions.
     async fn handle_command(&mut self, command: Command) {
         let destination = match &command {
             Command::SendText { chat, .. }
@@ -4212,8 +4213,9 @@ impl Worker {
             Command::Forward { to_chat, .. } => Some(to_chat),
             _ => None,
         };
-        if let Some(chat) = destination {
-            if !self.destination_writable(chat) {
+        if let Some(chat) = destination
+            && !self.destination_writable(chat)
+        {
                 let error = "This conversation is read-only in ZapFast".to_owned();
                 if matches!(&command, Command::CreatePoll { .. }) {
                     self.emit(Event::PollCreated {
@@ -4224,7 +4226,6 @@ impl Worker {
                     self.emit(Event::Error(error));
                 }
                 return;
-            }
         }
         match command {
             Command::RefreshPoll { chat, message } => self.refresh_poll(chat, message),
@@ -5905,6 +5906,7 @@ impl Worker {
         ));
     }
 
+    /// Prepares archived copies and queues each destination behind active sends.
     fn forward_messages(&mut self, from_chat: ChatId, messages: Vec<String>, to_chat: ChatId) {
         let Some(client) = self.client.clone() else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
@@ -6002,10 +6004,14 @@ impl Worker {
             if self.destination_writable(&job.0) {
                 return Some((id, job));
             }
-            let _ = self.archive.set_status(&job.0, &id, Delivery::Failed, crate::util::now());
+            let _ = self
+                .archive
+                .set_status(&job.0, &id, Delivery::Failed, crate::util::now());
             self.emit_message(&job.0, &id);
             self.emit_chat(&job.0);
-            self.emit(Event::Error("This conversation is read-only in ZapFast".to_owned()));
+            self.emit(Event::Error(
+                "This conversation is read-only in ZapFast".to_owned(),
+            ));
             completed = id;
         }
     }
@@ -11189,18 +11195,44 @@ mod receipt_tests {
             worker.archive.upsert_chat(&chat).unwrap();
             let mut queue = ForwardQueue::new();
             let payload = || (PEER.to_owned(), Jid::pn(PEER), wa::Message::default(), None);
-            queue.push(vec![("running".to_owned(), payload()), ("queued".to_owned(), payload())]).unwrap();
+            queue
+                .push(vec![
+                    ("running".to_owned(), payload()),
+                    ("queued".to_owned(), payload()),
+                ])
+                .unwrap();
             worker.forward_queue = Some(queue);
-            worker.store_message(Message { status: Delivery::Pending, ..own_message("queued", 1) }, None, None);
+            worker.store_message(
+                Message {
+                    status: Delivery::Pending,
+                    ..own_message("queued", 1)
+                },
+                None,
+                None,
+            );
             match unavailable {
                 "locked" => worker.archive.set_locked(PEER, true).unwrap(),
                 "left" => worker.archive.set_left(PEER, true).unwrap(),
-                "read-only" => worker.archive.set_group_info(PEER, None, &[], true).unwrap(),
+                "read-only" => worker
+                    .archive
+                    .set_group_info(PEER, None, &[], true)
+                    .unwrap(),
                 _ => worker.privacy_ready = false,
             }
-            assert!(worker.next_writable_forward("running").is_none(), "{unavailable}");
+            assert!(
+                worker.next_writable_forward("running").is_none(),
+                "{unavailable}"
+            );
             assert!(worker.forward_queue.is_none());
-            assert_eq!(worker.archive.message(PEER, "queued").unwrap().unwrap().status, Delivery::Failed);
+            assert_eq!(
+                worker
+                    .archive
+                    .message(PEER, "queued")
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                Delivery::Failed
+            );
         }
         let (mut worker, _events, _inbox, _wa) = worker();
         worker.privacy_ready = true;
@@ -11209,16 +11241,37 @@ mod receipt_tests {
         let chat = Chat::new(blocked.clone(), "Fixture".to_owned());
         worker.archive.upsert_chat(&chat).unwrap();
         worker.archive.set_locked(&blocked, true).unwrap();
-        queue.push(vec![
-            ("running".to_owned(), (PEER.to_owned(), Jid::pn(PEER), wa::Message::default(), None)),
-            ("blocked".to_owned(), (blocked.clone(), Jid::pn(&blocked), wa::Message::default(), None)),
-            ("allowed".to_owned(), (PEER.to_owned(), Jid::pn(PEER), wa::Message::default(), None)),
-        ]).unwrap();
+        queue
+            .push(vec![
+                (
+                    "running".to_owned(),
+                    (PEER.to_owned(), Jid::pn(PEER), wa::Message::default(), None),
+                ),
+                (
+                    "blocked".to_owned(),
+                    (
+                        blocked.clone(),
+                        Jid::pn(&blocked),
+                        wa::Message::default(),
+                        None,
+                    ),
+                ),
+                (
+                    "allowed".to_owned(),
+                    (PEER.to_owned(), Jid::pn(PEER), wa::Message::default(), None),
+                ),
+            ])
+            .unwrap();
         worker.forward_queue = Some(queue);
-        let (id, job) = worker.next_writable_forward("running").expect("the next authorized recipient");
+        let (id, job) = worker
+            .next_writable_forward("running")
+            .expect("the next authorized recipient");
         assert_eq!(id, "allowed");
         assert_eq!(job.0, PEER);
-        assert_eq!(worker.forward_queue.as_ref().unwrap().current.as_deref(), Some("allowed"));
+        assert_eq!(
+            worker.forward_queue.as_ref().unwrap().current.as_deref(),
+            Some("allowed")
+        );
     }
 
     /// A batch belongs to the session that was sending it. The proxy-change
