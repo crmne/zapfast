@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 00:01-0300\n"
+"POT-Creation-Date: 2026-10-02 10:29-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -179,7 +179,7 @@ msgstr "已锁定"
 msgid "No favorites yet"
 msgstr "还没有收藏"
 
-#: src/ui/chats.rs:878 src/app.rs:1617
+#: src/ui/chats.rs:878 src/app.rs:1650
 msgid "Message yourself"
 msgstr "给自己发消息"
 
@@ -1025,64 +1025,64 @@ msgstr[0] "剩余 {}"
 msgid "No one yet"
 msgstr "还没有人"
 
-#: src/app.rs:1538
+#: src/app.rs:1571
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "已存在名为“{name}”的标签。"
 
-#: src/app.rs:1598
+#: src/app.rs:1631
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name}（你）"
 
-#: src/app.rs:1599 src/app.rs:1618
+#: src/app.rs:1632 src/app.rs:1651
 msgid "You"
 msgstr "你"
 
-#: src/app.rs:2437
+#: src/app.rs:2470
 msgid "Could not use this image"
 msgstr "无法使用此图片"
 
-#: src/app.rs:2903
+#: src/app.rs:2936
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "未发送：ZapFast 未连接到 WhatsApp。"
 
-#: src/app.rs:2907
+#: src/app.rs:2940
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr "未发送：你要回复的消息不在这台电脑上。取消回复即可不带引用发送。"
 
-#: src/app.rs:4340
+#: src/app.rs:4373
 msgid "Added to favorites"
 msgstr "已添加到收藏"
 
-#: src/app.rs:4415
+#: src/app.rs:4448
 msgid "Sending the sticker pack…"
 msgstr "正在发送贴图包…"
 
-#: src/app.rs:4703 src/ui/labels.rs:237
+#: src/app.rs:4736 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
 
-#: src/app.rs:5339
+#: src/app.rs:5380
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5347
+#: src/app.rs:5388
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5460
+#: src/app.rs:5501
 msgid "This video opens in your system player"
 msgstr "此视频将用系统播放器打开"
 
-#: src/app.rs:5995
+#: src/app.rs:6036
 msgid "Copied image"
 msgstr "已复制图片"
 
-#: src/app.rs:5998 src/app.rs:6003
+#: src/app.rs:6039 src/app.rs:6044
 msgid "Failed to copy image"
 msgstr "复制图片失败"
 
@@ -1478,8 +1478,8 @@ msgstr ""
 msgid "After 1 hour"
 msgstr ""
 
-#: src/file_drag.rs:15
 #
+#: src/file_drag.rs:15
 msgid "Could not drag the attachment"
 msgstr "无法拖动附件"
 
