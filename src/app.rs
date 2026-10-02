@@ -1109,6 +1109,7 @@ impl App {
         // A hand-edited speed snaps to a supported one, so a speed control
         // always shows the speed that plays.
         app.settings.voice_speed = app.player.set_speed(app.settings.voice_speed);
+        app.sync_prefetch();
         app
     }
 
@@ -2368,8 +2369,23 @@ impl App {
                     }
                 }
                 Event::SyncProgress(percent) => self.sync_percent = Some(percent),
-                Event::OlderFetched { chat, more } => {
+                Event::OlderFetched { chat, more, silent } => {
                     let conversation = self.conversations.entry(chat).or_default();
+                    if silent {
+                        // A background page is not an answer to a request the
+                        // reader made: it must not clear the spinner of a
+                        // request still in flight, and it must not count
+                        // against the phone, or every successful prefetch would
+                        // look like a miss and back off the next scroll.
+                        //
+                        // It does fill the archive with older messages, so a
+                        // chat that had reached its start has not any more:
+                        // without this, scrolling up asks the phone instead of
+                        // reading what the page just filed, and the page stays
+                        // out of sight until the chat is opened again.
+                        conversation.complete = false;
+                        continue;
+                    }
                     conversation.fetching_phone = false;
                     conversation.phone_exhausted = !more;
                     conversation.phone_answered = Some(Instant::now());
@@ -3183,6 +3199,7 @@ impl App {
             self.settings.last_chat = Some(id);
             self.mark_settings_dirty();
         }
+        self.sync_prefetch();
     }
 
     /// Returns keyboard focus to the open conversation when no search or
@@ -3485,6 +3502,17 @@ impl App {
         self.settings_dirty = true;
     }
 
+    /// Tells the worker whether the background may fetch older history, and
+    /// which chat is open so it goes first. Only the open chat counts: the one
+    /// that was last open is not open any more, and asking for it first would
+    /// spend the turn on a chat nobody is reading.
+    fn sync_prefetch(&mut self) {
+        self.backend.send(Command::SetHistoryPrefetch {
+            on: self.settings.history_prefetch,
+            focused: self.open_chat.clone(),
+        });
+    }
+
     fn save_settings(&mut self) {
         self.settings_dirty = false;
         self.last_settings_save = Instant::now();
@@ -3725,6 +3753,7 @@ impl App {
                 self.reaction_target = None;
                 self.reaction_anchor = None;
                 self.emoji_jump = None;
+                self.sync_prefetch();
             }
             Action::SendText {
                 chat,
@@ -4859,6 +4888,11 @@ impl App {
                 self.settings.interface_language = choice;
                 self.locale = crate::i18n::resolve(choice);
                 self.mark_settings_dirty();
+            }
+            Action::SetHistoryPrefetch(on) => {
+                self.settings.history_prefetch = on;
+                self.mark_settings_dirty();
+                self.sync_prefetch();
             }
             Action::SetCustomTheme(filename) => {
                 if let Some(theme) = self.custom_themes.find(&filename) {
@@ -6391,6 +6425,61 @@ mod tests {
 
     /// Demo and test runs share the machine with a linked ZapFast, whose real
     /// taskbar badge they must not overwrite.
+    /// A background page is not an answer to a request the reader made.
+    /// Counting it as one would look like the phone missing, and back off the
+    /// next scroll by the miss cooldown.
+    #[test]
+    fn a_silent_page_does_not_count_against_the_phone() {
+        let mut app = app();
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let chat = "peer@s.whatsapp.net";
+        {
+            let conversation = app.conversations.entry(chat.into()).or_default();
+            conversation.fetching_phone = true;
+            conversation.phone_misses = 2;
+            conversation.complete = true;
+        }
+
+        events
+            .send(Event::OlderFetched {
+                chat: chat.into(),
+                more: true,
+                silent: true,
+            })
+            .unwrap();
+        app.handle_events();
+
+        let conversation = app.conversations.get(chat).expect("the chat");
+        assert_eq!(
+            conversation.phone_misses, 2,
+            "a background page is not a miss"
+        );
+        assert!(
+            !conversation.complete,
+            "and it sends the view back to the archive, which holds the older messages the page just filed"
+        );
+        assert!(
+            conversation.fetching_phone,
+            "a background page leaves the reader's request in flight"
+        );
+
+        // A page the reader asked for still counts, and ends the wait.
+        events
+            .send(Event::OlderFetched {
+                chat: chat.into(),
+                more: false,
+                silent: false,
+            })
+            .unwrap();
+        app.handle_events();
+        let conversation = app.conversations.get(chat).expect("the chat");
+        assert_eq!(conversation.phone_misses, 3);
+        assert!(conversation.phone_exhausted);
+        assert!(!conversation.complete);
+        assert!(!conversation.fetching_phone);
+    }
+
     #[test]
     fn demo_and_test_runs_do_not_publish_a_taskbar_badge() {
         let app = app();
@@ -8360,7 +8449,7 @@ mod tests {
                 width: None,
                 height: None,
                 path: path.map(PathBuf::from),
-                state: MediaState::Idle,
+                ..Default::default()
             },
             seconds: Some(3),
             voice_note: true,
@@ -8565,10 +8654,9 @@ mod tests {
                 media: Media {
                     mime: "image/jpeg".into(),
                     size: 100,
-                    width: None,
-                    height: None,
                     path,
                     state,
+                    ..Default::default()
                 },
             },
             ..message(chat, "picture", 1)
@@ -8622,7 +8710,7 @@ mod tests {
                 width: None,
                 height: None,
                 path: None,
-                state: MediaState::Idle,
+                ..Default::default()
             },
             seconds: Some(3),
             gif: false,
@@ -8746,7 +8834,7 @@ mod tests {
                 width: None,
                 height: None,
                 path: None,
-                state: MediaState::Idle,
+                ..Default::default()
             },
         };
         app.conversations
@@ -8808,7 +8896,7 @@ mod tests {
                 width: None,
                 height: None,
                 path: None,
-                state: MediaState::Idle,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -9261,7 +9349,7 @@ mod tests {
                 width: None,
                 height: None,
                 path: None,
-                state: MediaState::Idle,
+                ..Default::default()
             },
         };
         app.conversations

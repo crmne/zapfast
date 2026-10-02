@@ -39,6 +39,13 @@ impl Requests {
         self.queue.push_back((key, now));
     }
 
+    /// Whether a phone-history request is on its way right now. The phone
+    /// answers one at a time, so anything else that asks for history has to
+    /// wait for this one, not only for the ones the reader asked for.
+    pub fn in_flight(&self) -> bool {
+        self.active.is_some()
+    }
+
     pub fn next(&mut self, now: Instant) -> Option<Key> {
         if self.active.is_some() {
             return None;

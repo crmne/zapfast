@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:51\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -614,6 +614,17 @@ msgstr "Загружать файлы автоматически"
 #: src/ui/settings.rs:389
 msgid "Files up to 64 MiB download as they come into view."
 msgstr "Файлы до 64 МиБ загружаются, когда появляются на экране."
+
+#: src/ui/settings.rs:394
+msgid "Download older history in the background"
+msgstr "Загружать старую историю в фоне"
+
+#: src/ui/settings.rs:397
+msgid ""
+"Slowly fetch older messages, one chat every twenty seconds, so scrolling up "
+"does not hit WhatsApp's rate limit."
+msgstr "Постепенно загружает старые сообщения, по одному чату каждые двадцать се"
+"кунд, чтобы прокрутка вверх не упиралась в ограничение WhatsApp."
 
 #: src/ui/settings.rs:396
 msgid "Pause other media while recording or playing"
@@ -1525,6 +1536,13 @@ msgstr "В сети"
 msgid "New message"
 msgstr "Введите сообщение"
 
+#: src/settings.rs:80
+msgid ""
+"Fetch older history for the open chat, the pinned chats and the ten most "
+"recent ones."
+msgstr "Загружать старые сообщения для открытого чата, закреплённых чатов и деся"
+"ти последних."
+
 #: src/settings.rs:339
 msgid "After 1 minute"
 msgstr ""
@@ -1536,3 +1554,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+

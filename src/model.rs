@@ -847,7 +847,10 @@ pub(crate) const ATTACHMENT_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 
 /// Attachment metadata, download state, and optional local file. Download keys
 /// remain in the archive's raw message.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+///
+/// `Default` is here for this branch's own tests, which build a message's
+/// attachment from a couple of fields (`worker.rs`, `app.rs`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Media {
     pub mime: String,
     pub size: u64,
@@ -1607,6 +1610,7 @@ pub enum Action {
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),
     SetWallpaperDoodles(bool),
+    SetHistoryPrefetch(bool),
     /// Asks for an image to use as the chat wallpaper.
     PickWallpaperImage,
     /// Goes back to the wallpaper colour and deletes the copied image.

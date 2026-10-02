@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:51\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -606,6 +606,17 @@ msgstr "Baixar arquivos automaticamente"
 #: src/ui/settings.rs:389
 msgid "Files up to 64 MiB download as they come into view."
 msgstr "Arquivos de até 64 MiB são baixados quando aparecem na tela."
+
+#: src/ui/settings.rs:394
+msgid "Download older history in the background"
+msgstr "Baixar o histórico mais antigo em segundo plano"
+
+#: src/ui/settings.rs:397
+msgid ""
+"Slowly fetch older messages, one chat every twenty seconds, so scrolling up "
+"does not hit WhatsApp's rate limit."
+msgstr "Busca aos poucos mensagens mais antigas, uma conversa a cada vinte segun"
+"dos, para que rolar para cima não esbarre no limite do WhatsApp."
 
 #: src/ui/settings.rs:396
 msgid "Pause other media while recording or playing"
@@ -1513,6 +1524,13 @@ msgstr "Online"
 msgid "New message"
 msgstr "Digite uma mensagem"
 
+#: src/settings.rs:80
+msgid ""
+"Fetch older history for the open chat, the pinned chats and the ten most "
+"recent ones."
+msgstr "Buscar histórico anterior para a conversa aberta, as conversas fixadas e"
+" as dez mais recentes."
+
 #: src/settings.rs:339
 msgid "After 1 minute"
 msgstr ""
@@ -1524,3 +1542,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+
