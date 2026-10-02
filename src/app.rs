@@ -444,10 +444,14 @@ pub struct App {
     /// asked for again once that one is in.
     info_media_stale: bool,
     /// The thumbnails the panel has registered with egui, freed when it
-    /// closes rather than when they fall out of the resident window.
+    /// closes or a listing drops them, rather than when they fall out of
+    /// the resident window.
     pub(crate) info_textures: HashSet<String>,
     /// The texture name of each listed picture, in the listing's order.
     pub(crate) info_uris: Vec<String>,
+    /// Texture names a new listing or another chat's left out, freed on
+    /// the panel's next frame though the panel stays open.
+    pub(crate) info_released: Vec<String>,
     /// The request the panel is waiting for; an earlier one's answer is
     /// ignored.
     info_media_request: u64,
@@ -1028,6 +1032,7 @@ impl App {
             info_media_stale: false,
             info_textures: HashSet::new(),
             info_uris: Vec::new(),
+            info_released: Vec::new(),
             info_media_request: 0,
             info_media_failed: false,
             info_members: None,
@@ -2984,7 +2989,7 @@ impl App {
     /// answer on its way is for a chat the panel no longer shows.
     fn reset_info_media(&mut self) {
         self.info_media = None;
-        self.info_uris.clear();
+        self.info_released.append(&mut self.info_uris);
         self.info_media_request += 1;
         self.info_media_pending = false;
         self.info_media_stale = false;
@@ -3039,14 +3044,25 @@ impl App {
 
     /// Keeps a listing, with the texture name of each of its pictures, so
     /// the panel draws them under fixed names and frees them together when
-    /// it closes.
+    /// it closes. The pictures the last listing had and this one has not
+    /// are freed on the panel's next frame.
     pub(crate) fn set_info_media(&mut self, media: ChatMedia) {
-        self.info_uris = media
+        let uris: Vec<String> = media
             .media
             .iter()
             .map(|row| crate::ui::info::thumbnail_uri(&row.chat, &row.id))
             .collect();
-        self.info_textures.extend(self.info_uris.iter().cloned());
+        let listed: HashSet<&str> = uris.iter().map(String::as_str).collect();
+        // One dropped earlier and listed again before a frame stays.
+        self.info_released
+            .retain(|uri| !listed.contains(uri.as_str()));
+        let dropped = self
+            .info_uris
+            .drain(..)
+            .filter(|uri| !listed.contains(uri.as_str()));
+        self.info_released.extend(dropped);
+        self.info_textures.extend(uris.iter().cloned());
+        self.info_uris = uris;
         self.info_media = Some(media);
     }
 
@@ -10150,6 +10166,119 @@ mod tests {
         assert!(app.info.is_none());
         assert!(app.info_media.is_none(), "closing drops the listing");
         assert!(app.focus_composer, "and hands the keyboard back");
+    }
+
+    /// A refreshed listing frees the pictures it no longer lists, and
+    /// another chat's panel frees the rest, on the panel's next frame and
+    /// not only once the panel closes.
+    #[test]
+    fn pictures_a_listing_drops_are_freed_while_the_panel_stays() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let (ada, bob) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        app.chats.push(Chat::new(bob.into(), "Bob".into()));
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        let uri = |id| crate::ui::info::thumbnail_uri(ada, id);
+        let registered = |uri: &str| ctx.try_load_bytes(uri).is_ok();
+        let frame = |app: &mut App| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                crate::ui::info::release_thumbnails(app, ui.ctx());
+                crate::ui::info::show(app, ui);
+            });
+            output.textures_delta.clear();
+        };
+        let request = media_requests(&mut commands)[0].1;
+        events
+            .send(media_listing(request, ada, &["old", "kept"]))
+            .unwrap();
+        app.handle_events();
+        for id in ["old", "kept"] {
+            crate::image_cache::include(&ctx, &uri(id), b"picture");
+        }
+        events.send(Event::ChatMediaChanged(ada.into())).unwrap();
+        app.handle_events();
+        let request = media_requests(&mut commands)[0].1;
+        events
+            .send(media_listing(request, ada, &["kept", "new"]))
+            .unwrap();
+        app.handle_events();
+        frame(&mut app);
+        assert!(app.info_visible());
+        assert!(!registered(&uri("old")), "the dropped picture is freed");
+        assert!(registered(&uri("kept")), "a picture still listed stays");
+        // A member's panel opened over the same chat lists another chat.
+        app.apply(Action::OpenInfo(bob.into()), &ctx);
+        frame(&mut app);
+        assert!(app.info_visible());
+        assert!(!registered(&uri("kept")), "the first chat's go too");
+    }
+
+    /// A picture a listing drops and the next one lists again, before the
+    /// panel draws a frame, stays: it is not freed while it is shown.
+    #[test]
+    fn a_picture_listed_again_before_a_frame_is_not_freed() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let ada = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        let uri = crate::ui::info::thumbnail_uri(ada, "photo");
+        for listed in [&["photo"][..], &[], &["photo"]] {
+            events.send(Event::ChatMediaChanged(ada.into())).unwrap();
+            app.handle_events();
+            let request = media_requests(&mut commands)
+                .last()
+                .map(|(_, request)| *request)
+                .unwrap_or(app.info_media_request);
+            events.send(media_listing(request, ada, listed)).unwrap();
+            app.handle_events();
+        }
+        crate::image_cache::include(&ctx, &uri, b"picture");
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::ui::info::release_thumbnails(&mut app, ui.ctx());
+            crate::ui::info::show(&mut app, ui);
+        });
+        output.textures_delta.clear();
+        assert!(ctx.try_load_bytes(&uri).is_ok(), "the listed picture stays");
+    }
+
+    /// The pictures of a panel that closed are freed on the next frame even
+    /// when that frame only draws the login or lock screen.
+    #[test]
+    fn a_closed_panels_pictures_are_freed_on_the_login_screen() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let ada = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(ada.into(), "Ada".into()));
+        app.apply(Action::OpenChat(ada.into()), &ctx);
+        app.apply(Action::OpenInfo(ada.into()), &ctx);
+        let request = media_requests(&mut commands)[0].1;
+        events
+            .send(media_listing(request, ada, &["photo"]))
+            .unwrap();
+        app.handle_events();
+        let uri = crate::ui::info::thumbnail_uri(ada, "photo");
+        crate::image_cache::include(&ctx, &uri, b"picture");
+        app.apply(Action::CloseInfo, &ctx);
+        app.link = crate::backend::LinkStatus::LoggedOut;
+        assert!(!app.is_linked(), "the frame draws the login screen");
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::ui::show(&mut app, ui);
+        });
+        output.textures_delta.clear();
+        assert!(ctx.try_load_bytes(&uri).is_err(), "the picture is freed");
     }
 
     /// Closing and reopening the panel asks again; the first request's

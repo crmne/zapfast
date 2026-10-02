@@ -50,6 +50,16 @@ pub(crate) fn thumbnail_uri(chat: &str, id: &str) -> String {
     )
 }
 
+/// Frees the pictures the panel no longer lists. Called on every frame,
+/// the lock and login screens included, so a closed panel's pictures do
+/// not wait for the chats to be drawn again.
+pub fn release_thumbnails(app: &mut App, ctx: &egui::Context) {
+    for uri in std::mem::take(&mut app.info_released) {
+        app.info_textures.remove(&uri);
+        crate::image_cache::forget(ctx, &uri);
+    }
+}
+
 /// Docks the panel when there is room, before the conversation is laid out.
 /// Otherwise returns the conversation's rect for [`show_overlay`], drawn
 /// after the conversation so it lies on top.
