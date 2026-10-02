@@ -3789,7 +3789,9 @@ impl App {
             }
             Action::CloseChat => {
                 if let Some(chat) = self.open_chat.take() {
-                    if let Some(target) = self.reply_to.take().filter(|target| target.chat.is_some()) {
+                    if let Some(target) =
+                        self.reply_to.take().filter(|target| target.chat.is_some())
+                    {
                         self.private_reply_drafts.insert(chat.clone(), target);
                     } else {
                         self.private_reply_drafts.remove(&chat);
@@ -9468,9 +9470,13 @@ mod tests {
         let mut app = app();
         let ctx = egui::Context::default();
         let recipient = "15550001111@s.whatsapp.net";
-        app.chats.push(Chat::new(recipient.into(), "Recipient fixture".into()));
+        app.chats
+            .push(Chat::new(recipient.into(), "Recipient fixture".into()));
         app.open_chat(recipient.into());
-        let target = ReplyTarget { id: "original".into(), chat: Some("12345@g.us".into()) };
+        let target = ReplyTarget {
+            id: "original".into(),
+            chat: Some("12345@g.us".into()),
+        };
         app.reply_to = Some(target.clone());
         app.composer = "Private draft".into();
         app.apply(Action::CloseChat, &ctx);
