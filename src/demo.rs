@@ -2828,6 +2828,49 @@ mod tests {
         }
     }
 
+    /// A sent message moves its chat up, and the scrolled chat list follows
+    /// it back to the top.
+    #[test]
+    fn sending_a_message_scrolls_the_chat_list_back_to_the_top() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let offset = || {
+            ctx.data(|data| data.get_temp::<f32>(crate::ui::chats::list_offset_id()))
+                .expect("the chat list was drawn")
+        };
+        // Short enough that the sample chats do not all fit.
+        let render = |app: &mut App| {
+            for _ in 0..3 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 420.0),
+                    )),
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                });
+                output.textures_delta.clear();
+            }
+        };
+        let last = app.visible_chats().last().map(|chat| chat.id.clone());
+        app.scroll_chat_into_view.clone_from(&last);
+        render(&mut app);
+        assert!(offset() > 0.0, "the list starts scrolled down");
+
+        app.actions.push(crate::model::Action::SendText {
+            chat: last.expect("sample chats"),
+            text: "Fixture".into(),
+            quoting: None,
+        });
+        render(&mut app);
+        assert_eq!(offset(), 0.0, "the list is back at the top");
+    }
+
     /// A clicked notification lands on the message it announced and keeps it
     /// in view, even with the unread divider far above it.
     #[test]

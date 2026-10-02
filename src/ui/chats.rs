@@ -500,6 +500,8 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
 
 fn list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    // Taken here so a send seen while the list is hidden cannot move it later.
+    let to_top = std::mem::take(&mut app.scroll_chats_to_top);
     if app.locked_folder_open() {
         locked_list(app, ui);
         return;
@@ -551,6 +553,9 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-list")
         .auto_shrink([false, false]);
+    if to_top {
+        scroll_area = scroll_area.vertical_scroll_offset(0.0);
+    }
     let target_row = app
         .scroll_chat_into_view
         .as_ref()
@@ -1306,6 +1311,7 @@ pub fn compact_show(app: &mut App, ui: &mut egui::Ui) {
 /// The avatars: the chats the full list would show right now, under the same
 /// filter, search, archive, and locked-folder state.
 fn compact_list(app: &mut App, ui: &mut egui::Ui) {
+    let to_top = std::mem::take(&mut app.scroll_chats_to_top);
     if !app.locked_folder_open() && app.secret_code_matched() {
         // As in the full list, the secret code reveals only the way in.
         compact_locked_entry(app, ui);
@@ -1315,6 +1321,9 @@ fn compact_list(app: &mut App, ui: &mut egui::Ui) {
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-rail")
         .auto_shrink([false, false]);
+    if to_top {
+        scroll_area = scroll_area.vertical_scroll_offset(0.0);
+    }
     // Alt+Up/Down reveals the chat it opens here too.
     let target_row = app
         .scroll_chat_into_view
@@ -1752,6 +1761,57 @@ mod tests {
     }
 
     #[test]
+    fn a_sent_message_scrolls_the_chat_list_to_the_top() {
+        let (_directory, mut app, ids, ctx) = rail_app(24);
+        let frame = |app: &mut App| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 240.0))),
+                    ..Default::default()
+                },
+                |ui| list(app, ui),
+            );
+            output.textures_delta.clear();
+            ctx.data(|data| data.get_temp::<f32>(list_offset_id()))
+                .expect("chat-list offset")
+        };
+        app.scroll_chat_into_view = ids.last().cloned();
+        assert!(frame(&mut app) > 0.0, "the list starts scrolled down");
+
+        app.scroll_chats_to_top = true;
+        assert_eq!(frame(&mut app), 0.0, "the list is back at the top");
+        assert!(!app.scroll_chats_to_top, "the request was consumed");
+        assert_eq!(frame(&mut app), 0.0, "the list stays at the top");
+    }
+
+    #[test]
+    fn a_send_while_search_results_show_does_not_move_the_list_later() {
+        let (_directory, mut app, ids, ctx) = rail_app(24);
+        let frame = |app: &mut App| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 240.0))),
+                    ..Default::default()
+                },
+                |ui| list(app, ui),
+            );
+            output.textures_delta.clear();
+            ctx.data(|data| data.get_temp::<f32>(list_offset_id()))
+                .expect("chat-list offset")
+        };
+        app.scroll_chat_into_view = ids.last().cloned();
+        let scrolled = frame(&mut app);
+        assert!(scrolled > 0.0, "the list starts scrolled down");
+
+        app.search = "Chat".into();
+        app.scroll_chats_to_top = true;
+        frame(&mut app);
+        assert!(!app.scroll_chats_to_top, "the request was dropped");
+        app.search.clear();
+        assert_eq!(frame(&mut app), scrolled, "the list keeps its place");
+    }
+
+    #[test]
     fn the_collapsed_list_is_narrow_and_opens_a_chat_on_click() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _events) =
@@ -1920,6 +1980,30 @@ mod tests {
             drawn < 20,
             "a 400-point window has room for a few avatars, yet {drawn} were laid out"
         );
+    }
+
+    #[test]
+    fn a_sent_message_scrolls_the_collapsed_list_to_the_top() {
+        let (_directory, mut app, ids, ctx) = rail_app(40);
+        let laid_out = |id: &str| {
+            ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(id)))
+                .is_some()
+        };
+        app.scroll_chat_into_view = Some(ids[39].clone());
+        rail_frame(&mut app, &ctx, vec![]);
+        rail_frame(&mut app, &ctx, vec![]);
+        assert!(laid_out(&ids[39]), "the rail starts scrolled to the end");
+
+        app.scroll_chats_to_top = true;
+        // Row rects stay in memory until replaced; forget the old ones.
+        ctx.data_mut(|data| {
+            data.remove::<Rect>(compact_chat_id(&ids[0]));
+            data.remove::<Rect>(compact_chat_id(&ids[39]));
+        });
+        rail_frame(&mut app, &ctx, vec![]);
+        assert!(!app.scroll_chats_to_top, "the request was consumed");
+        assert!(laid_out(&ids[0]), "the first avatar is back on screen");
+        assert!(!laid_out(&ids[39]), "the last avatar left the screen");
     }
 
     #[test]
