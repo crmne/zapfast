@@ -5787,7 +5787,11 @@ impl App {
             (dropped, hovering)
         });
         self.dropping = hovering && self.open_chat.is_some();
-        if !dropped.is_empty() {
+        let frame = ctx.cumulative_frame_nr();
+        let drop_id = egui::Id::new("dropped-files-input-frame");
+        let already_staged = ctx.data(|data| data.get_temp::<u64>(drop_id) == Some(frame));
+        if !dropped.is_empty() && !already_staged {
+            ctx.data_mut(|data| data.insert_temp(drop_id, frame));
             self.stage_clipboard(ctx, ClipboardPaste::Files(dropped));
         }
         // Tests inject fixtures and must never read the system clipboard.
@@ -5942,7 +5946,7 @@ impl App {
             self.saw_paste_command = false;
         } else if text {
             // A menu paste has no key release to wait for.
-            self.paste_before_release = command;
+            self.paste_before_release = command || self.saw_paste_command;
         }
         if focused && !released && command {
             self.saw_paste_command = true;
@@ -6854,6 +6858,74 @@ mod tests {
         assert_eq!(app.pending.len(), 1);
         clipboard_frame(&mut app, &ctx, vec![paste_release()], true);
         assert_eq!(app.pending.len(), 2);
+    }
+
+    /// A keyboard paste remains owned until V-up even if Control went up first.
+    #[test]
+    fn a_paste_after_modifier_up_is_not_repeated_on_v_up() {
+        let (mut app, ctx) = clipboard_app();
+        assert_eq!(clipboard_frame(&mut app, &ctx, vec![], true), 0);
+        assert_eq!(
+            clipboard_frame(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                    egui::Event::Paste("fixture image URL".into()),
+                ],
+                true,
+            ),
+            1,
+        );
+        let mut release = paste_release();
+        if let egui::Event::Key { modifiers, .. } = &mut release {
+            *modifiers = egui::Modifiers::NONE;
+        }
+        assert_eq!(
+            clipboard_frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), release],
+                true,
+            ),
+            0,
+        );
+        assert_eq!(app.pending.len(), 1);
+    }
+
+    /// Replayed drop input must stage once across discarded layout passes.
+    #[test]
+    fn a_layout_retry_does_not_stage_the_same_dropped_file_twice() {
+        #[derive(Debug)]
+        struct FixtureDrop(PathBuf);
+        impl egui::DroppedFile for FixtureDrop {
+            /// Supplies a synthetic path without consulting the user's files.
+            fn path(&self) -> &std::path::Path {
+                &self.0
+            }
+            /// Drop staging needs only the path, so fixture bytes are empty.
+            fn bytes(&self) -> Result<Vec<u8>, String> {
+                Ok(Vec::new())
+            }
+        }
+        let (mut app, ctx) = clipboard_app();
+        let mut passes = 0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                dropped_files: vec![std::sync::Arc::new(FixtureDrop("fixture.png".into()))],
+                ..Default::default()
+            },
+            |ui| {
+                passes += 1;
+                app.take_drops_and_pastes(ui.ctx());
+                if passes == 1 {
+                    ui.ctx().request_discard("fixture drop relayout");
+                }
+            },
+        );
+        output.textures_delta.clear();
+        assert_eq!(passes, 2);
+        assert_eq!(app.pending.len(), 1);
     }
 
     #[test]
