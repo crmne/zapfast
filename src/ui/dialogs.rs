@@ -2147,7 +2147,8 @@ mod tests {
     #[test]
     fn chinese_delete_body_is_neutral_for_one_or_multiple_selected_messages() {
         for count in [1, 2] {
-            let body = super::deletion_body(crate::i18n::Locale::ChineseSimplified, false, Some(count));
+            let body =
+                super::deletion_body(crate::i18n::Locale::ChineseSimplified, false, Some(count));
             assert!(body.contains("手机不会再次发送所选消息"), "{body}");
             assert!(!body.contains("这些消息"), "{body}");
         }
