@@ -1536,3 +1536,13 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+
+#: src/ui/settings.rs:386
+msgid "Keep chat list position after sending"
+msgstr "Сохранять позицию списка чатов после отправки"
+
+#: src/ui/settings.rs:389
+msgid ""
+"Stay among older conversations while replying. When off, the chat list "
+"scrolls to the top."
+msgstr "Оставайтесь среди старых переписок, отвечая на сообщения. Если выключено, список чатов прокручивается вверх."

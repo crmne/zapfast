@@ -220,7 +220,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   unfinished actions are dismissed first. Sending while reading older messages
   keeps your place; use the newest-message button or End to return to the latest
   message. The chat list scrolls to the top after you send, where the chat now
-  is; under the Favorites chip the list keeps the phone's order and stays in
+  is; enable **Keep chat list position after sending** in Settings > Chats
+  to stay among older conversations while working through unanswered chats.
+  Under the Favorites chip the list keeps the phone's order and stays in
   place. Type `:name` to autocomplete an emoji without leaving the composer,
   or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,

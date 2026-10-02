@@ -2828,8 +2828,8 @@ mod tests {
         }
     }
 
-    /// A sent message moves its chat up, and the scrolled chat list follows
-    /// it back to the top.
+    /// The full frame loop follows sent chats to the top by default and keeps
+    /// the sidebar offset when the reader opts out.
     #[test]
     fn sending_a_message_scrolls_the_chat_list_back_to_the_top() {
         let mut app = app();
@@ -2857,18 +2857,26 @@ mod tests {
                 output.textures_delta.clear();
             }
         };
-        let last = app.visible_chats().last().map(|chat| chat.id.clone());
-        app.scroll_chat_into_view.clone_from(&last);
-        render(&mut app);
-        assert!(offset() > 0.0, "the list starts scrolled down");
+        for keep_position in [false, true] {
+            app.settings.keep_chat_list_position = keep_position;
+            let last = app.visible_chats().last().map(|chat| chat.id.clone());
+            app.scroll_chat_into_view.clone_from(&last);
+            render(&mut app);
+            let before = offset();
+            assert!(before > 0.0, "the list starts scrolled down");
 
-        app.actions.push(crate::model::Action::SendText {
-            chat: last.expect("sample chats"),
-            text: "Fixture".into(),
-            quoting: None,
-        });
-        render(&mut app);
-        assert_eq!(offset(), 0.0, "the list is back at the top");
+            app.actions.push(crate::model::Action::SendText {
+                chat: last.expect("sample chats"),
+                text: "Fixture".into(),
+                quoting: None,
+            });
+            render(&mut app);
+            assert_eq!(
+                offset(),
+                if keep_position { before } else { 0.0 },
+                "sending respects the chat list preference"
+            );
+        }
     }
 
     /// A clicked notification lands on the message it announced and keeps it

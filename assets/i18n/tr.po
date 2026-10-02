@@ -1533,3 +1533,13 @@ msgstr "Pencereyi kapla"
 #: src/ui/conversation.rs
 msgid "Back to the message (Esc)"
 msgstr "Mesaja geri dön (Esc)"
+
+#: src/ui/settings.rs:386
+msgid "Keep chat list position after sending"
+msgstr "Gönderdikten sonra sohbet listesinin konumunu koru"
+
+#: src/ui/settings.rs:389
+msgid ""
+"Stay among older conversations while replying. When off, the chat list "
+"scrolls to the top."
+msgstr "Yanıt verirken eski konuşmaların arasında kalın. Kapalıyken sohbet listesi en üste kayar."

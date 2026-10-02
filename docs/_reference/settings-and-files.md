@@ -57,6 +57,10 @@ name or description, in the interface language or in English.
 
 - **Enter sends**: when off, Enter adds a line and `Ctrl+Enter` (Command+Enter
   on macOS) sends.
+- **Keep chat list position after sending**: stay among older conversations
+  while working through unanswered chats. Off by default, so sending scrolls
+  the chat list to the top. Chat order and scrolling inside a conversation
+  are unchanged.
 - **Download files automatically**: files up to 64 MiB, stickers included,
   download as they come into view. When off, click one to download it.
 - **Pause other media while recording or playing**: pause music and videos in
