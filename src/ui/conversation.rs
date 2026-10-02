@@ -353,8 +353,8 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     }
                     // A narrow window shows the list or the chat, not both;
                     // this is the way back to the list.
-                    if narrow
-                        && theme::icon_button(
+                    if narrow {
+                        let back = theme::icon_button(
                             ui,
                             Icon::ArrowLeft,
                             18.0,
@@ -362,10 +362,12 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             palette.text,
                             "Back to chats",
                         )
-                        .tab_stop(Stop::Back)
-                        .clicked()
-                    {
-                        app.actions.push(Action::CloseChat);
+                        .tab_stop(Stop::Back);
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(back_button_id(), back.rect));
+                        if back.clicked() {
+                            app.actions.push(Action::CloseChat);
+                        }
                     }
                 });
             });
@@ -374,6 +376,11 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
         })
         .response
         .rect
+}
+
+/// Where a narrow window's Back was laid out, for interaction tests.
+pub(crate) fn back_button_id() -> egui::Id {
+    egui::Id::new("conversation-back")
 }
 
 /// Where the conversation header's row was laid out, for layout tests.

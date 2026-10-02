@@ -960,12 +960,10 @@ mod idle_tests {
             "the chat starts at the edge: {header:?}"
         );
 
-        // Back sits left of Search, the third control from the right.
-        let gap = ctx.global_style().spacing.item_spacing.x;
-        let back = egui::pos2(
-            header.right() - 2.0 * (30.0 + gap) - 15.0,
-            header.center().y,
-        );
+        let back = ctx
+            .data(|data| data.get_temp::<egui::Rect>(conversation::back_button_id()))
+            .expect("Back is drawn")
+            .center();
         let press = |pressed| egui::Event::PointerButton {
             pos: back,
             button: egui::PointerButton::Primary,
@@ -1135,15 +1133,12 @@ mod idle_tests {
         run(&mut app, Vec::new());
         time.set(1.0 + SLIDE_SECONDS / 2.0);
         run(&mut app, Vec::new());
-        let header = ctx
-            .data(|data| data.get_temp::<egui::Rect>(conversation::header_row_id()))
-            .expect("the conversation header is drawn");
-        let gap = ctx.global_style().spacing.item_spacing.x;
-        // Where Back ends up, and where it is drawn halfway in.
-        let landed = egui::pos2(
-            header.right() - 2.0 * (30.0 + gap) - 15.0,
-            header.center().y,
-        );
+        // Where Back ends up (its laid-out rect, which the slide only moves
+        // on screen), and where it is drawn halfway in.
+        let landed = ctx
+            .data(|data| data.get_temp::<egui::Rect>(conversation::back_button_id()))
+            .expect("Back is drawn")
+            .center();
         let eased = 1.0 - 0.5_f32.powi(3);
         let drawn = landed + egui::vec2((1.0 - eased) * 480.0, 0.0);
         assert!(!click(&mut app, landed), "not drawn there yet");
