@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 22:02-0500\n"
+"POT-Creation-Date: 2026-10-01 22:06-0500\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1532,26 +1532,26 @@ msgctxt "info tab"
 msgid "Links"
 msgstr ""
 
-#: src/ui/info.rs:1267
+#: src/ui/info.rs:1270
 msgid "Change group photo"
 msgstr ""
 
-#: src/ui/info.rs:1274
+#: src/ui/info.rs:1277
 msgid "Change photo"
 msgstr ""
 
-#: src/ui/info.rs:1275
+#: src/ui/info.rs:1278
 msgid "Remove photo"
 msgstr ""
 
-#: src/ui/info.rs:1313
+#: src/ui/info.rs:1316
 msgid "Group name"
 msgstr ""
 
-#: src/ui/info.rs:1356
+#: src/ui/info.rs:1359
 msgid "Save name (Enter)"
 msgstr ""
 
-#: src/ui/info.rs:1368
+#: src/ui/info.rs:1371
 msgid "Cancel (Escape)"
 msgstr ""

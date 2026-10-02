@@ -1236,13 +1236,16 @@ pub fn tab_label(app: &App, tab: MediaTab) -> String {
     .into_owned()
 }
 
-/// The site an address points at, without its scheme or a leading `www.`.
-pub fn domain(url: &str) -> &str {
-    let rest = url
-        .split_once("://")
-        .map_or(url, |(_, rest)| rest)
-        .trim_start_matches("www.");
-    rest.split(['/', '?', '#']).next().unwrap_or(rest)
+/// The host an address opens, without a leading `www.`. It is parsed, not
+/// sliced, so userinfo such as `bank.example@` cannot pose as the site.
+pub fn domain(url: &str) -> String {
+    let parsed = reqwest::Url::parse(url)
+        .or_else(|_| reqwest::Url::parse(&format!("https://{url}")))
+        .ok();
+    match parsed.as_ref().and_then(reqwest::Url::host_str) {
+        Some(host) => host.trim_start_matches("www.").to_owned(),
+        None => url.to_owned(),
+    }
 }
 
 /// Where the pencil that renames a group was drawn, for interaction tests.
@@ -1393,5 +1396,17 @@ mod tests {
             "rust-lang.org"
         );
         assert_eq!(domain("engine.rocks#top"), "engine.rocks");
+    }
+
+    #[test]
+    fn a_links_site_is_the_host_the_browser_opens_not_its_userinfo() {
+        assert_eq!(
+            domain("https://bank.example@attacker.example/path"),
+            "attacker.example"
+        );
+        assert_eq!(
+            domain("https://user:pass@www.attacker.example:8080/"),
+            "attacker.example"
+        );
     }
 }
