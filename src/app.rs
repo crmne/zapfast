@@ -6423,9 +6423,16 @@ mod tests {
         let mut app = app();
         app.open_chat("fixture@s.whatsapp.net".into());
         app.composer = "Caption @Mira".into();
-        app.composer_mentions.push(ComposerMention { id: "fixture-member".into(), name: "Mira".into() });
+        app.composer_mentions.push(ComposerMention {
+            id: "fixture-member".into(),
+            name: "Mira".into(),
+        });
         app.reply_to = Some("survivor".into());
-        app.conversations.entry("fixture@s.whatsapp.net".into()).or_default().messages.push(message("fixture@s.whatsapp.net", "survivor", 100));
+        app.conversations
+            .entry("fixture@s.whatsapp.net".into())
+            .or_default()
+            .messages
+            .push(message("fixture@s.whatsapp.net", "survivor", 100));
         app.stage_files(vec!["fixture.png".into()]);
         app.handle_chat_cleared("fixture@s.whatsapp.net", 0);
         assert!(app.pending.is_empty());
@@ -6443,7 +6450,10 @@ mod tests {
         let mut app = app();
         app.open_chat("fixture@s.whatsapp.net".into());
         app.composer = "Text @Mira".into();
-        app.composer_mentions.push(ComposerMention { id: "fixture-member".into(), name: "Mira".into() });
+        app.composer_mentions.push(ComposerMention {
+            id: "fixture-member".into(),
+            name: "Mira".into(),
+        });
         app.handle_chat_cleared("fixture@s.whatsapp.net", i64::MAX);
         assert_eq!(app.composer, "Text @Mira");
         assert_eq!(app.composer_mentions.len(), 1);
