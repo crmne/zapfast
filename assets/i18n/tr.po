@@ -3,8 +3,9 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
-"POT-Creation-Date: 2026-09-29 15:36+0200\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-10-02 00:01-0300\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -389,6 +390,15 @@ msgstr "Duraklat"
 msgid "Play"
 msgstr "Oynat"
 
+#: src/ui/conversation.rs
+msgid "Back to the message (Esc)"
+msgstr "Mesaja geri dön (Esc)"
+
+
+#: src/ui/conversation.rs
+msgid "Fill the window"
+msgstr "Pencereyi kapla"
+
 #: src/ui/conversation.rs:6191
 msgid "Unmute"
 msgstr "Sesi aç"
@@ -542,6 +552,18 @@ msgstr "Sistemi takip et, Omarchy renklerinizi kullanır."
 #: src/ui/settings.rs:315
 msgid "Theme"
 msgstr "Tema"
+
+#: src/ui/settings.rs
+msgid "Font"
+msgstr "Yazı tipi"
+
+#: src/ui/settings.rs
+msgid ""
+"System is your desktop's interface font. Inter looks the same on every "
+"computer."
+msgstr ""
+"Sistem, masaüstünüzün arayüz yazı tipidir. Inter ise her bilgisayarda aynı "
+"görünür."
 
 #: src/ui/settings.rs:317
 msgid "Wallpaper"
@@ -1513,23 +1535,3 @@ msgstr "15 dakika sonra"
 #: src/settings.rs:319
 msgid "After 1 hour"
 msgstr "1 saat sonra"
-
-#: src/ui/settings.rs
-msgid "Font"
-msgstr "Yazı tipi"
-
-#: src/ui/settings.rs
-msgid ""
-"System is your desktop's interface font. Inter looks the same on every "
-"computer."
-msgstr ""
-"Sistem, masaüstünüzün arayüz yazı tipidir. Inter ise her bilgisayarda aynı "
-"görünür."
-
-#: src/ui/conversation.rs
-msgid "Fill the window"
-msgstr "Pencereyi kapla"
-
-#: src/ui/conversation.rs
-msgid "Back to the message (Esc)"
-msgstr "Mesaja geri dön (Esc)"
