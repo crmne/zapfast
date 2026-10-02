@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 11:23-0300\n"
+"POT-Creation-Date: 2026-10-02 12:44-0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -370,27 +370,27 @@ msgstr ""
 msgid "Open in a map"
 msgstr ""
 
-#: src/ui/conversation.rs:6315
+#: src/ui/conversation.rs:6317
 msgid "Pause"
 msgstr ""
 
-#: src/ui/conversation.rs:6317 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6319 src/ui/settings.rs:1636
 msgid "Play"
 msgstr ""
 
-#: src/ui/conversation.rs:6344
+#: src/ui/conversation.rs:6346
 msgid "Back to the message (Esc)"
 msgstr ""
 
-#: src/ui/conversation.rs:6346
+#: src/ui/conversation.rs:6348
 msgid "Fill the window"
 msgstr ""
 
-#: src/ui/conversation.rs:6376
+#: src/ui/conversation.rs:6378
 msgid "Unmute"
 msgstr ""
 
-#: src/ui/conversation.rs:6378
+#: src/ui/conversation.rs:6380
 msgid "Mute"
 msgstr ""
 
@@ -1057,36 +1057,36 @@ msgid ""
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:4385
+#: src/app.rs:4387
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:4460
+#: src/app.rs:4462
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:4748 src/ui/labels.rs:237
+#: src/app.rs:4750 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
-#: src/app.rs:5392
+#: src/app.rs:5394
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5400
+#: src/app.rs:5402
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5513
+#: src/app.rs:5515
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/app.rs:6048
+#: src/app.rs:6050
 msgid "Copied image"
 msgstr ""
 
-#: src/app.rs:6051 src/app.rs:6056
+#: src/app.rs:6053 src/app.rs:6058
 msgid "Failed to copy image"
 msgstr ""
 
@@ -1476,14 +1476,14 @@ msgstr ""
 msgid "After 1 hour"
 msgstr ""
 
-#: src/file_drag.rs:15
+#: src/file_drag.rs:16
 msgid "Could not drag the attachment"
 msgstr ""
 
-#: src/file_drag.rs:19
+#: src/file_drag.rs:20
 msgid "The attachment is unavailable. Download it before dragging it."
 msgstr ""
 
-#: src/file_drag.rs:24
+#: src/file_drag.rs:25
 msgid "Dragging attachments out is currently available on Windows only."
 msgstr ""
