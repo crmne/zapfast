@@ -5,6 +5,25 @@ use jiff::{Timestamp, Zoned};
 
 use crate::i18n::Locale;
 
+/// Normalizes supported formatting without changing an international recipient.
+/// Accepts 7 to 15 ASCII digits, an optional leading plus, and balanced brackets.
+pub fn international_phone(input: &str) -> Option<String> {
+    let input = input.trim();
+    let input = input.strip_prefix('+').unwrap_or(input);
+    let mut digits = String::new();
+    let mut bracket = false;
+    for character in input.chars() {
+        match character {
+            '0'..='9' => digits.push(character),
+            ' ' | '-' => {}
+            '(' if !bracket => bracket = true,
+            ')' if bracket => bracket = false,
+            _ => return None,
+        }
+    }
+    (!bracket && (7..=15).contains(&digits.len()) && !digits.starts_with('0')).then_some(digits)
+}
+
 /// File-loader identifier for a native path. egui requires a slash after
 /// `file://` on Windows or it interprets a drive path as a UNC hostname.
 /// Keep native characters: egui's loader does not percent-decode URLs.
@@ -959,5 +978,27 @@ mod tests {
     fn both_marks_render() {
         assert!(render_mark(MARK, 128).is_some());
         assert!(render_mark(SMALL_MARK, 22).is_some());
+    }
+}
+
+#[cfg(test)]
+mod international_phone_tests {
+    #[test]
+    fn supported_formatting_never_swallows_extra_recipient_digits() {
+        for input in ["+1 (555) 123-4567", "15551234567", "  +55 11 99999-9999  "] {
+            assert!(super::international_phone(input).is_some(), "{input}");
+        }
+        for input in [
+            "+1 (555) 123-4567 ext. 89",
+            "05512345678",
+            "1234567890123456",
+            "123456",
+            "++15551234567",
+            "1+5551234567",
+            "+1 (555 1234567",
+            "١٥٥٥١٢٣٤٥٦٧",
+        ] {
+            assert!(super::international_phone(input).is_none(), "{input}");
+        }
     }
 }

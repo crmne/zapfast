@@ -27,7 +27,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmUnlink => 380.0,
                 Dialog::ConfirmLeaveGroup(_) => 380.0,
                 Dialog::PairWithPhone => 380.0,
-                Dialog::NewContact => 380.0,
+                Dialog::NewContact | Dialog::MessageNumber => 380.0,
                 Dialog::NewChat => 420.0,
                 Dialog::UnlockLockedChats | Dialog::ConfirmLockChat(_) => 380.0,
                 Dialog::ChatInfo(_) => 360.0,
@@ -65,6 +65,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmLeaveGroup(id) => confirm_leave_group(app, ui, &id),
                 Dialog::PairWithPhone => pair_with_phone(app, ui),
                 Dialog::NewContact => new_contact(app, ui),
+                Dialog::MessageNumber => message_number(app, ui),
                 Dialog::NewChat => new_chat(app, ui),
                 Dialog::UnlockLockedChats => unlock_locked_chats(app, ui),
                 Dialog::ConfirmLockChat(id) => confirm_lock_chat(app, ui, &id),
@@ -383,6 +384,17 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     title(ui, app, "New chat");
     // "Message yourself" heads the contact list below, as on the phone.
     ui.horizontal_wrapped(|ui| {
+        if theme::soft_button(
+            ui,
+            &palette,
+            Some(Icon::MessageCircle),
+            &crate::i18n::gettext(app.locale, "Message a number"),
+            false,
+        )
+        .clicked()
+        {
+            app.actions.push(Action::ShowDialog(Dialog::MessageNumber));
+        }
         if theme::soft_button(ui, &palette, Some(Icon::Plus), "Add contact", false).clicked() {
             app.actions.push(Action::ShowDialog(Dialog::NewContact));
         }
@@ -448,6 +460,79 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
                 });
             }
         });
+}
+
+fn message_number(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    title(
+        ui,
+        app,
+        &crate::i18n::gettext(app.locale, "Message a number"),
+    );
+    theme::paragraph(
+        ui,
+        crate::i18n::gettext(
+            app.locale,
+            "Enter a phone number with its country code. You do not need to save it as a contact.",
+        ),
+        theme::regular(13.0),
+        palette.secondary,
+    );
+    let id = egui::Id::new("message-number-phone");
+    let focused = ui.memory(|memory| memory.has_focus(id));
+    let submitted =
+        focused && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let field = ui.add_enabled(
+        !app.new_contact_pending,
+        egui::TextEdit::singleline(&mut app.new_contact_phone)
+            .id(id)
+            .hint_text("+15551234567")
+            .desired_width(f32::INFINITY),
+    );
+    if ui.memory(|memory| memory.focused().is_none()) {
+        field.request_focus();
+    }
+    let digits = crate::util::international_phone(&app.new_contact_phone);
+    let ready = digits.is_some() && !app.new_contact_pending;
+    if app.new_contact_pending {
+        theme::text(
+            ui,
+            crate::i18n::gettext(app.locale, "Checking the number…"),
+            theme::regular(12.5),
+            palette.secondary,
+        );
+    }
+    ui.horizontal(|ui| {
+        let message = ui
+            .add_enabled_ui(ready, |ui| {
+                theme::pill_button(
+                    ui,
+                    &palette,
+                    &crate::i18n::gettext(app.locale, "Message"),
+                    true,
+                )
+            })
+            .inner
+            .clicked();
+        if ready && (submitted || message) {
+            app.actions.push(Action::NewContact {
+                phone: digits.expect("validated number"),
+                first: String::new(),
+                last: String::new(),
+                to_phone: None,
+            });
+        }
+        if theme::pill_button(
+            ui,
+            &palette,
+            &crate::i18n::gettext(app.locale, "Cancel"),
+            false,
+        )
+        .clicked()
+        {
+            app.actions.push(Action::CloseDialog);
+        }
+    });
 }
 
 fn forward(app: &mut App, ui: &mut egui::Ui, from_chat: &str, messages: &[String]) {

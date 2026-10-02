@@ -4835,27 +4835,38 @@ impl Worker {
                 self.emit_chat(&id);
             }
             Command::NewContact {
+                request,
                 phone,
                 full_name,
                 first_name,
                 to_phone,
             } => {
+                let Some(phone) = crate::util::international_phone(&phone) else {
+                    self.emit(Event::ContactFailed {
+                        request,
+                        error: "Enter a valid international phone number".to_owned(),
+                    });
+                    return;
+                };
                 let Some(client) = self.client.clone() else {
-                    self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+                    self.emit(Event::ContactFailed {
+                        request,
+                        error: "Not connected to WhatsApp".to_owned(),
+                    });
                     return;
                 };
                 let commands = self.commands.clone();
                 let jid = Jid::pn(&phone);
                 tokio::spawn(async move {
                     // Use WhatsApp's registration check before opening the chat.
-                    let registered = match client.contacts().is_on_whatsapp(&[jid]).await {
-                        Ok(results) => results.iter().any(|result| result.is_registered),
-                        Err(error) => {
-                            log::debug!("number check failed, trusting the number: {error}");
-                            true
-                        }
-                    };
+                    let registered = client
+                        .contacts()
+                        .is_on_whatsapp(&[jid])
+                        .await
+                        .map(|results| results.iter().any(|result| result.is_registered))
+                        .map_err(|_| "Could not check the number. Please try again.".to_owned());
                     let _ = commands.send(Command::ContactChecked {
+                        request,
                         phone,
                         full_name,
                         first_name,
@@ -4865,18 +4876,26 @@ impl Worker {
                 });
             }
             Command::ContactChecked {
+                request,
                 phone,
                 full_name,
                 first_name,
                 to_phone,
                 registered,
             } => {
-                if !registered {
-                    self.emit(Event::Error(format!(
-                        "{} is not on WhatsApp",
-                        crate::util::phone(&phone)
-                    )));
-                    return;
+                match registered {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.emit(Event::ContactFailed {
+                            request,
+                            error: "This number is not on WhatsApp".to_owned(),
+                        });
+                        return;
+                    }
+                    Err(error) => {
+                        self.emit(Event::ContactFailed { request, error });
+                        return;
+                    }
                 }
                 let id = format!("{phone}@s.whatsapp.net");
                 if let Some(full_name) = full_name.clone() {
@@ -4888,6 +4907,7 @@ impl Worker {
                     });
                 }
                 self.emit(Event::ContactReady {
+                    request,
                     id,
                     name: full_name,
                 });
@@ -8859,6 +8879,49 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[tokio::test]
+    async fn failed_number_check_never_saves_a_contact_or_opens_a_chat() {
+        let (mut worker, events, mut commands, _) = super::receipt_tests::worker();
+        worker
+            .handle_command(Command::ContactChecked {
+                request: 42,
+                phone: "15550000001".into(),
+                full_name: Some("Fixture".into()),
+                first_name: None,
+                to_phone: true,
+                registered: Err("Synthetic network failure".into()),
+            })
+            .await;
+        assert!(commands.try_recv().is_err());
+        let failures: Vec<_> = events.try_iter().collect();
+        assert!(matches!(
+            failures.as_slice(),
+            [Event::ContactFailed { request: 42, .. }]
+        ));
+        assert!(
+            worker
+                .archive
+                .contact("15550000001@s.whatsapp.net")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_numbers_are_refused_before_contact_lookup() {
+        let (mut worker, events, _, _) = super::receipt_tests::worker();
+        worker
+            .handle_command(Command::NewContact {
+                request: 42,
+                phone: "+1 (555) 123-4567 ext. 89".into(),
+                full_name: None,
+                first_name: None,
+                to_phone: false,
+            })
+            .await;
+        assert!(events.try_iter().any(|event| matches!(event, Event::ContactFailed { request: 42, error } if error == "Enter a valid international phone number")));
+    }
 
     #[test]
     fn only_phone_playable_audio_is_sent_as_an_audio_message() {
