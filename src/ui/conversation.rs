@@ -3999,17 +3999,25 @@ fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> 
 }
 
 fn selection_can_revoke(messages: &[Message], selected: &[String], now: i64) -> bool {
-    !selected.is_empty()
-        && selected.iter().all(|id| {
-            messages
-                .iter()
-                .find(|message| &message.id == id)
-                .is_some_and(|message| {
-                    message.from_me
-                        && !matches!(message.content, Content::Revoked)
-                        && now - message.timestamp <= crate::app::REVOKE_WINDOW.as_secs() as i64
-                })
-        })
+    if selected.is_empty() {
+        return false;
+    }
+    let mut remaining: std::collections::HashSet<&str> =
+        selected.iter().map(String::as_str).collect();
+    for message in messages {
+        if remaining.remove(message.id.as_str()) {
+            if !message.from_me
+                || matches!(message.content, Content::Revoked)
+                || now - message.timestamp > crate::app::REVOKE_WINDOW.as_secs() as i64
+            {
+                return false;
+            }
+            if remaining.is_empty() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn selection_menu(
