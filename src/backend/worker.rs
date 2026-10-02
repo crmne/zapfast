@@ -6975,9 +6975,13 @@ impl Worker {
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let error = with_edit_deadline(EDIT_TIMEOUT, async {
-                client.edit_message(jid, id.clone(), message)
-                    .await.map(|_| ()).map_err(|error| error.to_string())
-            }).await;
+                client
+                    .edit_message(jid, id.clone(), message)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+            .await;
             let _ = commands.send(Command::EditedText {
                 chat,
                 id,
@@ -9217,26 +9221,61 @@ mod tests {
     /// later accepted edit remains the saved correction, without automatic retry.
     #[tokio::test]
     async fn an_edit_deadline_releases_a_later_accepted_correction() {
+        use super::receipt_tests::{PEER, own_message, worker};
         let (mut worker, _events, _inbox, _wa) = worker();
         let row = own_message("deadline", 1);
         worker.store_message(row.clone(), None, None);
         let first = worker.begin_edit(PEER, &row.id);
         let second = worker.begin_edit(PEER, &row.id);
         let request = |text: &str| EditRequest {
-            text: text.to_owned(), mentions: Vec::new(),
-            draft: EditDraft { text: text.to_owned(), mentions: Vec::new() },
+            text: text.to_owned(),
+            mentions: Vec::new(),
+            draft: EditDraft {
+                text: text.to_owned(),
+                mentions: Vec::new(),
+            },
         };
         let version = |generation| EditVersion {
-            generation, content: row.content.clone(), edited: row.edited,
+            generation,
+            content: row.content.clone(),
+            edited: row.edited,
         };
-        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Accepted"), None, version(second));
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Accepted"),
+            None,
+            version(second),
+        );
         assert!(!worker.pending_edits.is_empty());
         let error = with_edit_deadline(Duration::from_millis(1), std::future::pending()).await;
-        assert!(error.as_ref().is_some_and(|error| error.contains("timed out")));
-        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Earlier"), error, version(first));
+        assert!(
+            error
+                .as_ref()
+                .is_some_and(|error| error.contains("timed out"))
+        );
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Earlier"),
+            error,
+            version(first),
+        );
         assert!(worker.pending_edits.is_empty());
-        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, Content::text("Accepted"));
-        assert!(with_edit_deadline(Duration::from_millis(10), async { Ok(()) }).await.is_none());
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::text("Accepted")
+        );
+        assert!(
+            with_edit_deadline(Duration::from_millis(10), async { Ok(()) })
+                .await
+                .is_none()
+        );
     }
 
     #[test]
