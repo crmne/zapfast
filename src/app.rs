@@ -6361,7 +6361,11 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(saved_caption.as_deref(), Some(""), "sent caption is removed from storage");
+        assert_eq!(
+            saved_caption.as_deref(),
+            Some(""),
+            "sent caption is removed from storage"
+        );
         assert!(!app.drafts.contains_key(&first));
         assert!(matches!(sends.as_slice(), [
             Command::SendImage { chat: a, caption: Some(caption), quoting: Some(quote), rgba: one, .. },
@@ -9302,9 +9306,10 @@ mod tests {
         assert!(matches!(
             sent.as_slice(),
             [
+                Command::SaveDraft { chat: draft_chat, text: draft_text },
                 Command::SendImage { quoting: Some(id), caption: Some(_), .. },
                 Command::SendFiles { quoting: None, caption: None, .. },
-            ] if id == "original"
+            ] if id == "original" && draft_chat == chat && draft_text.is_empty()
         ));
         assert!(app.reply_to.is_none());
         assert!(app.pending.is_empty());
