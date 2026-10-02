@@ -462,6 +462,8 @@ pub struct App {
     pub dropping: bool,
     /// A text paste already handled the clipboard before the shortcut release.
     paste_before_release: bool,
+    /// Last observed command state, distinguishing a new shortcut from V-up.
+    paste_command_down: bool,
     /// A V press delivered to us, unlike the press swallowed by native paste.
     ordinary_v_down: bool,
     saw_paste_command: bool,
@@ -1023,6 +1025,7 @@ impl App {
             avatar_full_requests: HashSet::new(),
             dropping: false,
             paste_before_release: false,
+            paste_command_down: false,
             ordinary_v_down: false,
             saw_paste_command: false,
             paste_was_focused: false,
@@ -1394,6 +1397,7 @@ impl App {
         self.zoom_applied = false;
         self.window_hidden = false;
         self.paste_before_release = false;
+        self.paste_command_down = false;
         self.ordinary_v_down = false;
         self.saw_paste_command = false;
         self.paste_was_focused = false;
@@ -5919,6 +5923,12 @@ impl App {
                 input.modifiers.command,
             )
         });
+        if command && !self.paste_command_down {
+            // A new command press starts another shortcut, including after a
+            // menu paste that had no V release.
+            self.paste_before_release = false;
+        }
+        self.paste_command_down = command && focused;
         let requested =
             paste && (text || self.paste_was_focused) && (text || !self.paste_before_release);
         self.paste_was_focused = focused;
@@ -6885,7 +6895,10 @@ mod tests {
             clipboard_frame(
                 &mut app,
                 &ctx,
-                vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), release],
+                vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                    release
+                ],
                 true,
             ),
             0,
