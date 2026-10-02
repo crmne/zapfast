@@ -580,6 +580,7 @@ pub enum Command {
     RevokeFinished {
         chat: ChatId,
         id: String,
+        token: u64,
         error: Option<String>,
     },
     /// Internal send result.

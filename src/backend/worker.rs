@@ -496,6 +496,8 @@ pub async fn run(
         group_info_requested: HashSet::new(),
         leave_generation: HashMap::new(),
         subject_generation: HashMap::new(),
+        revoke_sequence: 0,
+        pending_revokes: HashMap::new(),
         group_info_queue: std::collections::VecDeque::new(),
         group_info_tries: HashMap::new(),
         group_info_retry: Vec::new(),
@@ -760,6 +762,8 @@ struct Worker {
     /// Bumped whenever a rename made here is confirmed, for the same reason:
     /// metadata asked for before it must not bring the old subject back.
     subject_generation: HashMap<String, u64>,
+    revoke_sequence: u64,
+    pending_revokes: HashMap<(ChatId, String), u64>,
     group_info_tries: HashMap<String, u32>,
     /// Next retry time for failed group metadata requests.
     group_info_retry: Vec<(Instant, String)>,
@@ -2607,6 +2611,7 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        self.invalidate_revokes();
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
         self.stop_bot().await;
         if let Err(error) = self.archive.clear() {
@@ -5439,7 +5444,7 @@ impl Worker {
             Command::GroupInfoFailed { chat, permanent } => {
                 self.handle_failed_group(chat, permanent);
             }
-            Command::RevokeFinished { chat, id, error } => self.finish_revoke(chat, id, error),
+            Command::RevokeFinished { chat, id, token, error } => self.finish_revoke(chat, id, token, error),
             Command::Sent { chat, id, error } => {
                 let completed = self.interactive_sending.iter().find_map(
                     |((pending_chat, source), pending_id)| {
@@ -6873,12 +6878,28 @@ impl Worker {
         });
     }
 
+    /// Starts one operation per message, with a token that is never reused
+    /// across logout or retry. Duplicate requests wait for the active operation.
+    fn begin_revoke(&mut self, chat: &str, id: &str) -> Option<u64> {
+        let std::collections::hash_map::Entry::Vacant(entry) =
+            self.pending_revokes.entry((chat.to_owned(), id.to_owned())) else { return None; };
+        self.revoke_sequence = self.revoke_sequence.checked_add(1).expect("revoke token exhausted");
+        entry.insert(self.revoke_sequence);
+        Some(self.revoke_sequence)
+    }
+
+    /// Invalidates completions before logout can clear or replace the archive.
+    fn invalidate_revokes(&mut self) {
+        self.pending_revokes.clear();
+    }
+
     /// Keeps the original content until WhatsApp accepts its deletion.
     fn revoke(&mut self, chat: ChatId, id: String) {
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
+        let Some(token) = self.begin_revoke(&chat, &id) else { return; };
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let error = client
@@ -6886,13 +6907,16 @@ impl Worker {
                 .await
                 .err()
                 .map(|error| error.to_string());
-            let _ = commands.send(Command::RevokeFinished { chat, id, error });
+            let _ = commands.send(Command::RevokeFinished { chat, id, token, error });
         });
     }
 
     /// Applies each accepted deletion independently; refused batch members
     /// remain visible with their original content and can be retried.
-    fn finish_revoke(&mut self, chat: ChatId, id: String, error: Option<String>) {
+    fn finish_revoke(&mut self, chat: ChatId, id: String, token: u64, error: Option<String>) {
+        let key = (chat.clone(), id.clone());
+        if self.pending_revokes.get(&key) != Some(&token) { return; }
+        self.pending_revokes.remove(&key);
         if let Some(error) = error {
             self.emit_message(&chat, &id);
             self.emit(Event::Error(format!(
@@ -11138,6 +11162,34 @@ mod receipt_tests {
         assert_eq!(worker.group_info_tries.get("busy@g.us"), Some(&1));
     }
 
+    /// Stale operations cannot mutate a new session or consume its pending
+    /// token. Duplicate attempts are suppressed until the active result arrives.
+    #[test]
+    fn revoke_completions_are_bound_to_the_active_operation_and_session() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        let row = own_message("revoke-token", 1);
+        worker.store_message(row.clone(), None, None);
+        let old = worker.begin_revoke(PEER, &row.id).unwrap();
+        assert!(worker.begin_revoke(PEER, &row.id).is_none());
+        worker.invalidate_revokes();
+        worker.archive.clear().unwrap();
+        worker.store_message(row.clone(), None, None);
+        let current = worker.begin_revoke(PEER, &row.id).unwrap();
+        assert_ne!(old, current);
+        let _ = events.try_iter().count();
+        worker.finish_revoke(PEER.to_owned(), row.id.clone(), old, None);
+        worker.finish_revoke(PEER.to_owned(), row.id.clone(), old, Some("Old refusal".to_owned()));
+        assert!(events.try_recv().is_err());
+        assert_eq!(worker.pending_revokes.get(&(PEER.to_owned(), row.id.clone())), Some(&current));
+        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, row.content);
+        worker.finish_revoke(PEER.to_owned(), row.id.clone(), current, Some("Current refusal".to_owned()));
+        let retry = worker.begin_revoke(PEER, &row.id).unwrap();
+        worker.finish_revoke(PEER.to_owned(), row.id.clone(), current, None);
+        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, row.content);
+        worker.finish_revoke(PEER.to_owned(), row.id.clone(), retry, None);
+        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, Content::Revoked);
+    }
+
     /// A partial batch only replaces accepted messages with tombstones, even
     /// if a failed completion arrives after a phone-delivered revocation.
     #[test]
@@ -11147,10 +11199,13 @@ mod receipt_tests {
         let refused = own_message("refused", 1);
         worker.store_message(accepted.clone(), None, None);
         worker.store_message(refused.clone(), None, None);
-        worker.finish_revoke(PEER.to_owned(), accepted.id.clone(), None);
+        let accepted_token = worker.begin_revoke(PEER, &accepted.id).unwrap();
+        let refused_token = worker.begin_revoke(PEER, &refused.id).unwrap();
+        worker.finish_revoke(PEER.to_owned(), accepted.id.clone(), accepted_token, None);
         worker.finish_revoke(
             PEER.to_owned(),
             refused.id.clone(),
+            refused_token,
             Some("Fixture refusal".to_owned()),
         );
         assert_eq!(
@@ -11180,9 +11235,11 @@ mod receipt_tests {
             .archive
             .set_content(PEER, &refused.id, &Content::Revoked, false)
             .unwrap();
+        let retry = worker.begin_revoke(PEER, &refused.id).unwrap();
         worker.finish_revoke(
             PEER.to_owned(),
             refused.id.clone(),
+            retry,
             Some("Late refusal".to_owned()),
         );
         assert_eq!(
@@ -11340,6 +11397,8 @@ mod receipt_tests {
             group_info_requested: HashSet::new(),
             leave_generation: HashMap::new(),
             subject_generation: HashMap::new(),
+        revoke_sequence: 0,
+        pending_revokes: HashMap::new(),
             group_info_queue: std::collections::VecDeque::new(),
             group_info_tries: HashMap::new(),
             group_info_retry: Vec::new(),
