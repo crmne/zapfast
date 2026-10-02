@@ -2619,9 +2619,20 @@ impl App {
     }
 
     fn restore_refused_edit(&mut self) {
-        if !self.composer.trim().is_empty() || self.editing.is_some() || !self.pending.is_empty() {
+        if !self.composer.trim().is_empty()
+            || self.editing.is_some()
+            || self.reply_to.is_some()
+            || !self.pending.is_empty()
+        {
             return;
         }
+        let Some(chat) = self.open_chat.as_ref() else { return };
+        let Some(conversation) = self.conversations.get(chat) else { return };
+        self.refused_edits.retain(|(target_chat, id, _)| {
+            target_chat != chat || conversation.message(id).is_some_and(|message| {
+                message.from_me && matches!(message.content, Content::Text { .. })
+            })
+        });
         if let Some(index) = self
             .refused_edits
             .iter()
@@ -6482,6 +6493,9 @@ mod tests {
     fn worker_refusal_restores_an_expired_edit_without_overwriting_a_new_draft() {
         let mut app = app();
         app.open_chat = Some("fixture".into());
+        let mut original = message("fixture", "sent", 0);
+        original.from_me = true;
+        app.conversations.entry("fixture".into()).or_default().messages.push(original);
         let (backend, _commands, events) = Backend::recording_with_events();
         app.backend = backend;
         events
@@ -6503,6 +6517,12 @@ mod tests {
         assert_eq!(app.composer, "New draft");
         assert_eq!(app.refused_edits.len(), 1);
         app.composer.clear();
+        app.reply_to = Some("another-reply".into());
+        app.restore_refused_edit();
+        assert!(app.composer.is_empty());
+        assert_eq!(app.reply_to.as_deref(), Some("another-reply"));
+        assert_eq!(app.refused_edits.len(), 1);
+        app.reply_to = None;
         app.restore_refused_edit();
         assert_eq!(app.composer, "Correction @Mira Example");
         assert_eq!(
@@ -6514,6 +6534,28 @@ mod tests {
         );
         assert_eq!(app.editing.as_deref(), Some("sent"));
         assert!(app.refused_edits.is_empty());
+    }
+
+    #[test]
+    fn refused_edits_do_not_restore_revoked_or_deleted_targets() {
+        for revoked in [false, true] {
+            let mut app = app();
+            app.open_chat = Some("fixture".into());
+            let conversation = app.conversations.entry("fixture".into()).or_default();
+            if revoked {
+                let mut original = message("fixture", "sent", 0);
+                original.from_me = true;
+                original.content = Content::Revoked;
+                conversation.messages.push(original);
+            }
+            app.refused_edits.push(("fixture".into(), "sent".into(), EditDraft {
+                text: "Correction".into(), mentions: vec![],
+            }));
+            app.restore_refused_edit();
+            assert!(app.editing.is_none());
+            assert!(app.composer.is_empty());
+            assert!(app.refused_edits.is_empty());
+        }
     }
 
     /// egui redoes a discarded pass without the frame's input events. However
