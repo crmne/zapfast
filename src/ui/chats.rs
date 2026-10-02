@@ -1365,6 +1365,10 @@ fn compact_list(app: &mut App, ui: &mut egui::Ui) {
     });
     app.scroll_route
         .place(crate::app::ScrollPane::Chats, output.inner_rect);
+    #[cfg(test)]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(list_offset_id().with("compact"), output.state.offset.y);
+    });
 }
 
 /// The collapsed form of the entry the secret code reveals.
@@ -1980,6 +1984,48 @@ mod tests {
             drawn < 20,
             "a 400-point window has room for a few avatars, yet {drawn} were laid out"
         );
+    }
+
+    /// A backlog reply keeps the collapsed sidebar scrolled down even when
+    /// normal activity ordering moves the recipient to the top.
+    #[test]
+    fn sending_with_keep_position_leaves_the_collapsed_list_scrolled_down() {
+        let (_directory, mut app, ids, ctx) = rail_app(40);
+        let (backend, mut commands) = crate::backend::Backend::recording();
+        app.backend = backend;
+        app.open_chat = Some(ids[30].clone());
+        app.settings.keep_chat_list_position = true;
+        app.scroll_chat_into_view = Some(ids[30].clone());
+        rail_frame(&mut app, &ctx, vec![]);
+        rail_frame(&mut app, &ctx, vec![]);
+        let offset = || {
+            ctx.data(|data| data.get_temp::<f32>(list_offset_id().with("compact")))
+                .expect("the collapsed list was drawn")
+        };
+        let before = offset();
+        assert!(before > 0.0);
+        app.actions.push(Action::SendText {
+            chat: ids[30].clone(),
+            text: "Backlog reply fixture".into(),
+            quoting: None,
+        });
+        app.background_frame(&ctx);
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                command,
+                crate::backend::Command::SendText { chat, .. } if chat == ids[30]
+            ))
+        );
+        // Normal activity ordering still moves the replied-to chat up.
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == ids[30])
+            .unwrap()
+            .last_activity = 20_000;
+        rail_frame(&mut app, &ctx, vec![]);
+        rail_frame(&mut app, &ctx, vec![]);
+        assert_eq!(offset(), before, "sending keeps the sidebar offset");
+        assert_eq!(app.visible_chats()[0].id, ids[30]);
     }
 
     #[test]
