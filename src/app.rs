@@ -3977,11 +3977,7 @@ impl App {
             Action::ToggleForwardRecipient(id) => {
                 if matches!(self.dialog, Some(Dialog::Forward { .. }))
                     && !self.forward_reviewing
-                    && self.chat(&id).is_some_and(|chat| {
-                        chat.kind != crate::model::ChatKind::Broadcast
-                            && !chat.read_only
-                            && !chat.locked
-                    })
+                    && self.chat(&id).is_some_and(|chat| chat.can_send())
                 {
                     if self.forward_recipients.contains(&id) {
                         self.forward_recipients.retain(|recipient| recipient != &id);
@@ -4013,11 +4009,7 @@ impl App {
                 let writable: std::collections::HashSet<_> = self
                     .chats
                     .iter()
-                    .filter(|chat| {
-                        chat.kind != crate::model::ChatKind::Broadcast
-                            && !chat.read_only
-                            && !chat.locked
-                    })
+                    .filter(|chat| chat.can_send())
                     .map(|chat| chat.id.clone())
                     .collect();
                 let count = self.forward_recipients.len();
@@ -6400,6 +6392,7 @@ mod tests {
 
     #[test]
     fn forwarding_rechecks_destinations_before_sending() {
+        for left in [false, true] {
         let mut app = app();
         app.locale = crate::i18n::Locale::PortugueseBrazil;
         let (backend, mut commands) = Backend::recording();
@@ -6417,11 +6410,12 @@ mod tests {
         app.apply(Action::ToggleForwardRecipient("target".into()), &ctx);
         app.apply(Action::ToggleForwardRecipient("valid".into()), &ctx);
         app.apply(Action::ReviewForward, &ctx);
-        app.chats
+        let target = app.chats
             .iter_mut()
             .find(|chat| chat.id == "target")
-            .unwrap()
-            .locked = true;
+            .unwrap();
+        target.left = left;
+        target.locked = !left;
         app.apply(Action::ConfirmForward, &ctx);
         assert!(commands.try_recv().is_err());
         assert!(app.dialog.is_some());
@@ -6435,6 +6429,21 @@ mod tests {
         assert!(commands.try_recv().is_err());
         assert!(app.toasts.iter().any(|toast| toast.message
             == "Não é mais possível enviar mensagens para uma das conversas selecionadas"));
+        }
+    }
+
+    #[test]
+    fn forwarding_cannot_select_a_left_chat() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let mut target = Chat::new("left".into(), "Left".into());
+        target.left = true;
+        app.chats.push(target);
+        app.apply(Action::ShowDialog(Dialog::Forward {
+            chat: "source".into(), messages: vec!["m".into()],
+        }), &ctx);
+        app.apply(Action::ToggleForwardRecipient("left".into()), &ctx);
+        assert!(app.forward_recipients.is_empty());
     }
 
     /// egui redoes a discarded pass without the frame's input events. However

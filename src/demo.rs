@@ -4365,6 +4365,7 @@ mod tests {
     fn forward_row_and_checkbox_clicks_select_without_sending() {
         for light in [false, true] {
             let mut app = app();
+            app.backend.record_demo_commands();
             let ctx = egui::Context::default();
             ctx.enable_accesskit();
             app.attach(&ctx);

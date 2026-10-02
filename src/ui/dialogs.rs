@@ -663,7 +663,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
 }
 
 fn forwardable(chat: &crate::model::Chat) -> bool {
-    chat.kind != crate::model::ChatKind::Broadcast && !chat.read_only && !chat.locked
+    chat.can_send()
 }
 
 fn title(ui: &mut egui::Ui, app: &mut App, label: &str) {
