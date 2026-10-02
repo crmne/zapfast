@@ -855,6 +855,7 @@ mod tests {
             (Locale::Spanish, "Ayer (29 de septiembre)"),
             (Locale::Russian, "Вчера (29 сентября)"),
             (Locale::ChineseSimplified, "昨天（9月29日）"),
+            (Locale::Turkish, "Dün (29 Eylül)"),
         ] {
             assert_eq!(
                 day_label_relative_to(locale, date, date.tomorrow().unwrap()),
