@@ -5641,7 +5641,7 @@ fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> Str
 /// Default image bounds based on [`CARD_WIDTH`].
 const PICTURE_WIDTH: f32 = CARD_WIDTH;
 
-/// Enables primary-button dragging only for a locally available attachment.
+/// Uses drag sensing on Windows and click sensing on other platforms.
 fn attachment_drag_sense() -> Sense {
     if crate::file_drag::SUPPORTED {
         Sense::click_and_drag()
