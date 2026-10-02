@@ -8918,6 +8918,38 @@ mod tests {
     }
 
     #[test]
+    fn numbered_shortcuts_switch_chats_keep_drafts_and_focus_the_composer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let original = app.open_chat.clone().unwrap();
+        assert_eq!(app.visible_chats()[0].id, original);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("unsent draft".into())],
+        );
+        let target = app.visible_chats()[1].id.clone();
+        assert_ne!(target, original);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Num2, egui::Modifiers::COMMAND)],
+        );
+        assert_eq!(app.open_chat.as_ref(), Some(&target));
+        render(&mut app, &ctx);
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Num1, egui::Modifiers::COMMAND)],
+        );
+        assert_eq!(app.open_chat.as_ref(), Some(&original));
+        assert_eq!(app.composer, "unsent draft");
+    }
+
+    #[test]
     fn a_quote_names_the_people_its_text_mentions() {
         let mut app = app();
         apply_flags(&mut app, Some("quotes"));
