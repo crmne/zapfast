@@ -899,19 +899,19 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 ui.vertical(|ui| {
                                     ui.set_max_width((ui.available_width() - 40.0).max(0.0));
                                     widgets::rich_text(
-                                    ui,
-                                    &crate::i18n::gettext(app.locale, "Original group message unavailable"),
-                                    theme::regular(12.5),
-                                    palette.secondary,
+                                        ui,
+                                        &crate::i18n::gettext(app.locale, "Original group message unavailable"),
+                                        theme::regular(12.5),
+                                        palette.secondary,
                                     );
                                 });
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if theme::icon_button(
-                                    ui, Icon::X, 16.0, palette.secondary, palette.text,
-                                    "Cancel reply (Esc)",
-                                ).clicked() {
-                                    app.actions.push(Action::CancelReply);
-                                }
+                                    if theme::icon_button(
+                                        ui, Icon::X, 16.0, palette.secondary, palette.text,
+                                        "Cancel reply (Esc)",
+                                    ).clicked() {
+                                        app.actions.push(Action::CancelReply);
+                                    }
                                 });
                             });
                         });
