@@ -1910,6 +1910,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
                 Action::StartChat {
                     id: chat.id.clone(),
                     name: name.clone(),
+                    dismiss_dialog: true,
                 },
                 Action::CloseDialog,
             ],

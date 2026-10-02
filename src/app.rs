@@ -2568,7 +2568,11 @@ impl App {
                     let name = name
                         .filter(|name| !name.is_empty())
                         .unwrap_or_else(|| crate::util::phone(&id));
-                    self.actions.push(Action::StartChat { id, name });
+                    self.actions.push(Action::StartChat {
+                        id,
+                        name,
+                        dismiss_dialog: owned_by_dialog,
+                    });
                 }
                 Event::Info(message) => self.toast(message),
                 Event::ClipboardImage(result) => {
@@ -3735,7 +3739,7 @@ impl App {
                 self.apply(Action::Open(page), ctx);
             }
             Action::OpenChat(id) => self.open_chat(id),
-            Action::StartChat { id, name } => {
+            Action::StartChat { id, name, dismiss_dialog } => {
                 if self.chat(&id).is_none() {
                     self.chats.push(Chat::new(id.clone(), name.clone()));
                     self.backend.send(Command::EnsureChat {
@@ -3744,7 +3748,9 @@ impl App {
                     });
                 }
                 self.open_chat(id);
-                self.dialog = None;
+                if dismiss_dialog {
+                    self.dialog = None;
+                }
             }
             Action::MessageYourself => {
                 if let Some(id) = self.me.clone() {
@@ -3756,6 +3762,7 @@ impl App {
                             Action::StartChat {
                                 id,
                                 name: "You".to_owned(),
+                                dismiss_dialog: true,
                             },
                             ctx,
                         );
@@ -6394,6 +6401,7 @@ mod tests {
                 })
                 .unwrap();
             app.handle_events();
+            app.apply_actions(&ctx);
             assert_eq!(
                 app.dialog,
                 Some(Dialog::MessageNumber),
@@ -6401,11 +6409,7 @@ mod tests {
             );
             assert!(app.new_contact_request.is_none());
             if success {
-                assert!(
-                    app.actions
-                        .iter()
-                        .any(|action| matches!(action, Action::StartChat { .. }))
-                );
+                assert_eq!(app.open_chat.as_deref(), Some("15550000001@s.whatsapp.net"));
             } else {
                 assert!(app.toasts.iter().any(|toast| toast.message
                     == "Não foi possível verificar o número. Tente novamente."));
