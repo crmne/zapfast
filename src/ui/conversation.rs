@@ -1885,6 +1885,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // a held key's repeats, which restart it, never stall it.
     let key_start = time - f64::from(ui.input(|input| input.stable_dt.min(0.1)));
     let mut pinned = false;
+    let mut visible_day = None;
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
@@ -1948,6 +1949,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     ui.spacing_mut().item_spacing.y = 3.0;
                     top_of_history(ui, &palette, &conversation, chat, &mut actions);
                     let mut previous: Option<&Message> = None;
+                    let mut day_separator_top = f32::NEG_INFINITY;
                     // Rows within a few viewports of the screen are laid out
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
@@ -1958,6 +1960,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             crate::util::day_key(previous.timestamp)
                                 != crate::util::day_key(message.timestamp)
                         });
+                        if new_day {
+                            day_separator_top = before + 8.0;
+                        }
                         let known = rows.get(&message.id).copied();
                         let height = known.map_or_else(
                             || estimated_height(message, layout_width, new_day),
@@ -2141,6 +2146,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             anchored = true;
                         }
                         let measured = ui.cursor().top() - before;
+                        if visible_day.is_none()
+                            && before + measured > viewport.top()
+                            && before < viewport.bottom()
+                        {
+                            visible_day = Some((message.timestamp, day_separator_top));
+                        }
                         if before + height <= viewport.top() {
                             grew_above += measured - height;
                         }
@@ -2232,6 +2243,24 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         });
     app.scroll_route
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
+    if let Some((timestamp, separator_top)) = visible_day
+        && separator_top < output.inner_rect.top()
+    {
+        // Paint after the scroll contents, inside their clip, without changing
+        // their height or taking clicks away from the messages underneath.
+        let mut overlay = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(("visible-message-date", &chat.id))
+                .max_rect(output.inner_rect.shrink2(vec2(0.0, 8.0)))
+                .layout(Layout::top_down(Align::Center)),
+        );
+        overlay.set_clip_rect(output.inner_rect);
+        widgets::chip(
+            &mut overlay,
+            &palette,
+            &crate::util::day_label(app.locale, timestamp),
+        );
+    }
     let at_bottom =
         output.state.offset.y + output.inner_rect.height() >= output.content_size.y - 24.0;
     ui.ctx().data_mut(|data| {

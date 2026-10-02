@@ -302,18 +302,45 @@ pub fn day_label(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
         return String::new();
     };
-    let date = when.date();
-    let today = today();
+    day_label_relative_to(locale, when.date(), today())
+}
+
+fn day_label_relative_to(locale: Locale, date: Date, today: Date) -> String {
     let days = today
         .since(date)
         .map(|span| span.get_days())
         .unwrap_or(i32::MAX);
-    match days {
-        0 => crate::i18n::gettext(locale, "Today").into_owned(),
+    let label = match days {
+        0 => return crate::i18n::gettext(locale, "Today").into_owned(),
         1 => crate::i18n::gettext(locale, "Yesterday").into_owned(),
         2..=6 => weekday_name(locale, date.weekday()),
-        _ => long_date(locale, date),
-    }
+        _ => return long_date(locale, date),
+    };
+    let calendar = if locale == Locale::English {
+        let day = date.day();
+        let suffix = match (day % 100, day % 10) {
+            (11..=13, _) => "th",
+            (_, 1) => "st",
+            (_, 2) => "nd",
+            (_, 3) => "rd",
+            _ => "th",
+        };
+        format!("{} {day}{suffix}", month_name(locale, date.month()))
+    } else {
+        crate::i18n::gettext(locale, "{day} {month}")
+            .replace("{day}", &date.day().to_string())
+            .replace("{month}", &date_month_name(locale, date.month()))
+    };
+    let calendar = if date.year() == today.year() {
+        calendar
+    } else {
+        crate::i18n::gettext(locale, "{date}, {year}")
+            .replace("{date}", &calendar)
+            .replace("{year}", &date.year().to_string())
+    };
+    crate::i18n::gettext(locale, "{label} ({date})")
+        .replace("{label}", &label)
+        .replace("{date}", &calendar)
 }
 
 /// Local calendar day used to group messages.
@@ -371,6 +398,25 @@ fn month_name(locale: Locale, month: i8) -> String {
         10 => gettext(locale, "October"),
         11 => gettext(locale, "November"),
         _ => gettext(locale, "December"),
+    }
+    .into_owned()
+}
+
+fn date_month_name(locale: Locale, month: i8) -> String {
+    use crate::i18n::pgettext;
+    match month {
+        1 => pgettext(locale, "date month", "January"),
+        2 => pgettext(locale, "date month", "February"),
+        3 => pgettext(locale, "date month", "March"),
+        4 => pgettext(locale, "date month", "April"),
+        5 => pgettext(locale, "date month", "May"),
+        6 => pgettext(locale, "date month", "June"),
+        7 => pgettext(locale, "date month", "July"),
+        8 => pgettext(locale, "date month", "August"),
+        9 => pgettext(locale, "date month", "September"),
+        10 => pgettext(locale, "date month", "October"),
+        11 => pgettext(locale, "date month", "November"),
+        _ => pgettext(locale, "date month", "December"),
     }
     .into_owned()
 }
@@ -753,6 +799,69 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn recent_day_labels_include_the_calendar_date_except_today() {
+        let today = Date::new(2026, 9, 30).unwrap();
+        for (day, expected) in [
+            (30, "Today"),
+            (29, "Yesterday (September 29th)"),
+            (26, "Saturday (September 26th)"),
+            (23, "Wednesday, 23 September 2026"),
+        ] {
+            assert_eq!(
+                day_label_relative_to(Locale::English, Date::new(2026, 9, day).unwrap(), today),
+                expected
+            );
+        }
+        assert_eq!(
+            day_label_relative_to(
+                Locale::English,
+                Date::new(2026, 12, 31).unwrap(),
+                Date::new(2027, 1, 1).unwrap()
+            ),
+            "Yesterday (December 31st, 2026)"
+        );
+        assert_eq!(day_label(Locale::English, i64::MAX), "");
+    }
+
+    #[test]
+    fn english_calendar_dates_handle_ordinal_endings() {
+        for (day, suffix) in [
+            (1, "st"),
+            (2, "nd"),
+            (3, "rd"),
+            (11, "th"),
+            (12, "th"),
+            (13, "th"),
+            (21, "st"),
+            (22, "nd"),
+            (23, "rd"),
+            (31, "st"),
+        ] {
+            let date = Date::new(2026, 8, day).unwrap();
+            assert_eq!(
+                day_label_relative_to(Locale::English, date, date.tomorrow().unwrap()),
+                format!("Yesterday (August {day}{suffix})")
+            );
+        }
+    }
+
+    #[test]
+    fn translated_recent_dates_use_local_grammar() {
+        let date = Date::new(2026, 9, 29).unwrap();
+        for (locale, expected) in [
+            (Locale::PortugueseBrazil, "Ontem (29 de setembro)"),
+            (Locale::Spanish, "Ayer (29 de septiembre)"),
+            (Locale::Russian, "Вчера (29 сентября)"),
+            (Locale::ChineseSimplified, "昨天（9月29日）"),
+        ] {
+            assert_eq!(
+                day_label_relative_to(locale, date, date.tomorrow().unwrap()),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn initials_take_first_and_last_word() {
