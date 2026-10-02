@@ -2626,12 +2626,17 @@ impl App {
         {
             return;
         }
-        let Some(chat) = self.open_chat.as_ref() else { return };
-        let Some(conversation) = self.conversations.get(chat) else { return };
+        let Some(chat) = self.open_chat.as_ref() else {
+            return;
+        };
+        let Some(conversation) = self.conversations.get(chat) else {
+            return;
+        };
         self.refused_edits.retain(|(target_chat, id, _)| {
-            target_chat != chat || conversation.message(id).is_some_and(|message| {
-                message.from_me && matches!(message.content, Content::Text { .. })
-            })
+            target_chat != chat
+                || conversation.message(id).is_some_and(|message| {
+                    message.from_me && matches!(message.content, Content::Text { .. })
+                })
         });
         if let Some(index) = self
             .refused_edits
@@ -6495,7 +6500,11 @@ mod tests {
         app.open_chat = Some("fixture".into());
         let mut original = message("fixture", "sent", 0);
         original.from_me = true;
-        app.conversations.entry("fixture".into()).or_default().messages.push(original);
+        app.conversations
+            .entry("fixture".into())
+            .or_default()
+            .messages
+            .push(original);
         let (backend, _commands, events) = Backend::recording_with_events();
         app.backend = backend;
         events
@@ -6548,9 +6557,14 @@ mod tests {
                 original.content = Content::Revoked;
                 conversation.messages.push(original);
             }
-            app.refused_edits.push(("fixture".into(), "sent".into(), EditDraft {
-                text: "Correction".into(), mentions: vec![],
-            }));
+            app.refused_edits.push((
+                "fixture".into(),
+                "sent".into(),
+                EditDraft {
+                    text: "Correction".into(),
+                    mentions: vec![],
+                },
+            ));
             app.restore_refused_edit();
             assert!(app.editing.is_none());
             assert!(app.composer.is_empty());

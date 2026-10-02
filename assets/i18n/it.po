@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 00:01-0300\n"
+"POT-Creation-Date: 2026-10-02 10:34-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -179,7 +179,7 @@ msgstr "Bloccati"
 msgid "No favorites yet"
 msgstr "Ancora nessun preferito"
 
-#: src/ui/chats.rs:878 src/app.rs:1614
+#: src/ui/chats.rs:878 src/app.rs:1647
 msgid "Message yourself"
 msgstr "Invia un messaggio a te stesso"
 
@@ -1060,29 +1060,29 @@ msgstr[1] "{} in attesa"
 msgid "No one yet"
 msgstr "Ancora nessuno"
 
-#: src/app.rs:1535
+#: src/app.rs:1568
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Esiste già un’etichetta chiamata «{name}»."
 
-#: src/app.rs:1595
+#: src/app.rs:1628
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Tu)"
 
-#: src/app.rs:1596 src/app.rs:1615
+#: src/app.rs:1629 src/app.rs:1648
 msgid "You"
 msgstr "Tu"
 
-#: src/app.rs:2432
+#: src/app.rs:2465
 msgid "Could not use this image"
 msgstr "Impossibile usare questa immagine"
 
-#: src/app.rs:2930
+#: src/app.rs:2979
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Non inviato: ZapFast non è connesso a WhatsApp."
 
-#: src/app.rs:2934
+#: src/app.rs:2983
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1090,57 +1090,58 @@ msgstr ""
 "Non inviato: il messaggio a cui stai rispondendo non è disponibile su questo "
 "computer. Annulla la risposta per inviare senza citazione."
 
-#: src/app.rs:3295 src/app.rs:11271
 #
+#: src/app.rs:3344 src/app.rs:11390
 msgid "This message can no longer be edited"
 msgstr "Questo messaggio non può più essere modificato"
 
-#: src/app.rs:4368
+#: src/app.rs:4417
 msgid "Added to favorites"
 msgstr "Aggiunto ai preferiti"
 
-#: src/app.rs:4443
+#: src/app.rs:4492
 msgid "Sending the sticker pack…"
 msgstr "Invio del pacchetto di sticker…"
 
-#: src/app.rs:4731 src/ui/labels.rs:237
+#: src/app.rs:4780 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Hai {limit} etichette, il massimo che ZapFast conserva."
 
-#: src/app.rs:5367
+#: src/app.rs:5424
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5375
+#: src/app.rs:5432
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5488
+#: src/app.rs:5545
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"
 
-#: src/app.rs:6023
+#: src/app.rs:6080
 msgid "Copied image"
 msgstr "Immagine copiata"
 
-#: src/app.rs:6026 src/app.rs:6031
+#: src/app.rs:6083 src/app.rs:6088
 msgid "Failed to copy image"
 msgstr "Impossibile copiare l'immagine"
 
-#: src/app.rs:11274
 #
+#: src/app.rs:11393
 msgid "Not connected to WhatsApp"
 msgstr "Non connesso a WhatsApp"
 
-#: src/app.rs:11278
 #
+#: src/app.rs:11397
 msgid "Could not send the edit"
 msgstr "Impossibile inviare la modifica"
 
-#: src/app.rs:11281
+#: src/app.rs:11400
 msgid "The edit was sent but could not be saved locally"
-msgstr "La modifica è stata inviata, ma non è stato possibile salvarla sul computer"
+msgstr ""
+"La modifica è stata inviata, ma non è stato possibile salvarla sul computer"
 
 #: src/ui/labels.rs:68
 msgctxt "label colour"
