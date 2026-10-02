@@ -66,18 +66,6 @@ pub fn layout_field(ui: &egui::Ui, text: &str, format: &TextFormat, wrap: f32) -
     galley
 }
 
-/// Visual bounds of the glyphs covering the logical character range.
-///
-/// The start caret of a right-to-left cluster is to the right of the end
-/// caret, so callers must not assume the first cursor is the left edge.
-pub fn char_bounds(galley: &Galley, start: usize, end: usize) -> Option<Rect> {
-    let mut rect: Option<Rect> = None;
-    for (_, bounds) in char_bounds_by_row(galley, start, end) {
-        rect = Some(rect.map_or(bounds, |rect| rect.union(bounds)));
-    }
-    rect
-}
-
 /// Visual bounds of a logical character range, kept separate for each row.
 pub fn char_bounds_by_row(galley: &Galley, start: usize, end: usize) -> Vec<(usize, Rect)> {
     let mut bounds = Vec::new();
