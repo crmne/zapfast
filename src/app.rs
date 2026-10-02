@@ -2732,7 +2732,13 @@ impl App {
         conversation.phone_exhausted = true;
         conversation.loading_older = false;
         if self.open_chat.as_deref() == Some(id) {
+            let had_pending = !self.pending.is_empty();
             self.pending.clear();
+            if had_pending {
+                self.composer.clear();
+                self.composer_mentions.clear();
+                self.reply_to = None;
+            }
             if self
                 .editing
                 .as_ref()
@@ -6416,12 +6422,31 @@ mod tests {
     fn clearing_an_open_chat_removes_active_attachment_drafts() {
         let mut app = app();
         app.open_chat("fixture@s.whatsapp.net".into());
+        app.composer = "Caption @Mira".into();
+        app.composer_mentions.push(ComposerMention { id: "fixture-member".into(), name: "Mira".into() });
+        app.reply_to = Some("survivor".into());
+        app.conversations.entry("fixture@s.whatsapp.net".into()).or_default().messages.push(message("fixture@s.whatsapp.net", "survivor", 100));
         app.stage_files(vec!["fixture.png".into()]);
-        app.handle_chat_cleared("fixture@s.whatsapp.net", i64::MAX);
+        app.handle_chat_cleared("fixture@s.whatsapp.net", 0);
         assert!(app.pending.is_empty());
+        assert!(app.composer.is_empty());
+        assert!(app.composer_mentions.is_empty());
+        assert!(app.reply_to.is_none());
         app.open_chat("other@s.whatsapp.net".into());
         app.open_chat("fixture@s.whatsapp.net".into());
         assert!(app.pending.is_empty());
+        assert!(app.composer.is_empty());
+    }
+
+    #[test]
+    fn clearing_a_chat_preserves_an_unattached_text_draft() {
+        let mut app = app();
+        app.open_chat("fixture@s.whatsapp.net".into());
+        app.composer = "Text @Mira".into();
+        app.composer_mentions.push(ComposerMention { id: "fixture-member".into(), name: "Mira".into() });
+        app.handle_chat_cleared("fixture@s.whatsapp.net", i64::MAX);
+        assert_eq!(app.composer, "Text @Mira");
+        assert_eq!(app.composer_mentions.len(), 1);
     }
 
     #[test]
