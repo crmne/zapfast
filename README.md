@@ -222,7 +222,19 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   message. Type `:name` to autocomplete an emoji without leaving the composer,
   or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
-  delivered, or read. Replies can be text, attachments, voice messages,
+  delivered, or read. Only your sent text can be edited, within 15 minutes of
+  sending. Eligibility is checked again when submitting; the edited body is
+  stored locally after WhatsApp accepts it. A rejected edit keeps its visible
+  correction and selected mentions, without replacing the original,
+  while the original message remains available. Deleting or revoking the
+  original discards a queued correction.
+  If you have started another draft, that draft stays first and the correction
+  waits for an empty composer.
+  Edit requests time out after two minutes. Check the message before retrying,
+  since a timeout cannot confirm remote delivery.
+  If the original is no longer editable, the correction becomes a normal
+  draft that you can send as a new message. It is never sent automatically.
+  Replies can be text, attachments, voice messages,
   stickers, or GIFs. A reply never goes out without its quote: if the
   original is no longer available on this computer, nothing is sent, the text
   or attachments return to the composer, and a voice message waits above it

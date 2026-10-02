@@ -3,6 +3,8 @@
 //! Views queue [`Action`]s while drawing. The app applies them after the frame
 //! and processes backend events.
 
+use crate::backend::{EditDraft, EditFailure};
+use crate::model::ComposerMention;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -26,7 +28,6 @@ pub const PAGE: usize = 60;
 /// Minimum delay between phone history requests.
 const PHONE_COOLDOWN: Duration = Duration::from_secs(6);
 /// WhatsApp message-edit window.
-pub const EDIT_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// WhatsApp revoke-for-everyone window.
 pub const REVOKE_WINDOW: Duration = Duration::from_secs(2 * 24 * 60 * 60);
 
@@ -399,6 +400,7 @@ pub struct App {
     pub reply_to: Option<String>,
     /// Outgoing message being edited.
     pub editing: Option<String>,
+    refused_edits: Vec<(ChatId, String, EditDraft)>,
     composing: bool,
     last_keystroke: Option<Instant>,
     pub search: String,
@@ -739,12 +741,6 @@ pub enum Pending {
     File(PathBuf),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ComposerMention {
-    id: String,
-    name: String,
-}
-
 impl Pending {
     /// Whether the composer can preview the file as an image.
     pub fn is_picture_file(path: &std::path::Path) -> bool {
@@ -934,6 +930,7 @@ impl App {
         }
     }
 
+    /// Constructs application state around the supplied backend and persisted settings.
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
         let palette = settings
             .cached_palette()
@@ -982,6 +979,7 @@ impl App {
             mention_selected: 0,
             reply_to: None,
             editing: None,
+            refused_edits: Vec::new(),
             unsent_voice: None,
             composing: false,
             last_keystroke: None,
@@ -2073,9 +2071,7 @@ impl App {
 
     /// Whether an outgoing message is still editable.
     pub fn can_edit(&self, message: &Message) -> bool {
-        message.from_me
-            && matches!(message.content, Content::Text { .. })
-            && crate::util::now() - message.timestamp <= EDIT_WINDOW.as_secs() as i64
+        message.editable_at(crate::util::now())
     }
 
     /// Whether an outgoing message can still be revoked for everyone.
@@ -2109,6 +2105,7 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Drains backend events into interface state and queues follow-up actions.
     fn handle_events(&mut self) {
         for event in self.backend.poll() {
             match event {
@@ -2612,6 +2609,20 @@ impl App {
                         self.group_saving.remove(&chat);
                     }
                 }
+                Event::EditRefused {
+                    chat,
+                    id,
+                    draft,
+                    error,
+                } => {
+                    if !matches!(error, EditFailure::Save) {
+                        self.refused_edits.retain(|(target_chat, target_id, _)| {
+                            target_chat != &chat || target_id != &id
+                        });
+                        self.refused_edits.push((chat, id, draft));
+                    }
+                    self.toast_error(edit_failure_message(self.locale, &error));
+                }
                 Event::Error(message) => {
                     self.sticker_import_pending = false;
                     self.new_contact_pending = false;
@@ -2619,8 +2630,50 @@ impl App {
                 }
             }
         }
+        self.restore_refused_edit();
     }
 
+    /// Restores an idle composer's refused correction, using a normal draft
+    /// when the original is still present but can no longer be edited.
+    fn restore_refused_edit(&mut self) {
+        if !self.composer.trim().is_empty()
+            || self.editing.is_some()
+            || self.reply_to.is_some()
+            || !self.pending.is_empty()
+        {
+            return;
+        }
+        let Some(chat) = self.open_chat.as_ref() else {
+            return;
+        };
+        let Some(conversation) = self.conversations.get(chat) else {
+            return;
+        };
+        self.refused_edits.retain(|(target_chat, id, _)| {
+            target_chat != chat
+                || conversation.message(id).is_some_and(|message| {
+                    message.from_me && matches!(message.content, Content::Text { .. })
+                })
+        });
+        if let Some(index) = self
+            .refused_edits
+            .iter()
+            .position(|(chat, _, _)| self.open_chat.as_ref() == Some(chat))
+        {
+            let (_, id, draft) = self.refused_edits.remove(index);
+            self.editing = conversation
+                .message(&id)
+                .filter(|message| self.can_edit(message))
+                .map(|_| id);
+            self.reply_to = None;
+            self.composer_tools_open = false;
+            self.composer = draft.text;
+            self.composer_mentions = draft.mentions;
+            self.focus_composer = true;
+        }
+    }
+
+    /// Applies link transitions and clears account-owned state when the device is unlinked.
     fn handle_link(&mut self, status: LinkStatus) {
         match &status {
             LinkStatus::Connected => {
@@ -2658,6 +2711,7 @@ impl App {
                 self.open_chat = None;
                 // Unsent text belongs to the account that was unlinked.
                 self.drafts.clear();
+                self.refused_edits.clear();
                 self.draft_mentions.clear();
                 self.composer.clear();
                 self.composer_mentions.clear();
@@ -3311,30 +3365,49 @@ impl App {
         }
     }
 
+    /// Sends composer text or a valid edit. An ineligible edit returns its
+    /// correction to a normal draft without dispatching either kind of send.
     fn send_text(&mut self, chat: ChatId, text: String, quoting: Option<String>) {
         let text = text.trim().to_owned();
         if text.is_empty() {
             return;
         }
+        if let Some(id) = self.editing.as_ref() {
+            let eligible = self.open_chat.as_ref() == Some(&chat)
+                && self
+                    .conversations
+                    .get(&chat)
+                    .and_then(|conversation| conversation.message(id))
+                    .is_some_and(|message| self.can_edit(message));
+            if !eligible {
+                self.editing = None;
+                self.composer = text;
+                self.toast_error(
+                    crate::i18n::gettext(self.locale, "This message can no longer be edited")
+                        .into_owned(),
+                );
+                self.focus_composer = true;
+                return;
+            }
+        }
+        let draft = EditDraft {
+            text: text.clone(),
+            mentions: self.composer_mentions.clone(),
+        };
         let (text, mentions) = self.encode_composer_mentions(&chat, text);
         self.emoji_start = None;
         self.mention_start = None;
         self.stop_composing(&chat);
         if let Some(id) = self.editing.take() {
-            if let Some(message) = self
-                .conversations
-                .get_mut(&chat)
-                .and_then(|conversation| conversation.message_mut(&id))
-            {
-                message.content = Content::text(text.clone());
-                message.edited = true;
-                message.mentions = mention_refs(&mentions);
-            }
+            self.refused_edits
+                .retain(|(target_chat, target_id, _)| target_chat != &chat || target_id != &id);
+            // The worker publishes the updated row only after the send succeeds.
             self.backend.send(Command::EditText {
                 chat,
                 id,
                 text,
                 mentions,
+                draft,
             });
             return;
         }
@@ -3666,6 +3739,7 @@ impl App {
         }
     }
 
+    /// Applies queued view actions after drawing, routing state changes and backend commands.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the
@@ -4100,6 +4174,7 @@ impl App {
                     .as_deref()
                     .and_then(|chat| self.conversations.get(chat))
                     .and_then(|conversation| conversation.message(&id))
+                    .filter(|message| self.can_edit(message))
                     .and_then(|message| match &message.content {
                         Content::Text { text, .. } => Some(text.clone()),
                         _ => None,
@@ -6108,18 +6183,6 @@ fn find_named_mention(text: &str, token: &str) -> Option<usize> {
     })
 }
 
-fn mention_refs(ids: &[String]) -> Vec<crate::model::MentionRef> {
-    ids.iter()
-        .filter_map(|id| {
-            let user = id.split('@').next()?.to_owned();
-            (!user.is_empty()).then(|| crate::model::MentionRef {
-                user,
-                id: id.clone(),
-            })
-        })
-        .collect()
-}
-
 pub fn wants_paste(input: &egui::InputState) -> bool {
     input.events.iter().any(|event| {
         matches!(event, egui::Event::Paste(_))
@@ -6308,6 +6371,345 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn edit_window_and_submission_use_original_sent_text() {
+        let mut row = message("chat", "sent", 1_000);
+        row.from_me = true;
+        row.status = Delivery::Sent;
+        assert!(row.editable_at(1_000));
+        assert!(row.editable_at(1_900));
+        assert!(!row.editable_at(1_901));
+        assert!(!row.editable_at(999));
+        for status in [Delivery::Pending, Delivery::Failed] {
+            row.status = status;
+            assert!(!row.editable_at(1_100));
+        }
+        row.status = Delivery::Sent;
+        row.edited = true;
+        assert!(
+            !row.editable_at(1_901),
+            "editing does not extend the window"
+        );
+        row.from_me = false;
+        assert!(!row.editable_at(1_100));
+        row.from_me = true;
+        row.content = Content::Revoked;
+        assert!(!row.editable_at(1_100));
+
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.open_chat = Some("chat".into());
+        row.content = Content::text("Original");
+        row.timestamp = crate::util::now() - 60;
+        app.conversations
+            .entry("chat".into())
+            .or_default()
+            .merge(vec![row], false);
+        let ctx = egui::Context::default();
+        app.apply(Action::Edit("sent".into()), &ctx);
+        assert_eq!(app.editing.as_deref(), Some("sent"));
+        app.conversations
+            .get_mut("chat")
+            .unwrap()
+            .message_mut("sent")
+            .unwrap()
+            .timestamp = crate::util::now() - 901;
+        app.send_text("chat".into(), "Correction".into(), None);
+        assert!(commands.try_recv().is_err(), "expired edits never dispatch");
+        assert_eq!(
+            app.composer, "Correction",
+            "keep the correction for copying"
+        );
+        assert!(app.editing.is_none());
+        app.apply(Action::CancelEdit, &ctx);
+        assert_eq!(
+            app.composer, "Correction",
+            "cancel cannot discard a normal correction draft"
+        );
+        app.conversations
+            .get_mut("chat")
+            .unwrap()
+            .message_mut("sent")
+            .unwrap()
+            .timestamp = crate::util::now() - 60;
+        app.apply(Action::Edit("sent".into()), &ctx);
+        app.send_text("chat".into(), "Correction".into(), None);
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::EditText { .. }
+        ));
+        let original = app.conversations["chat"].message("sent").unwrap();
+        assert_eq!(original.content, Content::text("Original"));
+        assert!(original.edited, "original metadata is retained");
+        app.conversations
+            .get_mut("chat")
+            .unwrap()
+            .message_mut("sent")
+            .unwrap()
+            .from_me = false;
+        app.apply(Action::Edit("sent".into()), &ctx);
+        assert!(
+            app.editing.is_none(),
+            "direct actions cannot edit incoming text"
+        );
+    }
+
+    #[test]
+    fn refused_mention_edit_round_trips_visible_text_and_selected_metadata() {
+        let mut app = app();
+        let chat_id = "123@g.us";
+        let member = "491702222222@s.whatsapp.net";
+        let mut chat = Chat::new(chat_id.into(), "Fixture".into());
+        chat.participants.push(member.into());
+        app.chats.push(chat);
+        app.open_chat = Some(chat_id.into());
+        let mut row = message(chat_id, "sent", crate::util::now() - 60);
+        row.from_me = true;
+        row.status = Delivery::Sent;
+        row.content = Content::text("Original");
+        app.conversations
+            .entry(chat_id.into())
+            .or_default()
+            .merge(vec![row], false);
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.editing = Some("sent".into());
+        app.composer_mentions = vec![ComposerMention {
+            id: member.into(),
+            name: "Mira Example".into(),
+        }];
+        let visible = "Correction @Mira Example";
+        app.send_text(chat_id.into(), visible.into(), None);
+        let draft = std::iter::from_fn(|| commands.try_recv().ok())
+            .find_map(|command| match command {
+                Command::EditText {
+                    text,
+                    mentions,
+                    draft,
+                    ..
+                } => {
+                    assert_eq!(text, "Correction @491702222222");
+                    assert_eq!(mentions, vec![member.to_owned()]);
+                    assert_eq!(draft.text, visible);
+                    Some(draft)
+                }
+                _ => None,
+            })
+            .expect("edit dispatched");
+        app.composer.clear();
+        events
+            .send(Event::EditRefused {
+                chat: chat_id.into(),
+                id: "sent".into(),
+                draft,
+                error: EditFailure::Send("Fixture refusal".into()),
+            })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.composer, visible);
+        assert_eq!(
+            app.composer_mentions,
+            vec![ComposerMention {
+                id: member.into(),
+                name: "Mira Example".into()
+            }]
+        );
+        app.send_text(chat_id.into(), app.composer.clone(), None);
+        assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command, Command::EditText { text, mentions, .. } if text == "Correction @491702222222" && mentions == vec![member.to_owned()])));
+    }
+
+    #[test]
+    fn accepted_edit_save_failure_does_not_offer_to_resend_it() {
+        let mut app = app();
+        let (backend, _, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.open_chat = Some("fixture".into());
+        events
+            .send(Event::EditRefused {
+                chat: "fixture".into(),
+                id: "sent".into(),
+                draft: EditDraft {
+                    text: "Accepted".into(),
+                    mentions: vec![],
+                },
+                error: EditFailure::Save,
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(app.refused_edits.is_empty());
+        assert!(app.composer.is_empty());
+        assert!(app.editing.is_none());
+    }
+
+    #[test]
+    fn worker_refusal_restores_an_expired_edit_without_overwriting_a_new_draft() {
+        let mut app = app();
+        app.open_chat = Some("fixture".into());
+        let mut original = message("fixture", "sent", 0);
+        original.from_me = true;
+        app.conversations
+            .entry("fixture".into())
+            .or_default()
+            .messages
+            .push(original);
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        events
+            .send(Event::EditRefused {
+                chat: "fixture".into(),
+                id: "sent".into(),
+                draft: EditDraft {
+                    text: "Correction @Mira Example".into(),
+                    mentions: vec![ComposerMention {
+                        id: "fixture-member@g.us".into(),
+                        name: "Mira Example".into(),
+                    }],
+                },
+                error: EditFailure::Expired,
+            })
+            .unwrap();
+        app.composer = "New draft".into();
+        app.handle_events();
+        assert_eq!(app.composer, "New draft");
+        assert_eq!(app.refused_edits.len(), 1);
+        app.composer.clear();
+        app.reply_to = Some("another-reply".into());
+        app.restore_refused_edit();
+        assert!(app.composer.is_empty());
+        assert_eq!(app.reply_to.as_deref(), Some("another-reply"));
+        assert_eq!(app.refused_edits.len(), 1);
+        app.reply_to = None;
+        app.restore_refused_edit();
+        assert_eq!(app.composer, "Correction @Mira Example");
+        assert_eq!(
+            app.composer_mentions,
+            vec![ComposerMention {
+                id: "fixture-member@g.us".into(),
+                name: "Mira Example".into()
+            }]
+        );
+        assert!(
+            app.editing.is_none(),
+            "an expired correction is a normal draft"
+        );
+        assert!(app.refused_edits.is_empty());
+    }
+
+    #[test]
+    fn refused_edits_do_not_restore_revoked_or_deleted_targets() {
+        for revoked in [false, true] {
+            let mut app = app();
+            app.open_chat = Some("fixture".into());
+            let conversation = app.conversations.entry("fixture".into()).or_default();
+            if revoked {
+                let mut original = message("fixture", "sent", 0);
+                original.from_me = true;
+                original.content = Content::Revoked;
+                conversation.messages.push(original);
+            }
+            app.refused_edits.push((
+                "fixture".into(),
+                "sent".into(),
+                EditDraft {
+                    text: "Correction".into(),
+                    mentions: vec![],
+                },
+            ));
+            app.restore_refused_edit();
+            assert!(app.editing.is_none());
+            assert!(app.composer.is_empty());
+            assert!(app.refused_edits.is_empty());
+        }
+    }
+
+    #[test]
+    fn an_expired_refused_correction_can_be_sent_as_a_new_message() {
+        let mut app = app();
+        app.open_chat = Some("fixture".into());
+        let mut original = message("fixture", "sent", 0);
+        original.from_me = true;
+        app.conversations
+            .entry("fixture".into())
+            .or_default()
+            .messages
+            .push(original);
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        events
+            .send(Event::EditRefused {
+                chat: "fixture".into(),
+                id: "sent".into(),
+                draft: EditDraft {
+                    text: "Unsent correction".into(),
+                    mentions: vec![],
+                },
+                error: EditFailure::Expired,
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(app.editing.is_none());
+        assert!(
+            commands.try_recv().is_err(),
+            "restoration never sends automatically"
+        );
+        app.apply(Action::CancelEdit, &egui::Context::default());
+        assert_eq!(app.composer, "Unsent correction");
+        app.send_text("fixture".into(), app.composer.clone(), None);
+        let dispatched: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(
+            dispatched
+                .iter()
+                .any(|command| matches!(command, Command::SendText {
+            chat, text, ..
+        } if chat == "fixture" && text == "Unsent correction"))
+        );
+        assert!(
+            !dispatched
+                .iter()
+                .any(|command| matches!(command, Command::EditText { .. }))
+        );
+    }
+
+    #[test]
+    fn repeated_immediate_edit_refusals_restore_only_the_latest_correction() {
+        let mut app = app();
+        app.open_chat = Some("fixture".into());
+        let mut original = message("fixture", "sent", 0);
+        original.from_me = true;
+        app.conversations
+            .entry("fixture".into())
+            .or_default()
+            .messages
+            .push(original);
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.composer = "New draft".into();
+        for (text, error) in [
+            ("Older correction", EditFailure::Expired),
+            ("Latest correction", EditFailure::Offline),
+        ] {
+            events
+                .send(Event::EditRefused {
+                    chat: "fixture".into(),
+                    id: "sent".into(),
+                    draft: EditDraft {
+                        text: text.into(),
+                        mentions: vec![],
+                    },
+                    error,
+                })
+                .unwrap();
+        }
+        app.handle_events();
+        assert_eq!(app.refused_edits.len(), 1);
+        assert_eq!(app.composer, "New draft");
+        app.composer.clear();
+        app.restore_refused_edit();
+        assert_eq!(app.composer, "Latest correction");
+        assert!(app.refused_edits.is_empty());
     }
 
     /// egui redoes a discarded pass without the frame's input events. However
@@ -11243,5 +11645,25 @@ mod app_lock_tests {
         assert!(!actions.contains(&Action::FocusComposer));
         let mut app = app_with(settings(None));
         assert!(!press(&mut app).contains(&Action::LockApp));
+    }
+}
+
+/// Localizes edit-refusal reasons and appends protocol details only for send failures.
+fn edit_failure_message(locale: crate::i18n::Locale, error: &EditFailure) -> String {
+    match error {
+        EditFailure::Expired => {
+            crate::i18n::gettext(locale, "This message can no longer be edited").into_owned()
+        }
+        EditFailure::Offline => {
+            crate::i18n::gettext(locale, "Not connected to WhatsApp").into_owned()
+        }
+        EditFailure::Send(detail) => format!(
+            "{}: {detail}",
+            crate::i18n::gettext(locale, "Could not send the edit")
+        ),
+        EditFailure::Save => {
+            crate::i18n::gettext(locale, "The edit was sent but could not be saved locally")
+                .into_owned()
+        }
     }
 }

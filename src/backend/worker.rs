@@ -3,6 +3,7 @@
 //! Messages are archived before reaching the UI. Privacy ids (`@lid`) are
 //! canonicalized to phone-number ids as soon as their mapping is known.
 
+use super::{EditDraft, EditFailure};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -49,7 +50,9 @@ mod polls;
 mod sticker_pace;
 mod stickers;
 
-use super::{Command, Event, GroupEdit, LinkStatus, Refusal, Unsent, Waker, read_sync::ReadSync};
+use super::{
+    Command, EditVersion, Event, GroupEdit, LinkStatus, Refusal, Unsent, Waker, read_sync::ReadSync,
+};
 use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
@@ -77,6 +80,21 @@ const PROFILE_PICTURE_SIDE: u32 = 640;
 const STICKER_FETCH_LIMIT: usize = 40;
 const ATTACHMENT_LIMIT_ERROR: &str = "This attachment is larger than the 64 MiB download limit";
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Bounds each edit attempt so an incomplete earlier request cannot prevent
+/// a later accepted correction from settling in the local archive.
+const EDIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Converts an edit deadline into a normal refused completion for its generation.
+async fn with_edit_deadline(
+    duration: Duration,
+    operation: impl std::future::Future<Output = Result<(), String>>,
+) -> Option<String> {
+    tokio::time::timeout(duration, operation)
+        .await
+        .unwrap_or_else(|_| Err("Edit timed out; check the message before retrying".to_owned()))
+        .err()
+}
 
 async fn with_attachment_deadline<T>(
     duration: Duration,
@@ -391,6 +409,7 @@ fn sticker_hash(sha256: Option<&[u8]>, enc_sha256: Option<&[u8]>) -> Option<Stri
     Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// Runs the backend event and command loop, keeping asynchronous work off the UI thread.
 pub async fn run(
     dirs: AppDirs,
     events: std::sync::mpsc::Sender<Event>,
@@ -508,6 +527,8 @@ pub async fn run(
         group_info_requested: HashSet::new(),
         leave_generation: HashMap::new(),
         subject_generation: HashMap::new(),
+        edit_sequence: 0,
+        pending_edits: HashMap::new(),
         group_info_queue: std::collections::VecDeque::new(),
         group_info_tries: HashMap::new(),
         group_info_retry: Vec::new(),
@@ -707,6 +728,75 @@ enum WithheldPage {
     Until(ChatId, String, super::PageKey),
 }
 
+struct EditRequest {
+    text: String,
+    mentions: Vec<String>,
+    draft: EditDraft,
+}
+
+#[derive(Default)]
+struct PendingEdits {
+    latest: u64,
+    outstanding: std::collections::BTreeSet<u64>,
+    accepted: Option<AcceptedEdit>,
+    /// Only the worker owns this lifetime, so logout cancels queued dispatches.
+    dispatch_owner: Arc<()>,
+    dispatch_tail: Option<tokio::sync::oneshot::Receiver<()>>,
+}
+
+/// A reservation made synchronously by the worker, preserving edit arrival order.
+struct EditTurn {
+    previous: Option<tokio::sync::oneshot::Receiver<()>>,
+    completion: tokio::sync::oneshot::Sender<()>,
+    owner: std::sync::Weak<()>,
+}
+
+impl PendingEdits {
+    /// Rejects stale results and waiting turns without releasing an active network attempt.
+    fn invalidate(&mut self) {
+        self.dispatch_owner = Arc::new(());
+        self.latest = 0;
+        self.outstanding.clear();
+        self.accepted = None;
+    }
+
+    /// Reports whether the last reserved attempt has released its dispatch barrier.
+    fn dispatch_finished(&mut self) -> bool {
+        self.dispatch_tail.as_mut().is_none_or(|tail| {
+            matches!(
+                tail.try_recv(),
+                Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+            )
+        })
+    }
+    /// Chains the next dispatch to this message's previous attempt.
+    fn reserve_dispatch(&mut self) -> EditTurn {
+        let (completion, next) = tokio::sync::oneshot::channel();
+        EditTurn {
+            previous: self.dispatch_tail.replace(next),
+            completion,
+            owner: Arc::downgrade(&self.dispatch_owner),
+        }
+    }
+}
+
+impl EditTurn {
+    /// Waits for the preceding attempt and rejects work whose account was invalidated.
+    async fn wait(&mut self) -> bool {
+        if let Some(previous) = self.previous.take() {
+            let _ = previous.await;
+        }
+        self.owner.upgrade().is_some()
+    }
+}
+
+struct AcceptedEdit {
+    text: String,
+    mentions: Vec<String>,
+    version: EditVersion,
+    draft: EditDraft,
+}
+
 struct Worker {
     /// Private content may reach the UI.
     privacy_ready: bool,
@@ -774,6 +864,8 @@ struct Worker {
     /// Bumped whenever a rename made here is confirmed, for the same reason:
     /// metadata asked for before it must not bring the old subject back.
     subject_generation: HashMap<String, u64>,
+    edit_sequence: u64,
+    pending_edits: HashMap<(ChatId, String), PendingEdits>,
     group_info_tries: HashMap<String, u32>,
     /// Next retry time for failed group metadata requests.
     group_info_retry: Vec<(Instant, String)>,
@@ -1072,6 +1164,7 @@ impl Worker {
         self.group_info_tries.remove(chat);
         match self.archive.remove_chat_through(chat, through, true) {
             Ok(removed) => {
+                self.discard_removed_edits(chat);
                 self.pending_older.remove(chat);
                 if delete_media {
                     self.drop_cached_media(&removed.media);
@@ -1103,6 +1196,7 @@ impl Worker {
     fn empty_chat(&mut self, chat: &str, through: i64, delete_media: bool) -> bool {
         match self.archive.remove_chat_through(chat, through, false) {
             Ok(removed) => {
+                self.discard_removed_edits(chat);
                 self.pending_older.remove(chat);
                 if delete_media {
                     self.drop_cached_media(&removed.media);
@@ -2639,6 +2733,7 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        self.invalidate_pending_edits();
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
         self.stop_bot().await;
         if let Err(error) = self.archive.clear() {
@@ -2988,6 +3083,7 @@ impl Worker {
             .collect()
     }
 
+    /// Archives a protocol message and publishes the derived application events.
     fn ingest(&mut self, message: &Arc<wa::Message>, info: &MessageInfo) {
         self.learn_source(&info.source);
         if info.source.chat.is_status_broadcast() {
@@ -3047,6 +3143,7 @@ impl Worker {
             };
             match protocol.r#type {
                 Some(Type::REVOKE) => {
+                    self.pending_edits.remove(&(chat.clone(), target.clone()));
                     if let Ok(true) =
                         self.archive
                             .set_content(&chat, &target, &Content::Revoked, false)
@@ -3056,6 +3153,11 @@ impl Worker {
                     }
                 }
                 Some(Type::MESSAGE_EDIT) => {
+                    if let Some(pending) =
+                        self.pending_edits.get_mut(&(chat.clone(), target.clone()))
+                    {
+                        pending.invalidate();
+                    }
                     if let Some(edited) = protocol.edited_message.as_option()
                         && let Some(mut content) = classify(edited)
                     {
@@ -4263,6 +4365,7 @@ impl Worker {
 
     // --- commands --------------------------------------------------------
 
+    /// Dispatches UI commands and validates asynchronous completions before applying them.
     async fn handle_command(&mut self, command: Command) {
         let destination = match &command {
             Command::SendText { chat, .. }
@@ -4456,10 +4559,41 @@ impl Worker {
                 id,
                 text,
                 mentions,
-            } => self.edit_text(chat, id, text, mentions),
+                draft,
+            } => self.edit_text(
+                chat,
+                id,
+                EditRequest {
+                    text,
+                    mentions,
+                    draft,
+                },
+            ),
+            Command::EditedText {
+                chat,
+                id,
+                text,
+                mentions,
+                error,
+                version,
+                draft,
+            } => {
+                self.finish_edit(
+                    chat,
+                    id,
+                    EditRequest {
+                        text,
+                        mentions,
+                        draft,
+                    },
+                    error,
+                    version,
+                );
+            }
             Command::Revoke { chat, id } => self.revoke(chat, id),
             Command::DeleteLocal { chat, id } => {
                 if let Ok(true) = self.archive.delete_message(&chat, &id) {
+                    self.pending_edits.remove(&(chat.clone(), id.clone()));
                     self.emit(Event::MessageDeleted {
                         chat: chat.clone(),
                         id,
@@ -6918,35 +7052,215 @@ impl Worker {
         }
     }
 
-    fn edit_text(&mut self, chat: ChatId, id: String, text: String, mentions: Vec<String>) {
-        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
-            return;
-        };
-        let content = Content::text(text.clone());
-        let mention_rows = self.mentions_of(&mentions);
-        if let Ok(true) = self
-            .archive
-            .set_edited_text(&chat, &id, &content, &mention_rows)
-        {
-            self.emit_message(&chat, &id);
-            self.emit_chat(&chat);
-        }
-        let mut message = outgoing_text(text, None, &mentions);
-        self.apply_ephemeral(&chat, &mut message);
-        let commands = self.commands.clone();
-        tokio::spawn(async move {
-            if let Err(error) = client.edit_message(jid, id.clone(), message).await {
-                let _ = commands.send(Command::Sent {
-                    chat,
-                    id: String::new(),
-                    error: Some(format!("Could not send the edit: {error}")),
-                });
-            }
+    /// Assigns a generation to an edit and records it among that target's outstanding requests.
+    fn begin_edit(&mut self, chat: &str, id: &str) -> u64 {
+        self.edit_sequence += 1;
+        let pending = self
+            .pending_edits
+            .entry((chat.to_owned(), id.to_owned()))
+            .or_default();
+        pending.latest = self.edit_sequence;
+        pending.outstanding.insert(self.edit_sequence);
+        self.edit_sequence
+    }
+
+    /// Drops edit ownership before logout replaces the archive. The monotonically
+    /// increasing sequence prevents a late completion matching a new account's edit.
+    fn invalidate_pending_edits(&mut self) {
+        self.pending_edits.clear();
+    }
+
+    /// Cancels queued edits to rows removed by a clear or delete boundary.
+    fn discard_removed_edits(&mut self, chat: &str) {
+        let archive = &self.archive;
+        self.pending_edits.retain(|(source, id), _| {
+            source != chat || archive.message(source, id).ok().flatten().is_some()
         });
     }
 
+    /// Validates and dispatches an edit using the current eligibility-check time.
+    fn edit_text(&mut self, chat: ChatId, id: String, request: EditRequest) {
+        self.edit_text_at(chat, id, request, crate::util::now());
+    }
+
+    /// Checks archived edit eligibility at the supplied time before dispatching to WhatsApp.
+    fn edit_text_at(&mut self, chat: ChatId, id: String, request: EditRequest, now: i64) {
+        let EditRequest {
+            text,
+            mentions,
+            draft,
+        } = request;
+        let row = self.archive.message(&chat, &id).ok().flatten();
+        if !row.as_ref().is_some_and(|row| row.editable_at(now)) || text.trim().is_empty() {
+            self.emit(Event::EditRefused {
+                chat,
+                id,
+                draft,
+                error: EditFailure::Expired,
+            });
+            return;
+        }
+        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
+            self.emit(Event::EditRefused {
+                chat,
+                id,
+                draft,
+                error: EditFailure::Offline,
+            });
+            return;
+        };
+        let row = row.expect("eligible message");
+        let generation = self.begin_edit(&chat, &id);
+        let mut turn = self
+            .pending_edits
+            .get_mut(&(chat.clone(), id.clone()))
+            .expect("registered edit")
+            .reserve_dispatch();
+        let eligibility = row.clone();
+        let version = EditVersion {
+            generation,
+            content: row.content,
+            edited: row.edited,
+        };
+        let mut message = outgoing_text(text.clone(), None, &mentions);
+        self.apply_ephemeral(&chat, &mut message);
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            let error = if !turn.wait().await {
+                Some("Edit cancelled".to_owned())
+            } else if !eligibility.editable_at(crate::util::now()) {
+                Some("This message can no longer be edited".to_owned())
+            } else {
+                with_edit_deadline(EDIT_TIMEOUT, async {
+                    client
+                        .edit_message(jid, id.clone(), message)
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| error.to_string())
+                })
+                .await
+            };
+            // Signal first so even an invalidated completion can collect an idle
+            // entry. Cancelled queued turns also release their barrier here.
+            let _ = turn.completion.send(());
+            let _ = commands.send(Command::EditedText {
+                chat,
+                id,
+                text,
+                mentions,
+                error,
+                version,
+                draft,
+            });
+        });
+    }
+
+    /// Settles an edit completion and saves the latest accepted version without restoring stale results.
+    fn finish_edit(
+        &mut self,
+        chat: ChatId,
+        id: String,
+        request: EditRequest,
+        error: Option<String>,
+        version: EditVersion,
+    ) {
+        let EditRequest {
+            text,
+            mentions,
+            draft,
+        } = request;
+        let key = (chat.clone(), id.clone());
+        let Some(pending) = self.pending_edits.get_mut(&key) else {
+            return;
+        };
+        if !pending.outstanding.remove(&version.generation) {
+            if pending.outstanding.is_empty() && pending.dispatch_finished() {
+                self.pending_edits.remove(&key);
+            }
+            return;
+        }
+        let successful = error.is_none();
+        let refusal = error.filter(|_| pending.latest == version.generation);
+        let settled = pending.outstanding.is_empty();
+        let failed_draft = if refusal.is_some() {
+            Some(draft.clone())
+        } else {
+            None
+        };
+        if successful
+            && pending
+                .accepted
+                .as_ref()
+                .is_none_or(|accepted| accepted.version.generation < version.generation)
+        {
+            pending.accepted = Some(AcceptedEdit {
+                text,
+                mentions,
+                version,
+                draft,
+            });
+        }
+        if let Some(error) = refusal {
+            self.emit(Event::EditRefused {
+                chat: chat.clone(),
+                id: id.clone(),
+                draft: failed_draft.expect("failed draft"),
+                error: EditFailure::Send(error),
+            });
+        }
+        if !settled {
+            return;
+        }
+        let Some(accepted) = self
+            .pending_edits
+            .remove(&key)
+            .and_then(|pending| pending.accepted)
+        else {
+            return;
+        };
+        let AcceptedEdit {
+            text,
+            mentions,
+            version,
+            draft,
+        } = accepted;
+        // An incoming phone edit or revoke invalidates all local completions.
+        if !self
+            .archive
+            .message(&chat, &id)
+            .ok()
+            .flatten()
+            .is_some_and(|row| {
+                row.from_me
+                    && matches!(row.content, Content::Text { .. })
+                    && row.content == version.content
+                    && row.edited == version.edited
+            })
+        {
+            return;
+        }
+        let mention_rows = self.mentions_of(&mentions);
+        match self
+            .archive
+            .set_edited_text(&chat, &id, &Content::text(text), &mention_rows)
+        {
+            Ok(true) => {
+                self.emit_message(&chat, &id);
+                self.emit_chat(&chat);
+            }
+            Ok(false) => {}
+            Err(_) => self.emit(Event::EditRefused {
+                chat,
+                id,
+                draft,
+                error: EditFailure::Save,
+            }),
+        }
+    }
+
     fn revoke(&mut self, chat: ChatId, id: String) {
+        // Withdrawing a message also withdraws every edit still waiting to send.
+        self.pending_edits.remove(&(chat.clone(), id.clone()));
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
@@ -8932,7 +9246,505 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Even a later task polled first must wait, while other messages stay independent.
+    #[tokio::test]
+    async fn edit_dispatch_reservations_preserve_each_messages_order() {
+        let mut pending = PendingEdits::default();
+        let mut first = pending.reserve_dispatch();
+        let mut second = pending.reserve_dispatch();
+        let (started, mut observed) = tokio::sync::oneshot::channel();
+        let later = tokio::spawn(async move {
+            assert!(second.wait().await);
+            let _ = started.send(());
+            let _ = second.completion.send(());
+        });
+        tokio::task::yield_now().await;
+        assert!(matches!(
+            observed.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        let mut unrelated = PendingEdits::default();
+        assert!(unrelated.reserve_dispatch().wait().await);
+        assert!(first.wait().await);
+        let _ = first.completion.send(());
+        observed.await.unwrap();
+        later.await.unwrap();
+    }
+
+    /// Clearing worker ownership prevents an old queued edit from reaching the network.
+    #[tokio::test]
+    async fn invalidating_edits_cancels_waiting_dispatches() {
+        let mut pending = PendingEdits::default();
+        let first = pending.reserve_dispatch();
+        let mut second = pending.reserve_dispatch();
+        drop(pending);
+        let _ = first.completion.send(());
+        assert!(!second.wait().await);
+    }
+
+    /// A phone edit cancels stale turns but keeps new requests behind the active send.
+    #[tokio::test]
+    async fn phone_edit_invalidation_preserves_the_existing_dispatch_chain() {
+        let mut pending = PendingEdits::default();
+        let mut active = pending.reserve_dispatch();
+        assert!(active.wait().await);
+        let mut stale = pending.reserve_dispatch();
+        pending.invalidate();
+        let mut replacement = pending.reserve_dispatch();
+        let (started, mut observed) = tokio::sync::oneshot::channel();
+        let newer = tokio::spawn(async move {
+            assert!(replacement.wait().await);
+            let _ = started.send(());
+            let _ = replacement.completion.send(());
+        });
+        tokio::task::yield_now().await;
+        assert!(matches!(
+            observed.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        let _ = active.completion.send(());
+        assert!(!stale.wait().await);
+        assert!(matches!(
+            observed.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        let _ = stale.completion.send(());
+        observed.await.unwrap();
+        newer.await.unwrap();
+        assert!(pending.dispatch_finished());
+    }
+
+    /// A settled invalidated completion removes its idle barrier without changing the archive.
+    #[tokio::test]
+    async fn invalidated_edit_completion_collects_the_retained_dispatch_entry() {
+        let (mut worker, _, _, _) = super::receipt_tests::worker();
+        let row = super::receipt_tests::own_message("invalidated-edit", crate::util::now() - 60);
+        worker.archive.ensure_chat(&row.chat, "Fixture").unwrap();
+        worker.archive.insert_message(&row, None).unwrap();
+        let generation = worker.begin_edit(&row.chat, &row.id);
+        let pending = worker
+            .pending_edits
+            .get_mut(&(row.chat.clone(), row.id.clone()))
+            .unwrap();
+        let turn = pending.reserve_dispatch();
+        pending.invalidate();
+        let _ = turn.completion.send(());
+        worker.finish_edit(
+            row.chat.clone(),
+            row.id.clone(),
+            EditRequest {
+                text: "Stale edit".into(),
+                mentions: vec![],
+                draft: EditDraft::default(),
+            },
+            None,
+            EditVersion {
+                generation,
+                content: row.content.clone(),
+                edited: row.edited,
+            },
+        );
+        assert!(worker.pending_edits.is_empty());
+        assert_eq!(
+            worker
+                .archive
+                .message(&row.chat, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            row.content
+        );
+    }
+
+    /// A local revoke cancels waiting edits even when connectivity has disappeared.
+    #[tokio::test]
+    async fn local_revoke_withdraws_queued_edit_dispatches() {
+        let (mut worker, _, _, _) = super::receipt_tests::worker();
+        let row = super::receipt_tests::own_message("withdrawn-edit", crate::util::now() - 60);
+        worker.archive.ensure_chat(&row.chat, "Fixture").unwrap();
+        worker.archive.insert_message(&row, None).unwrap();
+        worker.begin_edit(&row.chat, &row.id);
+        let key = (row.chat.clone(), row.id.clone());
+        let pending = worker.pending_edits.get_mut(&key).unwrap();
+        let mut active = pending.reserve_dispatch();
+        let mut queued = pending.reserve_dispatch();
+        assert!(active.wait().await);
+        worker.revoke(row.chat.clone(), row.id.clone());
+        active.completion.send(()).unwrap();
+        assert!(!queued.wait().await);
+        assert!(!worker.pending_edits.contains_key(&key));
+    }
+
+    /// Clearing older rows cancels their queued dispatches and keeps newer rows editable.
+    #[tokio::test]
+    async fn clearing_a_chat_cancels_only_edits_whose_rows_were_removed() {
+        let (mut worker, _, _, _) = super::receipt_tests::worker();
+        let older = super::receipt_tests::own_message("older-edit", 100);
+        let newer = super::receipt_tests::own_message("newer-edit", 200);
+        worker.archive.ensure_chat(&older.chat, "Fixture").unwrap();
+        for row in [&older, &newer] {
+            worker.archive.insert_message(row, None).unwrap();
+            worker.begin_edit(&row.chat, &row.id);
+        }
+        let key = (older.chat.clone(), older.id.clone());
+        let mut removed = worker
+            .pending_edits
+            .get_mut(&key)
+            .unwrap()
+            .reserve_dispatch();
+        let key = (newer.chat.clone(), newer.id.clone());
+        let mut retained = worker
+            .pending_edits
+            .get_mut(&key)
+            .unwrap()
+            .reserve_dispatch();
+        assert!(worker.empty_chat(&older.chat, 100, false));
+        assert!(!removed.wait().await);
+        assert!(retained.wait().await);
+    }
     use std::io::Cursor;
+
+    #[test]
+    fn edit_completion_preserves_newer_requests_and_archive_updates() {
+        let (mut worker, events, _, _) = super::receipt_tests::worker();
+        let row = super::receipt_tests::own_message("edit-fixture", crate::util::now() - 60);
+        let chat = row.chat.clone();
+        worker.archive.ensure_chat(&chat, "Fixture").unwrap();
+        worker.archive.insert_message(&row, None).unwrap();
+        let old = worker.begin_edit(&chat, &row.id);
+        let new = worker.begin_edit(&chat, &row.id);
+        worker.finish_edit(
+            chat.clone(),
+            row.id.clone(),
+            EditRequest {
+                text: "Newest".into(),
+                mentions: vec![],
+                draft: EditDraft::default(),
+            },
+            None,
+            EditVersion {
+                generation: new,
+                content: row.content.clone(),
+                edited: row.edited,
+            },
+        );
+        worker.finish_edit(
+            chat.clone(),
+            row.id.clone(),
+            EditRequest {
+                text: "Stale".into(),
+                mentions: vec![],
+                draft: EditDraft::default(),
+            },
+            None,
+            EditVersion {
+                generation: old,
+                content: row.content.clone(),
+                edited: row.edited,
+            },
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(&chat, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::text("Newest")
+        );
+        let saved = worker.archive.message(&chat, &row.id).unwrap().unwrap();
+        assert_eq!(saved.timestamp, row.timestamp);
+        let generation = worker.begin_edit(&chat, &row.id);
+        worker
+            .archive
+            .set_content(&chat, &row.id, &Content::text("From phone"), true)
+            .unwrap();
+        worker.finish_edit(
+            chat.clone(),
+            row.id.clone(),
+            EditRequest {
+                text: "Stale again".into(),
+                mentions: vec![],
+                draft: EditDraft::default(),
+            },
+            None,
+            EditVersion {
+                generation,
+                content: saved.content.clone(),
+                edited: saved.edited,
+            },
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(&chat, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::text("From phone")
+        );
+        let generation = worker.begin_edit(&chat, &row.id);
+        worker.finish_edit(
+            chat.clone(),
+            row.id.clone(),
+            EditRequest {
+                text: "Retry me".into(),
+                mentions: vec![],
+                draft: EditDraft {
+                    text: "Retry me".into(),
+                    mentions: vec![],
+                },
+            },
+            Some("Synthetic failure".into()),
+            EditVersion {
+                generation,
+                content: Content::text("From phone"),
+                edited: true,
+            },
+        );
+        assert!(events.try_iter().any(
+            |event| matches!(event, Event::EditRefused { draft, .. } if draft.text == "Retry me")
+        ));
+        let generation = worker.begin_edit(&chat, &row.id);
+        worker
+            .archive
+            .set_content(&chat, &row.id, &Content::Revoked, false)
+            .unwrap();
+        worker.finish_edit(
+            chat.clone(),
+            row.id.clone(),
+            EditRequest {
+                text: "Revived".into(),
+                mentions: vec![],
+                draft: EditDraft {
+                    text: "Retry me".into(),
+                    mentions: vec![],
+                },
+            },
+            None,
+            EditVersion {
+                generation,
+                content: Content::text("From phone"),
+                edited: true,
+            },
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(&chat, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Revoked
+        );
+    }
+
+    /// Logout discards old drafts and completion ownership, even when a new
+    /// session starts an edit for the same archived message identity.
+    #[test]
+    fn logged_out_edits_cannot_emit_refusals_into_the_next_session() {
+        use super::receipt_tests::{PEER, own_message, worker};
+        let (mut worker, events, _inbox, _wa) = worker();
+        let row = own_message("session-edit", 1);
+        worker.store_message(row.clone(), None, None);
+        let old = worker.begin_edit(PEER, &row.id);
+        worker.invalidate_pending_edits();
+        worker.archive.clear().unwrap();
+        worker.store_message(row.clone(), None, None);
+        let current = worker.begin_edit(PEER, &row.id);
+        assert_ne!(old, current);
+        let _ = events.try_iter().count();
+        let request = |text: &str| EditRequest {
+            text: text.to_owned(),
+            mentions: Vec::new(),
+            draft: EditDraft {
+                text: text.to_owned(),
+                mentions: Vec::new(),
+            },
+        };
+        let version = |generation| EditVersion {
+            generation,
+            content: row.content.clone(),
+            edited: row.edited,
+        };
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Old account"),
+            Some("Old refusal".to_owned()),
+            version(old),
+        );
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Old account"),
+            None,
+            version(old),
+        );
+        assert!(events.try_recv().is_err());
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            row.content
+        );
+        assert!(
+            worker.pending_edits[&(PEER.to_owned(), row.id.clone())]
+                .outstanding
+                .contains(&current)
+        );
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Current account"),
+            None,
+            version(current),
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::text("Current account")
+        );
+    }
+
+    /// A timed-out earlier request releases the settlement barrier while a
+    /// later accepted edit remains the saved correction, without automatic retry.
+    #[tokio::test]
+    async fn an_edit_deadline_releases_a_later_accepted_correction() {
+        use super::receipt_tests::{PEER, own_message, worker};
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let row = own_message("deadline", 1);
+        worker.store_message(row.clone(), None, None);
+        let first = worker.begin_edit(PEER, &row.id);
+        let second = worker.begin_edit(PEER, &row.id);
+        let request = |text: &str| EditRequest {
+            text: text.to_owned(),
+            mentions: Vec::new(),
+            draft: EditDraft {
+                text: text.to_owned(),
+                mentions: Vec::new(),
+            },
+        };
+        let version = |generation| EditVersion {
+            generation,
+            content: row.content.clone(),
+            edited: row.edited,
+        };
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Accepted"),
+            None,
+            version(second),
+        );
+        assert!(!worker.pending_edits.is_empty());
+        let error = with_edit_deadline(Duration::from_millis(1), std::future::pending()).await;
+        assert!(
+            error
+                .as_ref()
+                .is_some_and(|error| error.contains("timed out"))
+        );
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Earlier"),
+            error,
+            version(first),
+        );
+        assert!(worker.pending_edits.is_empty());
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::text("Accepted")
+        );
+        assert!(
+            with_edit_deadline(Duration::from_millis(10), async { Ok(()) })
+                .await
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_accepted_older_edit_survives_a_newer_refusal_in_either_completion_order() {
+        for older_first in [true, false] {
+            let (mut worker, events, _, _) = super::receipt_tests::worker();
+            let row = super::receipt_tests::own_message("edit-race", crate::util::now() - 60);
+            let chat = row.chat.clone();
+            worker.archive.ensure_chat(&chat, "Fixture").unwrap();
+            worker.archive.insert_message(&row, None).unwrap();
+            let older = worker.begin_edit(&chat, &row.id);
+            let newer = worker.begin_edit(&chat, &row.id);
+            for generation in if older_first {
+                [older, newer]
+            } else {
+                [newer, older]
+            } {
+                let text = if generation == older {
+                    "Accepted A"
+                } else {
+                    "Refused B"
+                };
+                worker.finish_edit(
+                    chat.clone(),
+                    row.id.clone(),
+                    EditRequest {
+                        text: text.into(),
+                        mentions: vec![],
+                        draft: EditDraft {
+                            text: text.into(),
+                            mentions: vec![],
+                        },
+                    },
+                    (generation == newer).then(|| "Synthetic refusal".into()),
+                    EditVersion {
+                        generation,
+                        content: row.content.clone(),
+                        edited: row.edited,
+                    },
+                );
+            }
+            let saved = worker.archive.message(&chat, &row.id).unwrap().unwrap();
+            assert_eq!(saved.content, Content::text("Accepted A"));
+            assert!(saved.edited);
+            assert!(worker.pending_edits.is_empty());
+            assert!(events.try_iter().any(|event| matches!(event, Event::EditRefused { draft, .. } if draft.text == "Refused B")));
+        }
+    }
+
+    #[test]
+    fn an_edit_expiring_in_the_command_queue_returns_its_text_and_target() {
+        let (mut worker, events, _, _) = super::receipt_tests::worker();
+        let row = super::receipt_tests::own_message("edit-fixture", 1000);
+        worker.archive.ensure_chat(&row.chat, "Fixture").unwrap();
+        worker.archive.insert_message(&row, None).unwrap();
+        assert!(row.editable_at(1900));
+        worker.edit_text_at(
+            row.chat.clone(),
+            row.id.clone(),
+            EditRequest {
+                text: "Keep correction".into(),
+                mentions: vec![],
+                draft: EditDraft {
+                    text: "Keep correction".into(),
+                    mentions: vec![],
+                },
+            },
+            1901,
+        );
+        assert!(events.try_iter().any(|event| matches!(event, Event::EditRefused { chat, id, draft, .. } if chat == row.chat && id == row.id && draft.text == "Keep correction")));
+    }
 
     #[test]
     fn only_phone_playable_audio_is_sent_as_an_audio_message() {
@@ -11344,6 +12156,7 @@ mod receipt_tests {
         assert!(worker.forward_queue.is_none());
     }
 
+    /// Creates an isolated backend fixture with a temporary archive and synthetic credentials.
     pub(super) fn worker() -> (
         Worker,
         std::sync::mpsc::Receiver<Event>,
@@ -11393,6 +12206,8 @@ mod receipt_tests {
             group_info_requested: HashSet::new(),
             leave_generation: HashMap::new(),
             subject_generation: HashMap::new(),
+            edit_sequence: 0,
+            pending_edits: HashMap::new(),
             group_info_queue: std::collections::VecDeque::new(),
             group_info_tries: HashMap::new(),
             group_info_retry: Vec::new(),

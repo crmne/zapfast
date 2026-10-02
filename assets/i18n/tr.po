@@ -3,8 +3,9 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
-"POT-Creation-Date: 2026-09-29 15:36+0200\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-10-02 17:10-0300\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -254,10 +255,9 @@ msgstr ""
 "Ctrl+Enter gönderir · *kalın* _italik_ ~üstü çizili~ · Ctrl+V görsel "
 "yapıştırır"
 
-#: src/ui/conversation.rs:1298
+#: src/ui/conversation.rs:1308
 msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
-msgstr ""
-"Kısayol ipuçlarını gizle (Klavye kısayollarından tekrar açabilirsiniz)"
+msgstr "Kısayol ipuçlarını gizle (Klavye kısayollarından tekrar açabilirsiniz)"
 
 #: src/ui/conversation.rs:1313
 #, rust-format
@@ -388,6 +388,15 @@ msgstr "Duraklat"
 #: src/ui/conversation.rs:6168 src/ui/settings.rs:1613
 msgid "Play"
 msgstr "Oynat"
+
+#: src/ui/conversation.rs
+msgid "Back to the message (Esc)"
+msgstr "Mesaja geri dön (Esc)"
+
+
+#: src/ui/conversation.rs
+msgid "Fill the window"
+msgstr "Pencereyi kapla"
 
 #: src/ui/conversation.rs:6191
 msgid "Unmute"
@@ -543,6 +552,18 @@ msgstr "Sistemi takip et, Omarchy renklerinizi kullanır."
 msgid "Theme"
 msgstr "Tema"
 
+#: src/ui/settings.rs
+msgid "Font"
+msgstr "Yazı tipi"
+
+#: src/ui/settings.rs
+msgid ""
+"System is your desktop's interface font. Inter looks the same on every "
+"computer."
+msgstr ""
+"Sistem, masaüstünüzün arayüz yazı tipidir. Inter ise her bilgisayarda aynı "
+"görünür."
+
 #: src/ui/settings.rs:317
 msgid "Wallpaper"
 msgstr "Sohbet duvar kâğıdı"
@@ -622,10 +643,9 @@ msgstr "Bildirimler"
 msgid "Desktop notifications"
 msgstr "Masaüstü bildirimleri"
 
-#: src/ui/settings.rs:433
+#: src/ui/settings.rs:441
 msgid "For chats you are not looking at. Muted chats stay quiet."
-msgstr ""
-"Açık olmayan sohbetler içindir. Sessize alınan sohbetler sessiz kalır."
+msgstr "Açık olmayan sohbetler içindir. Sessize alınan sohbetler sessiz kalır."
 
 #: src/ui/settings.rs:441 src/ui/settings.rs:1748
 msgid "Play sounds for group messages"
@@ -1076,6 +1096,11 @@ msgstr ""
 "Gönderilmedi: Yanıtladığınız mesaj bu bilgisayarda mevcut değil. Alıntısız "
 "göndermek için yanıtı iptal edin."
 
+#: src/app.rs:3295 src/app.rs:11271
+#
+msgid "This message can no longer be edited"
+msgstr "Bu mesaj artık düzenlenemez"
+
 #: src/app.rs:4254
 msgid "Added to favorites"
 msgstr "Favorilere eklendi"
@@ -1084,11 +1109,10 @@ msgstr "Favorilere eklendi"
 msgid "Sending the sticker pack…"
 msgstr "Çıkartma paketi gönderiliyor…"
 
-#: src/app.rs:4617 src/ui/labels.rs:237
+#: src/app.rs:4780 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
-msgstr ""
-"ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
+msgstr "ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
 
 #: src/app.rs:5247
 msgid "App lock password saved"
@@ -1109,6 +1133,20 @@ msgstr "Görsel kopyalandı"
 #: src/app.rs:5903 src/app.rs:5908
 msgid "Failed to copy image"
 msgstr "Görsel kopyalanamadı"
+
+#: src/app.rs:11274
+#
+msgid "Not connected to WhatsApp"
+msgstr "WhatsApp'a bağlı değil"
+
+#: src/app.rs:11278
+#
+msgid "Could not send the edit"
+msgstr "Düzenleme gönderilemedi"
+
+#: src/app.rs:11281
+msgid "The edit was sent but could not be saved locally"
+msgstr "Düzenleme gönderildi, ancak bu bilgisayara kaydedilemedi"
 
 #: src/ui/labels.rs:68
 msgctxt "label colour"
@@ -1178,8 +1216,8 @@ msgid ""
 "Labels stay on this computer. They do not reach your phone or anyone you "
 "chat with."
 msgstr ""
-"Etiketler bu bilgisayarda kalır. Telefonunuza veya sohbet ettiğiniz kişilere"
-" iletilmez."
+"Etiketler bu bilgisayarda kalır. Telefonunuza veya sohbet ettiğiniz kişilere "
+"iletilmez."
 
 #: src/ui/labels.rs:247
 msgid "New label"
@@ -1264,22 +1302,22 @@ msgstr "Bu paketi kaldır"
 msgid "Send this pack to the chat"
 msgstr "Bu paketi sohbete gönder"
 
-#: src/ui/picker.rs:1294
+#: src/ui/picker.rs:1338
 msgid "Nothing here yet. Right-click any sticker to add it to this pack."
 msgstr ""
-"Henüz burada bir şey yok. Bu pakete eklemek için herhangi bir çıkartmaya sağ"
-" tıklayın."
+"Henüz burada bir şey yok. Bu pakete eklemek için herhangi bir çıkartmaya sağ "
+"tıklayın."
 
 #: src/ui/picker.rs:1367
 msgid "Import a pack"
 msgstr "Paket içe aktar"
 
-#: src/ui/picker.rs:1375
+#: src/ui/picker.rs:1419
 msgid ""
 "Paste a signal.art link from signalstickers.org, or open a .wastickers file."
 msgstr ""
-"signalstickers.org sitesinden bir signal.art bağlantısı yapıştırın veya bir "
-".wastickers dosyası açın."
+"signalstickers.org sitesinden bir signal.art bağlantısı yapıştırın veya "
+"bir .wastickers dosyası açın."
 
 #: src/ui/picker.rs:1385
 msgid "Make your own"
@@ -1510,26 +1548,6 @@ msgstr "1 dakika sonra"
 msgid "After 15 minutes"
 msgstr "15 dakika sonra"
 
-#: src/settings.rs:319
+#: src/settings.rs:341
 msgid "After 1 hour"
 msgstr "1 saat sonra"
-
-#: src/ui/settings.rs
-msgid "Font"
-msgstr "Yazı tipi"
-
-#: src/ui/settings.rs
-msgid ""
-"System is your desktop's interface font. Inter looks the same on every "
-"computer."
-msgstr ""
-"Sistem, masaüstünüzün arayüz yazı tipidir. Inter ise her bilgisayarda aynı "
-"görünür."
-
-#: src/ui/conversation.rs
-msgid "Fill the window"
-msgstr "Pencereyi kapla"
-
-#: src/ui/conversation.rs
-msgid "Back to the message (Esc)"
-msgstr "Mesaja geri dön (Esc)"

@@ -319,7 +319,19 @@ pub struct LinkPreview {
     pub description: Option<String>,
 }
 
+pub const EDIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
 impl Message {
+    /// Only sent text inside the original fifteen-minute window can be edited.
+    pub fn editable_at(&self, now: i64) -> bool {
+        self.from_me
+            && matches!(self.content, Content::Text { .. })
+            && !matches!(self.status, Delivery::Pending | Delivery::Failed)
+            && now
+                .checked_sub(self.timestamp)
+                .is_some_and(|age| (0..=EDIT_WINDOW.as_secs() as i64).contains(&age))
+    }
+
     /// One-line summary used in chat rows and quotes.
     pub fn summary(&self) -> String {
         self.content.summary()
@@ -1249,6 +1261,13 @@ pub enum Scroll {
     /// The newest message, eased. `Action::ScrollToBottom` (Ctrl+End) jumps
     /// there at once.
     Bottom,
+}
+
+/// A selected display-name mention in a composer draft.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComposerMention {
+    pub id: String,
+    pub name: String,
 }
 
 /// Actions queued by views and applied after drawing.
