@@ -6,6 +6,7 @@ use crate::app::App;
 use crate::model::{Action, Dialog};
 use crate::theme::{self, Icon};
 
+/// Draws the active dialog and queues its actions for application after the frame.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(dialog) = app.dialog.clone() else {
         return;
@@ -742,6 +743,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// Returns the selected count only when that selection belongs to the requested chat.
 fn selected_message_count(locale: crate::i18n::Locale, count: usize) -> String {
     crate::i18n::ngettext(
         locale,
@@ -1115,6 +1117,7 @@ fn confirm_start_over(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// Formats localized deletion guidance for direct or selected messages and the chosen scope.
 fn deletion_body(locale: crate::i18n::Locale, for_everyone: bool, count: Option<usize>) -> String {
     match (for_everyone, count) {
         (false, None) => crate::i18n::gettext(locale, "This removes the message from this computer. Other people keep their copy. Your phone will not send it again, so it cannot be undone.").into_owned(),
@@ -1136,6 +1139,7 @@ fn confirm_delete_message(
     confirm_delete_messages(app, ui, chat, &[id.to_owned()], for_everyone, false);
 }
 
+/// Draws the batch-delete confirmation and queues the confirmed deletion scope.
 fn confirm_delete_messages(
     app: &mut App,
     ui: &mut egui::Ui,

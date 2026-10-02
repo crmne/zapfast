@@ -1700,6 +1700,7 @@ fn shows_sender_pictures(chat: &Chat) -> bool {
     chat.is_group()
 }
 
+/// Draws virtualized transcript rows and records selection, scrolling and message actions.
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     // Taken up front: `names_or` below borrows the rest of `app` for the
@@ -3998,6 +3999,7 @@ fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> 
     list
 }
 
+/// Checks every selected message's revoke eligibility with one scan of loaded history.
 fn selection_can_revoke(messages: &[Message], selected: &[String], now: i64) -> bool {
     if selected.is_empty() {
         return false;
@@ -4020,6 +4022,7 @@ fn selection_can_revoke(messages: &[Message], selected: &[String], now: i64) -> 
     false
 }
 
+/// Draws batch actions for the selected messages, including separate deletion choices.
 fn selection_menu(
     ui: &mut egui::Ui,
     view: &View<'_>,
