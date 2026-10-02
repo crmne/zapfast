@@ -5540,6 +5540,9 @@ fn rich_body(
     }
     if !laid.links.is_empty()
         && let Some(pos) = response.hover_pos()
+        && laid.galley.rows.iter().any(|row| {
+            Rect::from_min_size(origin + row.pos.to_vec2(), row.row.size).contains(pos)
+        })
     {
         let cursor = laid.galley.cursor_from_pos(pos - origin);
         if let Some(url) = laid.link_at(cursor.index.0) {
