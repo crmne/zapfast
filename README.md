@@ -98,17 +98,24 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   A message that could not be sent says "Not sent" beside its time. ZapFast
   does not retry it; send it again yourself. Timestamps follow the system's
   12-hour or 24-hour clock: the time format on Windows and macOS, and GNOME's
-  clock format or the time locale (`LC_TIME`) on Linux. **Select** in a
-  message's menu, or Ctrl-click (Command-click on macOS) on a message, starts
-  a selection: click more messages to add or remove them, Shift-click to add
+  clock format or the time locale (`LC_TIME`) on Linux. **Select messages**
+  in the chat's menu, **Select** in a message's menu, or Ctrl-click
+  (Command-click on macOS) on a message starts a selection. Each message then
+  gets a check box on the left, as in WhatsApp Web: click anywhere on a
+  message's row, box included, to add or remove it, Shift-click to add
   everything up to the one you click, or drag across messages to add every
   one you pass (the list scrolls when you hold the pointer at its top or
   bottom edge). A drag that starts beside the bubbles, off the text, starts a
   selection too; a drag over the text outside a selection still selects the
-  text to copy. Then **Forward…** sends them together,
-  in their original order, or Escape cancels. A batch goes out one message at
-  a time, each starting once the one before it reached WhatsApp, so a picture
-  cannot overtake the text that came before it.
+  text to copy. Deleted or unsupported messages, phone-only content, polls,
+  and interactive messages cannot be selected or forwarded and have no box.
+  If a selected message is deleted, it leaves the selection automatically.
+  Keyboard focus outlines the box; screen readers identify its message by
+  sender, time, and a short summary. Then **Forward…** sends them together, in
+  their original order; unticking the last one keeps the selection open, and
+  Escape ends it. A batch goes out one message at a time, each starting once
+  the one before it reached WhatsApp, so a picture cannot overtake the text
+  that came before it.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew,
   Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so

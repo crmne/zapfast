@@ -24,6 +24,22 @@ Editing uses the composer. Press Escape to cancel.
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 
+## Selecting messages
+
+Choose **Select messages** in the chat's menu (the three dots at the top),
+**Select** in a message's menu, or Ctrl-click (Command-click on macOS) a
+message. As in WhatsApp Web, every message then gets a check box on the left.
+Click anywhere on a message's row, its box included, to add or remove it.
+Shift-click adds every message up to the one you click, and a drag adds every
+message it passes, scrolling when you hold the pointer at the top or bottom
+edge. A drag that starts beside the bubbles, off the text, starts a selection
+too. **Forward…** sends the selected messages together, in their original
+order. Unticking the last message keeps the selection open; Escape or the
+close button ends it. Deleted or unsupported messages, phone-only content,
+polls, and interactive messages cannot be selected or forwarded, so they have
+no box. Keyboard focus outlines the box; screen readers identify its message
+by sender, time, and a short summary.
+
 ## Stickers
 
 The sticker tab works like WhatsApp's: a row of tabs holds **Recent**

@@ -220,6 +220,21 @@ mod tests {
     }
 
     #[test]
+    fn message_selection_labels_use_the_portuguese_catalog() {
+        assert_eq!(
+            gettext(Locale::PortugueseBrazil, "Select messages"),
+            "Selecionar mensagens"
+        );
+        assert_eq!(
+            gettext(
+                Locale::PortugueseBrazil,
+                "Select message from {sender}, {time}: {summary}"
+            ),
+            "Selecionar mensagem de {sender} ({time}): {summary}"
+        );
+    }
+
+    #[test]
     fn german_catalog_translates_the_pilot() {
         assert_eq!(gettext(Locale::German, "Chats"), "Chats");
         assert_eq!(gettext(Locale::German, "Search"), "Suchen");

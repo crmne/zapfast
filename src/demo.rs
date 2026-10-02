@@ -5921,6 +5921,313 @@ mod tests {
         assert_eq!(selected(&app), ["ada-doc", "ada-voice"]);
     }
 
+    /// While selecting, as in WhatsApp Web, every row has a check box in a
+    /// column on the left, the whole width of the row picks it, and the
+    /// selection stays open with nothing in it.
+    #[test]
+    fn while_selecting_every_row_has_a_check_box_on_the_left() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let chat = sample_ids()[0].to_owned();
+        let check = |message: &str| {
+            let id = crate::ui::conversation::bubble_id(&chat, message).with("check");
+            ctx.data(|data| data.get_temp::<egui::Rect>(id))
+        };
+        assert!(
+            check("ada-reply").is_none(),
+            "no check boxes outside a selection"
+        );
+        app.actions.push(crate::model::Action::StartSelection);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        assert_eq!(app.selection, Some((chat.clone(), Vec::new())));
+        let rect = |message: &str| {
+            let id = crate::ui::conversation::bubble_id(&chat, message).with("rect");
+            ctx.data(|data| data.get_temp::<egui::Rect>(id))
+                .unwrap_or_else(|| panic!("{message} is on screen"))
+        };
+        for (message, own) in [
+            ("ada-voice", false),
+            ("you-voice", true),
+            ("ada-reply", false),
+        ] {
+            let boxed = check(message).unwrap_or_else(|| panic!("{message} has a check box"));
+            let bubble = rect(message);
+            assert!(
+                boxed.right() < bubble.left(),
+                "{message}'s check box sits left of its bubble"
+            );
+            assert!(bubble.y_range().contains(boxed.center().y));
+            if own {
+                assert!(
+                    bubble.right() > rect("ada-voice").right() + 50.0,
+                    "an own bubble stays on the right"
+                );
+            }
+        }
+        let click = |app: &mut App, pos: egui::Pos2| {
+            let button = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                app,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos), button(true)],
+            );
+            frame_with(app, &ctx, vec![button(false)]);
+            render(app, &ctx);
+        };
+        click(&mut app, check("ada-voice").unwrap().center());
+        assert_eq!(selected_ids(&app), ["ada-voice"], "the check box picks");
+        // The view's margin, left of the check box.
+        let margin = check("ada-reply").unwrap().left_center() - egui::vec2(10.0, 0.0);
+        click(&mut app, margin);
+        assert_eq!(
+            selected_ids(&app),
+            ["ada-voice", "ada-reply"],
+            "the margin picks too"
+        );
+        click(&mut app, check("ada-voice").unwrap().center());
+        click(&mut app, check("ada-reply").unwrap().center());
+        assert_eq!(
+            app.selection,
+            Some((chat.clone(), Vec::new())),
+            "unticking every message keeps selecting"
+        );
+    }
+
+    #[test]
+    fn message_checkboxes_describe_the_message_and_checked_state() {
+        let mut app = app();
+        let chat = sample_ids()[0].to_owned();
+        let conversation = app.conversations.get_mut(&chat).unwrap();
+        conversation
+            .messages
+            .retain(|row| matches!(row.id.as_str(), "ada-voice" | "you-voice" | "ada-reply"));
+        app.selection = Some((chat.clone(), vec!["ada-voice".into()]));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| app.frame_ui(ui),
+        );
+        output.textures_delta.clear();
+        let tree = output.platform_output.accesskit_update.unwrap();
+        let boxes: Vec<_> = tree
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == egui::accesskit::Role::CheckBox)
+            .map(|(_, node)| node)
+            .collect();
+        assert_eq!(boxes.len(), 3);
+        let labels: std::collections::HashSet<_> =
+            boxes.iter().map(|node| node.label().unwrap()).collect();
+        assert_eq!(labels.len(), 3, "each message has a distinct label");
+        for row in &app.conversations[&chat].messages {
+            let node = boxes
+                .iter()
+                .find(|node| node.label().unwrap().contains(&row.content.summary()))
+                .expect("label identifies the message content");
+            let label = node.label().unwrap();
+            let sender = if row.from_me {
+                "You".to_owned()
+            } else {
+                app.display_name_or(&row.sender, row.sender_name.as_deref())
+            };
+            assert!(label.contains(&sender), "label identifies the sender");
+            assert!(label.contains(&crate::util::moment_stamp(app.locale, row.timestamp)));
+            assert_eq!(
+                node.toggled(),
+                Some(if row.id == "ada-voice" {
+                    egui::accesskit::Toggled::True
+                } else {
+                    egui::accesskit::Toggled::False
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn ineligible_messages_have_neither_selection_boxes_nor_menu_actions() {
+        for content in [
+            Content::Revoked,
+            Content::PhoneOnly {
+                view_once: true,
+                live_location: false,
+                once: None,
+            },
+            Content::Unsupported {
+                what: "Test".into(),
+            },
+            Content::Poll {
+                question: "Lunch?".into(),
+                options: vec!["Yes".into(), "No".into()],
+                state: Default::default(),
+            },
+            Content::Interactive {
+                text: "Choose an option".into(),
+                card: None,
+            },
+            Content::text("A selectable message"),
+        ] {
+            let selectable = matches!(content, Content::Text { .. });
+            let mut app = app();
+            let chat = sample_ids()[0].to_owned();
+            let conversation = app.conversations.get_mut(&chat).unwrap();
+            conversation.messages.retain(|row| row.id == "ada-reply");
+            conversation.messages[0].content = content;
+            app.selection = Some((chat.clone(), Vec::new()));
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            for _ in 0..3 {
+                render(&mut app, &ctx);
+            }
+            let check = crate::ui::conversation::bubble_id(&chat, "ada-reply").with("check");
+            assert_eq!(
+                ctx.data(|data| data.get_temp::<egui::Rect>(check).is_some()),
+                selectable
+            );
+            let pick = crate::ui::conversation::bubble_id(&chat, "ada-reply").with("pick");
+            assert_eq!(
+                ctx.read_response(pick).unwrap().sense,
+                if selectable {
+                    egui::Sense::click_and_drag()
+                } else {
+                    egui::Sense::hover()
+                },
+                "only a visible checkbox can receive focus or start a sweep"
+            );
+            app.selection = None;
+            render(&mut app, &ctx);
+            app.open_message_menu = Some("ada-reply".into());
+            render(&mut app, &ctx);
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            assert!(nodes.iter().any(|(label, _, _)| label == "Copy message ID"));
+            for action in ["Select", "Forward"] {
+                assert_eq!(
+                    nodes.iter().any(|(label, _, _)| label == action),
+                    selectable,
+                    "only eligible messages offer {action}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn message_checkboxes_reveal_keyboard_focus_and_outline_the_box() {
+        let mut app = app();
+        let chat = sample_ids()[0].to_owned();
+        let conversation = app.conversations.get_mut(&chat).unwrap();
+        let timestamp = conversation.messages.last().unwrap().timestamp;
+        conversation.messages = (0..12)
+            .map(|index| {
+                message(
+                    &chat,
+                    &format!("focus-{index}"),
+                    false,
+                    timestamp + index,
+                    Content::text("A short message for keyboard selection"),
+                )
+            })
+            .collect();
+        app.selection = Some((chat.clone(), Vec::new()));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            frame_sized(&mut app, &ctx, 360.0, Vec::new());
+        }
+        frame_sized(&mut app, &ctx, 360.0, tab());
+        let (message, pick) = app.conversations[&chat]
+            .messages
+            .iter()
+            .find_map(|row| {
+                let id = crate::ui::conversation::bubble_id(&chat, &row.id).with("pick");
+                ctx.read_response(id)
+                    .filter(|response| {
+                        response.interact_rect.is_positive()
+                            && response.interact_rect.y_range() != response.rect.y_range()
+                    })
+                    .map(|response| (row.id.clone(), response))
+            })
+            .expect("a partially clipped message checkbox is laid out");
+        // Request focus inside the pass, as keyboard and accessibility
+        // events do, so egui reports gained_focus to the scroll area.
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 360.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                pick.request_focus();
+                app.background_frame(ui.ctx());
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+        for _ in 0..3 {
+            frame_sized(&mut app, &ctx, 360.0, Vec::new());
+        }
+        assert_eq!(ctx.memory(|memory| memory.focused()), Some(pick.id));
+        assert!(
+            !app.scroll_to_bottom,
+            "keyboard focus releases the bottom pin"
+        );
+        let focused = ctx.read_response(pick.id).unwrap();
+        assert_eq!(focused.interact_rect.y_range(), focused.rect.y_range());
+        let check = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(
+                    crate::ui::conversation::bubble_id(&chat, &message).with("check"),
+                )
+            })
+            .unwrap();
+        let outline = ring(&ctx).expect("keyboard focus is visible");
+        assert!(outline.contains_rect(check));
+        assert!(outline.width() < check.width() + 12.0);
+        let mut next_message = None;
+        for _ in 0..50 {
+            frame_sized(&mut app, &ctx, 360.0, tab());
+            frame_sized(&mut app, &ctx, 360.0, Vec::new());
+            let focused = ctx.memory(|memory| memory.focused());
+            next_message = app.conversations[&chat].messages.iter().find_map(|row| {
+                let id = crate::ui::conversation::bubble_id(&chat, &row.id).with("pick");
+                (focused == Some(id) && row.id != message).then(|| row.id.clone())
+            });
+            if next_message.is_some() {
+                break;
+            }
+        }
+        let next_message = next_message.expect("Tab reaches another message checkbox");
+        frame_sized(
+            &mut app,
+            &ctx,
+            360.0,
+            vec![key(egui::Key::Space, egui::Modifiers::NONE)],
+        );
+        assert_eq!(selected_ids(&app), [next_message]);
+    }
+
     /// One frame with AccessKit on; returns (label, role, centre) per node.
     fn accessible_nodes(
         app: &mut App,
