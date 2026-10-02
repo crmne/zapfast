@@ -425,7 +425,7 @@ msgstr "Voltar"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"
-msgstr ""
+msgstr "Encaminhar"
 
 #: src/ui/dialogs.rs:641
 #, rust-format
@@ -1126,8 +1126,7 @@ msgstr ""
 #
 #: src/app.rs:4028
 msgid "A selected chat is no longer writable"
-msgstr ""
-"Não é mais possível enviar mensagens para uma das conversas selecionadas"
+msgstr "Não é mais possível enviar mensagens para uma das conversas selecionadas"
 
 #: src/app.rs:4416
 msgid "Added to favorites"

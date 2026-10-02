@@ -429,7 +429,7 @@ msgstr "Indietro"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"
-msgstr ""
+msgstr "Inoltra"
 
 #: src/ui/dialogs.rs:641
 #, rust-format

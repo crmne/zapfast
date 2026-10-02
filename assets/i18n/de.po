@@ -430,7 +430,7 @@ msgstr "Zurück"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"
-msgstr ""
+msgstr "Weiterleiten"
 
 #: src/ui/dialogs.rs:641
 #, rust-format
@@ -1137,8 +1137,7 @@ msgstr ""
 #
 #: src/app.rs:4028
 msgid "A selected chat is no longer writable"
-msgstr ""
-"In einen ausgewählten Chat können keine Nachrichten mehr gesendet werden"
+msgstr "In einen ausgewählten Chat können keine Nachrichten mehr gesendet werden"
 
 #: src/app.rs:4416
 msgid "Added to favorites"

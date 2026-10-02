@@ -428,7 +428,7 @@ msgstr "Retour"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"
-msgstr ""
+msgstr "Transférer"
 
 #: src/ui/dialogs.rs:641
 #, rust-format

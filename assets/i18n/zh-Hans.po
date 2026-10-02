@@ -410,7 +410,7 @@ msgstr "返回"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"
-msgstr ""
+msgstr "转发"
 
 #: src/ui/dialogs.rs:641
 #, rust-format

@@ -425,7 +425,7 @@ msgstr "Atrás"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"
-msgstr ""
+msgstr "Reenviar"
 
 #: src/ui/dialogs.rs:641
 #, rust-format

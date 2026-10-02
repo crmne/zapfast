@@ -433,7 +433,7 @@ msgstr "Назад"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"
-msgstr ""
+msgstr "Переслать"
 
 #: src/ui/dialogs.rs:641
 #, rust-format
