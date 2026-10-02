@@ -33,13 +33,16 @@ pub fn shape(rect: egui::Rect, fade: f32) -> egui::Shape {
             let gl = painter.gl();
             let mut glass = GLASS.lock().unwrap_or_else(|p| p.into_inner());
             // A window made anew has a new context; the old one took its
-            // objects with it.
+            // objects with it. A context that cannot frost is asked once.
             let context = Arc::as_ptr(gl) as usize;
-            if glass.as_ref().is_none_or(|glass| glass.context != context) {
+            if glass
+                .as_ref()
+                .is_none_or(|(made_for, _)| *made_for != context)
+            {
                 // SAFETY: called on the painting thread with its context current.
-                *glass = unsafe { Glass::new(gl, context) };
+                *glass = Some((context, unsafe { Glass::new(gl) }));
             }
-            if let Some(glass) = glass.as_mut() {
+            if let Some((_, Some(glass))) = glass.as_mut() {
                 // SAFETY: as above.
                 unsafe { glass.frost(gl, &info, fade) };
             }
@@ -47,11 +50,12 @@ pub fn shape(rect: egui::Rect, fade: f32) -> egui::Shape {
     })
 }
 
-static GLASS: Mutex<Option<Glass>> = Mutex::new(None);
+/// The objects for the current context, keyed by it, or nothing where it
+/// cannot run them.
+static GLASS: Mutex<Option<(usize, Option<Glass>)>> = Mutex::new(None);
 
 /// One full-size and two small render targets, and the two programs.
 struct Glass {
-    context: usize,
     blur: glow::Program,
     compose: glow::Program,
     vao: glow::VertexArray,
@@ -109,7 +113,7 @@ void main() {
 impl Glass {
     /// The programs and an empty vertex array, or nothing where the context
     /// cannot run them; the header then goes without the blur.
-    unsafe fn new(gl: &glow::Context, context: usize) -> Option<Self> {
+    unsafe fn new(gl: &glow::Context) -> Option<Self> {
         let version = egui_glow::ShaderVersion::get(gl);
         if !version.is_new_shader_interface() {
             log::info!("frosted header unavailable: {version:?} shaders");
@@ -121,7 +125,6 @@ impl Glass {
             let compose = program(gl, header, COMPOSE)?;
             let vao = gl.create_vertex_array().ok()?;
             Some(Self {
-                context,
                 blur,
                 compose,
                 vao,
