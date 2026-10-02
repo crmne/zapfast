@@ -37,6 +37,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     widgets::paint_edge_beside(ui, &palette, response.response.rect);
 }
 
+/// The chat list across the whole window, when the window is too narrow to
+/// hold it beside a conversation. Opening a chat replaces it.
+pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
+    search_keyboard(app, ui);
+    let palette = app.palette;
+    egui::CentralPanel::default()
+        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO))
+        .show(ui, |ui| {
+            header(app, ui);
+            list(app, ui);
+        });
+}
+
 /// Walks matching chats while the global search field keeps keyboard focus.
 /// Enter leaves search and opens the reached chat ready for typing.
 fn search_keyboard(app: &mut App, ui: &egui::Ui) {
@@ -216,16 +229,17 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             app.actions
                                 .push(Action::ShowDialog(crate::model::Dialog::NewChat));
                         }
-                        if theme::icon_button(
-                            ui,
-                            Icon::PanelLeft,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            "Hide the chat list (Ctrl+B)",
-                        )
-                        .tab_stop(Stop::Sidebar)
-                        .clicked()
+                        if !super::narrow(ui.ctx())
+                            && theme::icon_button(
+                                ui,
+                                Icon::PanelLeft,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                "Hide the chat list (Ctrl+B)",
+                            )
+                            .tab_stop(Stop::Sidebar)
+                            .clicked()
                         {
                             app.actions.push(Action::ToggleSidebar);
                         }
@@ -325,16 +339,17 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     {
                         app.actions.push(Action::ShowDialog(Dialog::NewChat));
                     }
-                    if theme::icon_button(
-                        ui,
-                        Icon::PanelLeft,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        "Hide the chat list (⌘B)",
-                    )
-                    .tab_stop(Stop::Sidebar)
-                    .clicked()
+                    if !super::narrow(ui.ctx())
+                        && theme::icon_button(
+                            ui,
+                            Icon::PanelLeft,
+                            18.0,
+                            palette.secondary,
+                            palette.text,
+                            "Hide the chat list (⌘B)",
+                        )
+                        .tab_stop(Stop::Sidebar)
+                        .clicked()
                     {
                         app.actions.push(Action::ToggleSidebar);
                     }

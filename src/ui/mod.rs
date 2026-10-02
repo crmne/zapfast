@@ -68,20 +68,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if !macos {
         banner(app, ui);
     }
-    match app.sidebar_mode() {
-        SidebarDisplayMode::Expanded => chats::show(app, ui),
-        SidebarDisplayMode::CollapsedIconsOnly => chats::compact_show(app, ui),
-    }
-    let search_overlay = pane::show(app, ui);
-    egui::CentralPanel::default()
-        .frame(central_frame(app))
-        .show(ui, |ui| match app.page {
-            Page::Settings => settings::show(app, ui),
-            Page::Chats => conversation::show(app, ui),
-            Page::Wallpaper => settings::wallpaper_show(app, ui),
-        });
-    if let Some(region) = search_overlay {
-        pane::show_overlay(app, ctx, region);
+    let narrow = narrow(ctx);
+    let list_only = narrow && app.page == Page::Chats && app.current_chat().is_none();
+    let view = narrow.then_some(if list_only {
+        NarrowView::List
+    } else {
+        NarrowView::Detail
+    });
+    match narrow_slide(ctx, view) {
+        Some(progress) => slide_in(app, ui, list_only, progress),
+        None => main_view(app, ui, list_only),
     }
     focus::finish(ctx, main_navigation);
     update::show(app, ctx);
@@ -92,6 +88,112 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     drop_target(app, ctx);
     toasts(app, ctx);
     focus_ring(app, ctx);
+}
+
+/// The chat list, or the open chat or page with the list beside it unless
+/// the window is narrow.
+fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
+    if list_only {
+        chats::full_show(app, ui);
+        return;
+    }
+    // A narrow window gives the open chat or page all of its width; the
+    // conversation header's Back returns to the list.
+    if !narrow(ui.ctx()) {
+        match app.sidebar_mode() {
+            SidebarDisplayMode::Expanded => chats::show(app, ui),
+            SidebarDisplayMode::CollapsedIconsOnly => chats::compact_show(app, ui),
+        }
+    }
+    let search_overlay = pane::show(app, ui);
+    egui::CentralPanel::default()
+        .frame(central_frame(app))
+        .show(ui, |ui| match app.page {
+            Page::Settings => settings::show(app, ui),
+            Page::Chats => conversation::show(app, ui),
+            Page::Wallpaper => settings::wallpaper_show(app, ui),
+        });
+    if let Some(region) = search_overlay {
+        pane::show_overlay(app, ui.ctx(), region);
+    }
+}
+
+/// What a narrow window shows: the chat list, or what was opened from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NarrowView {
+    List,
+    Detail,
+}
+
+/// How long a narrow window takes to slide one view in over the other.
+const SLIDE_SECONDS: f64 = 0.22;
+
+/// Follows the narrow window's view from frame to frame and returns how far
+/// the slide to it has come (0 to 1, eased) while one is under way. A view
+/// shown on widening or narrowing the window appears without one.
+fn narrow_slide(ctx: &egui::Context, view: Option<NarrowView>) -> Option<f32> {
+    let view_id = egui::Id::new("narrow-view");
+    let start_id = egui::Id::new("narrow-slide-start");
+    let now = ctx.input(|input| input.time);
+    let before = ctx.data_mut(|data| {
+        let before = data.get_temp::<NarrowView>(view_id);
+        match view {
+            Some(view) => {
+                data.insert_temp(view_id, view);
+            }
+            None => data.remove::<NarrowView>(view_id),
+        }
+        before
+    });
+    if view.is_none() {
+        ctx.data_mut(|data| data.remove::<f64>(start_id));
+        return None;
+    }
+    if before.is_some() && before != view {
+        ctx.data_mut(|data| data.insert_temp(start_id, now));
+    }
+    let start = ctx.data(|data| data.get_temp::<f64>(start_id))?;
+    let t = ((now - start) / SLIDE_SECONDS) as f32;
+    if t >= 1.0 {
+        ctx.data_mut(|data| data.remove::<f64>(start_id));
+        return None;
+    }
+    ctx.request_repaint();
+    // Ease out: quick to start, settling into place.
+    Some(1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3))
+}
+
+/// A narrow window's view mid-slide, as a stack: an opened chat or page
+/// comes in from the right over the list, which stays beneath it, dimmed;
+/// going back brings the list in from the left.
+fn slide_in(app: &mut App, ui: &mut egui::Ui, list_only: bool, progress: f32) {
+    let rect = ui.available_rect_before_wrap();
+    if list_only {
+        // The view it covers is gone (the chat is closed): its backdrop.
+        ui.painter().rect_filled(rect, 0.0, central_background(app));
+    } else {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.disable();
+            chats::full_show(app, ui);
+        });
+    }
+    let direction = if list_only { -1.0 } else { 1.0 };
+    let offset = (1.0 - progress) * rect.width() * direction;
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.with_visual_transform(
+            egui::emath::TSTransform::from_translation(vec2(offset, 0.0)),
+            |ui| main_view(app, ui, list_only),
+        );
+    });
+}
+
+/// Below this window width the chat list and the open chat take turns at the
+/// whole window: the narrowest list beside a readable conversation.
+pub(crate) const NARROW_WIDTH: f32 = 620.0;
+
+/// Whether the window is too narrow to show the chat list beside a chat.
+pub(crate) fn narrow(ctx: &egui::Context) -> bool {
+    ctx.content_rect().width() < NARROW_WIDTH
 }
 
 fn central_background(app: &App) -> egui::Color32 {
@@ -752,5 +854,131 @@ mod idle_tests {
             output.textures_delta.clear();
         }
         assert!(app.at_bottom, "at bottom after reopening");
+    }
+
+    #[test]
+    fn a_narrow_window_shows_the_list_or_the_chat_with_a_way_back() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let frame = std::cell::Cell::new(0.0);
+        // Lets a slide between the list and the chat finish.
+        let settle = || frame.set(frame.get() + 1.0);
+        // Lays out one frame at `width` and returns where the chat list's and
+        // the conversation's header rows landed, if they were drawn.
+        let run = |app: &mut App, width: f32, events: Vec<egui::Event>| {
+            ctx.data_mut(|data| {
+                data.remove::<egui::Rect>(chats::header_row_id());
+                data.remove::<egui::Rect>(conversation::header_row_id());
+            });
+            // Frame times a click apart; egui ignores a press held too long.
+            frame.set(frame.get() + 1.0 / 60.0);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(frame.get()),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            output.textures_delta.clear();
+            ctx.data(|data| {
+                (
+                    data.get_temp::<egui::Rect>(chats::header_row_id()),
+                    data.get_temp::<egui::Rect>(conversation::header_row_id()),
+                )
+            })
+        };
+
+        // Wide: the list stands beside the open chat.
+        app.open_chat = Some(chat.id.clone());
+        let (list, header) = run(&mut app, 1180.0, Vec::new());
+        assert!(list.is_some() && header.is_some());
+
+        // Narrow with no chat open: the list takes the whole window.
+        app.open_chat = None;
+        let (list, header) = run(&mut app, 480.0, Vec::new());
+        let list = list.expect("the chat list is drawn");
+        assert!(list.width() > 400.0, "the list fills the window: {list:?}");
+        assert!(header.is_none());
+
+        // Narrow with a chat open: only the conversation, from the left edge.
+        app.open_chat = Some(chat.id.clone());
+        let (list, _) = run(&mut app, 480.0, Vec::new());
+        assert!(list.is_some(), "the chat slides in over the list");
+        settle();
+        let (list, header) = run(&mut app, 480.0, Vec::new());
+        assert!(list.is_none(), "no chat list beside a narrow conversation");
+        let header = header.expect("the conversation header is drawn");
+        assert!(
+            header.left() < 20.0,
+            "the chat starts at the edge: {header:?}"
+        );
+
+        // Back sits left of Search, the third control from the right.
+        let gap = ctx.global_style().spacing.item_spacing.x;
+        let back = egui::pos2(
+            header.right() - 2.0 * (30.0 + gap) - 15.0,
+            header.center().y,
+        );
+        let press = |pressed| egui::Event::PointerButton {
+            pos: back,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        app.actions.clear();
+        run(&mut app, 480.0, vec![egui::Event::PointerMoved(back)]);
+        run(&mut app, 480.0, vec![press(true)]);
+        run(&mut app, 480.0, vec![press(false)]);
+        assert!(
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::CloseChat)),
+            "Back returns to the list: {:?}",
+            app.actions
+        );
+    }
+
+    #[test]
+    fn a_narrow_window_slides_between_the_list_and_what_it_opens() {
+        let ctx = egui::Context::default();
+        let at = |time: f64, view: Option<NarrowView>| {
+            let mut progress = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |_| progress = narrow_slide(&ctx, view),
+            );
+            output.textures_delta.clear();
+            progress
+        };
+        // Narrowing the window shows its view at once.
+        assert_eq!(at(0.0, None), None);
+        assert_eq!(at(0.1, Some(NarrowView::List)), None);
+        // Opening a chat starts a slide that eases into place and ends.
+        assert_eq!(at(1.0, Some(NarrowView::Detail)), Some(0.0));
+        let halfway = at(1.0 + SLIDE_SECONDS / 2.0, Some(NarrowView::Detail)).unwrap();
+        assert!(halfway > 0.5 && halfway < 1.0, "eased: {halfway}");
+        assert_eq!(at(1.0 + SLIDE_SECONDS, Some(NarrowView::Detail)), None);
+        // Back to the list slides too.
+        assert_eq!(at(2.0, Some(NarrowView::List)), Some(0.0));
+        // Widening mid-slide drops it, and narrowing again does not slide.
+        assert_eq!(at(2.05, None), None);
+        assert_eq!(at(2.1, Some(NarrowView::Detail)), None);
     }
 }
