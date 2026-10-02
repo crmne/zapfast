@@ -393,6 +393,7 @@ fn sticker_hash(sha256: Option<&[u8]>, enc_sha256: Option<&[u8]>) -> Option<Stri
     Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// Runs the backend event and command loop, keeping asynchronous work off the UI thread.
 pub async fn run(
     dirs: AppDirs,
     events: std::sync::mpsc::Sender<Event>,
@@ -2983,6 +2984,7 @@ impl Worker {
             .collect()
     }
 
+    /// Archives a protocol message and publishes the derived application events.
     fn ingest(&mut self, message: &Arc<wa::Message>, info: &MessageInfo) {
         self.learn_source(&info.source);
         if info.source.chat.is_status_broadcast() {
@@ -4227,6 +4229,7 @@ impl Worker {
 
     // --- commands --------------------------------------------------------
 
+    /// Dispatches UI commands and validates asynchronous completions before applying them.
     async fn handle_command(&mut self, command: Command) {
         let destination = match &command {
             Command::SendText { chat, .. }
@@ -6902,6 +6905,7 @@ impl Worker {
         }
     }
 
+    /// Assigns a generation to an edit and records it among that target's outstanding requests.
     fn begin_edit(&mut self, chat: &str, id: &str) -> u64 {
         self.edit_sequence += 1;
         let pending = self
@@ -6913,10 +6917,12 @@ impl Worker {
         self.edit_sequence
     }
 
+    /// Validates and dispatches an edit using the current eligibility-check time.
     fn edit_text(&mut self, chat: ChatId, id: String, request: EditRequest) {
         self.edit_text_at(chat, id, request, crate::util::now());
     }
 
+    /// Checks archived edit eligibility at the supplied time before dispatching to WhatsApp.
     fn edit_text_at(&mut self, chat: ChatId, id: String, request: EditRequest, now: i64) {
         let EditRequest {
             text,
@@ -6970,6 +6976,7 @@ impl Worker {
         });
     }
 
+    /// Settles an edit completion and saves the latest accepted version without restoring stale results.
     fn finish_edit(
         &mut self,
         chat: ChatId,
@@ -11618,6 +11625,7 @@ mod receipt_tests {
         assert!(worker.forward_queue.is_none());
     }
 
+    /// Creates an isolated backend fixture with a temporary archive and synthetic credentials.
     pub(super) fn worker() -> (
         Worker,
         std::sync::mpsc::Receiver<Event>,

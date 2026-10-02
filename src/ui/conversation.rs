@@ -3940,6 +3940,7 @@ fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> 
     list
 }
 
+/// Draws message actions with current edit, revoke and attachment capabilities.
 fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
     let palette = view.palette;
     let chat = &view.chat.id;
