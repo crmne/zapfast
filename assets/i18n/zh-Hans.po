@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 12:28-0300\n"
+"POT-Creation-Date: 2026-10-02 12:34-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -179,7 +179,7 @@ msgstr "已锁定"
 msgid "No favorites yet"
 msgstr "还没有收藏"
 
-#: src/ui/chats.rs:878 src/app.rs:1647
+#: src/ui/chats.rs:878 src/app.rs:1648
 msgid "Message yourself"
 msgstr "给自己发消息"
 
@@ -191,7 +191,7 @@ msgstr "草稿："
 msgid "Remove from favorites"
 msgstr "取消收藏"
 
-#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4091
+#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4092
 #: src/ui/dialogs.rs:1055 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "添加到收藏"
@@ -284,108 +284,108 @@ msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} 条未读消息"
 
-#: src/ui/conversation.rs:3310 src/ui/conversation.rs:4100
+#: src/ui/conversation.rs:3310 src/ui/conversation.rs:4101
 msgid "Open in system player"
 msgstr "用系统播放器打开"
 
-#: src/ui/conversation.rs:3311 src/ui/conversation.rs:4169
+#: src/ui/conversation.rs:3311 src/ui/conversation.rs:4170
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "消息信息"
 
-#: src/ui/conversation.rs:4112 src/ui/image_preview.rs:62
+#: src/ui/conversation.rs:4113 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
 msgid "Copy image"
 msgstr "复制图片"
 
-#: src/ui/conversation.rs:4511
+#: src/ui/conversation.rs:4512
 msgid "Location"
 msgstr "位置"
 
-#: src/ui/conversation.rs:4537
+#: src/ui/conversation.rs:4538
 msgid "Live location ended"
 msgstr "实时位置已结束"
 
-#: src/ui/conversation.rs:4539 src/ui/conversation.rs:4729
+#: src/ui/conversation.rs:4540 src/ui/conversation.rs:4730
 msgid "Live location"
 msgstr "实时位置"
 
-#: src/ui/conversation.rs:4549
+#: src/ui/conversation.rs:4550
 #, rust-format
 msgid "Updated {time}"
 msgstr "更新于 {time}"
 
-#: src/ui/conversation.rs:4599
+#: src/ui/conversation.rs:4600
 msgid "Chat"
 msgstr "聊天"
 
-#: src/ui/conversation.rs:4613
+#: src/ui/conversation.rs:4614
 msgid "Add"
 msgstr "添加"
 
-#: src/ui/conversation.rs:4658
+#: src/ui/conversation.rs:4659
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} 个贴图"
 
-#: src/ui/conversation.rs:4671
+#: src/ui/conversation.rs:4672
 msgid "View stickers"
 msgstr "查看贴图"
 
-#: src/ui/conversation.rs:4737
+#: src/ui/conversation.rs:4738
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "在手机上打开 WhatsApp 即可查看。"
 
-#: src/ui/conversation.rs:4755
+#: src/ui/conversation.rs:4756
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr "一次性照片。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4759
+#: src/ui/conversation.rs:4760
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr "一次性视频。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4763
+#: src/ui/conversation.rs:4764
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr "一次性语音消息。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4767
+#: src/ui/conversation.rs:4768
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr "一次性音频。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4771
+#: src/ui/conversation.rs:4772
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr "一次性消息。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4773
+#: src/ui/conversation.rs:4774
 msgid "This message can only be seen on your phone."
 msgstr "此消息只能在手机上查看。"
 
-#: src/ui/conversation.rs:5614
+#: src/ui/conversation.rs:5615
 msgid "Open in a map"
 msgstr "在地图中打开"
 
-#: src/ui/conversation.rs:6233
+#: src/ui/conversation.rs:6234
 msgid "Pause"
 msgstr "暂停"
 
-#: src/ui/conversation.rs:6235 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6236 src/ui/settings.rs:1636
 msgid "Play"
 msgstr "播放"
 
-#: src/ui/conversation.rs:6262
+#: src/ui/conversation.rs:6263
 msgid "Back to the message (Esc)"
 msgstr "返回消息 (Esc)"
 
-#: src/ui/conversation.rs:6264
+#: src/ui/conversation.rs:6265
 msgid "Fill the window"
 msgstr "填满窗口"
 
-#: src/ui/conversation.rs:6294
+#: src/ui/conversation.rs:6295
 msgid "Unmute"
 msgstr "取消静音"
 
-#: src/ui/conversation.rs:6296
+#: src/ui/conversation.rs:6297
 msgid "Mute"
 msgstr "静音"
 
@@ -1025,83 +1025,83 @@ msgstr[0] "剩余 {}"
 msgid "No one yet"
 msgstr "还没有人"
 
-#: src/app.rs:1568
+#: src/app.rs:1569
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "已存在名为“{name}”的标签。"
 
-#: src/app.rs:1628
+#: src/app.rs:1629
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name}（你）"
 
-#: src/app.rs:1629 src/app.rs:1648
+#: src/app.rs:1630 src/app.rs:1649
 msgid "You"
 msgstr "你"
 
-#: src/app.rs:2465
+#: src/app.rs:2467
 msgid "Could not use this image"
 msgstr "无法使用此图片"
 
-#: src/app.rs:2987
+#: src/app.rs:2990
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "未发送：ZapFast 未连接到 WhatsApp。"
 
-#: src/app.rs:2991
+#: src/app.rs:2994
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr "未发送：你要回复的消息不在这台电脑上。取消回复即可不带引用发送。"
 
 #
-#: src/app.rs:3355 src/app.rs:11449
+#: src/app.rs:3358 src/app.rs:11502
 msgid "This message can no longer be edited"
 msgstr "此消息已无法编辑"
 
-#: src/app.rs:4428
+#: src/app.rs:4432
 msgid "Added to favorites"
 msgstr "已添加到收藏"
 
-#: src/app.rs:4503
+#: src/app.rs:4507
 msgid "Sending the sticker pack…"
 msgstr "正在发送贴图包…"
 
-#: src/app.rs:4791 src/ui/labels.rs:237
+#: src/app.rs:4795 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
 
-#: src/app.rs:5435
+#: src/app.rs:5439
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5443
+#: src/app.rs:5447
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5556
+#: src/app.rs:5560
 msgid "This video opens in your system player"
 msgstr "此视频将用系统播放器打开"
 
-#: src/app.rs:6091
+#: src/app.rs:6095
 msgid "Copied image"
 msgstr "已复制图片"
 
-#: src/app.rs:6094 src/app.rs:6099
+#: src/app.rs:6098 src/app.rs:6103
 msgid "Failed to copy image"
 msgstr "复制图片失败"
 
 #
-#: src/app.rs:11452
+#: src/app.rs:11505
 msgid "Not connected to WhatsApp"
 msgstr "未连接到 WhatsApp"
 
 #
-#: src/app.rs:11456
+#: src/app.rs:11509
 msgid "Could not send the edit"
 msgstr "无法发送编辑内容"
 
-#: src/app.rs:11459
+#: src/app.rs:11512
 msgid "The edit was sent but could not be saved locally"
 msgstr "编辑已发送，但无法保存在此计算机上"
 

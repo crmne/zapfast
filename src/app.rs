@@ -6602,26 +6602,46 @@ mod tests {
         app.open_chat = Some("fixture".into());
         let mut original = message("fixture", "sent", 0);
         original.from_me = true;
-        app.conversations.entry("fixture".into()).or_default().messages.push(original);
+        app.conversations
+            .entry("fixture".into())
+            .or_default()
+            .messages
+            .push(original);
         let (backend, mut commands, events) = Backend::recording_with_events();
         app.backend = backend;
-        events.send(Event::EditRefused {
-            chat: "fixture".into(), id: "sent".into(),
-            draft: EditDraft {
-                text: "Unsent correction".into(), mentions: vec![],
-            }, error: EditFailure::Expired,
-        }).unwrap();
+        events
+            .send(Event::EditRefused {
+                chat: "fixture".into(),
+                id: "sent".into(),
+                draft: EditDraft {
+                    text: "Unsent correction".into(),
+                    mentions: vec![],
+                },
+                error: EditFailure::Expired,
+            })
+            .unwrap();
         app.handle_events();
         assert!(app.editing.is_none());
-        assert!(commands.try_recv().is_err(), "restoration never sends automatically");
+        assert!(
+            commands.try_recv().is_err(),
+            "restoration never sends automatically"
+        );
         app.apply(Action::CancelEdit, &egui::Context::default());
         assert_eq!(app.composer, "Unsent correction");
         app.send_text("fixture".into(), app.composer.clone(), None);
         let dispatched: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
-        assert!(dispatched.iter().any(|command| matches!(command, Command::SendText {
+        assert!(
+            dispatched
+                .iter()
+                .any(|command| matches!(command, Command::SendText {
             chat, text, ..
-        } if chat == "fixture" && text == "Unsent correction")));
-        assert!(!dispatched.iter().any(|command| matches!(command, Command::EditText { .. })));
+        } if chat == "fixture" && text == "Unsent correction"))
+        );
+        assert!(
+            !dispatched
+                .iter()
+                .any(|command| matches!(command, Command::EditText { .. }))
+        );
     }
 
     #[test]
