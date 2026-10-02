@@ -465,6 +465,7 @@ pub struct App {
     /// A V press delivered to us, unlike the press swallowed by native paste.
     ordinary_v_down: bool,
     saw_paste_command: bool,
+    paste_was_focused: bool,
     /// Open emoji, GIF, or sticker picker tab.
     pub picker: Option<PickerTab>,
     /// Picker anchor at the composer button.
@@ -1024,6 +1025,7 @@ impl App {
             paste_before_release: false,
             ordinary_v_down: false,
             saw_paste_command: false,
+            paste_was_focused: false,
             picker: None,
             picker_anchor: None,
             picker_search: String::new(),
@@ -1394,6 +1396,7 @@ impl App {
         self.paste_before_release = false;
         self.ordinary_v_down = false;
         self.saw_paste_command = false;
+        self.paste_was_focused = false;
         self.hide_intent = false;
         self.wants_show = false;
         self.reopen = false;
@@ -5861,6 +5864,7 @@ impl App {
         ctx.data_mut(|data| data.insert_temp(frame_id, (frame, false)));
         if ctx.input(|input| !input.focused || input.events.iter().any(|event| matches!(event, egui::Event::WindowFocused(false)))) {
             self.saw_paste_command = false;
+            self.paste_was_focused = false;
         }
         let (paste, text, released, focused, command) = ctx.input(|input| {
             (
@@ -5874,7 +5878,7 @@ impl App {
                                 ..
                             }
                         ) && !self.ordinary_v_down
-                            && (self.saw_paste_command || input.modifiers.command)
+                            && (self.saw_paste_command || (self.paste_was_focused && input.modifiers.command))
                             && !input.events.iter().any(|event| {
                                 matches!(
                                     event,
@@ -5905,6 +5909,7 @@ impl App {
             )
         });
         let requested = paste && (text || !self.paste_before_release);
+        self.paste_was_focused = focused;
         // egui-winit swallows Ctrl/Cmd+V's press even for an image-only
         // clipboard. A release after an observed command modifier can be that
         // shortcut, including when Ctrl/Cmd was released first. Ordinary typing has a
