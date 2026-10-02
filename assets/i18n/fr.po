@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 18:07-0300\n"
+"POT-Creation-Date: 2026-10-02 18:36-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -16,27 +16,27 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
-#: src/model.rs:110
+#: src/model.rs:116
 msgid "All"
 msgstr "Tous"
 
-#: src/model.rs:111
+#: src/model.rs:117
 msgid "Unread"
 msgstr "Non lus"
 
-#: src/model.rs:112
+#: src/model.rs:118
 msgid "Private"
 msgstr "Privés"
 
-#: src/model.rs:113 src/ui/picker.rs:1188
+#: src/model.rs:119 src/ui/picker.rs:1188
 msgid "Favorites"
 msgstr "Favoris"
 
-#: src/model.rs:114
+#: src/model.rs:120
 msgid "Groups"
 msgstr "Groupes"
 
-#: src/model.rs:115
+#: src/model.rs:121
 msgid "Channels"
 msgstr "Chaînes"
 
@@ -179,7 +179,7 @@ msgstr "Verrouillés"
 msgid "No favorites yet"
 msgstr "Pas encore de favoris"
 
-#: src/ui/chats.rs:878 src/app.rs:1656
+#: src/ui/chats.rs:878 src/app.rs:1673
 msgid "Message yourself"
 msgstr "Envoyez-vous un message"
 
@@ -1076,29 +1076,29 @@ msgstr[1] "{} restants"
 msgid "No one yet"
 msgstr "Personne pour l’instant"
 
-#: src/app.rs:1577
+#: src/app.rs:1594
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Une étiquette nommée « {name} » existe déjà."
 
-#: src/app.rs:1637
+#: src/app.rs:1654
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Vous)"
 
-#: src/app.rs:1638 src/app.rs:1657
+#: src/app.rs:1655 src/app.rs:1674
 msgid "You"
 msgstr "Vous"
 
-#: src/app.rs:2476
+#: src/app.rs:2493
 msgid "Could not use this image"
 msgstr "Impossible d’utiliser cette image"
 
-#: src/app.rs:2976
+#: src/app.rs:3008
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Non envoyé : ZapFast n’est pas connecté à WhatsApp."
 
-#: src/app.rs:2980
+#: src/app.rs:3012
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1106,36 +1106,36 @@ msgstr ""
 "Non envoyé : le message auquel vous répondez n’est pas disponible sur cet "
 "ordinateur. Annulez la réponse pour l’envoyer sans citation."
 
-#: src/app.rs:4488
+#: src/app.rs:4525
 msgid "Added to favorites"
 msgstr "Ajouté aux favoris"
 
-#: src/app.rs:4563
+#: src/app.rs:4600
 msgid "Sending the sticker pack…"
 msgstr "Envoi du pack de stickers…"
 
-#: src/app.rs:4851 src/ui/labels.rs:237
+#: src/app.rs:4888 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Vous avez {limit} étiquettes, le maximum que ZapFast conserve."
 
-#: src/app.rs:5495
+#: src/app.rs:5532
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5503
+#: src/app.rs:5540
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5616
+#: src/app.rs:5653
 msgid "This video opens in your system player"
 msgstr "Cette vidéo s'ouvre dans le lecteur du système"
 
-#: src/app.rs:6179
+#: src/app.rs:6216
 msgid "Copied image"
 msgstr "Image copiée"
 
-#: src/app.rs:6182 src/app.rs:6187
+#: src/app.rs:6219 src/app.rs:6224
 msgid "Failed to copy image"
 msgstr "Impossible de copier l'image"
 
