@@ -5702,6 +5702,35 @@ mod attachment_drag_tests {
         assert_eq!(actions.len(), 1);
         assert!(matches!(&actions[0], Action::DragAttachment(file) if file == path));
     }
+    /// The decode-failure tile exports its file on drag and opens on a click.
+    #[test]
+    fn an_unavailable_picture_drags_without_opening_and_still_opens_on_click() {
+        let ctx = egui::Context::default();
+        let path = PathBuf::from("corrupt-fixture.png");
+        let mut actions = Vec::new();
+        let mut frame = |events| {
+            let mut rect = Rect::NOTHING;
+            let mut output = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+                rect = unavailable_picture(ui, Palette::dark(), &path, vec2(120.0, 120.0), &mut actions);
+            });
+            output.textures_delta.clear();
+            rect
+        };
+        let area = frame(vec![]);
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(area.center()), press(area.center(), true)]);
+        let end = area.center() + vec2(25.0, 0.0);
+        frame(vec![egui::Event::PointerMoved(end)]);
+        frame(vec![press(end, false)]);
+        frame(vec![egui::Event::PointerMoved(area.center()), press(area.center(), true)]);
+        frame(vec![press(area.center(), false)]);
+        assert_eq!(actions.len(), 2);
+        assert!(matches!(&actions[0], Action::DragAttachment(file) if file == &path));
+        assert!(matches!(&actions[1], Action::OpenFile(file) if file == &path));
+    }
+
 }
 const PICTURE_HEIGHT: f32 = 440.0;
 const STICKER_SIDE: f32 = 180.0;
@@ -5756,6 +5785,33 @@ fn frame_size(
         },
     };
     fit_picture(w, h, max_width, max_height)
+}
+
+/// Keeps a downloaded picture usable for opening and dragging after decode failure.
+fn unavailable_picture(
+    ui: &mut egui::Ui,
+    palette: Palette,
+    path: &PathBuf,
+    size: Vec2,
+    actions: &mut Vec<Action>,
+) -> Rect {
+    let (rect, response) = ui.allocate_exact_size(size, attachment_drag_sense());
+    attachment_drag(&response, path, actions);
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(rect, 6.0, palette.surface);
+        theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, palette.danger);
+        ui.painter().text(
+            rect.center() + vec2(0.0, 24.0),
+            Align2::CENTER_CENTER,
+            "Could not display this picture. Click to open it.",
+            theme::regular(11.5),
+            palette.secondary,
+        );
+    }
+    if response.clicked() {
+        actions.push(Action::OpenFile(path.clone()));
+    }
+    rect
 }
 
 /// Draws an image or sticker, using its preview until downloaded. Returns its width.
@@ -5878,22 +5934,7 @@ fn picture(
                 } else {
                     frame_size(media, None, max_width, max_height)
                 };
-                let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-                if ui.is_rect_visible(rect) {
-                    ui.painter().rect_filled(rect, 6.0, palette.surface);
-                    theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, palette.danger);
-                    ui.painter().text(
-                        rect.center() + vec2(0.0, 24.0),
-                        Align2::CENTER_CENTER,
-                        "Could not display this picture. Click to open it.",
-                        theme::regular(11.5),
-                        palette.secondary,
-                    );
-                }
-                if response.clicked() {
-                    actions.push(Action::OpenFile(path.clone()));
-                }
-                rect
+                unavailable_picture(ui, palette, path, size, actions)
             }
         };
     }
