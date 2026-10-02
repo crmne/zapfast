@@ -6881,8 +6881,11 @@ impl Worker {
         };
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            let error = client.revoke_message(jid, id.clone(), RevokeType::Sender)
-                .await.err().map(|error| error.to_string());
+            let error = client
+                .revoke_message(jid, id.clone(), RevokeType::Sender)
+                .await
+                .err()
+                .map(|error| error.to_string());
             let _ = commands.send(Command::RevokeFinished { chat, id, error });
         });
     }
@@ -6892,16 +6895,23 @@ impl Worker {
     fn finish_revoke(&mut self, chat: ChatId, id: String, error: Option<String>) {
         if let Some(error) = error {
             self.emit_message(&chat, &id);
-            self.emit(Event::Error(format!("Could not delete the message for everyone: {error}")));
+            self.emit(Event::Error(format!(
+                "Could not delete the message for everyone: {error}"
+            )));
             return;
         }
-        match self.archive.set_content(&chat, &id, &Content::Revoked, false) {
+        match self
+            .archive
+            .set_content(&chat, &id, &Content::Revoked, false)
+        {
             Ok(true) => {
                 self.emit_message(&chat, &id);
                 self.emit_chat(&chat);
             }
-            Ok(false) => {},
-            Err(error) => self.emit(Event::Error(format!("Could not update the deleted message: {error}"))),
+            Ok(false) => {}
+            Err(error) => self.emit(Event::Error(format!(
+                "Could not update the deleted message: {error}"
+            ))),
         }
     }
 
@@ -11138,13 +11148,52 @@ mod receipt_tests {
         worker.store_message(accepted.clone(), None, None);
         worker.store_message(refused.clone(), None, None);
         worker.finish_revoke(PEER.to_owned(), accepted.id.clone(), None);
-        worker.finish_revoke(PEER.to_owned(), refused.id.clone(), Some("Fixture refusal".to_owned()));
-        assert_eq!(worker.archive.message(PEER, &accepted.id).unwrap().unwrap().content, Content::Revoked);
-        assert_eq!(worker.archive.message(PEER, &refused.id).unwrap().unwrap().content, refused.content);
-        assert!(events.try_iter().any(|event| matches!(event, Event::Error(_))));
-        worker.archive.set_content(PEER, &refused.id, &Content::Revoked, false).unwrap();
-        worker.finish_revoke(PEER.to_owned(), refused.id.clone(), Some("Late refusal".to_owned()));
-        assert_eq!(worker.archive.message(PEER, &refused.id).unwrap().unwrap().content, Content::Revoked);
+        worker.finish_revoke(
+            PEER.to_owned(),
+            refused.id.clone(),
+            Some("Fixture refusal".to_owned()),
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &accepted.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Revoked
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &refused.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            refused.content
+        );
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Error(_)))
+        );
+        worker
+            .archive
+            .set_content(PEER, &refused.id, &Content::Revoked, false)
+            .unwrap();
+        worker.finish_revoke(
+            PEER.to_owned(),
+            refused.id.clone(),
+            Some("Late refusal".to_owned()),
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &refused.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Revoked
+        );
     }
 
     #[test]
