@@ -109,6 +109,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   selection too; a drag over the text outside a selection still selects the
   text to copy. Deleted or unsupported messages, phone-only content, polls,
   and interactive messages cannot be selected or forwarded and have no box.
+  If a selected message is deleted, it leaves the selection automatically.
   Keyboard focus outlines the box; screen readers identify its message by
   sender, time, and a short summary. Then **Forward…** sends them together, in
   their original order; unticking the last one keeps the selection open, and

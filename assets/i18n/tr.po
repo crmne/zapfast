@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 21:31-0500\n"
+"POT-Creation-Date: 2026-10-02 09:31-0500\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -190,7 +190,7 @@ msgstr "Taslak:"
 msgid "Remove from favorites"
 msgstr "Favorilerden kaldır"
 
-#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4197
+#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4201
 #: src/ui/dialogs.rs:1055 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Favorilere ekle"
@@ -292,128 +292,128 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} okunmamış mesaj"
 msgstr[1] "{} okunmamış mesaj"
 
-#: src/ui/conversation.rs:2189 src/app.rs:1607 src/app.rs:1626
+#: src/ui/conversation.rs:2193 src/app.rs:1607 src/app.rs:1626
 msgid "You"
 msgstr "Siz"
 
-#: src/ui/conversation.rs:2200
+#: src/ui/conversation.rs:2204
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "{sender} tarafından {time} tarihinde gönderilen mesajı seç: {summary}"
 
-#: src/ui/conversation.rs:3418 src/ui/conversation.rs:4206
+#: src/ui/conversation.rs:3422 src/ui/conversation.rs:4210
 msgid "Open in system player"
 msgstr "Sistem oynatıcısında aç"
 
-#: src/ui/conversation.rs:3419 src/ui/conversation.rs:4275
+#: src/ui/conversation.rs:3423 src/ui/conversation.rs:4279
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Mesaj bilgisi"
 
-#: src/ui/conversation.rs:4218 src/ui/image_preview.rs:62
+#: src/ui/conversation.rs:4222 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
 msgid "Copy image"
 msgstr "Görseli kopyala"
 
-#: src/ui/conversation.rs:4617
+#: src/ui/conversation.rs:4621
 msgid "Location"
 msgstr "Konum"
 
-#: src/ui/conversation.rs:4643
+#: src/ui/conversation.rs:4647
 msgid "Live location ended"
 msgstr "Canlı konum sona erdi"
 
-#: src/ui/conversation.rs:4645 src/ui/conversation.rs:4835
+#: src/ui/conversation.rs:4649 src/ui/conversation.rs:4839
 msgid "Live location"
 msgstr "Canlı konum"
 
-#: src/ui/conversation.rs:4655
+#: src/ui/conversation.rs:4659
 #, rust-format
 msgid "Updated {time}"
 msgstr "Güncellendi: {time}"
 
-#: src/ui/conversation.rs:4705
+#: src/ui/conversation.rs:4709
 msgid "Chat"
 msgstr "Sohbet"
 
-#: src/ui/conversation.rs:4719
+#: src/ui/conversation.rs:4723
 msgid "Add"
 msgstr "Ekle"
 
-#: src/ui/conversation.rs:4764
+#: src/ui/conversation.rs:4768
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} çıkartma"
 msgstr[1] "{} çıkartma"
 
-#: src/ui/conversation.rs:4777
+#: src/ui/conversation.rs:4781
 msgid "View stickers"
 msgstr "Çıkartmaları görüntüle"
 
-#: src/ui/conversation.rs:4843
+#: src/ui/conversation.rs:4847
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Takip etmek için telefonunuzda WhatsApp'ı açın."
 
-#: src/ui/conversation.rs:4861
+#: src/ui/conversation.rs:4865
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen fotoğraf. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:4865
+#: src/ui/conversation.rs:4869
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen video. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:4869
+#: src/ui/conversation.rs:4873
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez dinlenebilen sesli mesaj. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:4873
+#: src/ui/conversation.rs:4877
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez dinlenebilen ses kaydı. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:4877
+#: src/ui/conversation.rs:4881
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen mesaj. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:4879
+#: src/ui/conversation.rs:4883
 msgid "This message can only be seen on your phone."
 msgstr "Bu mesaj yalnızca telefonunuzda görülebilir."
 
-#: src/ui/conversation.rs:5720
+#: src/ui/conversation.rs:5724
 msgid "Open in a map"
 msgstr "Haritada aç"
 
-#: src/ui/conversation.rs:6339
+#: src/ui/conversation.rs:6343
 msgid "Pause"
 msgstr "Duraklat"
 
-#: src/ui/conversation.rs:6341 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6345 src/ui/settings.rs:1636
 msgid "Play"
 msgstr "Oynat"
 
-#: src/ui/conversation.rs:6368
+#: src/ui/conversation.rs:6372
 msgid "Back to the message (Esc)"
 msgstr "Mesaja geri dön (Esc)"
 
-#: src/ui/conversation.rs:6370
+#: src/ui/conversation.rs:6374
 msgid "Fill the window"
 msgstr "Pencereyi kapla"
 
-#: src/ui/conversation.rs:6400
+#: src/ui/conversation.rs:6404
 msgid "Unmute"
 msgstr "Sesi aç"
 
-#: src/ui/conversation.rs:6402
+#: src/ui/conversation.rs:6406
 msgid "Mute"
 msgstr "Sessize al"
 
@@ -1091,11 +1091,11 @@ msgstr "{name} (Siz)"
 msgid "Could not use this image"
 msgstr "Bu görsel kullanılamadı"
 
-#: src/app.rs:2911
+#: src/app.rs:2937
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Gönderilmedi: ZapFast WhatsApp'a bağlı değil."
 
-#: src/app.rs:2915
+#: src/app.rs:2941
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1103,36 +1103,36 @@ msgstr ""
 "Gönderilmedi: Yanıtladığınız mesaj bu bilgisayarda mevcut değil. Alıntısız "
 "göndermek için yanıtı iptal edin."
 
-#: src/app.rs:4361
+#: src/app.rs:4389
 msgid "Added to favorites"
 msgstr "Favorilere eklendi"
 
-#: src/app.rs:4436
+#: src/app.rs:4464
 msgid "Sending the sticker pack…"
 msgstr "Çıkartma paketi gönderiliyor…"
 
-#: src/app.rs:4724 src/ui/labels.rs:237
+#: src/app.rs:4752 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
 
-#: src/app.rs:5360
+#: src/app.rs:5388
 msgid "App lock password saved"
 msgstr "Uygulama kilidi parolası kaydedildi"
 
-#: src/app.rs:5368
+#: src/app.rs:5396
 msgid "App lock turned off"
 msgstr "Uygulama kilidi kapatıldı"
 
-#: src/app.rs:5481
+#: src/app.rs:5509
 msgid "This video opens in your system player"
 msgstr "Bu video sistem oynatıcınızda açılır"
 
-#: src/app.rs:6016
+#: src/app.rs:6044
 msgid "Copied image"
 msgstr "Görsel kopyalandı"
 
-#: src/app.rs:6019 src/app.rs:6024
+#: src/app.rs:6047 src/app.rs:6052
 msgid "Failed to copy image"
 msgstr "Görsel kopyalanamadı"
 

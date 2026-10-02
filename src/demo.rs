@@ -6105,6 +6105,16 @@ mod tests {
                 ctx.data(|data| data.get_temp::<egui::Rect>(check).is_some()),
                 selectable
             );
+            let pick = crate::ui::conversation::bubble_id(&chat, "ada-reply").with("pick");
+            assert_eq!(
+                ctx.read_response(pick).unwrap().sense,
+                if selectable {
+                    egui::Sense::click_and_drag()
+                } else {
+                    egui::Sense::hover()
+                },
+                "only a visible checkbox can receive focus or start a sweep"
+            );
             app.selection = None;
             render(&mut app, &ctx);
             app.open_message_menu = Some("ada-reply".into());

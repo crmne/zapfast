@@ -2146,7 +2146,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             let pick = ui.interact(
                                 row,
                                 bubble_id(&chat.id, &message.id).with("pick"),
-                                Sense::click_and_drag(),
+                                if selectable {
+                                    Sense::click_and_drag()
+                                } else {
+                                    Sense::hover()
+                                },
                             );
                             let fill = if checked {
                                 palette.accent.gamma_multiply(0.16)
