@@ -9668,7 +9668,7 @@ mod tests {
     #[test]
     fn hidden_private_quotes_cannot_be_sent_by_any_composer_action() {
         for authorized in [false, true] {
-            for kind in 0..5 {
+            for kind in 0..6 {
                 let mut app = app();
                 let (backend, mut commands) = Backend::recording();
                 app.backend = backend;
@@ -9690,8 +9690,12 @@ mod tests {
                     }
                     2 => Action::SendSticker(PathBuf::from("synthetic-sticker.webp")),
                     3 => Action::SendGif(Gif { id: "fixture".into(), still: None, mp4: "https://example.invalid/fixture.mp4".into(), width: 2, height: 2 }),
-                    _ => {
+                    4 => {
                         app.unsent_voice = Some((recipient.into(), vec![0.0; 10]));
+                        Action::SendRecording
+                    }
+                    _ => {
+                        app.recording = Some(crate::audio::Recorder::recorded_fixture(vec![0.0; crate::voice::RATE as usize]));
                         Action::SendRecording
                     }
                 };
@@ -9711,7 +9715,7 @@ mod tests {
                     assert_eq!(app.reply_to, Some(target));
                     if kind <= 1 { assert_eq!(app.composer, "Private draft"); }
                     if kind == 1 { assert_eq!(app.pending.len(), 1); }
-                    if kind == 4 { assert!(app.unsent_voice.is_some()); }
+                    if kind >= 4 { assert!(app.unsent_voice.is_some()); assert!(app.recording.is_none()); }
                 }
             }
         }
