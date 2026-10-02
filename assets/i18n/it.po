@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -159,9 +159,17 @@ msgstr "Novembre"
 msgid "December"
 msgstr "Dicembre"
 
+#: src/ui/chats.rs:134 src/ui/chats.rs:333 src/app.rs:2152
+msgid "Starred"
+msgstr "Contrassegnati"
+
 #: src/ui/chats.rs:176 src/ui/chats.rs:309 src/ui/settings.rs:379
 msgid "Chats"
 msgstr "Chat"
+
+#: src/ui/chats.rs:236 src/ui/chats.rs:383 src/ui/chats.rs:1617
+msgid "Starred messages"
+msgstr "Messaggi contrassegnati"
 
 #: src/ui/chats.rs:246 src/ui/chats.rs:352 src/ui/pane.rs:169
 msgid "Search"
@@ -174,6 +182,14 @@ msgstr "Archiviate"
 #: src/ui/chats.rs:472
 msgid "Locked"
 msgstr "Bloccati"
+
+#: src/ui/chats.rs:593
+msgid "No starred messages"
+msgstr "Nessun messaggio contrassegnato"
+
+#: src/ui/chats.rs:596
+msgid "Right-click a message and choose Star to keep it here."
+msgstr "Fai clic destro su un messaggio e scegli Contrassegna per tenerlo qui."
 
 #: src/ui/chats.rs:528
 msgid "No favorites yet"
@@ -209,6 +225,15 @@ msgstr "Esci dal canale"
 #: src/ui/chats.rs:1166 src/ui/labels.rs:166 src/ui/labels.rs:203
 msgid "Labels"
 msgstr "Etichette"
+
+#: src/ui/conversation.rs:152
+#, rust-format
+msgid "Pinned message: {}"
+msgstr "Messaggio fissato: {}"
+
+#: src/ui/conversation.rs:173 src/ui/conversation.rs:175
+msgid "Next pinned message"
+msgstr "Messaggio fissato successivo"
 
 #: src/ui/conversation.rs:104
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
@@ -284,6 +309,19 @@ msgstr "Messaggio vocale ({duration}) non inviato"
 msgid "Discard voice message"
 msgstr "Elimina messaggio vocale"
 
+#: src/ui/conversation.rs:1865
+msgid "You pinned a message"
+msgstr "Hai fissato un messaggio"
+
+#: src/ui/conversation.rs:1868
+msgid "A message was pinned"
+msgstr "Un messaggio è stato fissato"
+
+#: src/ui/conversation.rs:1870
+#, rust-format
+msgid "{} pinned a message"
+msgstr "{} ha fissato un messaggio"
+
 #: src/ui/conversation.rs:2028 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
@@ -299,6 +337,22 @@ msgstr "Apri nel lettore di sistema"
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Info messaggio"
+
+#: src/ui/conversation.rs:4431
+msgid "Unstar"
+msgstr "Rimuovi contrassegno"
+
+#: src/ui/conversation.rs:4433
+msgid "Star"
+msgstr "Contrassegna"
+
+#: src/ui/conversation.rs:4447
+msgid "Unpin message"
+msgstr "Rimuovi fissaggio"
+
+#: src/ui/conversation.rs:4449
+msgid "Pin message"
+msgstr "Fissa messaggio"
 
 #: src/ui/conversation.rs:4114 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
@@ -1074,9 +1128,25 @@ msgstr "{name} (Tu)"
 msgid "You"
 msgstr "Tu"
 
+#: src/app.rs:2154
+msgid "Star removed"
+msgstr "Contrassegno rimosso"
+
+#: src/app.rs:2206
+msgid "Pinned for 7 days"
+msgstr "Fissato per 7 giorni"
+
+#: src/app.rs:2208
+msgid "Pin removed"
+msgstr "Fissaggio rimosso"
+
 #: src/app.rs:2437
 msgid "Could not use this image"
 msgstr "Impossibile usare questa immagine"
+
+#: src/app.rs:2718 src/app.rs:4774
+msgid "This chat already has three pinned messages"
+msgstr "Questa chat ha già tre messaggi fissati"
 
 #: src/app.rs:2903
 msgid "Not sent: ZapFast is not connected to WhatsApp."
@@ -1526,3 +1596,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+

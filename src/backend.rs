@@ -205,6 +205,8 @@ pub enum Command {
         chat: ChatId,
         before: Option<PageKey>,
     },
+    /// Asks for one chat's active pins, for the line under its header.
+    LoadPins(ChatId),
     /// Requests messages before the archive's earliest message.
     FetchOlder(ChatId),
     Download {
@@ -233,6 +235,24 @@ pub enum Command {
         query: String,
         from: Option<i64>,
         until: Option<i64>,
+    },
+    /// Stars or unstars one archived message.
+    SetStar {
+        chat: ChatId,
+        message: String,
+        starred: bool,
+    },
+    /// Asks for the starred messages.
+    LoadStarred,
+    /// Result of a star or unstar request.
+    Starred {
+        chat: ChatId,
+        message: String,
+        starred: bool,
+        /// Which attempt this answer belongs to. A later click or a phone
+        /// update wins, and this answer is ignored.
+        generation: u64,
+        result: Result<(), String>,
     },
     /// Creates an archive chat before its first message is sent.
     EnsureChat {
@@ -554,6 +574,24 @@ pub enum Command {
         through: i64,
     },
     SetPinned(ChatId, bool),
+    /// Pins or unpins one message for everyone in the chat.
+    SetMessagePinned {
+        chat: ChatId,
+        message: String,
+        pinned: bool,
+    },
+    /// Result of a pin or unpin request.
+    MessagePinned {
+        chat: ChatId,
+        message: String,
+        pinned: bool,
+        /// When the click was made. An older answer cannot overwrite a newer one.
+        at: i64,
+        /// Which attempt this answer belongs to.
+        generation: u64,
+        expires_at: i64,
+        result: Result<(), String>,
+    },
     /// Marks a chat as a favorite, or removes the mark, here and on the phone.
     SetFavorite(ChatId, bool),
     /// The phone answered a favorites list sent at `at` holding the queued
@@ -738,6 +776,19 @@ pub enum Event {
     Labels(Vec<crate::model::Label>),
     /// Unsent text stored for each chat, sent once at startup.
     Drafts(Vec<(ChatId, String)>),
+    /// The starred messages of one chat, for the mark in the conversation.
+    Stars {
+        chat: ChatId,
+        ids: Vec<String>,
+    },
+    /// A star the server accepted, or refused, for one message.
+    StarChanged {
+        chat: ChatId,
+        message: String,
+        starred: bool,
+    },
+    /// The starred messages, newest star first.
+    StarredList(Vec<crate::archive::Starred>),
     /// Messages in one chat matching a search, newest first, echoing the
     /// query and range asked for so a stale answer can be told apart.
     ChatHits {
@@ -751,6 +802,17 @@ pub enum Event {
         truncated: bool,
     },
     ChatUpdated(Box<Chat>),
+    /// Active pins of one chat, for the line under its header.
+    Pins {
+        chat: ChatId,
+        items: Vec<crate::archive::Pinned>,
+    },
+    /// A pin the server accepted, or refused, for one message.
+    PinChanged {
+        chat: ChatId,
+        message: String,
+        pinned: bool,
+    },
     /// Chat messages in ascending order. `older` prepends them; `complete`
     /// means the archive has no earlier rows.
     Messages {

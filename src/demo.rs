@@ -1691,6 +1691,26 @@ fn wallpaper_image_sample(app: &mut App) {
     app.settings.wallpaper_image = Some(path);
 }
 
+/// Sample stars, and the left panel that lists them. `menu` keeps one row's
+/// own context menu open, so a screenshot and a layout test can see it.
+fn starred_sample(app: &mut App, menu: Option<&str>) {
+    let chat = SAMPLES[0].id.to_owned();
+    let starred = app.conversations[&chat]
+        .messages
+        .iter()
+        .find(|row| row.id == "ada-link")
+        .cloned()
+        .expect("the sample link message");
+    app.stars
+        .insert(chat.clone(), [starred.id.clone()].into_iter().collect());
+    app.starred = vec![crate::archive::Starred {
+        message: starred,
+        starred_at: crate::util::now(),
+    }];
+    app.show_starred = true;
+    app.open_list_menu = menu.map(|id| (chat, id.to_owned()));
+}
+
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -2291,6 +2311,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     });
             }
             "new-contact" => app.dialog = Some(Dialog::NewContact),
+            // One pinned message: its line under the chat header and its mark
+            // on the bubble.
+            "pinned" => pin_sample(app),
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
             }
@@ -2697,6 +2720,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     row.read_at = Some(row.timestamp + 60 * 60 * 7);
                 }
             }
+            "starred" => starred_sample(app, None),
+            "star-menu" => starred_sample(app, Some("ada-link")),
             "react-picker" => {
                 let chat = SAMPLES[0].id.to_owned();
                 app.reaction_target = Some((chat, "ada-link".into()));
@@ -2762,6 +2787,51 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
         }
     }
+}
+
+/// Three pinned messages in the first sample chat: their lines under the
+/// header, their marks on the bubbles, and the notice each pin leaves in the
+/// transcript. Plain text, a long line that gets cut, and emoji, so one
+/// capture covers all three.
+fn pin_sample(app: &mut App) {
+    let chat = SAMPLES[0].id;
+    let now = crate::util::now();
+    // Each pin is made just after the message it names, and the list is handed
+    // over newest first, the way `chat_pins` reads it. The notices then belong
+    // one above each pinned message, rather than all at the end of the
+    // transcript, which is what the ordering bug looked like.
+    let sample = [
+        (
+            "ada-link",
+            "btw I made my own Spotify app from scratch! https://spotifast.rocks/",
+            2,
+        ),
+        ("ada-reply", "Listened, agreed on all three points.", 2),
+        ("ada-emoji", "😂🎉", 2),
+    ];
+    let mut rows = Vec::new();
+    for (id, text, after) in sample {
+        let sent_at = app
+            .conversations
+            .get(chat)
+            .and_then(|conversation| conversation.message(id))
+            .map_or(now, |message| message.timestamp);
+        app.pins.entry(chat.into()).or_default().insert(id.into());
+        rows.push(crate::archive::Pinned {
+            chat: chat.into(),
+            id: id.into(),
+            pinned_at: sent_at + after,
+            expires_at: sent_at + 7 * 24 * 60 * 60,
+            text: text.into(),
+            from_me: true,
+            sent_at,
+            pinner: crate::archive::Pinner {
+                by_me: true,
+                sender: String::new(),
+            },
+        });
+    }
+    app.chat_pins.insert(chat.into(), rows);
 }
 
 fn unlink(app: &mut App) {
@@ -4247,10 +4317,13 @@ mod tests {
             "gifs",
             "gifs-badkey",
             "react-menu",
+            "starred",
+            "star-menu",
             "react-picker",
             "react-picker-empty",
             "react-custom",
             "react-other",
+            "pinned",
         ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
@@ -5919,6 +5992,145 @@ mod tests {
         // And a second click on the text leaves the message out again.
         click(&mut app, rect("ada-reply", "body").center());
         assert_eq!(selected(&app), ["ada-doc", "ada-voice"]);
+    }
+
+    /// Where every copy of a label landed in the last frame.
+    fn painted_label_centers(ctx: &egui::Context, needle: &str) -> Vec<egui::Pos2> {
+        let mut found = Vec::new();
+        let layers: Vec<_> = ctx.memory(|memory| memory.layer_ids().collect());
+        for layer in layers {
+            let transform = ctx.layer_transform_to_global(layer).unwrap_or_default();
+            ctx.graphics(|graphics| {
+                if let Some(list) = graphics.get(layer) {
+                    for clipped in list.all_entries() {
+                        if let egui::Shape::Text(text) = &clipped.shape
+                            && text.galley.text() == needle
+                        {
+                            let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                            found.push(transform * rect.center());
+                        }
+                    }
+                }
+            });
+        }
+        found
+    }
+
+    /// Where a label landed in the last frame, read from the shapes egui
+    /// still holds for this pass.
+    fn painted_label_center(ctx: &egui::Context, needle: &str) -> Option<egui::Pos2> {
+        let mut found = None;
+        let layers: Vec<_> = ctx.memory(|memory| memory.layer_ids().collect());
+        for layer in layers {
+            let transform = ctx.layer_transform_to_global(layer).unwrap_or_default();
+            ctx.graphics(|graphics| {
+                if let Some(list) = graphics.get(layer) {
+                    for clipped in list.all_entries() {
+                        if let egui::Shape::Text(text) = &clipped.shape
+                            && text.galley.text() == needle
+                        {
+                            let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                            found = Some(transform * rect.center());
+                        }
+                    }
+                }
+            });
+        }
+        found
+    }
+
+    /// The pinned page shows each pin's notice beside the message it names,
+    /// rather than every notice together at the end of the transcript.
+    #[test]
+    fn the_pinned_page_spreads_its_notices_over_the_transcript() {
+        let mut app = app();
+        apply_flags(&mut app, Some("pinned"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut notices = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                    notices = painted_label_centers(&ctx, "You pinned a message");
+                },
+            );
+            output.textures_delta.clear();
+        }
+        let mut ys: Vec<f32> = notices.iter().map(|pos| pos.y).collect();
+        ys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        assert!(
+            ys.len() >= 2,
+            "the page shows the notices of the pins on screen: {ys:?}"
+        );
+        assert!(
+            ys[ys.len() - 1] - ys[0] > 40.0,
+            "each notice sits with its own message, not beside the others: {ys:?}"
+        );
+    }
+
+    #[test]
+    fn the_bubble_menu_stars_the_message() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        apply_flags(&mut app, Some("react-menu"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut pos = None;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 2400.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                    pos = painted_label_center(&ctx, "Star");
+                },
+            );
+            output.textures_delta.clear();
+        }
+        let pos = pos.expect("Star is on the bubble menu");
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_sized(
+            &mut app,
+            &ctx,
+            2400.0,
+            vec![egui::Event::PointerMoved(pos), button(true)],
+        );
+        frame_sized(&mut app, &ctx, 2400.0, vec![button(false)]);
+        let chat = sample_ids()[0].to_owned();
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                crate::backend::Command::SetStar {
+                    chat: starred_chat,
+                    message: starred_message,
+                    starred: true,
+                } if starred_chat == &chat && starred_message == "ada-link"
+            )),
+            "the bubble menu sends SetStar for that message: {commands:?}"
+        );
     }
 
     /// One frame with AccessKit on; returns (label, role, centre) per node.
@@ -8653,6 +8865,53 @@ mod tests {
             })
             .count();
         assert_eq!(hints, 1, "exactly the failed message carries the hint");
+    }
+
+    /// Every control the line under the header draws is reachable without a
+    /// pointer: the row opens its message and the pin beside it steps to the
+    /// next pin, and both are labelled buttons.
+    #[test]
+    fn the_pinned_line_exposes_a_button_per_row_and_a_step_control() {
+        let mut app = app();
+        apply_flags(&mut app, Some("pinned"));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility tree");
+        let labels: Vec<&str> = tree
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label())
+            .collect();
+        let rows = labels
+            .iter()
+            .filter(|label| label.starts_with("Pinned message: "))
+            .count();
+        assert_eq!(rows, 3, "one button per pin: {labels:?}");
+        let steps = labels
+            .iter()
+            .filter(|label| **label == "Next pinned message")
+            .count();
+        assert_eq!(steps, 3, "one step control per pin: {labels:?}");
     }
 
     /// Voice controls keep their width and order in right-aligned bubbles.

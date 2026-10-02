@@ -15,10 +15,14 @@ mod favorites;
 pub use favorites::Favorite;
 mod labels;
 pub use labels::{DEFAULT_COLOR, LABEL_LIMIT, NAME_LIMIT};
+mod pins;
+pub use pins::{Pinned, Pinner};
 mod polls;
 mod receipts;
+mod stars;
 mod stickers;
 pub use polls::PollVote;
+pub use stars::Starred;
 pub use stickers::FavoriteSticker;
 
 /// Outcome of deleting or clearing a chat.
@@ -52,6 +56,44 @@ pub struct Archive {
 }
 
 pub type Result<T> = std::result::Result<T, rusqlite::Error>;
+
+/// The message columns every whole-message read selects, in the order
+/// [`message_from_row`] expects. One list, so a read cannot quietly drop a
+/// field.
+const MESSAGE_COLUMNS: &str = "sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at";
+
+/// Reads one whole message from a row whose message columns start at `offset`.
+fn message_from_row(
+    row: &rusqlite::Row<'_>,
+    offset: usize,
+    chat: &str,
+    id: &str,
+) -> Result<Message> {
+    let content: String = row.get(offset + 4)?;
+    let quoted: Option<String> = row.get(offset + 6)?;
+    let reactions: String = row.get(offset + 7)?;
+    let mentions: String = row.get(offset + 10)?;
+    Ok(Message {
+        id: id.to_owned(),
+        chat: chat.to_owned(),
+        sender: row.get(offset)?,
+        sender_name: row.get(offset + 1)?,
+        from_me: row.get(offset + 2)?,
+        timestamp: row.get(offset + 3)?,
+        content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
+            what: "unreadable".into(),
+        }),
+        status: status_from_rank(row.get(offset + 5)?),
+        delivered_at: row.get(offset + 12)?,
+        read_at: row.get(offset + 13)?,
+        quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
+        reactions: serde_json::from_str(&reactions).unwrap_or_default(),
+        edited: row.get(offset + 8)?,
+        mentions: serde_json::from_str(&mentions).unwrap_or_default(),
+        forwarded: row.get(offset + 11)?,
+        thumbnail: row.get(offset + 9)?,
+    })
+}
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS chats (
@@ -350,6 +392,8 @@ impl Archive {
         connection.execute_batch(drafts::SCHEMA)?;
         connection.execute_batch(stickers::SCHEMA)?;
         connection.execute_batch(favorites::SCHEMA)?;
+        connection.execute_batch(stars::SCHEMA)?;
+        connection.execute_batch(pins::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -956,41 +1000,19 @@ impl Archive {
         before: Option<(i64, &str)>,
         limit: usize,
     ) -> Result<Vec<Message>> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT id, {MESSAGE_COLUMNS}
              FROM messages
              WHERE chat = ?1 AND (timestamp < ?2 OR (timestamp = ?2 AND rowid <
                  (SELECT rowid FROM messages WHERE chat = ?1 AND id = ?3)))
              ORDER BY timestamp DESC, rowid DESC
-             LIMIT ?4",
-        )?;
+             LIMIT ?4"
+        ))?;
         let (before_time, before_id) = before.unwrap_or((i64::MAX, ""));
         let rows =
             statement.query_map(params![chat, before_time, before_id, limit as i64], |row| {
-                let content: String = row.get(5)?;
-                let quoted: Option<String> = row.get(7)?;
-                let reactions: String = row.get(8)?;
-                let mentions: String = row.get(11)?;
-                Ok(Message {
-                    id: row.get(0)?,
-                    chat: chat.to_owned(),
-                    sender: row.get(1)?,
-                    sender_name: row.get(2)?,
-                    from_me: row.get(3)?,
-                    timestamp: row.get(4)?,
-                    content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
-                        what: "unreadable".into(),
-                    }),
-                    status: status_from_rank(row.get(6)?),
-                    delivered_at: row.get(13)?,
-                    read_at: row.get(14)?,
-                    quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
-                    reactions: serde_json::from_str(&reactions).unwrap_or_default(),
-                    edited: row.get(9)?,
-                    mentions: serde_json::from_str(&mentions).unwrap_or_default(),
-                    forwarded: row.get(12)?,
-                    thumbnail: row.get(10)?,
-                })
+                let id: String = row.get(0)?;
+                message_from_row(row, 1, chat, &id)
             })?;
         let mut messages: Vec<Message> = rows.collect::<Result<_>>()?;
         messages.reverse();
@@ -1266,6 +1288,11 @@ impl Archive {
             "DELETE FROM messages WHERE chat = ?1 AND id = ?2",
             params![chat, id],
         )?;
+        self.delete_star(chat, id)?;
+        // A pin outlives its message in the table only until the message goes.
+        // Left behind, it would hold one of the chat's three slots while the
+        // line under the header had nothing to show for it.
+        self.delete_pin(chat, id)?;
         Ok(deleted > 0)
     }
 
@@ -1357,11 +1384,13 @@ impl Archive {
     fn purge_chat_rows(&self, chat: &str) -> Result<()> {
         for table in [
             "messages",
+            "message_pins",
             "group_receipts",
             "polls",
             "poll_history",
             "local_chat_labels",
             "drafts",
+            "stars",
         ] {
             self.connection.execute(
                 &format!("DELETE FROM {table} WHERE chat = ?1"),
@@ -1429,37 +1458,11 @@ impl Archive {
     }
 
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
-        let mut statement = self.connection.prepare(
-            "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at
-             FROM messages WHERE chat = ?1 AND id = ?2",
-        )?;
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages WHERE chat = ?1 AND id = ?2"
+        ))?;
         statement
-            .query_row(params![chat, id], |row| {
-                let content: String = row.get(4)?;
-                let quoted: Option<String> = row.get(6)?;
-                let reactions: String = row.get(7)?;
-                let mentions: String = row.get(10)?;
-                Ok(Message {
-                    id: id.to_owned(),
-                    chat: chat.to_owned(),
-                    sender: row.get(0)?,
-                    sender_name: row.get(1)?,
-                    from_me: row.get(2)?,
-                    timestamp: row.get(3)?,
-                    content: serde_json::from_str(&content).unwrap_or(Content::Unsupported {
-                        what: "unreadable".into(),
-                    }),
-                    status: status_from_rank(row.get(5)?),
-                    delivered_at: row.get(12)?,
-                    read_at: row.get(13)?,
-                    quoted: quoted.and_then(|quoted| serde_json::from_str(&quoted).ok()),
-                    reactions: serde_json::from_str(&reactions).unwrap_or_default(),
-                    edited: row.get(8)?,
-                    mentions: serde_json::from_str(&mentions).unwrap_or_default(),
-                    forwarded: row.get(11)?,
-                    thumbnail: row.get(9)?,
-                })
-            })
+            .query_row(params![chat, id], |row| message_from_row(row, 0, chat, id))
             .optional()
     }
 
@@ -1565,6 +1568,10 @@ impl Archive {
                 edited
             ],
         )?;
+        if matches!(content, Content::Revoked) {
+            // Deleted for everyone: the message is gone, so its pin is too.
+            self.delete_pin(chat, id)?;
+        }
         Ok(changed > 0)
     }
 
@@ -1708,7 +1715,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM message_pins; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }
@@ -1741,6 +1748,121 @@ pub(crate) mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn starring_a_message_survives_a_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fixture.db");
+        let key = [7; 32];
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+            archive
+                .insert_message(&message("1@s.whatsapp.net", "m1", 100, false), None)
+                .unwrap();
+            archive.star("1@s.whatsapp.net", "m1", 500).unwrap();
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert!(
+            archive
+                .starred_ids("1@s.whatsapp.net")
+                .unwrap()
+                .contains("m1")
+        );
+        let list = archive.starred(50).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].starred_at, 500);
+        assert_eq!(list[0].message.content.full_summary(), "message m1");
+        archive.unstar("1@s.whatsapp.net", "m1", 600).unwrap();
+        assert!(archive.starred(50).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_older_unstar_does_not_clear_a_newer_star() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        archive
+            .insert_message(&message("1@s.whatsapp.net", "m1", 100, false), None)
+            .unwrap();
+        archive.star("1@s.whatsapp.net", "m1", 500).unwrap();
+        assert!(
+            !archive
+                .set_star("1@s.whatsapp.net", "m1", false, 400)
+                .unwrap()
+        );
+        assert_eq!(archive.starred(50).unwrap().len(), 1);
+        assert!(
+            archive
+                .set_star("1@s.whatsapp.net", "m1", false, 700)
+                .unwrap()
+        );
+        assert!(archive.starred(50).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_locked_chat_stays_out_of_the_starred_list() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        archive
+            .insert_message(&message("1@s.whatsapp.net", "m1", 100, false), None)
+            .unwrap();
+        archive.star("1@s.whatsapp.net", "m1", 500).unwrap();
+        archive.set_locked("1@s.whatsapp.net", true).unwrap();
+        assert!(archive.starred(50).unwrap().is_empty());
+        archive.set_locked("1@s.whatsapp.net", false).unwrap();
+        assert_eq!(archive.starred(50).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_deleted_message_leaves_the_starred_list() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        archive
+            .insert_message(&message("1@s.whatsapp.net", "m1", 100, false), None)
+            .unwrap();
+        archive.star("1@s.whatsapp.net", "m1", 500).unwrap();
+        assert_eq!(archive.starred(50).unwrap().len(), 1);
+        assert!(archive.delete_message("1@s.whatsapp.net", "m1").unwrap());
+        assert!(
+            archive.starred(50).unwrap().is_empty(),
+            "the list hides a message deleted here"
+        );
+    }
+
+    #[test]
+    fn starred_messages_come_back_newest_star_first() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        for (id, at) in [("old", 100), ("new", 900)] {
+            archive
+                .insert_message(&message("1@s.whatsapp.net", id, 50, false), None)
+                .unwrap();
+            archive.star("1@s.whatsapp.net", id, at).unwrap();
+        }
+        let list = archive.starred(50).unwrap();
+        let ids: Vec<&str> = list.iter().map(|entry| entry.message.id.as_str()).collect();
+        assert_eq!(ids, vec!["new", "old"]);
+    }
+
+    #[test]
+    fn a_starred_message_keeps_its_whole_text() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        let mut written = message("1@s.whatsapp.net", "m1", 100, false);
+        written.content = Content::text("first line\nsecond line");
+        archive.insert_message(&written, None).unwrap();
+        archive.star("1@s.whatsapp.net", "m1", 500).unwrap();
+        let list = archive.starred(50).unwrap();
+        assert_eq!(
+            list[0].message.content.full_summary(),
+            "first line\nsecond line",
+            "the list draws the message as written, not only its first line"
+        );
+        assert_eq!(
+            list[0].message.timestamp, 100,
+            "the bubble can show the message's time"
+        );
     }
 
     /// `left` reads like a SQL keyword, so this pins down that it is usable as
@@ -1839,6 +1961,153 @@ pub(crate) mod tests {
         assert!(!row.read_only, "the metadata is applied as it came");
         archive.set_left(id, false).expect("rejoined");
         assert!(!archive.chat(id).expect("row").expect("chat").left);
+    }
+
+    #[test]
+    fn pinning_caps_at_three_active_and_drops_expired() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        for id in ["a", "b", "c", "d"] {
+            archive
+                .insert_message(&message("1@s.whatsapp.net", id, 100, false), None)
+                .unwrap();
+        }
+        archive.pin("1@s.whatsapp.net", "a", 10, 1_000).unwrap();
+        archive.pin("1@s.whatsapp.net", "b", 20, 1_000).unwrap();
+        archive.pin("1@s.whatsapp.net", "c", 30, 1_000).unwrap();
+        assert!(archive.pin_full("1@s.whatsapp.net", "d", 50).unwrap());
+        assert!(!archive.pin_full("1@s.whatsapp.net", "a", 50).unwrap());
+        archive.unpin("1@s.whatsapp.net", "b", 35).unwrap();
+        assert!(!archive.pin_full("1@s.whatsapp.net", "d", 50).unwrap());
+        archive.pin("1@s.whatsapp.net", "d", 40, 1_000).unwrap();
+        let ids = archive.pinned_ids("1@s.whatsapp.net", 50).unwrap();
+        assert!(ids.contains("a") && ids.contains("c") && ids.contains("d"));
+        assert!(!ids.contains("b"));
+        archive.pin("1@s.whatsapp.net", "a", 10, 40).unwrap();
+        let ids = archive.pinned_ids("1@s.whatsapp.net", 50).unwrap();
+        assert!(!ids.contains("a"), "expired pins leave the active set");
+    }
+
+    #[test]
+    fn chat_pins_list_newest_first_with_message_body() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        archive
+            .insert_message(&message("1@s.whatsapp.net", "old", 10, false), None)
+            .unwrap();
+        archive
+            .insert_message(&message("1@s.whatsapp.net", "new", 20, true), None)
+            .unwrap();
+        archive.pin("1@s.whatsapp.net", "old", 1, 1_000).unwrap();
+        archive.pin("1@s.whatsapp.net", "new", 2, 1_000).unwrap();
+        archive.pin("1@s.whatsapp.net", "ghost", 3, 1_000).unwrap();
+        let rows = archive.chat_pins("1@s.whatsapp.net", 50).unwrap();
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, vec!["new", "old"]);
+        assert_eq!(rows[0].text, "message new");
+        assert!(rows[0].from_me);
+        assert!(rows[0].pinner.by_me, "a pin made here says so");
+        assert!(rows[0].pinner.sender.is_empty());
+    }
+
+    #[test]
+    fn a_pin_made_elsewhere_remembers_who_made_it() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        archive
+            .insert_message(&message("1@s.whatsapp.net", "m1", 10, false), None)
+            .unwrap();
+        let bob = Pinner {
+            by_me: false,
+            sender: "bob@s.whatsapp.net".to_owned(),
+        };
+        archive
+            .pin_from("1@s.whatsapp.net", "m1", 500, 9_000, &bob)
+            .unwrap();
+        let rows = archive.chat_pins("1@s.whatsapp.net", 600).unwrap();
+        assert_eq!(rows[0].pinner, bob, "the notice can name who pinned it");
+        // An older pin from anyone loses to the state already stored.
+        assert!(
+            !archive
+                .pin_from("1@s.whatsapp.net", "m1", 400, 9_000, &bob)
+                .unwrap()
+        );
+        let rows = archive.chat_pins("1@s.whatsapp.net", 600).unwrap();
+        assert_eq!(rows.len(), 1, "the newer pin stands");
+        assert_eq!(rows[0].pinned_at, 500);
+        // And an unpin from someone else takes it away.
+        archive
+            .set_pin("1@s.whatsapp.net", "m1", false, 700, 0, &bob)
+            .unwrap();
+        assert!(
+            archive
+                .chat_pins("1@s.whatsapp.net", 800)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_message_deleted_here_or_for_everyone_stops_being_a_pin() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        for id in ["a", "b", "c", "d"] {
+            archive
+                .insert_message(&message("1@s.whatsapp.net", id, 100, false), None)
+                .unwrap();
+        }
+        for id in ["a", "b", "c"] {
+            archive.pin("1@s.whatsapp.net", id, 10, 9_000).unwrap();
+        }
+        assert!(archive.pin_full("1@s.whatsapp.net", "d", 50).unwrap());
+
+        // Deleted here: the pin goes with the message, so the slot is free
+        // rather than held for the rest of the pin's seven days.
+        archive.delete_message("1@s.whatsapp.net", "c").unwrap();
+        assert!(!archive.pin_full("1@s.whatsapp.net", "d", 50).unwrap());
+        assert_eq!(
+            archive.chat_pins("1@s.whatsapp.net", 50).unwrap().len(),
+            2,
+            "the line shows the pins left"
+        );
+
+        // Deleted for everyone: the same, for the stub that stays behind.
+        archive
+            .set_content("1@s.whatsapp.net", "b", &Content::Revoked, false)
+            .unwrap();
+        assert!(!archive.pin_full("1@s.whatsapp.net", "d", 50).unwrap());
+        assert_eq!(archive.chat_pins("1@s.whatsapp.net", 50).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_older_pin_does_not_undo_a_newer_unpin() {
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "Fixture").unwrap();
+        archive
+            .insert_message(&message("1@s.whatsapp.net", "m1", 100, false), None)
+            .unwrap();
+        assert!(archive.pin("1@s.whatsapp.net", "m1", 500, 9_000).unwrap());
+        assert!(!archive.unpin("1@s.whatsapp.net", "m1", 400).unwrap());
+        assert!(
+            archive
+                .pinned_ids("1@s.whatsapp.net", 600)
+                .unwrap()
+                .contains("m1")
+        );
+        assert!(archive.unpin("1@s.whatsapp.net", "m1", 700).unwrap());
+        assert!(
+            archive
+                .pinned_ids("1@s.whatsapp.net", 800)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!archive.pin("1@s.whatsapp.net", "m1", 650, 9_000).unwrap());
+        assert!(
+            archive
+                .pinned_ids("1@s.whatsapp.net", 800)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

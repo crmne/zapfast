@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -160,9 +160,17 @@ msgstr "Ноябрь"
 msgid "December"
 msgstr "Декабрь"
 
+#: src/ui/chats.rs:134 src/ui/chats.rs:333 src/app.rs:2152
+msgid "Starred"
+msgstr "Отмеченные"
+
 #: src/ui/chats.rs:176 src/ui/chats.rs:309 src/ui/settings.rs:379
 msgid "Chats"
 msgstr "Чаты"
+
+#: src/ui/chats.rs:236 src/ui/chats.rs:383 src/ui/chats.rs:1617
+msgid "Starred messages"
+msgstr "Отмеченные сообщения"
 
 #: src/ui/chats.rs:246 src/ui/chats.rs:352 src/ui/pane.rs:169
 msgid "Search"
@@ -175,6 +183,15 @@ msgstr "Архив"
 #: src/ui/chats.rs:472
 msgid "Locked"
 msgstr "Заблокированные"
+
+#: src/ui/chats.rs:593
+msgid "No starred messages"
+msgstr "Нет отмеченных сообщений"
+
+#: src/ui/chats.rs:596
+msgid "Right-click a message and choose Star to keep it here."
+msgstr "Щёлкните сообщение правой кнопкой и выберите «Отметить», чтобы сохранить"
+" его здесь."
 
 #: src/ui/chats.rs:528
 msgid "No favorites yet"
@@ -210,6 +227,15 @@ msgstr "Покинуть канал"
 #: src/ui/chats.rs:1166 src/ui/labels.rs:166 src/ui/labels.rs:203
 msgid "Labels"
 msgstr "Метки"
+
+#: src/ui/conversation.rs:152
+#, rust-format
+msgid "Pinned message: {}"
+msgstr "Закреплённое сообщение: {}"
+
+#: src/ui/conversation.rs:173 src/ui/conversation.rs:175
+msgid "Next pinned message"
+msgstr "Следующее закреплённое сообщение"
 
 #: src/ui/conversation.rs:104
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
@@ -283,6 +309,19 @@ msgstr "Голосовое сообщение ({duration}) не отправле
 msgid "Discard voice message"
 msgstr "Удалить голосовое сообщение"
 
+#: src/ui/conversation.rs:1865
+msgid "You pinned a message"
+msgstr "Вы закрепили сообщение"
+
+#: src/ui/conversation.rs:1868
+msgid "A message was pinned"
+msgstr "Сообщение закреплено"
+
+#: src/ui/conversation.rs:1870
+#, rust-format
+msgid "{} pinned a message"
+msgstr "{} закрепил(а) сообщение"
+
 #: src/ui/conversation.rs:2028 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
@@ -299,6 +338,22 @@ msgstr "Открыть в системном плеере"
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Данные сообщения"
+
+#: src/ui/conversation.rs:4431
+msgid "Unstar"
+msgstr "Снять отметку"
+
+#: src/ui/conversation.rs:4433
+msgid "Star"
+msgstr "Отметить"
+
+#: src/ui/conversation.rs:4447
+msgid "Unpin message"
+msgstr "Открепить сообщение"
+
+#: src/ui/conversation.rs:4449
+msgid "Pin message"
+msgstr "Закрепить сообщение"
 
 #: src/ui/conversation.rs:4114 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
@@ -1083,9 +1138,25 @@ msgstr "{name} (Вы)"
 msgid "You"
 msgstr "Вы"
 
+#: src/app.rs:2154
+msgid "Star removed"
+msgstr "Отметка снята"
+
+#: src/app.rs:2206
+msgid "Pinned for 7 days"
+msgstr "Закреплено на 7 дней"
+
+#: src/app.rs:2208
+msgid "Pin removed"
+msgstr "Закрепление снято"
+
 #: src/app.rs:2437
 msgid "Could not use this image"
 msgstr "Не удалось использовать это изображение"
+
+#: src/app.rs:2718 src/app.rs:4774
+msgid "This chat already has three pinned messages"
+msgstr "В этом чате уже три закреплённых сообщения"
 
 #: src/app.rs:2903
 msgid "Not sent: ZapFast is not connected to WhatsApp."
@@ -1536,3 +1607,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+

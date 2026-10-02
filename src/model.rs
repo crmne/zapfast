@@ -832,6 +832,7 @@ fn video_label(gif: bool, note: bool) -> &'static str {
     }
 }
 
+/// `label: caption` with the caption whole, for a row that wraps it.
 fn with_caption(label: &str, caption: &Option<String>) -> String {
     match caption
         .as_deref()
@@ -1427,6 +1428,12 @@ pub enum Action {
         chat: ChatId,
         id: String,
     },
+    /// Stars or unstars one message from its bubble's menu.
+    SetStar {
+        chat: ChatId,
+        message: String,
+        starred: bool,
+    },
     /// Opens the attachment picker for the current chat.
     Attach,
     /// Opens or closes the composer tools menu.
@@ -1539,6 +1546,12 @@ pub enum Action {
     /// Clears a chat's messages here and on the phone, keeping the chat.
     ClearChat(ChatId),
     SetPinned(ChatId, bool),
+    /// Pins or unpins one message for everyone in the chat.
+    SetMessagePinned {
+        chat: ChatId,
+        message: String,
+        pinned: bool,
+    },
     /// Marks a chat as a favorite, or removes the mark, here and on the phone.
     SetFavorite(ChatId, bool),
     ShowDialog(Dialog),
@@ -1567,6 +1580,8 @@ pub enum Action {
     DeleteLabel(String),
     /// Shows or leaves the archived chats.
     ShowArchived(bool),
+    /// Shows or hides the starred messages in the left panel.
+    ToggleStarred,
     /// Mutes (`true`) or unmutes every followed channel.
     MuteAllChannels(bool),
     /// Joins the group of the invite being previewed.

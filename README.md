@@ -109,6 +109,23 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   in their original order, or Escape cancels. A batch goes out one message at
   a time, each starting once the one before it reached WhatsApp, so a picture
   cannot overtake the text that came before it.
+- **Starred messages.** Right-click a message and choose **Star** to keep it,
+  and a small star then shows in the message's corner beside its time. The
+  star button in the chat-list header opens **Starred**, a panel that lists
+  every starred message, newest star first. Each row is drawn as the message
+  looks in its chat, with the chat's name and the moment it was starred.
+  Clicking a row opens that chat at the message, and right-clicking it offers
+  the chat's own menu, so **Reply**, **Edit**, **Select**, and **Unstar** work
+  from the list too.
+- **Pinned messages.** **Pin message** in a message's menu pins it for
+  everyone in the chat, for the seven days WhatsApp offers. A chat keeps three
+  active pins and a fourth is refused here instead of quietly replacing one. An
+  open chat shows its pins in a line under the header, one per pin, and clicking
+  one opens the message it names; the pin beside a row steps to the next pin, so
+  clicking it walks the chat's pins one after another. The pinned message also
+  carries a pin mark beside its time, and the chat shows a notice where the pin
+  happened, naming whoever made it. A pin that runs out its seven days leaves
+  the line, and a message deleted here or for everyone stops being a pin.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew,
   Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so
