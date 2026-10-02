@@ -1210,7 +1210,7 @@ mod tests {
     ) {
         let (mut worker, events, commands, _wa) = super::super::receipt_tests::worker();
         let root = tempfile::tempdir().expect("temp");
-        worker.dirs = AppDirs::under(root.path());
+        worker.dirs = crate::paths::AppDirs::under(root.path()).as_account();
         (worker, root, events, commands)
     }
 

@@ -132,13 +132,14 @@ fn common_setup(app: &mut App) {
     app.show_archived = false;
     app.backend.record_demo_commands();
     media::populate(app).expect("bundled demo media");
+    let saved_sticker = app.stickers_saved.first().cloned();
     if let Some(row) = app
         .conversations
         .get_mut(super::SAMPLES[0].id)
         .and_then(|chat| chat.message_mut("ada-sticker"))
         && let Content::Sticker { media, animated } = &mut row.content
     {
-        media.path = app.stickers_saved.first().cloned();
+        media.path = saved_sticker;
         *animated = false;
     }
 }

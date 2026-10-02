@@ -1736,7 +1736,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         locale: app.locale,
         chat,
         me: app.me.as_deref(),
-        auto_download: app.settings.auto_download,
+        auto_download: app.account().settings.auto_download,
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         interactive_pending: &app.interactive_sending,

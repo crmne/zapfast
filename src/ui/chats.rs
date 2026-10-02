@@ -79,7 +79,8 @@ fn search_keyboard(app: &mut App, ui: &egui::Ui) {
     }
     app.search_selected = index.map(|index| chats[index].clone());
     if app.search_selected != before {
-        app.scroll_chat_into_view.clone_from(&app.search_selected);
+        let selected = app.search_selected.clone();
+        app.scroll_chat_into_view = selected;
     }
     if enter {
         let chat = app

@@ -100,6 +100,8 @@ enum Control {
     Row(Draw),
     /// A switch bound to a setting.
     Toggle(fn(&mut Settings) -> &mut bool),
+    /// A switch bound to the active WhatsApp account.
+    AccountToggle(fn(&mut crate::settings::AccountSettings) -> &mut bool),
     /// Something that lays itself out, like the account card.
     Block(Draw),
 }
@@ -146,6 +148,20 @@ impl Section {
         self.entries.push((row, Control::Toggle(field)));
     }
 
+    fn account_toggle(
+        &mut self,
+        title: impl Into<Text>,
+        description: impl Into<Text>,
+        field: fn(&mut crate::settings::AccountSettings) -> &mut bool,
+    ) {
+        let row = Row {
+            title: title.into(),
+            description: description.into(),
+            keywords: Vec::new(),
+        };
+        self.entries.push((row, Control::AccountToggle(field)));
+    }
+
     fn block(&mut self, keywords: Vec<Text>, draw: impl FnOnce(&mut egui::Ui, &mut App) + 'static) {
         let row = Row {
             keywords,
@@ -183,6 +199,9 @@ impl Section {
                     ),
                     Control::Toggle(field) => {
                         toggle(ui, app, &row.title.shown, &row.description.shown, field);
+                    }
+                    Control::AccountToggle(field) => {
+                        account_toggle(ui, app, &row.title.shown, &row.description.shown, field);
                     }
                     Control::Block(draw) => draw(ui, app),
                 }
@@ -325,7 +344,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Wallpaper"),
         Text::default(),
         move |ui, app| {
-            let label = if app.settings.wallpaper_image.is_some() {
+            let label = if app.account().settings.wallpaper_image.is_some() {
                 crate::i18n::gettext(app.locale, "Image").into_owned()
             } else {
                 wallpaper_label(app.locale, app.settings.wallpaper_color_for(palette.dark))
@@ -382,7 +401,7 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
     );
-    chats.toggle(
+    chats.account_toggle(
         translated(locale, "Download files automatically"),
         translated(
             locale,
@@ -434,7 +453,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
 
     let mut notifications = Section::new(translated(locale, "Notifications"));
-    notifications.toggle(
+    notifications.account_toggle(
         translated(locale, "Desktop notifications"),
         translated(
             locale,
@@ -442,7 +461,7 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.notifications,
     );
-    if app.settings.notifications {
+    if app.account().settings.notifications {
         let (title, description) = sound_text(locale, false);
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
         notifications.toggle(
@@ -463,12 +482,12 @@ fn sections(app: &App) -> Vec<Section> {
     } else {
         translated(locale, "Let people see when you read their messages.")
     };
-    privacy.toggle(
+    privacy.account_toggle(
         translated(locale, "Send read receipts"),
         receipts_note,
         |settings| &mut settings.send_read_receipts,
     );
-    privacy.toggle(
+    privacy.account_toggle(
         translated(locale, "Show when you are typing"),
         "",
         |settings| &mut settings.send_typing,
@@ -1232,7 +1251,7 @@ fn image_buttons(app: &mut App, ui: &mut egui::Ui, width: f32) {
     let palette = app.palette;
     let choose = crate::i18n::gettext(app.locale, "Choose image…");
     let remove = crate::i18n::gettext(app.locale, "Remove image");
-    let has_image = app.settings.wallpaper_image.is_some();
+    let has_image = app.account().settings.wallpaper_image.is_some();
     let spacing = ui.spacing().item_spacing.x;
     let mut row_width = theme::soft_button_width(ui, &choose, true);
     if has_image {
@@ -1583,6 +1602,30 @@ fn toggle(
     if changed {
         *field(&mut app.settings) = value;
         app.actions.push(Action::SettingsChanged);
+    }
+}
+
+fn account_toggle(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    label: &str,
+    description: &str,
+    field: impl Fn(&mut crate::settings::AccountSettings) -> &mut bool,
+) {
+    let palette = app.palette;
+    let mut value = *field(&mut app.account_mut().settings);
+    let mut changed = false;
+    widgets::setting_row(ui, &palette, label, description, |ui| {
+        let response = widgets::switch(ui, &palette, &mut value);
+        theme::reveal_focus(&response);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), value, label)
+        });
+        changed = response.changed();
+    });
+    if changed {
+        *field(&mut app.account_mut().settings) = value;
+        app.account_mut().mark_settings_dirty();
     }
 }
 

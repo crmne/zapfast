@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::model::{Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack};
-use crate::paths::AppDirs;
+use crate::paths::AccountDirs;
 
 // Re-exported so the picker can detect pasted Signal pack links.
 mod read_sync;
@@ -67,7 +67,7 @@ mod tests {
     fn backend_waits_for_window_acknowledgement_before_touching_storage() {
         let directory = tempfile::tempdir().unwrap();
         let dirs = crate::paths::AppDirs::under(directory.path());
-        let mut backend = super::Backend::spawn(dirs.clone(), super::Waker::default());
+        let mut backend = super::Backend::spawn(dirs.as_account(), super::Waker::default());
         assert!(!dirs.session_db().exists());
         assert!(!dirs.archive_db().exists());
         // Closing before a first frame must cancel startup without connecting
@@ -577,6 +577,8 @@ pub enum Command {
     PairWithPhone(String),
     /// Unlinks the device remotely and locally.
     Unlink,
+    /// Unlinks this account and deletes its local folders.
+    RemoveAccount,
     Reconnect,
     /// Use this proxy setting and reconnect. Empty follows the environment.
     SetProxy(String),
@@ -931,6 +933,8 @@ pub enum Event {
         unsent: Unsent,
         reason: Refusal,
     },
+    /// The account folders were deleted after RemoveAccount.
+    AccountRemoved,
     Error(String),
     /// A change to a group's name or photo went to WhatsApp (`saving`), or
     /// WhatsApp answered it.
@@ -1006,7 +1010,7 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn spawn(dirs: AppDirs, waker: Waker) -> Self {
+    pub fn spawn(dirs: AccountDirs, waker: Waker) -> Self {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = std::sync::mpsc::channel();
         let runtime = tokio::runtime::Builder::new_multi_thread()

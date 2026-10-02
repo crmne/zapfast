@@ -170,15 +170,25 @@ fn label_chips(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 pub fn chat_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette) {
     let locale = app.locale;
     widgets::submenu(ui, palette, Icon::Tag, &gettext(locale, "Labels"), |ui| {
-        for label in &app.labels {
-            let worn = app.chat_wears(chat, &label.id);
+        let labels: Vec<(String, String, bool)> = app
+            .labels
+            .iter()
+            .map(|label| {
+                (
+                    label.id.clone(),
+                    label.name.clone(),
+                    app.chat_wears(chat, &label.id),
+                )
+            })
+            .collect();
+        for (id, name, worn) in labels {
             let icon = if worn { Some(Icon::Check) } else { None };
-            if widgets::menu_item(ui, palette, icon, &label.name) {
+            if widgets::menu_item(ui, palette, icon, &name) {
                 let mut next: Vec<String> = chat.labels.clone();
                 if worn {
-                    next.retain(|id| id != &label.id);
+                    next.retain(|label| label != &id);
                 } else {
-                    next.push(label.id.clone());
+                    next.push(id);
                 }
                 app.actions.push(Action::SetChatLabels {
                     chat: chat.id.clone(),

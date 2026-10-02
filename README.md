@@ -36,6 +36,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 - **Links to your phone.** Scan a QR code or link with your phone number.
   Recent history is copied to this computer after linking and stored here.
+  Several numbers can stay linked in one window; a rail appears once there
+  is more than one, or while you add another.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,
   and message status. Search chats, saved messages, and contacts. The
   **Search** icon in a chat's header (or **Ctrl+F**) opens a pane beside the
@@ -762,11 +764,12 @@ from the environment and honors `NO_PROXY`.
 | What | Linux | Notes |
 | --- | --- | --- |
 | Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit; the app lock password and the locked-chats code are kept only as salted verifiers |
-| Device keys | `~/.local/state/zapfast/session.db` | Owned by whatsapp-rust; deleting it unlinks |
-| Messages | `~/.local/state/zapfast/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
-| Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
-| Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
-| Wallpaper image | `~/.local/state/zapfast/wallpaper.jpg` | Copy of the chosen picture, or `.png`, `.webp`, `.gif`; deleted by **Remove image** |
+| Account list | `~/.config/zapfast/accounts.json` | Which numbers are linked here and which one is showing |
+| Device keys | `~/.local/state/zapfast/accounts/<id>/session.db` | Owned by whatsapp-rust; deleting it unlinks that number |
+| Messages | `~/.local/state/zapfast/accounts/<id>/archive.db` | SQLCipher-encrypted SQLite, unlocked by the OS keyring; raw messages retain attachment keys |
+| Attachments, avatars | `~/.cache/zapfast/accounts/<id>/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
+| Favorite stickers and packs | `~/.local/state/zapfast/accounts/<id>/stickers/` | Plain WebP files; each pack is a folder |
+| Wallpaper image | `~/.local/state/zapfast/accounts/<id>/wallpaper.jpg` | Copy of the chosen picture for that number, or `.png`, `.webp`, `.gif`; deleted by **Remove image** |
 | Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more; **Settings > Files > Log > Open** shows it in its folder when no app opens it |
 
 macOS and Windows use the standard platform directories selected by the

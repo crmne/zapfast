@@ -25,6 +25,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::Shortcuts => shortcuts_width(ui.ctx().content_rect().width()),
                 Dialog::About => 380.0,
                 Dialog::ConfirmUnlink => 380.0,
+                Dialog::ConfirmRemoveAccount(_) => 380.0,
                 Dialog::ConfirmLeaveGroup(_) => 380.0,
                 Dialog::PairWithPhone => 380.0,
                 Dialog::NewContact => 380.0,
@@ -62,6 +63,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::Shortcuts => shortcuts(app, ui),
                 Dialog::About => about(app, ui),
                 Dialog::ConfirmUnlink => confirm_unlink(app, ui),
+                Dialog::ConfirmRemoveAccount(id) => confirm_remove(app, ui, id),
                 Dialog::ConfirmLeaveGroup(id) => confirm_leave_group(app, ui, &id),
                 Dialog::PairWithPhone => pair_with_phone(app, ui),
                 Dialog::NewContact => new_contact(app, ui),
@@ -1155,6 +1157,40 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
                 app.actions.push(Action::Unlink);
             }
             if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn confirm_remove(app: &mut App, ui: &mut egui::Ui, id: crate::model::AccountId) {
+    let palette = app.palette;
+    let locale = app.locale;
+    title(
+        ui,
+        app,
+        &crate::i18n::gettext(locale, "Remove this account?"),
+    );
+    theme::paragraph(
+        ui,
+        crate::i18n::gettext(
+            locale,
+            "This unlinks the number on this computer and deletes its local chats. Other accounts stay.",
+        )
+        .as_ref(),
+        theme::regular(13.5),
+        palette.text,
+    );
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if danger_button(ui, app, &crate::i18n::gettext(locale, "Remove")) {
+                app.actions.push(Action::RemoveAccount(id));
+                app.actions.push(Action::CloseDialog);
+            }
+            if theme::pill_button(ui, &palette, &crate::i18n::gettext(locale, "Cancel"), false)
+                .clicked()
+            {
                 app.actions.push(Action::CloseDialog);
             }
         });

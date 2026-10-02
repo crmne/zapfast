@@ -35,6 +35,7 @@ impl Badge {
 /// of the chat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NotificationTarget {
+    pub account: crate::model::AccountId,
     pub chat: String,
     pub message: String,
 }
@@ -66,6 +67,9 @@ fn macos_application_ready() -> bool {
 /// until the process ran out of descriptors and aborted.
 const WAITING_LIMIT: usize = 32;
 
+type PendingByAccountChat =
+    std::collections::HashMap<(String, String), Vec<(u64, tokio::sync::oneshot::Sender<Stop>)>>;
+
 /// How a notification stops waiting for a click.
 #[derive(Debug, PartialEq, Eq)]
 enum Stop {
@@ -91,7 +95,7 @@ fn before_showing(cancelled: &mut tokio::sync::oneshot::Receiver<Stop>) -> Optio
 /// its notification is still being delivered cannot leave a stale notification.
 #[derive(Default)]
 pub struct Notifications {
-    pending: std::collections::HashMap<String, Vec<(u64, tokio::sync::oneshot::Sender<Stop>)>>,
+    pending: PendingByAccountChat,
     /// Order of registration, so the oldest waiting notification is released first.
     registered: u64,
     /// What unit tests would have shown, recorded instead of shown on the
@@ -109,7 +113,11 @@ pub struct Shown {
 }
 
 impl Notifications {
-    fn register(&mut self, chat: &str) -> tokio::sync::oneshot::Receiver<Stop> {
+    fn register(
+        &mut self,
+        account: &crate::model::AccountId,
+        chat: &str,
+    ) -> tokio::sync::oneshot::Receiver<Stop> {
         self.pending.retain(|_, entries| {
             entries.retain(|(_, entry)| !entry.is_closed());
             !entries.is_empty()
@@ -120,7 +128,7 @@ impl Notifications {
         let (cancel, cancelled) = tokio::sync::oneshot::channel();
         self.registered += 1;
         self.pending
-            .entry(chat.to_owned())
+            .entry((account.as_str().to_owned(), chat.to_owned()))
             .or_default()
             .push((self.registered, cancel));
         cancelled
@@ -130,27 +138,47 @@ impl Notifications {
         let oldest = self
             .pending
             .iter()
-            .flat_map(|(chat, entries)| entries.iter().map(move |(order, _)| (*order, chat)))
+            .flat_map(|(key, entries)| entries.iter().map(move |(order, _)| (*order, key)))
             .min()
-            .map(|(order, chat)| (order, chat.clone()));
-        let Some((order, chat)) = oldest else {
+            .map(|(order, key)| (order, key.clone()));
+        let Some((order, key)) = oldest else {
             return;
         };
-        if let Some(entries) = self.pending.get_mut(&chat) {
+        if let Some(entries) = self.pending.get_mut(&key) {
             if let Some(index) = entries.iter().position(|(entry, _)| *entry == order) {
                 let (_, cancel) = entries.remove(index);
                 let _ = cancel.send(Stop::Release);
             }
             if entries.is_empty() {
-                self.pending.remove(&chat);
+                self.pending.remove(&key);
             }
         }
     }
 
-    pub fn clear(&mut self, chat: &str) {
-        if let Some(entries) = self.pending.remove(chat) {
+    pub fn clear(&mut self, account: &crate::model::AccountId, chat: &str) {
+        if let Some(entries) = self
+            .pending
+            .remove(&(account.as_str().to_owned(), chat.to_owned()))
+        {
             for (_, cancel) in entries {
                 let _ = cancel.send(Stop::Close);
+            }
+        }
+    }
+
+    pub fn clear_account(&mut self, account: &crate::model::AccountId) {
+        let account = account.as_str();
+        let keys: Vec<_> = self
+            .pending
+            .keys()
+            .filter(|(id, _)| id == account)
+            .cloned()
+            .collect();
+        for key in keys {
+            if let Some(entries) = self.pending.remove(&key) {
+                for (_, cancel) in entries {
+                    let _ = cancel.send(Stop::Close);
+                }
             }
         }
     }
@@ -171,7 +199,7 @@ impl Notifications {
         opened: Arc<Mutex<Vec<NotificationTarget>>>,
         wake: impl Fn() + Send + 'static,
     ) {
-        let cancelled = self.register(&target.chat);
+        let cancelled = self.register(&target.account, &target.chat);
         if cfg!(test) {
             self.shown.push(Shown {
                 title,
@@ -390,6 +418,11 @@ fn deliver(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::AccountId;
+
+    fn account(id: &str) -> AccountId {
+        AccountId(id.into())
+    }
 
     #[test]
     fn macos_notification_identity_matches_the_packaged_application() {
@@ -402,17 +435,18 @@ mod tests {
     #[test]
     fn reading_cancels_delivered_and_pending_notifications_for_only_that_chat() {
         let mut notifications = Notifications::default();
-        let mut first = notifications.register("a");
-        let mut second = notifications.register("a");
-        let mut other = notifications.register("b");
-        notifications.clear("a");
+        let one = account("1");
+        let mut first = notifications.register(&one, "a");
+        let mut second = notifications.register(&one, "a");
+        let mut other = notifications.register(&one, "b");
+        notifications.clear(&one, "a");
         assert_eq!(first.try_recv(), Ok(Stop::Close));
         assert_eq!(second.try_recv(), Ok(Stop::Close));
         assert_eq!(
             other.try_recv(),
             Err(tokio::sync::oneshot::error::TryRecvError::Empty)
         );
-        let mut next = notifications.register("a");
+        let mut next = notifications.register(&one, "a");
         assert_eq!(
             next.try_recv(),
             Err(tokio::sync::oneshot::error::TryRecvError::Empty)
@@ -428,9 +462,13 @@ mod tests {
     #[test]
     fn expired_notifications_do_not_accumulate() {
         let mut notifications = Notifications::default();
-        drop(notifications.register("a"));
-        let _next = notifications.register("b");
-        assert!(!notifications.pending.contains_key("a"));
+        drop(notifications.register(&account("1"), "a"));
+        let _next = notifications.register(&account("1"), "b");
+        assert!(
+            !notifications
+                .pending
+                .contains_key(&("1".into(), "a".into()))
+        );
     }
 
     #[test]
@@ -438,9 +476,9 @@ mod tests {
         use tokio::sync::oneshot::error::TryRecvError;
         let mut notifications = Notifications::default();
         let mut waiting: Vec<_> = (0..WAITING_LIMIT)
-            .map(|index| notifications.register(&format!("chat {}", index % 3)))
+            .map(|index| notifications.register(&account("1"), &format!("chat {}", index % 3)))
             .collect();
-        let mut newest = notifications.register("chat 0");
+        let mut newest = notifications.register(&account("1"), "chat 0");
         assert_eq!(waiting[0].try_recv(), Ok(Stop::Release));
         for later in &mut waiting[1..] {
             assert_eq!(later.try_recv(), Err(TryRecvError::Empty));
@@ -450,7 +488,7 @@ mod tests {
         assert_eq!(count, WAITING_LIMIT);
 
         // Reading a chat still closes what is left of it.
-        notifications.clear("chat 0");
+        notifications.clear(&account("1"), "chat 0");
         assert_eq!(newest.try_recv(), Ok(Stop::Close));
         assert_eq!(waiting[3].try_recv(), Ok(Stop::Close));
         assert_eq!(waiting[1].try_recv(), Err(TryRecvError::Empty));
@@ -461,15 +499,16 @@ mod tests {
     #[test]
     fn a_notification_released_before_it_appears_is_still_shown() {
         let mut notifications = Notifications::default();
-        let mut first = notifications.register("a");
-        let mut read = notifications.register("b");
+        let one = account("1");
+        let mut first = notifications.register(&one, "a");
+        let mut read = notifications.register(&one, "b");
         let _waiting: Vec<_> = (0..WAITING_LIMIT - 1)
-            .map(|index| notifications.register(&format!("chat {index}")))
+            .map(|index| notifications.register(&one, &format!("chat {index}")))
             .collect();
-        notifications.clear("b");
+        notifications.clear(&one, "b");
         assert_eq!(before_showing(&mut first), Some(false));
         assert_eq!(before_showing(&mut read), None);
-        let mut fresh = notifications.register("c");
+        let mut fresh = notifications.register(&one, "c");
         assert_eq!(before_showing(&mut fresh), Some(true));
     }
 
@@ -477,10 +516,10 @@ mod tests {
     fn finished_notifications_do_not_count_against_the_limit() {
         let mut notifications = Notifications::default();
         for index in 0..WAITING_LIMIT * 2 {
-            drop(notifications.register(&format!("chat {index}")));
+            drop(notifications.register(&account("1"), &format!("chat {index}")));
         }
         let mut waiting: Vec<_> = (0..WAITING_LIMIT)
-            .map(|index| notifications.register(&format!("chat {index}")))
+            .map(|index| notifications.register(&account("1"), &format!("chat {index}")))
             .collect();
         for receiver in &mut waiting {
             assert_eq!(
@@ -505,6 +544,7 @@ mod tests {
             picture,
             NotificationSound::System,
             NotificationTarget {
+                account: crate::model::AccountId::first(),
                 chat: "test".into(),
                 message: "test-message".into(),
             },
@@ -512,6 +552,21 @@ mod tests {
             || {},
         );
         std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn reading_one_account_leaves_the_same_chat_on_another() {
+        let mut notifications = Notifications::default();
+        let first = account("1");
+        let second = account("2");
+        let mut theirs = notifications.register(&second, "shared");
+        notifications.clear(&first, "shared");
+        assert_eq!(
+            theirs.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+        notifications.clear(&second, "shared");
+        assert_eq!(theirs.try_recv(), Ok(Stop::Close));
     }
 
     #[test]

@@ -16,3 +16,5 @@ src/notify/badge_windows.rs
 src/ui/lock.rs
 src/notify.rs
 src/settings.rs
+src/account.rs
+src/ui/accounts.rs

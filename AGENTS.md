@@ -35,10 +35,22 @@ protocol. These notes are for coding agents and new contributors.
   them after the frame. Never mutate application state from inside a view
   beyond the view's own fields (composer text, search text, flags).
 - `src/backend.rs` is the interface's handle to a tokio runtime on its own
-  thread; `src/backend/worker.rs` runs there. It owns the whatsapp-rust
-  `Bot`, the message archive, downloads, and profile pictures. The two
-  sides talk only through `Command` (interface to runtime) and `Event`
-  (runtime to interface); every event wakes the window through `Waker`.
+  thread; `src/backend/worker.rs` runs there. Each account owns one
+  `Backend`. It owns the whatsapp-rust `Bot`, the message archive,
+  downloads, and profile pictures. The two sides talk only through
+  `Command` (interface to runtime) and `Event` (runtime to interface);
+  every event wakes the window through `Waker`.
+- Several WhatsApp accounts may be linked in one process. Each account has
+  its own folder under `state/accounts/<id>/` (`session.db`, `archive.db`,
+  stickers) and `cache/accounts/<id>/` (media, avatars). Never mix files,
+  caches, or SQLCipher keys across accounts. `ChatId` is unique only inside
+  one account. Notifications, tray clicks, and search hits always carry an
+  `AccountId`. `src/app.rs` is the process shell (theme, window, tray,
+  updates). Each `Account` in `src/account.rs` owns a `Backend`/`Worker`.
+  Views draw the active account through `App`'s `Deref` to `Account`.
+  The account rail (`src/ui/accounts.rs`) is shown when there are two or
+  more accounts, or while adding one. A single-account window stays
+  unchanged.
 - `src/archive.rs` is the SQLite store of chats, messages, contacts, and
   privacy-id mappings. WhatsApp replays history once, at link time, so the
   archive is the only copy. It keeps each message's raw protobuf because

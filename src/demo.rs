@@ -412,7 +412,7 @@ fn sample_files(app: &App) -> (std::path::PathBuf, std::path::PathBuf) {
 pub fn populate(app: &mut App) {
     app.backend.set_offline(true);
     // Demo mode has no backend to handle downloads.
-    app.settings.auto_download = false;
+    app.account_mut().settings.auto_download = false;
     app.link = LinkStatus::Connected;
     app.me = Some(ME.to_owned());
     app.me_name = Some("Carmine".to_owned());
@@ -853,21 +853,35 @@ pub fn populate(app: &mut App) {
         .extend(group_extra);
 
     // Sync chat-row previews with each conversation's last message.
-    for chat in &mut app.chats {
-        if let Some(last) = app
-            .conversations
-            .get(&chat.id)
-            .and_then(|conversation| conversation.messages.last())
-        {
-            chat.last_activity = last.timestamp;
-            chat.last = Some(crate::model::LastMessage {
-                from_me: last.from_me,
-                sender: last.sender.clone(),
-                sender_name: last.sender_name.clone(),
-                summary: last.summary(),
-                full: last.content.full_summary(),
-                status: last.status,
-            });
+    // chats and conversations live on Account; Deref would treat a joint
+    // borrow as one exclusive lock, so the previews are collected first.
+    let previews: Vec<(crate::model::ChatId, i64, crate::model::LastMessage)> = app
+        .chats
+        .iter()
+        .filter_map(|chat| {
+            app.conversations
+                .get(&chat.id)
+                .and_then(|conversation| conversation.messages.last())
+                .map(|last| {
+                    (
+                        chat.id.clone(),
+                        last.timestamp,
+                        crate::model::LastMessage {
+                            from_me: last.from_me,
+                            sender: last.sender.clone(),
+                            sender_name: last.sender_name.clone(),
+                            summary: last.summary(),
+                            full: last.content.full_summary(),
+                            status: last.status,
+                        },
+                    )
+                })
+        })
+        .collect();
+    for (id, activity, last) in previews {
+        if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == id) {
+            chat.last_activity = activity;
+            chat.last = Some(last);
         }
     }
     app.typing.insert(
@@ -1688,7 +1702,7 @@ fn wallpaper_image_sample(app: &mut App) {
     let image = egui::ColorImage::new([width, height], pixels);
     let path = app.dirs.wallpaper_file("png");
     app.wallpaper_image.show_now(&path, image);
-    app.settings.wallpaper_image = Some(path);
+    app.account_mut().settings.wallpaper_image = Some(path);
 }
 
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
@@ -2291,6 +2305,26 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     });
             }
             "new-contact" => app.dialog = Some(Dialog::NewContact),
+            "accounts" => {
+                if app.accounts.len() < 2 {
+                    let id = crate::model::AccountId::parse("2").expect("demo account");
+                    if let Ok((mut extra, _)) = crate::account::Account::detached(
+                        &app.dirs,
+                        id,
+                        crate::settings::AccountSettings {
+                            label: "Work".into(),
+                            color: "#53bdeb".into(),
+                            ..crate::settings::AccountSettings::default()
+                        },
+                    ) {
+                        extra.me_name = Some("Work".into());
+                        extra.link = crate::backend::LinkStatus::Connected;
+                        app.accounts.push(extra);
+                    }
+                }
+                app.accounts[0].settings.label = "Personal".into();
+                app.accounts[0].me_name = Some("Personal".into());
+            }
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
             }
@@ -2553,10 +2587,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     let _ = std::fs::write(&path, bytes);
                 }
                 let waveform = crate::voice::waveform(&tone);
+                let open = app.open_chat.clone().unwrap_or_default();
                 for id in ["ada-voice", "you-voice"] {
                     if let Some(message) = app
                         .conversations
-                        .get_mut(&app.open_chat.clone().unwrap_or_default())
+                        .get_mut(&open)
                         .and_then(|conversation| conversation.message_mut(id))
                         && let crate::model::Content::Audio {
                             media,
@@ -4245,6 +4280,8 @@ mod tests {
             "delete-message",
             "delete-message-mine",
             "new-contact",
+            "accounts",
+            "accounts,light",
             "light",
             "archived",
             "chat-search",
@@ -10905,7 +10942,7 @@ mod wallpaper_tests {
 
         app.actions.push(crate::model::Action::RemoveWallpaperImage);
         let chat = shapes(&mut app, &ctx);
-        assert!(app.settings.wallpaper_image.is_none());
+        assert!(app.account().settings.wallpaper_image.is_none());
         assert_eq!(crate::wallpaper::texture_ids(&ctx).0, None);
         assert!(textured(&chat, image).is_empty());
         assert!(!textured(&chat, doodles).is_empty(), "the doodles return");

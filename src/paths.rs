@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
 
+use crate::model::AccountId;
+
 #[derive(Clone, Debug)]
 pub struct AppDirs {
     pub config: PathBuf,
@@ -88,6 +90,73 @@ impl AppDirs {
         self.config.join("settings.json")
     }
 
+    /// Ordered list of account ids and the active one.
+    pub fn accounts_file(&self) -> PathBuf {
+        self.config.join("accounts.json")
+    }
+
+    pub fn account(&self, id: &AccountId) -> AccountDirs {
+        assert!(
+            AccountId::is_safe(id.as_str()),
+            "account id is not a safe folder name"
+        );
+        AccountDirs {
+            id: id.clone(),
+            state: self.state.join("accounts").join(id.as_str()),
+            cache: self.cache.join("accounts").join(id.as_str()),
+        }
+    }
+
+    /// Session files at the app root, used by tests that have not moved into
+    /// `accounts/<id>/`.
+    pub fn as_account(&self) -> AccountDirs {
+        AccountDirs {
+            id: AccountId::first(),
+            state: self.state.clone(),
+            cache: self.cache.clone(),
+        }
+    }
+
+    /// Moves a pre-0.18 single-account layout into `accounts/1/`.
+    /// Copies the archive keyring entry before renaming files.
+    pub fn adopt_single_account(&self) -> std::io::Result<()> {
+        let legacy_session = self.state.join("session.db");
+        let legacy_archive = self.state.join("archive.db");
+        if !legacy_session.exists() && !legacy_archive.exists() {
+            return Ok(());
+        }
+        let dest = self.account(&AccountId::first());
+        dest.ensure()?;
+        if legacy_archive.exists() {
+            crate::archive::copy_archive_key(&legacy_archive, &dest.archive_db()).map_err(
+                |error| std::io::Error::other(format!("could not copy the archive key: {error:#}")),
+            )?;
+        }
+        for name in [
+            "session.db",
+            "session.db-wal",
+            "session.db-shm",
+            "session.db-journal",
+            "archive.db",
+            "archive.db-wal",
+            "archive.db-shm",
+            "archive.db-journal",
+        ] {
+            move_file(&self.state.join(name), &dest.state.join(name))?;
+        }
+        adopt_directory(&self.state.join("stickers"), &dest.saved_sticker_dir())?;
+        adopt_directory(&self.cache.join("media"), &dest.media_cache_dir())?;
+        adopt_directory(&self.cache.join("avatars"), &dest.avatar_cache_dir())?;
+        adopt_directory(&self.cache.join("stickers"), &dest.sticker_cache_dir())?;
+        for extension in ["jpg", "png", "webp", "gif"] {
+            move_file(
+                &self.state.join(format!("wallpaper.{extension}")),
+                &dest.wallpaper_file(extension),
+            )?;
+        }
+        Ok(())
+    }
+
     /// whatsapp-rust device identity, Signal sessions, and state keys.
     /// Deleting this database unlinks the computer.
     pub fn session_db(&self) -> PathBuf {
@@ -160,6 +229,84 @@ impl AppDirs {
         }
         Ok(())
     }
+}
+
+/// Per-account session, archive, stickers, and caches.
+#[derive(Clone, Debug)]
+pub struct AccountDirs {
+    pub id: AccountId,
+    pub state: PathBuf,
+    pub cache: PathBuf,
+}
+
+impl AccountDirs {
+    pub fn ensure(&self) -> std::io::Result<()> {
+        for dir in [&self.state, &self.cache] {
+            let mut builder = std::fs::DirBuilder::new();
+            builder.recursive(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            builder.create(dir)?;
+            restrict_directory(dir)?;
+        }
+        Ok(())
+    }
+
+    /// whatsapp-rust device identity. Deleting this database unlinks the account.
+    pub fn session_db(&self) -> PathBuf {
+        self.state.join("session.db")
+    }
+
+    pub fn archive_db(&self) -> PathBuf {
+        self.state.join("archive.db")
+    }
+
+    pub fn settings_file(&self) -> PathBuf {
+        self.state.join("settings.json")
+    }
+
+    pub fn media_cache_dir(&self) -> PathBuf {
+        self.cache.join("media")
+    }
+
+    pub fn avatar_cache_dir(&self) -> PathBuf {
+        self.cache.join("avatars")
+    }
+
+    pub fn sticker_cache_dir(&self) -> PathBuf {
+        self.cache.join("stickers")
+    }
+
+    pub fn saved_sticker_dir(&self) -> PathBuf {
+        self.state.join("stickers")
+    }
+
+    /// ZapFast's copy of the chosen chat wallpaper image for this account.
+    pub fn wallpaper_file(&self, extension: &str) -> PathBuf {
+        self.state.join(format!("wallpaper.{extension}"))
+    }
+
+    pub fn avatar_file(&self, id: &str, full: bool) -> PathBuf {
+        let stem: String = id
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        self.avatar_cache_dir()
+            .join(format!("{stem}{}.jpg", if full { "-full" } else { "" }))
+    }
+}
+
+fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if from.exists() && !to.try_exists()? {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(from, to)?;
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -373,6 +520,37 @@ mod tests {
         std::fs::remove_file(root.join("blocked")).unwrap();
         new.adopt(&old).unwrap();
         assert_eq!(std::fs::read(new.session_db()).unwrap(), b"session");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_legacy_session_moves_into_the_first_account_folder() {
+        let root = root("single-account");
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        std::fs::write(dirs.session_db(), b"session").unwrap();
+        std::fs::write(dirs.archive_db(), b"SQLite format 3\0").unwrap();
+        std::fs::create_dir_all(dirs.media_cache_dir()).unwrap();
+        std::fs::write(dirs.media_cache_dir().join("photo.jpg"), b"photo").unwrap();
+        std::fs::write(dirs.state.join("wallpaper.png"), b"wall").unwrap();
+        dirs.adopt_single_account().unwrap();
+        let account = dirs.account(&AccountId::first());
+        assert_eq!(std::fs::read(account.session_db()).unwrap(), b"session");
+        assert_eq!(
+            std::fs::read(account.archive_db()).unwrap(),
+            b"SQLite format 3\0"
+        );
+        assert_eq!(
+            std::fs::read(account.media_cache_dir().join("photo.jpg")).unwrap(),
+            b"photo"
+        );
+        assert!(!dirs.session_db().exists());
+        assert!(!dirs.archive_db().exists());
+        assert_eq!(
+            std::fs::read(account.wallpaper_file("png")).unwrap(),
+            b"wall"
+        );
+        assert!(!dirs.state.join("wallpaper.png").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

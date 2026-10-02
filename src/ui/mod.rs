@@ -1,5 +1,6 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
+pub mod accounts;
 pub mod chats;
 pub mod conversation;
 pub mod dialogs;
@@ -57,6 +58,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ctx.data_mut(|data| data.remove::<egui::Rect>(composer_rect_id()));
     titlebar_strip(app, ui);
     if !app.is_linked() {
+        if app.shows_account_rail() {
+            accounts::show(app, ui);
+        }
         login::show(app, ui);
         dialogs::show(app, ctx);
         update::show(app, ctx);
@@ -67,6 +71,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let macos = theme::macos_chrome(ctx);
     if !macos {
         banner(app, ui);
+    }
+    if app.shows_account_rail() {
+        accounts::show(app, ui);
     }
     match app.sidebar_mode() {
         SidebarDisplayMode::Expanded => chats::show(app, ui),
