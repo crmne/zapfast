@@ -171,6 +171,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   to your caption. Files copied in Finder, Explorer, or a Linux file manager
   paste as the files themselves, not their icons. Text-only clipboard contents
   still paste as text.
+  Screenshot pastes work whichever shortcut key you release first and return
+  focus to the composer, where the configured send shortcut sends the staged attachment.
   MP3, M4A, AAC, and OGG files go as audio messages; other audio, such as
   WAV or FLAC, goes as a document so the recipient gets the original file.
   An MP4 video goes with a preview picture, its size, and its length, so it

@@ -462,6 +462,8 @@ pub struct App {
     pub dropping: bool,
     /// A text paste already handled the clipboard before the shortcut release.
     paste_before_release: bool,
+    /// A V press delivered to us, unlike the press swallowed by native paste.
+    ordinary_v_down: bool,
     /// Open emoji, GIF, or sticker picker tab.
     pub picker: Option<PickerTab>,
     /// Picker anchor at the composer button.
@@ -1019,6 +1021,7 @@ impl App {
             avatar_full_requests: HashSet::new(),
             dropping: false,
             paste_before_release: false,
+            ordinary_v_down: false,
             picker: None,
             picker_anchor: None,
             picker_search: String::new(),
@@ -1387,6 +1390,7 @@ impl App {
         self.zoom_applied = false;
         self.window_hidden = false;
         self.paste_before_release = false;
+        self.ordinary_v_down = false;
         self.hide_intent = false;
         self.wants_show = false;
         self.reopen = false;
@@ -4124,7 +4128,12 @@ impl App {
                     self.reaction_anchor = None;
                 }
             }
-            Action::SendFiles(paths) => self.stage_files(paths),
+            Action::SendFiles(paths) => {
+                self.stage_files(paths);
+                if !self.pending.is_empty() {
+                    ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("composer-text")));
+                }
+            }
             Action::SendPending { chat, caption } => self.send_pending(chat, caption),
             Action::RemovePending(index) => {
                 if index < self.pending.len() {
@@ -4491,6 +4500,9 @@ impl App {
                         texture: None,
                     });
                     self.focus_composer = true;
+                    ctx.memory_mut(|memory| {
+                        memory.request_focus(egui::Id::new("composer-text"));
+                    });
                 }
             }
             Action::React {
@@ -5770,9 +5782,57 @@ impl App {
         });
         self.dropping = hovering && self.open_chat.is_some();
         if !dropped.is_empty() {
-            self.actions.push(Action::SendFiles(dropped));
+            self.stage_clipboard(ctx, ClipboardPaste::Files(dropped));
         }
-        self.take_clipboard_paste(ctx, || clipboard_contents(clipboard_files, clipboard_image));
+        // Tests inject fixtures and must never read the system clipboard.
+        self.take_clipboard_paste(ctx, || {
+            if cfg!(test) {
+                clipboard_contents(
+                    || {
+                        ctx.data_mut(|data| {
+                            data.remove_temp::<Vec<PathBuf>>(egui::Id::new(
+                                "fixture-clipboard-files",
+                            ))
+                        })
+                    },
+                    || {
+                        ctx.data_mut(|data| {
+                            data.remove_temp::<(usize, usize, Vec<u8>)>(egui::Id::new(
+                                "fixture-clipboard-image",
+                            ))
+                        })
+                    },
+                )
+            } else {
+                clipboard_contents(clipboard_files, clipboard_image)
+            }
+        });
+    }
+
+    /// Stages only detected attachments before drawing; queued view actions
+    /// remain deferred until the frame ends.
+    fn stage_clipboard(&mut self, ctx: &egui::Context, contents: ClipboardPaste) {
+        match contents {
+            ClipboardPaste::Files(paths) => self.stage_files(paths),
+            ClipboardPaste::Image {
+                width,
+                height,
+                rgba,
+            } => {
+                if self.open_chat.is_some() {
+                    self.pending.push(Pending::Picture {
+                        width,
+                        height,
+                        rgba: std::sync::Arc::new(rgba),
+                        texture: None,
+                    });
+                }
+            }
+        }
+        if !self.pending.is_empty() {
+            self.focus_composer = true;
+            ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("composer-text")));
+        }
     }
 
     /// Stages pasted files or a pasted picture for the open chat.
@@ -5781,9 +5841,44 @@ impl App {
         ctx: &egui::Context,
         read_clipboard: impl FnOnce() -> Option<ClipboardPaste>,
     ) {
+        let frame = ctx.cumulative_frame_nr();
+        let frame_id = egui::Id::new("clipboard-input-frame");
+        if let Some((last, staged)) = ctx.data(|data| data.get_temp::<(u64, bool)>(frame_id))
+            && last == frame
+        {
+            if staged {
+                ctx.input_mut(|input| {
+                    input
+                        .events
+                        .retain(|event| !matches!(event, egui::Event::Paste(_)))
+                });
+            }
+            return;
+        }
+        ctx.data_mut(|data| data.insert_temp(frame_id, (frame, false)));
         let (paste, text, released, focused, command) = ctx.input(|input| {
             (
-                wants_paste(input),
+                wants_paste(input)
+                    || input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Key {
+                                key: egui::Key::V,
+                                pressed: false,
+                                ..
+                            }
+                        ) && !self.ordinary_v_down
+                            && !input.events.iter().any(|event| {
+                                matches!(
+                                    event,
+                                    egui::Event::Key {
+                                        key: egui::Key::V,
+                                        pressed: true,
+                                        ..
+                                    }
+                                )
+                            })
+                    }),
                 input
                     .events
                     .iter()
@@ -5803,21 +5898,52 @@ impl App {
             )
         });
         let requested = paste && (text || !self.paste_before_release);
+        // egui-winit swallows Ctrl/Cmd+V's press even for an image-only
+        // clipboard. A release without a delivered press is that shortcut,
+        // including when Ctrl/Cmd was released first. Ordinary typing has a
+        // delivered press, and must never stage an unrelated clipboard image.
+        if ctx.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::V,
+                        pressed: true,
+                        ..
+                    }
+                )
+            })
+        }) {
+            self.ordinary_v_down = true;
+        }
         if released || !focused {
             self.paste_before_release = false;
+            self.ordinary_v_down = false;
         } else if text {
             // A menu paste has no key release to wait for.
             self.paste_before_release = command;
         }
-        // Handle file and image paste only when the composer or no field has focus.
+        // A message or button may retain keyboard focus after clicking it.
+        // Other text fields still own their clipboard input.
+        let editing_text = ctx.text_edit_focused();
         let composing = ctx.memory(|memory| {
-            memory.has_focus(egui::Id::new("composer-text")) || memory.focused().is_none()
+            memory.has_focus(egui::Id::new("composer-text"))
+                || (!editing_text
+                    && !memory.has_focus(egui::Id::new("search"))
+                    && !memory.has_focus(egui::Id::new("chat-search")))
         });
         if requested
             && focused
             && composing
             && self.page == Page::Chats
             && self.dialog.is_none()
+            && self.image_preview.is_none()
+            && !self.video_expanded
+            && self.picker.is_none()
+            && self.reaction_target.is_none()
+            && self.recording.is_none()
+            && !egui::Popup::is_any_open(ctx)
+            && !self.show_update
             && self
                 .open_chat
                 .as_deref()
@@ -5825,6 +5951,7 @@ impl App {
                 .is_some_and(Chat::can_send)
             && let Some(contents) = read_clipboard()
         {
+            ctx.data_mut(|data| data.insert_temp(frame_id, (frame, true)));
             // A browser can offer both pixels and its source URL, and a file
             // manager both paths and their text. Consume the text before the
             // composer sees it, keeping any existing caption.
@@ -5833,18 +5960,7 @@ impl App {
                     .events
                     .retain(|event| !matches!(event, egui::Event::Paste(_)))
             });
-            self.actions.push(match contents {
-                ClipboardPaste::Files(paths) => Action::SendFiles(paths),
-                ClipboardPaste::Image {
-                    width,
-                    height,
-                    rgba,
-                } => Action::PasteImage {
-                    width,
-                    height,
-                    rgba,
-                },
-            });
+            self.stage_clipboard(ctx, contents);
         }
     }
 
@@ -6735,6 +6851,80 @@ mod tests {
     }
 
     #[test]
+    fn screenshot_paste_survives_releasing_control_before_v() {
+        let (mut app, ctx) = clipboard_app();
+        let mut release = paste_release();
+        if let egui::Event::Key { modifiers, .. } = &mut release {
+            *modifiers = egui::Modifiers::NONE;
+        }
+        clipboard_frame(&mut app, &ctx, vec![release.clone()], true);
+        assert_eq!(app.pending.len(), 1);
+        clipboard_frame(&mut app, &ctx, vec![release], true);
+        assert_eq!(app.pending.len(), 2, "each shortcut stages one image");
+    }
+
+    #[test]
+    fn typing_v_does_not_paste_a_screenshot_on_release() {
+        let (mut app, ctx) = clipboard_app();
+        let mut press = paste_release();
+        if let egui::Event::Key {
+            pressed, modifiers, ..
+        } = &mut press
+        {
+            *pressed = true;
+            *modifiers = egui::Modifiers::NONE;
+        }
+        let mut release = paste_release();
+        if let egui::Event::Key { modifiers, .. } = &mut release {
+            *modifiers = egui::Modifiers::NONE;
+        }
+        assert_eq!(clipboard_frame(&mut app, &ctx, vec![press], true), 0);
+        assert_eq!(clipboard_frame(&mut app, &ctx, vec![release], true), 0);
+        assert!(app.pending.is_empty());
+    }
+
+    #[test]
+    fn screenshot_paste_takes_focus_back_from_a_message() {
+        let (mut app, ctx) = clipboard_app();
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("fixture-message")));
+        clipboard_frame(&mut app, &ctx, vec![paste_release()], true);
+        assert_eq!(app.pending.len(), 1);
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+    }
+
+    #[test]
+    fn a_layout_retry_does_not_stage_the_same_screenshot_twice() {
+        let (mut app, ctx) = clipboard_app();
+        let mut passes = 0;
+        let mut reads = 0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![paste_release()],
+                ..Default::default()
+            },
+            |ui| {
+                passes += 1;
+                app.take_clipboard_paste(ui.ctx(), || {
+                    reads += 1;
+                    Some(ClipboardPaste::Image {
+                        width: 2,
+                        height: 2,
+                        rgba: vec![200; 16],
+                    })
+                });
+                app.apply_actions(ui.ctx());
+                if passes == 1 {
+                    ui.ctx().request_discard("fixture relayout");
+                }
+            },
+        );
+        output.textures_delta.clear();
+        assert_eq!(passes, 2);
+        assert_eq!(reads, 1);
+        assert_eq!(app.pending.len(), 1);
+    }
+
+    #[test]
     fn text_paste_is_preserved_when_the_clipboard_has_no_image() {
         let (mut app, ctx) = clipboard_app();
         clipboard_frame(
@@ -6802,6 +6992,48 @@ mod tests {
         );
         assert_eq!(image_reads, 1);
         assert!(matches!(app.pending.as_slice(), [Pending::Picture { .. }]));
+    }
+
+    #[test]
+    fn clipboard_fallback_leaves_overlay_and_recording_focus_alone() {
+        for state in ["reaction", "popup", "recording"] {
+            let (mut app, ctx) = clipboard_app();
+            let control = egui::Id::new("fixture-active-control");
+            match state {
+                "reaction" => {
+                    app.reaction_target = Some(("fixture".into(), "fixture-message".into()))
+                }
+                "popup" => egui::Popup::open_id(&ctx, egui::Id::new("fixture-menu")),
+                "recording" => app.recording = Some(crate::audio::Recorder::rehearsal()),
+                _ => unreachable!(),
+            }
+            let mut reads = 0;
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![paste_release()],
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = ui.interact(
+                        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(50.0, 20.0)),
+                        control,
+                        egui::Sense::click(),
+                    );
+                    response.request_focus();
+                    app.take_clipboard_paste(ui.ctx(), || {
+                        reads += 1;
+                        Some(ClipboardPaste::Image {
+                            width: 2,
+                            height: 2,
+                            rgba: vec![200; 16],
+                        })
+                    });
+                    assert!(ui.memory(|memory| memory.has_focus(control)), "{state}");
+                },
+            );
+            assert_eq!(reads, 0, "{state}");
+            assert!(app.pending.is_empty(), "{state}");
+        }
     }
 
     #[test]
@@ -6889,6 +7121,40 @@ mod tests {
             chat.archived = false;
             assert!(notification_eligible(&chat, now, now), "{id} unarchived");
         }
+    }
+
+    #[test]
+    fn expanded_video_keeps_clipboard_and_control_focus() {
+        let (mut app, ctx) = clipboard_app();
+        app.video_expanded = true;
+        let control = egui::Id::new("fixture-video-control");
+        ctx.memory_mut(|memory| memory.request_focus(control));
+        let mut reads = 0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![paste_release()],
+                ..Default::default()
+            },
+            |ui| {
+                ui.interact(
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(40.0, 40.0)),
+                    control,
+                    egui::Sense::click(),
+                );
+                app.take_clipboard_paste(ui.ctx(), || {
+                    reads += 1;
+                    Some(ClipboardPaste::Image {
+                        width: 2,
+                        height: 2,
+                        rgba: vec![200; 16],
+                    })
+                });
+            },
+        );
+        output.textures_delta.clear();
+        assert_eq!(reads, 0);
+        assert!(app.pending.is_empty());
+        assert!(ctx.memory(|memory| memory.has_focus(control)));
     }
 
     #[test]
