@@ -749,7 +749,10 @@ impl PendingEdits {
     /// Reports whether the last reserved attempt has released its dispatch barrier.
     fn dispatch_finished(&mut self) -> bool {
         self.dispatch_tail.as_mut().is_none_or(|tail| {
-            matches!(tail.try_recv(), Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed))
+            matches!(
+                tail.try_recv(),
+                Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+            )
         })
     }
     /// Chains the next dispatch to this message's previous attempt.
@@ -3118,7 +3121,9 @@ impl Worker {
                     }
                 }
                 Some(Type::MESSAGE_EDIT) => {
-                    if let Some(pending) = self.pending_edits.get_mut(&(chat.clone(), target.clone())) {
+                    if let Some(pending) =
+                        self.pending_edits.get_mut(&(chat.clone(), target.clone()))
+                    {
                         pending.invalidate();
                     }
                     if let Some(edited) = protocol.edited_message.as_option()
@@ -9218,10 +9223,16 @@ mod tests {
             let _ = replacement.completion.send(());
         });
         tokio::task::yield_now().await;
-        assert!(matches!(observed.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+        assert!(matches!(
+            observed.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
         let _ = active.completion.send(());
         assert!(!stale.wait().await);
-        assert!(matches!(observed.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+        assert!(matches!(
+            observed.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
         let _ = stale.completion.send(());
         observed.await.unwrap();
         newer.await.unwrap();
@@ -9236,15 +9247,38 @@ mod tests {
         worker.archive.ensure_chat(&row.chat, "Fixture").unwrap();
         worker.archive.insert_message(&row, None).unwrap();
         let generation = worker.begin_edit(&row.chat, &row.id);
-        let pending = worker.pending_edits.get_mut(&(row.chat.clone(), row.id.clone())).unwrap();
+        let pending = worker
+            .pending_edits
+            .get_mut(&(row.chat.clone(), row.id.clone()))
+            .unwrap();
         let turn = pending.reserve_dispatch();
         pending.invalidate();
         let _ = turn.completion.send(());
-        worker.finish_edit(row.chat.clone(), row.id.clone(), EditRequest {
-            text: "Stale edit".into(), mentions: vec![], draft: EditDraft::default(),
-        }, None, EditVersion { generation, content: row.content.clone(), edited: row.edited });
+        worker.finish_edit(
+            row.chat.clone(),
+            row.id.clone(),
+            EditRequest {
+                text: "Stale edit".into(),
+                mentions: vec![],
+                draft: EditDraft::default(),
+            },
+            None,
+            EditVersion {
+                generation,
+                content: row.content.clone(),
+                edited: row.edited,
+            },
+        );
         assert!(worker.pending_edits.is_empty());
-        assert_eq!(worker.archive.message(&row.chat, &row.id).unwrap().unwrap().content, row.content);
+        assert_eq!(
+            worker
+                .archive
+                .message(&row.chat, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            row.content
+        );
     }
 
     /// Clearing older rows cancels their queued dispatches and keeps newer rows editable.
