@@ -6339,6 +6339,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks forwarding requires review and confirmation while back navigation preserves recipients.
     fn forwarding_requires_review_and_confirmation_and_preserves_selection() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
@@ -6393,6 +6394,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks confirmation rejects destinations that became locked or left after selection.
     fn forwarding_rechecks_destinations_before_sending() {
         for left in [false, true] {
             let mut app = app();
@@ -6436,6 +6438,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks a chat the user has left cannot be selected as a forwarding destination.
     fn forwarding_cannot_select_a_left_chat() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -7921,6 +7924,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks a selected message batch is forwarded in its original conversation order.
     fn selected_messages_forward_together_in_chat_order() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();

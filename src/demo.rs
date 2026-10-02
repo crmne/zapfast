@@ -4113,6 +4113,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks all synthetic demo surfaces fit their tested window sizes and themes.
     fn every_surface_lays_out() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -4340,6 +4341,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks recipient selection and review both use the localized singular forwarding heading.
     fn singular_forward_headings_use_the_forwarding_translation_in_both_steps() {
         for page in ["forward", "forward-review"] {
             let mut app = app();
@@ -4363,6 +4365,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks real row and checkbox clicks toggle recipients without dispatching a forward command.
     fn forward_row_and_checkbox_clicks_select_without_sending() {
         for light in [false, true] {
             let mut app = app();
