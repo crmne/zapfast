@@ -1251,7 +1251,6 @@ pub enum Scroll {
     Bottom,
 }
 
-/// Actions queued by views and applied after drawing.
 /// A selected mention retained with an unsent composer draft.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ComposerMention {
@@ -1259,6 +1258,7 @@ pub struct ComposerMention {
     pub name: String,
 }
 
+/// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Open(Page),
