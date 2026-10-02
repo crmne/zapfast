@@ -273,7 +273,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   keep opening in their default desktop apps. **Save as…** in a downloaded
   attachment's right-click menu keeps a copy wherever you choose, starting in
   your Downloads folder. Pictures and videos sent as a WhatsApp album appear
-  in one compact grid; **Download all** fetches its missing items and **Save all…**
+  in one compact grid; **Download all** fetches its missing items and shows
+  a per-item failure for oversized attachments. **Save all…**
   copies every downloaded item into one folder. Profile pictures and downloaded images support
   Windows drive paths and filenames with spaces or non-ASCII characters.
   If an attachment has expired, ZapFast asks your
@@ -924,6 +925,7 @@ Use `--demo-page chat-menu` to preview the compact chat context menu,
 `video-playing` or `note-playing` starts one of them, silently.
 `--demo-page media-album` shows a synthetic four-picture album and its batch action;
 `media-album-before` keeps the same pictures separate for review comparisons.
+`media-album-oversized` shows a batch with one attachment above the download limit.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.

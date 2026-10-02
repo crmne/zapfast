@@ -1768,6 +1768,20 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
             }
             "media-album" => media_album_sample(app, true),
+            "media-album-oversized" => {
+                media_album_sample(app, true);
+                let chat = SAMPLES[0].id;
+                let messages = &mut app.conversations.get_mut(chat).unwrap().messages;
+                messages[1].content.media_at_mut(None).unwrap().size =
+                    crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1;
+                for message in messages.iter() {
+                    app.actions.push(crate::model::Action::Download {
+                        card: None,
+                        chat: chat.into(),
+                        message: message.id.clone(),
+                    });
+                }
+            }
             "media-album-before" => media_album_sample(app, false),
             "shared-contact" => {
                 let chat = SAMPLES[0].id;
@@ -4164,6 +4178,8 @@ mod tests {
             "message-number",
             "media-album",
             "media-album-before",
+            "media-album-oversized",
+            "media-album-oversized,light",
             "unnamed-group",
             "keyring",
             "interactive",
@@ -4935,6 +4951,71 @@ mod tests {
         render(&mut app, &ctx);
         for index in 0..4 {
             assert!(app.conversations[&chat].rows[&format!("album-{index}")].height > 0.0);
+        }
+    }
+
+    /// Batch download shows oversize failures and leaves active or saved members alone.
+    #[test]
+    fn album_download_all_reports_oversized_members_without_dispatching_them() {
+        use crate::model::MediaState;
+        let mut app = app();
+        media_album_sample(&mut app, true);
+        let chat = app.open_chat.clone().unwrap();
+        let (saved, _) = sample_files(&app);
+        let messages = &mut app.conversations.get_mut(&chat).unwrap().messages;
+        messages[1].content.media_at_mut(None).unwrap().size =
+            crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1;
+        messages[2].content.media_at_mut(None).unwrap().state = MediaState::Downloading;
+        messages[3].content.media_at_mut(None).unwrap().path = Some(saved.clone());
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        app.backend.record_demo_commands();
+        for first_click in [true, false] {
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            let pos = nodes
+                .iter()
+                .find(|(label, _, _)| label == "Download all")
+                .unwrap()
+                .2;
+            for pressed in [true, false] {
+                accessible_nodes(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            pressed,
+                            button: egui::PointerButton::Primary,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            render(&mut app, &ctx);
+            let commands = app.backend.take_demo_commands();
+            let downloads: Vec<_> = commands
+                .iter()
+                .filter_map(|command| match command {
+                    crate::backend::Command::Download { message, .. } => Some(message.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                downloads,
+                if first_click { vec!["album-0"] } else { vec![] }
+            );
+            let rows = &app.conversations[&chat].messages;
+            assert!(
+                matches!(&rows[1].content.media().unwrap().state, MediaState::Failed(reason) if reason.contains("64 MiB"))
+            );
+            assert!(matches!(
+                rows[2].content.media().unwrap().state,
+                MediaState::Downloading
+            ));
+            assert_eq!(rows[3].content.media().unwrap().path.as_ref(), Some(&saved));
         }
     }
 

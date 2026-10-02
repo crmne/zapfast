@@ -5250,7 +5250,6 @@ fn album_content(
             for message in missing {
                 if let Some(media) = message.content.media()
                     && !matches!(media.state, MediaState::Downloading)
-                    && media.is_within_download_limit()
                 {
                     actions.push(Action::Download {
                         card: None,
