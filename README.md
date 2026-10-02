@@ -276,7 +276,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   in one compact grid; **Download all** fetches its missing items and shows
   a per-item failure for oversized attachments. Hover a failed tile to see why.
   **Save all…**
-  copies every downloaded item into one folder. Profile pictures and downloaded images support
+  copies every downloaded item into one folder. Albums split at local day boundaries
+  so each date marker remains visible. Profile pictures and downloaded images support
   Windows drive paths and filenames with spaces or non-ASCII characters.
   If an attachment has expired, ZapFast asks your
   phone to upload it again. Downloads stop after two minutes with an inline
@@ -927,6 +928,7 @@ Use `--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page media-album` shows a synthetic four-picture album and its batch action;
 `media-album-before` keeps the same pictures separate for review comparisons.
 `media-album-oversized` shows a batch with one attachment above the download limit.
+`media-album-midnight` keeps both date markers for an album spanning two local days.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.

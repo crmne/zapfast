@@ -1680,6 +1680,7 @@ fn album_run(messages: &[Message], start: usize) -> Option<&[Message]> {
         if album_id(message) != Some(album)
             || message.from_me != first.from_me
             || message.sender != first.sender
+            || crate::util::day_key(message.timestamp) != crate::util::day_key(first.timestamp)
         {
             break;
         }
@@ -1993,6 +1994,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 == album_id(message)
                             && conversation.messages[message_index - 1].from_me == message.from_me
                             && conversation.messages[message_index - 1].sender == message.sender
+                            && crate::util::day_key(
+                                conversation.messages[message_index - 1].timestamp,
+                            ) == crate::util::day_key(message.timestamp)
                         {
                             rows.insert(
                                 message.id.clone(),
@@ -7550,6 +7554,22 @@ mod tests {
         ];
         assert_eq!(album_run(&messages, 0).map(<[Message]>::len), Some(2));
         assert!(album_run(&messages, 2).is_none());
+    }
+
+    /// A protocol album splits at the local day boundary even when its identity stays the same.
+    #[test]
+    fn album_runs_stop_at_the_local_calendar_day_boundary() {
+        let (_, midnight) = crate::util::day_bounds(jiff::civil::date(2026, 9, 20)).unwrap();
+        let mut messages: Vec<_> = ["one", "two", "three", "four"]
+            .iter()
+            .map(|id| album_picture(id, Some("album-1"), "alice"))
+            .collect();
+        for (message, offset) in messages.iter_mut().zip([-2, -1, 1, 2]) {
+            message.timestamp = midnight + offset;
+        }
+        assert_eq!(album_run(&messages, 0).map(<[Message]>::len), Some(2));
+        assert_eq!(album_run(&messages, 2).map(<[Message]>::len), Some(2));
+        assert!(album_run(&messages[1..3], 0).is_none());
     }
 
     /// Checks that grouping never combines unrelated pictures or messages from different senders.

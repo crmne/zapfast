@@ -1609,6 +1609,11 @@ fn video_sample(app: &mut App, play: Option<&str>) {
 fn media_album_sample(app: &mut App, grouped: bool) {
     let chat = SAMPLES[0].id;
     let now = crate::util::now();
+    // Keep the ordinary album fixture inside today's local date, including at midnight.
+    let start = crate::util::day_key(now)
+        .and_then(crate::util::day_bounds)
+        .map_or(now - 30, |(start, _)| start);
+    let at = (now - 30).max(start);
     let rows = (0..4)
         .map(|index| {
             let mut attachment =
@@ -1618,7 +1623,7 @@ fn media_album_sample(app: &mut App, grouped: bool) {
                 chat,
                 &format!("album-{index}"),
                 false,
-                now - 30 + index as i64,
+                at + index as i64,
                 Content::Image {
                     caption: (index == 0).then(|| "Weekend references, all in one place".into()),
                     media: attachment,
@@ -1780,6 +1785,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         chat: chat.into(),
                         message: message.id.clone(),
                     });
+                }
+            }
+            "media-album-midnight" => {
+                media_album_sample(app, true);
+                let midnight = crate::util::day_key(crate::util::now())
+                    .and_then(crate::util::day_bounds)
+                    .unwrap()
+                    .0;
+                for (message, offset) in app
+                    .conversations
+                    .get_mut(SAMPLES[0].id)
+                    .unwrap()
+                    .messages
+                    .iter_mut()
+                    .zip([-2, -1, 1, 2])
+                {
+                    message.timestamp = midnight + offset;
                 }
             }
             "media-album-before" => media_album_sample(app, false),
@@ -4180,6 +4202,8 @@ mod tests {
             "media-album-before",
             "media-album-oversized",
             "media-album-oversized,light",
+            "media-album-midnight",
+            "media-album-midnight,light",
             "unnamed-group",
             "keyring",
             "interactive",
@@ -5016,6 +5040,70 @@ mod tests {
                 MediaState::Downloading
             ));
             assert_eq!(rows[3].content.media().unwrap().path.as_ref(), Some(&saved));
+        }
+    }
+
+    /// Both local-date dividers and both grouped rows survive an album spanning midnight.
+    #[test]
+    fn albums_crossing_midnight_keep_both_date_dividers() {
+        for light in [false, true] {
+            let mut app = app();
+            apply_flags(
+                &mut app,
+                Some(if light {
+                    "media-album-midnight,light"
+                } else {
+                    "media-album-midnight"
+                }),
+            );
+            let chat = app.open_chat.clone().unwrap();
+            let messages = &app.conversations[&chat].messages;
+            let expected = [messages[0].timestamp, messages[2].timestamp]
+                .map(|timestamp| crate::util::day_label(app.locale, timestamp));
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            let mut labels = std::collections::HashSet::new();
+            /// Collects painted labels, including date chips drawn directly by the painter.
+            fn visit(shape: &egui::epaint::Shape, labels: &mut std::collections::HashSet<String>) {
+                match shape {
+                    egui::epaint::Shape::Vec(shapes) => {
+                        for shape in shapes {
+                            visit(shape, labels);
+                        }
+                    }
+                    egui::epaint::Shape::Text(text) => {
+                        labels.insert(text.galley.job.text.clone());
+                    }
+                    _ => {}
+                }
+            }
+            for shape in &output.shapes {
+                visit(&shape.shape, &mut labels);
+            }
+            for date in expected {
+                assert!(labels.contains(&date), "missing {date}: {labels:?}");
+            }
+            let rows = &app.conversations[&chat].rows;
+            assert!(rows["album-0"].height > 0.0);
+            assert_eq!(rows["album-1"].height, 0.0);
+            assert!(rows["album-2"].height > 0.0);
+            assert_eq!(rows["album-3"].height, 0.0);
         }
     }
 
