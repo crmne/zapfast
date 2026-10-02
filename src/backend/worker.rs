@@ -4216,16 +4216,16 @@ impl Worker {
         if let Some(chat) = destination
             && !self.destination_writable(chat)
         {
-                let error = "This conversation is read-only in ZapFast".to_owned();
-                if matches!(&command, Command::CreatePoll { .. }) {
-                    self.emit(Event::PollCreated {
-                        chat: chat.clone(),
-                        error: Some(error),
-                    });
-                } else {
-                    self.emit(Event::Error(error));
-                }
-                return;
+            let error = "This conversation is read-only in ZapFast".to_owned();
+            if matches!(&command, Command::CreatePoll { .. }) {
+                self.emit(Event::PollCreated {
+                    chat: chat.clone(),
+                    error: Some(error),
+                });
+            } else {
+                self.emit(Event::Error(error));
+            }
+            return;
         }
         match command {
             Command::RefreshPoll { chat, message } => self.refresh_poll(chat, message),
