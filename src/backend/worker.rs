@@ -390,6 +390,7 @@ fn sticker_hash(sha256: Option<&[u8]>, enc_sha256: Option<&[u8]>) -> Option<Stri
     Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// Runs the backend event and command loop, keeping asynchronous work off the UI thread.
 pub async fn run(
     dirs: AppDirs,
     events: std::sync::mpsc::Sender<Event>,
@@ -2608,6 +2609,7 @@ impl Worker {
         self.emit(self.me_event());
     }
 
+    /// Invalidates account-scoped work and clears the unlinked account before publishing logout.
     async fn on_logged_out(&mut self) {
         self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
@@ -4202,6 +4204,7 @@ impl Worker {
 
     // --- commands --------------------------------------------------------
 
+    /// Saves a validated contact through the current account and tags its asynchronous completion.
     fn save_contact(
         &mut self,
         id: String,
@@ -4232,6 +4235,7 @@ impl Worker {
         });
     }
 
+    /// Dispatches UI commands and validates asynchronous completions before applying them.
     async fn handle_command(&mut self, command: Command) {
         let destination = match &command {
             Command::SendText { chat, .. }
@@ -11346,6 +11350,7 @@ mod receipt_tests {
         assert!(worker.forward_queue.is_none());
     }
 
+    /// Creates an isolated backend fixture with a temporary archive and synthetic credentials.
     pub(super) fn worker() -> (
         Worker,
         std::sync::mpsc::Receiver<Event>,

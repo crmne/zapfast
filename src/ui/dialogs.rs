@@ -6,6 +6,7 @@ use crate::app::App;
 use crate::model::{Action, Dialog};
 use crate::theme::{self, Icon};
 
+/// Draws the active dialog and queues its actions for application after the frame.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(dialog) = app.dialog.clone() else {
         return;
@@ -379,6 +380,7 @@ fn confirm_lock_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
     });
 }
 
+/// Draws contact selection and the entry point for messaging an unsaved number.
 fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     title(ui, app, "New chat");
@@ -462,6 +464,7 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
+/// Draws international-number entry, validation feedback and lookup submission.
 fn message_number(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     title(
@@ -1564,6 +1567,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// Draws chat details and queues the available contact or group management actions.
 fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
     let palette = app.palette;
     // Group members may not have an existing chat.

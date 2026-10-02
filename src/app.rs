@@ -727,6 +727,7 @@ impl JumpHighlight {
     }
 }
 
+/// Localizes known number-lookup failures while preserving unknown failure details.
 fn contact_failure_message(locale: crate::i18n::Locale, error: &str) -> String {
     match error {
         "Could not check the number. Please try again." => {
@@ -953,6 +954,7 @@ impl App {
         }
     }
 
+    /// Constructs application state around the supplied backend and persisted settings.
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
         let palette = settings
             .cached_palette()
@@ -2125,6 +2127,7 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Drains backend events into interface state and queues follow-up actions.
     fn handle_events(&mut self) {
         for event in self.backend.poll() {
             match event {
@@ -2657,6 +2660,7 @@ impl App {
         }
     }
 
+    /// Applies link transitions and clears account-owned state when the device is unlinked.
     fn handle_link(&mut self, status: LinkStatus) {
         match &status {
             LinkStatus::Connected => {
@@ -3697,6 +3701,7 @@ impl App {
         }
     }
 
+    /// Applies queued view actions after drawing, routing state changes and backend commands.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the
