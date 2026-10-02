@@ -4651,6 +4651,7 @@ fn content(
                                     actions.push(Action::StartChat {
                                         id: id.clone(),
                                         name: name.to_owned(),
+                                        dismiss_dialog: true,
                                     });
                                 }
                                 if !view.contacts.contains_key(&id)

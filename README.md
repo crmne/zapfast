@@ -177,6 +177,13 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   WAV or FLAC, goes as a document so the recipient gets the original file.
   An MP4 video goes with a preview picture, its size, and its length, so it
   shows as a video before it is downloaded and plays in its message here too.
+- **Message an unsaved number.** Choose **New chat → Message a number**, enter
+  its country code and number, and start a conversation without adding a contact.
+  Numbers accept a leading +, spaces, hyphens, and balanced parentheses. Extensions,
+  leading zeroes, and numbers outside 7 to 15 digits are rejected.
+  Number checks report network failures and keep the dialog open for retry.
+  Cancelling a lookup prevents its delayed response from opening a different chat.
+  Unlinking ends pending checks; after linking again you can retry the number.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
   applies on your phone and to desktop notifications. Mute changes from your
   phone survive history arriving later, including during initial linking.
