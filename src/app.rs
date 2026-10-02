@@ -3638,6 +3638,18 @@ impl App {
         }
     }
 
+    fn finish_attachment_drag(&mut self, ctx: &egui::Context, result: Result<(), crate::file_drag::Failure>) {
+        match result {
+            Ok(()) => {
+                // Only a native drag loop can consume the button release.
+                ctx.stop_dragging();
+                ctx.input_mut(|input| input.pointer = Default::default());
+            }
+            Err(error) => self.toast_error(crate::file_drag::failure_message(self.locale, &error)),
+        }
+        ctx.request_repaint();
+    }
+
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the
@@ -3927,16 +3939,8 @@ impl App {
                 ctx.data_mut(|data| {
                     data.insert_temp(egui::Id::new("fixture-native-drag"), path.clone())
                 });
-                if !cfg!(test)
-                    && let Err(error) = crate::file_drag::start(&path)
-                {
-                    self.toast_error(crate::file_drag::failure_message(self.locale, &error));
-                }
-                // The native drag loop consumes the button release. Drop egui's
-                // retained pointer grab so the next click starts normally.
-                ctx.stop_dragging();
-                ctx.input_mut(|input| input.pointer = Default::default());
-                ctx.request_repaint();
+                let result = if cfg!(test) { Ok(()) } else { crate::file_drag::start(&path) };
+                self.finish_attachment_drag(ctx, result);
             }
             Action::OpenFolder(path) => {
                 if path.is_dir() {
@@ -6295,6 +6299,22 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn native_drag_failure_preserves_the_pointer_until_a_drag_succeeds() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput { events: vec![
+            egui::Event::PointerMoved(egui::pos2(20.0, 20.0)),
+            egui::Event::PointerButton { pos: egui::pos2(20.0, 20.0), button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+        ], ..Default::default() }, |ui| {
+            app.finish_attachment_drag(ui.ctx(), Err(crate::file_drag::Failure::Unavailable));
+            assert!(ui.input(|input| input.pointer.primary_down()));
+            app.finish_attachment_drag(ui.ctx(), Ok(()));
+            assert!(!ui.input(|input| input.pointer.primary_down()));
+        });
+        output.textures_delta.clear();
     }
 
     /// egui redoes a discarded pass without the frame's input events. However
