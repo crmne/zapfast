@@ -1,7 +1,7 @@
 //! Maps known choices to whatsapp-rust message types. The library owns quoting,
 //! encryption, fanout, stanza classification, receipts, and disappearing timers.
 
-use super::super::{ChatId, Delivery, Event, Message, MessageField, Quoted, send_outgoing};
+use super::super::{ChatId, Delivery, Event, Message, MessageField, Quoted};
 use super::*;
 
 fn present(value: Option<&str>) -> Option<&str> {
@@ -277,15 +277,7 @@ impl Worker {
             pending: true,
         });
         self.store_message(row, Some(message.encode_to_vec()), None);
-        tokio::spawn(send_outgoing(
-            client,
-            self.commands.clone(),
-            chat,
-            jid,
-            id,
-            message,
-            expiration,
-        ));
+        self.queue_outgoing(chat, jid, id, message, expiration);
     }
 }
 
