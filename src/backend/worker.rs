@@ -2650,6 +2650,7 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        self.invalidate_pending_edits();
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
         self.stop_bot().await;
         if let Err(error) = self.archive.clear() {
@@ -6932,6 +6933,12 @@ impl Worker {
         self.edit_sequence
     }
 
+    /// Drops edit ownership before logout replaces the archive. The monotonically
+    /// increasing sequence prevents a late completion matching a new account's edit.
+    fn invalidate_pending_edits(&mut self) {
+        self.pending_edits.clear();
+    }
+
     /// Validates and dispatches an edit using the current eligibility-check time.
     fn edit_text(&mut self, chat: ChatId, id: String, request: EditRequest) {
         self.edit_text_at(chat, id, request, crate::util::now());
@@ -9215,6 +9222,35 @@ mod tests {
                 .content,
             Content::Revoked
         );
+    }
+
+    /// Logout discards old drafts and completion ownership, even when a new
+    /// session starts an edit for the same archived message identity.
+    #[test]
+    fn logged_out_edits_cannot_emit_refusals_into_the_next_session() {
+        use super::receipt_tests::{PEER, own_message, worker};
+        let (mut worker, events, _inbox, _wa) = worker();
+        let row = own_message("session-edit", 1);
+        worker.store_message(row.clone(), None, None);
+        let old = worker.begin_edit(PEER, &row.id);
+        worker.invalidate_pending_edits();
+        worker.archive.clear().unwrap();
+        worker.store_message(row.clone(), None, None);
+        let current = worker.begin_edit(PEER, &row.id);
+        assert_ne!(old, current);
+        let _ = events.try_iter().count();
+        let request = |text: &str| EditRequest {
+            text: text.to_owned(), mentions: Vec::new(),
+            draft: EditDraft { text: text.to_owned(), mentions: Vec::new() },
+        };
+        let version = |generation| EditVersion { generation, content: row.content.clone(), edited: row.edited };
+        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Old account"), Some("Old refusal".to_owned()), version(old));
+        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Old account"), None, version(old));
+        assert!(events.try_recv().is_err());
+        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, row.content);
+        assert!(worker.pending_edits[&(PEER.to_owned(), row.id.clone())].outstanding.contains(&current));
+        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Current account"), None, version(current));
+        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, Content::text("Current account"));
     }
 
     /// A timed-out earlier request releases the settlement barrier while a
