@@ -4351,6 +4351,9 @@ mod tests {
                 labels.iter().any(|label| label == "Encaminhar mensagem"),
                 "{page}: {labels:?}"
             );
+            if page == "forward-review" {
+                assert!(labels.iter().any(|label| label == "Voltar"), "{labels:?}");
+            }
         }
     }
 
