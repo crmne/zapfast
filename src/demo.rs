@@ -4504,6 +4504,46 @@ mod tests {
         }
     }
 
+    /// The panel says when a contact was last seen as the chat header does:
+    /// with the day and the time, in the reader's language.
+    #[test]
+    fn the_panel_says_when_a_contact_was_last_seen_as_the_header_does() {
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let mut app = app();
+        apply_flags(&mut app, Some("info"));
+        let chat = app.open_chat.clone().expect("a chat");
+        let seen = jiff::Timestamp::now().as_second() - 86_400;
+        app.presence.insert(
+            chat,
+            crate::app::Presence {
+                online: false,
+                last_seen: Some(seen),
+            },
+        );
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        }
+        let mut drawn = Vec::new();
+        for clipped in &shapes {
+            texts(&clipped.shape, &mut drawn);
+        }
+        let line = crate::util::last_seen(app.locale, seen);
+        assert_eq!(
+            drawn.iter().filter(|text| **text == line).count(),
+            2,
+            "the header and the panel both say {line:?}"
+        );
+    }
+
     /// The info pages open the panel on the sample chat, listed from the
     /// sample's own messages: the overview, and each tab of the media view,
     /// with something to show on every one.
