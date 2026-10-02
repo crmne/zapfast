@@ -3248,6 +3248,7 @@ mod tests {
     #[test]
     fn phone_number_link_opens_its_actions_from_the_keyboard() {
         let mut app = app();
+        app.backend.record_demo_commands();
         let chat = SAMPLES[0].id;
         let row = app
             .conversations
@@ -3255,37 +3256,88 @@ mod tests {
             .unwrap()
             .message_mut("ada-link")
             .unwrap();
-        row.content = Content::text("Call +00 (00) 00000-0000");
+        let body = "اتصل على +00 (00) 00000-0000";
+        row.content = Content::text(body);
         row.from_me = false;
 
         let ctx = egui::Context::default();
         app.attach(&ctx);
         render(&mut app, &ctx);
-        let body = "Call +00 (00) 00000-0000";
-        let start = body.find('+').unwrap();
+        let start = body[..body.find('+').unwrap()].chars().count();
+        let end = body.chars().count();
         let phone = crate::ui::conversation::bubble_id(chat, "ada-link").with((
             "phone-link",
             start,
-            body.len(),
+            end,
             0usize,
         ));
-        ctx.memory_mut(|memory| memory.request_focus(phone));
-        ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1180.0, 780.0),
-                )),
-                events: vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
-                ..Default::default()
-            },
-            |ui| {
-                let ctx = ui.ctx().clone();
-                app.background_frame(&ctx);
-                app.frame_ui(ui);
-            },
+        let run = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output.platform_output.commands
+        };
+        let open_menu = |app: &mut App| {
+            ctx.memory_mut(|memory| memory.request_focus(phone));
+            run(app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+            assert!(egui::Popup::is_id_open(&ctx, phone.with("popup")));
+        };
+        let click = |app: &mut App, rect: egui::Rect| {
+            let pos = rect.center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos,
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: egui::Modifiers::NONE,
+            };
+            run(app, vec![egui::Event::PointerMoved(pos), button(true)]);
+            run(app, vec![button(false)])
+        };
+
+        open_menu(&mut app);
+        let copy_rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(phone.with("test-copy-action")))
+            .unwrap();
+        let copied = click(&mut app, copy_rect)
+            .into_iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(copied, "+00 (00) 00000-0000");
+
+        open_menu(&mut app);
+        let message_rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(phone.with("test-message-action")))
+            .unwrap();
+        click(&mut app, message_rect);
+        assert!(
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    crate::backend::Command::NewContact {
+                        phone,
+                        full_name: None,
+                        ..
+                    } if phone == "0000000000000"
+                ))
         );
-        assert!(egui::Popup::is_id_open(&ctx, phone.with("popup")));
     }
 
     #[test]

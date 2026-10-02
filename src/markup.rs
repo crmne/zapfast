@@ -857,6 +857,11 @@ mod tests {
         );
         assert_eq!(links("Call (212) 555-1212"), vec!["tel:2125551212"]);
         assert_eq!(links("Call +1 (212) 555-1212"), vec!["tel:+12125551212"]);
+        let spans = parse("Call +1 (212) 555-1212", &[]);
+        assert_eq!(
+            spans.iter().find(|span| span.link.is_some()).unwrap().text,
+            "+1 (212) 555-1212"
+        );
         assert!(links("Date 2026-10-01").is_empty());
         assert_eq!(
             links("1234567@example.com"),
