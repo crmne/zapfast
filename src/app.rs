@@ -3739,7 +3739,11 @@ impl App {
                 self.apply(Action::Open(page), ctx);
             }
             Action::OpenChat(id) => self.open_chat(id),
-            Action::StartChat { id, name, dismiss_dialog } => {
+            Action::StartChat {
+                id,
+                name,
+                dismiss_dialog,
+            } => {
                 if self.chat(&id).is_none() {
                     self.chats.push(Chat::new(id.clone(), name.clone()));
                     self.backend.send(Command::EnsureChat {
