@@ -1691,6 +1691,8 @@ fn wallpaper_image_sample(app: &mut App) {
     app.settings.wallpaper_image = Some(path);
 }
 
+/// Selects synthetic offline screens and states for layout tests and demo captures.
+/// Audio fixtures vary voice-note and forwarding metadata independently without playback.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;

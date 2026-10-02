@@ -6675,7 +6675,8 @@ fn attachment(
     }
 }
 
-/// In-chat voice and audio player.
+/// Draws the in-chat player with a waveform for voice notes or a track and music badge
+/// for audio files. Playback, seeking and speed controls remain shared between both types.
 #[allow(clippy::too_many_arguments)]
 fn voice_player(
     ui: &mut egui::Ui,
