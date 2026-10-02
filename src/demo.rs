@@ -2828,8 +2828,7 @@ mod tests {
         }
     }
 
-    /// A clicked notification lands on the message it announced and keeps it
-    /// in view, even with the unread divider far above it.
+    /// Dragging downloaded video surfaces exports their files without starting playback.
     #[test]
     fn downloaded_standard_and_round_video_surfaces_dispatch_drag_without_play() {
         if !crate::file_drag::SUPPORTED {
@@ -2879,6 +2878,8 @@ mod tests {
         }
     }
 
+    /// A clicked notification lands on the message it announced and keeps it
+    /// in view, even with the unread divider far above it.
     #[test]
     fn an_opened_message_stays_in_view_below_a_distant_unread_divider() {
         let mut app = app();
