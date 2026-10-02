@@ -743,7 +743,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-/// Returns the selected count only when that selection belongs to the requested chat.
+/// Formats the localized singular or plural selected-message count.
 fn selected_message_count(locale: crate::i18n::Locale, count: usize) -> String {
     crate::i18n::ngettext(
         locale,
