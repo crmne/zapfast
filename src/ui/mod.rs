@@ -981,4 +981,72 @@ mod idle_tests {
         assert_eq!(at(2.05, None), None);
         assert_eq!(at(2.1, Some(NarrowView::Detail)), None);
     }
+
+    #[test]
+    fn the_list_beneath_a_sliding_chat_ignores_the_keyboard() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        let alice = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        let alan = crate::model::Chat::new("456@s.whatsapp.net".into(), "Alan".into());
+        app.chats.push(alice.clone());
+        app.chats.push(alan.clone());
+        app.search = "Al".into();
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let frame = std::cell::Cell::new(0.0);
+        let run = |app: &mut App, events: Vec<egui::Event>| {
+            frame.set(frame.get() + 1.0 / 60.0);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(frame.get()),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(480.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            output.textures_delta.clear();
+        };
+        // The search field holds the keyboard over the narrow list.
+        run(&mut app, Vec::new());
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("chat-search")));
+        run(&mut app, Vec::new());
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search"))));
+        // A chat opens without the field giving the keyboard up (as a
+        // notification click does), and slides in over the list.
+        app.open_chat = Some(alan.id.clone());
+        app.actions.clear();
+        app.focus_search = true;
+        app.scroll_chat_into_view = Some(alice.id.clone());
+        let enter = |pressed| egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(&mut app, vec![enter(true), enter(false)]);
+        assert!(
+            !app.actions
+                .iter()
+                .any(|action| matches!(action, Action::OpenChat(_) | Action::Search(_))),
+            "the dimmed list took the key: {:?}",
+            app.actions
+        );
+        assert!(app.search_selected.is_none());
+        // Requests meant for the list wait for it to come back.
+        assert!(app.focus_search);
+        assert_eq!(
+            app.scroll_chat_into_view.as_deref(),
+            Some(alice.id.as_str())
+        );
+    }
 }

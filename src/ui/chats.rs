@@ -51,10 +51,13 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// Walks matching chats while the global search field keeps keyboard focus.
-/// Enter leaves search and opens the reached chat ready for typing.
+/// Enter leaves search and opens the reached chat ready for typing. A
+/// disabled list (beneath a narrow window's sliding chat) leaves the keys
+/// to the view coming in.
 fn search_keyboard(app: &mut App, ui: &egui::Ui) {
     let field = egui::Id::new("chat-search");
-    if app.search.trim().is_empty()
+    if !ui.is_enabled()
+        || app.search.trim().is_empty()
         || app.locked_folder_open()
         || app.secret_code_matched()
         || !ui.memory(|memory| memory.has_focus(field))
@@ -264,7 +267,8 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             if text != app.search {
                 app.actions.push(Action::Search(text));
             }
-            if app.focus_search {
+            // A disabled field cannot take the keyboard; the request waits.
+            if app.focus_search && ui.is_enabled() {
                 app.focus_search = false;
                 response.request_focus();
             }
@@ -371,7 +375,8 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             if text != app.search {
                 app.actions.push(Action::Search(text));
             }
-            if app.focus_search {
+            // A disabled field cannot take the keyboard; the request waits.
+            if app.focus_search && ui.is_enabled() {
                 app.focus_search = false;
                 response.request_focus();
             }
@@ -568,7 +573,9 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         .scroll_chat_into_view
         .as_ref()
         .and_then(|target| chats.iter().position(|chat| chat.id == *target));
-    if let Some(target_row) = target_row {
+    // A disabled list leaves the request and any carried scroll to the list
+    // drawn for real.
+    if let Some(target_row) = target_row.filter(|_| ui.is_enabled()) {
         let id = ui.make_persistent_id(egui::IdSalt::new("chat-list"));
         let current = egui::scroll_area::State::load(ui.ctx(), id)
             .unwrap_or_default()
@@ -585,7 +592,11 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         app.scroll_chat_into_view = None;
     }
     // A scroll gesture that began over the list stays with it (#274).
-    let carried = app.scroll_route.take(crate::app::ScrollPane::Chats);
+    let carried = if ui.is_enabled() {
+        app.scroll_route.take(crate::app::ScrollPane::Chats)
+    } else {
+        0.0
+    };
     let output = scroll_area.show_rows(ui, row_height, total, |ui, range| {
         if carried != 0.0 {
             ui.scroll_with_delta_animation(
@@ -739,7 +750,8 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
             if !chats.is_empty() {
                 section(ui, &palette, "Chats");
                 for chat in &chats {
-                    let reveal = app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
+                    let reveal = ui.is_enabled()
+                        && app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
                     let response = ui
                         .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
                         .inner;
