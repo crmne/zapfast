@@ -67,7 +67,8 @@ close button ends it. A batch goes out one message at a time, each starting
 once the one before it reached WhatsApp, so a picture cannot overtake the
 text that came before it. Deleted or unsupported messages, phone-only content,
 polls, and interactive messages cannot be selected or forwarded, so they have
-no box. Keyboard focus outlines the box; screen readers identify its message
+no box. If a selected message is deleted, it leaves the selection automatically.
+Keyboard focus outlines the box; screen readers identify its message
 by sender, time, and a short summary.
 
 ## Stickers

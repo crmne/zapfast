@@ -2940,6 +2940,43 @@ impl App {
             }
             Event::AccountRemoved => {}
         }
+        self.prune_selection();
+    }
+
+    fn prune_selection(&mut self) {
+        let Some((chat, ids)) = self.selection.clone() else {
+            return;
+        };
+        let conversation = self.conversations.get(chat.as_str());
+        let selectable = |id: &str| {
+            conversation
+                .and_then(|conversation| conversation.message(id))
+                .is_some_and(|message| can_select(&message.content))
+        };
+        let ids: Vec<String> = ids.into_iter().filter(|id| selectable(id)).collect();
+        let anchor_gone = self
+            .selection_anchor
+            .as_deref()
+            .is_some_and(|id| !selectable(id));
+        let base = self
+            .sweep
+            .as_ref()
+            .filter(|sweep| sweep.chat == chat)
+            .map(|sweep| {
+                sweep
+                    .base
+                    .iter()
+                    .filter(|id| selectable(id))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            });
+        if anchor_gone {
+            self.selection_anchor = ids.last().cloned();
+        }
+        if let (Some(base), Some(sweep)) = (base, self.sweep.as_mut()) {
+            sweep.base = base;
+        }
+        self.selection = Some((chat, ids));
     }
 
     fn handle_link(&mut self, status: LinkStatus, live: bool) {
@@ -4603,9 +4640,12 @@ impl App {
                 {
                     message.content = Content::Revoked;
                 }
+                self.prune_selection();
                 self.backend.send(Command::Revoke { chat, id });
             }
             Action::DeleteForMe { chat, id } => {
+                // The message stays until WhatsApp accepts the deletion.
+                // `Event::MessageDeleted` removes it and prunes the selection.
                 self.backend.send(Command::DeleteLocal { chat, id });
             }
             Action::Attach => {
@@ -8554,6 +8594,71 @@ mod tests {
         app.apply(Action::StartSelection, &ctx);
         app.apply(Action::ToggleSelected("gone".into()), &ctx);
         assert_eq!(app.selection, Some((chat.into(), vec!["fifth".into()])));
+    }
+
+    #[test]
+    fn selection_drops_messages_that_become_ineligible() {
+        let mut app = app();
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.conversations.entry(chat.into()).or_default().merge(
+            vec![message(chat, "first", 1), message(chat, "second", 2)],
+            false,
+        );
+        app.apply(Action::SelectMessage("first".into()), &ctx);
+        app.apply(
+            Action::SweepMessages {
+                anchor: "first".into(),
+                to: "second".into(),
+            },
+            &ctx,
+        );
+        let mut revoked = message(chat, "first", 1);
+        revoked.content = Content::Revoked;
+        events
+            .send(Event::MessageUpdated(Box::new(revoked)))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.selection, Some((chat.into(), vec!["second".into()])));
+        assert_eq!(app.selection_anchor.as_deref(), Some("second"));
+        assert!(app.sweep.as_ref().unwrap().base.is_empty());
+        app.apply(
+            Action::SweepMessages {
+                anchor: "first".into(),
+                to: "second".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(app.selection, Some((chat.into(), vec!["second".into()])));
+
+        app.apply(
+            Action::DeleteForEveryone {
+                chat: chat.into(),
+                id: "second".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(app.selection, Some((chat.into(), Vec::new())));
+
+        // Delete for me keeps the row until the deletion is accepted, then
+        // drops it from the selection along with the message.
+        app.conversations
+            .get_mut(chat)
+            .unwrap()
+            .merge(vec![message(chat, "kept", 3)], false);
+        app.apply(Action::SelectMessage("kept".into()), &ctx);
+        events
+            .send(Event::MessageDeleted {
+                chat: chat.to_owned(),
+                id: "kept".into(),
+            })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.selection, Some((chat.into(), Vec::new())));
+        assert!(app.conversations[chat].message("kept").is_none());
     }
 
     #[test]
