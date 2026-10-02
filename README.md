@@ -197,7 +197,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   media go with them, and history that was already on its way does not bring
   them back.
 - **Voice messages.** Play, seek, record, reply with, and send voice messages
-  in the chat. The speed chip cycles between 1x, 1.5x, and 2x, and the
+  in the chat. Voice notes show a waveform; audio files show a seek bar and
+  music icon. The forwarded label appears only when WhatsApp marks a message
+  as forwarded. The speed chip cycles between 1x, 1.5x, and 2x, and the
   message menu offers 1x, 1.25x, 1.5x, 1.75x, and 2x, keeping the speaker's
   pitch; the last choice applies to later messages. When one ends, playback
   carries on through the voice messages right after it that you have not
