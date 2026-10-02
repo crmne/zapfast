@@ -3789,6 +3789,11 @@ impl App {
             }
             Action::CloseChat => {
                 if let Some(chat) = self.open_chat.take() {
+                    if let Some(target) = self.reply_to.take().filter(|target| target.chat.is_some()) {
+                        self.private_reply_drafts.insert(chat.clone(), target);
+                    } else {
+                        self.private_reply_drafts.remove(&chat);
+                    }
                     self.stop_composing(&chat);
                     let draft = std::mem::take(&mut self.composer);
                     if self.editing.take().is_none() && !draft.trim().is_empty() {
@@ -9455,6 +9460,31 @@ mod tests {
         assert!(app.reply_to.is_none());
         app.open_chat(sender.into());
         assert_eq!(app.reply_to, Some(target));
+    }
+
+    /// Closing and reopening a recipient restores its private quote, while cancel removes it.
+    #[test]
+    fn closing_a_private_reply_preserves_the_quote_until_cancelled() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let recipient = "15550001111@s.whatsapp.net";
+        app.chats.push(Chat::new(recipient.into(), "Recipient fixture".into()));
+        app.open_chat(recipient.into());
+        let target = ReplyTarget { id: "original".into(), chat: Some("12345@g.us".into()) };
+        app.reply_to = Some(target.clone());
+        app.composer = "Private draft".into();
+        app.apply(Action::CloseChat, &ctx);
+        assert!(app.open_chat.is_none());
+        assert!(app.reply_to.is_none());
+        assert_eq!(app.private_reply_drafts.get(recipient), Some(&target));
+        app.open_chat(recipient.into());
+        assert_eq!(app.reply_to, Some(target));
+        assert_eq!(app.composer, "Private draft");
+        app.reply_to = None;
+        app.apply(Action::CloseChat, &ctx);
+        assert!(!app.private_reply_drafts.contains_key(recipient));
+        app.open_chat(recipient.into());
+        assert!(app.reply_to.is_none());
     }
 
     /// Leaving or deleting one recipient must not erase another recipient's quote draft.
