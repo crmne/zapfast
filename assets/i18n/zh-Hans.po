@@ -406,7 +406,7 @@ msgstr "转发到这些聊天？"
 
 #: src/ui/dialogs.rs:489
 msgid "Back"
-msgstr ""
+msgstr "返回"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"

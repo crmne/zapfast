@@ -421,7 +421,7 @@ msgstr "Encaminhar para estas conversas?"
 
 #: src/ui/dialogs.rs:489
 msgid "Back"
-msgstr ""
+msgstr "Voltar"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"

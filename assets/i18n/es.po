@@ -421,7 +421,7 @@ msgstr "¿Reenviar a estos chats?"
 
 #: src/ui/dialogs.rs:489
 msgid "Back"
-msgstr ""
+msgstr "Atrás"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"

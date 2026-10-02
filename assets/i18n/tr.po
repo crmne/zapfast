@@ -425,7 +425,7 @@ msgstr "Bu sohbetlere iletilsin mi?"
 
 #: src/ui/dialogs.rs:489
 msgid "Back"
-msgstr ""
+msgstr "Geri"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"

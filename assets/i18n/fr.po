@@ -424,7 +424,7 @@ msgstr "Transférer à ces discussions ?"
 
 #: src/ui/dialogs.rs:489
 msgid "Back"
-msgstr ""
+msgstr "Retour"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"

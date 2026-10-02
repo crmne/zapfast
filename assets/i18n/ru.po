@@ -429,7 +429,7 @@ msgstr "Переслать в эти чаты?"
 
 #: src/ui/dialogs.rs:489
 msgid "Back"
-msgstr ""
+msgstr "Назад"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"

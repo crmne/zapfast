@@ -426,7 +426,7 @@ msgstr "An diese Chats weiterleiten?"
 
 #: src/ui/dialogs.rs:489
 msgid "Back"
-msgstr ""
+msgstr "Zurück"
 
 #: src/ui/dialogs.rs:499
 msgid "Forward"
