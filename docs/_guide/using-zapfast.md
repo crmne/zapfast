@@ -60,10 +60,15 @@ Click anywhere on a message's row, its box included, to add or remove it.
 Shift-click adds every message up to the one you click, and a drag adds every
 message it passes, scrolling when you hold the pointer at the top or bottom
 edge. A drag that starts beside the bubbles, off the text, starts a selection
-too. **Forward…** sends the selected messages together, in their original
+too. A drag over the text outside a selection still selects the text to copy.
+**Forward…** sends the selected messages together, in their original
 order. Unticking the last message keeps the selection open; Escape or the
-close button ends it. Deleted and unsupported messages cannot be forwarded, so
-they have no box.
+close button ends it. A batch goes out one message at a time, each starting
+once the one before it reached WhatsApp, so a picture cannot overtake the
+text that came before it. Deleted or unsupported messages, phone-only content,
+polls, and interactive messages cannot be selected or forwarded, so they have
+no box. Keyboard focus outlines the box; screen readers identify its message
+by sender, time, and a short summary.
 
 ## Stickers
 

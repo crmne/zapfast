@@ -303,18 +303,21 @@ pub(crate) struct Sweep {
     base: Vec<String>,
 }
 
-/// Whether a message can join a selection: deleted and placeholder
-/// messages cannot be forwarded.
+/// Whether a message can join a selection, matching `Worker::forward_job`.
 pub(crate) fn can_select(content: &Content) -> bool {
     !matches!(
         content,
-        Content::Revoked | Content::PhoneOnly { .. } | Content::Unsupported { .. }
+        Content::Revoked
+            | Content::PhoneOnly { .. }
+            | Content::Unsupported { .. }
+            | Content::Poll { .. }
+            | Content::Interactive { .. }
     )
 }
 
 /// Adds the messages from `anchor` to `to` to a selection, in either
-/// direction, keeping the chat's order. Deleted and placeholder messages
-/// cannot be forwarded, so they stay out.
+/// direction, keeping the chat's order and skipping content that cannot
+/// be forwarded.
 fn add_range(messages: &[Message], ids: &mut Vec<String>, anchor: &str, to: &str) {
     let position = |id: &str| messages.iter().position(|message| message.id == id);
     let (Some(from), Some(to)) = (position(anchor), position(to)) else {
@@ -4452,7 +4455,13 @@ impl App {
                 }
             }
             Action::SelectMessage(id) => {
-                if let Some(chat) = self.open_chat.clone() {
+                if let Some(chat) = self.open_chat.clone()
+                    && self
+                        .conversations
+                        .get(&chat)
+                        .and_then(|conversation| conversation.message(&id))
+                        .is_some_and(|message| can_select(&message.content))
+                {
                     self.selection = Some((chat, vec![id.clone()]));
                     self.selection_anchor = Some(id);
                 }
@@ -4524,17 +4533,17 @@ impl App {
             }
             Action::EndSweep => self.sweep = None,
             Action::ToggleSelected(id) => {
-                self.selection_anchor = Some(id.clone());
                 let mut next = self.selection.clone();
                 if let Some((chat, ids)) = next.as_mut() {
-                    let blocked = self
+                    let selectable = self
                         .conversations
                         .get(chat.as_str())
                         .and_then(|conversation| conversation.message(&id))
-                        .is_some_and(|message| !can_select(&message.content));
-                    if blocked {
+                        .is_some_and(|message| can_select(&message.content));
+                    if !selectable {
                         return;
                     }
+                    self.selection_anchor = Some(id.clone());
                     if let Some(index) = ids.iter().position(|selected| *selected == id) {
                         ids.remove(index);
                     } else {
@@ -8545,6 +8554,82 @@ mod tests {
         app.apply(Action::StartSelection, &ctx);
         app.apply(Action::ToggleSelected("gone".into()), &ctx);
         assert_eq!(app.selection, Some((chat.into(), vec!["fifth".into()])));
+    }
+
+    #[test]
+    fn selection_rejects_messages_that_cannot_be_forwarded() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        let blocked = [
+            Content::Revoked,
+            Content::PhoneOnly {
+                view_once: true,
+                live_location: false,
+                once: None,
+            },
+            Content::Unsupported {
+                what: "Test".into(),
+            },
+            Content::Poll {
+                question: "Lunch?".into(),
+                options: vec!["Yes".into(), "No".into()],
+                state: Default::default(),
+            },
+            Content::Interactive {
+                text: "Choose an option".into(),
+                card: None,
+            },
+        ];
+        let mut messages = vec![message(chat, "first", 1)];
+        for (index, content) in blocked.into_iter().enumerate() {
+            let mut row = message(chat, &format!("blocked-{index}"), index as i64 + 2);
+            row.content = content;
+            messages.push(row);
+        }
+        messages.push(message(chat, "last", 10));
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(messages, false);
+        for id in (0..5)
+            .map(|index| format!("blocked-{index}"))
+            .chain(std::iter::once("missing".into()))
+        {
+            app.apply(Action::SelectMessage(id.clone()), &ctx);
+            assert!(app.selection.is_none(), "{id} cannot start a selection");
+            assert!(app.selection_anchor.is_none());
+            app.apply(Action::SelectMessage("first".into()), &ctx);
+            app.apply(Action::SelectMessage(id.clone()), &ctx);
+            app.apply(Action::ToggleSelected(id.clone()), &ctx);
+            assert_eq!(
+                app.selection,
+                Some((chat.into(), vec!["first".into()])),
+                "{id} cannot replace or join a selection"
+            );
+            assert_eq!(app.selection_anchor.as_deref(), Some("first"));
+            app.apply(Action::CancelSelection, &ctx);
+            app.selection_anchor = None;
+        }
+        app.apply(Action::SelectMessage("first".into()), &ctx);
+        app.apply(Action::SelectRange("last".into()), &ctx);
+        assert_eq!(
+            app.selection,
+            Some((chat.into(), vec!["first".into(), "last".into()]))
+        );
+        app.apply(Action::CancelSelection, &ctx);
+        app.apply(
+            Action::SweepMessages {
+                anchor: "first".into(),
+                to: "last".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.selection,
+            Some((chat.into(), vec!["first".into(), "last".into()]))
+        );
     }
 
     /// #246: a sweep adds its range to what was selected when it began, in
