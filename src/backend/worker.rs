@@ -725,6 +725,38 @@ struct PendingEdits {
     latest: u64,
     outstanding: std::collections::BTreeSet<u64>,
     accepted: Option<AcceptedEdit>,
+    /// Only the worker owns this lifetime, so logout cancels queued dispatches.
+    dispatch_owner: Arc<()>,
+    dispatch_tail: Option<tokio::sync::oneshot::Receiver<()>>,
+}
+
+/// A reservation made synchronously by the worker, preserving edit arrival order.
+struct EditTurn {
+    previous: Option<tokio::sync::oneshot::Receiver<()>>,
+    completion: tokio::sync::oneshot::Sender<()>,
+    owner: std::sync::Weak<()>,
+}
+
+impl PendingEdits {
+    /// Chains the next dispatch to this message's previous attempt.
+    fn reserve_dispatch(&mut self) -> EditTurn {
+        let (completion, next) = tokio::sync::oneshot::channel();
+        EditTurn {
+            previous: self.dispatch_tail.replace(next),
+            completion,
+            owner: Arc::downgrade(&self.dispatch_owner),
+        }
+    }
+}
+
+impl EditTurn {
+    /// Waits for the preceding attempt and rejects work whose account was invalidated.
+    async fn wait(&mut self) -> bool {
+        if let Some(previous) = self.previous.take() {
+            let _ = previous.await;
+        }
+        self.owner.upgrade().is_some()
+    }
 }
 
 struct AcceptedEdit {
@@ -6972,6 +7004,11 @@ impl Worker {
         };
         let row = row.expect("eligible message");
         let generation = self.begin_edit(&chat, &id);
+        let mut turn = self.pending_edits
+            .get_mut(&(chat.clone(), id.clone()))
+            .expect("registered edit")
+            .reserve_dispatch();
+        let eligibility = row.clone();
         let version = EditVersion {
             generation,
             content: row.content,
@@ -6981,14 +7018,19 @@ impl Worker {
         self.apply_ephemeral(&chat, &mut message);
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            let error = with_edit_deadline(EDIT_TIMEOUT, async {
+            if !turn.wait().await {
+                return;
+            }
+            let error = if !eligibility.editable_at(crate::util::now()) {
+                Some("This message can no longer be edited".to_owned())
+            } else { with_edit_deadline(EDIT_TIMEOUT, async {
                 client
                     .edit_message(jid, id.clone(), message)
                     .await
                     .map(|_| ())
                     .map_err(|error| error.to_string())
             })
-            .await;
+            .await };
             let _ = commands.send(Command::EditedText {
                 chat,
                 id,
@@ -6998,6 +7040,8 @@ impl Worker {
                 version,
                 draft,
             });
+            // Release the following edit only after this attempt has finished.
+            let _ = turn.completion.send(());
         });
     }
 
@@ -9087,6 +9131,39 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Even a later task polled first must wait, while other messages stay independent.
+    #[tokio::test]
+    async fn edit_dispatch_reservations_preserve_each_messages_order() {
+        let mut pending = PendingEdits::default();
+        let mut first = pending.reserve_dispatch();
+        let mut second = pending.reserve_dispatch();
+        let (started, mut observed) = tokio::sync::oneshot::channel();
+        let later = tokio::spawn(async move {
+            assert!(second.wait().await);
+            let _ = started.send(());
+            let _ = second.completion.send(());
+        });
+        tokio::task::yield_now().await;
+        assert!(matches!(observed.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+        let mut unrelated = PendingEdits::default();
+        assert!(unrelated.reserve_dispatch().wait().await);
+        assert!(first.wait().await);
+        let _ = first.completion.send(());
+        observed.await.unwrap();
+        later.await.unwrap();
+    }
+
+    /// Clearing worker ownership prevents an old queued edit from reaching the network.
+    #[tokio::test]
+    async fn invalidating_edits_cancels_waiting_dispatches() {
+        let mut pending = PendingEdits::default();
+        let first = pending.reserve_dispatch();
+        let mut second = pending.reserve_dispatch();
+        drop(pending);
+        let _ = first.completion.send(());
+        assert!(!second.wait().await);
+    }
     use std::io::Cursor;
 
     #[test]
