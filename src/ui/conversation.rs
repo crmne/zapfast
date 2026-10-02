@@ -5454,35 +5454,47 @@ fn rich_body(
     let copy_number = crate::i18n::gettext(view.locale, "Copy number");
     let menu_labels = [message_number.as_ref(), copy_number.as_ref()];
     for (range, url) in &laid.links {
-        let Some(number) = url.strip_prefix("tel:") else {
+        let Some(phone) = url.strip_prefix("tel:") else {
             continue;
         };
-        let Some(bounds) = crate::bidi::char_bounds(&laid.galley, range.start, range.end) else {
-            continue;
-        };
-        let link = ui
-            .interact(
-                bounds.translate(origin.to_vec2()).expand(2.0),
-                bubble_id(&view.chat.id, &message.id).with(("phone-link", range.start, range.end)),
-                Sense::CLICK,
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-        egui::Popup::menu(&link)
-            .id(link.id.with("popup"))
-            .width(widgets::menu_width(ui, &menu_labels, true))
-            .frame(widgets::menu_frame(&view.palette))
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-            .show(|ui| {
-                if widgets::menu_item(ui, &view.palette, None, message_number.as_ref()) {
-                    actions.push(Action::StartChat {
-                        id: format!("{number}@s.whatsapp.net"),
-                        name: number.to_owned(),
-                    });
-                }
-                if widgets::menu_item(ui, &view.palette, Some(Icon::Copy), copy_number.as_ref()) {
-                    actions.push(Action::CopyText(number.to_owned()));
-                }
+        let number = phone.strip_prefix('+').unwrap_or(phone);
+        for (row, bounds) in crate::bidi::char_bounds_by_row(&laid.galley, range.start, range.end) {
+            let link = ui
+                .interact(
+                    bounds.translate(origin.to_vec2()).expand(2.0),
+                    bubble_id(&view.chat.id, &message.id)
+                        .with(("phone-link", range.start, range.end, row)),
+                    Sense::CLICK,
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            link.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), number)
             });
+            theme::reveal_focus(&link);
+            egui::Popup::menu(&link)
+                .id(link.id.with("popup"))
+                .width(widgets::menu_width(ui, &menu_labels, true))
+                .frame(widgets::menu_frame(&view.palette))
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                .show(|ui| {
+                    if widgets::menu_item(ui, &view.palette, None, message_number.as_ref()) {
+                        actions.push(Action::NewContact {
+                            phone: number.to_owned(),
+                            first: String::new(),
+                            last: String::new(),
+                            to_phone: None,
+                        });
+                    }
+                    if widgets::menu_item(
+                        ui,
+                        &view.palette,
+                        Some(Icon::Copy),
+                        copy_number.as_ref(),
+                    ) {
+                        actions.push(Action::CopyText(phone.to_owned()));
+                    }
+                });
+        }
     }
     if !laid.links.is_empty()
         && let Some(pos) = response.hover_pos()

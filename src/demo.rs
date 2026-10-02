@@ -3173,6 +3173,45 @@ mod tests {
     }
 
     #[test]
+    fn phone_number_link_opens_its_actions_from_the_keyboard() {
+        let mut app = app();
+        let chat = SAMPLES[0].id;
+        let row = app
+            .conversations
+            .get_mut(chat)
+            .unwrap()
+            .message_mut("ada-link")
+            .unwrap();
+        row.content = Content::text("Call +00 (00) 00000-0000");
+        row.from_me = false;
+
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let body = "Call +00 (00) 00000-0000";
+        let start = body.find('+').unwrap();
+        let phone = crate::ui::conversation::bubble_id(chat, "ada-link")
+            .with(("phone-link", start, body.len(), 0usize));
+        ctx.memory_mut(|memory| memory.request_focus(phone));
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                events: vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        assert!(egui::Popup::is_id_open(&ctx, phone.with("popup")));
+    }
+
+    #[test]
     fn interactive_lists_copy_codes_and_unavailable_actions_use_the_correct_paths() {
         let mut app = app();
         apply_flags(&mut app, Some("interactive-actions"));
