@@ -1068,11 +1068,11 @@ msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
 
 #: src/app.rs:5382
 msgid "App lock password saved"
-msgstr ""
+msgstr "应用锁密码已保存"
 
 #: src/app.rs:5390
 msgid "App lock turned off"
-msgstr ""
+msgstr "应用锁已关闭"
 
 #: src/app.rs:5503
 msgid "This video opens in your system player"
