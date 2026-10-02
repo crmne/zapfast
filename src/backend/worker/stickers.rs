@@ -1300,6 +1300,7 @@ mod tests {
                 size: bytes.len() as u64,
                 width: Some(512),
                 height: Some(512),
+                album: None,
                 path: Some(path.clone()),
                 state: MediaState::Idle,
             },

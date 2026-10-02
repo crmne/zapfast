@@ -211,12 +211,14 @@ const SAMPLES: &[Sample] = &[
     },
 ];
 
+/// Builds synthetic attachment metadata for media-state and album regression tests.
 fn media(mime: &str, size: u64, width: Option<u32>, height: Option<u32>) -> Media {
     Media {
         mime: mime.to_owned(),
         size,
         width,
         height,
+        album: None,
         path: None,
         state: Default::default(),
     }
@@ -1603,6 +1605,39 @@ fn video_sample(app: &mut App, play: Option<&str>) {
     }
 }
 
+/// Replaces the first chat with a synthetic four-picture WhatsApp album.
+fn media_album_sample(app: &mut App, grouped: bool) {
+    let chat = SAMPLES[0].id;
+    let now = crate::util::now();
+    // Keep the ordinary album fixture inside today's local date, including at midnight.
+    let start = crate::util::day_key(now)
+        .and_then(crate::util::day_bounds)
+        .map_or(now - 30, |(start, _)| start);
+    let at = (now - 30).max(start);
+    let rows = (0..4)
+        .map(|index| {
+            let mut attachment =
+                media("image/jpeg", 180_000 + index * 10_000, Some(900), Some(700));
+            attachment.album = grouped.then(|| "demo-album".into());
+            let mut row = message(
+                chat,
+                &format!("album-{index}"),
+                false,
+                at + index as i64,
+                Content::Image {
+                    caption: (index == 0).then(|| "Weekend references, all in one place".into()),
+                    media: attachment,
+                },
+            );
+            row.thumbnail = Some(sample_thumbnail(index as u32 + 10));
+            row
+        })
+        .collect();
+    app.conversations.entry(chat.into()).or_default().messages = rows;
+    app.open_chat = Some(chat.into());
+    app.scroll_to_bottom = true;
+}
+
 /// The search pane over the sample chat with the most matches for
 /// `query`, listing them newest first as the archive would.
 fn chat_search_sample(app: &mut App, query: &str) {
@@ -1691,6 +1726,7 @@ fn wallpaper_image_sample(app: &mut App) {
     app.settings.wallpaper_image = Some(path);
 }
 
+/// Selects offline demo states, including album grouping, selection and export controls.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -1736,6 +1772,39 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     path: app.dirs.media_cache_dir().join("demo-video.mp4"),
                 });
             }
+            "media-album" => media_album_sample(app, true),
+            "media-album-oversized" => {
+                media_album_sample(app, true);
+                let chat = SAMPLES[0].id;
+                let messages = &mut app.conversations.get_mut(chat).unwrap().messages;
+                messages[1].content.media_at_mut(None).unwrap().size =
+                    crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1;
+                for message in messages.iter() {
+                    app.actions.push(crate::model::Action::Download {
+                        card: None,
+                        chat: chat.into(),
+                        message: message.id.clone(),
+                    });
+                }
+            }
+            "media-album-midnight" => {
+                media_album_sample(app, true);
+                let midnight = crate::util::day_key(crate::util::now())
+                    .and_then(crate::util::day_bounds)
+                    .unwrap()
+                    .0;
+                for (message, offset) in app
+                    .conversations
+                    .get_mut(SAMPLES[0].id)
+                    .unwrap()
+                    .messages
+                    .iter_mut()
+                    .zip([-2, -1, 1, 2])
+                {
+                    message.timestamp = midnight + offset;
+                }
+            }
+            "media-album-before" => media_album_sample(app, false),
             "shared-contact" => {
                 let chat = SAMPLES[0].id;
                 let now = crate::util::now();
@@ -4102,6 +4171,7 @@ mod tests {
         assert!(!leaks(&labels).is_empty());
     }
 
+    /// Checks that each synthetic demo screen fits its visible area in the supported themes.
     #[test]
     fn every_surface_lays_out() {
         let mut app = app();
@@ -4127,6 +4197,13 @@ mod tests {
             "app-lock-settings",
             "app-lock-setup",
             "new-chat",
+            "message-number",
+            "media-album",
+            "media-album-before",
+            "media-album-oversized",
+            "media-album-oversized,light",
+            "media-album-midnight",
+            "media-album-midnight,light",
             "unnamed-group",
             "keyring",
             "interactive",
@@ -4836,6 +4913,198 @@ mod tests {
         );
         render(&mut app, &ctx);
         assert!(ctx.memory(|memory| memory.has_focus(composer)));
+    }
+
+    /// Checks that navigation to an individual album member scrolls its grouped row into view.
+    #[test]
+    fn a_jump_to_an_album_member_reaches_the_group_and_finishes() {
+        let mut app = app();
+        media_album_sample(&mut app, true);
+        let chat = app.open_chat.clone().unwrap();
+        let conversation = app.conversations.get_mut(&chat).unwrap();
+        let album = std::mem::take(&mut conversation.messages);
+        let at = album[0].timestamp;
+        let rows = |after: bool| {
+            let chat = &chat;
+            (0..80).map(move |index| {
+                message(
+                    chat,
+                    &format!("album-context-{after}-{index}"),
+                    false,
+                    at + if after { 100 + index } else { -100 + index },
+                    Content::text(format!("Surrounding history {index}")),
+                )
+            })
+        };
+        conversation.messages = rows(false).chain(album).chain(rows(true)).collect();
+        conversation.complete = true;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        app.actions.push(crate::model::Action::OpenMessage {
+            chat,
+            message: "album-2".into(),
+        });
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        assert!(
+            app.scroll_anchor.is_none(),
+            "a member jump resolves at its album row"
+        );
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        assert!(
+            shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
+            if text.galley.text().contains("Weekend references")
+                && shape.clip_rect.contains(text.pos + egui::vec2(1.0, 1.0))))
+        );
+    }
+
+    /// Checks that grouped album members remain independently selectable and actionable.
+    #[test]
+    fn selecting_messages_keeps_every_album_member_individually_accessible() {
+        let mut app = app();
+        media_album_sample(&mut app, true);
+        let chat = app.open_chat.clone().unwrap();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert_eq!(app.conversations[&chat].rows["album-1"].height, 0.0);
+        app.selection = Some((chat.clone(), vec!["album-1".into()]));
+        render(&mut app, &ctx);
+        for index in 0..4 {
+            assert!(app.conversations[&chat].rows[&format!("album-{index}")].height > 0.0);
+        }
+    }
+
+    /// Batch download shows oversize failures and leaves active or saved members alone.
+    #[test]
+    fn album_download_all_reports_oversized_members_without_dispatching_them() {
+        use crate::model::MediaState;
+        let mut app = app();
+        media_album_sample(&mut app, true);
+        let chat = app.open_chat.clone().unwrap();
+        let (saved, _) = sample_files(&app);
+        let messages = &mut app.conversations.get_mut(&chat).unwrap().messages;
+        messages[1].content.media_at_mut(None).unwrap().size =
+            crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1;
+        messages[2].content.media_at_mut(None).unwrap().state = MediaState::Downloading;
+        messages[3].content.media_at_mut(None).unwrap().path = Some(saved.clone());
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        app.backend.record_demo_commands();
+        for first_click in [true, false] {
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            let pos = nodes
+                .iter()
+                .find(|(label, _, _)| label == "Download all")
+                .unwrap()
+                .2;
+            for pressed in [true, false] {
+                accessible_nodes(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            pressed,
+                            button: egui::PointerButton::Primary,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            render(&mut app, &ctx);
+            let commands = app.backend.take_demo_commands();
+            let downloads: Vec<_> = commands
+                .iter()
+                .filter_map(|command| match command {
+                    crate::backend::Command::Download { message, .. } => Some(message.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                downloads,
+                if first_click { vec!["album-0"] } else { vec![] }
+            );
+            let rows = &app.conversations[&chat].messages;
+            assert!(
+                matches!(&rows[1].content.media().unwrap().state, MediaState::Failed(reason) if reason.contains("64 MiB"))
+            );
+            assert!(matches!(
+                rows[2].content.media().unwrap().state,
+                MediaState::Downloading
+            ));
+            assert_eq!(rows[3].content.media().unwrap().path.as_ref(), Some(&saved));
+        }
+    }
+
+    /// Both local-date dividers and both grouped rows survive an album spanning midnight.
+    #[test]
+    fn albums_crossing_midnight_keep_both_date_dividers() {
+        for light in [false, true] {
+            let mut app = app();
+            apply_flags(
+                &mut app,
+                Some(if light {
+                    "media-album-midnight,light"
+                } else {
+                    "media-album-midnight"
+                }),
+            );
+            let chat = app.open_chat.clone().unwrap();
+            let messages = &app.conversations[&chat].messages;
+            let expected = [messages[0].timestamp, messages[2].timestamp]
+                .map(|timestamp| crate::util::day_label(app.locale, timestamp));
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            let mut labels = std::collections::HashSet::new();
+            /// Collects painted labels, including date chips drawn directly by the painter.
+            fn visit(shape: &egui::epaint::Shape, labels: &mut std::collections::HashSet<String>) {
+                match shape {
+                    egui::epaint::Shape::Vec(shapes) => {
+                        for shape in shapes {
+                            visit(shape, labels);
+                        }
+                    }
+                    egui::epaint::Shape::Text(text) => {
+                        labels.insert(text.galley.job.text.clone());
+                    }
+                    _ => {}
+                }
+            }
+            for shape in &output.shapes {
+                visit(&shape.shape, &mut labels);
+            }
+            for date in expected {
+                assert!(labels.contains(&date), "missing {date}: {labels:?}");
+            }
+            let rows = &app.conversations[&chat].rows;
+            assert!(rows["album-0"].height > 0.0);
+            assert_eq!(rows["album-1"].height, 0.0);
+            assert!(rows["album-2"].height > 0.0);
+            assert_eq!(rows["album-3"].height, 0.0);
+        }
     }
 
     /// The composer keeps its draft while the preview is open: Enter does not

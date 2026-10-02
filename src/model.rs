@@ -853,6 +853,9 @@ pub struct Media {
     pub size: u64,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// Parent message id when WhatsApp sent this picture or video as an album.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album: Option<String>,
     /// Decrypted downloaded file.
     #[serde(default)]
     pub path: Option<PathBuf>,
@@ -1389,6 +1392,10 @@ pub enum Action {
         path: PathBuf,
         name: String,
     },
+    /// Saves a group of downloaded album attachments into one chosen folder.
+    SaveAttachments {
+        files: Vec<(PathBuf, String)>,
+    },
     OpenUrl(String),
     CopyText(String),
     CopyImage(PathBuf),
@@ -1897,6 +1904,7 @@ mod tests {
         assert_eq!(unknown.remaining(), 0);
     }
 
+    /// Checks that content rederivation retains each downloaded interactive image path.
     #[test]
     fn rederived_interactive_content_keeps_every_downloaded_image() {
         let image = |path: Option<&str>| Media {
@@ -1904,6 +1912,7 @@ mod tests {
             size: 1,
             width: None,
             height: None,
+            album: None,
             path: path.map(PathBuf::from),
             state: MediaState::Idle,
         };
@@ -1950,12 +1959,14 @@ mod tests {
         assert!(draft.validated().is_err());
     }
 
+    /// Builds synthetic attachment metadata for media-state and album regression tests.
     fn media() -> Media {
         Media {
             mime: "image/jpeg".into(),
             size: 1,
             width: None,
             height: None,
+            album: None,
             path: None,
             state: MediaState::Idle,
         }

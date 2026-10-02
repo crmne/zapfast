@@ -391,6 +391,7 @@ fn sticker_hash(sha256: Option<&[u8]>, enc_sha256: Option<&[u8]>) -> Option<Stri
     Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// Runs the protocol worker, receiving commands and waking the interface for emitted events.
 pub async fn run(
     dirs: AppDirs,
     events: std::sync::mpsc::Sender<Event>,
@@ -548,6 +549,7 @@ pub async fn run(
     };
     worker.load_state();
     worker.backfill();
+    worker.backfill_media_albums();
     worker.backfill_video_notes();
     worker.backfill_view_once();
     worker.backfill_interactive();
@@ -1462,6 +1464,65 @@ impl Worker {
         let _ = self.archive.set_meta(KEY, "1");
         if updated > 0 {
             log::info!("marked {updated} archived messages as view once");
+            self.emit_chats();
+        }
+    }
+
+    /// Adds album parent ids to archived pictures and videos without
+    /// re-deriving edited text or any other locally preserved state.
+    fn backfill_media_albums(&mut self) {
+        const KEY: &str = "media_albums";
+        if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
+            return;
+        }
+        let rows = match self.archive.rows_with_raw() {
+            Ok(rows) => rows,
+            Err(error) => {
+                log::warn!("could not read archived media albums: {error}");
+                return;
+            }
+        };
+        let mut updated = 0;
+        for (chat, id, raw) in rows {
+            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                continue;
+            };
+            let album =
+                album_media(message.get_base_message(), media(None, None, None, None)).album;
+            let Some(album) = album else { continue };
+            let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
+                continue;
+            };
+            let mut content = existing.content;
+            let media = match &mut content {
+                Content::Image { media, .. }
+                | Content::Video {
+                    media, note: false, ..
+                } => media,
+                _ => continue,
+            };
+            if media.album.as_deref() == Some(&album) {
+                continue;
+            }
+            media.album = Some(album);
+            if self
+                .archive
+                .set_derived(
+                    &chat,
+                    &id,
+                    &content,
+                    &existing.mentions,
+                    existing.thumbnail.as_deref(),
+                    existing.forwarded,
+                )
+                .is_ok()
+            {
+                updated += 1;
+            }
+        }
+        let _ = self.archive.set_meta(KEY, "1");
+        if updated > 0 {
+            log::info!("grouped {updated} archived media-album items");
             self.emit_chats();
         }
     }
@@ -4263,6 +4324,7 @@ impl Worker {
 
     // --- commands --------------------------------------------------------
 
+    /// Validates and applies interface commands, including per-message album downloads and exports.
     async fn handle_command(&mut self, command: Command) {
         let destination = match &command {
             Command::SendText { chat, .. }
@@ -4748,6 +4810,40 @@ impl Worker {
                         let _ = events.send(Event::Error(error));
                         waker.wake();
                     }
+                });
+            }
+            Command::SaveAttachments { files } => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let mut dialog = rfd::FileDialog::new().set_title("Save album");
+                    if let Some(downloads) = directories::UserDirs::new()
+                        .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
+                    {
+                        dialog = dialog.set_directory(downloads);
+                    }
+                    let Some(folder) = dialog.pick_folder() else {
+                        return;
+                    };
+                    let mut saved = 0usize;
+                    let mut failed = Vec::new();
+                    for (source, name) in files {
+                        match save_album_copy(&source, &folder, &name) {
+                            Ok(_) => saved += 1,
+                            Err(error) => failed.push(format!("{name}: {error}")),
+                        }
+                    }
+                    let event = if failed.is_empty() {
+                        Event::Info(format!("Saved {saved} album attachments"))
+                    } else {
+                        Event::Error(format!(
+                            "Saved {saved} album attachments; {} could not be saved: {}",
+                            failed.len(),
+                            failed.join("; ")
+                        ))
+                    };
+                    let _ = events.send(event);
+                    waker.wake();
                 });
             }
             Command::PrepareClipboardImage(path) => {
@@ -7548,6 +7644,47 @@ fn media_path(dir: &Path, chat: &str, id: &str, mime: &str, file_name: Option<&s
     dir.join(format!("{stem}.{extension}"))
 }
 
+/// Reserve each destination atomically, including when another save is racing
+/// us. Checking existence before fs::copy could still overwrite a user's file.
+fn save_album_copy(source: &Path, folder: &Path, name: &str) -> std::io::Result<PathBuf> {
+    use std::io::ErrorKind;
+    let name = Path::new(name)
+        .file_name()
+        .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "Invalid attachment name"))?;
+    let path = Path::new(name);
+    let stem = path.file_stem().unwrap_or(name).to_string_lossy();
+    let extension = path
+        .extension()
+        .map(|value| format!(".{}", value.to_string_lossy()))
+        .unwrap_or_default();
+    let mut input = std::fs::File::open(source)?;
+    let mut number = 1usize;
+    loop {
+        let target = if number == 1 {
+            folder.join(name)
+        } else {
+            folder.join(format!("{stem} ({number}){extension}"))
+        };
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+        {
+            Ok(mut output) => {
+                if let Err(error) = std::io::copy(&mut input, &mut output) {
+                    drop(output);
+                    let _ = std::fs::remove_file(&target);
+                    return Err(error);
+                }
+                return Ok(target);
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => number += 1,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Converts optional protocol dimensions and file size into local attachment metadata.
 fn media(
     mime: Option<&String>,
     size: Option<u64>,
@@ -7559,6 +7696,7 @@ fn media(
         size: size.unwrap_or(0),
         width,
         height,
+        album: None,
         path: None,
         state: Default::default(),
     }
@@ -7826,11 +7964,14 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
     if let Some(image) = base.image_message.as_option() {
         return Some(Content::Image {
             caption: non_empty(&image.caption),
-            media: media(
-                image.mimetype.as_ref(),
-                image.file_length,
-                image.width,
-                image.height,
+            media: album_media(
+                base,
+                media(
+                    image.mimetype.as_ref(),
+                    image.file_length,
+                    image.width,
+                    image.height,
+                ),
             ),
         });
     }
@@ -7841,11 +7982,14 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
     {
         return Some(Content::Video {
             caption: non_empty(&video.caption),
-            media: media(
-                video.mimetype.as_ref(),
-                video.file_length,
-                video.width,
-                video.height,
+            media: album_media(
+                base,
+                media(
+                    video.mimetype.as_ref(),
+                    video.file_length,
+                    video.width,
+                    video.height,
+                ),
             ),
             seconds: video.seconds,
             gif: video.gif_playback.unwrap_or(false),
@@ -8017,6 +8161,21 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
         return None;
     }
     unsupported("message")
+}
+
+/// Builds synthetic album attachments with explicit protocol parent ids.
+fn album_media(base: &wa::Message, mut media: Media) -> Media {
+    media.album = base
+        .message_context_info
+        .as_option()
+        .and_then(|context| context.message_association.as_option())
+        .filter(|association| {
+            association.association_type
+                == Some(wa::message_association::AssociationType::MEDIA_ALBUM)
+        })
+        .and_then(|association| association.parent_message_key.as_option())
+        .and_then(|key| key.id.clone());
+    media
 }
 
 /// Uploaded attachment protobuf and archive content.
@@ -8933,6 +9092,57 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    /// Checks that album export never overwrites existing files or colliding attachment names.
+    #[test]
+    fn saving_an_album_preserves_existing_files_and_repeated_names() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.png");
+        let folder = root.path().join("saved");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(&source, b"synthetic picture").unwrap();
+        std::fs::write(folder.join("photo.png"), b"keep this file").unwrap();
+        let first = save_album_copy(&source, &folder, "photo.png").unwrap();
+        let second = save_album_copy(&source, &folder, "photo.png").unwrap();
+        assert_eq!(first.file_name().unwrap(), "photo (2).png");
+        assert_eq!(second.file_name().unwrap(), "photo (3).png");
+        assert_eq!(
+            std::fs::read(folder.join("photo.png")).unwrap(),
+            b"keep this file"
+        );
+        assert_eq!(std::fs::read(first).unwrap(), b"synthetic picture");
+        assert_eq!(std::fs::read(second).unwrap(), b"synthetic picture");
+    }
+
+    /// Checks that derived media retains the protocol album parent used for grouping.
+    #[test]
+    fn album_parent_is_kept_on_derived_media() {
+        let parent = "album-parent";
+        let base = wa::Message {
+            message_context_info: MessageField::some(wa::MessageContextInfo {
+                message_association: MessageField::some(wa::MessageAssociation {
+                    association_type: Some(wa::message_association::AssociationType::MEDIA_ALBUM),
+                    parent_message_key: MessageField::some(wa::MessageKey {
+                        id: Some(parent.into()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            album_media(&base, media(None, None, None, None))
+                .album
+                .as_deref(),
+            Some(parent)
+        );
+        assert_eq!(
+            album_media(&wa::Message::default(), media(None, None, None, None)).album,
+            None
+        );
+    }
 
     #[test]
     fn only_phone_playable_audio_is_sent_as_an_audio_message() {
@@ -12289,6 +12499,7 @@ mod receipt_tests {
                 size: 10,
                 width: None,
                 height: None,
+                album: None,
                 path: None,
                 state: MediaState::Idle,
             },
