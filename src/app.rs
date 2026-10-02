@@ -737,11 +737,7 @@ pub enum Pending {
     File(PathBuf),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ComposerMention {
-    id: String,
-    name: String,
-}
+use crate::model::ComposerMention;
 
 impl Pending {
     /// Whether the composer can preview the file as an image.
@@ -2736,6 +2732,7 @@ impl App {
         conversation.phone_exhausted = true;
         conversation.loading_older = false;
         if self.open_chat.as_deref() == Some(id) {
+            self.pending.clear();
             if self
                 .editing
                 .as_ref()
@@ -3372,7 +3369,11 @@ impl App {
     }
 
     /// Sends pending files, attaching the caption to the first.
-    fn send_pending(&mut self, chat: ChatId, caption: String) {
+    pub fn composer_mentions(&self) -> Vec<ComposerMention> {
+        self.composer_mentions.clone()
+    }
+
+    fn send_pending(&mut self, chat: ChatId, caption: String, mentions: Vec<ComposerMention>) {
         // A queued send from a view that was replaced cannot consume the
         // next chat's attachments or reply. Keep its caption with its draft.
         if self.open_chat.as_ref() != Some(&chat) {
@@ -3381,10 +3382,12 @@ impl App {
                 && self.drafts.get(&chat).is_none_or(|text| text.is_empty())
             {
                 self.store_draft(&chat, &caption);
+                self.draft_mentions.insert(chat.clone(), mentions);
                 self.drafts.insert(chat, caption);
             }
             return;
         }
+        self.composer_mentions = mentions;
         // The reply travels with the first attachment, like the caption.
         let mut quoting = self.reply_to.take();
         let caption = caption.trim().to_owned();
@@ -4139,7 +4142,11 @@ impl App {
                 }
             }
             Action::SendFiles(paths) => self.stage_files(paths),
-            Action::SendPending { chat, caption } => self.send_pending(chat, caption),
+            Action::SendPending {
+                chat,
+                caption,
+                mentions,
+            } => self.send_pending(chat, caption, mentions),
             Action::RemovePending(index) => {
                 if index < self.pending.len() {
                     self.pending.remove(index);
@@ -6316,7 +6323,7 @@ mod tests {
         app.stage_files(vec!["fixture-second.png".into()]);
         app.composer = "Second caption".into();
         app.reply_to = Some("second-reply".into());
-        app.send_pending(first.clone(), "Stale caption".into());
+        app.send_pending(first.clone(), "Stale caption".into(), Vec::new());
         assert_eq!(
             app.pending.len(),
             1,
@@ -6333,7 +6340,7 @@ mod tests {
         assert!(app.pending.is_empty());
         app.open_chat(first.clone());
         let caption = std::mem::take(&mut app.composer);
-        app.send_pending(first.clone(), caption);
+        app.send_pending(first.clone(), caption, app.composer_mentions());
         let sends: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
             .filter(|command| {
                 matches!(
@@ -6358,18 +6365,60 @@ mod tests {
     }
 
     #[test]
+    fn queued_attachment_caption_retains_selected_mentions_after_switching() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat = "fixture@g.us";
+        let member = "491702222222@s.whatsapp.net";
+        let mut group = Chat::new(chat.into(), "Fixture group".into());
+        group.participants.push(member.into());
+        app.chats.push(group);
+        app.open_chat(chat.into());
+        app.stage_files(vec!["fixture.png".into()]);
+        app.composer = "Hello @Mira Example".into();
+        app.composer_mentions.push(ComposerMention {
+            id: member.into(),
+            name: "Mira Example".into(),
+        });
+        let caption = std::mem::take(&mut app.composer);
+        let mentions = app.composer_mentions();
+        app.open_chat("other@s.whatsapp.net".into());
+        app.send_pending(chat.into(), caption, mentions);
+        app.open_chat(chat.into());
+        assert_eq!(app.composer, "Hello @Mira Example");
+        assert_eq!(app.composer_mentions.len(), 1);
+        let caption = std::mem::take(&mut app.composer);
+        app.send_pending(chat.into(), caption, app.composer_mentions());
+        assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+            Command::SendFiles { caption: Some(caption), mentions, .. } if caption == "Hello @491702222222" && mentions == [member])));
+    }
+
+    #[test]
+    fn clearing_an_open_chat_removes_active_attachment_drafts() {
+        let mut app = app();
+        app.open_chat("fixture@s.whatsapp.net".into());
+        app.stage_files(vec!["fixture.png".into()]);
+        app.handle_chat_cleared("fixture@s.whatsapp.net", i64::MAX);
+        assert!(app.pending.is_empty());
+        app.open_chat("other@s.whatsapp.net".into());
+        app.open_chat("fixture@s.whatsapp.net".into());
+        assert!(app.pending.is_empty());
+    }
+
+    #[test]
     fn a_stale_attachment_send_keeps_its_caption_without_crossing_accounts() {
         let mut app = app();
         let first = "fixture@s.whatsapp.net".to_owned();
         app.open_chat(first.clone());
         app.stage_files(vec!["fixture.png".into()]);
         app.open_chat("other@s.whatsapp.net".into());
-        app.send_pending(first.clone(), "Queued caption".into());
+        app.send_pending(first.clone(), "Queued caption".into(), Vec::new());
         app.open_chat(first.clone());
         assert_eq!(app.composer, "Queued caption");
         assert_eq!(app.pending.len(), 1);
         app.handle_link(LinkStatus::LoggedOut);
-        app.send_pending(first.clone(), "Old account caption".into());
+        app.send_pending(first.clone(), "Old account caption".into(), Vec::new());
         assert!(!app.drafts.contains_key(&first));
         assert!(app.pending.is_empty());
     }
@@ -9230,6 +9279,7 @@ mod tests {
             Action::SendPending {
                 chat: chat.into(),
                 caption: "Caption fixture".into(),
+                mentions: Vec::new(),
             },
             &ctx,
         );

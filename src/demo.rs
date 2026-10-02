@@ -2580,6 +2580,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "compose-emoji" => {
                 app.composer = "Andiamo 😊 con due 👍🏽 e poi testo normale".to_owned();
             }
+            "attachment-draft-away" | "attachment-draft-return" => {
+                apply_flags(app, Some("staged"));
+                app.actions
+                    .push(crate::model::Action::OpenChat(SAMPLES[1].id.into()));
+                if part == "attachment-draft-return" {
+                    app.actions
+                        .push(crate::model::Action::OpenChat(SAMPLES[0].id.into()));
+                }
+            }
             "staged" => {
                 let (photo, _) = sample_files(app);
                 let side = 48usize;
@@ -4239,6 +4248,8 @@ mod tests {
             "rail",
             "search",
             "staged",
+            "attachment-draft-away",
+            "attachment-draft-return",
             "compose-emoji",
             "voice",
             "voice,voice-menu",
@@ -7967,6 +7978,7 @@ mod tests {
         app.actions.push(crate::model::Action::SendPending {
             chat: chat.clone(),
             caption: "look".into(),
+            mentions: Vec::new(),
         });
         render(&mut app, &ctx);
         assert!(app.pending.is_empty(), "sent with the caption");
