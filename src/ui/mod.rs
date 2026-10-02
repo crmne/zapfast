@@ -169,6 +169,10 @@ fn narrow_slide(ctx: &egui::Context, view: Option<NarrowView>) -> Option<f32> {
 /// comes in from the right over the list, which stays beneath it, dimmed;
 /// going back brings the list in from the left.
 fn slide_in(app: &mut App, ui: &mut egui::Ui, list_only: bool, progress: f32) {
+    // Both views are drawn in scopes of their own, so the list in either is
+    // a copy of the real one, which it follows.
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(chats::slide_copy_id(), true));
     let rect = ui.available_rect_before_wrap();
     if list_only {
         // The view it covers is gone (the chat is closed): its backdrop.
@@ -187,6 +191,8 @@ fn slide_in(app: &mut App, ui: &mut egui::Ui, list_only: bool, progress: f32) {
             |ui| main_view(app, ui, list_only),
         );
     });
+    ui.ctx()
+        .data_mut(|data| data.remove::<bool>(chats::slide_copy_id()));
 }
 
 /// A slide moves what is drawn but not where presses land, so while one
@@ -1149,5 +1155,79 @@ mod idle_tests {
             click(&mut app, landed),
             "Back works once the chat is in place"
         );
+    }
+
+    #[test]
+    fn a_scrolled_list_stays_put_through_both_slides() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        for i in 0..60 {
+            app.chats.push(crate::model::Chat::new(
+                format!("{i}@s.whatsapp.net"),
+                format!("Chat {i}"),
+            ));
+        }
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let time = std::cell::Cell::new(0.0);
+        let run = |app: &mut App, events: Vec<egui::Event>| {
+            time.set(time.get() + 1.0 / 60.0);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time.get()),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(480.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            output.textures_delta.clear();
+            ctx.data(|data| data.get_temp::<f32>(chats::list_offset_id()))
+                .unwrap_or_default()
+        };
+        // Scroll the narrow list down, and let it come to rest.
+        run(&mut app, Vec::new());
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -300.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        };
+        for _ in 0..3 {
+            run(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(egui::pos2(200.0, 500.0)),
+                    wheel.clone(),
+                ],
+            );
+        }
+        run(&mut app, vec![egui::Event::PointerGone]);
+        time.set(time.get() + 1.0);
+        let scrolled = run(&mut app, Vec::new());
+        assert!(scrolled > 100.0, "the list scrolled: {scrolled}");
+        // The list shows the same rows beneath the chat sliding in, and as
+        // it slides back in once the chat closes.
+        for open in [Some("5@s.whatsapp.net".to_owned()), None] {
+            app.open_chat = open;
+            for frame in 0..4 {
+                let offset = run(&mut app, Vec::new());
+                assert!(
+                    (offset - scrolled).abs() < 1.0,
+                    "frame {frame} of the slide: {offset} vs {scrolled}"
+                );
+            }
+            time.set(time.get() + 1.0);
+            run(&mut app, Vec::new());
+        }
+        assert!((run(&mut app, Vec::new()) - scrolled).abs() < 1.0);
     }
 }

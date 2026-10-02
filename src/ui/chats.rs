@@ -573,6 +573,19 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         .scroll_chat_into_view
         .as_ref()
         .and_then(|target| chats.iter().position(|chat| chat.id == *target));
+    // The copies a narrow window's slide draws have widget ids of their own:
+    // they show the real list's offset instead of keeping one.
+    let copy = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(slide_copy_id()))
+        .is_some();
+    if copy
+        && let Some(offset) = ui
+            .ctx()
+            .data(|data| data.get_temp::<f32>(shared_offset_id()))
+    {
+        scroll_area = scroll_area.vertical_scroll_offset(offset);
+    }
     // A disabled list leaves the request and any carried scroll to the list
     // drawn for real.
     if let Some(target_row) = target_row.filter(|_| ui.is_enabled()) {
@@ -622,11 +635,25 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+    if !copy {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(shared_offset_id(), output.state.offset.y));
+    }
     app.scroll_route
         .place(crate::app::ScrollPane::Chats, output.inner_rect);
     #[cfg(test)]
     ui.ctx()
         .data_mut(|data| data.insert_temp(list_offset_id(), output.state.offset.y));
+}
+
+/// Set while a narrow window's slide draws copies of the list.
+pub(crate) fn slide_copy_id() -> egui::Id {
+    egui::Id::new("chat-list-slide-copy")
+}
+
+/// The real list's scroll offset, for the copies a slide draws.
+fn shared_offset_id() -> egui::Id {
+    egui::Id::new("chat-list-real-offset")
 }
 
 /// Where the chat list's scroll offset is kept for tests.
