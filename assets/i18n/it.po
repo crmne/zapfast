@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 16:38-0300\n"
+"POT-Creation-Date: 2026-10-02 17:05-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -1115,11 +1115,11 @@ msgstr ""
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"
 
-#: src/app.rs:6185
+#: src/app.rs:6198
 msgid "Copied image"
 msgstr "Immagine copiata"
 
-#: src/app.rs:6188 src/app.rs:6193
+#: src/app.rs:6201 src/app.rs:6206
 msgid "Failed to copy image"
 msgstr "Impossibile copiare l'immagine"
 

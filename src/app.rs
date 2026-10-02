@@ -5892,34 +5892,46 @@ impl App {
             self.paste_was_focused = false;
         }
         let (paste, text, released, focused, command) = ctx.input(|input| {
-            let text = input.events.iter().any(|event| matches!(event, egui::Event::Paste(_)));
-            let ordinary_v = self.ordinary_v_down || input.events.iter().any(|event| {
-                matches!(event, egui::Event::Key { key: egui::Key::V, pressed: true, .. })
-            });
+            let text = input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::Paste(_)));
+            let ordinary_v = self.ordinary_v_down
+                || input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::V,
+                            pressed: true,
+                            ..
+                        }
+                    )
+                });
             (
-                text || (!ordinary_v && (wants_paste(input)
-                    || input.events.iter().any(|event| {
-                        matches!(
-                            event,
-                            egui::Event::Key {
-                                key: egui::Key::V,
-                                pressed: false,
-                                ..
-                            }
-                        ) && !self.ordinary_v_down
-                            && (self.saw_paste_command
-                                || (self.paste_was_focused && input.modifiers.command))
-                            && !input.events.iter().any(|event| {
-                                matches!(
-                                    event,
-                                    egui::Event::Key {
-                                        key: egui::Key::V,
-                                        pressed: true,
-                                        ..
-                                    }
-                                )
-                            })
-                    }))),
+                text || (!ordinary_v
+                    && (wants_paste(input)
+                        || input.events.iter().any(|event| {
+                            matches!(
+                                event,
+                                egui::Event::Key {
+                                    key: egui::Key::V,
+                                    pressed: false,
+                                    ..
+                                }
+                            ) && !self.ordinary_v_down
+                                && (self.saw_paste_command
+                                    || (self.paste_was_focused && input.modifiers.command))
+                                && !input.events.iter().any(|event| {
+                                    matches!(
+                                        event,
+                                        egui::Event::Key {
+                                            key: egui::Key::V,
+                                            pressed: true,
+                                            ..
+                                        }
+                                    )
+                                })
+                        }))),
                 text,
                 input.events.iter().any(|event| {
                     matches!(
@@ -7068,17 +7080,32 @@ mod tests {
             for files in [None, Some(vec![PathBuf::from("unrelated-fixture.png")])] {
                 let (mut app, ctx) = clipboard_app();
                 let mut press = paste_release();
-                if let egui::Event::Key { pressed, modifiers, .. } = &mut press {
+                if let egui::Event::Key {
+                    pressed, modifiers, ..
+                } = &mut press
+                {
                     *pressed = true;
                     *modifiers = egui::Modifiers::NONE;
                 }
                 let events = if same_frame {
                     vec![press, paste_release()]
                 } else {
-                    assert_eq!(clipboard_frame_with_files(&mut app, &ctx, vec![press], files.clone(), true), (0, 0));
+                    assert_eq!(
+                        clipboard_frame_with_files(
+                            &mut app,
+                            &ctx,
+                            vec![press],
+                            files.clone(),
+                            true
+                        ),
+                        (0, 0)
+                    );
                     vec![paste_release()]
                 };
-                assert_eq!(clipboard_frame_with_files(&mut app, &ctx, events, files, true), (0, 0));
+                assert_eq!(
+                    clipboard_frame_with_files(&mut app, &ctx, events, files, true),
+                    (0, 0)
+                );
                 assert!(app.pending.is_empty());
             }
         }

@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 16:38-0300\n"
+"POT-Creation-Date: 2026-10-02 17:05-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -1078,11 +1078,11 @@ msgstr "应用锁已关闭"
 msgid "This video opens in your system player"
 msgstr "此视频将用系统播放器打开"
 
-#: src/app.rs:6185
+#: src/app.rs:6198
 msgid "Copied image"
 msgstr "已复制图片"
 
-#: src/app.rs:6188 src/app.rs:6193
+#: src/app.rs:6201 src/app.rs:6206
 msgid "Failed to copy image"
 msgstr "复制图片失败"
 
