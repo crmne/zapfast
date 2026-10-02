@@ -105,7 +105,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   one you pass (the list scrolls when you hold the pointer at its top or
   bottom edge). A drag that starts beside the bubbles, off the text, starts a
   selection too; a drag over the text outside a selection still selects the
-  text to copy. Then **Forward…** sends them together,
+  text to copy. Right-click a row to delete the entire selection, with a
+  confirmation showing the count. **Delete for everyone** is available only
+  when every selected message is yours and within WhatsApp's deletion window.
+  Then **Forward…** sends them together,
   in their original order, or Escape cancels. A batch goes out one message at
   a time, each starting once the one before it reached WhatsApp, so a picture
   cannot overtake the text that came before it.

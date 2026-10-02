@@ -1467,7 +1467,7 @@ impl App {
             ) if chat == id
         ) || matches!(
             &self.dialog,
-            Some(Dialog::Forward { chat, .. } | Dialog::ConfirmDeleteMessage { chat, .. })
+            Some(Dialog::Forward { chat, .. } | Dialog::ConfirmDeleteMessage { chat, .. } | Dialog::ConfirmDeleteSelection { chat, .. })
                 if chat == id
         ) {
             self.dialog = None;
