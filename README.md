@@ -89,6 +89,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Replies from another device clear preceding unread messages. The read-receipt
   toggle also controls voice-message played receipts; account privacy is checked
   before sending receipts in direct chats. A hidden window does not read messages.
+- **Attachment drafts stay with their chat.** Switch chats or close a
+  conversation without losing its staged pictures, files, caption, or attachment
+  reply. Return to that chat to resume and send them. Unsent attachments are kept
+  while ZapFast is running; quitting the app discards them.
 - **Conversations.** See replies, reactions, edits, deleted messages, read
   receipts, sender names, and group pictures. Older messages load as you
   scroll up, first from the local archive and then from your phone.

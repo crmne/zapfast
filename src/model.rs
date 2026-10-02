@@ -1251,6 +1251,13 @@ pub enum Scroll {
     Bottom,
 }
 
+/// A selected mention retained with an unsent composer draft.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComposerMention {
+    pub id: String,
+    pub name: String,
+}
+
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -1716,6 +1723,7 @@ pub enum Action {
     SendPending {
         chat: ChatId,
         caption: String,
+        mentions: Vec<ComposerMention>,
     },
     /// Removes one pending attachment.
     RemovePending(usize),
