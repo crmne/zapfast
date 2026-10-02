@@ -4202,28 +4202,34 @@ impl Worker {
 
     // --- commands --------------------------------------------------------
 
-    fn save_contact(&mut self, id: String, full_name: String, first_name: Option<String>, to_phone: bool) {
-                let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&id)) else {
-                    self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
-                    return;
-                };
-                let commands = self.commands.clone();
-                let generation = self.contact_generation;
-                tokio::spawn(async move {
-                    let error = client
-                        .chat_actions()
-                        .save_contact(&jid, Some(full_name.clone()), first_name.clone(), to_phone)
-                        .await
-                        .err()
-                        .map(|error| error.to_string());
-                    let _ = commands.send(Command::ContactSaved {
-                        generation,
-                        id,
-                        name: full_name,
-                        first_name,
-                        error,
-                    });
-                });
+    fn save_contact(
+        &mut self,
+        id: String,
+        full_name: String,
+        first_name: Option<String>,
+        to_phone: bool,
+    ) {
+        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&id)) else {
+            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+            return;
+        };
+        let commands = self.commands.clone();
+        let generation = self.contact_generation;
+        tokio::spawn(async move {
+            let error = client
+                .chat_actions()
+                .save_contact(&jid, Some(full_name.clone()), first_name.clone(), to_phone)
+                .await
+                .err()
+                .map(|error| error.to_string());
+            let _ = commands.send(Command::ContactSaved {
+                generation,
+                id,
+                name: full_name,
+                first_name,
+                error,
+            });
+        });
     }
 
     async fn handle_command(&mut self, command: Command) {
@@ -4825,7 +4831,9 @@ impl Worker {
                 first_name,
                 error,
             } => {
-                if generation != self.contact_generation { return; }
+                if generation != self.contact_generation {
+                    return;
+                }
                 if let Some(error) = error {
                     self.emit(Event::Error(format!("Could not save contact: {error}")));
                     return;
@@ -4897,7 +4905,9 @@ impl Worker {
                 to_phone,
                 registered,
             } => {
-                if generation != self.contact_generation { return; }
+                if generation != self.contact_generation {
+                    return;
+                }
                 match registered {
                     Ok(true) => {}
                     Ok(false) => {
@@ -8941,16 +8951,34 @@ mod tests {
             let generation = worker.contact_generation;
             worker.on_logged_out().await;
             events.try_iter().for_each(drop);
-            worker.handle_command(Command::ContactChecked {
-                generation, request: 42, phone: "15550000001".into(),
-                full_name, first_name: None, to_phone: true, registered: Ok(true),
-            }).await;
-            worker.handle_command(Command::ContactSaved {
-                generation, id: "15550000001@s.whatsapp.net".into(),
-                name: "Fixture".into(), first_name: None, error: None,
-            }).await;
+            worker
+                .handle_command(Command::ContactChecked {
+                    generation,
+                    request: 42,
+                    phone: "15550000001".into(),
+                    full_name,
+                    first_name: None,
+                    to_phone: true,
+                    registered: Ok(true),
+                })
+                .await;
+            worker
+                .handle_command(Command::ContactSaved {
+                    generation,
+                    id: "15550000001@s.whatsapp.net".into(),
+                    name: "Fixture".into(),
+                    first_name: None,
+                    error: None,
+                })
+                .await;
             assert!(events.try_iter().next().is_none());
-            assert!(worker.archive.contact("15550000001@s.whatsapp.net").unwrap().is_none());
+            assert!(
+                worker
+                    .archive
+                    .contact("15550000001@s.whatsapp.net")
+                    .unwrap()
+                    .is_none()
+            );
         }
     }
 
@@ -11342,7 +11370,7 @@ mod receipt_tests {
             privacy_warned: false,
             privacy_recovering: false,
             privacy_generation: 0,
-        contact_generation: 0,
+            contact_generation: 0,
             privacy_retry: Instant::now(),
             withheld_pages: Vec::new(),
             dirs: AppDirs::under(&root),

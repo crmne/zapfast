@@ -415,9 +415,7 @@ msgstr "Envoyer un message à un numéro"
 msgid ""
 "Enter a phone number with its country code. You do not need to save it as a "
 "contact."
-msgstr ""
-"Saisissez un numéro avec son indicatif pays. Il n’est pas nécessaire de "
-"l’enregistrer comme contact."
+msgstr "Saisissez un numéro avec son indicatif pays. Il n’est pas nécessaire de l’enregistrer comme contact."
 
 #: src/ui/dialogs.rs:500
 msgid "Checking the number…"

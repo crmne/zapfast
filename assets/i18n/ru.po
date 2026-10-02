@@ -419,8 +419,7 @@ msgstr "Написать на номер"
 msgid ""
 "Enter a phone number with its country code. You do not need to save it as a "
 "contact."
-msgstr ""
-"Введите номер телефона с кодом страны. Его не нужно сохранять в контактах."
+msgstr "Введите номер телефона с кодом страны. Его не нужно сохранять в контактах."
 
 #: src/ui/dialogs.rs:500
 msgid "Checking the number…"
