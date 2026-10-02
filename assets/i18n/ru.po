@@ -394,9 +394,9 @@ msgstr "Пауза"
 msgid "Play"
 msgstr "Воспроизвести"
 
-#: src/ui/conversation.rs:6264
+#: src/ui/conversation.rs:6544
 msgid "Back to the message (Esc)"
-msgstr "Вернуть в сообщение (Esc)"
+msgstr "Вернуться к сообщению (Esc)"
 
 #: src/ui/conversation.rs:6266
 msgid "Fill the window"

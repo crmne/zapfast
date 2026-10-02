@@ -272,7 +272,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   player** in a video's right-click menu. Unsupported pictures and documents
   keep opening in their default desktop apps. **Save as…** in a downloaded
   attachment's right-click menu keeps a copy wherever you choose, starting in
-  your Downloads folder. Profile pictures and downloaded images support
+  your Downloads folder. Pictures and videos sent as a WhatsApp album appear
+  in one compact grid; **Download all** fetches its missing items and **Save all…**
+  copies every downloaded item into one folder. Profile pictures and downloaded images support
   Windows drive paths and filenames with spaces or non-ASCII characters.
   If an attachment has expired, ZapFast asks your
   phone to upload it again. Downloads stop after two minutes with an inline
@@ -920,6 +922,8 @@ Use `--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page video` shows a video and round video messages,
 `--demo-page video-expanded` the video over the whole window, and
 `video-playing` or `note-playing` starts one of them, silently.
+`--demo-page media-album` shows a synthetic four-picture album and its batch action;
+`media-album-before` keeps the same pictures separate for review comparisons.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.

@@ -211,12 +211,14 @@ const SAMPLES: &[Sample] = &[
     },
 ];
 
+/// Builds synthetic attachment metadata for media-state and album regression tests.
 fn media(mime: &str, size: u64, width: Option<u32>, height: Option<u32>) -> Media {
     Media {
         mime: mime.to_owned(),
         size,
         width,
         height,
+        album: None,
         path: None,
         state: Default::default(),
     }
@@ -1603,6 +1605,34 @@ fn video_sample(app: &mut App, play: Option<&str>) {
     }
 }
 
+/// Replaces the first chat with a synthetic four-picture WhatsApp album.
+fn media_album_sample(app: &mut App, grouped: bool) {
+    let chat = SAMPLES[0].id;
+    let now = crate::util::now();
+    let rows = (0..4)
+        .map(|index| {
+            let mut attachment =
+                media("image/jpeg", 180_000 + index * 10_000, Some(900), Some(700));
+            attachment.album = grouped.then(|| "demo-album".into());
+            let mut row = message(
+                chat,
+                &format!("album-{index}"),
+                false,
+                now - 30 + index as i64,
+                Content::Image {
+                    caption: (index == 0).then(|| "Weekend references, all in one place".into()),
+                    media: attachment,
+                },
+            );
+            row.thumbnail = Some(sample_thumbnail(index as u32 + 10));
+            row
+        })
+        .collect();
+    app.conversations.entry(chat.into()).or_default().messages = rows;
+    app.open_chat = Some(chat.into());
+    app.scroll_to_bottom = true;
+}
+
 /// The search pane over the sample chat with the most matches for
 /// `query`, listing them newest first as the archive would.
 fn chat_search_sample(app: &mut App, query: &str) {
@@ -1691,6 +1721,7 @@ fn wallpaper_image_sample(app: &mut App) {
     app.settings.wallpaper_image = Some(path);
 }
 
+/// Selects offline demo states, including album grouping, selection and export controls.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -1736,6 +1767,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     path: app.dirs.media_cache_dir().join("demo-video.mp4"),
                 });
             }
+            "media-album" => media_album_sample(app, true),
+            "media-album-before" => media_album_sample(app, false),
             "shared-contact" => {
                 let chat = SAMPLES[0].id;
                 let now = crate::util::now();
@@ -4102,6 +4135,7 @@ mod tests {
         assert!(!leaks(&labels).is_empty());
     }
 
+    /// Checks that each synthetic demo screen fits its visible area in the supported themes.
     #[test]
     fn every_surface_lays_out() {
         let mut app = app();
@@ -4127,6 +4161,9 @@ mod tests {
             "app-lock-settings",
             "app-lock-setup",
             "new-chat",
+            "message-number",
+            "media-album",
+            "media-album-before",
             "unnamed-group",
             "keyring",
             "interactive",
@@ -4836,6 +4873,69 @@ mod tests {
         );
         render(&mut app, &ctx);
         assert!(ctx.memory(|memory| memory.has_focus(composer)));
+    }
+
+    /// Checks that navigation to an individual album member scrolls its grouped row into view.
+    #[test]
+    fn a_jump_to_an_album_member_reaches_the_group_and_finishes() {
+        let mut app = app();
+        media_album_sample(&mut app, true);
+        let chat = app.open_chat.clone().unwrap();
+        let conversation = app.conversations.get_mut(&chat).unwrap();
+        let album = std::mem::take(&mut conversation.messages);
+        let at = album[0].timestamp;
+        let rows = |after: bool| {
+            let chat = &chat;
+            (0..80).map(move |index| {
+                message(
+                    chat,
+                    &format!("album-context-{after}-{index}"),
+                    false,
+                    at + if after { 100 + index } else { -100 + index },
+                    Content::text(format!("Surrounding history {index}")),
+                )
+            })
+        };
+        conversation.messages = rows(false).chain(album).chain(rows(true)).collect();
+        conversation.complete = true;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        app.actions.push(crate::model::Action::OpenMessage {
+            chat,
+            message: "album-2".into(),
+        });
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        assert!(
+            app.scroll_anchor.is_none(),
+            "a member jump resolves at its album row"
+        );
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        assert!(
+            shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
+            if text.galley.text().contains("Weekend references")
+                && shape.clip_rect.contains(text.pos + egui::vec2(1.0, 1.0))))
+        );
+    }
+
+    /// Checks that grouped album members remain independently selectable and actionable.
+    #[test]
+    fn selecting_messages_keeps_every_album_member_individually_accessible() {
+        let mut app = app();
+        media_album_sample(&mut app, true);
+        let chat = app.open_chat.clone().unwrap();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert_eq!(app.conversations[&chat].rows["album-1"].height, 0.0);
+        app.selection = Some((chat.clone(), vec!["album-1".into()]));
+        render(&mut app, &ctx);
+        for index in 0..4 {
+            assert!(app.conversations[&chat].rows[&format!("album-{index}")].height > 0.0);
+        }
     }
 
     /// The composer keeps its draft while the preview is open: Enter does not
