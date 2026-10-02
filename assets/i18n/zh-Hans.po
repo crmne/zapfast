@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 12:44-0300\n"
+"POT-Creation-Date: 2026-10-02 16:13-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -365,27 +365,27 @@ msgstr "此消息只能在手机上查看。"
 msgid "Open in a map"
 msgstr "在地图中打开"
 
-#: src/ui/conversation.rs:6317
+#: src/ui/conversation.rs:6378
 msgid "Pause"
 msgstr "暂停"
 
-#: src/ui/conversation.rs:6319 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6380 src/ui/settings.rs:1636
 msgid "Play"
 msgstr "播放"
 
-#: src/ui/conversation.rs:6346
+#: src/ui/conversation.rs:6407
 msgid "Back to the message (Esc)"
 msgstr "返回消息 (Esc)"
 
-#: src/ui/conversation.rs:6348
+#: src/ui/conversation.rs:6409
 msgid "Fill the window"
 msgstr "填满窗口"
 
-#: src/ui/conversation.rs:6378
+#: src/ui/conversation.rs:6439
 msgid "Unmute"
 msgstr "取消静音"
 
-#: src/ui/conversation.rs:6380
+#: src/ui/conversation.rs:6441
 msgid "Mute"
 msgstr "静音"
 

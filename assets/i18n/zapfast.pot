@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 13:17-0300\n"
+"POT-Creation-Date: 2026-10-02 16:15-0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -370,27 +370,27 @@ msgstr ""
 msgid "Open in a map"
 msgstr ""
 
-#: src/ui/conversation.rs:6317
+#: src/ui/conversation.rs:6378
 msgid "Pause"
 msgstr ""
 
-#: src/ui/conversation.rs:6319 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6380 src/ui/settings.rs:1636
 msgid "Play"
 msgstr ""
 
-#: src/ui/conversation.rs:6346
+#: src/ui/conversation.rs:6407
 msgid "Back to the message (Esc)"
 msgstr ""
 
-#: src/ui/conversation.rs:6348
+#: src/ui/conversation.rs:6409
 msgid "Fill the window"
 msgstr ""
 
-#: src/ui/conversation.rs:6378
+#: src/ui/conversation.rs:6439
 msgid "Unmute"
 msgstr ""
 
-#: src/ui/conversation.rs:6380
+#: src/ui/conversation.rs:6441
 msgid "Mute"
 msgstr ""
 

@@ -5710,27 +5710,47 @@ mod attachment_drag_tests {
         let mut actions = Vec::new();
         let mut frame = |events| {
             let mut rect = Rect::NOTHING;
-            let mut output = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
-                rect = unavailable_picture(ui, Palette::dark(), &path, vec2(120.0, 120.0), &mut actions);
-            });
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    rect = unavailable_picture(
+                        ui,
+                        Palette::dark(),
+                        &path,
+                        vec2(120.0, 120.0),
+                        &mut actions,
+                    );
+                },
+            );
             output.textures_delta.clear();
             rect
         };
         let area = frame(vec![]);
         let press = |pos, pressed| egui::Event::PointerButton {
-            pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE,
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
         };
-        frame(vec![egui::Event::PointerMoved(area.center()), press(area.center(), true)]);
+        frame(vec![
+            egui::Event::PointerMoved(area.center()),
+            press(area.center(), true),
+        ]);
         let end = area.center() + vec2(25.0, 0.0);
         frame(vec![egui::Event::PointerMoved(end)]);
         frame(vec![press(end, false)]);
-        frame(vec![egui::Event::PointerMoved(area.center()), press(area.center(), true)]);
+        frame(vec![
+            egui::Event::PointerMoved(area.center()),
+            press(area.center(), true),
+        ]);
         frame(vec![press(area.center(), false)]);
         assert_eq!(actions.len(), 2);
         assert!(matches!(&actions[0], Action::DragAttachment(file) if file == &path));
         assert!(matches!(&actions[1], Action::OpenFile(file) if file == &path));
     }
-
 }
 const PICTURE_HEIGHT: f32 = 440.0;
 const STICKER_SIDE: f32 = 180.0;
@@ -5791,7 +5811,7 @@ fn frame_size(
 fn unavailable_picture(
     ui: &mut egui::Ui,
     palette: Palette,
-    path: &PathBuf,
+    path: &Path,
     size: Vec2,
     actions: &mut Vec<Action>,
 ) -> Rect {
@@ -5809,7 +5829,7 @@ fn unavailable_picture(
         );
     }
     if response.clicked() {
-        actions.push(Action::OpenFile(path.clone()));
+        actions.push(Action::OpenFile(path.to_path_buf()));
     }
     rect
 }
