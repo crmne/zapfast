@@ -219,7 +219,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   a chat's draft in its row, after "Draft:". Open menus, dialogs, and
   unfinished actions are dismissed first. Sending while reading older messages
   keeps your place; use the newest-message button or End to return to the latest
-  message. Type `:name` to autocomplete an emoji without leaving the composer,
+  message. The chat list scrolls to the top after you send, where the chat now
+  is; under the Favorites chip the list keeps the phone's order and stays in
+  place. Type `:name` to autocomplete an emoji without leaving the composer,
   or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
   delivered, or read. Replies can be text, attachments, voice messages,
