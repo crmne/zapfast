@@ -5444,7 +5444,12 @@ impl Worker {
             Command::GroupInfoFailed { chat, permanent } => {
                 self.handle_failed_group(chat, permanent);
             }
-            Command::RevokeFinished { chat, id, token, error } => self.finish_revoke(chat, id, token, error),
+            Command::RevokeFinished {
+                chat,
+                id,
+                token,
+                error,
+            } => self.finish_revoke(chat, id, token, error),
             Command::Sent { chat, id, error } => {
                 let completed = self.interactive_sending.iter().find_map(
                     |((pending_chat, source), pending_id)| {
@@ -6882,8 +6887,14 @@ impl Worker {
     /// across logout or retry. Duplicate requests wait for the active operation.
     fn begin_revoke(&mut self, chat: &str, id: &str) -> Option<u64> {
         let std::collections::hash_map::Entry::Vacant(entry) =
-            self.pending_revokes.entry((chat.to_owned(), id.to_owned())) else { return None; };
-        self.revoke_sequence = self.revoke_sequence.checked_add(1).expect("revoke token exhausted");
+            self.pending_revokes.entry((chat.to_owned(), id.to_owned()))
+        else {
+            return None;
+        };
+        self.revoke_sequence = self
+            .revoke_sequence
+            .checked_add(1)
+            .expect("revoke token exhausted");
         entry.insert(self.revoke_sequence);
         Some(self.revoke_sequence)
     }
@@ -6899,7 +6910,9 @@ impl Worker {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
-        let Some(token) = self.begin_revoke(&chat, &id) else { return; };
+        let Some(token) = self.begin_revoke(&chat, &id) else {
+            return;
+        };
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let error = client
@@ -6907,7 +6920,12 @@ impl Worker {
                 .await
                 .err()
                 .map(|error| error.to_string());
-            let _ = commands.send(Command::RevokeFinished { chat, id, token, error });
+            let _ = commands.send(Command::RevokeFinished {
+                chat,
+                id,
+                token,
+                error,
+            });
         });
     }
 
@@ -6915,7 +6933,9 @@ impl Worker {
     /// remain visible with their original content and can be retried.
     fn finish_revoke(&mut self, chat: ChatId, id: String, token: u64, error: Option<String>) {
         let key = (chat.clone(), id.clone());
-        if self.pending_revokes.get(&key) != Some(&token) { return; }
+        if self.pending_revokes.get(&key) != Some(&token) {
+            return;
+        }
         self.pending_revokes.remove(&key);
         if let Some(error) = error {
             self.emit_message(&chat, &id);
@@ -11178,16 +11198,55 @@ mod receipt_tests {
         assert_ne!(old, current);
         let _ = events.try_iter().count();
         worker.finish_revoke(PEER.to_owned(), row.id.clone(), old, None);
-        worker.finish_revoke(PEER.to_owned(), row.id.clone(), old, Some("Old refusal".to_owned()));
+        worker.finish_revoke(
+            PEER.to_owned(),
+            row.id.clone(),
+            old,
+            Some("Old refusal".to_owned()),
+        );
         assert!(events.try_recv().is_err());
-        assert_eq!(worker.pending_revokes.get(&(PEER.to_owned(), row.id.clone())), Some(&current));
-        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, row.content);
-        worker.finish_revoke(PEER.to_owned(), row.id.clone(), current, Some("Current refusal".to_owned()));
+        assert_eq!(
+            worker
+                .pending_revokes
+                .get(&(PEER.to_owned(), row.id.clone())),
+            Some(&current)
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            row.content
+        );
+        worker.finish_revoke(
+            PEER.to_owned(),
+            row.id.clone(),
+            current,
+            Some("Current refusal".to_owned()),
+        );
         let retry = worker.begin_revoke(PEER, &row.id).unwrap();
         worker.finish_revoke(PEER.to_owned(), row.id.clone(), current, None);
-        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, row.content);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            row.content
+        );
         worker.finish_revoke(PEER.to_owned(), row.id.clone(), retry, None);
-        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, Content::Revoked);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Revoked
+        );
     }
 
     /// A partial batch only replaces accepted messages with tombstones, even
@@ -11397,8 +11456,8 @@ mod receipt_tests {
             group_info_requested: HashSet::new(),
             leave_generation: HashMap::new(),
             subject_generation: HashMap::new(),
-        revoke_sequence: 0,
-        pending_revokes: HashMap::new(),
+            revoke_sequence: 0,
+            pending_revokes: HashMap::new(),
             group_info_queue: std::collections::VecDeque::new(),
             group_info_tries: HashMap::new(),
             group_info_retry: Vec::new(),
