@@ -5892,8 +5892,12 @@ impl App {
             self.paste_was_focused = false;
         }
         let (paste, text, released, focused, command) = ctx.input(|input| {
+            let text = input.events.iter().any(|event| matches!(event, egui::Event::Paste(_)));
+            let ordinary_v = self.ordinary_v_down || input.events.iter().any(|event| {
+                matches!(event, egui::Event::Key { key: egui::Key::V, pressed: true, .. })
+            });
             (
-                wants_paste(input)
+                text || (!ordinary_v && (wants_paste(input)
                     || input.events.iter().any(|event| {
                         matches!(
                             event,
@@ -5915,11 +5919,8 @@ impl App {
                                     }
                                 )
                             })
-                    }),
-                input
-                    .events
-                    .iter()
-                    .any(|event| matches!(event, egui::Event::Paste(_))),
+                    }))),
+                text,
                 input.events.iter().any(|event| {
                     matches!(
                         event,
@@ -7058,6 +7059,29 @@ mod tests {
         assert_eq!(clipboard_frame(&mut app, &ctx, vec![press], true), 0);
         assert_eq!(clipboard_frame(&mut app, &ctx, vec![release], true), 0);
         assert!(app.pending.is_empty());
+    }
+
+    /// Adding Control before an ordinary V release never reads images or copied files.
+    #[test]
+    fn typing_v_then_control_before_release_never_stages_attachments() {
+        for same_frame in [true, false] {
+            for files in [None, Some(vec![PathBuf::from("unrelated-fixture.png")])] {
+                let (mut app, ctx) = clipboard_app();
+                let mut press = paste_release();
+                if let egui::Event::Key { pressed, modifiers, .. } = &mut press {
+                    *pressed = true;
+                    *modifiers = egui::Modifiers::NONE;
+                }
+                let events = if same_frame {
+                    vec![press, paste_release()]
+                } else {
+                    assert_eq!(clipboard_frame_with_files(&mut app, &ctx, vec![press], files.clone(), true), (0, 0));
+                    vec![paste_release()]
+                };
+                assert_eq!(clipboard_frame_with_files(&mut app, &ctx, events, files, true), (0, 0));
+                assert!(app.pending.is_empty());
+            }
+        }
     }
 
     #[test]
