@@ -465,7 +465,7 @@ msgid ""
 msgid_plural ""
 "This removes the selected messages from this computer. Your phone will not "
 "send them again. This cannot be undone."
-msgstr[0] "这将从此计算机删除所选消息。手机不会再次发送这些消息。此操作无法撤销。"
+msgstr[0] "这将从此计算机删除所选消息。手机不会再次发送所选消息。此操作无法撤销。"
 
 #: src/ui/dialogs.rs:1123
 #, rust-format
