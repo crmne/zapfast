@@ -1470,7 +1470,7 @@ impl App {
             ) if chat == id
         ) || matches!(
             &self.dialog,
-            Some(Dialog::Forward { chat, .. } | Dialog::ConfirmDeleteMessage { chat, .. })
+            Some(Dialog::Forward { chat, .. } | Dialog::ConfirmDeleteMessage { chat, .. } | Dialog::ConfirmDeleteSelection { chat, .. })
                 if chat == id
         ) {
             self.dialog = None;
@@ -4124,13 +4124,6 @@ impl App {
                 }
             }
             Action::DeleteForEveryone { chat, id } => {
-                if let Some(message) = self
-                    .conversations
-                    .get_mut(&chat)
-                    .and_then(|conversation| conversation.message_mut(&id))
-                {
-                    message.content = Content::Revoked;
-                }
                 self.backend.send(Command::Revoke { chat, id });
             }
             Action::DeleteForMe { chat, id } => {

@@ -1637,6 +1637,7 @@ struct View<'a> {
     connected: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
     interactive_pending: &'a HashSet<(ChatId, String)>,
+    selecting: bool,
     anchor: Option<&'a str>,
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
@@ -1699,6 +1700,7 @@ fn shows_sender_pictures(chat: &Chat) -> bool {
     chat.is_group()
 }
 
+/// Draws virtualized transcript rows and records selection, scrolling and message actions.
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     // Taken up front: `names_or` below borrows the rest of `app` for the
@@ -1740,6 +1742,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         interactive_pending: &app.interactive_sending,
+        selecting: app.selection.as_ref().is_some_and(|(id, _)| id == &chat.id),
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
         } else {
@@ -2108,18 +2111,71 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 ui.max_rect().x_range(),
                                 response.rect.y_range(),
                             );
-                            let pick = ui.interact(
-                                row,
-                                bubble_id(&chat.id, &message.id).with("pick"),
-                                Sense::click_and_drag(),
-                            );
+                            let pick_id = bubble_id(&chat.id, &message.id).with("pick");
+                            let pick = ui.interact(row, pick_id, Sense::click_and_drag());
                             if pick.drag_started() {
                                 actions.push(Action::SweepMessages {
                                     anchor: message.id.clone(),
                                     to: message.id.clone(),
                                 });
                             }
-                            if response.clicked() || pick.clicked() {
+                            pick.widget_info(|| {
+                                egui::WidgetInfo::selected(
+                                    egui::WidgetType::SelectableLabel,
+                                    ui.is_enabled(),
+                                    selected.contains(&message.id),
+                                    crate::i18n::gettext(
+                                        view.locale,
+                                        "Message from {sender} at {time}",
+                                    )
+                                    .replace(
+                                        "{sender}",
+                                        &(view.names_or)(
+                                            &message.sender,
+                                            message.sender_name.as_deref(),
+                                        ),
+                                    )
+                                    .replace("{time}", &crate::util::clock(message.timestamp)),
+                                )
+                            });
+                            theme::reveal_focus(&pick);
+                            theme::focus_outline(ui, pick.id, row, 6.0);
+                            theme::focus_outline(ui, response.id, row, 6.0);
+                            let keyboard_clicked = (pick.clicked() && pick.has_focus()
+                                || response.clicked() && response.has_focus())
+                                && !ui.input(|input| input.pointer.any_click());
+                            if pick.has_focus() || response.has_focus() {
+                                view.keyboard_navigation.set(true);
+                                if pick.gained_focus() && !ui.clip_rect().contains_rect(row) {
+                                    ui.scroll_to_rect_animation(
+                                        row,
+                                        None,
+                                        egui::style::ScrollAnimation::none(),
+                                    );
+                                }
+                            }
+                            let popup = egui::Popup::menu(&pick)
+                                .open_memory(if pick.secondary_clicked() || keyboard_clicked {
+                                    Some(egui::SetOpenCommand::Bool(true))
+                                } else {
+                                    None
+                                })
+                                .frame(widgets::menu_frame(&palette));
+                            let popup = if keyboard_clicked {
+                                popup.at_position(row.left_top() + vec2(12.0, 8.0))
+                            } else {
+                                popup.at_pointer_fixed()
+                            };
+                            popup.show(|ui| {
+                                selection_menu(
+                                    ui,
+                                    &view,
+                                    &conversation.messages,
+                                    selected,
+                                    &mut actions,
+                                );
+                            });
+                            if !keyboard_clicked && (response.clicked() || pick.clicked()) {
                                 let shift = ui.input(|input| input.modifiers.shift);
                                 actions.push(if shift {
                                     Action::SelectRange(message.id.clone())
@@ -3261,6 +3317,9 @@ fn bubble_frame(
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
     let bubble = early.unwrap_or_else(|| ui.interact(inner.response.rect, bubble_id, Sense::CLICK));
+    if view.selecting {
+        return bubble;
+    }
     theme::reveal_focus(&bubble);
     theme::focus_outline(ui, bubble.id, inner.response.rect, 10.0);
     if ui.ctx().data(|data| {
@@ -3949,6 +4008,55 @@ fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> 
         list.push(mine);
     }
     list
+}
+
+/// Checks every selected message's revoke eligibility with one scan of loaded history.
+fn selection_can_revoke(messages: &[Message], selected: &[String], now: i64) -> bool {
+    if selected.is_empty() {
+        return false;
+    }
+    let mut remaining: std::collections::HashSet<&str> =
+        selected.iter().map(String::as_str).collect();
+    for message in messages {
+        if remaining.remove(message.id.as_str()) {
+            if !message.from_me
+                || matches!(message.content, Content::Revoked)
+                || now - message.timestamp > crate::app::REVOKE_WINDOW.as_secs() as i64
+            {
+                return false;
+            }
+            if remaining.is_empty() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Draws batch actions for the selected messages, including separate deletion choices.
+fn selection_menu(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    messages: &[Message],
+    selected: &[String],
+    actions: &mut Vec<Action>,
+) {
+    for (label, for_everyone, enabled) in [
+        (
+            "Delete for everyone",
+            true,
+            selection_can_revoke(messages, selected, view.now),
+        ),
+        ("Delete for me", false, !selected.is_empty()),
+    ] {
+        if widgets::menu_item_enabled(ui, &view.palette, Some(Icon::Trash), label, enabled) {
+            actions.push(Action::ShowDialog(Dialog::ConfirmDeleteSelection {
+                chat: view.chat.id.clone(),
+                messages: selected.to_vec(),
+                for_everyone,
+            }));
+        }
+    }
 }
 
 fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
@@ -7065,6 +7173,59 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_revoke_requires_every_selected_message_to_be_eligible() {
+        let now = crate::util::now();
+        let first = Message {
+            id: "first".into(),
+            chat: "synthetic-chat".into(),
+            sender: "me".into(),
+            sender_name: None,
+            from_me: true,
+            timestamp: now,
+            content: Content::text("Synthetic message"),
+            status: Delivery::Sent,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        let mut second = first.clone();
+        second.id = "second".into();
+        let selected = vec!["first".into(), "second".into()];
+        assert!(selection_can_revoke(
+            &[first.clone(), second.clone()],
+            &selected,
+            now
+        ));
+        second.from_me = false;
+        assert!(!selection_can_revoke(
+            &[first.clone(), second.clone()],
+            &selected,
+            now
+        ));
+        second.from_me = true;
+        second.timestamp = now - crate::app::REVOKE_WINDOW.as_secs() as i64 - 1;
+        assert!(!selection_can_revoke(
+            &[first.clone(), second.clone()],
+            &selected,
+            now
+        ));
+        second.timestamp = now;
+        second.content = Content::Revoked;
+        assert!(!selection_can_revoke(
+            &[first.clone(), second],
+            &selected,
+            now
+        ));
+        assert!(!selection_can_revoke(&[first], &selected, now));
+        assert!(!selection_can_revoke(&[], &[], now));
+    }
 
     #[test]
     fn sender_pictures_show_in_groups_only() {
