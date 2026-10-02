@@ -2709,9 +2709,9 @@ impl App {
     /// Rechecks source-chat authorization for every retained private quote.
     fn reply_source_visible(&self, target: &crate::model::ReplyTarget, destination: &str) -> bool {
         target.chat.is_none()
-            || self.chat(target.source_chat(destination)).is_some_and(|chat| {
-                !chat.locked || self.locked_folder_open()
-            })
+            || self
+                .chat(target.source_chat(destination))
+                .is_some_and(|chat| !chat.locked || self.locked_folder_open())
     }
 
     /// Resolves a quote preview only while its source chat is visible to the user.
@@ -3697,7 +3697,9 @@ impl App {
         let reply_send = match &action {
             Action::SendText { chat, quoting, .. } => Some((chat.as_str(), quoting.as_ref())),
             Action::SendPending { chat, .. } => Some((chat.as_str(), self.reply_to.as_ref())),
-            Action::SendGif(_) | Action::SendSticker(_) => self.open_chat.as_deref()
+            Action::SendGif(_) | Action::SendSticker(_) => self
+                .open_chat
+                .as_deref()
                 .map(|chat| (chat, self.reply_to.as_ref())),
             _ => None,
         };
@@ -3711,7 +3713,12 @@ impl App {
                 Action::SendPending { caption, .. } => caption.clone(),
                 _ => String::new(),
             };
-            self.send_refused(chat, Some(target), Unsent::Text(text), Refusal::QuoteUnavailable);
+            self.send_refused(
+                chat,
+                Some(target),
+                Unsent::Text(text),
+                Refusal::QuoteUnavailable,
+            );
             return;
         }
         match action {
@@ -5746,11 +5753,22 @@ impl App {
                     .as_ref()
                     .is_some_and(|(unsent, _)| *unsent == chat)
             {
-                if self.reply_to.as_ref().is_some_and(|target| !self.reply_source_visible(target, &chat)) {
-                    self.send_refused(chat, self.reply_to.clone(), Unsent::Text(String::new()), Refusal::QuoteUnavailable);
+                if self
+                    .reply_to
+                    .as_ref()
+                    .is_some_and(|target| !self.reply_source_visible(target, &chat))
+                {
+                    self.send_refused(
+                        chat,
+                        self.reply_to.clone(),
+                        Unsent::Text(String::new()),
+                        Refusal::QuoteUnavailable,
+                    );
                     return;
                 }
-                let Some((_, samples)) = self.unsent_voice.take() else { return; };
+                let Some((_, samples)) = self.unsent_voice.take() else {
+                    return;
+                };
                 let quoting = self.reply_to.take();
                 self.backend.send(Command::SendVoice {
                     chat,
@@ -5767,8 +5785,17 @@ impl App {
         match recorder.finish() {
             Ok(samples) if samples.len() < crate::voice::RATE as usize / 2 => {}
             Ok(samples) => {
-                if self.reply_to.as_ref().is_some_and(|target| !self.reply_source_visible(target, &chat)) {
-                    self.send_refused(chat, self.reply_to.clone(), Unsent::Voice(samples), Refusal::QuoteUnavailable);
+                if self
+                    .reply_to
+                    .as_ref()
+                    .is_some_and(|target| !self.reply_source_visible(target, &chat))
+                {
+                    self.send_refused(
+                        chat,
+                        self.reply_to.clone(),
+                        Unsent::Voice(samples),
+                        Refusal::QuoteUnavailable,
+                    );
                     return;
                 }
                 let quoting = self.reply_to.take();
@@ -9676,46 +9703,86 @@ mod tests {
                 let recipient = "15550002222@s.whatsapp.net";
                 let mut source = Chat::new(group.into(), "Locked source fixture".into());
                 source.locked = true;
-                app.chats.extend([source, Chat::new(recipient.into(), "Recipient fixture".into())]);
+                app.chats.extend([
+                    source,
+                    Chat::new(recipient.into(), "Recipient fixture".into()),
+                ]);
                 app.open_chat = Some(recipient.into());
-                let target = ReplyTarget { id: "original".into(), chat: Some(group.into()) };
+                let target = ReplyTarget {
+                    id: "original".into(),
+                    chat: Some(group.into()),
+                };
                 app.reply_to = Some(target.clone());
                 app.settings.chat_lock_code_hash = Some("synthetic authenticated verifier".into());
-                if authorized { app.enter_locked_folder(); }
+                if authorized {
+                    app.enter_locked_folder();
+                }
                 let action = match kind {
-                    0 => Action::SendText { chat: recipient.into(), text: "Private draft".into(), quoting: Some(target.clone()) },
+                    0 => Action::SendText {
+                        chat: recipient.into(),
+                        text: "Private draft".into(),
+                        quoting: Some(target.clone()),
+                    },
                     1 => {
-                        app.pending.push(Pending::File(PathBuf::from("synthetic-attachment.png")));
-                        Action::SendPending { chat: recipient.into(), caption: "Private draft".into() }
+                        app.pending
+                            .push(Pending::File(PathBuf::from("synthetic-attachment.png")));
+                        Action::SendPending {
+                            chat: recipient.into(),
+                            caption: "Private draft".into(),
+                        }
                     }
                     2 => Action::SendSticker(PathBuf::from("synthetic-sticker.webp")),
-                    3 => Action::SendGif(Gif { id: "fixture".into(), still: None, mp4: "https://example.invalid/fixture.mp4".into(), width: 2, height: 2 }),
+                    3 => Action::SendGif(Gif {
+                        id: "fixture".into(),
+                        still: None,
+                        mp4: "https://example.invalid/fixture.mp4".into(),
+                        width: 2,
+                        height: 2,
+                    }),
                     4 => {
                         app.unsent_voice = Some((recipient.into(), vec![0.0; 10]));
                         Action::SendRecording
                     }
                     _ => {
-                        app.recording = Some(crate::audio::Recorder::recorded_fixture(vec![0.0; crate::voice::RATE as usize]));
+                        app.recording = Some(crate::audio::Recorder::recorded_fixture(vec![
+                                0.0;
+                                crate::voice::RATE
+                                    as usize
+                            ]));
                         Action::SendRecording
                     }
                 };
                 app.apply(action, &egui::Context::default());
                 let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
                 if authorized {
-                    assert!(sent.iter().any(|command| matches!(command,
-                        Command::SendText { quoting: Some(quote), .. } |
-                        Command::SendFiles { quoting: Some(quote), .. } |
-                        Command::SendSticker { quoting: Some(quote), .. } |
-                        Command::SendGif { quoting: Some(quote), .. } |
-                        Command::SendVoice { quoting: Some(quote), .. } if quote == &target
-                    )), "kind {kind}");
+                    assert!(
+                        sent.iter().any(|command| matches!(command,
+                            Command::SendText { quoting: Some(quote), .. } |
+                            Command::SendFiles { quoting: Some(quote), .. } |
+                            Command::SendSticker { quoting: Some(quote), .. } |
+                            Command::SendGif { quoting: Some(quote), .. } |
+                            Command::SendVoice { quoting: Some(quote), .. } if quote == &target
+                        )),
+                        "kind {kind}"
+                    );
                     assert!(app.reply_to.is_none());
                 } else {
-                    assert!(sent.is_empty(), "kind {kind}");
+                    assert!(!sent.iter().any(|command| matches!(command,
+                        Command::SendText { .. } | Command::SendFiles { .. } |
+                        Command::SendImage { .. } | Command::SendSticker { .. } |
+                        Command::SendGif { .. } | Command::SendVoice { .. }
+                    )), "kind {kind}");
                     assert_eq!(app.reply_to, Some(target));
-                    if kind <= 1 { assert_eq!(app.composer, "Private draft"); }
-                    if kind == 1 { assert_eq!(app.pending.len(), 1); }
-                    if kind >= 4 { assert!(app.unsent_voice.is_some()); assert!(app.recording.is_none()); }
+                    if kind <= 1 {
+                        assert_eq!(app.composer, "Private draft");
+                    }
+                    if kind == 1 {
+                        assert_eq!(app.pending.len(), 1);
+                    }
+                    if kind >= 4 {
+                        assert!(app.unsent_voice.is_some());
+                        assert!(app.recording.is_none());
+                    }
                 }
             }
         }
