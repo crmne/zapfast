@@ -2075,7 +2075,7 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Drains backend events into UI state, checking request ownership before applying results.
+    /// Drains backend events into interface state and queues follow-up actions.
     fn handle_events(&mut self) {
         for event in self.backend.poll() {
             match event {
