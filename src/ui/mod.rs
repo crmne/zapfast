@@ -75,10 +75,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     } else {
         NarrowView::Detail
     });
-    match narrow_slide(ctx, view) {
+    let slide = narrow_slide(ctx, view);
+    match slide {
         Some(progress) => slide_in(app, ui, list_only, progress),
         None => main_view(app, ui, list_only),
     }
+    slide_shield(ctx, narrow, slide.is_some());
     focus::finish(ctx, main_navigation);
     update::show(app, ctx);
     picker::show(app, ctx);
@@ -185,6 +187,31 @@ fn slide_in(app: &mut App, ui: &mut egui::Ui, list_only: bool, progress: f32) {
             |ui| main_view(app, ui, list_only),
         );
     });
+}
+
+/// A slide moves what is drawn but not where presses land, so while one
+/// runs an empty area over the window takes the pointer: nothing is clicked,
+/// hovered or scrolled where it is not drawn. A narrow window keeps the area
+/// between slides, taking nothing, because egui lays a new area out unseen
+/// and without input in its first frame.
+fn slide_shield(ctx: &egui::Context, narrow: bool, sliding: bool) {
+    if !narrow {
+        return;
+    }
+    let rect = ctx.content_rect();
+    egui::Area::new(egui::Id::new("narrow-slide-shield"))
+        .order(egui::Order::Middle)
+        .interactable(sliding)
+        .constrain(false)
+        .fixed_pos(rect.min)
+        .show(ctx, |ui| {
+            let sense = if sliding {
+                egui::Sense::click_and_drag()
+            } else {
+                egui::Sense::hover()
+            };
+            ui.allocate_rect(rect, sense);
+        });
 }
 
 /// Below this window width the chat list and the open chat take turns at the
@@ -1047,6 +1074,80 @@ mod idle_tests {
         assert_eq!(
             app.scroll_chat_into_view.as_deref(),
             Some(alice.id.as_str())
+        );
+    }
+
+    #[test]
+    fn a_sliding_chat_takes_no_presses_until_it_lands() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let time = std::cell::Cell::new(0.0);
+        let run = |app: &mut App, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time.get()),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(480.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            output.textures_delta.clear();
+        };
+        let click = |app: &mut App, pos: egui::Pos2| {
+            app.actions.clear();
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            run(app, vec![egui::Event::PointerMoved(pos)]);
+            run(app, vec![press(true)]);
+            run(app, vec![press(false)]);
+            run(app, vec![egui::Event::PointerGone]);
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::CloseChat))
+        };
+        run(&mut app, Vec::new());
+        // Open the chat and hold its slide halfway in.
+        app.open_chat = Some(chat.id.clone());
+        time.set(1.0);
+        run(&mut app, Vec::new());
+        time.set(1.0 + SLIDE_SECONDS / 2.0);
+        run(&mut app, Vec::new());
+        let header = ctx
+            .data(|data| data.get_temp::<egui::Rect>(conversation::header_row_id()))
+            .expect("the conversation header is drawn");
+        let gap = ctx.global_style().spacing.item_spacing.x;
+        // Where Back ends up, and where it is drawn halfway in.
+        let landed = egui::pos2(
+            header.right() - 2.0 * (30.0 + gap) - 15.0,
+            header.center().y,
+        );
+        let eased = 1.0 - 0.5_f32.powi(3);
+        let drawn = landed + egui::vec2((1.0 - eased) * 480.0, 0.0);
+        assert!(!click(&mut app, landed), "not drawn there yet");
+        assert!(!click(&mut app, drawn), "still moving");
+        // Once it has landed, Back takes the press.
+        time.set(2.0);
+        run(&mut app, Vec::new());
+        assert!(
+            click(&mut app, landed),
+            "Back works once the chat is in place"
         );
     }
 }
