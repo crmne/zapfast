@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:17-0300\n"
+"POT-Creation-Date: 2026-10-02 10:45-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -197,12 +197,12 @@ msgid "Add to favorites"
 msgstr "添加到收藏"
 
 #: src/ui/chats.rs:1150 src/ui/chats.rs:1526 src/ui/conversation.rs:222
-#: src/ui/dialogs.rs:1234 src/ui/dialogs.rs:1752
+#: src/ui/dialogs.rs:1241 src/ui/dialogs.rs:1759
 msgid "Leave group"
 msgstr "退出群组"
 
 #: src/ui/chats.rs:1151 src/ui/chats.rs:1524 src/ui/conversation.rs:220
-#: src/ui/dialogs.rs:1232 src/ui/dialogs.rs:1750
+#: src/ui/dialogs.rs:1239 src/ui/dialogs.rs:1757
 msgid "Leave channel"
 msgstr "退出频道"
 
@@ -440,8 +440,8 @@ msgstr "描述它的表情，例如 😂 或 ❤️"
 msgid "Send"
 msgstr "发送"
 
-#: src/ui/dialogs.rs:1081 src/ui/dialogs.rs:1262 src/ui/settings.rs:910
-#: src/ui/settings.rs:1446 src/ui/lock.rs:142
+#: src/ui/dialogs.rs:1081 src/ui/dialogs.rs:1183 src/ui/dialogs.rs:1269
+#: src/ui/settings.rs:910 src/ui/settings.rs:1446 src/ui/lock.rs:142
 msgid "Cancel"
 msgstr "取消"
 
@@ -477,78 +477,90 @@ msgid_plural ""
 "selected messages. This cannot be undone."
 msgstr[0] "此聊天中的所有人将看到“此消息已删除”，替代所选消息。此操作无法撤销。"
 
-#: src/ui/dialogs.rs:1216
+#: src/ui/dialogs.rs:1149
+msgid "Delete for everyone?"
+msgstr "为所有人删除？"
+
+#: src/ui/dialogs.rs:1151
+msgid "Delete for me?"
+msgstr "为我删除？"
+
+#: src/ui/dialogs.rs:1167
+msgid "Delete"
+msgstr "删除"
+
+#: src/ui/dialogs.rs:1223
 msgid "Leave this channel?"
 msgstr "退出此频道？"
 
-#: src/ui/dialogs.rs:1218
+#: src/ui/dialogs.rs:1225
 msgid "Leave this group?"
 msgstr "退出此群组？"
 
-#: src/ui/dialogs.rs:1225
+#: src/ui/dialogs.rs:1232
 msgid ""
 "You will not receive new messages. The local history stays on this computer."
 msgstr "你将不再收到新消息。本机上的历史记录会保留。"
 
-#: src/ui/dialogs.rs:1245
+#: src/ui/dialogs.rs:1252
 msgid "Leave channel and archive"
 msgstr "退出频道并归档"
 
-#: src/ui/dialogs.rs:1247
+#: src/ui/dialogs.rs:1254
 msgid "Leave group and archive"
 msgstr "退出群组并归档"
 
-#: src/ui/dialogs.rs:1472
+#: src/ui/dialogs.rs:1479
 msgid "Also save to your phone's contacts"
 msgstr "同时保存到手机联系人"
 
-#: src/ui/dialogs.rs:1537
+#: src/ui/dialogs.rs:1544
 msgid "Group"
 msgstr "群组"
 
-#: src/ui/dialogs.rs:1539
+#: src/ui/dialogs.rs:1546
 msgid "Channel"
 msgstr "频道"
 
-#: src/ui/dialogs.rs:1541
+#: src/ui/dialogs.rs:1548
 msgid "Contact"
 msgstr "联系人"
 
-#: src/ui/dialogs.rs:1586
+#: src/ui/dialogs.rs:1593
 msgid "Edit group name"
 msgstr "编辑群组名称"
 
-#: src/ui/dialogs.rs:1716
+#: src/ui/dialogs.rs:1723
 msgid "Saving…"
 msgstr "正在保存…"
 
-#: src/ui/dialogs.rs:1726
+#: src/ui/dialogs.rs:1733
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} 位成员"
 
-#: src/ui/dialogs.rs:1986
+#: src/ui/dialogs.rs:1993
 msgid "Change group photo"
 msgstr "更换群组头像"
 
-#: src/ui/dialogs.rs:1992
+#: src/ui/dialogs.rs:1999
 msgid "Change photo"
 msgstr "更换头像"
 
-#: src/ui/dialogs.rs:1993
+#: src/ui/dialogs.rs:2000
 msgid "Remove photo"
 msgstr "移除头像"
 
-#: src/ui/dialogs.rs:2033
+#: src/ui/dialogs.rs:2040
 msgid "Group name"
 msgstr "群组名称"
 
-#: src/ui/dialogs.rs:2076
+#: src/ui/dialogs.rs:2083
 msgid "Save name (Enter)"
 msgstr "保存名称（Enter）"
 
-#: src/ui/dialogs.rs:2088
+#: src/ui/dialogs.rs:2095
 msgid "Cancel (Escape)"
 msgstr "取消（Esc）"
 

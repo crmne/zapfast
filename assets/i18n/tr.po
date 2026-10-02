@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:17-0300\n"
+"POT-Creation-Date: 2026-10-02 10:45-0300\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -496,6 +496,18 @@ msgid_plural ""
 "selected messages. This cannot be undone."
 msgstr[0] "Bu sohbetteki herkes seçilen mesajın yerine \"Bu mesaj silindi\" ifadesini görür. Bu işlem geri alınamaz."
 msgstr[1] "Bu sohbetteki herkes seçilen mesajların yerine \"Bu mesaj silindi\" ifadesini görür. Bu işlem geri alınamaz."
+
+#: src/ui/dialogs.rs:1149
+msgid "Delete for everyone?"
+msgstr "Herkesten silinsin mi?"
+
+#: src/ui/dialogs.rs:1151
+msgid "Delete for me?"
+msgstr "Benden silinsin mi?"
+
+#: src/ui/dialogs.rs:1167
+msgid "Delete"
+msgstr "Sil"
 
 #: src/ui/dialogs.rs:1119
 msgid "Leave this channel?"

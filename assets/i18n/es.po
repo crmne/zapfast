@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:17-0300\n"
+"POT-Creation-Date: 2026-10-02 10:45-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Spanish\n"
@@ -197,12 +197,12 @@ msgid "Add to favorites"
 msgstr "Añadir a favoritos"
 
 #: src/ui/chats.rs:1150 src/ui/chats.rs:1526 src/ui/conversation.rs:222
-#: src/ui/dialogs.rs:1234 src/ui/dialogs.rs:1752
+#: src/ui/dialogs.rs:1241 src/ui/dialogs.rs:1759
 msgid "Leave group"
 msgstr "Salir del grupo"
 
 #: src/ui/chats.rs:1151 src/ui/chats.rs:1524 src/ui/conversation.rs:220
-#: src/ui/dialogs.rs:1232 src/ui/dialogs.rs:1750
+#: src/ui/dialogs.rs:1239 src/ui/dialogs.rs:1757
 msgid "Leave channel"
 msgstr "Salir del canal"
 
@@ -455,8 +455,8 @@ msgstr "Emojis que lo describan, como 😂 o ❤️"
 msgid "Send"
 msgstr "Enviar"
 
-#: src/ui/dialogs.rs:1081 src/ui/dialogs.rs:1262 src/ui/settings.rs:910
-#: src/ui/settings.rs:1446 src/ui/lock.rs:142
+#: src/ui/dialogs.rs:1081 src/ui/dialogs.rs:1183 src/ui/dialogs.rs:1269
+#: src/ui/settings.rs:910 src/ui/settings.rs:1446 src/ui/lock.rs:142
 msgid "Cancel"
 msgstr "Cancelar"
 
@@ -494,81 +494,93 @@ msgid_plural ""
 msgstr[0] "Todos en este chat verán \"Este mensaje fue eliminado\" en lugar del mensaje seleccionado. No se puede deshacer."
 msgstr[1] "Todos en este chat verán \"Este mensaje fue eliminado\" en lugar de los mensajes seleccionados. No se puede deshacer."
 
-#: src/ui/dialogs.rs:1216
+#: src/ui/dialogs.rs:1149
+msgid "Delete for everyone?"
+msgstr "¿Eliminar para todos?"
+
+#: src/ui/dialogs.rs:1151
+msgid "Delete for me?"
+msgstr "¿Eliminar para mí?"
+
+#: src/ui/dialogs.rs:1167
+msgid "Delete"
+msgstr "Eliminar"
+
+#: src/ui/dialogs.rs:1223
 msgid "Leave this channel?"
 msgstr "¿Salir de este canal?"
 
-#: src/ui/dialogs.rs:1218
+#: src/ui/dialogs.rs:1225
 msgid "Leave this group?"
 msgstr "¿Salir de este grupo?"
 
-#: src/ui/dialogs.rs:1225
+#: src/ui/dialogs.rs:1232
 msgid ""
 "You will not receive new messages. The local history stays on this computer."
 msgstr ""
 "No vas a recibir mensajes nuevos. El historial local queda en esta "
 "computadora."
 
-#: src/ui/dialogs.rs:1245
+#: src/ui/dialogs.rs:1252
 msgid "Leave channel and archive"
 msgstr "Salir del canal y archivar"
 
-#: src/ui/dialogs.rs:1247
+#: src/ui/dialogs.rs:1254
 msgid "Leave group and archive"
 msgstr "Salir del grupo y archivar"
 
-#: src/ui/dialogs.rs:1472
+#: src/ui/dialogs.rs:1479
 msgid "Also save to your phone's contacts"
 msgstr "Guardar también en los contactos de tu teléfono"
 
-#: src/ui/dialogs.rs:1537
+#: src/ui/dialogs.rs:1544
 msgid "Group"
 msgstr "Grupo"
 
-#: src/ui/dialogs.rs:1539
+#: src/ui/dialogs.rs:1546
 msgid "Channel"
 msgstr "Canal"
 
-#: src/ui/dialogs.rs:1541
+#: src/ui/dialogs.rs:1548
 msgid "Contact"
 msgstr "Contacto"
 
-#: src/ui/dialogs.rs:1586
+#: src/ui/dialogs.rs:1593
 msgid "Edit group name"
 msgstr "Editar el nombre del grupo"
 
-#: src/ui/dialogs.rs:1716
+#: src/ui/dialogs.rs:1723
 msgid "Saving…"
 msgstr "Guardando…"
 
-#: src/ui/dialogs.rs:1726
+#: src/ui/dialogs.rs:1733
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} miembro"
 msgstr[1] "{} miembros"
 
-#: src/ui/dialogs.rs:1986
+#: src/ui/dialogs.rs:1993
 msgid "Change group photo"
 msgstr "Cambiar la foto del grupo"
 
-#: src/ui/dialogs.rs:1992
+#: src/ui/dialogs.rs:1999
 msgid "Change photo"
 msgstr "Cambiar foto"
 
-#: src/ui/dialogs.rs:1993
+#: src/ui/dialogs.rs:2000
 msgid "Remove photo"
 msgstr "Quitar foto"
 
-#: src/ui/dialogs.rs:2033
+#: src/ui/dialogs.rs:2040
 msgid "Group name"
 msgstr "Nombre del grupo"
 
-#: src/ui/dialogs.rs:2076
+#: src/ui/dialogs.rs:2083
 msgid "Save name (Enter)"
 msgstr "Guardar nombre (Intro)"
 
-#: src/ui/dialogs.rs:2088
+#: src/ui/dialogs.rs:2095
 msgid "Cancel (Escape)"
 msgstr "Cancelar (Escape)"
 

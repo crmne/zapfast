@@ -4171,12 +4171,22 @@ mod tests {
             let mut app = app();
             app.locale = crate::i18n::Locale::PortugueseBrazil;
             app.dialog = Some(crate::model::Dialog::ConfirmDeleteMessage {
-                chat: SAMPLES[0].id.to_owned(), message: "fixture".into(), for_everyone,
+                chat: SAMPLES[0].id.to_owned(),
+                message: "fixture".into(),
+                for_everyone,
             });
             let ctx = egui::Context::default();
             app.attach(&ctx);
             let labels = accessible_labels(&mut app, &ctx);
-            for expected in [if for_everyone { "Apagar para todos?" } else { "Apagar para mim?" }, "Apagar", "Cancelar"] {
+            for expected in [
+                if for_everyone {
+                    "Apagar para todos?"
+                } else {
+                    "Apagar para mim?"
+                },
+                "Apagar",
+                "Cancelar",
+            ] {
                 assert!(labels.iter().any(|label| label == expected), "{labels:?}");
             }
         }

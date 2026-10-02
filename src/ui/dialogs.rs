@@ -1177,7 +1177,14 @@ fn confirm_delete_messages(
                 app.actions.push(Action::CancelSelection);
                 app.actions.push(Action::CloseDialog);
             }
-            if theme::pill_button(ui, &palette, crate::i18n::gettext(app.locale, "Cancel").as_ref(), false).clicked() {
+            if theme::pill_button(
+                ui,
+                &palette,
+                crate::i18n::gettext(app.locale, "Cancel").as_ref(),
+                false,
+            )
+            .clicked()
+            {
                 app.actions.push(Action::CloseDialog);
             }
         });
