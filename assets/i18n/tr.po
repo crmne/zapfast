@@ -3,8 +3,9 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
-"POT-Creation-Date: 2026-09-29 15:36+0200\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-10-02 00:01-0300\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -389,6 +390,15 @@ msgstr "Duraklat"
 msgid "Play"
 msgstr "Oynat"
 
+#: src/ui/conversation.rs
+msgid "Back to the message (Esc)"
+msgstr "Mesaja geri dön (Esc)"
+
+
+#: src/ui/conversation.rs
+msgid "Fill the window"
+msgstr "Pencereyi kapla"
+
 #: src/ui/conversation.rs:6191
 msgid "Unmute"
 msgstr "Sesi aç"
@@ -542,6 +552,18 @@ msgstr "Sistemi takip et, Omarchy renklerinizi kullanır."
 #: src/ui/settings.rs:315
 msgid "Theme"
 msgstr "Tema"
+
+#: src/ui/settings.rs
+msgid "Font"
+msgstr "Yazı tipi"
+
+#: src/ui/settings.rs
+msgid ""
+"System is your desktop's interface font. Inter looks the same on every "
+"computer."
+msgstr ""
+"Sistem, masaüstünüzün arayüz yazı tipidir. Inter ise her bilgisayarda aynı "
+"görünür."
 
 #: src/ui/settings.rs:317
 msgid "Wallpaper"
@@ -1076,6 +1098,11 @@ msgstr ""
 "Gönderilmedi: Yanıtladığınız mesaj bu bilgisayarda mevcut değil. Alıntısız "
 "göndermek için yanıtı iptal edin."
 
+#: src/app.rs:3295 src/app.rs:11271
+#
+msgid "This message can no longer be edited"
+msgstr "Bu mesaj artık düzenlenemez"
+
 #: src/app.rs:4254
 msgid "Added to favorites"
 msgstr "Favorilere eklendi"
@@ -1109,6 +1136,20 @@ msgstr "Görsel kopyalandı"
 #: src/app.rs:5903 src/app.rs:5908
 msgid "Failed to copy image"
 msgstr "Görsel kopyalanamadı"
+
+#: src/app.rs:11274
+#
+msgid "Not connected to WhatsApp"
+msgstr "WhatsApp'a bağlı değil"
+
+#: src/app.rs:11278
+#
+msgid "Could not send the edit"
+msgstr "Düzenleme gönderilemedi"
+
+#: src/app.rs:11281
+msgid "The edit was sent but could not be saved locally"
+msgstr "Düzenleme gönderildi, ancak bu bilgisayara kaydedilemedi"
 
 #: src/ui/labels.rs:68
 msgctxt "label colour"
@@ -1513,23 +1554,3 @@ msgstr "15 dakika sonra"
 #: src/settings.rs:319
 msgid "After 1 hour"
 msgstr "1 saat sonra"
-
-#: src/ui/settings.rs
-msgid "Font"
-msgstr "Yazı tipi"
-
-#: src/ui/settings.rs
-msgid ""
-"System is your desktop's interface font. Inter looks the same on every "
-"computer."
-msgstr ""
-"Sistem, masaüstünüzün arayüz yazı tipidir. Inter ise her bilgisayarda aynı "
-"görünür."
-
-#: src/ui/conversation.rs
-msgid "Fill the window"
-msgstr "Pencereyi kapla"
-
-#: src/ui/conversation.rs
-msgid "Back to the message (Esc)"
-msgstr "Mesaja geri dön (Esc)"
