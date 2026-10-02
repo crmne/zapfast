@@ -9767,11 +9767,18 @@ mod tests {
                     );
                     assert!(app.reply_to.is_none());
                 } else {
-                    assert!(!sent.iter().any(|command| matches!(command,
-                        Command::SendText { .. } | Command::SendFiles { .. } |
-                        Command::SendImage { .. } | Command::SendSticker { .. } |
-                        Command::SendGif { .. } | Command::SendVoice { .. }
-                    )), "kind {kind}");
+                    assert!(
+                        !sent.iter().any(|command| matches!(
+                            command,
+                            Command::SendText { .. }
+                                | Command::SendFiles { .. }
+                                | Command::SendImage { .. }
+                                | Command::SendSticker { .. }
+                                | Command::SendGif { .. }
+                                | Command::SendVoice { .. }
+                        )),
+                        "kind {kind}"
+                    );
                     assert_eq!(app.reply_to, Some(target));
                     if kind <= 1 {
                         assert_eq!(app.composer, "Private draft");

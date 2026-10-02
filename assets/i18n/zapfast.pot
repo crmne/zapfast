@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 17:16-0300\n"
+"POT-Creation-Date: 2026-10-02 17:40-0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1055,46 +1055,46 @@ msgstr ""
 msgid "Could not use this image"
 msgstr ""
 
-#: src/app.rs:2966
+#: src/app.rs:2970
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr ""
 
-#: src/app.rs:2970
+#: src/app.rs:2974
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:4451
+#: src/app.rs:4482
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:4526
+#: src/app.rs:4557
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:4814 src/ui/labels.rs:237
+#: src/app.rs:4845 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
-#: src/app.rs:5458
+#: src/app.rs:5489
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5466
+#: src/app.rs:5497
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5579
+#: src/app.rs:5610
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/app.rs:6114
+#: src/app.rs:6173
 msgid "Copied image"
 msgstr ""
 
-#: src/app.rs:6117 src/app.rs:6122
+#: src/app.rs:6176 src/app.rs:6181
 msgid "Failed to copy image"
 msgstr ""
 
