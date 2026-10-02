@@ -3384,6 +3384,12 @@ impl Worker {
         let Ok(Some(mut share)) = self.archive.message(chat, &latest) else {
             return false;
         };
+        // The share's newest position may be newer than this event: a masked
+        // event that arrives out of order says nothing about positions the
+        // card already shows, so it must not claim the phone holds them.
+        if live_location_time(&share) > now {
+            return false;
+        }
         if share.content.live_location_over(share.timestamp, now) {
             return false;
         }
@@ -3779,6 +3785,7 @@ impl Worker {
         // that has no downloaded path.
         if let Some(existing) = &existing {
             message.content.keep_local_paths(&existing.content);
+            keep_live_location_notice(&mut message.content, existing);
         }
         if let Err(error) = self.archive.insert_message(&message, raw.as_deref()) {
             log::warn!("could not store a message: {error}");
@@ -4278,6 +4285,7 @@ impl Worker {
                         row.thumbnail = existing.thumbnail;
                         keep_raw = true;
                     }
+                    keep_live_location_notice(&mut row.content, &existing);
                 }
                 if let Err(error) = self
                     .archive
@@ -8183,6 +8191,31 @@ fn live_location_content(live: &wa::message::LiveLocationMessage, ended: bool) -
     }
 }
 
+/// Carries a stored live location's notice about the positions the phone
+/// keeps to itself into a replayed classification of the same message. A
+/// replay brings no newer readable position, so the notice stands; only an
+/// advancing position or a share the phone reports as finished takes it back.
+fn keep_live_location_notice(incoming: &mut Content, existing: &Message) {
+    if !matches!(incoming, Content::LiveLocation { .. }) {
+        return;
+    }
+    let stored = matches!(
+        existing.content,
+        Content::LiveLocation {
+            newer_on_phone: true,
+            ..
+        }
+    );
+    // `live_location_newer` needs the share, so decide before borrowing the
+    // incoming content's own fields.
+    let advances = live_location_newer(existing, incoming);
+    let ended = matches!(incoming, Content::LiveLocation { ended: true, .. });
+    let Content::LiveLocation { newer_on_phone, .. } = incoming else {
+        return;
+    };
+    *newer_on_phone = stored && !advances && !ended;
+}
+
 /// The last position of a share that history reports as finished.
 fn finished_live_location(last: &wa::message::LiveLocationMessage, sent: i64) -> Content {
     let mut content = live_location_content(last, true);
@@ -10424,6 +10457,144 @@ mod tests {
         let rows = worker.archive.messages(PEER, None, 10).unwrap();
         assert_eq!(rows.len(), 1, "the share keeps its one row");
         assert!(!marked(&worker));
+    }
+
+    /// A history replay of the position a share started with reclassifies
+    /// the row the archive already holds, and that fresh classification
+    /// carries no newer readable position. It must not take back the notice
+    /// that the phone keeps the newer ones; a share the phone reports as
+    /// finished does.
+    #[test]
+    fn a_history_replay_keeps_the_live_location_notice() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let start = 1_700_000_000;
+        let source = || MessageSource {
+            chat: PEER.parse().unwrap(),
+            sender: PEER.parse().unwrap(),
+            ..Default::default()
+        };
+        let (message, info) = live_position("start", start, 1, 51.0, None);
+        worker.ingest(&message, &info);
+        // The phone keeps the positions that follow to itself.
+        worker.ingest(
+            &masked_live_location(),
+            &live_location_info("masked", start + 60, source()),
+        );
+        let marked = |worker: &Worker| {
+            let share = worker.archive.message(PEER, "start").unwrap().unwrap();
+            match share.content {
+                Content::LiveLocation { newer_on_phone, .. } => newer_on_phone,
+                other => panic!("unexpected {other:?}"),
+            }
+        };
+        assert!(
+            marked(&worker),
+            "the card says where the newer positions are"
+        );
+        let replay = |worker: &mut Worker, finished: bool| {
+            worker.apply_history(
+                ParsedHistory {
+                    chats: vec![parse_conversation(wa::Conversation {
+                        id: PEER.into(),
+                        messages: vec![wa::HistorySyncMsg {
+                            message: MessageField::some(wa::WebMessageInfo {
+                                key: MessageField::some(wa::MessageKey {
+                                    id: Some("start".into()),
+                                    from_me: Some(false),
+                                    remote_jid: Some(PEER.into()),
+                                    ..Default::default()
+                                }),
+                                message: MessageField::some(wa::Message {
+                                    live_location_message: MessageField::some(
+                                        wa::message::LiveLocationMessage {
+                                            degrees_latitude: Some(51.0),
+                                            degrees_longitude: Some(-0.12),
+                                            sequence_number: Some(1),
+                                            time_offset: finished.then_some(600),
+                                            ..Default::default()
+                                        },
+                                    ),
+                                    ..Default::default()
+                                }),
+                                message_timestamp: Some(start as u64),
+                                final_live_location: if finished {
+                                    MessageField::some(wa::message::LiveLocationMessage {
+                                        degrees_latitude: Some(51.0),
+                                        degrees_longitude: Some(-0.12),
+                                        sequence_number: Some(1),
+                                        time_offset: Some(600),
+                                        ..Default::default()
+                                    })
+                                } else {
+                                    MessageField::default()
+                                },
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    })],
+                    push_names: Vec::new(),
+                    lids: Vec::new(),
+                    stickers: Vec::new(),
+                },
+                true,
+            );
+        };
+        // The same unfinished position, replayed.
+        replay(&mut worker, false);
+        assert!(
+            marked(&worker),
+            "a replay with no newer readable position keeps the notice"
+        );
+        // The same position, this time as the share's last one.
+        replay(&mut worker, true);
+        assert!(
+            !marked(&worker),
+            "a share the phone reports as finished takes the notice back"
+        );
+    }
+
+    /// A masked event that arrives out of order, older than the position the
+    /// card already shows, says nothing about the positions the phone keeps.
+    #[test]
+    fn an_out_of_order_masked_event_does_not_mark_the_card() {
+        const PEER: &str = super::receipt_tests::PEER;
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let start = crate::util::now() - 600;
+        let source = || MessageSource {
+            chat: PEER.parse().unwrap(),
+            sender: PEER.parse().unwrap(),
+            ..Default::default()
+        };
+        let ingest = |worker: &mut Worker, position: (Arc<wa::Message>, MessageInfo)| {
+            worker.ingest(&position.0, &position.1);
+        };
+        // Ada shares where she is, and this device reads both positions.
+        ingest(&mut worker, live_position("start", start, 1, 51.0, None));
+        ingest(
+            &mut worker,
+            live_position("p2", start + 300, 2, 51.1, Some("start")),
+        );
+        // A masked event from before that position arrives late.
+        worker.ingest(
+            &masked_live_location(),
+            &live_location_info("masked", start + 60, source()),
+        );
+        let share = worker.archive.message(PEER, "start").unwrap().unwrap();
+        assert!(
+            matches!(
+                share.content,
+                Content::LiveLocation {
+                    newer_on_phone: false,
+                    updated,
+                    ..
+                } if updated == start + 300
+            ),
+            "the card keeps the newer readable position: {:?}",
+            share.content
+        );
     }
 
     #[test]
