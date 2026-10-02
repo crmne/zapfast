@@ -5453,12 +5453,15 @@ fn rich_body(
             // Virtualized rows can move between frames. Align the cached bubble
             // to this frame's body before expanding its input target, so it
             // cannot cover a neighboring message after a layout change.
-            let bubble = ui.ctx().data(|data| data.get_temp::<Rect>(id.with("body")))
+            let bubble = ui
+                .ctx()
+                .data(|data| data.get_temp::<Rect>(id.with("body")))
                 .map(|previous| {
                     let mut bubble = bubble.translate(rect.min - previous.min);
                     bubble.max += rect.size() - previous.size();
                     bubble
-                }).unwrap_or(bubble);
+                })
+                .unwrap_or(bubble);
             if matches!(message.content, Content::Text { .. }) {
                 bubble.union(rect)
             } else {
