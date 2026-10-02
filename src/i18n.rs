@@ -219,6 +219,7 @@ mod tests {
         assert_eq!(gettext(Locale::German, missing), missing);
     }
 
+    /// Checks that private reply controls use dedicated translated catalog entries.
     #[test]
     fn private_reply_labels_use_their_own_catalog_entries() {
         for (locale, reply, unavailable) in [

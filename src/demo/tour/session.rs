@@ -201,6 +201,7 @@ pub fn respond(app: &mut App) {
     }
 }
 
+/// Resolves an explicit quote source rather than assuming it belongs to the destination chat.
 fn quote(app: &App, chat: &str, target: crate::model::ReplyTarget) -> Option<Quoted> {
     let row = app
         .conversations

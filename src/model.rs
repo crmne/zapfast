@@ -19,18 +19,21 @@ pub struct ReplyTarget {
 }
 
 impl ReplyTarget {
+    /// Returns the explicit group source, or the destination for an ordinary same-chat reply.
     pub fn source_chat<'a>(&'a self, destination: &'a str) -> &'a str {
         self.chat.as_deref().unwrap_or(destination)
     }
 }
 
 impl From<String> for ReplyTarget {
+    /// Wraps a same-chat message id without inventing a cross-chat source.
     fn from(id: String) -> Self {
         Self { id, chat: None }
     }
 }
 
 impl From<&str> for ReplyTarget {
+    /// Wraps a same-chat message id without inventing a cross-chat source.
     fn from(id: &str) -> Self {
         id.to_owned().into()
     }
@@ -39,6 +42,7 @@ impl From<&str> for ReplyTarget {
 impl std::ops::Deref for ReplyTarget {
     type Target = str;
 
+    /// Exposes the message id for existing transcript lookup helpers.
     fn deref(&self) -> &str {
         &self.id
     }
@@ -353,6 +357,7 @@ pub struct LinkPreview {
 }
 
 impl Message {
+    /// Returns a valid individual sender only for an incoming, non-revoked group message.
     pub fn private_reply_recipient(&self) -> Option<&str> {
         (!self.from_me
             && ChatKind::from_id(&self.chat) == ChatKind::Group
@@ -1765,6 +1770,7 @@ pub enum Action {
 
 #[cfg(test)]
 mod tests {
+    /// Checks compatibility with older archived quotes that omitted a source chat.
     #[test]
     fn archived_quotes_without_a_source_chat_remain_readable() {
         let old = r#"{"id":"original","sender":"sender@lid","sender_name":null,"summary":"Fixture","mentions":[]}"#;

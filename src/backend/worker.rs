@@ -3650,6 +3650,7 @@ impl Worker {
         }
     }
 
+    /// Parses a protocol quote, preserving its source chat separately from the containing conversation.
     fn quoted_of(&self, base: &wa::Message) -> Option<Quoted> {
         let context = context_of(base)?;
         let id = context.stanza_id.clone().filter(|id| !id.is_empty())?;
@@ -5865,6 +5866,7 @@ impl Worker {
         Ok(Some((context, shown)))
     }
 
+    /// Resolves an explicit quote source rather than assuming it belongs to the destination chat.
     #[cfg(test)]
     fn quote(
         &self,
@@ -5890,6 +5892,7 @@ impl Worker {
         });
     }
 
+    /// Dispatches composed text with its explicit quote target and restores it on refusal.
     fn send_text(
         &mut self,
         chat: ChatId,
@@ -6933,6 +6936,7 @@ impl Worker {
         });
     }
 
+    /// Dispatches selected files with the first attachment carrying the caption and quote.
     fn send_files(
         &mut self,
         chat: ChatId,
@@ -7011,6 +7015,7 @@ impl Worker {
         }
     }
 
+    /// Encodes and dispatches pasted image pixels while preserving the quote for a refused send.
     #[allow(clippy::too_many_arguments)]
     fn send_pasted_image(
         &mut self,
@@ -7160,6 +7165,7 @@ impl Worker {
         });
     }
 
+    /// Dispatches a sticker with its explicit quote and returns both on refusal.
     fn send_sticker(
         &mut self,
         chat: ChatId,
@@ -7208,6 +7214,7 @@ impl Worker {
         });
     }
 
+    /// Dispatches a selected GIF with its explicit quote and returns both on refusal.
     fn send_gif(&mut self, chat: ChatId, gif: Gif, quoting: Option<crate::model::ReplyTarget>) {
         let quote = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(quote) => quote,
@@ -8627,6 +8634,7 @@ fn parse_history(compressed: &[u8]) -> Result<ParsedHistory, String> {
     })
 }
 
+/// Converts supported protocol message content into local display types, retaining quoted source metadata.
 fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
     let mut messages = Vec::new();
     let mut revoked = Vec::new();
@@ -8940,6 +8948,7 @@ mod tests {
         );
     }
 
+    /// Builds a synthetic message carrying protocol quote context for parser regression tests.
     fn message_quoting(sender: &str, sender_name: Option<&str>) -> Message {
         Message {
             id: "message".into(),
@@ -10607,6 +10616,7 @@ mod tests {
         }
     }
 
+    /// Checks that forwarding retains content while removing source conversation delivery and quote state.
     #[test]
     fn forwarded_rows_keep_content_but_reset_conversation_state() {
         let source = Message {
@@ -13113,6 +13123,7 @@ mod receipt_tests {
         );
     }
 
+    /// Checks that each send command returns the original group source with its refused private reply.
     #[tokio::test]
     async fn every_send_path_preserves_the_private_reply_source_when_refused() {
         let (mut worker, events, _commands, _wa) = worker();
@@ -13150,6 +13161,7 @@ mod receipt_tests {
         }
     }
 
+    /// Enumerates synthetic send commands and matching unsent payloads with a shared quote target.
     fn reply_sends(quoting: Option<crate::model::ReplyTarget>) -> Vec<(Command, Unsent)> {
         let gif = Gif {
             id: "fixture-gif".into(),
@@ -13225,6 +13237,7 @@ mod receipt_tests {
         ]
     }
 
+    /// Checks that every send path refuses missing originals instead of sending an unquoted reply.
     #[tokio::test]
     async fn every_send_path_refuses_a_reply_it_cannot_quote() {
         let (mut worker, events, _commands, _wa) = worker();

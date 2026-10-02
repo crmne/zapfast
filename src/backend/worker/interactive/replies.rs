@@ -214,6 +214,7 @@ fn prepare(
 }
 
 impl Worker {
+    /// Re-resolves archived interactive choices and quotes through the normal validated send path.
     pub(in super::super) fn reply_interactive(
         &mut self,
         chat: ChatId,

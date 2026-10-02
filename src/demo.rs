@@ -1696,6 +1696,7 @@ fn wallpaper_image_sample(app: &mut App) {
     app.settings.wallpaper_image = Some(path);
 }
 
+/// Selects synthetic demo states, including private reply destinations and their group quote source.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -2456,13 +2457,36 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.reply_to = Some("ada-photo".into());
                 app.focus_composer = true;
             }
-            "private-reply" | "private-reply-menu" => {
+            "private-reply" | "private-reply-menu" | "private-reply-locked-source" => {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.into());
                 if part == "private-reply-menu" {
                     app.open_message_menu = Some("group-photo".into());
                     app.scroll_to_bottom = false;
                     app.scroll_anchor = Some("group-photo".into());
+                } else if part == "private-reply-locked-source" {
+                    let recipient = app.conversations[group]
+                        .message("group-photo")
+                        .unwrap()
+                        .sender
+                        .clone();
+                    if !app.chats.iter().any(|chat| chat.id == recipient) {
+                        app.chats.push(Chat::new(
+                            recipient.clone(),
+                            "Private recipient fixture".into(),
+                        ));
+                    }
+                    app.conversations.entry(recipient.clone()).or_default();
+                    app.open_chat = Some(recipient);
+                    app.reply_to = Some(crate::model::ReplyTarget {
+                        id: "group-photo".into(),
+                        chat: Some(group.into()),
+                    });
+                    app.chats
+                        .iter_mut()
+                        .find(|chat| chat.id == group)
+                        .unwrap()
+                        .locked = true;
                 } else {
                     app.actions.push(crate::model::Action::ReplyPrivately {
                         chat: group.into(),
@@ -4124,6 +4148,7 @@ mod tests {
         assert!(!leaks(&labels).is_empty());
     }
 
+    /// Lays out each synthetic demo screen and checks that its controls fit the visible surface.
     #[test]
     fn every_surface_lays_out() {
         let mut app = app();
@@ -4255,6 +4280,8 @@ mod tests {
             "private-reply,light",
             "private-reply-menu",
             "private-reply-menu,light",
+            "private-reply-locked-source",
+            "private-reply-locked-source,light",
             "edit",
             "unsent-voice",
             "scrolled",
@@ -8900,6 +8927,7 @@ mod tests {
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
     }
 
+    /// Checks that the group context menu opens the sender draft without dispatching a message.
     #[test]
     fn the_group_menu_opens_a_private_reply_without_sending() {
         for light in [false, true] {
@@ -8964,6 +8992,7 @@ mod tests {
             );
         }
     }
+    /// Checks that evicting a source page keeps the private quote target rather than silently clearing it.
     #[test]
     fn a_private_reply_keeps_its_quote_when_the_source_page_is_missing() {
         let ctx = egui::Context::default();
@@ -8976,8 +9005,68 @@ mod tests {
         render(&mut app, &ctx);
         assert_eq!(app.reply_to, Some(target));
     }
+
+    /// A locked group's cached quote must not appear in the direct-chat composer.
+    #[test]
+    fn a_private_reply_hides_cached_locked_source_content() {
+        for theme in [
+            "private-reply-locked-source",
+            "private-reply-locked-source,light",
+        ] {
+            let ctx = egui::Context::default();
+            let mut app = app();
+            apply_flags(&mut app, Some(theme));
+            let target = app.reply_to.clone().unwrap();
+            let source = target.chat.as_ref().unwrap();
+            let original = app
+                .conversations
+                .get_mut(source)
+                .unwrap()
+                .messages
+                .iter_mut()
+                .find(|message| message.id == target.id)
+                .unwrap();
+            original.content = Content::text("Hidden source fixture sentinel");
+            original.sender_name = Some("Hidden sender fixture sentinel".into());
+            app.attach(&ctx);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            let mut stack: Vec<_> = output.shapes.iter().map(|shape| &shape.shape).collect();
+            let mut texts = Vec::new();
+            while let Some(shape) = stack.pop() {
+                match shape {
+                    egui::Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+                    egui::Shape::Vec(shapes) => stack.extend(shapes),
+                    _ => {}
+                }
+            }
+            assert!(
+                texts
+                    .iter()
+                    .any(|text| text == "Original group message unavailable"),
+                "{texts:?}"
+            );
+            assert!(!texts.iter().any(|text| text.contains("fixture sentinel")));
+            assert_eq!(app.reply_to, Some(target));
+        }
+    }
+    /// Private quotes open existing source groups and ignore locally deleted sources.
     #[test]
     fn a_private_quote_returns_to_its_source_group() {
+        for source_present in [true, false] {
         let ctx = egui::Context::default();
         let mut app = app();
         let group = SAMPLES[1].id;
@@ -9015,6 +9104,10 @@ mod tests {
             },
         );
         app.open_chat = Some(chat.clone());
+        if !source_present {
+            app.chats.retain(|known| known.id != group);
+            app.conversations.remove(group);
+        }
         app.attach(&ctx);
         render(&mut app, &ctx);
         let rect = ctx
@@ -9040,8 +9133,62 @@ mod tests {
                 ],
             );
         }
-        assert_eq!(app.open_chat.as_deref(), Some(group));
-        assert_eq!(app.scroll_anchor.as_deref(), Some("group-photo"));
+        assert_eq!(app.open_chat.as_deref(), Some(if source_present { group } else { &chat }));
+        if source_present { assert_eq!(app.scroll_anchor.as_deref(), Some("group-photo")); }
+            }
+    }
+
+    /// Long translated unavailable-quote labels leave Cancel visible and clickable.
+    #[test]
+    fn an_unavailable_private_quote_keeps_cancel_inside_a_narrow_composer() {
+        for locale in [crate::i18n::Locale::English, crate::i18n::Locale::German] {
+            for width in [260.0, 360.0] {
+                let ctx = egui::Context::default();
+                let mut app = app();
+                apply_flags(&mut app, Some("private-reply-locked-source"));
+                app.locale = locale;
+                app.sidebar_visible = false;
+                app.attach(&ctx);
+                let mut cancel = None;
+                let mut frame = |events| {
+                    let mut output = ctx.run_ui(egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 780.0))),
+                        events, ..Default::default()
+                    }, |ui| {
+                        let ctx = ui.ctx().clone();
+                        app.background_frame(&ctx);
+                        app.frame_ui(ui);
+                    });
+                    output.textures_delta.clear();
+                    if let Some(tree) = output.platform_output.accesskit_update {
+                        for (_, node) in tree.nodes {
+                            if node.label() == Some(crate::i18n::gettext(locale, "Cancel reply (Esc)").as_str())
+                                && let Some(bounds) = node.bounds()
+                            {
+                                let scale = ctx.pixels_per_point() as f64;
+                                cancel = Some(egui::Rect::from_min_max(
+                                    egui::pos2((bounds.x0 / scale) as f32, (bounds.y0 / scale) as f32),
+                                    egui::pos2((bounds.x1 / scale) as f32, (bounds.y1 / scale) as f32),
+                                ));
+                            }
+                        }
+                    }
+                    cancel
+                };
+                frame(vec![]);
+                let cancel = frame(vec![]).expect("the unavailable quote exposes Cancel");
+                let strip = ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::reply_strip_id())).unwrap();
+                assert!(strip.contains_rect(cancel), "{locale:?}: {strip:?} {cancel:?}");
+                assert!(cancel.left() >= 0.0 && cancel.right() <= width);
+                for pressed in [true, false] {
+                    frame(vec![egui::Event::PointerMoved(cancel.center()), egui::Event::PointerButton {
+                        pos: cancel.center(), button: egui::PointerButton::Primary, pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }]);
+                }
+                assert!(app.reply_to.is_none());
+            }
+        }
     }
 
     #[test]

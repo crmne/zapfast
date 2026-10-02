@@ -933,6 +933,7 @@ impl App {
         }
     }
 
+    /// Constructs application state while keeping the supplied backend as its only protocol boundary.
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
         let palette = settings
             .cached_palette()
@@ -2616,6 +2617,7 @@ impl App {
         }
     }
 
+    /// Applies link lifecycle changes and clears account-owned drafts when the device logs out.
     fn handle_link(&mut self, status: LinkStatus) {
         match &status {
             LinkStatus::Connected => {
@@ -2702,6 +2704,23 @@ impl App {
         }
         self.chats
             .sort_by_key(|chat| std::cmp::Reverse(chat.last_activity));
+    }
+
+    /// Resolves a quote preview only while its source chat is visible to the user.
+    pub(crate) fn reply_preview(
+        &self,
+        target: &crate::model::ReplyTarget,
+        destination: &str,
+    ) -> Option<&Message> {
+        let source = target.source_chat(destination);
+        if target.chat.is_some()
+            && self
+                .chat(source)
+                .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+        {
+            return None;
+        }
+        self.conversations.get(source)?.message(target)
     }
 
     fn close_locked_folder(&mut self) {
@@ -3143,6 +3162,7 @@ impl App {
         self.backend.send(Command::MarkUnread(chat.to_owned()));
     }
 
+    /// Saves the previous composer and restores the destination draft, including its private quote source.
     fn open_chat(&mut self, id: ChatId) {
         // Notifications and stale actions must not open a locked chat from
         // outside the authenticated folder.
@@ -3299,6 +3319,7 @@ impl App {
         }
     }
 
+    /// Dispatches composed text with its explicit quote target and restores it on refusal.
     fn send_text(
         &mut self,
         chat: ChatId,
@@ -3659,6 +3680,7 @@ impl App {
         }
     }
 
+    /// Applies deferred view actions, validating private-reply source and destination access before switching chats.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the
@@ -3729,6 +3751,10 @@ impl App {
                 }
             }
             Action::OpenMessage { chat, message } => {
+                // A stored cross-chat quote may outlive its locally deleted source.
+                if self.chat(&chat).is_none() {
+                    return;
+                }
                 // A result picked in the search pane keeps the keyboard in
                 // the pane, so the arrows can walk on to the next one.
                 let from_pane =
@@ -3991,7 +4017,11 @@ impl App {
                 self.focus_composer = true;
             }
             Action::ReplyPrivately { chat, message } => {
-                if self.open_chat.as_deref() != Some(chat.as_str()) {
+                if self.open_chat.as_deref() != Some(chat.as_str())
+                    || self
+                        .chat(&chat)
+                        .is_some_and(|source| source.locked && !self.locked_folder_open())
+                {
                     return;
                 }
                 let Some(original) = self
@@ -7947,6 +7977,7 @@ mod tests {
         assert_eq!(app.settings.message_sound, NotificationSound::Receive);
     }
 
+    /// Checks that incoming group mentions and quotes identify us across phone and privacy ids.
     #[test]
     fn a_group_message_addresses_us_by_phone_number_privacy_id_or_reply() {
         let mut app = app();
@@ -9001,6 +9032,7 @@ mod tests {
         assert_eq!(images[1].state, MediaState::Idle);
     }
 
+    /// Builds a synthetic send refusal without accessing the user archive.
     fn refused(chat: &str, quoting: Option<&str>, unsent: Unsent, reason: Refusal) -> Event {
         Event::SendRefused {
             chat: chat.into(),
@@ -9018,6 +9050,7 @@ mod tests {
             .collect()
     }
 
+    /// Checks that refusing a text send restores both draft text and the original quote target.
     #[test]
     fn a_refused_text_reply_returns_to_the_composer_with_its_reply() {
         let root = tempfile::tempdir().unwrap();
@@ -9076,6 +9109,7 @@ mod tests {
         assert!(error_toasts(&app)[1].contains("not connected"));
     }
 
+    /// Checks that sending a quoted reply preserves the loaded transcript rather than dropping older rows.
     #[test]
     fn sending_a_reply_keeps_older_messages_in_view() {
         let mut app = app();
@@ -9169,6 +9203,7 @@ mod tests {
         );
     }
 
+    /// Checks that attachment and GIF refusals restore the same quote alongside their unsent media.
     #[test]
     fn attachments_and_gifs_carry_the_reply_and_come_back_when_refused() {
         let root = tempfile::tempdir().unwrap();
@@ -9255,6 +9290,7 @@ mod tests {
         assert_eq!(error_toasts(&app).len(), 1);
     }
 
+    /// Checks that an unsent recording remains scoped to its destination and retains its quote.
     #[test]
     fn a_refused_voice_message_is_sent_again_only_from_its_chat_or_discarded() {
         let root = tempfile::tempdir().unwrap();
@@ -9343,6 +9379,7 @@ mod tests {
         assert!(app.focus_composer);
     }
 
+    /// Private quotes keep their source identity through chat switches and send refusals.
     #[test]
     fn private_reply_opens_the_sender_and_preserves_both_drafts() {
         let mut app = app();
@@ -9420,6 +9457,7 @@ mod tests {
         assert_eq!(app.reply_to, Some(target));
     }
 
+    /// Leaving or deleting one recipient must not erase another recipient's quote draft.
     #[test]
     fn leaving_a_chat_preserves_other_private_reply_drafts() {
         for delete in [false, true] {
@@ -9452,9 +9490,17 @@ mod tests {
         }
     }
 
+    /// Only a visible incoming group message and an accessible sender can start a reply.
     #[test]
     fn private_reply_ignores_own_deleted_invalid_and_locked_targets() {
-        for case in ["own", "deleted", "invalid", "locked", "stale"] {
+        for case in [
+            "own",
+            "deleted",
+            "invalid",
+            "locked",
+            "locked-source",
+            "stale",
+        ] {
             let mut app = app();
             let group = "12345@g.us";
             let sender = "15550002222@s.whatsapp.net";
@@ -9466,6 +9512,11 @@ mod tests {
                 "invalid" => original.sender = group.into(),
                 "locked" => {
                     let mut chat = Chat::new(sender.into(), "Locked fixture".into());
+                    chat.locked = true;
+                    app.chats.push(chat);
+                }
+                "locked-source" => {
+                    let mut chat = Chat::new(group.into(), "Locked group fixture".into());
                     chat.locked = true;
                     app.chats.push(chat);
                 }
@@ -9492,6 +9543,60 @@ mod tests {
         }
     }
 
+    /// Cached source content stays hidden after switching out of an authenticated folder.
+    #[test]
+    fn private_quote_previews_follow_source_lock_authorization() {
+        let mut app = app();
+        let group = "12345@g.us";
+        let sender = "15550002222@s.whatsapp.net";
+        let other = "15550003333@s.whatsapp.net";
+        let mut source = Chat::new(group.into(), "Locked group fixture".into());
+        source.locked = true;
+        app.chats.extend([
+            source,
+            Chat::new(sender.into(), "Sender fixture".into()),
+            Chat::new(other.into(), "Other fixture".into()),
+        ]);
+        let mut original = message(group, "original", 100);
+        original.sender = sender.into();
+        app.conversations.insert(
+            group.into(),
+            Conversation {
+                messages: vec![original],
+                requested: true,
+                ..Default::default()
+            },
+        );
+        app.settings.chat_lock_code_hash = Some("synthetic authenticated verifier".into());
+        app.enter_locked_folder();
+        app.open_chat = Some(group.into());
+        app.apply(
+            Action::ReplyPrivately {
+                chat: group.into(),
+                message: "original".into(),
+            },
+            &egui::Context::default(),
+        );
+        assert_eq!(app.open_chat.as_deref(), Some(sender));
+        assert!(!app.locked_folder_open());
+        let target = app.reply_to.clone().unwrap();
+        assert!(app.conversations[group].message(&target).is_some());
+        assert!(app.reply_preview(&target, sender).is_none());
+        app.open_chat(other.into());
+        app.open_chat(sender.into());
+        assert_eq!(app.reply_to, Some(target.clone()));
+        assert!(app.reply_preview(&target, sender).is_none());
+        app.enter_locked_folder();
+        assert!(app.reply_preview(&target, sender).is_some());
+        app.close_locked_folder();
+        assert!(app.reply_preview(&target, sender).is_none());
+        let mut unlocked = app.chat(group).unwrap().clone();
+        unlocked.locked = false;
+        app.handle_chat_updated(unlocked);
+        assert!(app.reply_preview(&target, sender).is_some());
+    }
+
+    /// Checks that sticker dispatch consumes and forwards the pending quote exactly once.
     #[test]
     fn sending_a_sticker_consumes_the_pending_reply() {
         let mut app = app();

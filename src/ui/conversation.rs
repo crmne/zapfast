@@ -787,6 +787,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     }
 }
 
+/// Draws the current draft and quote preview, respecting the source chat visibility rules.
 fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     let shown = egui::Panel::bottom("composer")
@@ -884,11 +885,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             if app.editing.is_some() {
                 edit_strip(app, ui);
             } else if let Some(reply_id) = app.reply_to.clone() {
-                let quoted = app
-                    .conversations
-                    .get(reply_id.source_chat(&chat.id))
-                    .and_then(|conversation| conversation.message(&reply_id))
-                    .cloned();
+                let quoted = app.reply_preview(&reply_id, &chat.id).cloned();
                 match quoted {
                     Some(quoted) => reply_strip(app, ui, &quoted),
                     None if reply_id.chat.is_some() => {
@@ -896,22 +893,29 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         // private reply into an unquoted send. The worker
                         // resolves the original from the archive on Send.
                         let palette = app.palette;
-                        widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
+                        let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
+                            ui.set_width(ui.available_width().max(0.0));
                             ui.horizontal(|ui| {
-                                widgets::rich_text(
+                                ui.vertical(|ui| {
+                                    ui.set_max_width((ui.available_width() - 40.0).max(0.0));
+                                    widgets::rich_text(
                                     ui,
                                     &crate::i18n::gettext(app.locale, "Original group message unavailable"),
                                     theme::regular(12.5),
                                     palette.secondary,
-                                );
+                                    );
+                                });
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if theme::icon_button(
                                     ui, Icon::X, 16.0, palette.secondary, palette.text,
                                     "Cancel reply (Esc)",
                                 ).clicked() {
                                     app.actions.push(Action::CancelReply);
                                 }
+                                });
                             });
                         });
+                        ui.ctx().data_mut(|data| data.insert_temp(reply_strip_id(), strip.response.rect));
                         strip_gap(ui);
                     }
                     None => app.reply_to = None,
@@ -3495,6 +3499,7 @@ const QUOTE_BAR: f32 = 4.0;
 /// Corner radius of a quote.
 const QUOTE_RADIUS: u8 = 6;
 
+/// Draws a stored quote and routes navigation to its source conversation.
 fn quote_block(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -3970,6 +3975,7 @@ fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> 
     list
 }
 
+/// Offers actions supported by the selected message, including private replies for eligible group senders.
 fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
     let palette = view.palette;
     let chat = &view.chat.id;
