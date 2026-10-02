@@ -5468,6 +5468,14 @@ fn rich_body(
                 // were registered before the text. Keep their current-frame
                 // rectangles outside this later, enlarged input target.
                 for kind in ["quote", "preview"] {
+                    let present = if kind == "quote" {
+                        message.quoted.is_some()
+                    } else {
+                        matches!(message.content, Content::Text { preview: Some(_), .. })
+                    };
+                    if !present {
+                        continue;
+                    }
                     if let Some(card) = ui.ctx().data(|data| data.get_temp::<Rect>(id.with(kind))) {
                         target.min.y = target.min.y.max(card.bottom());
                     }
