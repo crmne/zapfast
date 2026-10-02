@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 12:39-0300\n"
+"POT-Creation-Date: 2026-10-02 13:11-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -1058,7 +1058,7 @@ msgstr "此号码未注册 WhatsApp"
 msgid "Not connected to WhatsApp"
 msgstr "未连接到 WhatsApp"
 
-#: src/app.rs:744 src/app.rs:4725
+#: src/app.rs:744 src/app.rs:4727
 msgid "Enter a valid international phone number"
 msgstr "请输入有效的国际电话号码"
 
@@ -1080,46 +1080,46 @@ msgstr "你"
 msgid "Could not use this image"
 msgstr "无法使用此图片"
 
-#: src/app.rs:2991
+#: src/app.rs:2993
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "未发送：ZapFast 未连接到 WhatsApp。"
 
-#: src/app.rs:2995
+#: src/app.rs:2997
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr "未发送：你要回复的消息不在这台电脑上。取消回复即可不带引用发送。"
 
-#: src/app.rs:4434
+#: src/app.rs:4436
 msgid "Added to favorites"
 msgstr "已添加到收藏"
 
-#: src/app.rs:4509
+#: src/app.rs:4511
 msgid "Sending the sticker pack…"
 msgstr "正在发送贴图包…"
 
-#: src/app.rs:4818 src/ui/labels.rs:237
+#: src/app.rs:4820 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
 
-#: src/app.rs:5462
+#: src/app.rs:5464
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5470
+#: src/app.rs:5472
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5583
+#: src/app.rs:5585
 msgid "This video opens in your system player"
 msgstr "此视频将用系统播放器打开"
 
-#: src/app.rs:6118
+#: src/app.rs:6120
 msgid "Copied image"
 msgstr "已复制图片"
 
-#: src/app.rs:6121 src/app.rs:6126
+#: src/app.rs:6123 src/app.rs:6128
 msgid "Failed to copy image"
 msgstr "复制图片失败"
 

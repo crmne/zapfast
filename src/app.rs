@@ -6442,16 +6442,31 @@ mod tests {
         app.backend = backend;
         let ctx = egui::Context::default();
         app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
-        app.apply(Action::NewContact {
-            phone: "15550000001".into(), first: String::new(), last: String::new(), to_phone: None,
-        }, &ctx);
+        app.apply(
+            Action::NewContact {
+                phone: "15550000001".into(),
+                first: String::new(),
+                last: String::new(),
+                to_phone: None,
+            },
+            &ctx,
+        );
         let request = app.new_contact_request.unwrap();
-        events.send(Event::ContactReady {
-            request, id: "15550000001@s.whatsapp.net".into(), name: None,
-        }).unwrap();
-        events.send(Event::StickerPicture {
-            path: PathBuf::from("synthetic-sticker.png"), width: 32, height: 32, transparent: false,
-        }).unwrap();
+        events
+            .send(Event::ContactReady {
+                request,
+                id: "15550000001@s.whatsapp.net".into(),
+                name: None,
+            })
+            .unwrap();
+        events
+            .send(Event::StickerPicture {
+                path: PathBuf::from("synthetic-sticker.png"),
+                width: 32,
+                height: 32,
+                transparent: false,
+            })
+            .unwrap();
         app.handle_events();
         assert_eq!(app.dialog, Some(Dialog::StickerMaker));
         app.apply_actions(&ctx);
