@@ -194,10 +194,7 @@ mod tests {
             Locale::from_system("pt_BR.UTF-8"),
             Some(Locale::PortugueseBrazil)
         );
-        assert_eq!(
-            Locale::from_system("tr_TR.UTF-8"),
-            Some(Locale::Turkish)
-        );
+        assert_eq!(Locale::from_system("tr_TR.UTF-8"), Some(Locale::Turkish));
     }
 
     /// The suite asserts the English source strings, so the language of the
@@ -220,6 +217,21 @@ mod tests {
         let missing = "A string nobody has translated";
         assert_eq!(gettext(Locale::PortugueseBrazil, missing), missing);
         assert_eq!(gettext(Locale::German, missing), missing);
+    }
+
+    #[test]
+    fn message_selection_labels_use_the_portuguese_catalog() {
+        assert_eq!(
+            gettext(Locale::PortugueseBrazil, "Select messages"),
+            "Selecionar mensagens"
+        );
+        assert_eq!(
+            gettext(
+                Locale::PortugueseBrazil,
+                "Select message from {sender}, {time}: {summary}"
+            ),
+            "Selecionar mensagem de {sender} ({time}): {summary}"
+        );
     }
 
     #[test]
@@ -377,10 +389,7 @@ mod tests {
     #[test]
     fn turkish_contexts_stay_separate_from_plain_lookups() {
         assert_eq!(gettext(Locale::Turkish, "About"), "Hakkımda");
-        assert_eq!(
-            pgettext(Locale::Turkish, "privacy", "About"),
-            "Hakkımda"
-        );
+        assert_eq!(pgettext(Locale::Turkish, "privacy", "About"), "Hakkımda");
         assert_eq!(gettext(Locale::Turkish, "Groups"), "Gruplar");
         assert_eq!(pgettext(Locale::Turkish, "sound", "None"), "Yok");
         assert_eq!(gettext(Locale::Turkish, "None"), "None");

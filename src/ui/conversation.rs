@@ -224,6 +224,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 } else {
                     crate::i18n::gettext(app.locale, "Leave group")
                 };
+                let select_messages_label = crate::i18n::gettext(app.locale, "Select messages");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let more = theme::icon_button(
                         ui,
@@ -237,7 +238,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         ui,
                         &[
                             "Info",
-                            "Select messages",
+                            select_messages_label.as_ref(),
                             "Pin to top",
                             "Unarchive",
                             "Clear chat",
@@ -264,7 +265,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 ui,
                                 &palette,
                                 Some(Icon::Check),
-                                "Select messages",
+                                select_messages_label.as_ref(),
                             ) {
                                 app.actions.push(Action::StartSelection);
                             }
@@ -2170,16 +2171,45 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 pos2(ui.max_rect().left() + SELECT_BOX / 2.0, drawn.center().y),
                                 Vec2::splat(SELECT_BOX),
                             );
-                            // Deleted and placeholder messages cannot be
-                            // forwarded, so they get no box.
+                            // Only forwardable messages get a box.
                             if selectable {
                                 select_box(ui, &palette, check, checked);
+                                if pick.has_focus()
+                                    && ui.ctx().data(|data| {
+                                        data.get_temp::<bool>(theme::keyboard_focus_id())
+                                            .unwrap_or(false)
+                                    })
+                                {
+                                    keyboard_navigation.set(true);
+                                }
+                                theme::reveal_focus(&pick);
+                                theme::focus_outline(ui, pick.id, check.expand(3.0), 4.0);
                                 pick.widget_info(|| {
+                                    let sender = if message.from_me {
+                                        crate::i18n::gettext(view.locale, "You").into_owned()
+                                    } else {
+                                        (view.names_or)(
+                                            &message.sender,
+                                            message.sender_name.as_deref(),
+                                        )
+                                    };
+                                    let summary: String =
+                                        message.content.summary().chars().take(120).collect();
+                                    let label = crate::i18n::gettext(
+                                        view.locale,
+                                        "Select message from {sender}, {time}: {summary}",
+                                    )
+                                    .replace("{sender}", &sender)
+                                    .replace(
+                                        "{time}",
+                                        &crate::util::moment_stamp(view.locale, message.timestamp),
+                                    )
+                                    .replace("{summary}", &summary);
                                     egui::WidgetInfo::selected(
                                         egui::WidgetType::Checkbox,
-                                        true,
+                                        pick.enabled(),
                                         checked,
-                                        "Select message",
+                                        label,
                                     )
                                 });
                                 #[cfg(any(test, feature = "demo"))]
@@ -2207,6 +2237,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         } else if let Some(response) = &response
                             && response.clicked()
                             && ui.input(|input| input.modifiers.command)
+                            && crate::app::can_select(&message.content)
                         {
                             // Ctrl-click (Command-click on macOS) starts a selection.
                             actions.push(Action::SelectMessage(message.id.clone()));
@@ -4096,21 +4127,17 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     {
         actions.push(Action::Reply(message.id.clone()));
     }
-    if !matches!(
-        message.content,
-        Content::Revoked
-            | Content::Unsupported { .. }
-            | Content::PhoneOnly { .. }
-            | Content::Poll { .. }
-            | Content::Interactive { .. }
-    ) && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
+    if crate::app::can_select(&message.content)
+        && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
     {
         actions.push(Action::ShowDialog(Dialog::Forward {
             chat: chat.clone(),
             messages: vec![message.id.clone()],
         }));
     }
-    if widgets::menu_item(ui, &palette, Some(Icon::Check), "Select") {
+    if crate::app::can_select(&message.content)
+        && widgets::menu_item(ui, &palette, Some(Icon::Check), "Select")
+    {
         actions.push(Action::SelectMessage(message.id.clone()));
     }
     let text = match &message.content {

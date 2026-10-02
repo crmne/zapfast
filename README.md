@@ -107,11 +107,14 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   one you pass (the list scrolls when you hold the pointer at its top or
   bottom edge). A drag that starts beside the bubbles, off the text, starts a
   selection too; a drag over the text outside a selection still selects the
-  text to copy. Deleted and unsupported messages cannot be forwarded and
-  have no box. Then **Forward…** sends them together, in their original
-  order; unticking the last one keeps the selection open, and Escape ends it. A batch goes out one message at
-  a time, each starting once the one before it reached WhatsApp, so a picture
-  cannot overtake the text that came before it.
+  text to copy. Deleted or unsupported messages, phone-only content, polls,
+  and interactive messages cannot be selected or forwarded and have no box.
+  Keyboard focus outlines the box; screen readers identify its message by
+  sender, time, and a short summary. Then **Forward…** sends them together, in
+  their original order; unticking the last one keeps the selection open, and
+  Escape ends it. A batch goes out one message at a time, each starting once
+  the one before it reached WhatsApp, so a picture cannot overtake the text
+  that came before it.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
   mentions, and link previews are supported. Links are clickable. Hebrew,
   Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so

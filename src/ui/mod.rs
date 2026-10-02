@@ -49,6 +49,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && !app.video_expanded
         && app.emoji_start.is_none()
         && app.mention_start.is_none()
+        // Selection keeps egui's order so Tab can reach message checkboxes.
+        && app.selection.is_none()
         // The day filter keeps egui's own order among its days.
         && !app.chat_search_calendar
         && !egui::Popup::is_any_open(ctx);

@@ -35,8 +35,10 @@ message it passes, scrolling when you hold the pointer at the top or bottom
 edge. A drag that starts beside the bubbles, off the text, starts a selection
 too. **Forward…** sends the selected messages together, in their original
 order. Unticking the last message keeps the selection open; Escape or the
-close button ends it. Deleted and unsupported messages cannot be forwarded, so
-they have no box.
+close button ends it. Deleted or unsupported messages, phone-only content,
+polls, and interactive messages cannot be selected or forwarded, so they have
+no box. Keyboard focus outlines the box; screen readers identify its message
+by sender, time, and a short summary.
 
 ## Stickers
 
