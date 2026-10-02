@@ -8162,6 +8162,247 @@ mod tests {
     }
 
     #[test]
+    fn message_text_selection_starts_in_the_bubble_padding() {
+        let mut app = app();
+        let chat = sample_ids()[0].to_owned();
+        app.conversations.get_mut(&chat).unwrap().messages = vec![message(
+            &chat,
+            "padding-target",
+            false,
+            1_700_000_000,
+            Content::text("A forgiving selection target"),
+        )];
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+
+        let id = crate::ui::conversation::bubble_id(&chat, "padding-target");
+        let body = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("body")))
+            .expect("the message body is on screen");
+        let target = ctx
+            .read_response(id.with("body-text"))
+            .expect("the selection target is on screen")
+            .rect;
+        let bubble = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+            .expect("the message bubble is on screen");
+        assert!(target.contains(bubble.center()));
+        let from = egui::pos2(target.right() - 2.0, target.bottom() - 2.0);
+        let to = body.center();
+        assert!(target.contains(from));
+        assert!(
+            !body.contains(from),
+            "the sweep starts outside the text: {from:?}"
+        );
+
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 780.0));
+        let mut copied = None;
+        for events in [
+            vec![egui::Event::PointerMoved(from), press(from, true)],
+            vec![egui::Event::PointerMoved(to)],
+            vec![press(to, false)],
+            vec![egui::Event::Copy],
+            vec![],
+        ] {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            });
+            output.textures_delta.clear();
+            for command in output.platform_output.commands {
+                if let egui::OutputCommand::CopyText(text) = command {
+                    copied = Some(text);
+                }
+            }
+        }
+
+        let copied = copied.expect("a sweep from the padding copies text");
+        assert!(!copied.trim().is_empty(), "{copied:?}");
+        assert!("A forgiving selection target".contains(copied.trim()));
+    }
+
+    /// Link navigation uses the painted text bounds, while padding remains
+    /// available for selection and reply without opening a browser.
+    #[test]
+    fn expanded_selection_padding_does_not_activate_message_links() {
+        let mut app = app();
+        let chat = SAMPLES[0].id.to_owned();
+        let row = message(
+            &chat,
+            "link-padding",
+            false,
+            1_700_000_000,
+            Content::text("https://example.com/"),
+        );
+        app.conversations.get_mut(&chat).unwrap().messages = vec![row];
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        for _ in 0..4 {
+            render(&mut app, &ctx);
+        }
+        let id = crate::ui::conversation::bubble_id(&chat, "link-padding");
+        let body = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("body")))
+            .unwrap();
+        let bubble = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+            .unwrap();
+        let padding = egui::pos2(bubble.left() + 2.0, body.center().y);
+        assert!(!body.contains(padding));
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut opened = Vec::new();
+        for pos in [padding, body.center()] {
+            for events in [
+                vec![egui::Event::PointerMoved(pos), press(pos, true)],
+                vec![press(pos, false)],
+            ] {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    app.background_frame(ui.ctx());
+                    app.frame_ui(ui);
+                });
+                output.textures_delta.clear();
+                for command in output.platform_output.commands {
+                    if let egui::OutputCommand::OpenUrl(url) = command {
+                        opened.push(url.url);
+                    }
+                }
+            }
+            if pos == padding {
+                assert!(opened.is_empty(), "padding cannot open the link");
+            }
+        }
+        assert_eq!(
+            opened,
+            ["https://example.com/"],
+            "the painted link still opens"
+        );
+    }
+
+    #[test]
+    fn expanded_text_selection_preserves_quote_and_preview_clicks() {
+        for kind in ["quote", "preview"] {
+            let mut app = app();
+            let chat = sample_ids()[0].to_owned();
+            let mut row = message(
+                &chat,
+                "cards",
+                false,
+                1_700_000_001,
+                Content::Text {
+                    text: "Text below a card".into(),
+                    preview: (kind == "preview").then(|| LinkPreview {
+                        url: "https://example.com/selection-fixture".into(),
+                        title: Some("Fixture preview".into()),
+                        description: None,
+                    }),
+                },
+            );
+            if kind == "quote" {
+                row.quoted = Some(Quoted {
+                    id: "original".into(),
+                    sender: chat.clone(),
+                    sender_name: Some("Fixture".into()),
+                    summary: "Original text".into(),
+                    mentions: Vec::new(),
+                });
+            }
+            app.conversations.get_mut(&chat).unwrap().messages = vec![
+                message(
+                    &chat,
+                    "original",
+                    false,
+                    1_700_000_000,
+                    Content::text("Original text"),
+                ),
+                row,
+            ];
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            for _ in 0..3 {
+                render(&mut app, &ctx);
+            }
+            let id = crate::ui::conversation::bubble_id(&chat, "cards");
+            let card = ctx
+                .data(|data| data.get_temp::<egui::Rect>(id.with(kind)))
+                .unwrap();
+            let target = ctx.read_response(id.with("body-text")).unwrap().rect;
+            assert!(
+                !target.contains(card.center()),
+                "{kind}: {target:?} overlaps {card:?}"
+            );
+            let pos = card.center();
+            let mut opened = Vec::new();
+            for pressed in [true, false] {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1180.0, 780.0),
+                        )),
+                        events: vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let ctx = ui.ctx().clone();
+                        app.background_frame(&ctx);
+                        app.frame_ui(ui);
+                    },
+                );
+                output.textures_delta.clear();
+                opened.extend(
+                    output.platform_output.commands.into_iter().filter_map(
+                        |command| match command {
+                            egui::OutputCommand::OpenUrl(url) => Some(url.url),
+                            _ => None,
+                        },
+                    ),
+                );
+            }
+            if kind == "quote" {
+                assert_eq!(app.scroll_anchor.as_deref(), Some("original"));
+            } else {
+                assert_eq!(opened, ["https://example.com/selection-fixture"]);
+            }
+        }
+    }
+
+    #[test]
     fn a_drag_selects_short_messages_on_opposite_sides_of_the_chat() {
         let mut app = app();
         let chat = sample_ids()[0].to_owned();
