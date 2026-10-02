@@ -143,34 +143,9 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             palette.text,
                         );
                     } else {
-                        let me = app.me.clone().unwrap_or_default();
-                        let name = app.me_name.clone().unwrap_or_else(|| "You".to_owned());
-                        let picture = app.avatar(&me);
-                        let tooltip = match &app.me_about {
-                            Some(about) => format!("{name}\n{about}"),
-                            None => name.clone(),
-                        };
-                        let response = widgets::clickable_avatar(
-                            ui,
-                            &palette,
-                            &name,
-                            &me,
-                            34.0,
-                            picture.as_deref(),
-                            // The label follows the action: while Settings are
-                            // showing, this click closes them.
-                            if app.page == Page::Settings {
-                                "Close settings"
-                            } else {
-                                "Your profile and settings"
-                            },
-                        )
-                        .tab_stop(Stop::Profile)
-                        .on_hover_text(tooltip)
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                        if response.clicked() {
-                            app.actions.push(Action::ToggleSettings);
-                        }
+                        // Our avatar opens the account switcher, with the
+                        // profile and settings below the accounts.
+                        super::accounts::avatar_button(app, ui, 34.0).tab_stop(Stop::Profile);
                         ui.add_space(2.0);
                         theme::text(
                             ui,
@@ -305,6 +280,12 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                     );
                 } else {
+                    // The Mac header names no profile: the app menu holds the
+                    // settings. The switcher appears once there is a choice.
+                    if app.has_several_accounts() {
+                        super::accounts::avatar_button(app, ui, 30.0).tab_stop(Stop::Profile);
+                        ui.add_space(2.0);
+                    }
                     theme::text(
                         ui,
                         crate::i18n::gettext(app.locale, "Chats"),

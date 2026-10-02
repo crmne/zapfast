@@ -2305,25 +2305,32 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     });
             }
             "new-contact" => app.dialog = Some(Dialog::NewContact),
-            "accounts" => {
+            // A second number linked beside the first, with unread chats of
+            // its own, and the switcher under our avatar open.
+            "accounts" | "accounts-closed" => {
                 if app.accounts.len() < 2 {
                     let id = crate::model::AccountId::parse("2").expect("demo account");
-                    if let Ok((mut extra, _)) = crate::account::Account::detached(
+                    if let Ok((mut work, _)) = crate::account::Account::detached(
                         &app.dirs,
                         id,
-                        crate::settings::AccountSettings {
-                            label: "Work".into(),
-                            color: "#53bdeb".into(),
-                            ..crate::settings::AccountSettings::default()
-                        },
+                        crate::settings::AccountSettings::default(),
                     ) {
-                        extra.me_name = Some("Work".into());
-                        extra.link = crate::backend::LinkStatus::Connected;
-                        app.accounts.push(extra);
+                        work.me = Some("15550002222@s.whatsapp.net".into());
+                        work.me_name = Some("Carmine (Studio)".into());
+                        work.link = crate::backend::LinkStatus::Connected;
+                        for (id, name, unread) in [
+                            ("15550003333@s.whatsapp.net", "Grace", 2),
+                            ("120363000000000099@g.us", "Studio team", 5),
+                        ] {
+                            let mut chat = Chat::new(id.into(), name.into());
+                            chat.unread = unread;
+                            chat.last_activity = crate::util::now();
+                            work.chats.push(chat);
+                        }
+                        app.accounts.push(work);
                     }
                 }
-                app.accounts[0].settings.label = "Personal".into();
-                app.accounts[0].me_name = Some("Personal".into());
+                app.account_menu = part == "accounts";
             }
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
@@ -4282,6 +4289,7 @@ mod tests {
             "new-contact",
             "accounts",
             "accounts,light",
+            "accounts-closed",
             "light",
             "archived",
             "chat-search",
@@ -6773,8 +6781,8 @@ mod tests {
         );
     }
 
-    /// While Settings are showing, both header buttons say what a click does
-    /// now: a screen reader reads the label, not the accent colour.
+    /// While Settings are showing, the gear and the switcher's entry say what
+    /// a click does now: a screen reader reads the label, not the accent colour.
     #[test]
     fn the_header_buttons_say_they_close_settings() {
         let mut app = app();
@@ -6817,8 +6825,8 @@ mod tests {
         };
         let closed = labels(&mut app, &ctx);
         assert!(
-            closed.contains(&"Your profile and settings".to_owned()),
-            "the avatar opens settings: {closed:?}"
+            closed.contains(&"Accounts, profile and settings".to_owned()),
+            "the avatar opens the account switcher: {closed:?}"
         );
         assert!(
             closed.contains(&"Settings (Ctrl+,)".to_owned()),
@@ -6826,10 +6834,11 @@ mod tests {
         );
         app.actions
             .push(crate::model::Action::Open(crate::model::Page::Settings));
+        app.account_menu = true;
         let open = labels(&mut app, &ctx);
         assert!(
             open.contains(&"Close settings".to_owned()),
-            "the avatar says it closes settings: {open:?}"
+            "the switcher says it closes settings: {open:?}"
         );
         assert!(
             open.contains(&"Close settings (Ctrl+,)".to_owned()),

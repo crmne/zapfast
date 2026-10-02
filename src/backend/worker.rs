@@ -5489,8 +5489,14 @@ impl Worker {
                 }
             }
             Command::RemoveAccount => {
-                if let Some(client) = self.client.clone() {
-                    client.logout().await;
+                // A link that does not answer must not keep the account:
+                // the folders go once the backend stops either way.
+                if let Some(client) = self.client.clone()
+                    && tokio::time::timeout(Duration::from_secs(15), client.logout())
+                        .await
+                        .is_err()
+                {
+                    log::warn!("unlinking a removed account timed out");
                 }
                 self.stop_bot().await;
                 self.emit(Event::AccountRemoved);

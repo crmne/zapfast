@@ -344,6 +344,10 @@ pub struct App {
     pub accounts: Vec<Account>,
     pub active: usize,
     pub adding_account: bool,
+    /// The account on screen when "Add account" was chosen, for Cancel.
+    account_before_adding: Option<AccountId>,
+    /// Whether the account switcher under our own avatar is open.
+    pub account_menu: bool,
     pub palette: Palette,
     pub custom_themes: theme::Catalog,
     applied_dark: Option<bool>,
@@ -534,6 +538,10 @@ pub struct App {
     pub actions: Vec<Action>,
     /// Actions queued by a backend event, applied on that account after the frame.
     deferred_account_actions: Vec<(AccountId, Action)>,
+    /// Set while the events of an account that is not on screen are being
+    /// applied: they update that account only, never the window's composer,
+    /// dialogs, playback, or read state.
+    events_hidden: bool,
     /// A newer release than this build, once GitHub has said so.
     pub update: Option<crate::updates::Release>,
     last_update_check: Option<Instant>,
@@ -863,9 +871,12 @@ impl App {
                 crate::util::twelve_hour_clock();
             })
             .ok();
-        app.backend.send(Command::SetDownloadFolder(
-            app.settings.download_folder.clone(),
-        ));
+        let folder = app.settings.download_folder.clone();
+        for account in &app.accounts {
+            account
+                .backend
+                .send(Command::SetDownloadFolder(folder.clone()));
+        }
         if crate::autostart::supported() {
             app.start_with_system = Some(crate::autostart::enabled());
         }
@@ -962,6 +973,8 @@ impl App {
             accounts,
             active,
             adding_account: false,
+            account_before_adding: None,
+            account_menu: false,
             palette,
             custom_themes: theme::Catalog::default(),
             applied_dark: None,
@@ -1064,6 +1077,7 @@ impl App {
             toasts: Vec::new(),
             actions: Vec::new(),
             deferred_account_actions: Vec::new(),
+            events_hidden: false,
             update: None,
             last_update_check: None,
             show_update: false,
@@ -1118,8 +1132,29 @@ impl App {
         self.accounts.iter().any(Account::is_linked)
     }
 
-    pub fn shows_account_rail(&self) -> bool {
-        self.accounts.len() >= 2 || self.adding_account
+    /// Whether more than one number is (or is being) linked here, so the
+    /// window names which one it shows.
+    pub fn has_several_accounts(&self) -> bool {
+        self.accounts.len() >= 2
+    }
+
+    /// Unread chats across every account, for the taskbar and the tray.
+    pub fn unread_chat_count_everywhere(&self) -> u32 {
+        self.accounts
+            .iter()
+            .map(Account::unread_chat_count)
+            .fold(0, u32::saturating_add)
+    }
+
+    /// Unread chats in the accounts that are not on screen, for the mark on
+    /// the account switcher.
+    pub fn unread_chat_count_elsewhere(&self) -> u32 {
+        self.accounts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != self.active)
+            .map(|(_, account)| account.unread_chat_count())
+            .fold(0, u32::saturating_add)
     }
 
     fn save_roster(&mut self) {
@@ -1175,10 +1210,16 @@ impl App {
         if index == self.active {
             return;
         }
+        // An account left before it was linked was never really added.
+        let abandoned =
+            (self.adding_account && !self.is_linked()).then(|| self.account().id.clone());
         self.park_composer();
         self.clear_account_ui();
         self.active = index;
         self.adding_account = false;
+        if let Some(abandoned) = abandoned {
+            self.remove_account(abandoned);
+        }
         self.restore_composer();
         self.page = Page::Chats;
         self.save_roster();
@@ -1188,6 +1229,15 @@ impl App {
 
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
+        // The locked folder and the picker show the previous account's chats
+        // and stickers.
+        if self.locked_folder {
+            self.close_locked_folder();
+        }
+        self.sticker_shelf = StickerShelf::default();
+        self.sticker_emojis.clear();
+        self.sticker_pack_created = None;
+        self.account_menu = false;
         self.chat_search_open = false;
         self.chat_search.clear();
         self.chat_search_hits.clear();
@@ -1242,6 +1292,10 @@ impl App {
                 }
             }
         };
+        account.backend.send(Command::SetDownloadFolder(
+            self.settings.download_folder.clone(),
+        ));
+        self.account_before_adding = Some(self.account().id.clone());
         self.park_composer();
         self.clear_account_ui();
         self.accounts.push(account);
@@ -1253,41 +1307,66 @@ impl App {
         self.report_presence();
     }
 
+    /// Unlinks an account and, once its backend has stopped, deletes its
+    /// folders. The last account is only unlinked: the window always shows
+    /// one, even if it is waiting to be linked.
     fn remove_account(&mut self, id: AccountId) {
-        if self.accounts.len() <= 1 {
-            self.backend.send(Command::Unlink);
-            return;
-        }
         let Some(index) = self.accounts.iter().position(|account| account.id == id) else {
             return;
         };
+        if self.accounts.len() <= 1 {
+            self.accounts[index].backend.send(Command::Unlink);
+            return;
+        }
         self.accounts[index].backend.send(Command::RemoveAccount);
     }
 
     fn finish_removed(&mut self, index: usize) {
         if self.accounts.len() <= 1 {
+            // Another removal got there first. Keep this one listed and
+            // linkable instead of leaving the window on a stopped backend.
+            self.accounts[index].backend.send(Command::Unlink);
             return;
         }
         let removing_active = index == self.active;
+        if removing_active {
+            self.park_composer();
+            self.clear_account_ui();
+        }
         self.accounts[index].backend.shutdown();
-        let state = self.accounts[index].dirs.state.clone();
-        let cache = self.accounts[index].dirs.cache.clone();
-        let state_error = std::fs::remove_dir_all(&state).err();
-        let cache_error = std::fs::remove_dir_all(&cache).err();
+        let dirs = self.accounts[index].dirs.clone();
+        // The key outlives the archive only by mistake: forget it once the
+        // archive is gone, never before.
+        let key = crate::archive::archive_key_identity(&dirs.archive_db()).ok();
+        let state_error = std::fs::remove_dir_all(&dirs.state).err();
+        let cache_error = std::fs::remove_dir_all(&dirs.cache)
+            .err()
+            .filter(|error| error.kind() != std::io::ErrorKind::NotFound);
+        if let Some(identity) = key
+            && !dirs.archive_db().exists()
+            && cfg!(not(test))
+            && let Err(error) = crate::archive::forget_archive_key(&identity)
+        {
+            log::warn!("could not delete a removed account's archive key: {error:#}");
+        }
         self.accounts.remove(index);
         if index < self.active {
-            self.active = self.active.saturating_sub(1);
+            self.active -= 1;
         } else if self.active >= self.accounts.len() {
-            self.active = self.accounts.len().saturating_sub(1);
+            self.active = self.accounts.len() - 1;
         }
-        self.adding_account = false;
         if removing_active {
+            self.adding_account = false;
             self.restore_composer();
+            self.page = Page::Chats;
+            self.wallpaper_image.reload();
         }
         self.save_roster();
         self.report_presence();
         if let Some(error) = state_error.or(cache_error) {
-            self.toast_error(format!("Could not remove this account's files: {error}"));
+            let message =
+                crate::i18n::gettext(self.locale, "Could not delete the removed account's files");
+            self.toast_error(format!("{message}: {error}"));
         }
     }
 
@@ -1396,6 +1475,13 @@ impl App {
                 .unwrap_or_else(|p| p.into_inner()),
         );
         for target in opened {
+            // Behind the app lock nothing changes yet: the message, with its
+            // account, opens once unlocked.
+            if self.app_lock.is_locked() {
+                self.app_lock.deferred = Some(target);
+                self.actions.push(Action::ShowWindow);
+                continue;
+            }
             self.switch_account(&target.account);
             self.actions.push(Action::OpenMessage {
                 chat: target.chat,
@@ -1422,7 +1508,8 @@ impl App {
         if !notification_eligible(chat, now, message.timestamp) {
             return;
         }
-        let reading = !self.window_hidden
+        let reading = !self.events_hidden
+            && !self.window_hidden
             && self.window_focused
             && self.page == Page::Chats
             && self.open_chat.as_deref() == Some(chat_id);
@@ -1629,6 +1716,12 @@ impl App {
     fn leave_chat(&mut self, id: &str) {
         self.clear_chat_notifications(id);
         self.search_hits.retain(|message| message.chat != id);
+        if self.events_hidden {
+            if self.open_chat.as_deref() == Some(id) {
+                self.open_chat = None;
+            }
+            return;
+        }
         if matches!(
             &self.dialog,
             Some(
@@ -2197,20 +2290,12 @@ impl App {
     /// The taskbar count: unarchived, unmuted, unlocked chats that look
     /// unread. WhatsApp counts chats here, not the messages inside them.
     pub fn unread_chat_count(&self) -> u32 {
-        let now = crate::util::now();
-        let chats = self
-            .chats
-            .iter()
-            .filter(|chat| {
-                !chat.archived && !chat.locked && !chat.muted(now) && chat.looks_unread()
-            })
-            .count();
-        u32::try_from(chats).unwrap_or(u32::MAX)
+        self.account().unread_chat_count()
     }
 
     /// Returns or requests a cached profile picture.
     fn cached_avatar(&self, id: &str) -> Option<PathBuf> {
-        let path = self.dirs.avatar_file(id, false);
+        let path = self.account().dirs.avatar_file(id, false);
         path.metadata()
             .ok()
             .filter(|metadata| metadata.len() > 0)
@@ -2223,16 +2308,7 @@ impl App {
     }
 
     pub fn avatar(&mut self, id: &str) -> Option<PathBuf> {
-        if let Some(known) = self.avatars.get(id) {
-            return known.clone();
-        }
-        if self.avatar_requests.insert(id.to_owned()) {
-            self.backend.send(Command::FetchAvatar {
-                id: id.to_owned(),
-                full: false,
-            });
-        }
-        None
+        self.account_mut().avatar(id)
     }
 
     /// Returns or requests a full-size profile picture.
@@ -2305,7 +2381,9 @@ impl App {
                     removed.push(index);
                     continue;
                 }
+                self.events_hidden = !live;
                 self.apply_backend_event(event, live);
+                self.events_hidden = false;
             }
             let queued: Vec<_> = self.actions.drain(pending_before..).collect();
             deferred.extend(queued.into_iter().map(|action| (origin.clone(), action)));
@@ -2388,7 +2466,7 @@ impl App {
                 }
                 // Request phone history when sync created a chat without messages.
                 let bare = !older && complete && conversation.messages.is_empty();
-                if self.open_chat.as_deref() == Some(chat.as_str()) {
+                if live && self.open_chat.as_deref() == Some(chat.as_str()) {
                     if !older && (self.at_bottom || was_empty) {
                         self.scroll_to_bottom = true;
                     }
@@ -2431,7 +2509,8 @@ impl App {
                 // replaced, or for a day they have already moved off,
                 // arrive too late to matter.
                 let (want_from, want_until) = self.chat_search_range();
-                if self.open_chat.as_deref() == Some(chat.as_str())
+                if live
+                    && self.open_chat.as_deref() == Some(chat.as_str())
                     && query == self.chat_search.trim()
                     && from == want_from
                     && until == want_until
@@ -2453,7 +2532,7 @@ impl App {
             }
             Event::Incoming { chat, message } => self.maybe_notify(&chat, &message),
             Event::Picked { chat, paths } => {
-                if self.open_chat.as_deref() == Some(chat.as_str()) {
+                if live && self.open_chat.as_deref() == Some(chat.as_str()) {
                     self.stage_files(paths);
                 }
             }
@@ -2574,6 +2653,12 @@ impl App {
                 self.sticker_packs = packs;
                 self.stickers = recent;
                 self.stickers_received = received;
+                self.stickers_pending = false;
+                self.sticker_import_pending = false;
+                // The picker belongs to the account on screen.
+                if !live {
+                    return;
+                }
                 self.sticker_emojis = emojis;
                 // Show a pack made here as soon as it exists. Packs list
                 // newest first, so the first match is the new one.
@@ -2593,8 +2678,6 @@ impl App {
                 {
                     self.sticker_shelf = StickerShelf::Recent;
                 }
-                self.stickers_pending = false;
-                self.sticker_import_pending = false;
             }
             Event::MessageDeleted { chat, id } => {
                 if let Some(conversation) = self.conversations.get_mut(&chat) {
@@ -2901,8 +2984,10 @@ impl App {
     }
 
     fn handle_chat_updated(&mut self, chat: Chat, live: bool) {
-        let is_open =
-            self.open_chat.as_deref() == Some(chat.id.as_str()) && self.page == Page::Chats;
+        // A hidden account's remembered chat is not being read: marking it
+        // read would send receipts for messages nobody has seen.
+        let remembered = self.open_chat.as_deref() == Some(chat.id.as_str());
+        let is_open = live && remembered && self.page == Page::Chats;
         let mut chat = chat;
         if chat.unread == 0 {
             self.clear_chat_notifications(&chat.id);
@@ -2925,7 +3010,10 @@ impl App {
         // so this is where the open conversation closes, not before. Only a
         // chat that just became archived: a message arriving in one that was
         // already archived does not close it.
-        if is_open && chat.archived && self.chat(&chat.id).is_none_or(|known| !known.archived) {
+        if (is_open || (!live && remembered))
+            && chat.archived
+            && self.chat(&chat.id).is_none_or(|known| !known.archived)
+        {
             if live {
                 self.actions.push(Action::CloseChat);
             } else {
@@ -3107,7 +3195,12 @@ impl App {
 
     fn hide_locked_chat(&mut self, id: &str) {
         // A locked chat still exists, so its unsent text waits as a draft.
-        // Text emptied in the composer clears the stored copy too.
+        // Text emptied in the composer clears the stored copy too. A hidden
+        // account's composer text is already parked among its drafts.
+        if self.events_hidden {
+            self.leave_chat(id);
+            return;
+        }
         if self.open_chat.as_deref() == Some(id)
             && self.editing.is_none()
             && self.composer.is_empty()
@@ -3240,6 +3333,9 @@ impl App {
             .as_ref()
             .is_some_and(|(wanted_chat, wanted, _)| wanted_chat == chat && wanted == id);
         let open = self.open_chat.as_deref() == Some(chat);
+        // Playback waits belong to the account on screen.
+        let want_video = want_video && !self.events_hidden;
+        let want_voice = want_voice && !self.events_hidden;
         let applied = {
             let Some(message) = self
                 .conversations
@@ -5367,7 +5463,11 @@ impl App {
             Action::SetDownloadFolder(folder) => {
                 self.settings.download_folder = folder.clone();
                 self.mark_settings_dirty();
-                self.backend.send(Command::SetDownloadFolder(folder));
+                for account in &self.accounts {
+                    account
+                        .backend
+                        .send(Command::SetDownloadFolder(folder.clone()));
+                }
             }
             Action::SetProxy(value) => {
                 let value = value.trim().to_owned();
@@ -5383,7 +5483,9 @@ impl App {
                 self.settings.proxy = value.clone();
                 self.mark_settings_dirty();
                 crate::proxy::configure(&value);
-                self.backend.send(Command::SetProxy(value));
+                for account in &self.accounts {
+                    account.backend.send(Command::SetProxy(value.clone()));
+                }
             }
             Action::SetStartWithSystem(enabled) => match crate::autostart::set(enabled) {
                 Ok(()) => self.start_with_system = Some(crate::autostart::enabled()),
@@ -5433,9 +5535,12 @@ impl App {
             Action::UnlinkLockedApp => {
                 // The lock lifts only once WhatsApp has unlinked and the
                 // chats are gone (`LinkStatus::LoggedOut`), never before.
+                // Every number linked here goes: the lock guards them all.
                 if self.app_lock.is_locked() {
                     self.app_lock.forgetting = crate::app_lock::Forgetting::Unlinking;
-                    self.backend.send(Command::Unlink);
+                    for account in &self.accounts {
+                        account.backend.send(Command::Unlink);
+                    }
                 }
             }
             Action::AppLockForm(mode) => {
@@ -5509,41 +5614,20 @@ impl App {
             Action::SwitchAccount(id) => self.switch_account(&id),
             Action::AddAccount => self.add_account(),
             Action::CancelAddAccount => {
-                if self.adding_account {
-                    let id = self.account().id.clone();
-                    self.remove_account(id);
+                // Back to the account the window showed before; leaving an
+                // unlinked new account removes it.
+                if self.adding_account
+                    && let Some(back) = self.account_before_adding.clone().or_else(|| {
+                        self.accounts
+                            .iter()
+                            .find(|account| account.id != self.account().id)
+                            .map(|account| account.id.clone())
+                    })
+                {
+                    self.switch_account(&back);
                 }
             }
             Action::RemoveAccount(id) => self.remove_account(id),
-            Action::RenameAccount { id, label } => {
-                if let Some(account) = self.accounts.iter_mut().find(|account| account.id == id) {
-                    account.settings.label = label;
-                    account.save_settings();
-                }
-            }
-            Action::ReorderAccounts(order) => {
-                let mut next = Vec::with_capacity(order.len());
-                for id in &order {
-                    if let Some(index) = self.accounts.iter().position(|account| &account.id == id)
-                    {
-                        next.push(self.accounts.remove(index));
-                    }
-                }
-                next.append(&mut self.accounts);
-                self.accounts = next;
-                self.active = self
-                    .accounts
-                    .iter()
-                    .position(|account| account.id.0 == self.roster.active)
-                    .unwrap_or(0);
-                self.save_roster();
-            }
-            Action::SetAccountColor { id, color } => {
-                if let Some(account) = self.accounts.iter_mut().find(|account| account.id == id) {
-                    account.settings.color = color;
-                    account.save_settings();
-                }
-            }
         }
     }
 
@@ -5774,7 +5858,7 @@ impl App {
     /// Mirrors the unread chat count onto the taskbar icon, where the desktop
     /// reads it. The badge ignores repeats, so calling this each frame is cheap.
     fn sync_badge(&mut self) {
-        let count = self.unread_chat_count();
+        let count = self.unread_chat_count_everywhere();
         if let Some(badge) = &mut self.badge {
             badge.set(count);
         }
@@ -6565,23 +6649,152 @@ mod tests {
     }
 
     #[test]
-    fn a_second_account_shows_the_rail_and_is_remembered() {
+    fn a_second_account_is_remembered_with_the_one_on_screen() {
         let directory = tempfile::tempdir().unwrap();
         let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
-        assert!(!app.shows_account_rail());
-        assert_eq!(app.accounts.len(), 1);
+        assert!(!app.has_several_accounts());
         let ctx = egui::Context::default();
         app.apply(Action::AddAccount, &ctx);
-        assert!(app.shows_account_rail());
-        assert_eq!(app.accounts.len(), 2);
+        assert!(app.has_several_accounts());
         assert_eq!(app.account().id.as_str(), "2");
         assert!(app.adding_account);
+        app.link = LinkStatus::Connected;
         let first = AccountId::first();
         app.apply(Action::SwitchAccount(first.clone()), &ctx);
         assert_eq!(app.account().id, first);
         let roster = AccountRoster::load(&app.dirs.accounts_file()).unwrap();
         assert_eq!(roster.order, ["1".to_string(), "2".to_string()]);
         assert_eq!(roster.active, "1");
+    }
+
+    /// Two accounts, the second with a recording backend; the first on screen.
+    fn two_accounts(
+        directory: &std::path::Path,
+    ) -> (App, tokio::sync::mpsc::UnboundedReceiver<Command>) {
+        let dirs = AppDirs::under(directory);
+        let mut app = App::headless(dirs.clone(), Settings::default()).0;
+        let mut second = Account::detached(
+            &dirs,
+            AccountId::parse("2").unwrap(),
+            crate::settings::AccountSettings::default(),
+        )
+        .unwrap()
+        .0;
+        let (backend, commands) = Backend::recording();
+        second.backend = backend;
+        second.link = LinkStatus::Connected;
+        app.accounts.push(second);
+        app.active = 0;
+        (app, commands)
+    }
+
+    #[test]
+    fn leaving_an_account_before_it_is_linked_removes_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        let ctx = egui::Context::default();
+        app.apply(Action::AddAccount, &ctx);
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.link = LinkStatus::Unlinked {
+            qr: None,
+            pair_code: None,
+            pairing_phone: None,
+        };
+        app.apply(Action::CancelAddAccount, &ctx);
+        assert_eq!(app.account().id, AccountId::first());
+        assert!(!app.adding_account);
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::RemoveAccount)),
+            "the unlinked account is removed"
+        );
+    }
+
+    #[test]
+    fn a_hidden_account_never_marks_its_remembered_chat_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = two_accounts(directory.path());
+        app.window_focused = true;
+        app.window_hidden = false;
+        let chat = "15550003333@s.whatsapp.net";
+        app.accounts[1].open_chat = Some(chat.into());
+        app.accounts[1].settings.notifications = true;
+        let mut update = Chat::new(chat.into(), "Grace".into());
+        update.unread = 1;
+        app.active = 1;
+        app.events_hidden = true;
+        app.handle_chat_updated(update, false);
+        app.events_hidden = false;
+        app.active = 0;
+        let kept = app.accounts[1].chats.iter().find(|known| known.id == chat);
+        assert_eq!(kept.unwrap().unread, 1);
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::MarkRead { .. })),
+            "no read receipt for a chat nobody is looking at"
+        );
+    }
+
+    #[test]
+    fn the_taskbar_counts_every_account_and_the_switcher_the_others() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        let mut mine = Chat::new("15550004444@s.whatsapp.net".into(), "Ada".into());
+        mine.unread = 1;
+        app.accounts[0].chats.push(mine);
+        for id in ["15550005555@s.whatsapp.net", "15550006666@s.whatsapp.net"] {
+            let mut theirs = Chat::new(id.into(), "Grace".into());
+            theirs.unread = 3;
+            app.accounts[1].chats.push(theirs);
+        }
+        assert_eq!(app.unread_chat_count(), 1);
+        assert_eq!(app.unread_chat_count_everywhere(), 3);
+        assert_eq!(app.unread_chat_count_elsewhere(), 2);
+    }
+
+    #[test]
+    fn global_settings_reach_every_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        let folder = directory.path().join("Downloads");
+        app.apply(Action::SetDownloadFolder(Some(folder.clone())), &ctx);
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                command,
+                Command::SetDownloadFolder(Some(ref chosen)) if *chosen == folder
+            )),
+            "the hidden account downloads there too"
+        );
+    }
+
+    #[test]
+    fn a_notification_behind_the_lock_keeps_its_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        app.app_lock = crate::app_lock::AppLock::new(true);
+        app.notification_opens
+            .lock()
+            .unwrap()
+            .push(crate::notify::NotificationTarget {
+                account: AccountId::parse("2").unwrap(),
+                chat: "15550003333@s.whatsapp.net".into(),
+                message: "m1".into(),
+            });
+        app.handle_notification_opens();
+        assert_eq!(
+            app.account().id,
+            AccountId::first(),
+            "nothing changes while locked"
+        );
+        assert_eq!(
+            app.app_lock
+                .deferred
+                .as_ref()
+                .map(|target| target.account.as_str()),
+            Some("2")
+        );
     }
 
     #[test]

@@ -700,10 +700,6 @@ pub struct AccountSettings {
     pub last_chat: Option<String>,
     pub notifications: bool,
     pub save_contacts_to_phone: bool,
-    /// Short name shown on the account rail.
-    pub label: String,
-    /// Accent colour for the rail badge as `#RRGGBB`.
-    pub color: String,
     /// This account's copy of the chosen chat wallpaper image.
     pub wallpaper_image: Option<std::path::PathBuf>,
 }
@@ -717,8 +713,6 @@ impl Default for AccountSettings {
             last_chat: None,
             notifications: true,
             save_contacts_to_phone: true,
-            label: String::new(),
-            color: String::new(),
             wallpaper_image: None,
         }
     }
@@ -733,15 +727,16 @@ impl AccountSettings {
             last_chat: settings.last_chat.clone(),
             notifications: settings.notifications,
             save_contacts_to_phone: settings.save_contacts_to_phone,
-            label: String::new(),
-            color: String::new(),
             wallpaper_image: settings.wallpaper_image.clone(),
         }
     }
 
     pub fn load(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|error| {
+                log::warn!("account settings are unreadable, using the defaults: {error}");
+                Self::default()
+            }),
             Err(_) => Self::default(),
         }
     }

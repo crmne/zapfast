@@ -48,9 +48,18 @@ protocol. These notes are for coding agents and new contributors.
   `AccountId`. `src/app.rs` is the process shell (theme, window, tray,
   updates). Each `Account` in `src/account.rs` owns a `Backend`/`Worker`.
   Views draw the active account through `App`'s `Deref` to `Account`.
-  The account rail (`src/ui/accounts.rs`) is shown when there are two or
-  more accounts, or while adding one. A single-account window stays
-  unchanged.
+  Our own avatar at the top of the chat list opens the account switcher
+  (`src/ui/accounts.rs`): every account with its unread chats, Add account,
+  and Profile and settings. Events from an account that is not on screen are
+  applied with `App::events_hidden` set: they update that account only, never
+  the window's composer, dialogs, playback, or read state (a hidden account's
+  remembered chat is not being read, so it sends no receipts). Process-wide
+  settings (download folder, proxy) go to every backend. `paths.rs` moves a
+  single-account layout into `accounts/1/` at startup, after logging starts:
+  it refuses when anything is in the way, copies and reads back the archive's
+  keyring key before moving it, and moves SQLite side files before their
+  database. Removing an account deletes its folders after its backend has
+  stopped, then its keyring entry.
 - `src/archive.rs` is the SQLite store of chats, messages, contacts, and
   privacy-id mappings. WhatsApp replays history once, at link time, so the
   archive is the only copy. It keeps each message's raw protobuf because

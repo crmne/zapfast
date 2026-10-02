@@ -1749,19 +1749,14 @@ pub enum Action {
     HideWindow,
     /// Applies the configured close-button behavior.
     CloseWindow,
+    /// Shows another linked account in the window.
     SwitchAccount(AccountId),
+    /// Starts linking another number beside the ones already here.
     AddAccount,
+    /// Leaves an account being added before it was linked.
     CancelAddAccount,
+    /// Unlinks an account and deletes what is stored here for it.
     RemoveAccount(AccountId),
-    RenameAccount {
-        id: AccountId,
-        label: String,
-    },
-    ReorderAccounts(Vec<AccountId>),
-    SetAccountColor {
-        id: AccountId,
-        color: String,
-    },
     /// Mutes until Unix time, indefinitely with `Some(0)`, or unmutes with `None`.
     SetMuted(ChatId, Option<i64>),
     /// Moves a chat into or out of the locked folder.

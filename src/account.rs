@@ -184,23 +184,54 @@ impl Account {
         ) || (!self.chats.is_empty() && !matches!(self.link, LinkStatus::LoggedOut))
     }
 
-    pub fn unread_total(&self) -> u32 {
-        self.chats.iter().map(|chat| chat.unread).sum()
+    /// The taskbar count: unarchived, unmuted, unlocked chats that look
+    /// unread. WhatsApp counts chats here, not the messages inside them.
+    pub fn unread_chat_count(&self) -> u32 {
+        let now = crate::util::now();
+        let chats = self
+            .chats
+            .iter()
+            .filter(|chat| {
+                !chat.archived && !chat.locked && !chat.muted(now) && chat.looks_unread()
+            })
+            .count();
+        u32::try_from(chats).unwrap_or(u32::MAX)
     }
 
+    /// The name the switcher shows: the profile name, else the number,
+    /// else "Account" and its number here.
     pub fn display_label(&self, locale: crate::i18n::Locale) -> String {
-        if !self.settings.label.trim().is_empty() {
-            return self.settings.label.trim().to_owned();
+        if let Some(name) = self
+            .me_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+        {
+            return name.trim().to_owned();
         }
-        if let Some(name) = self.me_name.as_deref().filter(|name| !name.is_empty()) {
-            return name.to_owned();
+        if let Some(phone) = self.phone() {
+            return phone;
         }
-        let label = crate::i18n::gettext(locale, "Account {id}");
-        label.replace("{id}", self.id.as_str())
+        crate::i18n::gettext(locale, "Account {id}").replace("{id}", self.id.as_str())
     }
 
-    pub fn badge_color(&self) -> egui::Color32 {
-        parse_color(&self.settings.color).unwrap_or_else(|| fallback_color(&self.id))
+    /// Returns or requests a cached profile picture from this account.
+    pub fn avatar(&mut self, id: &str) -> Option<PathBuf> {
+        if let Some(known) = self.avatars.get(id) {
+            return known.clone();
+        }
+        if self.avatar_requests.insert(id.to_owned()) {
+            self.backend.send(crate::backend::Command::FetchAvatar {
+                id: id.to_owned(),
+                full: false,
+            });
+        }
+        None
+    }
+
+    /// Our phone number, formatted, once WhatsApp has told us.
+    pub fn phone(&self) -> Option<String> {
+        let me = self.me.as_deref()?;
+        crate::model::phone_of(me).map(crate::util::phone)
     }
 
     pub fn mark_settings_dirty(&mut self) {
@@ -237,28 +268,4 @@ fn resolve_wallpaper_path(dirs: &AccountDirs, settings: &mut AccountSettings) {
     {
         settings.wallpaper_image = None;
     }
-}
-
-fn parse_color(value: &str) -> Option<egui::Color32> {
-    let hex = value.trim().trim_start_matches('#');
-    if hex.len() != 6 {
-        return None;
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some(egui::Color32::from_rgb(r, g, b))
-}
-
-fn fallback_color(id: &AccountId) -> egui::Color32 {
-    const COLORS: [egui::Color32; 6] = [
-        egui::Color32::from_rgb(0x00, 0xa8, 0x84),
-        egui::Color32::from_rgb(0x53, 0xbd, 0xeb),
-        egui::Color32::from_rgb(0xf1, 0x5c, 0x6d),
-        egui::Color32::from_rgb(0xff, 0xd2, 0x79),
-        egui::Color32::from_rgb(0x9b, 0x7e, 0xde),
-        egui::Color32::from_rgb(0x6a, 0xbf, 0x65),
-    ];
-    let index = id.0.parse::<usize>().unwrap_or(0).saturating_sub(1);
-    COLORS[index % COLORS.len()]
 }

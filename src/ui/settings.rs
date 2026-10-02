@@ -674,16 +674,19 @@ fn sections(app: &App) -> Vec<Section> {
             },
             translated(locale, "Change profile picture"),
             translated(locale, "Unlink this computer"),
+            translated(locale, "Add account"),
+            translated(locale, "Remove this account"),
         ],
         |ui, app| account(app, ui),
     );
 
     let mut files = Section::new(translated(locale, "Files"));
-    let state = app.dirs.state.clone();
+    // The account on screen: each number keeps its own archive and media.
+    let state = app.account().dirs.state.clone();
     let open_folder = crate::i18n::gettext(locale, "Open folder");
     files.row(
         translated(locale, "Message archive"),
-        app.dirs.archive_db().display().to_string(),
+        app.account().dirs.archive_db().display().to_string(),
         {
             let open_folder = open_folder.clone();
             move |ui, app| {
@@ -696,7 +699,9 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
     let custom = app.settings.download_folder.clone();
-    let media = custom.clone().unwrap_or_else(|| app.dirs.media_cache_dir());
+    let media = custom
+        .clone()
+        .unwrap_or_else(|| app.account().dirs.media_cache_dir());
     files.row(
         translated(locale, "Downloads"),
         media.display().to_string(),
@@ -1385,7 +1390,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             app.actions.push(Action::PickProfilePicture);
         }
         ui.vertical(|ui| {
-            ui.set_width((ui.available_width() - 230.0).max(160.0));
+            ui.set_width((ui.available_width() - 380.0).max(160.0));
             if let Some((draft_name, draft_about)) = &mut draft {
                 submitted |= profile_field(
                     ui,
@@ -1431,7 +1436,23 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             }
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if theme::soft_button(
+            // With other numbers here, unlinking this one also takes it off
+            // the switcher; the last one stays, waiting to be linked again.
+            if app.has_several_accounts() {
+                if theme::soft_button(
+                    ui,
+                    &palette,
+                    Some(Icon::LogOut),
+                    &crate::i18n::gettext(app.locale, "Remove this account"),
+                    false,
+                )
+                .clicked()
+                {
+                    let id = app.account().id.clone();
+                    app.actions
+                        .push(Action::ShowDialog(Dialog::ConfirmRemoveAccount(id)));
+                }
+            } else if theme::soft_button(
                 ui,
                 &palette,
                 Some(Icon::LogOut),
@@ -1441,6 +1462,17 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             .clicked()
             {
                 app.actions.push(Action::ShowDialog(Dialog::ConfirmUnlink));
+            }
+            if theme::soft_button(
+                ui,
+                &palette,
+                Some(Icon::Plus),
+                &crate::i18n::gettext(app.locale, "Add account"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::AddAccount);
             }
         });
     });

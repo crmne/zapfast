@@ -36,8 +36,16 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 - **Links to your phone.** Scan a QR code or link with your phone number.
   Recent history is copied to this computer after linking and stored here.
-  Several numbers can stay linked in one window; a rail appears once there
-  is more than one, or while you add another.
+  Several numbers can stay linked in one window: click your own picture at
+  the top of the chat list to switch between them or add another (on macOS
+  the picture appears once there is a second number; **Settings > Account >
+  Add account** works everywhere). Each number keeps its own keys, archive,
+  media, and per-number settings (notifications, receipts, typing, automatic
+  downloads, wallpaper); the taskbar count adds up every number's unread
+  chats. A setup from an earlier version moves into `accounts/1/` on the first
+  start, keyring key included; if that cannot finish (a locked keyring, or a
+  folder already in the way), ZapFast stops without moving anything and says
+  why in its log.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,
   and message status. Search chats, saved messages, and contacts. The
   **Search** icon in a chat's header (or **Ctrl+F**) opens a pane beside the
@@ -770,6 +778,7 @@ from the environment and honors `NO_PROXY`.
 | Attachments, avatars | `~/.cache/zapfast/accounts/<id>/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/accounts/<id>/stickers/` | Plain WebP files; each pack is a folder |
 | Wallpaper image | `~/.local/state/zapfast/accounts/<id>/wallpaper.jpg` | Copy of the chosen picture for that number, or `.png`, `.webp`, `.gif`; deleted by **Remove image** |
+| Per-number settings | `~/.local/state/zapfast/accounts/<id>/settings.json` | Notifications, receipts, typing, automatic downloads, the last open chat, and the wallpaper of that number |
 | Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more; **Settings > Files > Log > Open** shows it in its folder when no app opens it |
 
 macOS and Windows use the standard platform directories selected by the
