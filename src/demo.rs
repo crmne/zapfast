@@ -9149,6 +9149,7 @@ mod tests {
         for locale in [crate::i18n::Locale::English, crate::i18n::Locale::German] {
             for width in [260.0, 360.0] {
                 let ctx = egui::Context::default();
+                ctx.enable_accesskit();
                 let mut app = app();
                 apply_flags(&mut app, Some("private-reply-locked-source"));
                 app.locale = locale;
@@ -9174,8 +9175,7 @@ mod tests {
                     output.textures_delta.clear();
                     if let Some(tree) = output.platform_output.accesskit_update {
                         for (_, node) in tree.nodes {
-                            if node.label()
-                                == Some(crate::i18n::gettext(locale, "Cancel reply (Esc)").as_str())
+                            if node.label() == Some("Cancel reply (Esc)")
                                 && let Some(bounds) = node.bounds()
                             {
                                 let scale = ctx.pixels_per_point() as f64;
