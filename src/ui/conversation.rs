@@ -2160,7 +2160,6 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                     // measured before they show.
                     let margin = (viewport.height() * 3.0).max(600.0);
                     for (index, message) in conversation.messages.iter().enumerate() {
-                        let next = conversation.messages.get(index + 1);
                         let before = ui.cursor().top();
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
@@ -2263,11 +2262,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             new_day || previous.is_none_or(|previous| !same_run(previous, message));
                         // Messages curls its tail under a run's last bubble.
                         let tailed = if palette.bubbles == theme::BubbleStyle::Messages {
-                            next.is_none_or(|next| {
-                                !same_run(message, next)
-                                    || crate::util::day_key(message.timestamp)
-                                        != crate::util::day_key(next.timestamp)
-                            })
+                            last_bubble_of_run(&palette, &conversation.messages, index)
                         } else {
                             first_in_run
                         };
@@ -3341,6 +3336,30 @@ fn speed_menu_row(
     );
 }
 
+/// Whether `message` draws without a bubble around it: stickers, round video
+/// messages, carousels, and in the Messages style a lone picture.
+fn bubbleless(palette: &Palette, message: &Message) -> bool {
+    matches!(
+        &message.content,
+        Content::Sticker { .. } | Content::Video { note: true, .. }
+    ) || matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty())
+        || bare_picture(palette, message)
+}
+
+/// Whether `messages[index]` is the last bubble of its run, which Messages
+/// tails: messages drawn without one after it, a lone photo or a sticker,
+/// leave the tail to it.
+fn last_bubble_of_run(palette: &Palette, messages: &[Message], index: usize) -> bool {
+    let message = &messages[index];
+    !messages[index + 1..]
+        .iter()
+        .take_while(|next| {
+            same_run(message, next)
+                && crate::util::day_key(message.timestamp) == crate::util::day_key(next.timestamp)
+        })
+        .any(|next| !bubbleless(palette, next))
+}
+
 /// Whether `next` continues the run `message` belongs to: the same side,
 /// and in a group the same sender.
 fn same_run(message: &Message, next: &Message) -> bool {
@@ -3359,13 +3378,7 @@ fn bubble_frame(
 ) -> egui::Response {
     let palette = view.palette;
     let own = message.from_me;
-    let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
-    // Stickers and round video messages draw without a bubble.
-    let bare = matches!(
-        message.content,
-        Content::Sticker { .. } | Content::Video { note: true, .. }
-    ) || bare_picture(&palette, message);
-    let fill = if carousel || bare {
+    let fill = if bubbleless(&palette, message) {
         Color32::TRANSPARENT
     } else if own {
         palette.bubble_out
@@ -7628,6 +7641,45 @@ mod reaction_tests {
             from_me,
             emoji: emoji.into(),
         }
+    }
+
+    /// The tail goes to a run's last bubble, past the messages drawn without
+    /// one after it, and only to one in the same run.
+    #[test]
+    fn the_tail_goes_to_the_last_bubble_of_a_run() {
+        let photo = Message {
+            id: "photo".into(),
+            content: Content::Image {
+                caption: None,
+                media: crate::model::Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    path: None,
+                    state: crate::model::MediaState::Idle,
+                },
+            },
+            ..with_reactions(Vec::new())
+        };
+        let text = with_reactions(Vec::new());
+        let mine = Message {
+            from_me: true,
+            ..with_reactions(Vec::new())
+        };
+        let messages = Palette::messages();
+        // Text, then a lone photo in the same run: the text keeps the tail.
+        let run = [text.clone(), photo.clone()];
+        assert!(last_bubble_of_run(&messages, &run, 0));
+        // Text, text: only the second.
+        let run = [text.clone(), text.clone()];
+        assert!(!last_bubble_of_run(&messages, &run, 0));
+        assert!(last_bubble_of_run(&messages, &run, 1));
+        // A photo, then text of the other side: the run ends, the text tails.
+        let run = [text.clone(), photo.clone(), mine, text.clone()];
+        assert!(last_bubble_of_run(&messages, &run, 0));
+        // WhatsApp frames the photo, so there it is the last bubble.
+        assert!(!last_bubble_of_run(&Palette::dark(), &[text, photo], 0));
     }
 
     /// Messages draws a photo alone in its message without a bubble, with
