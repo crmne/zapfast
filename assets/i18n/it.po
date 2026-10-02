@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -159,9 +159,17 @@ msgstr "Novembre"
 msgid "December"
 msgstr "Dicembre"
 
+#: src/ui/chats.rs:134 src/ui/chats.rs:333 src/app.rs:2141
+msgid "Starred"
+msgstr "Contrassegnati"
+
 #: src/ui/chats.rs:176 src/ui/chats.rs:309 src/ui/settings.rs:379
 msgid "Chats"
 msgstr "Chat"
+
+#: src/ui/chats.rs:236 src/ui/chats.rs:383 src/ui/chats.rs:1610
+msgid "Starred messages"
+msgstr "Messaggi contrassegnati"
 
 #: src/ui/chats.rs:246 src/ui/chats.rs:352 src/ui/pane.rs:169
 msgid "Search"
@@ -174,6 +182,15 @@ msgstr "Archiviate"
 #: src/ui/chats.rs:472
 msgid "Locked"
 msgstr "Bloccati"
+
+#: src/ui/chats.rs:592
+msgid "No starred messages"
+msgstr "Nessun messaggio contrassegnato"
+
+#: src/ui/chats.rs:595
+msgid "Right-click a message and choose Star to keep it here."
+msgstr "Fai clic con il pulsante destro su un messaggio e scegli Contrassegna pe"
+"r tenerlo qui."
 
 #: src/ui/chats.rs:528
 msgid "No favorites yet"
@@ -299,6 +316,14 @@ msgstr "Apri nel lettore di sistema"
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Info messaggio"
+
+#: src/ui/conversation.rs:3996 src/ui/conversation.rs:4183
+msgid "Unstar"
+msgstr "Rimuovi contrassegno"
+
+#: src/ui/conversation.rs:3997 src/ui/conversation.rs:4185
+msgid "Star"
+msgstr "Contrassegna"
 
 #: src/ui/conversation.rs:4114 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
@@ -1074,6 +1099,10 @@ msgstr "{name} (Tu)"
 msgid "You"
 msgstr "Tu"
 
+#: src/app.rs:2143
+msgid "Star removed"
+msgstr "Contrassegno rimosso"
+
 #: src/app.rs:2437
 msgid "Could not use this image"
 msgstr "Impossibile usare questa immagine"
@@ -1526,3 +1555,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+

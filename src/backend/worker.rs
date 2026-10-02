@@ -75,6 +75,8 @@ const THUMBNAIL_SIDE: u32 = 96;
 const PROFILE_PICTURE_SIDE: u32 = 640;
 /// Sticker download batch size for the picker.
 const STICKER_FETCH_LIMIT: usize = 40;
+/// How many starred messages the list shows.
+const STARRED_LIMIT: usize = 200;
 const ATTACHMENT_LIMIT_ERROR: &str = "This attachment is larger than the 64 MiB download limit";
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -484,6 +486,8 @@ pub async fn run(
         privacy_recovering: false,
         privacy_generation: 0,
         privacy_retry: Instant::now(),
+        star_generation: HashMap::new(),
+        star_session: 0,
         withheld_pages: Vec::new(),
         dirs,
         events,
@@ -721,6 +725,14 @@ struct Worker {
     privacy_recovering: bool,
     privacy_generation: u64,
     privacy_retry: Instant,
+    /// Latest star or unstar attempt per message. A finished request whose
+    /// generation is older than this is dropped.
+    star_generation: HashMap<(String, String), u64>,
+    /// The account the star requests in flight belong to. A task that keeps
+    /// the client of the account that left can finish after the next one has
+    /// linked, and the per-message generations start over there, so the
+    /// session has to be checked as well.
+    star_session: u64,
     /// Transcript pages asked for while private content was withheld. Their
     /// answers never reached the interface, which still waits for them, so
     /// they are read again once content is shown (#180).
@@ -1016,6 +1028,7 @@ impl Worker {
                     | Event::SearchHits { .. }
                     | Event::Labels(_)
                     | Event::Typing { .. }
+                    | Event::StarredList(_)
             )
         {
             return;
@@ -1038,6 +1051,96 @@ impl Worker {
                 log::warn!("could not synchronize a chat preference");
             }
         });
+    }
+
+    /// Stars or unstars one message for every linked device.
+    fn next_star_generation(&mut self, chat: &str, id: &str) -> u64 {
+        let slot = self
+            .star_generation
+            .entry((chat.to_owned(), id.to_owned()))
+            .or_insert(0);
+        *slot = slot.wrapping_add(1);
+        *slot
+    }
+
+    fn set_star(&mut self, chat: ChatId, id: String, starred: bool) {
+        let generation = self.next_star_generation(&chat, &id);
+        let session = self.star_session;
+        let commands = self.commands.clone();
+        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
+            // The batch counts every attempt, so a refusal it never heard
+            // about would leave its toast open. Report it like any other.
+            let _ = commands.send(Command::Starred {
+                chat,
+                message: id,
+                starred,
+                generation,
+                session,
+                result: Err("Not connected to WhatsApp".to_owned()),
+            });
+            return;
+        };
+        let Ok(Some(target)) = self.archive.message(&chat, &id) else {
+            let _ = commands.send(Command::Starred {
+                chat,
+                message: id,
+                starred,
+                generation,
+                session,
+                result: Err("This message is not on this computer".to_owned()),
+            });
+            return;
+        };
+        let from_me = target.from_me;
+        let participant = (jid.is_group() && !from_me)
+            .then(|| target.sender.clone())
+            .and_then(|sender| Self::jid_of(&sender));
+        tokio::spawn(async move {
+            let actions = client.chat_actions();
+            let result = if starred {
+                actions
+                    .star_message(&jid, participant.as_ref(), &id, from_me)
+                    .await
+            } else {
+                actions
+                    .unstar_message(&jid, participant.as_ref(), &id, from_me)
+                    .await
+            };
+            let _ = commands.send(Command::Starred {
+                chat,
+                message: id,
+                starred,
+                generation,
+                session,
+                result: result.map_err(|error| error.to_string()),
+            });
+        });
+    }
+
+    /// A star or unstar made on the phone, or on another linked device.
+    fn star_update(&mut self, update: &wa_events::StarUpdate) {
+        let chat = self.canonical(&update.chat_jid);
+        let id = update.message_id.clone();
+        let starred = update.action.starred.unwrap_or(false);
+        let at = update.timestamp.timestamp();
+        // An older event loses to the stored time and must not cancel a
+        // request that is still in flight. Only a row that actually changed
+        // retires that request.
+        match self
+            .archive
+            .set_star(&chat, &id, starred, at, update.from_full_sync)
+        {
+            Ok(true) => {
+                self.next_star_generation(&chat, &id);
+                self.emit(Event::StarChanged {
+                    chat,
+                    message: id,
+                    starred,
+                });
+            }
+            Ok(false) => {}
+            Err(error) => log::warn!("could not store a star from the phone: {error}"),
+        }
     }
 
     /// Deletes attachment files that belonged to a removed chat. Only the
@@ -1167,6 +1270,14 @@ impl Worker {
             Ok(Some(_)) => self.emit_labels(),
             Ok(None) => log::info!("label not created: full, empty, or taken"),
             Err(error) => log::warn!("could not create label: {error}"),
+        }
+    }
+
+    /// Hands the starred list to the interface.
+    fn emit_starred(&mut self) {
+        match self.archive.starred(STARRED_LIMIT) {
+            Ok(list) => self.emit(Event::StarredList(list)),
+            Err(error) => self.emit(Event::Error(error.to_string())),
         }
     }
 
@@ -1773,6 +1884,7 @@ impl Worker {
         self.emit(Event::Syncing(self.syncing));
         // The picker may have been sent an empty Received shelf meanwhile.
         self.emit_stickers();
+        self.emit_starred();
         // Answer the reads made while content was withheld, now that the
         // chat list they belong to has been sent.
         for page in std::mem::take(&mut self.withheld_pages) {
@@ -2467,6 +2579,7 @@ impl Worker {
             E::RemoveRecentStickerUpdate(update) => self.recent_sticker_removed(update),
             E::FavoriteStickerUpdate(update) => self.favorite_sticker_update(update),
             E::FavoritesUpdate(update) => self.favorite_chats_update(update),
+            E::StarUpdate(update) => self.star_update(update),
             E::LockChatUpdate(update) => {
                 let chat = self.canonical(&update.jid);
                 self.ensure_chat(&chat, None);
@@ -2659,6 +2772,11 @@ impl Worker {
         self.forward_queue = None;
         self.pending_older.clear();
         self.pending_avatars.clear();
+        // A star request belongs to the account that just left. A task that
+        // finishes after logout must not write the next account, whose
+        // generations start over.
+        self.star_generation.clear();
+        self.star_session = self.star_session.wrapping_add(1);
         self.me_pn = None;
         self.me_lid = None;
         self.me_name = None;
@@ -4427,6 +4545,49 @@ impl Worker {
                 from,
                 until,
             } => self.search_chat_messages(chat, query, from, until),
+            Command::LoadStarred => self.emit_starred(),
+            Command::SetStar {
+                chat,
+                message,
+                starred,
+            } => self.set_star(chat, message, starred),
+            Command::Starred {
+                chat,
+                message,
+                starred,
+                generation,
+                session,
+                result,
+            } => {
+                if self.star_session != session
+                    || self
+                        .star_generation
+                        .get(&(chat.clone(), message.clone()))
+                        .copied()
+                        != Some(generation)
+                {
+                    return;
+                }
+                if let Err(error) = &result {
+                    self.emit(Event::Error(error.clone()));
+                } else {
+                    // Only a confirmed star reaches the archive, so the list
+                    // never claims something WhatsApp refused. The time is the
+                    // moment of this answer: an older phone event cannot undo it.
+                    let written =
+                        self.archive
+                            .set_star(&chat, &message, starred, crate::util::now(), false);
+                    match written {
+                        Ok(true) => self.emit(Event::StarChanged {
+                            chat,
+                            message,
+                            starred,
+                        }),
+                        Ok(false) => {}
+                        Err(error) => self.emit(Event::Error(error.to_string())),
+                    }
+                }
+            }
             Command::EnsureChat { chat, name } => {
                 let is_new = self.archive.chat(&chat).ok().flatten().is_none();
                 if let Err(error) = self.archive.ensure_chat(&chat, &name) {
@@ -6313,6 +6474,14 @@ impl Worker {
 
     fn load_chat(&mut self, chat: ChatId, before: Option<super::PageKey>) {
         self.send_page(&chat, before.clone());
+        if before.is_none()
+            && let Ok(ids) = self.archive.starred_ids(&chat)
+        {
+            self.emit(Event::Stars {
+                chat: chat.clone(),
+                ids: ids.into_iter().collect(),
+            });
+        }
         if before.is_none() && ChatKind::from_id(&chat) == ChatKind::Group {
             // Force group metadata when opening a group.
             self.request_group_info(&chat, false);
@@ -11369,6 +11538,8 @@ mod receipt_tests {
             privacy_recovering: false,
             privacy_generation: 0,
             privacy_retry: Instant::now(),
+            star_generation: HashMap::new(),
+            star_session: 0,
             withheld_pages: Vec::new(),
             dirs: AppDirs::under(&root),
             events,
@@ -13858,6 +14029,62 @@ mod chat_removal_tests {
             clear_boundary(Ok(empty)).is_some(),
             "an empty archive clears through now"
         );
+    }
+
+    #[tokio::test]
+    async fn a_late_star_event_does_not_cancel_the_inflight_request() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        const CHAT: &str = "1@s.whatsapp.net";
+        worker.archive.ensure_chat(CHAT, "Ada").unwrap();
+        let now = whatsapp_rust::wacore::time::now_utc();
+        worker
+            .archive
+            .star(CHAT, "m1", now.timestamp() + 10_000)
+            .unwrap();
+        worker.star_generation.insert((CHAT.into(), "m1".into()), 3);
+        let stale = wa_events::StarUpdate::builder()
+            .chat_jid(CHAT.parse().unwrap())
+            .message_id("m1".into())
+            .from_me(false)
+            .timestamp(now)
+            .from_full_sync(false)
+            .action(Box::new(wa::sync_action_value::StarAction {
+                starred: Some(false),
+            }))
+            .build();
+        worker.star_update(&stale);
+        assert_eq!(
+            worker
+                .star_generation
+                .get(&(CHAT.into(), "m1".into()))
+                .copied(),
+            Some(3)
+        );
+        assert!(worker.archive.starred_ids(CHAT).unwrap().contains("m1"));
+    }
+
+    #[tokio::test]
+    async fn a_star_answer_from_the_previous_account_does_not_write() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        const CHAT: &str = "1@s.whatsapp.net";
+        worker.archive.ensure_chat(CHAT, "Ada").unwrap();
+        // The request that is about to answer belongs to the account that
+        // left. The next account starts its own generations at one, so the
+        // generation alone cannot tell the two apart.
+        worker.star_session = 0;
+        worker.star_generation.insert((CHAT.into(), "m1".into()), 1);
+        worker.star_session = 1;
+        worker
+            .handle_command(Command::Starred {
+                chat: CHAT.into(),
+                message: "m1".into(),
+                starred: true,
+                generation: 1,
+                session: 0,
+                result: Ok(()),
+            })
+            .await;
+        assert!(worker.archive.starred_ids(CHAT).unwrap().is_empty());
     }
 }
 

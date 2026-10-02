@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -159,9 +159,17 @@ msgstr "11月"
 msgid "December"
 msgstr "12月"
 
+#: src/ui/chats.rs:134 src/ui/chats.rs:333 src/app.rs:2141
+msgid "Starred"
+msgstr "已加星标"
+
 #: src/ui/chats.rs:176 src/ui/chats.rs:309 src/ui/settings.rs:379
 msgid "Chats"
 msgstr "聊天"
+
+#: src/ui/chats.rs:236 src/ui/chats.rs:383 src/ui/chats.rs:1610
+msgid "Starred messages"
+msgstr "已加星标的消息"
 
 #: src/ui/chats.rs:246 src/ui/chats.rs:352 src/ui/pane.rs:169
 msgid "Search"
@@ -174,6 +182,14 @@ msgstr "已归档"
 #: src/ui/chats.rs:472
 msgid "Locked"
 msgstr "已锁定"
+
+#: src/ui/chats.rs:592
+msgid "No starred messages"
+msgstr "没有已加星标的消息"
+
+#: src/ui/chats.rs:595
+msgid "Right-click a message and choose Star to keep it here."
+msgstr "右键点击消息并选择“加星标”，即可保留在这里。"
 
 #: src/ui/chats.rs:528
 msgid "No favorites yet"
@@ -292,6 +308,14 @@ msgstr "用系统播放器打开"
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "消息信息"
+
+#: src/ui/conversation.rs:3996 src/ui/conversation.rs:4183
+msgid "Unstar"
+msgstr "取消星标"
+
+#: src/ui/conversation.rs:3997 src/ui/conversation.rs:4185
+msgid "Star"
+msgstr "加星标"
 
 #: src/ui/conversation.rs:4114 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
@@ -1039,6 +1063,10 @@ msgstr "{name}（你）"
 msgid "You"
 msgstr "你"
 
+#: src/app.rs:2143
+msgid "Star removed"
+msgstr "已取消星标"
+
 #: src/app.rs:2437
 msgid "Could not use this image"
 msgstr "无法使用此图片"
@@ -1477,3 +1505,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+

@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
-"POT-Creation-Date: 2026-09-29 15:36+0200\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -157,9 +157,17 @@ msgstr "Kasım"
 msgid "December"
 msgstr "Aralık"
 
+#: src/ui/chats.rs:134 src/ui/chats.rs:333 src/app.rs:2141
+msgid "Starred"
+msgstr ""
+
 #: src/ui/chats.rs:181 src/ui/chats.rs:314 src/ui/settings.rs:371
 msgid "Chats"
 msgstr "Sohbetler"
+
+#: src/ui/chats.rs:236 src/ui/chats.rs:383 src/ui/chats.rs:1610
+msgid "Starred messages"
+msgstr ""
 
 #: src/ui/chats.rs:251 src/ui/chats.rs:355 src/ui/pane.rs:169
 msgid "Search"
@@ -172,6 +180,14 @@ msgstr "Arşivlenmiş"
 #: src/ui/chats.rs:475
 msgid "Locked"
 msgstr "Kilitli"
+
+#: src/ui/chats.rs:592
+msgid "No starred messages"
+msgstr ""
+
+#: src/ui/chats.rs:595
+msgid "Right-click a message and choose Star to keep it here."
+msgstr ""
 
 #: src/ui/chats.rs:531
 msgid "No favorites yet"
@@ -296,6 +312,14 @@ msgstr "Sistem oynatıcısında aç"
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Mesaj bilgisi"
+
+#: src/ui/conversation.rs:3996 src/ui/conversation.rs:4183
+msgid "Unstar"
+msgstr ""
+
+#: src/ui/conversation.rs:3997 src/ui/conversation.rs:4185
+msgid "Star"
+msgstr ""
 
 #: src/ui/conversation.rs:4104 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
@@ -1060,6 +1084,10 @@ msgstr "{name} (Siz)"
 msgid "You"
 msgstr "Siz"
 
+#: src/app.rs:2143
+msgid "Star removed"
+msgstr ""
+
 #: src/app.rs:2395
 msgid "Could not use this image"
 msgstr "Bu görsel kullanılamadı"
@@ -1533,3 +1561,4 @@ msgstr "Pencereyi kapla"
 #: src/ui/conversation.rs
 msgid "Back to the message (Esc)"
 msgstr "Mesaja geri dön (Esc)"
+
