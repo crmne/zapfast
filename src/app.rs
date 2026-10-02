@@ -2574,7 +2574,9 @@ impl App {
                     self.actions.push(Action::StartChat {
                         id,
                         name,
-                        dismiss_dialog: owned_by_dialog,
+                        // Its owned dialog was already closed above. A later
+                        // event may open a new one before this action runs.
+                        dismiss_dialog: false,
                     });
                 }
                 Event::Info(message) => self.toast(message),
@@ -6430,6 +6432,31 @@ mod tests {
                     == "Não foi possível verificar o número. Tente novamente."));
             }
         }
+    }
+
+    /// Verifies that a later sticker dialog survives dispatching a completed number lookup.
+    #[test]
+    fn completed_number_lookup_preserves_a_later_sticker_dialog() {
+        let mut app = app();
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
+        app.apply(Action::NewContact {
+            phone: "15550000001".into(), first: String::new(), last: String::new(), to_phone: None,
+        }, &ctx);
+        let request = app.new_contact_request.unwrap();
+        events.send(Event::ContactReady {
+            request, id: "15550000001@s.whatsapp.net".into(), name: None,
+        }).unwrap();
+        events.send(Event::StickerPicture {
+            path: PathBuf::from("synthetic-sticker.png"), width: 32, height: 32, transparent: false,
+        }).unwrap();
+        app.handle_events();
+        assert_eq!(app.dialog, Some(Dialog::StickerMaker));
+        app.apply_actions(&ctx);
+        assert_eq!(app.dialog, Some(Dialog::StickerMaker));
+        assert_eq!(app.open_chat.as_deref(), Some("15550000001@s.whatsapp.net"));
     }
 
     #[test]
