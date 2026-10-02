@@ -228,6 +228,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   original discards a queued correction.
   If you have started another draft, that draft stays first and the correction
   waits for an empty composer.
+  Edit requests time out after two minutes. Check the message before retrying,
+  since a timeout cannot confirm remote delivery.
   If the original is no longer editable, the correction becomes a normal
   draft that you can send as a new message. It is never sent automatically.
   Replies can be text, attachments, voice messages,

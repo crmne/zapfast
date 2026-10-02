@@ -80,6 +80,21 @@ const STICKER_FETCH_LIMIT: usize = 40;
 const ATTACHMENT_LIMIT_ERROR: &str = "This attachment is larger than the 64 MiB download limit";
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Bounds each edit attempt so an incomplete earlier request cannot prevent
+/// a later accepted correction from settling in the local archive.
+const EDIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Converts an edit deadline into a normal refused completion for its generation.
+async fn with_edit_deadline(
+    duration: Duration,
+    operation: impl std::future::Future<Output = Result<(), String>>,
+) -> Option<String> {
+    tokio::time::timeout(duration, operation)
+        .await
+        .unwrap_or_else(|_| Err("Edit timed out; check the message before retrying".to_owned()))
+        .err()
+}
+
 async fn with_attachment_deadline<T>(
     duration: Duration,
     operation: impl std::future::Future<Output = Result<T, String>>,
@@ -6959,11 +6974,10 @@ impl Worker {
         self.apply_ephemeral(&chat, &mut message);
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            let error = client
-                .edit_message(jid, id.clone(), message)
-                .await
-                .err()
-                .map(|error| error.to_string());
+            let error = with_edit_deadline(EDIT_TIMEOUT, async {
+                client.edit_message(jid, id.clone(), message)
+                    .await.map(|_| ()).map_err(|error| error.to_string())
+            }).await;
             let _ = commands.send(Command::EditedText {
                 chat,
                 id,
@@ -9197,6 +9211,32 @@ mod tests {
                 .content,
             Content::Revoked
         );
+    }
+
+    /// A timed-out earlier request releases the settlement barrier while a
+    /// later accepted edit remains the saved correction, without automatic retry.
+    #[tokio::test]
+    async fn an_edit_deadline_releases_a_later_accepted_correction() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let row = own_message("deadline", 1);
+        worker.store_message(row.clone(), None, None);
+        let first = worker.begin_edit(PEER, &row.id);
+        let second = worker.begin_edit(PEER, &row.id);
+        let request = |text: &str| EditRequest {
+            text: text.to_owned(), mentions: Vec::new(),
+            draft: EditDraft { text: text.to_owned(), mentions: Vec::new() },
+        };
+        let version = |generation| EditVersion {
+            generation, content: row.content.clone(), edited: row.edited,
+        };
+        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Accepted"), None, version(second));
+        assert!(!worker.pending_edits.is_empty());
+        let error = with_edit_deadline(Duration::from_millis(1), std::future::pending()).await;
+        assert!(error.as_ref().is_some_and(|error| error.contains("timed out")));
+        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Earlier"), error, version(first));
+        assert!(worker.pending_edits.is_empty());
+        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, Content::text("Accepted"));
+        assert!(with_edit_deadline(Duration::from_millis(10), async { Ok(()) }).await.is_none());
     }
 
     #[test]
