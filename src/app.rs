@@ -464,6 +464,7 @@ pub struct App {
     paste_before_release: bool,
     /// A V press delivered to us, unlike the press swallowed by native paste.
     ordinary_v_down: bool,
+    saw_paste_command: bool,
     /// Open emoji, GIF, or sticker picker tab.
     pub picker: Option<PickerTab>,
     /// Picker anchor at the composer button.
@@ -1022,6 +1023,7 @@ impl App {
             dropping: false,
             paste_before_release: false,
             ordinary_v_down: false,
+            saw_paste_command: false,
             picker: None,
             picker_anchor: None,
             picker_search: String::new(),
@@ -1391,6 +1393,7 @@ impl App {
         self.window_hidden = false;
         self.paste_before_release = false;
         self.ordinary_v_down = false;
+        self.saw_paste_command = false;
         self.hide_intent = false;
         self.wants_show = false;
         self.reopen = false;
@@ -5856,6 +5859,9 @@ impl App {
             return;
         }
         ctx.data_mut(|data| data.insert_temp(frame_id, (frame, false)));
+        if ctx.input(|input| !input.focused || input.events.iter().any(|event| matches!(event, egui::Event::WindowFocused(false)))) {
+            self.saw_paste_command = false;
+        }
         let (paste, text, released, focused, command) = ctx.input(|input| {
             (
                 wants_paste(input)
@@ -5868,6 +5874,7 @@ impl App {
                                 ..
                             }
                         ) && !self.ordinary_v_down
+                            && (self.saw_paste_command || input.modifiers.command)
                             && !input.events.iter().any(|event| {
                                 matches!(
                                     event,
@@ -5899,8 +5906,8 @@ impl App {
         });
         let requested = paste && (text || !self.paste_before_release);
         // egui-winit swallows Ctrl/Cmd+V's press even for an image-only
-        // clipboard. A release without a delivered press is that shortcut,
-        // including when Ctrl/Cmd was released first. Ordinary typing has a
+        // clipboard. A release after an observed command modifier can be that
+        // shortcut, including when Ctrl/Cmd was released first. Ordinary typing has a
         // delivered press, and must never stage an unrelated clipboard image.
         if ctx.input(|input| {
             input.events.iter().any(|event| {
@@ -5919,9 +5926,13 @@ impl App {
         if released || !focused {
             self.paste_before_release = false;
             self.ordinary_v_down = false;
+            self.saw_paste_command = false;
         } else if text {
             // A menu paste has no key release to wait for.
             self.paste_before_release = command;
+        }
+        if focused && !released && command {
+            self.saw_paste_command = true;
         }
         // A message or button may retain keyboard focus after clicking it.
         // Other text fields still own their clipboard input.
@@ -6857,10 +6868,34 @@ mod tests {
         if let egui::Event::Key { modifiers, .. } = &mut release {
             *modifiers = egui::Modifiers::NONE;
         }
-        clipboard_frame(&mut app, &ctx, vec![release.clone()], true);
+        assert_eq!(clipboard_frame(&mut app, &ctx, vec![], true), 0);
+        assert_eq!(clipboard_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)], true), 0);
+        clipboard_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), release.clone()], true);
         assert_eq!(app.pending.len(), 1);
         clipboard_frame(&mut app, &ctx, vec![release], true);
         assert_eq!(app.pending.len(), 2, "each shortcut stages one image");
+    }
+
+    #[test]
+    fn a_bare_v_release_after_refocusing_never_reads_the_clipboard() {
+        let (mut app, ctx) = clipboard_app();
+        let mut reads = 0;
+        let mut release = paste_release();
+        if let egui::Event::Key { modifiers, .. } = &mut release { *modifiers = egui::Modifiers::NONE; }
+        for (focused, events) in [
+            (true, vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND)]),
+            (false, vec![]),
+            (true, vec![release]),
+        ] {
+            let mut output = ctx.run_ui(egui::RawInput { focused, events, ..Default::default() }, |ui| {
+                app.take_clipboard_paste(ui.ctx(), || { reads += 1; Some(ClipboardPaste::Image {
+                    width: 2, height: 2, rgba: vec![200; 16],
+                }) });
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(reads, 0);
+        assert!(app.pending.is_empty());
     }
 
     #[test]
