@@ -299,7 +299,7 @@ msgstr "消息信息"
 
 #: src/ui/conversation.rs:4057
 msgid "Reply privately"
-msgstr "目前仅 Windows 支持向外拖动附件。"
+msgstr "私下回复"
 
 #: src/ui/conversation.rs:4157 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173

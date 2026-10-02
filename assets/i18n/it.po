@@ -306,7 +306,7 @@ msgstr "Info messaggio"
 
 #: src/ui/conversation.rs:4057
 msgid "Reply privately"
-msgstr "Il trascinamento degli allegati all’esterno è disponibile solo su Windows."
+msgstr "Rispondi in privato"
 
 #: src/ui/conversation.rs:4157 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173

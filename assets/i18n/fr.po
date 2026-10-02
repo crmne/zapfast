@@ -303,7 +303,7 @@ msgstr "Infos du message"
 
 #: src/ui/conversation.rs:4057
 msgid "Reply privately"
-msgstr "Le glisser-déposer des pièces jointes vers l’extérieur est disponible uniquement sous Windows."
+msgstr "Répondre en privé"
 
 #: src/ui/conversation.rs:4157 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173

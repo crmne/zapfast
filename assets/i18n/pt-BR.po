@@ -303,7 +303,7 @@ msgstr "Dados da mensagem"
 
 #: src/ui/conversation.rs:4057
 msgid "Reply privately"
-msgstr "Arrastar anexos para fora está disponível apenas no Windows."
+msgstr "Responder em particular"
 
 #: src/ui/conversation.rs:4157 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173

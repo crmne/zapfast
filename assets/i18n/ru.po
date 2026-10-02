@@ -306,7 +306,7 @@ msgstr "Данные сообщения"
 
 #: src/ui/conversation.rs:4057
 msgid "Reply privately"
-msgstr "Перетаскивание вложений наружу доступно только в Windows."
+msgstr "Ответить лично"
 
 #: src/ui/conversation.rs:4157 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173

@@ -305,7 +305,7 @@ msgstr "Nachrichteninfo"
 
 #: src/ui/conversation.rs:4057
 msgid "Reply privately"
-msgstr "Anhänge können derzeit nur unter Windows herausgezogen werden."
+msgstr "Privat antworten"
 
 #: src/ui/conversation.rs:4157 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173

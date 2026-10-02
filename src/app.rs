@@ -1483,7 +1483,7 @@ impl App {
             self.composer.clear();
             self.composer_mentions.clear();
             self.pending.clear();
-            self.private_reply_drafts.clear();
+            self.private_reply_drafts.remove(id);
             self.reply_to = None;
             self.editing = None;
             self.picker = None;
@@ -6331,7 +6331,7 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ChatKind, Content, Media, MediaState, ToastKind};
+    use crate::model::{ChatKind, Content, Media, MediaState, ReplyTarget, ToastKind};
 
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
@@ -9418,6 +9418,38 @@ mod tests {
         assert!(app.reply_to.is_none());
         app.open_chat(sender.into());
         assert_eq!(app.reply_to, Some(target));
+    }
+
+    #[test]
+    fn leaving_a_chat_preserves_other_private_reply_drafts() {
+        for delete in [false, true] {
+            let mut app = app();
+            let left = "15550001111@s.whatsapp.net";
+            let other = "15550002222@s.whatsapp.net";
+            let quote = ReplyTarget {
+                id: "original".into(),
+                chat: Some("12345@g.us".into()),
+            };
+            app.chats
+                .push(Chat::new(left.into(), "Left fixture".into()));
+            app.chats
+                .push(Chat::new(other.into(), "Other fixture".into()));
+            app.open_chat = Some(left.into());
+            app.reply_to = Some(quote.clone());
+            app.private_reply_drafts.insert(left.into(), quote.clone());
+            app.private_reply_drafts.insert(other.into(), quote.clone());
+            if delete {
+                app.forget_chat(left);
+            } else {
+                app.leave_chat(left);
+            }
+            assert!(app.open_chat.is_none());
+            assert!(app.reply_to.is_none());
+            assert!(!app.private_reply_drafts.contains_key(left));
+            assert_eq!(app.private_reply_drafts.get(other), Some(&quote));
+            app.open_chat(other.into());
+            assert_eq!(app.reply_to, Some(quote));
+        }
     }
 
     #[test]
