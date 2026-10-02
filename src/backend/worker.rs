@@ -7016,7 +7016,8 @@ impl Worker {
         };
         let row = row.expect("eligible message");
         let generation = self.begin_edit(&chat, &id);
-        let mut turn = self.pending_edits
+        let mut turn = self
+            .pending_edits
             .get_mut(&(chat.clone(), id.clone()))
             .expect("registered edit")
             .reserve_dispatch();
@@ -7035,14 +7036,16 @@ impl Worker {
             }
             let error = if !eligibility.editable_at(crate::util::now()) {
                 Some("This message can no longer be edited".to_owned())
-            } else { with_edit_deadline(EDIT_TIMEOUT, async {
-                client
-                    .edit_message(jid, id.clone(), message)
-                    .await
-                    .map(|_| ())
-                    .map_err(|error| error.to_string())
-            })
-            .await };
+            } else {
+                with_edit_deadline(EDIT_TIMEOUT, async {
+                    client
+                        .edit_message(jid, id.clone(), message)
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| error.to_string())
+                })
+                .await
+            };
             let _ = commands.send(Command::EditedText {
                 chat,
                 id,
@@ -9157,7 +9160,10 @@ mod tests {
             let _ = second.completion.send(());
         });
         tokio::task::yield_now().await;
-        assert!(matches!(observed.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+        assert!(matches!(
+            observed.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
         let mut unrelated = PendingEdits::default();
         assert!(unrelated.reserve_dispatch().wait().await);
         assert!(first.wait().await);
@@ -9189,9 +9195,17 @@ mod tests {
             worker.begin_edit(&row.chat, &row.id);
         }
         let key = (older.chat.clone(), older.id.clone());
-        let mut removed = worker.pending_edits.get_mut(&key).unwrap().reserve_dispatch();
+        let mut removed = worker
+            .pending_edits
+            .get_mut(&key)
+            .unwrap()
+            .reserve_dispatch();
         let key = (newer.chat.clone(), newer.id.clone());
-        let mut retained = worker.pending_edits.get_mut(&key).unwrap().reserve_dispatch();
+        let mut retained = worker
+            .pending_edits
+            .get_mut(&key)
+            .unwrap()
+            .reserve_dispatch();
         assert!(worker.empty_chat(&older.chat, 100, false));
         assert!(!removed.wait().await);
         assert!(retained.wait().await);
