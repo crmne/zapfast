@@ -8262,7 +8262,7 @@ mod tests {
         let bubble = ctx
             .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
             .unwrap();
-        let padding = egui::pos2(bubble.center().x, bubble.bottom() - 2.0);
+        let padding = egui::pos2(bubble.left() + 2.0, body.center().y);
         assert!(!body.contains(padding));
         let press = |pos, pressed| egui::Event::PointerButton {
             pos,
