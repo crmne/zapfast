@@ -2828,6 +2828,56 @@ mod tests {
         }
     }
 
+    /// Dragging downloaded video surfaces exports their files without starting playback.
+    #[test]
+    fn downloaded_standard_and_round_video_surfaces_dispatch_drag_without_play() {
+        if !crate::file_drag::SUPPORTED {
+            return;
+        }
+        for id in ["demo-video", "demo-note"] {
+            let mut app = app();
+            apply_flags(&mut app, Some("video"));
+            let chat = SAMPLES[0].id;
+            let rows = &mut app.conversations.get_mut(chat).unwrap().messages;
+            rows.retain(|row| row.id == id);
+            let path = rows[0].content.media().unwrap().path.clone().unwrap();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            app.backend.record_demo_commands();
+            let key = crate::ui::conversation::bubble_id(chat, id).with("drag-media");
+            let rect = ctx.data(|data| data.get_temp::<egui::Rect>(key)).unwrap();
+            let from = rect.center();
+            let to = from + egui::vec2(25.0, 0.0);
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(from), button(from, true)],
+            );
+            frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+            assert!(app.actions.is_empty());
+            assert!(
+                app.video.message().is_none(),
+                "drag must not start playback"
+            );
+            // Demo avoids the OS drag loop, but the app's drag action is
+            // recorded by the test hook below.
+            assert_eq!(
+                ctx.data(|data| data
+                    .get_temp::<std::path::PathBuf>(egui::Id::new("fixture-native-drag"))),
+                Some(path)
+            );
+            frame_with(&mut app, &ctx, vec![button(to, false)]);
+            assert!(app.video.message().is_none());
+        }
+    }
+
     /// A clicked notification lands on the message it announced and keeps it
     /// in view, even with the unread divider far above it.
     #[test]

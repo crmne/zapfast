@@ -5688,6 +5688,118 @@ fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> Str
 
 /// Default image bounds based on [`CARD_WIDTH`].
 const PICTURE_WIDTH: f32 = CARD_WIDTH;
+
+/// Uses drag sensing on Windows and click sensing on other platforms.
+fn attachment_drag_sense() -> Sense {
+    if crate::file_drag::SUPPORTED {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    }
+}
+
+/// Queues a native file drag when this attachment's primary-button drag begins.
+fn attachment_drag(response: &egui::Response, path: &Path, actions: &mut Vec<Action>) {
+    if crate::file_drag::SUPPORTED && response.drag_started_by(egui::PointerButton::Primary) {
+        actions.push(Action::DragAttachment(path.to_owned()));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod attachment_drag_tests {
+    use super::*;
+
+    #[test]
+    fn a_primary_drag_queues_a_file_copy_without_activating_the_picture() {
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+        let path = Path::new("fixture.png");
+        let mut rect = Rect::NOTHING;
+        let mut clicked = false;
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let (area, response) =
+                        ui.allocate_exact_size(vec2(120.0, 120.0), attachment_drag_sense());
+                    rect = area;
+                    clicked |= response.clicked();
+                    attachment_drag(&response, path, &mut actions);
+                },
+            );
+            output.textures_delta.clear();
+            rect
+        };
+        let area = frame(vec![]);
+        frame(vec![
+            egui::Event::PointerMoved(area.center()),
+            egui::Event::PointerButton {
+                pos: area.center(),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        frame(vec![egui::Event::PointerMoved(
+            area.center() + vec2(25.0, 0.0),
+        )]);
+        assert!(!clicked);
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(&actions[0], Action::DragAttachment(file) if file == path));
+    }
+    /// The decode-failure tile exports its file on drag and opens on a click.
+    #[test]
+    fn an_unavailable_picture_drags_without_opening_and_still_opens_on_click() {
+        let ctx = egui::Context::default();
+        let path = PathBuf::from("corrupt-fixture.png");
+        let mut actions = Vec::new();
+        let mut frame = |events| {
+            let mut rect = Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    rect = unavailable_picture(
+                        ui,
+                        Palette::dark(),
+                        &path,
+                        vec2(120.0, 120.0),
+                        &mut actions,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            rect
+        };
+        let area = frame(vec![]);
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        frame(vec![
+            egui::Event::PointerMoved(area.center()),
+            press(area.center(), true),
+        ]);
+        let end = area.center() + vec2(25.0, 0.0);
+        frame(vec![egui::Event::PointerMoved(end)]);
+        frame(vec![press(end, false)]);
+        frame(vec![
+            egui::Event::PointerMoved(area.center()),
+            press(area.center(), true),
+        ]);
+        frame(vec![press(area.center(), false)]);
+        assert_eq!(actions.len(), 2);
+        assert!(matches!(&actions[0], Action::DragAttachment(file) if file == &path));
+        assert!(matches!(&actions[1], Action::OpenFile(file) if file == &path));
+    }
+}
 const PICTURE_HEIGHT: f32 = 440.0;
 const STICKER_SIDE: f32 = 180.0;
 /// Height of a header row, the chat list's and the conversation's alike, so
@@ -5741,6 +5853,33 @@ fn frame_size(
         },
     };
     fit_picture(w, h, max_width, max_height)
+}
+
+/// Keeps a downloaded picture usable for opening and dragging after decode failure.
+fn unavailable_picture(
+    ui: &mut egui::Ui,
+    palette: Palette,
+    path: &Path,
+    size: Vec2,
+    actions: &mut Vec<Action>,
+) -> Rect {
+    let (rect, response) = ui.allocate_exact_size(size, attachment_drag_sense());
+    attachment_drag(&response, path, actions);
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(rect, 6.0, palette.surface);
+        theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, palette.danger);
+        ui.painter().text(
+            rect.center() + vec2(0.0, 24.0),
+            Align2::CENTER_CENTER,
+            "Could not display this picture. Click to open it.",
+            theme::regular(11.5),
+            palette.secondary,
+        );
+    }
+    if response.clicked() {
+        actions.push(Action::OpenFile(path.to_path_buf()));
+    }
+    rect
 }
 
 /// Draws an image or sticker, using its preview until downloaded. Returns its width.
@@ -5823,9 +5962,10 @@ fn picture(
                     image
                         .fit_to_exact_size(size)
                         .corner_radius(if sticker.is_some() { 0.0 } else { 6.0 })
-                        .sense(Sense::click()),
+                        .sense(attachment_drag_sense()),
                 );
                 let rect = response.rect;
+                attachment_drag(&response, path, actions);
                 if response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
@@ -5862,22 +6002,7 @@ fn picture(
                 } else {
                     frame_size(media, None, max_width, max_height)
                 };
-                let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-                if ui.is_rect_visible(rect) {
-                    ui.painter().rect_filled(rect, 6.0, palette.surface);
-                    theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, palette.danger);
-                    ui.painter().text(
-                        rect.center() + vec2(0.0, 24.0),
-                        Align2::CENTER_CENTER,
-                        "Could not display this picture. Click to open it.",
-                        theme::regular(11.5),
-                        palette.secondary,
-                    );
-                }
-                if response.clicked() {
-                    actions.push(Action::OpenFile(path.clone()));
-                }
-                rect
+                unavailable_picture(ui, palette, path, size, actions)
             }
         };
     }
@@ -6017,7 +6142,25 @@ fn video(
         limit,
         PICTURE_HEIGHT.min(limit * 1.3),
     );
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        size,
+        if media.path.is_some() {
+            attachment_drag_sense()
+        } else {
+            Sense::click()
+        },
+    );
+    if let Some(path) = &media.path {
+        attachment_drag(&response, path, actions);
+    }
+    #[cfg(any(test, feature = "demo"))]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            bubble_id(&message.chat, &message.id).with("drag-media"),
+            rect,
+        )
+    });
+
     let playing = match (&media.path, gif) {
         (Some(path), true) => Some(animation::frame(
             ui,
@@ -6418,7 +6561,25 @@ fn video_note(
 ) -> f32 {
     use crate::video::State;
     let palette = view.palette;
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(NOTE_SIDE), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::splat(NOTE_SIDE),
+        if media.path.is_some() {
+            attachment_drag_sense()
+        } else {
+            Sense::click()
+        },
+    );
+    if let Some(path) = &media.path {
+        attachment_drag(&response, path, actions);
+    }
+    #[cfg(any(test, feature = "demo"))]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            bubble_id(&message.chat, &message.id).with("drag-media"),
+            rect,
+        )
+    });
+
     let status = media
         .path
         .as_ref()
@@ -6569,6 +6730,7 @@ fn fit_within(size: Vec2, rect: Rect) -> Rect {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Draws a document attachment with its download, open and native-drag controls.
 fn attachment(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -6657,9 +6819,16 @@ fn attachment(
         .interact(
             response.rect,
             ui.id().with(("attachment", &message.id)),
-            Sense::click(),
+            if media.path.is_some() {
+                attachment_drag_sense()
+            } else {
+                Sense::click()
+            },
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if let Some(path) = &media.path {
+        attachment_drag(&response, path, actions);
+    }
     if response.clicked() && !auto {
         match &media.path {
             Some(path) => actions.push(Action::OpenFile(path.clone())),

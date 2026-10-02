@@ -177,6 +177,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   WAV or FLAC, goes as a document so the recipient gets the original file.
   An MP4 video goes with a preview picture, its size, and its length, so it
   shows as a video before it is downloaded and plays in its message here too.
+  On Windows, drag a downloaded picture, document, or video (including round video notes) from its bubble into a
+  folder or an app that accepts files. Dragging copies the cached attachment;
+  download remote attachments first. Outbound dragging is not yet available
+  on Linux or macOS.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
   applies on your phone and to desktop notifications. Mute changes from your
   phone survive history arriving later, including during initial linking.
