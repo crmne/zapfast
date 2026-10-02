@@ -753,4 +753,87 @@ mod idle_tests {
         }
         assert!(app.at_bottom, "at bottom after reopening");
     }
+
+    #[test]
+    fn a_chat_opened_for_the_first_time_shows_its_end_in_the_first_frame() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        let mut conversation = crate::app::Conversation::default();
+        for i in 0..60 {
+            conversation.messages.push(crate::model::Message {
+                id: format!("m{i}"),
+                chat: chat.id.clone(),
+                sender: "123@s.whatsapp.net".into(),
+                sender_name: Some("Alice".into()),
+                from_me: false,
+                timestamp: 1000 + i,
+                content: crate::model::Content::text(format!("Message {i}")),
+                status: crate::model::Delivery::None,
+                delivered_at: None,
+                read_at: None,
+                quoted: None,
+                reactions: Vec::new(),
+                edited: false,
+                mentions: Vec::new(),
+                forwarded: false,
+                thumbnail: None,
+            });
+        }
+        conversation.complete = true;
+        app.conversations.insert(chat.id.clone(), conversation);
+        // Another chat was open before, so the window is laid out already.
+        let other = crate::model::Chat::new("456@s.whatsapp.net".into(), "Bob".into());
+        app.chats.push(other.clone());
+        app.open_chat = Some(other.id.clone());
+
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let frame = |app: &mut App| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| conversation::show(app, ui),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        for _ in 0..3 {
+            frame(&mut app);
+        }
+        app.open_chat = Some(chat.id.clone());
+        app.scroll_to_bottom = true;
+        let output = frame(&mut app);
+        // The text the reader sees: drawn inside its clip rect.
+        let shown: Vec<String> = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text)
+                    if clipped.clip_rect.intersects(text.visual_bounding_rect()) =>
+                {
+                    Some(text.galley.text().to_owned())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            shown.iter().any(|text| text == "Message 59"),
+            "the newest message is in view at once: {shown:?}"
+        );
+        assert!(
+            !shown.iter().any(|text| text == "Message 0"),
+            "the oldest never flashes: {shown:?}"
+        );
+    }
 }

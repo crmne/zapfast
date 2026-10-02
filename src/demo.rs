@@ -8109,6 +8109,9 @@ mod tests {
             .collect();
         let ctx = egui::Context::default();
         app.attach(&ctx);
+        // The rows near the end settle over the first frames of a long chat's
+        // first showing; the sweep starts once they have.
+        render(&mut app, &ctx);
         render(&mut app, &ctx);
         render(&mut app, &ctx);
         let body = |id: &str| {
