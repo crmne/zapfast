@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:12-0300\n"
+"POT-Creation-Date: 2026-10-02 12:24-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: German\n"
@@ -1101,7 +1101,7 @@ msgstr "Diese Nummer ist nicht bei WhatsApp"
 msgid "Not connected to WhatsApp"
 msgstr "Nicht mit WhatsApp verbunden"
 
-#: src/app.rs:743 src/app.rs:4714
+#: src/app.rs:743 src/app.rs:4720
 msgid "Enter a valid international phone number"
 msgstr "Gib eine gültige internationale Telefonnummer ein"
 
@@ -1123,11 +1123,11 @@ msgstr "Du"
 msgid "Could not use this image"
 msgstr "Dieses Bild kann nicht verwendet werden"
 
-#: src/app.rs:2982
+#: src/app.rs:2987
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Nicht gesendet: ZapFast ist nicht mit WhatsApp verbunden."
 
-#: src/app.rs:2986
+#: src/app.rs:2991
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1135,36 +1135,36 @@ msgstr ""
 "Nicht gesendet: Die Nachricht, auf die du antwortest, ist auf diesem "
 "Computer nicht verfügbar. Brich die Antwort ab, um ohne Zitat zu senden."
 
-#: src/app.rs:4423
+#: src/app.rs:4429
 msgid "Added to favorites"
 msgstr "Zu Favoriten hinzugefügt"
 
-#: src/app.rs:4498
+#: src/app.rs:4504
 msgid "Sending the sticker pack…"
 msgstr "Sticker-Pack wird gesendet…"
 
-#: src/app.rs:4807 src/ui/labels.rs:237
+#: src/app.rs:4813 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Du hast {limit} Labels, mehr hebt ZapFast nicht auf."
 
-#: src/app.rs:5451
+#: src/app.rs:5457
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5459
+#: src/app.rs:5465
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5572
+#: src/app.rs:5578
 msgid "This video opens in your system player"
 msgstr "Dieses Video öffnet sich im Systemplayer"
 
-#: src/app.rs:6107
+#: src/app.rs:6113
 msgid "Copied image"
 msgstr "Bild kopiert"
 
-#: src/app.rs:6110 src/app.rs:6115
+#: src/app.rs:6116 src/app.rs:6121
 msgid "Failed to copy image"
 msgstr "Bild konnte nicht kopiert werden"
 

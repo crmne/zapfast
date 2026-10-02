@@ -6560,7 +6560,10 @@ mod tests {
         app.backend = backend;
         let ctx = egui::Context::default();
         let lookup = || Action::NewContact {
-            phone: "15550000001".into(), first: String::new(), last: String::new(), to_phone: None,
+            phone: "15550000001".into(),
+            first: String::new(),
+            last: String::new(),
+            to_phone: None,
         };
         app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
         app.apply(lookup(), &ctx);
@@ -6573,15 +6576,28 @@ mod tests {
         app.apply(lookup(), &ctx);
         let retry = app.new_contact_request.unwrap();
         assert_ne!(retry, old_request);
-        events.send(Event::ContactReady {
-            request: old_request, id: "15550000001@s.whatsapp.net".into(), name: None,
-        }).unwrap();
+        events
+            .send(Event::ContactReady {
+                request: old_request,
+                id: "15550000001@s.whatsapp.net".into(),
+                name: None,
+            })
+            .unwrap();
         app.handle_events();
         assert_eq!(app.new_contact_request, Some(retry));
         assert!(app.new_contact_pending);
         assert_eq!(app.dialog, Some(Dialog::MessageNumber));
-        assert!(!app.actions.iter().any(|action| matches!(action, Action::StartChat { .. })));
-        events.send(Event::ContactFailed { request: retry, error: "Fixture retry failure".into() }).unwrap();
+        assert!(
+            !app.actions
+                .iter()
+                .any(|action| matches!(action, Action::StartChat { .. }))
+        );
+        events
+            .send(Event::ContactFailed {
+                request: retry,
+                error: "Fixture retry failure".into(),
+            })
+            .unwrap();
         app.handle_events();
         assert!(!app.new_contact_pending);
     }
