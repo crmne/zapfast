@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 11:39-0300\n"
+"POT-Creation-Date: 2026-10-02 12:28-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -1078,11 +1078,11 @@ msgstr "Tu"
 msgid "Could not use this image"
 msgstr "Impossibile usare questa immagine"
 
-#: src/app.rs:2982
+#: src/app.rs:2987
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Non inviato: ZapFast non è connesso a WhatsApp."
 
-#: src/app.rs:2986
+#: src/app.rs:2991
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1091,54 +1091,54 @@ msgstr ""
 "computer. Annulla la risposta per inviare senza citazione."
 
 #
-#: src/app.rs:3347 src/app.rs:11432
+#: src/app.rs:3355 src/app.rs:11449
 msgid "This message can no longer be edited"
 msgstr "Questo messaggio non può più essere modificato"
 
-#: src/app.rs:4420
+#: src/app.rs:4428
 msgid "Added to favorites"
 msgstr "Aggiunto ai preferiti"
 
-#: src/app.rs:4495
+#: src/app.rs:4503
 msgid "Sending the sticker pack…"
 msgstr "Invio del pacchetto di sticker…"
 
-#: src/app.rs:4783 src/ui/labels.rs:237
+#: src/app.rs:4791 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Hai {limit} etichette, il massimo che ZapFast conserva."
 
-#: src/app.rs:5427
+#: src/app.rs:5435
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5435
+#: src/app.rs:5443
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5548
+#: src/app.rs:5556
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"
 
-#: src/app.rs:6083
+#: src/app.rs:6091
 msgid "Copied image"
 msgstr "Immagine copiata"
 
-#: src/app.rs:6086 src/app.rs:6091
+#: src/app.rs:6094 src/app.rs:6099
 msgid "Failed to copy image"
 msgstr "Impossibile copiare l'immagine"
 
 #
-#: src/app.rs:11435
+#: src/app.rs:11452
 msgid "Not connected to WhatsApp"
 msgstr "Non connesso a WhatsApp"
 
 #
-#: src/app.rs:11439
+#: src/app.rs:11456
 msgid "Could not send the edit"
 msgstr "Impossibile inviare la modifica"
 
-#: src/app.rs:11442
+#: src/app.rs:11459
 msgid "The edit was sent but could not be saved locally"
 msgstr "La modifica è stata inviata, ma non è stato possibile salvarla sul computer"
 

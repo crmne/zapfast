@@ -2649,7 +2649,10 @@ impl App {
             .position(|(chat, _, _)| self.open_chat.as_ref() == Some(chat))
         {
             let (_, id, draft) = self.refused_edits.remove(index);
-            self.editing = conversation.message(&id).filter(|message| self.can_edit(message)).map(|_| id);
+            self.editing = conversation
+                .message(&id)
+                .filter(|message| self.can_edit(message))
+                .map(|_| id);
             self.reply_to = None;
             self.composer_tools_open = false;
             self.composer = draft.text;
@@ -6389,7 +6392,10 @@ mod tests {
         );
         assert!(app.editing.is_none());
         app.apply(Action::CancelEdit, &ctx);
-        assert_eq!(app.composer, "Correction", "cancel cannot discard a normal correction draft");
+        assert_eq!(
+            app.composer, "Correction",
+            "cancel cannot discard a normal correction draft"
+        );
         app.conversations
             .get_mut("chat")
             .unwrap()
@@ -6552,7 +6558,10 @@ mod tests {
                 name: "Mira Example".into()
             }]
         );
-        assert!(app.editing.is_none(), "an expired correction is a normal draft");
+        assert!(
+            app.editing.is_none(),
+            "an expired correction is a normal draft"
+        );
         assert!(app.refused_edits.is_empty());
     }
 
