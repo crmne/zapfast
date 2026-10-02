@@ -9539,12 +9539,22 @@ mod tests {
             let ctx = egui::Context::default();
             let group = "12345@g.us";
             let recipient = "15550002222@s.whatsapp.net";
-            app.chats.push(Chat::new(group.into(), "Group fixture".into()));
+            app.chats
+                .push(Chat::new(group.into(), "Group fixture".into()));
             let mut original = message(group, "original", 100);
             original.sender = recipient.into();
-            app.conversations.entry(group.into()).or_default().merge(vec![original], false);
+            app.conversations
+                .entry(group.into())
+                .or_default()
+                .merge(vec![original], false);
             app.open_chat = Some(group.into());
-            app.apply(Action::ReplyPrivately { chat: group.into(), message: "original".into() }, &ctx);
+            app.apply(
+                Action::ReplyPrivately {
+                    chat: group.into(),
+                    message: "original".into(),
+                },
+                &ctx,
+            );
             let target = app.reply_to.clone().unwrap();
             let unsent = if voice {
                 let samples = vec![0.0; 10];
@@ -9552,7 +9562,14 @@ mod tests {
                 app.apply(Action::SendRecording, &ctx);
                 Unsent::Voice(samples)
             } else {
-                app.apply(Action::SendText { chat: recipient.into(), text: "Private draft".into(), quoting: Some(target.clone()) }, &ctx);
+                app.apply(
+                    Action::SendText {
+                        chat: recipient.into(),
+                        text: "Private draft".into(),
+                        quoting: Some(target.clone()),
+                    },
+                    &ctx,
+                );
                 Unsent::Text("Private draft".into())
             };
             assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
@@ -9564,7 +9581,10 @@ mod tests {
             assert!(!app.drafts.contains_key(recipient));
             assert!(app.reply_to.is_none());
             assert!(app.unsent_voice.is_none());
-            app.chats.push(Chat::new(recipient.into(), "Recreated recipient fixture".into()));
+            app.chats.push(Chat::new(
+                recipient.into(),
+                "Recreated recipient fixture".into(),
+            ));
             app.open_chat(recipient.into());
             assert!(app.reply_to.is_none());
             assert!(app.composer.is_empty());
