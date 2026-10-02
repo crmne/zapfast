@@ -933,6 +933,7 @@ impl App {
         }
     }
 
+    /// Constructs application state around the supplied backend and persisted settings.
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
         let palette = settings
             .cached_palette()
@@ -3642,6 +3643,7 @@ impl App {
         }
     }
 
+    /// Applies queued view actions after drawing, routing state changes and backend commands.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the

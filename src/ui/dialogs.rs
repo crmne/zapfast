@@ -6,6 +6,7 @@ use crate::app::App;
 use crate::model::{Action, Dialog};
 use crate::theme::{self, Icon};
 
+/// Draws the active dialog and queues its actions for application after the frame.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(dialog) = app.dialog.clone() else {
         return;
@@ -450,6 +451,7 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
+/// Draws recipient selection or the review step; forwarding requires explicit confirmation.
 fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     let palette = app.palette;
     let heading = if messages.len() == 1 {
@@ -662,6 +664,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     });
 }
 
+/// Uses the model's send permissions to reject unavailable forwarding destinations.
 fn forwardable(chat: &crate::model::Chat) -> bool {
     chat.can_send()
 }
