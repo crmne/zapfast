@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 11:55-0300\n"
+"POT-Creation-Date: 2026-10-02 13:59-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -379,31 +379,31 @@ msgstr ""
 msgid "This message can only be seen on your phone."
 msgstr "Questo messaggio si può vedere solo sul telefono."
 
-#: src/ui/conversation.rs:5694
+#: src/ui/conversation.rs:5699
 msgid "Open in a map"
 msgstr "Apri in una mappa"
 
-#: src/ui/conversation.rs:6313
+#: src/ui/conversation.rs:6318
 msgid "Pause"
 msgstr "Pausa"
 
-#: src/ui/conversation.rs:6315 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6320 src/ui/settings.rs:1636
 msgid "Play"
 msgstr "Riproduci"
 
-#: src/ui/conversation.rs:6342
+#: src/ui/conversation.rs:6347
 msgid "Back to the message (Esc)"
 msgstr "Torna al messaggio (Esc)"
 
-#: src/ui/conversation.rs:6344
+#: src/ui/conversation.rs:6349
 msgid "Fill the window"
 msgstr "Riempi la finestra"
 
-#: src/ui/conversation.rs:6374
+#: src/ui/conversation.rs:6379
 msgid "Unmute"
 msgstr "Riattiva audio"
 
-#: src/ui/conversation.rs:6376
+#: src/ui/conversation.rs:6381
 msgid "Mute"
 msgstr "Disattiva audio"
 

@@ -8241,35 +8241,69 @@ mod tests {
     fn expanded_selection_padding_does_not_activate_message_links() {
         let mut app = app();
         let chat = SAMPLES[0].id.to_owned();
-        let row = message(&chat, "link-padding", false, 1_700_000_000,
-            Content::text("https://example.com/"));
+        let row = message(
+            &chat,
+            "link-padding",
+            false,
+            1_700_000_000,
+            Content::text("https://example.com/"),
+        );
         app.conversations.get_mut(&chat).unwrap().messages = vec![row];
         let ctx = egui::Context::default();
         app.attach(&ctx);
         app.backend.record_demo_commands();
-        for _ in 0..4 { render(&mut app, &ctx); }
+        for _ in 0..4 {
+            render(&mut app, &ctx);
+        }
         let id = crate::ui::conversation::bubble_id(&chat, "link-padding");
-        let body = ctx.data(|data| data.get_temp::<egui::Rect>(id.with("body"))).unwrap();
-        let bubble = ctx.data(|data| data.get_temp::<egui::Rect>(id.with("rect"))).unwrap();
+        let body = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("body")))
+            .unwrap();
+        let bubble = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+            .unwrap();
         let padding = egui::pos2(bubble.center().x, bubble.bottom() - 2.0);
         assert!(!body.contains(padding));
         let press = |pos, pressed| egui::Event::PointerButton {
-            pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
         };
         let mut opened = Vec::new();
         for pos in [padding, body.center()] {
-            for events in [vec![egui::Event::PointerMoved(pos), press(pos, true)], vec![press(pos, false)]] {
-                let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 780.0))), events, ..Default::default() };
-                let output = ctx.run_ui(input, |ui| {
-                    app.background_frame(ui.ctx()); app.frame_ui(ui);
+            for events in [
+                vec![egui::Event::PointerMoved(pos), press(pos, true)],
+                vec![press(pos, false)],
+            ] {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    app.background_frame(ui.ctx());
+                    app.frame_ui(ui);
                 });
+                output.textures_delta.clear();
                 for command in output.platform_output.commands {
-                    if let egui::OutputCommand::OpenUrl(url) = command { opened.push(url.url); }
+                    if let egui::OutputCommand::OpenUrl(url) = command {
+                        opened.push(url.url);
+                    }
                 }
             }
-            if pos == padding { assert!(opened.is_empty(), "padding cannot open the link"); }
+            if pos == padding {
+                assert!(opened.is_empty(), "padding cannot open the link");
+            }
         }
-        assert_eq!(opened, ["https://example.com/"], "the painted link still opens");
+        assert_eq!(
+            opened,
+            ["https://example.com/"],
+            "the painted link still opens"
+        );
     }
 
     #[test]
