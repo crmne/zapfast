@@ -7185,6 +7185,8 @@ impl Worker {
     }
 
     fn revoke(&mut self, chat: ChatId, id: String) {
+        // Withdrawing a message also withdraws every edit still waiting to send.
+        self.pending_edits.remove(&(chat.clone(), id.clone()));
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
@@ -9279,6 +9281,25 @@ mod tests {
                 .content,
             row.content
         );
+    }
+
+    /// A local revoke cancels waiting edits even when connectivity has disappeared.
+    #[tokio::test]
+    async fn local_revoke_withdraws_queued_edit_dispatches() {
+        let (mut worker, _, _, _) = super::receipt_tests::worker();
+        let row = super::receipt_tests::own_message("withdrawn-edit", crate::util::now() - 60);
+        worker.archive.ensure_chat(&row.chat, "Fixture").unwrap();
+        worker.archive.insert_message(&row, None).unwrap();
+        worker.begin_edit(&row.chat, &row.id);
+        let key = (row.chat.clone(), row.id.clone());
+        let pending = worker.pending_edits.get_mut(&key).unwrap();
+        let mut active = pending.reserve_dispatch();
+        let mut queued = pending.reserve_dispatch();
+        assert!(active.wait().await);
+        worker.revoke(row.chat.clone(), row.id.clone());
+        active.completion.take().unwrap().send(()).unwrap();
+        assert!(!queued.wait().await);
+        assert!(!worker.pending_edits.contains_key(&key));
     }
 
     /// Clearing older rows cancels their queued dispatches and keeps newer rows editable.
