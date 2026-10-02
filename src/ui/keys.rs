@@ -218,6 +218,9 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
                 None => 0,
             });
             if let Some(next) = visible.get(next).map(|chat| chat.id.clone()) {
+                if number.is_some() {
+                    app.search_selected = None;
+                }
                 // Stepping through the Unread list must not shift it underfoot.
                 if app.search.trim().is_empty() && !app.show_archived {
                     actions.push(Action::KeepUnread(next.clone()));
@@ -800,9 +803,14 @@ mod tests {
         assert!(app.actions.contains(&Action::KeepUnread(ids[0].clone())));
 
         app.search = "Chat 02".into();
+        app.search_selected = Some(ids[0].clone());
         app.actions.clear();
+        press(&mut app, &ctx, Key::Num9, Modifiers::COMMAND);
+        assert!(app.actions.is_empty());
+        assert_eq!(app.search_selected.as_ref(), Some(&ids[0]));
         press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND);
         assert_eq!(app.actions, [Action::OpenChat(ids[2].clone())]);
+        assert!(app.search_selected.is_none());
 
         app.search.clear();
         app.show_archived = true;

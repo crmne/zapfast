@@ -8918,6 +8918,52 @@ mod tests {
     }
 
     #[test]
+    fn numbered_shortcuts_clear_the_arrow_selection_in_search_results() {
+        let mut app = app();
+        let mut first = Chat::new("search-fixture-1@g.us".into(), "Search fixture one".into());
+        first.last_activity = 2_000_000_000;
+        let mut second = Chat::new("search-fixture-2@g.us".into(), "Search fixture two".into());
+        second.last_activity = first.last_activity - 1;
+        app.chats.extend([first, second]);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::K, egui::Modifiers::COMMAND)],
+        );
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Search fixture".into())],
+        );
+        let matches: Vec<_> = app
+            .visible_chats()
+            .into_iter()
+            .map(|chat| chat.id.clone())
+            .collect();
+        assert_eq!(matches.len(), 2);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.search_selected.as_ref(), matches.first());
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Num2, egui::Modifiers::COMMAND)],
+        );
+        render(&mut app, &ctx);
+        assert_eq!(app.open_chat.as_ref(), matches.get(1));
+        assert!(app.search_selected.is_none());
+        assert_eq!(app.search, "Search fixture");
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+    }
+
+    #[test]
     fn numbered_shortcuts_switch_chats_keep_drafts_and_focus_the_composer() {
         let mut app = app();
         let ctx = egui::Context::default();

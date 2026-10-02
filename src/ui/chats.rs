@@ -672,14 +672,34 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
     }
     let chats: Vec<Chat> = chats.into_iter().cloned().collect();
     ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical()
+    let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("locked-chats")
-        .auto_shrink([false, false])
-        .show_rows(ui, theme::ROW_HEIGHT, chats.len(), |ui, range| {
-            for chat in &chats[range] {
-                ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
-            }
-        });
+        .auto_shrink([false, false]);
+    let target_row = app
+        .scroll_chat_into_view
+        .as_ref()
+        .and_then(|target| chats.iter().position(|chat| chat.id == *target));
+    if let Some(target_row) = target_row {
+        let id = ui.make_persistent_id(egui::IdSalt::new("locked-chats"));
+        let current = egui::scroll_area::State::load(ui.ctx(), id)
+            .unwrap_or_default()
+            .offset
+            .y;
+        let offset = row_scroll_offset(
+            current,
+            ui.available_height(),
+            target_row,
+            theme::ROW_HEIGHT,
+            ui.spacing().item_spacing.y,
+        );
+        scroll_area = scroll_area.vertical_scroll_offset(offset);
+        app.scroll_chat_into_view = None;
+    }
+    scroll_area.show_rows(ui, theme::ROW_HEIGHT, chats.len(), |ui, range| {
+        for chat in &chats[range] {
+            ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+        }
+    });
 }
 
 /// Returns the smallest offset that fully reveals a fixed-height row.
@@ -1809,6 +1829,63 @@ mod tests {
         assert!(!app.scroll_chats_to_top, "the request was dropped");
         app.search.clear();
         assert_eq!(frame(&mut app), scrolled, "the list keeps its place");
+    }
+
+    #[test]
+    fn numbered_shortcuts_reveal_locked_chats_and_consume_the_scroll_request() {
+        let (_directory, mut app, ids, ctx) = rail_app(24);
+        for chat in &mut app.chats {
+            chat.locked = true;
+        }
+        app.page = Page::Chats;
+        app.settings.set_chat_lock_code(Some("fixture-code"));
+        app.actions
+            .push(Action::UnlockLockedFolder("fixture-code".into()));
+        app.background_frame(&ctx);
+        assert!(app.locked_folder_open());
+
+        let mut frame = |key: Option<Key>| {
+            let mut offset = 0.0;
+            let mut height = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 240.0))),
+                    events: key
+                        .into_iter()
+                        .map(|key| egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::COMMAND,
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
+                |ui| {
+                    super::super::keys::handle(&mut app, ui.ctx());
+                    let scroll_id = ui.make_persistent_id(egui::IdSalt::new("locked-chats"));
+                    height = ui.available_height();
+                    list(&mut app, ui);
+                    offset = egui::scroll_area::State::load(ui.ctx(), scroll_id)
+                        .expect("locked-chats scroll state")
+                        .offset
+                        .y;
+                },
+            );
+            output.textures_delta.clear();
+            (offset, height)
+        };
+        assert_eq!(frame(None).0, 0.0);
+        let (offset, height) = frame(Some(Key::Num9));
+        assert!(offset > 0.0, "the ninth locked chat starts off screen");
+        assert!(8.0 * theme::ROW_HEIGHT >= offset);
+        assert!(9.0 * theme::ROW_HEIGHT <= offset + height + 0.5);
+        let (offset, _) = frame(Some(Key::Num1));
+        assert_eq!(offset, 0.0, "navigating back reveals the first row");
+        assert!(app.actions.contains(&Action::OpenChat(ids[8].clone())));
+        assert!(app.actions.contains(&Action::OpenChat(ids[0].clone())));
+        assert!(app.scroll_chat_into_view.is_none(), "reveal was consumed");
     }
 
     #[test]
