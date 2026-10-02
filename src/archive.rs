@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message};
+use crate::model::{
+    Chat, ChatKind, Contact, Content, Delivery, LastMessage, Message, StorageStats,
+};
 
 mod drafts;
 mod encryption;
@@ -82,7 +84,8 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat, timestamp);
 CREATE INDEX IF NOT EXISTS messages_stickers ON messages (from_me, timestamp)
-    WHERE json_extract(content, '$.kind') = 'sticker';
+    WHERE CASE WHEN json_valid(content) THEN json_extract(content, '$.kind') = 'sticker'
+        ELSE 0 END;
 CREATE TABLE IF NOT EXISTS contacts (
     id TEXT PRIMARY KEY,
     full_name TEXT,
@@ -162,6 +165,41 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "history_start", "INTEGER NOT NULL DEFAULT 0"),
     ("contacts", "first_name", "TEXT"),
 ];
+
+/// Whether a message holds an attachment that is on this computer: its own
+/// file, an interactive card's image, or any of that card's carousel images.
+/// Kept as a virtual generated column so SQLite maintains it from `content`
+/// on every write and it cannot drift from what the row says.
+///
+/// `json_extract` raises on a row whose content is not JSON, and an archive
+/// written before this column existed can hold one. The guard turns such a row
+/// into "not downloaded" instead: without it the `CREATE INDEX ... WHERE
+/// downloaded` below fails, and with it every later open of that archive.
+/// The carousel array of a row, as JSON, or an empty object when the row has
+/// no carousel or its content is not JSON at all.
+///
+/// `json_type` raises on a row whose content is not JSON, and the table-valued
+/// function that reads this expression runs before any `WHERE` clause can
+/// filter those rows out, so the guard has to live inside the expression.
+fn carousel_json(row: &str) -> String {
+    format!(
+        "CASE WHEN json_valid({row}) THEN
+             CASE WHEN json_type({row}, '$.card.carousel') = 'array'
+                 THEN {row} ELSE '{{}}' END
+         ELSE '{{}}' END"
+    )
+}
+
+const DOWNLOADED: &str = "CASE WHEN json_valid(content) THEN (
+        json_extract(content, '$.media.path') IS NOT NULL
+        OR json_extract(content, '$.card.image.path') IS NOT NULL
+        OR CASE
+            WHEN json_type(content, '$.card.carousel') = 'array'
+            THEN json_array_length(json_extract(content, '$.card.carousel')) > 0
+            ELSE 0
+        END
+    ) ELSE 0 END";
+
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
                  SELECT rowid FROM messages WHERE chat = c.id ORDER BY timestamp DESC, rowid DESC LIMIT 1
@@ -363,9 +401,167 @@ impl Archive {
                 ))?;
             }
         }
+        Self::add_downloaded_marker(&connection)?;
         favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
+    }
+
+    /// Adds the `downloaded` marker and the partial index over it.
+    ///
+    /// `PRAGMA table_info` does not list generated columns, so this one cannot
+    /// go through `MIGRATIONS`: its existence check would never see the column
+    /// and every start would try the `ALTER` again. `table_xinfo` does list it.
+    fn add_downloaded_marker(connection: &Connection) -> Result<()> {
+        let exists = connection
+            .prepare("PRAGMA table_xinfo(messages)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .any(|name| name.as_deref() == Ok("downloaded"));
+        // `json_array_length` raises when `card.carousel` is not an array.
+        // An archive that still has that expression cannot open once it holds
+        // such a row. Drop the column and add the guarded one.
+        let current = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten()
+            .is_some_and(|sql| {
+                sql.contains("WHEN json_type(content, '$.card.carousel') = 'array'")
+            });
+        let mut rebuilt = false;
+        if exists && !current {
+            // `DROP COLUMN` rewrites the table and reads `downloaded`. That
+            // read raises on the bad row. Copy the stored columns, then add
+            // the guarded expression. `table_info` omits generated columns,
+            // so the copy never evaluates the old one.
+            let mut info = connection.prepare("PRAGMA table_info(messages)")?;
+            let columns: Vec<(String, String, i64, Option<String>, i64)> = info
+                .query_map([], |row| {
+                    Ok((
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>>>()?;
+            drop(info);
+            let mut defs = Vec::new();
+            let mut names = Vec::new();
+            let mut keys = Vec::new();
+            for (name, ty, notnull, default, pk) in &columns {
+                let quoted = format!("\"{}\"", name.replace('"', "\"\""));
+                let mut def = format!("{quoted} {ty}");
+                if *notnull != 0 {
+                    def.push_str(" NOT NULL");
+                }
+                if let Some(value) = default {
+                    def.push_str(" DEFAULT ");
+                    def.push_str(value);
+                }
+                defs.push(def);
+                if *pk > 0 {
+                    keys.push((*pk, quoted.clone()));
+                }
+                names.push(quoted);
+            }
+            keys.sort_by_key(|(pk, _)| *pk);
+            if !keys.is_empty() {
+                let listed = keys
+                    .iter()
+                    .map(|(_, name)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                defs.push(format!("PRIMARY KEY ({listed})"));
+            }
+            let extras: Vec<String> = {
+                let mut stmt = connection.prepare(
+                    "SELECT sql FROM sqlite_master
+                     WHERE tbl_name = 'messages' AND sql IS NOT NULL AND type != 'table'",
+                )?;
+                stmt.query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    // The two indexes this migration owns stay out of the
+                    // copy: `downloaded` is added after it, and
+                    // `messages_stickers` is recreated below in its guarded
+                    // form, which a plain copy of the old definition would
+                    // not give back.
+                    .filter(|sql| !sql.contains("downloaded") && !sql.contains("messages_stickers"))
+                    .collect()
+            };
+            let listed = names.join(", ");
+            // One transaction for the whole reconstruction. A crash, or an
+            // index that fails to rebuild, would otherwise leave the archive
+            // with no `messages` table at all and no way back to the old one.
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            let rebuilt_table = (|| -> Result<()> {
+                connection.execute_batch(&format!(
+                    "DROP TABLE IF EXISTS messages_migrated;
+                     CREATE TABLE messages_migrated ({});
+                     INSERT INTO messages_migrated ({listed})
+                         SELECT {listed} FROM messages;",
+                    defs.join(", ")
+                ))?;
+                connection.execute_batch(
+                    "DROP TABLE messages;
+                     ALTER TABLE messages_migrated RENAME TO messages;",
+                )?;
+                for sql in &extras {
+                    connection.execute_batch(sql)?;
+                }
+                connection.execute_batch(&format!(
+                    "ALTER TABLE messages ADD COLUMN downloaded INTEGER
+                         GENERATED ALWAYS AS ({DOWNLOADED}) VIRTUAL"
+                ))?;
+                Ok(())
+            })();
+            match rebuilt_table {
+                Ok(()) => connection.execute_batch("COMMIT")?,
+                Err(error) => {
+                    let _ = connection.execute_batch("ROLLBACK");
+                    return Err(error);
+                }
+            }
+            rebuilt = true;
+        } else if !exists {
+            connection.execute_batch(&format!(
+                "ALTER TABLE messages ADD COLUMN downloaded INTEGER
+                     GENERATED ALWAYS AS ({DOWNLOADED}) VIRTUAL"
+            ))?;
+        }
+        // Without the index every read of the marker scans the archive, which
+        // is the cost this column exists to remove.
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS messages_downloaded ON messages (chat, id) WHERE downloaded",
+        )?;
+        // The sticker index predates the guard, and `CREATE INDEX IF NOT
+        // EXISTS` leaves an archive's own copy alone. One that still reads the
+        // content unguarded is rebuilt, or the archive cannot be opened at all
+        // once it holds a row whose content is not JSON. The reconstruction
+        // above dropped it with its table, so it is rebuilt then as well.
+        let unguarded = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'messages_stickers'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten()
+            .is_some_and(|sql| !sql.contains("json_valid"));
+        if unguarded || rebuilt {
+            connection.execute_batch(
+                "DROP INDEX IF EXISTS messages_stickers;
+                 CREATE INDEX messages_stickers ON messages (from_me, timestamp)
+                     WHERE CASE WHEN json_valid(content) THEN json_extract(content, '$.kind') = 'sticker'
+                         ELSE 0 END;",
+            )?;
+        }
+        Ok(())
     }
 
     /// Creates a chat or replaces a phone-number title with a better name.
@@ -844,10 +1040,12 @@ impl Archive {
     /// Includes each carousel attachment separately so moves and cache cleanup
     /// never reuse one card's image for another.
     pub fn carousel_media_paths(&self) -> Result<Vec<(String, String, usize, std::path::PathBuf)>> {
-        let mut statement = self.connection.prepare(
+        let carousel = carousel_json("m.content");
+        let mut statement = self.connection.prepare(&format!(
             "SELECT m.chat, m.id, c.key, json_extract(c.value, '$.image.path') AS image_path
-             FROM messages m, json_each(m.content, '$.card.carousel') c WHERE image_path IS NOT NULL",
-        )?;
+             FROM messages m, json_each({carousel}, '$.card.carousel') c
+             WHERE c.type = 'object' AND image_path IS NOT NULL",
+        ))?;
         let rows = statement.query_map([], |row| {
             Ok((
                 row.get(0)?,
@@ -1076,6 +1274,85 @@ impl Archive {
             searched_message,
         )?;
         rows.collect()
+    }
+
+    /// Counts every archived message and sums the size of the attachments
+    /// that have a local file, split by kind. GIFs (`kind=video` with
+    /// `gif=1`) share the sticker bucket, and an interactive card's own image,
+    /// like each of its carousel images, counts as a picture. The weight comes
+    /// from the sizes WhatsApp declared and the archive persisted, not from
+    /// `stat` on disk, so a file the user deleted by hand is still counted.
+    ///
+    /// Every read is bounded by the `messages_downloaded` partial index, so
+    /// its cost follows the number of downloaded attachments rather than the
+    /// size of the archive. Walking every message row was what stalled the
+    /// worker on a large archive.
+    pub fn storage_stats(&self, messages: bool) -> Result<StorageStats> {
+        // Counting every message is a scan of the whole table, so the caller
+        // asks for it when Settings opens and lets the refresh that follows a
+        // download read the sizes alone.
+        let counted = if messages {
+            "(SELECT COUNT(*) FROM messages)"
+        } else {
+            "0"
+        };
+        let carousel = carousel_json("m.content");
+        self.connection.query_row(
+            &format!(
+                "WITH media(kind, size, present) AS (
+                SELECT
+                    CASE
+                        WHEN json_extract(content, '$.kind') = 'video'
+                            AND json_extract(content, '$.gif') = 1 THEN 'sticker'
+                        WHEN json_extract(content, '$.kind') IN ('image', 'video', 'sticker')
+                            THEN json_extract(content, '$.kind')
+                        ELSE 'other'
+                    END,
+                    CAST(COALESCE(json_extract(content, '$.media.size'), 0) AS INTEGER),
+                    json_extract(content, '$.media.path') IS NOT NULL
+                        AND json_extract(content, '$.media.path') != ''
+                FROM messages WHERE downloaded AND json_valid(content)
+                UNION ALL
+                SELECT 'image',
+                    CAST(COALESCE(json_extract(content, '$.card.image.size'), 0) AS INTEGER),
+                    json_extract(content, '$.card.image.path') IS NOT NULL
+                        AND json_extract(content, '$.card.image.path') != ''
+                FROM messages WHERE downloaded AND json_valid(content)
+                UNION ALL
+                SELECT 'image',
+                    CAST(COALESCE(json_extract(c.value, '$.image.size'), 0) AS INTEGER),
+                    json_extract(c.value, '$.image.path') IS NOT NULL
+                        AND json_extract(c.value, '$.image.path') != ''
+                FROM messages m, json_each({carousel}, '$.card.carousel') c
+                WHERE m.downloaded AND json_valid(m.content) AND c.type = 'object'
+             )
+             SELECT
+                {counted},
+                COALESCE(SUM(CASE WHEN kind = 'image' AND present THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'image' AND present THEN size ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'video' AND present THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'video' AND present THEN size ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'sticker' AND present THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'sticker' AND present THEN size ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'other' AND present THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'other' AND present THEN size ELSE 0 END), 0)
+             FROM media"
+            ),
+            [],
+            |row| {
+                Ok(StorageStats {
+                    messages: row.get::<_, i64>(0)?.max(0) as u64,
+                    images: row.get::<_, i64>(1)?.max(0) as u64,
+                    image_bytes: row.get::<_, i64>(2)?.max(0) as u64,
+                    videos: row.get::<_, i64>(3)?.max(0) as u64,
+                    video_bytes: row.get::<_, i64>(4)?.max(0) as u64,
+                    stickers_gifs: row.get::<_, i64>(5)?.max(0) as u64,
+                    sticker_gif_bytes: row.get::<_, i64>(6)?.max(0) as u64,
+                    other: row.get::<_, i64>(7)?.max(0) as u64,
+                    other_bytes: row.get::<_, i64>(8)?.max(0) as u64,
+                })
+            },
+        )
     }
 
     /// Returns messages from `from` through `before`, ascending and limited.
@@ -1406,6 +1683,7 @@ impl Archive {
     /// Attachment paths of the messages matching `filter` (over `messages m`),
     /// including an interactive card's image and each carousel card's image.
     fn cached_media(&self, filter: &str, params: impl rusqlite::Params) -> Result<Vec<PathBuf>> {
+        let carousel = carousel_json("m.content");
         let mut statement = self.connection.prepare(&format!(
             "SELECT file FROM (
                  SELECT json_extract(m.content, '$.media.path') AS file FROM messages m WHERE {filter}
@@ -1413,7 +1691,8 @@ impl Archive {
                  SELECT json_extract(m.content, '$.card.image.path') FROM messages m WHERE {filter}
                  UNION ALL
                  SELECT json_extract(c.value, '$.image.path')
-                 FROM messages m, json_each(m.content, '$.card.carousel') c WHERE {filter}
+                 FROM messages m, json_each({carousel}, '$.card.carousel') c
+                 WHERE {filter} AND c.type = 'object'
              ) WHERE file IS NOT NULL"
         ))?;
         let rows =
@@ -1932,6 +2211,285 @@ pub(crate) mod tests {
                 .expect("day only")),
             vec!["m3".to_owned()]
         );
+    }
+
+    fn media(size: u64, path: Option<&str>) -> crate::model::Media {
+        crate::model::Media {
+            mime: "application/octet-stream".into(),
+            size,
+            width: None,
+            height: None,
+            path: path.map(std::path::PathBuf::from),
+            state: crate::model::MediaState::Idle,
+        }
+    }
+
+    fn card(
+        image: Option<crate::model::Media>,
+        carousel: Vec<crate::model::InteractiveCard>,
+    ) -> crate::model::InteractiveCard {
+        crate::model::InteractiveCard {
+            body: "body".into(),
+            buttons: Vec::new(),
+            image,
+            needs_phone: false,
+            carousel,
+            thumbnail: None,
+        }
+    }
+
+    /// Only attachments with a local file count, GIFs land in the sticker
+    /// bucket, and a text-only archive reports zeroes instead of a null sum.
+    #[test]
+    fn storage_stats_count_downloaded_media_and_all_messages() {
+        let archive = Archive::in_memory().expect("opens");
+        archive
+            .ensure_chat("1@s.whatsapp.net", "Ada")
+            .expect("chat");
+        let chat = "1@s.whatsapp.net";
+        let rows = vec![
+            {
+                let mut row = message(chat, "t1", 1, false);
+                row.content = Content::text("hello");
+                row
+            },
+            {
+                let mut row = message(chat, "i1", 2, false);
+                row.content = Content::Image {
+                    caption: None,
+                    media: media(100, Some("/i1.jpg")),
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "i2", 3, false);
+                row.content = Content::Image {
+                    caption: None,
+                    media: media(50, None),
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "i3", 4, false);
+                row.content = Content::Image {
+                    caption: None,
+                    media: media(999, Some("")),
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "v1", 5, false);
+                row.content = Content::Video {
+                    caption: None,
+                    media: media(1000, Some("/v1.mp4")),
+                    seconds: Some(1),
+                    gif: false,
+                    note: false,
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "g1", 6, false);
+                row.content = Content::Video {
+                    caption: None,
+                    media: media(200, Some("/g1.mp4")),
+                    seconds: Some(1),
+                    gif: true,
+                    note: false,
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "s1", 7, false);
+                row.content = Content::Sticker {
+                    media: media(30, Some("/s1.webp")),
+                    animated: false,
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "s2", 8, false);
+                row.content = Content::Sticker {
+                    media: media(30, None),
+                    animated: false,
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "a1", 9, false);
+                row.content = Content::Audio {
+                    media: media(80, Some("/a1.ogg")),
+                    seconds: Some(1),
+                    voice_note: true,
+                    waveform: Vec::new(),
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "d1", 10, false);
+                row.content = Content::Document {
+                    media: media(40, Some("/d1.pdf")),
+                    file_name: "d.pdf".into(),
+                    caption: None,
+                    pages: None,
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "x1", 11, false);
+                row.content = Content::Interactive {
+                    text: "Order ready".into(),
+                    card: Some(Box::new(card(
+                        Some(media(500, Some("/x1.jpg"))),
+                        Vec::new(),
+                    ))),
+                };
+                row
+            },
+            {
+                let mut row = message(chat, "x2", 12, false);
+                row.content = Content::Interactive {
+                    text: "Carousel".into(),
+                    card: Some(Box::new(card(
+                        None,
+                        vec![
+                            card(Some(media(700, Some("/x2a.jpg"))), Vec::new()),
+                            card(Some(media(300, None)), Vec::new()),
+                        ],
+                    ))),
+                };
+                row
+            },
+        ];
+        for row in &rows {
+            archive.insert_message(row, None).expect("inserted");
+        }
+        let empty = Archive::in_memory().expect("opens");
+        assert_eq!(
+            empty.storage_stats(true).expect("empty"),
+            StorageStats::default()
+        );
+        let stats = archive.storage_stats(true).expect("stats");
+        assert_eq!(stats.messages, 12, "the count includes text messages");
+        assert_eq!(
+            stats.images, 3,
+            "an image without a file is not counted, a card's own image and each \
+             downloaded carousel image are"
+        );
+        assert_eq!(stats.image_bytes, 1300);
+        assert_eq!(stats.videos, 1, "a GIF is not a video here");
+        assert_eq!(stats.video_bytes, 1000);
+        assert_eq!(stats.stickers_gifs, 2);
+        assert_eq!(stats.sticker_gif_bytes, 230);
+        assert_eq!(stats.other, 2);
+        assert_eq!(stats.other_bytes, 120);
+        assert_eq!(stats.bytes_total(), 2650);
+    }
+
+    /// An archive written before the marker existed can hold a row whose
+    /// content is not JSON, and `json_extract` raises on one. The marker and
+    /// its index must read such a row as "not downloaded": without the guard
+    /// `CREATE INDEX ... WHERE downloaded` fails on it and takes the whole
+    /// open with it.
+    #[test]
+    fn an_archive_with_unreadable_content_still_opens_and_counts() {
+        let connection = Connection::open_in_memory().expect("opens");
+        // The schema before the marker: no generated column, no partial index.
+        connection.execute_batch(SCHEMA).expect("schema");
+        connection
+            .execute(
+                "INSERT INTO chats (id, name, kind) VALUES ('1@s.whatsapp.net', 'Ada', 'Direct')",
+                [],
+            )
+            .expect("chat");
+        for (id, content) in [
+            ("broken", "not json at all"),
+            (
+                "i1",
+                r#"{"kind":"image","media":{"path":"/i1.jpg","size":100}}"#,
+            ),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO messages (chat, id, sender, timestamp, from_me, content)
+                     VALUES ('1@s.whatsapp.net', ?1, 'me', 1, 0, ?2)",
+                    params![id, content],
+                )
+                .expect("insert");
+        }
+        // The upgrade: the column and its index are built over a row the
+        // archive cannot read.
+        let archive = Archive::prepare(connection).expect("the archive opens");
+        let stats = archive.storage_stats(true).expect("stats");
+        assert_eq!(stats.messages, 2, "both rows are counted");
+        assert_eq!(stats.images, 1, "only the readable attachment counts");
+        assert_eq!(stats.image_bytes, 100);
+        // The refresh asks for the sizes alone, so the count is left at zero
+        // and the window keeps the one this read answered with.
+        let sizes_only = archive.storage_stats(false).expect("sizes");
+        assert_eq!(sizes_only.messages, 0);
+        assert_eq!(sizes_only.images, 1);
+        assert_eq!(sizes_only.image_bytes, 100);
+    }
+
+    /// The sticker index predates the guard, and an archive carries its own
+    /// copy of it. One that still reads the content unguarded is rebuilt, or
+    /// the archive cannot be opened at all.
+    #[test]
+    fn an_unguarded_sticker_index_is_rebuilt() {
+        let connection = Connection::open_in_memory().expect("opens");
+        connection.execute_batch(SCHEMA).expect("schema");
+        connection
+            .execute_batch(
+                "DROP INDEX messages_stickers;
+                 CREATE INDEX messages_stickers ON messages (from_me, timestamp)
+                     WHERE json_extract(content, '$.kind') = 'sticker';",
+            )
+            .expect("the index as it was");
+        let archive = Archive::prepare(connection).expect("the archive opens");
+        let sql: Option<String> = archive
+            .connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'messages_stickers'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the index is there");
+        assert!(
+            sql.as_deref().is_some_and(|sql| sql.contains("json_valid")),
+            "the index was rebuilt with the guard: {sql:?}"
+        );
+    }
+
+    /// `json_array_length` raises when `card.carousel` is a string. The old
+    /// generated column did that while the archive opened.
+    #[test]
+    fn a_string_carousel_does_not_stop_the_archive_opening() {
+        let connection = Connection::open_in_memory().expect("opens");
+        connection.execute_batch(SCHEMA).expect("schema");
+        // The row lands before the column. A virtual column is not computed
+        // on insert, and an update while the old column exists raises.
+        connection
+            .execute(
+                "INSERT INTO messages (chat, id, sender, from_me, timestamp, content)
+                 VALUES ('1@s.whatsapp.net', 'm1', '1@s.whatsapp.net', 0, 1, ?1)",
+                [r#"{"card":{"carousel":"not-an-array"}}"#],
+            )
+            .expect("the damaged row");
+        connection
+            .execute_batch(
+                "ALTER TABLE messages ADD COLUMN downloaded INTEGER
+                     GENERATED ALWAYS AS (
+                         CASE WHEN json_valid(content) THEN (
+                             json_array_length(json_extract(content, '$.card.carousel')) > 0
+                         ) ELSE 0 END
+                     ) VIRTUAL;",
+            )
+            .expect("the old column");
+        let archive = Archive::prepare(connection).expect("the archive opens");
+        let stats = archive.storage_stats(true).expect("stats");
+        assert_eq!(stats.messages, 1);
+        assert_eq!(stats.images, 0);
     }
 
     #[test]

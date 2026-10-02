@@ -4427,6 +4427,24 @@ impl Worker {
                 from,
                 until,
             } => self.search_chat_messages(chat, query, from, until),
+            Command::StorageStats { messages, token } => {
+                match self.archive.storage_stats(messages) {
+                    Ok(stats) => self.emit(Event::StorageStats {
+                        stats: Some(stats),
+                        counted: messages,
+                        token,
+                    }),
+                    Err(error) => {
+                        log::warn!("could not read the storage stats: {error}");
+                        // Nothing to show: a blank row is honest, zeroes are not.
+                        self.emit(Event::StorageStats {
+                            stats: None,
+                            counted: messages,
+                            token,
+                        });
+                    }
+                }
+            }
             Command::EnsureChat { chat, name } => {
                 let is_new = self.archive.chat(&chat).ok().flatten().is_none();
                 if let Err(error) = self.archive.ensure_chat(&chat, &name) {

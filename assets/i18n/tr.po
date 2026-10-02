@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
-"POT-Creation-Date: 2026-09-29 15:36+0200\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -791,6 +791,34 @@ msgstr "Değiştir…"
 msgid "Use default"
 msgstr "Varsayılanı kullan"
 
+#: src/ui/settings.rs:715 src/ui/settings.rs:1330
+msgid "Storage used"
+msgstr ""
+
+#: src/ui/settings.rs:717
+msgid "Space"
+msgstr ""
+
+#: src/ui/settings.rs:718 src/ui/settings.rs:1378
+msgid "Images"
+msgstr ""
+
+#: src/ui/settings.rs:719 src/ui/settings.rs:1386
+msgid "Videos"
+msgstr ""
+
+#: src/ui/settings.rs:720 src/ui/settings.rs:1394
+msgid "Stickers and GIFs"
+msgstr ""
+
+#: src/ui/settings.rs:721 src/ui/settings.rs:1403
+msgid "Other"
+msgstr ""
+
+#: src/ui/settings.rs:722
+msgid "Messages"
+msgstr ""
+
 #: src/ui/settings.rs:707
 msgid "Log"
 msgstr "Günlük (Log)"
@@ -919,6 +947,20 @@ msgstr "Görsel seç…"
 #: src/ui/settings.rs:1201
 msgid "Remove image"
 msgstr "Görseli kaldır"
+
+#: src/ui/settings.rs:1348
+msgid ""
+"Space taken by the pictures, videos, stickers, and GIFs ZapFast has "
+"downloaded. The size is the one WhatsApp declared. Documents and audio count "
+"under Other."
+msgstr ""
+
+#: src/ui/settings.rs:1366
+#, rust-format
+msgid "{} message"
+msgid_plural "{} messages"
+msgstr[0] ""
+msgstr[1] ""
 
 #: src/ui/settings.rs:1229
 msgctxt "wallpaper colour"
@@ -1533,3 +1575,4 @@ msgstr "Pencereyi kapla"
 #: src/ui/conversation.rs
 msgid "Back to the message (Esc)"
 msgstr "Mesaja geri dön (Esc)"
+

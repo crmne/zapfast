@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -809,6 +809,34 @@ msgstr "Cambia…"
 msgid "Use default"
 msgstr "Usa predefinita"
 
+#: src/ui/settings.rs:715 src/ui/settings.rs:1330
+msgid "Storage used"
+msgstr "Spazio utilizzato"
+
+#: src/ui/settings.rs:717
+msgid "Space"
+msgstr "Spazio"
+
+#: src/ui/settings.rs:718 src/ui/settings.rs:1378
+msgid "Images"
+msgstr "Immagini"
+
+#: src/ui/settings.rs:719 src/ui/settings.rs:1386
+msgid "Videos"
+msgstr "Video"
+
+#: src/ui/settings.rs:720 src/ui/settings.rs:1394
+msgid "Stickers and GIFs"
+msgstr "Sticker e GIF"
+
+#: src/ui/settings.rs:721 src/ui/settings.rs:1403
+msgid "Other"
+msgstr "Altro"
+
+#: src/ui/settings.rs:722
+msgid "Messages"
+msgstr "Messaggi"
+
 #: src/ui/settings.rs:715
 msgid "Log"
 msgstr "Log"
@@ -934,6 +962,22 @@ msgstr "Scegli immagine…"
 #: src/ui/settings.rs:1231
 msgid "Remove image"
 msgstr "Rimuovi immagine"
+
+#: src/ui/settings.rs:1348
+msgid ""
+"Space taken by the pictures, videos, stickers, and GIFs ZapFast has "
+"downloaded. The size is the one WhatsApp declared. Documents and audio count "
+"under Other."
+msgstr "Spazio occupato da immagini, video, sticker e GIF scaricati da ZapFast. "
+"La dimensione è quella dichiarata da WhatsApp. I documenti e l'audio con"
+"tano in Altro."
+
+#: src/ui/settings.rs:1366
+#, rust-format
+msgid "{} message"
+msgid_plural "{} messages"
+msgstr[0] "{} messaggio"
+msgstr[1] "{} messaggi"
 
 #: src/ui/settings.rs:1259
 msgctxt "wallpaper colour"
@@ -1526,3 +1570,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+

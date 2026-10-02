@@ -14,7 +14,7 @@ use crate::image_preview::PreviewState;
 use crate::model::{
     Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError, Label,
     Media, MediaState, Message, Page, PickerTab, Scroll, SidebarDisplayMode, StickerPack,
-    StickerShelf, Toast, ToastKind,
+    StickerShelf, StorageStats, Toast, ToastKind,
 };
 use crate::paths::AppDirs;
 use crate::settings::{NotificationSound, Settings, ThemeChoice};
@@ -23,6 +23,11 @@ use crate::theme::{self, Palette};
 
 /// Initial and incremental message-page size.
 pub const PAGE: usize = 60;
+
+/// How long a reading of the archive's downloaded size stays fresh. The
+/// reading itself is bounded by the `messages_downloaded` index, so this only
+/// decides how often a page left open follows a download.
+const STORAGE_STATS_TTL: Duration = Duration::from_secs(60);
 /// Minimum delay between phone history requests.
 const PHONE_COOLDOWN: Duration = Duration::from_secs(6);
 /// WhatsApp message-edit window.
@@ -427,6 +432,21 @@ pub struct App {
     pub chat_search_calendar: bool,
     /// Whether the pane's field should take focus.
     pub focus_chat_search: bool,
+    /// Counts and sizes of the downloaded attachments, for Settings. `None`
+    /// until a reading succeeds, so a failed one leaves the row blank instead
+    /// of claiming the archive is empty.
+    pub storage_stats: Option<StorageStats>,
+    /// When the last reading was asked for, so a stale one is asked again.
+    pub(crate) storage_stats_at: Option<Instant>,
+    /// Whether the message count has been read for the current visit to
+    /// Settings. The refresh reads the sizes alone.
+    pub(crate) storage_stats_counted: bool,
+    /// Whether a reading is already on its way to the worker.
+    pub(crate) storage_stats_asked: bool,
+    /// Which storage-stats ask is current. An answer for an older one is
+    /// dropped: it would otherwise put its numbers over the newer read and
+    /// date them now.
+    pub(crate) storage_stats_token: u64,
     /// Whether the locked-chats folder is open.
     pub locked_folder: bool,
     /// The verifier authenticated for this window session, never the code.
@@ -1001,6 +1021,11 @@ impl App {
             chat_search_month: crate::util::today(),
             chat_search_calendar: false,
             focus_chat_search: false,
+            storage_stats: None,
+            storage_stats_at: None,
+            storage_stats_asked: false,
+            storage_stats_token: 0,
+            storage_stats_counted: false,
             locked_folder: false,
             chat_lock_session: None,
             chat_lock_entry: String::new(),
@@ -2248,6 +2273,35 @@ impl App {
                                 self.chat(&message.chat).is_none_or(|chat| !chat.locked)
                             })
                             .collect();
+                    }
+                }
+                Event::StorageStats {
+                    stats,
+                    counted,
+                    token,
+                } => {
+                    // An answer to an older ask would put its numbers over
+                    // the newer ones and date them now, so it is dropped.
+                    if token == self.storage_stats_token {
+                        // A failed read answers nothing and leaves the last
+                        // good numbers, or the blank row, in place. The
+                        // attempt still counts as one, so a broken archive is
+                        // retried on the same cadence instead of on every
+                        // frame.
+                        if let Some(mut stats) = stats {
+                            if counted {
+                                self.storage_stats_counted = true;
+                            } else {
+                                // A sizes-only refresh carries a zero message
+                                // total. Keep the total from the counted read.
+                                stats.messages = self
+                                    .storage_stats
+                                    .map_or(stats.messages, |last| last.messages);
+                            }
+                            self.storage_stats = Some(stats);
+                        }
+                        self.storage_stats_at = Some(Instant::now());
+                        self.storage_stats_asked = false;
                     }
                 }
                 Event::Incoming { chat, message } => self.maybe_notify(&chat, &message),
@@ -3702,6 +3756,13 @@ impl App {
                 // announces it: read it again whenever Settings opens.
                 if page == Page::Settings && self.page != Page::Settings && self.is_connected() {
                     self.backend.send(Command::FetchAccountPrivacy);
+                }
+                // Each visit to Settings reads the message count again, even
+                // when the last sizes were read less than a minute ago.
+                if page == Page::Settings && self.page != Page::Settings {
+                    self.storage_stats_counted = false;
+                    self.storage_stats_at = None;
+                    self.storage_stats_asked = false;
                 }
                 // Typed passwords do not wait in a form nobody sees.
                 if page != Page::Settings && !self.app_lock.checking() {
@@ -5709,6 +5770,32 @@ impl App {
         }
     }
 
+    /// Asks the worker for the archive's storage numbers while Settings is
+    /// open, at most once per [`STORAGE_STATS_TTL`]. The request lives here
+    /// rather than in the view: `src/ui` draws and pushes actions, and only
+    /// `App` talks to the worker.
+    fn refresh_storage_stats(&mut self, ctx: &egui::Context) {
+        if self.page != Page::Settings || self.storage_stats_asked {
+            return;
+        }
+        let stale = self
+            .storage_stats_at
+            .is_none_or(|at| at.elapsed() >= STORAGE_STATS_TTL);
+        if stale {
+            self.storage_stats_token = self.storage_stats_token.wrapping_add(1);
+            self.backend.send(Command::StorageStats {
+                messages: !self.storage_stats_counted,
+                token: self.storage_stats_token,
+            });
+            self.storage_stats_asked = true;
+        } else if let Some(at) = self.storage_stats_at {
+            // Settings can sit idle. Ask for a frame when the minute ends,
+            // or the sizes stay frozen until the reader does something.
+            let left = STORAGE_STATS_TTL.saturating_sub(at.elapsed());
+            ctx.request_repaint_after(left);
+        }
+    }
+
     pub fn frame_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
@@ -5759,6 +5846,7 @@ impl App {
         }
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
+        self.refresh_storage_stats(ctx);
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
         // Release the image caches of everything that scrolled away.
@@ -6971,6 +7059,72 @@ mod tests {
         events.send(Event::Link(LinkStatus::LoggedOut)).unwrap();
         app.background_frame(&ctx);
         assert!(app.interactive_sending.is_empty());
+    }
+
+    #[test]
+    fn a_sizes_only_storage_answer_keeps_the_message_count() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, events) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.storage_stats = Some(crate::model::StorageStats {
+            messages: 5,
+            ..crate::model::StorageStats::default()
+        });
+        app.storage_stats_counted = false;
+        events
+            .send(Event::StorageStats {
+                stats: Some(crate::model::StorageStats {
+                    messages: 0,
+                    images: 2,
+                    ..crate::model::StorageStats::default()
+                }),
+                counted: false,
+                token: app.storage_stats_token,
+            })
+            .unwrap();
+        app.handle_events();
+        let stats = app.storage_stats.expect("stats");
+        assert_eq!(stats.messages, 5);
+        assert_eq!(stats.images, 2);
+        assert!(!app.storage_stats_counted);
+    }
+
+    #[test]
+    fn reopening_settings_counts_messages_again() {
+        let mut app = app();
+        let (backend, mut commands, _) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.page = Page::Settings;
+        app.storage_stats_counted = true;
+        app.storage_stats_at = Some(std::time::Instant::now());
+        app.apply(Action::Open(Page::Chats), &ctx);
+        app.apply(Action::Open(Page::Settings), &ctx);
+        app.refresh_storage_stats(&ctx);
+        let asked = std::iter::from_fn(|| commands.try_recv().ok())
+            .any(|command| matches!(command, Command::StorageStats { messages: true, .. }));
+        assert!(asked, "a new visit asks for the message total");
+    }
+
+    #[test]
+    fn fresh_storage_stats_ask_for_a_frame_when_they_go_stale() {
+        let mut app = app();
+        app.page = Page::Settings;
+        app.storage_stats_at = Some(std::time::Instant::now());
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {
+            app.refresh_storage_stats(&ctx);
+        });
+        output.textures_delta.clear();
+        let delay = output
+            .viewport_output
+            .values()
+            .map(|viewport| viewport.repaint_delay)
+            .min()
+            .unwrap_or(std::time::Duration::MAX);
+        assert!(
+            delay.as_secs() < 120,
+            "the idle page wakes before the minute ends"
+        );
     }
 
     #[test]
