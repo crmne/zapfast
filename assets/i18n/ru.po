@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 00:01-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -180,7 +180,7 @@ msgstr "Заблокированные"
 msgid "No favorites yet"
 msgstr "Пока нет избранных"
 
-#: src/ui/chats.rs:878 src/app.rs:1617
+#: src/ui/chats.rs:878 src/app.rs:1621
 msgid "Message yourself"
 msgstr "Написать себе"
 
@@ -193,17 +193,17 @@ msgid "Remove from favorites"
 msgstr "Убрать из избранного"
 
 #: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4093
-#: src/ui/dialogs.rs:1055 src/ui/picker.rs:1616
+#: src/ui/dialogs.rs:1157 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Добавить в избранное"
 
 #: src/ui/chats.rs:1150 src/ui/chats.rs:1526 src/ui/conversation.rs:222
-#: src/ui/dialogs.rs:1189 src/ui/dialogs.rs:1707
+#: src/ui/dialogs.rs:1291 src/ui/dialogs.rs:1809
 msgid "Leave group"
 msgstr "Покинуть группу"
 
 #: src/ui/chats.rs:1151 src/ui/chats.rs:1524 src/ui/conversation.rs:220
-#: src/ui/dialogs.rs:1187 src/ui/dialogs.rs:1705
+#: src/ui/dialogs.rs:1289 src/ui/dialogs.rs:1807
 msgid "Leave channel"
 msgstr "Покинуть канал"
 
@@ -410,99 +410,137 @@ msgstr "Включить звук"
 msgid "Mute"
 msgstr "Выключить звук"
 
-#: src/ui/dialogs.rs:679
+#: src/ui/dialogs.rs:456
+#
+msgid "Forward message"
+msgstr "Переслать сообщение"
+
+#: src/ui/dialogs.rs:460
+#, rust-format
+msgid "Forward {count} message"
+msgid_plural "Forward {count} messages"
+msgstr[0] "Переслать {count} сообщение"
+msgstr[1] "Переслать {count} сообщения"
+msgstr[2] "Переслать {count} сообщений"
+
+#: src/ui/dialogs.rs:470
+msgid "Forward to these chats?"
+msgstr "Переслать в эти чаты?"
+
+#: src/ui/dialogs.rs:489
+msgid "Back"
+msgstr ""
+
+#: src/ui/dialogs.rs:499
+msgid "Forward"
+msgstr ""
+
+#: src/ui/dialogs.rs:641
+#, rust-format
+msgid "{count} recipient selected"
+msgid_plural "{count} recipients selected"
+msgstr[0] "{count} получатель выбран"
+msgstr[1] "{count} получателя выбрано"
+msgstr[2] "{count} получателей выбрано"
+
+#: src/ui/dialogs.rs:654
+#
+msgid "Review recipients"
+msgstr "Проверить получателей"
+
+#: src/ui/dialogs.rs:781
 msgid "Show shortcut hints under the message box"
 msgstr "Показывать подсказки сочетаний клавиш под полем ввода"
 
-#: src/ui/dialogs.rs:881
+#: src/ui/dialogs.rs:983
 msgid "Sticker pack"
 msgstr "Набор стикеров"
 
-#: src/ui/dialogs.rs:886
+#: src/ui/dialogs.rs:988
 msgid "Downloading the pack…"
 msgstr "Загрузка набора…"
 
-#: src/ui/dialogs.rs:910
+#: src/ui/dialogs.rs:1012
 msgid "Add to my stickers"
 msgstr "Добавить в мои стикеры"
 
-#: src/ui/dialogs.rs:917 src/ui/message_info.rs:28 src/ui/labels.rs:214
+#: src/ui/dialogs.rs:1019 src/ui/message_info.rs:28 src/ui/labels.rs:214
 msgid "Close"
 msgstr "Закрыть"
 
-#: src/ui/dialogs.rs:934
+#: src/ui/dialogs.rs:1036
 msgid "Make a sticker"
 msgstr "Создать стикер"
 
-#: src/ui/dialogs.rs:998
+#: src/ui/dialogs.rs:1100
 msgid "Size"
 msgstr "Размер"
 
-#: src/ui/dialogs.rs:1013
+#: src/ui/dialogs.rs:1115
 msgid "Keep the transparent background"
 msgstr "Сохранить прозрачный фон"
 
-#: src/ui/dialogs.rs:1030
+#: src/ui/dialogs.rs:1132
 msgid "Emojis that describe it, like 😂 or ❤️"
 msgstr "Эмодзи, которые его описывают, например 😂 или ❤️"
 
-#: src/ui/dialogs.rs:1047
+#: src/ui/dialogs.rs:1149
 msgid "Send"
 msgstr "Отправить"
 
-#: src/ui/dialogs.rs:1062 src/ui/dialogs.rs:1217 src/ui/settings.rs:910
+#: src/ui/dialogs.rs:1164 src/ui/dialogs.rs:1319 src/ui/settings.rs:910
 #: src/ui/settings.rs:1446 src/ui/lock.rs:142
 msgid "Cancel"
 msgstr "Отмена"
 
-#: src/ui/dialogs.rs:1171
+#: src/ui/dialogs.rs:1273
 msgid "Leave this channel?"
 msgstr "Покинуть этот канал?"
 
-#: src/ui/dialogs.rs:1173
+#: src/ui/dialogs.rs:1275
 msgid "Leave this group?"
 msgstr "Покинуть эту группу?"
 
-#: src/ui/dialogs.rs:1180
+#: src/ui/dialogs.rs:1282
 msgid ""
 "You will not receive new messages. The local history stays on this computer."
 msgstr ""
 "Вы не будете получать новые сообщения. Локальная история остаётся на этом "
 "компьютере."
 
-#: src/ui/dialogs.rs:1200
+#: src/ui/dialogs.rs:1302
 msgid "Leave channel and archive"
 msgstr "Покинуть канал и архивировать"
 
-#: src/ui/dialogs.rs:1202
+#: src/ui/dialogs.rs:1304
 msgid "Leave group and archive"
 msgstr "Покинуть группу и архивировать"
 
-#: src/ui/dialogs.rs:1427
+#: src/ui/dialogs.rs:1529
 msgid "Also save to your phone's contacts"
 msgstr "Также сохранить в контакты телефона"
 
-#: src/ui/dialogs.rs:1492
+#: src/ui/dialogs.rs:1594
 msgid "Group"
 msgstr "Группа"
 
-#: src/ui/dialogs.rs:1494
+#: src/ui/dialogs.rs:1596
 msgid "Channel"
 msgstr "Канал"
 
-#: src/ui/dialogs.rs:1496
+#: src/ui/dialogs.rs:1598
 msgid "Contact"
 msgstr "Контакт"
 
-#: src/ui/dialogs.rs:1541
+#: src/ui/dialogs.rs:1643
 msgid "Edit group name"
 msgstr "Изменить название группы"
 
-#: src/ui/dialogs.rs:1671
+#: src/ui/dialogs.rs:1773
 msgid "Saving…"
 msgstr "Сохранение…"
 
-#: src/ui/dialogs.rs:1681
+#: src/ui/dialogs.rs:1783
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -510,27 +548,27 @@ msgstr[0] "{} участник"
 msgstr[1] "{} участника"
 msgstr[2] "{} участников"
 
-#: src/ui/dialogs.rs:1941
+#: src/ui/dialogs.rs:2043
 msgid "Change group photo"
 msgstr "Изменить фото группы"
 
-#: src/ui/dialogs.rs:1947
+#: src/ui/dialogs.rs:2049
 msgid "Change photo"
 msgstr "Изменить фото"
 
-#: src/ui/dialogs.rs:1948
+#: src/ui/dialogs.rs:2050
 msgid "Remove photo"
 msgstr "Удалить фото"
 
-#: src/ui/dialogs.rs:1988
+#: src/ui/dialogs.rs:2090
 msgid "Group name"
 msgstr "Название группы"
 
-#: src/ui/dialogs.rs:2031
+#: src/ui/dialogs.rs:2133
 msgid "Save name (Enter)"
 msgstr "Сохранить имя (Enter)"
 
-#: src/ui/dialogs.rs:2043
+#: src/ui/dialogs.rs:2145
 msgid "Cancel (Escape)"
 msgstr "Отмена (Escape)"
 
@@ -1069,29 +1107,29 @@ msgstr[2] "ещё {}"
 msgid "No one yet"
 msgstr "Пока никто"
 
-#: src/app.rs:1538
+#: src/app.rs:1542
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Метка «{name}» уже есть."
 
-#: src/app.rs:1598
+#: src/app.rs:1602
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Вы)"
 
-#: src/app.rs:1599 src/app.rs:1618
+#: src/app.rs:1603 src/app.rs:1622
 msgid "You"
 msgstr "Вы"
 
-#: src/app.rs:2437
+#: src/app.rs:2441
 msgid "Could not use this image"
 msgstr "Не удалось использовать это изображение"
 
-#: src/app.rs:2903
+#: src/app.rs:2907
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
 
-#: src/app.rs:2907
+#: src/app.rs:2911
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1099,36 +1137,41 @@ msgstr ""
 "Не отправлено: сообщение, на которое вы отвечаете, недоступно на этом "
 "компьютере. Отмените ответ, чтобы отправить без цитаты."
 
-#: src/app.rs:4324
+#: src/app.rs:3995
+#
+msgid "A selected chat is no longer writable"
+msgstr "В один из выбранных чатов больше нельзя отправлять сообщения"
+
+#: src/app.rs:4383
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: src/app.rs:4399
+#: src/app.rs:4458
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:4687 src/ui/labels.rs:237
+#: src/app.rs:4750 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
 
-#: src/app.rs:5323
+#: src/app.rs:5386
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5331
+#: src/app.rs:5394
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5444
+#: src/app.rs:5507
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
 
-#: src/app.rs:5979
+#: src/app.rs:6042
 msgid "Copied image"
 msgstr "Изображение скопировано"
 
-#: src/app.rs:5982 src/app.rs:5987
+#: src/app.rs:6045 src/app.rs:6050
 msgid "Failed to copy image"
 msgstr "Не удалось скопировать изображение"
 
