@@ -374,7 +374,7 @@ msgstr ""
 msgid "Copy number"
 msgstr ""
 
-#: src/ui/conversation.rs:5606
+#: src/ui/conversation.rs:5680
 msgid "Open in a map"
 msgstr ""
 

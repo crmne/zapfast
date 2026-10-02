@@ -5458,6 +5458,13 @@ fn rich_body(
             continue;
         };
         let number = phone.strip_prefix('+').unwrap_or(phone);
+        let copy_text: String = laid
+            .galley
+            .text()
+            .chars()
+            .skip(range.start)
+            .take(range.len())
+            .collect();
         for (row, bounds) in crate::bidi::char_bounds_by_row(&laid.galley, range.start, range.end) {
             let link = ui
                 .interact(
@@ -5481,7 +5488,16 @@ fn rich_body(
                 .frame(widgets::menu_frame(&view.palette))
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
                 .show(|ui| {
-                    if widgets::menu_item(ui, &view.palette, None, message_number.as_ref()) {
+                    #[cfg(test)]
+                    let message_rect =
+                        Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 28.0));
+                    let message_clicked =
+                        widgets::menu_item(ui, &view.palette, None, message_number.as_ref());
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(link.id.with("test-message-action"), message_rect);
+                    });
+                    if message_clicked {
                         actions.push(Action::NewContact {
                             phone: number.to_owned(),
                             first: String::new(),
@@ -5489,9 +5505,21 @@ fn rich_body(
                             to_phone: None,
                         });
                     }
-                    if widgets::menu_item(ui, &view.palette, Some(Icon::Copy), copy_number.as_ref())
-                    {
-                        actions.push(Action::CopyText(phone.to_owned()));
+                    #[cfg(test)]
+                    let copy_rect =
+                        Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 28.0));
+                    let copy_clicked = widgets::menu_item(
+                        ui,
+                        &view.palette,
+                        Some(Icon::Copy),
+                        copy_number.as_ref(),
+                    );
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(link.id.with("test-copy-action"), copy_rect);
+                    });
+                    if copy_clicked {
+                        actions.push(Action::CopyText(copy_text.clone()));
                     }
                 });
         }
