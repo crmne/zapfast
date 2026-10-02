@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 00:01-0300\n"
+"POT-Creation-Date: 2026-10-02 10:22-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: German\n"
@@ -179,7 +179,7 @@ msgstr "Gesperrt"
 msgid "No favorites yet"
 msgstr "Noch keine Favoriten"
 
-#: src/ui/chats.rs:878 src/app.rs:1621
+#: src/ui/chats.rs:878 src/app.rs:1654
 msgid "Message yourself"
 msgstr "Nachricht an dich selbst"
 
@@ -408,8 +408,8 @@ msgstr "Ton an"
 msgid "Mute"
 msgstr "Stumm"
 
-#: src/ui/dialogs.rs:456
 #
+#: src/ui/dialogs.rs:456
 msgid "Forward message"
 msgstr "Nachricht weiterleiten"
 
@@ -439,8 +439,8 @@ msgid_plural "{count} recipients selected"
 msgstr[0] "{count} Empfänger ausgewählt"
 msgstr[1] "{count} Empfänger ausgewählt"
 
-#: src/ui/dialogs.rs:654
 #
+#: src/ui/dialogs.rs:654
 msgid "Review recipients"
 msgstr "Empfänger überprüfen"
 
@@ -1104,29 +1104,29 @@ msgstr[1] "{} ausstehend"
 msgid "No one yet"
 msgstr "Noch niemand"
 
-#: src/app.rs:1542
+#: src/app.rs:1575
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Ein Label namens „{name}“ gibt es schon."
 
-#: src/app.rs:1602
+#: src/app.rs:1635
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Du)"
 
-#: src/app.rs:1603 src/app.rs:1622
+#: src/app.rs:1636 src/app.rs:1655
 msgid "You"
 msgstr "Du"
 
-#: src/app.rs:2441
+#: src/app.rs:2474
 msgid "Could not use this image"
 msgstr "Dieses Bild kann nicht verwendet werden"
 
-#: src/app.rs:2907
+#: src/app.rs:2940
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Nicht gesendet: ZapFast ist nicht mit WhatsApp verbunden."
 
-#: src/app.rs:2911
+#: src/app.rs:2944
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1134,41 +1134,42 @@ msgstr ""
 "Nicht gesendet: Die Nachricht, auf die du antwortest, ist auf diesem "
 "Computer nicht verfügbar. Brich die Antwort ab, um ohne Zitat zu senden."
 
-#: src/app.rs:3995
 #
+#: src/app.rs:4028
 msgid "A selected chat is no longer writable"
-msgstr "In einen ausgewählten Chat können keine Nachrichten mehr gesendet werden"
+msgstr ""
+"In einen ausgewählten Chat können keine Nachrichten mehr gesendet werden"
 
-#: src/app.rs:4383
+#: src/app.rs:4416
 msgid "Added to favorites"
 msgstr "Zu Favoriten hinzugefügt"
 
-#: src/app.rs:4458
+#: src/app.rs:4491
 msgid "Sending the sticker pack…"
 msgstr "Sticker-Pack wird gesendet…"
 
-#: src/app.rs:4750 src/ui/labels.rs:237
+#: src/app.rs:4783 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Du hast {limit} Labels, mehr hebt ZapFast nicht auf."
 
-#: src/app.rs:5386
+#: src/app.rs:5427
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5394
+#: src/app.rs:5435
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5507
+#: src/app.rs:5548
 msgid "This video opens in your system player"
 msgstr "Dieses Video öffnet sich im Systemplayer"
 
-#: src/app.rs:6042
+#: src/app.rs:6083
 msgid "Copied image"
 msgstr "Bild kopiert"
 
-#: src/app.rs:6045 src/app.rs:6050
+#: src/app.rs:6086 src/app.rs:6091
 msgid "Failed to copy image"
 msgstr "Bild konnte nicht kopiert werden"
 
