@@ -257,6 +257,7 @@ impl Worker {
             delivered_at: None,
             read_at: None,
             quoted: Some(Quoted {
+                chat: None,
                 mentions: source.mentions,
                 id: source.id,
                 sender_name: source.sender_name.or_else(|| self.name_for(&source.sender)),

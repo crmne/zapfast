@@ -886,11 +886,34 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             } else if let Some(reply_id) = app.reply_to.clone() {
                 let quoted = app
                     .conversations
-                    .get(&chat.id)
+                    .get(reply_id.source_chat(&chat.id))
                     .and_then(|conversation| conversation.message(&reply_id))
                     .cloned();
                 match quoted {
                     Some(quoted) => reply_strip(app, ui, &quoted),
+                    None if reply_id.chat.is_some() => {
+                        // Losing the source page must never silently turn a
+                        // private reply into an unquoted send. The worker
+                        // resolves the original from the archive on Send.
+                        let palette = app.palette;
+                        widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
+                            ui.horizontal(|ui| {
+                                widgets::rich_text(
+                                    ui,
+                                    &crate::i18n::gettext(app.locale, "Original group message unavailable"),
+                                    theme::regular(12.5),
+                                    palette.secondary,
+                                );
+                                if theme::icon_button(
+                                    ui, Icon::X, 16.0, palette.secondary, palette.text,
+                                    "Cancel reply (Esc)",
+                                ).clicked() {
+                                    app.actions.push(Action::CancelReply);
+                                }
+                            });
+                        });
+                        strip_gap(ui);
+                    }
                     None => app.reply_to = None,
                 }
             }
@@ -3556,7 +3579,14 @@ fn quote_block(
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() {
-        actions.push(Action::ScrollTo(quoted.id.clone()));
+        if let Some(chat) = &quoted.chat {
+            actions.push(Action::OpenMessage {
+                chat: chat.clone(),
+                message: quoted.id.clone(),
+            });
+        } else {
+            actions.push(Action::ScrollTo(quoted.id.clone()));
+        }
     }
 }
 
@@ -4018,6 +4048,19 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
     {
         actions.push(Action::Reply(message.id.clone()));
+    }
+    if message.private_reply_recipient().is_some()
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Reply),
+            &crate::i18n::gettext(view.locale, "Reply privately"),
+        )
+    {
+        actions.push(Action::ReplyPrivately {
+            chat: chat.clone(),
+            message: message.id.clone(),
+        });
     }
     if !matches!(
         message.content,

@@ -11,6 +11,39 @@ use serde::{Deserialize, Serialize};
 /// Chat JID string: `<phone>@s.whatsapp.net`, `<id>@g.us`, or `<id>@lid`.
 pub type ChatId = String;
 
+/// A composer quote, optionally from a different chat (a private group reply).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplyTarget {
+    pub id: String,
+    pub chat: Option<ChatId>,
+}
+
+impl ReplyTarget {
+    pub fn source_chat<'a>(&'a self, destination: &'a str) -> &'a str {
+        self.chat.as_deref().unwrap_or(destination)
+    }
+}
+
+impl From<String> for ReplyTarget {
+    fn from(id: String) -> Self {
+        Self { id, chat: None }
+    }
+}
+
+impl From<&str> for ReplyTarget {
+    fn from(id: &str) -> Self {
+        id.to_owned().into()
+    }
+}
+
+impl std::ops::Deref for ReplyTarget {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.id
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatKind {
@@ -320,6 +353,15 @@ pub struct LinkPreview {
 }
 
 impl Message {
+    pub fn private_reply_recipient(&self) -> Option<&str> {
+        (!self.from_me
+            && ChatKind::from_id(&self.chat) == ChatKind::Group
+            && !matches!(self.content, Content::Revoked)
+            && self.sender.split_once('@').is_some_and(|(user, server)| {
+                !user.is_empty() && matches!(server, "s.whatsapp.net" | "lid")
+            }))
+        .then_some(self.sender.as_str())
+    }
     /// One-line summary used in chat rows and quotes.
     pub fn summary(&self) -> String {
         self.content.summary()
@@ -335,6 +377,9 @@ impl Message {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Quoted {
+    /// Source chat for a cross-chat quote, absent for ordinary replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<ChatId>,
     pub id: String,
     pub sender: String,
     pub sender_name: Option<String>,
@@ -1281,7 +1326,7 @@ pub enum Action {
         chat: ChatId,
         text: String,
         /// Quoted message id.
-        quoting: Option<String>,
+        quoting: Option<crate::model::ReplyTarget>,
     },
     ReplyInteractive {
         chat: ChatId,
@@ -1390,6 +1435,11 @@ pub enum Action {
     DismissToast(usize),
     /// Starts a reply to a message in the open chat.
     Reply(String),
+    /// Opens the group sender's direct chat with this message quoted.
+    ReplyPrivately {
+        chat: ChatId,
+        message: String,
+    },
     CancelReply,
     /// Forwards an archived message to another chat.
     Forward {
@@ -1715,6 +1765,19 @@ pub enum Action {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn archived_quotes_without_a_source_chat_remain_readable() {
+        let old = r#"{"id":"original","sender":"sender@lid","sender_name":null,"summary":"Fixture","mentions":[]}"#;
+        let mut quote: super::Quoted = serde_json::from_str(old).unwrap();
+        assert_eq!(quote.chat, None);
+        quote.chat = Some("fixture@g.us".into());
+        let stored = serde_json::to_string(&quote).unwrap();
+        assert_eq!(
+            serde_json::from_str::<super::Quoted>(&stored).unwrap(),
+            quote
+        );
+    }
+
     use super::StickerCrop;
 
     #[test]

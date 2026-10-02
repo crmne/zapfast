@@ -603,6 +603,7 @@ pub fn populate(app: &mut App) {
                 Content::text("Listened, agreed on *all three* points."),
             );
             row.quoted = Some(Quoted {
+                chat: None,
                 id: "ada-voice".into(),
                 sender: ada.into(),
                 sender_name: Some("Ada Lovelace".into()),
@@ -814,6 +815,7 @@ pub fn populate(app: &mut App) {
             row.sender = mira.0.to_owned();
             row.sender_name = Some(mira.1.to_owned());
             row.quoted = Some(Quoted {
+                chat: None,
                 id: format!("{group}-3"),
                 sender: jonas.0.into(),
                 sender_name: Some(jonas.1.into()),
@@ -1025,6 +1027,7 @@ fn quote_sample(app: &mut App) {
             Content::text("See you there!"),
         );
         reply.quoted = Some(Quoted {
+            chat: None,
             id: "group-reply".into(),
             sender,
             sender_name,
@@ -1057,6 +1060,7 @@ fn meta_ai_sample(app: &mut App) {
         ),
     );
     reply.quoted = Some(Quoted {
+        chat: None,
         id: "meta-ai-question".into(),
         sender: ME.into(),
         sender_name: None,
@@ -1165,6 +1169,7 @@ fn interactive_sample(app: &mut App, with_image: bool) {
         },
     );
     reply.quoted = Some(Quoted {
+        chat: None,
         id: "interactive-card".into(),
         sender: id.into(),
         sender_name: Some("Cedar Studio".into()),
@@ -1915,6 +1920,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     let mut reply =
                         message(chat, id, own, now - 60, Content::text("Reply preview test"));
                     reply.quoted = Some(Quoted {
+                        chat: None,
                         id: "arabic-original".into(),
                         sender: chat.into(),
                         sender_name: Some("Demo contact".into()),
@@ -1951,6 +1957,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         let mut reply =
                             message(id, "rtl-reply", true, now, Content::text("שלום עולם"));
                         reply.quoted = Some(Quoted {
+                            chat: None,
                             id: "rtl-hebrew".into(),
                             sender: SAMPLES[0].id.into(),
                             sender_name: Some("שלום עולם".into()),
@@ -1967,6 +1974,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         let text = Content::text("עולה 3.14 ש״ח");
                         let mut reply = message(id, "rtl-digits-reply", false, now, text);
                         reply.quoted = Some(Quoted {
+                            chat: None,
                             id: "rtl-digits".into(),
                             sender: ME.into(),
                             sender_name: None,
@@ -2447,6 +2455,20 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.open_chat = Some(SAMPLES[0].id.to_owned());
                 app.reply_to = Some("ada-photo".into());
                 app.focus_composer = true;
+            }
+            "private-reply" | "private-reply-menu" => {
+                let group = SAMPLES[1].id;
+                app.open_chat = Some(group.into());
+                if part == "private-reply-menu" {
+                    app.open_message_menu = Some("group-photo".into());
+                    app.scroll_to_bottom = false;
+                    app.scroll_anchor = Some("group-photo".into());
+                } else {
+                    app.actions.push(crate::model::Action::ReplyPrivately {
+                        chat: group.into(),
+                        message: "group-photo".into(),
+                    });
+                }
             }
             "edit" => {
                 let chat = SAMPLES[0].id;
@@ -4229,6 +4251,10 @@ mod tests {
             "mention",
             "emoji-complete",
             "reply",
+            "private-reply",
+            "private-reply,light",
+            "private-reply-menu",
+            "private-reply-menu,light",
             "edit",
             "unsent-voice",
             "scrolled",
@@ -8271,7 +8297,7 @@ mod tests {
         ] {
             frame_with(&mut app, &ctx, events);
         }
-        app.reply_to
+        app.reply_to.map(|target| target.id)
     }
 
     #[test]
@@ -8875,6 +8901,150 @@ mod tests {
     }
 
     #[test]
+    fn the_group_menu_opens_a_private_reply_without_sending() {
+        for light in [false, true] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = app();
+            apply_flags(
+                &mut app,
+                Some(if light {
+                    "private-reply-menu,light"
+                } else {
+                    "private-reply-menu"
+                }),
+            );
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            app.backend.record_demo_commands();
+            let original = app
+                .conversations
+                .get(SAMPLES[1].id)
+                .unwrap()
+                .message("group-photo")
+                .unwrap()
+                .clone();
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            let (_, _, position) = nodes
+                .iter()
+                .find(|(label, _, _)| label == "Reply privately")
+                .expect("the group menu offers private replies");
+            let position = *position;
+            let press = |pressed| egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            accessible_nodes(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(position), press(true)],
+            );
+            accessible_nodes(&mut app, &ctx, vec![press(false)]);
+            render(&mut app, &ctx);
+            assert_eq!(app.open_chat.as_deref(), Some(original.sender.as_str()));
+            assert_eq!(
+                app.reply_to.as_ref().unwrap().chat.as_deref(),
+                Some(SAMPLES[1].id)
+            );
+            assert!(
+                ctx.data(
+                    |data| data.get_temp::<egui::Rect>(crate::ui::conversation::reply_strip_id())
+                )
+                .is_some(),
+                "the source-group quote remains visible in the DM"
+            );
+            assert!(
+                !app.backend
+                    .take_demo_commands()
+                    .iter()
+                    .any(|command| matches!(command, crate::backend::Command::SendText { .. })),
+                "opening the private reply sends nothing"
+            );
+        }
+    }
+    #[test]
+    fn a_private_reply_keeps_its_quote_when_the_source_page_is_missing() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        apply_flags(&mut app, Some("private-reply"));
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let target = app.reply_to.clone().unwrap();
+        app.conversations.remove(target.chat.as_ref().unwrap());
+        render(&mut app, &ctx);
+        assert_eq!(app.reply_to, Some(target));
+    }
+    #[test]
+    fn a_private_quote_returns_to_its_source_group() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let group = SAMPLES[1].id;
+        let original = app
+            .conversations
+            .get(group)
+            .unwrap()
+            .message("group-photo")
+            .unwrap()
+            .clone();
+        let chat = original.sender.clone();
+        let mut reply = message(
+            &chat,
+            "private-reply",
+            true,
+            original.timestamp + 1,
+            Content::text("See you there"),
+        );
+        reply.quoted = Some(Quoted {
+            chat: Some(group.into()),
+            id: original.id,
+            sender: original.sender,
+            sender_name: original.sender_name,
+            summary: original.content.summary(),
+            mentions: original.mentions,
+        });
+        app.chats.push(Chat::new(chat.clone(), "Tom".into()));
+        app.conversations.insert(
+            chat.clone(),
+            crate::app::Conversation {
+                messages: vec![reply],
+                requested: true,
+                complete: true,
+                ..Default::default()
+            },
+        );
+        app.open_chat = Some(chat.clone());
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let rect = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(
+                    crate::ui::conversation::bubble_id(&chat, "private-reply").with("quote"),
+                )
+            })
+            .expect("the private quote is drawn");
+        let pos = rect.center();
+        for pressed in [true, false] {
+            accessible_nodes(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(app.open_chat.as_deref(), Some(group));
+        assert_eq!(app.scroll_anchor.as_deref(), Some("group-photo"));
+    }
+
+    #[test]
     fn a_quote_names_the_people_its_text_mentions() {
         let mut app = app();
         apply_flags(&mut app, Some("quotes"));
@@ -9447,7 +9617,7 @@ mod tests {
             .conversations
             .get(&chat)
             .and_then(|conversation| conversation.messages.last())
-            .map(|message| message.id.clone());
+            .map(|message| message.id.clone().into());
         for _ in 0..4 {
             frame_sized(&mut app, &ctx, 780.0, Vec::new());
         }

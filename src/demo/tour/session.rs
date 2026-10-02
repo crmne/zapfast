@@ -201,14 +201,18 @@ pub fn respond(app: &mut App) {
     }
 }
 
-fn quote(app: &App, chat: &str, id: String) -> Option<Quoted> {
-    let row = app.conversations.get(chat)?.message(&id)?;
+fn quote(app: &App, chat: &str, target: crate::model::ReplyTarget) -> Option<Quoted> {
+    let row = app
+        .conversations
+        .get(target.source_chat(chat))?
+        .message(&target.id)?;
     Some(Quoted {
+        chat: target.chat,
         sender: row.sender.clone(),
         sender_name: row.sender_name.clone(),
         summary: row.summary(),
         mentions: row.mentions.clone(),
-        id,
+        id: target.id,
     })
 }
 
