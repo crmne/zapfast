@@ -3387,6 +3387,12 @@ impl App {
             }
             return;
         }
+        if self.pending.is_empty() {
+            return;
+        }
+        self.store_draft(&chat, "");
+        self.drafts.remove(&chat);
+        self.draft_mentions.remove(&chat);
         self.composer_mentions = mentions;
         // The reply travels with the first attachment, like the caption.
         let mut quoting = self.reply_to.take();
@@ -6341,14 +6347,22 @@ mod tests {
         app.open_chat(first.clone());
         let caption = std::mem::take(&mut app.composer);
         app.send_pending(first.clone(), caption, app.composer_mentions());
+        let mut saved_caption = None;
         let sends: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
             .filter(|command| {
+                if let Command::SaveDraft { chat, text } = command
+                    && chat == &first
+                {
+                    saved_caption = Some(text.clone());
+                }
                 matches!(
                     command,
                     Command::SendImage { .. } | Command::SendFiles { .. }
                 )
             })
             .collect();
+        assert_eq!(saved_caption.as_deref(), Some(""), "sent caption is removed from storage");
+        assert!(!app.drafts.contains_key(&first));
         assert!(matches!(sends.as_slice(), [
             Command::SendImage { chat: a, caption: Some(caption), quoting: Some(quote), rgba: one, .. },
             Command::SendImage { chat: b, caption: None, quoting: None, rgba: two, .. },
