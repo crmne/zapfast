@@ -5439,6 +5439,7 @@ impl Worker {
             Command::GroupInfoFailed { chat, permanent } => {
                 self.handle_failed_group(chat, permanent);
             }
+            Command::RevokeFinished { chat, id, error } => self.finish_revoke(chat, id, error),
             Command::Sent { chat, id, error } => {
                 let completed = self.interactive_sending.iter().find_map(
                     |((pending_chat, source), pending_id)| {
@@ -6872,30 +6873,36 @@ impl Worker {
         });
     }
 
+    /// Keeps the original content until WhatsApp accepts its deletion.
     fn revoke(&mut self, chat: ChatId, id: String) {
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
-        if let Ok(true) = self
-            .archive
-            .set_content(&chat, &id, &Content::Revoked, false)
-        {
-            self.emit_message(&chat, &id);
-            self.emit_chat(&chat);
-        }
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            if let Err(error) = client.revoke_message(jid, id, RevokeType::Sender).await {
-                let _ = commands.send(Command::Sent {
-                    chat,
-                    id: String::new(),
-                    error: Some(format!(
-                        "Could not delete the message for everyone: {error}"
-                    )),
-                });
-            }
+            let error = client.revoke_message(jid, id.clone(), RevokeType::Sender)
+                .await.err().map(|error| error.to_string());
+            let _ = commands.send(Command::RevokeFinished { chat, id, error });
         });
+    }
+
+    /// Applies each accepted deletion independently; refused batch members
+    /// remain visible with their original content and can be retried.
+    fn finish_revoke(&mut self, chat: ChatId, id: String, error: Option<String>) {
+        if let Some(error) = error {
+            self.emit_message(&chat, &id);
+            self.emit(Event::Error(format!("Could not delete the message for everyone: {error}")));
+            return;
+        }
+        match self.archive.set_content(&chat, &id, &Content::Revoked, false) {
+            Ok(true) => {
+                self.emit_message(&chat, &id);
+                self.emit_chat(&chat);
+            }
+            Ok(false) => {},
+            Err(error) => self.emit(Event::Error(format!("Could not update the deleted message: {error}"))),
+        }
     }
 
     fn send_files(
@@ -11119,6 +11126,25 @@ mod receipt_tests {
         worker.handle_failed_group("busy@g.us".to_owned(), false);
         assert_eq!(worker.group_info_retry.len(), 1);
         assert_eq!(worker.group_info_tries.get("busy@g.us"), Some(&1));
+    }
+
+    /// A partial batch only replaces accepted messages with tombstones, even
+    /// if a failed completion arrives after a phone-delivered revocation.
+    #[test]
+    fn failed_batch_revocations_preserve_the_original_message() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        let accepted = own_message("accepted", 1);
+        let refused = own_message("refused", 1);
+        worker.store_message(accepted.clone(), None, None);
+        worker.store_message(refused.clone(), None, None);
+        worker.finish_revoke(PEER.to_owned(), accepted.id.clone(), None);
+        worker.finish_revoke(PEER.to_owned(), refused.id.clone(), Some("Fixture refusal".to_owned()));
+        assert_eq!(worker.archive.message(PEER, &accepted.id).unwrap().unwrap().content, Content::Revoked);
+        assert_eq!(worker.archive.message(PEER, &refused.id).unwrap().unwrap().content, refused.content);
+        assert!(events.try_iter().any(|event| matches!(event, Event::Error(_))));
+        worker.archive.set_content(PEER, &refused.id, &Content::Revoked, false).unwrap();
+        worker.finish_revoke(PEER.to_owned(), refused.id.clone(), Some("Late refusal".to_owned()));
+        assert_eq!(worker.archive.message(PEER, &refused.id).unwrap().unwrap().content, Content::Revoked);
     }
 
     #[test]

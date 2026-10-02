@@ -2602,7 +2602,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "delete-selected-two" => {
                 app.dialog = Some(Dialog::ConfirmDeleteSelection {
                     chat: SAMPLES[0].id.into(),
-                    messages: vec!["ada-format".into(), "ada-out".into()],
+                    messages: vec!["ada-format".into(), "ada-reply".into()],
                     for_everyone: false,
                 });
             }
@@ -5244,6 +5244,20 @@ mod tests {
         );
     }
 
+    /// The two-message deletion demo references two real messages from its chat.
+    #[test]
+    fn the_batch_delete_demo_uses_existing_messages() {
+        let mut app = app();
+        apply_flags(&mut app, Some("delete-selected-two"));
+        let Some(Dialog::ConfirmDeleteSelection { chat, messages, .. }) = &app.dialog else {
+            panic!("batch confirmation");
+        };
+        assert_eq!(messages.len(), 2);
+        for id in messages {
+            assert!(app.conversations[chat].message(id).is_some(), "{id}");
+        }
+    }
+
     /// macOS and Wayland report trackpad scrolling in points; a two-finger
     /// scroll moves a picture larger than the area.
     #[test]
@@ -6166,7 +6180,7 @@ mod tests {
                     app.conversations[&chat]
                         .messages
                         .iter()
-                        .all(|message| matches!(message.content, Content::Revoked))
+                        .all(|message| !matches!(message.content, Content::Revoked))
                 );
             } else {
                 assert!(app.conversations[&chat].messages.is_empty());
@@ -7269,9 +7283,9 @@ mod tests {
                 assert!(
                     matches!(
                         row.map(|message| &message.content),
-                        Some(crate::model::Content::Revoked)
+                        Some(content) if !matches!(content, crate::model::Content::Revoked)
                     ),
-                    "{page}: a revoked message stays as a tombstone"
+                    "{page}: original content stays until the worker confirms deletion"
                 );
             } else {
                 assert!(row.is_none(), "{page}: a local delete removes the row");
@@ -7322,9 +7336,9 @@ mod tests {
                 assert!(
                     matches!(
                         row.map(|message| &message.content),
-                        Some(crate::model::Content::Revoked)
+                        Some(content) if !matches!(content, crate::model::Content::Revoked)
                     ),
-                    "{page}: the message is revoked in its own chat"
+                    "{page}: original content stays in its own chat until deletion succeeds"
                 );
             } else {
                 assert!(row.is_none(), "{page}: the message leaves its own chat");

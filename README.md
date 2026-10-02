@@ -223,7 +223,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   message. Type `:name` to autocomplete an emoji without leaving the composer,
   or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
-  delivered, or read. Replies can be text, attachments, voice messages,
+  delivered, or read. Deleting for everyone keeps each original message until
+  WhatsApp accepts that deletion; failed requests leave it available to retry.
+  Replies can be text, attachments, voice messages,
   stickers, or GIFs. A reply never goes out without its quote: if the
   original is no longer available on this computer, nothing is sent, the text
   or attachments return to the composer, and a voice message waits above it

@@ -576,6 +576,12 @@ pub enum Command {
     /// linked phone keeps receiving push notifications.
     SetOnline(bool),
     Shutdown,
+    /// Internal result of deleting a message for everyone.
+    RevokeFinished {
+        chat: ChatId,
+        id: String,
+        error: Option<String>,
+    },
     /// Internal send result.
     Sent {
         chat: ChatId,
