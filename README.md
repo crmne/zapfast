@@ -224,7 +224,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   stickers, or GIFs. **Reply privately** on an incoming group message opens its
   sender's direct chat with the group message quoted. Nothing sends until you
   choose Send. Private quotes stay with their direct chat while switching chats
-  during this session. Previews of quotes from locked groups stay hidden
+  during this session. Deleting that chat discards its private quote and
+  any later send recovery. Previews of quotes from locked groups stay hidden
   while the locked folder is closed. Sending a private reply also requires
   access to its source group, or cancelling the quote. A reply never goes out without its quote: if the
   original is no longer available on this computer, nothing is sent, the text
