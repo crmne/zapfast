@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:14-0300\n"
+"POT-Creation-Date: 2026-10-02 12:49-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -40,7 +40,7 @@ msgstr "群组"
 msgid "Channels"
 msgstr "频道"
 
-#: src/util.rs:226 src/util.rs:315
+#: src/util.rs:226 src/util.rs:316
 msgid "Yesterday"
 msgstr "昨天"
 
@@ -79,169 +79,169 @@ msgstr "最后上线：{weekday} {time}"
 msgid "last seen {date}"
 msgstr "最后上线：{date}"
 
-#: src/util.rs:314
+#: src/util.rs:315
 msgid "Today"
 msgstr "今天"
 
-#: src/util.rs:330
+#: src/util.rs:331
 #, rust-format
 msgid "{day} {month}"
 msgstr "{month}{day}日"
 
-#: src/util.rs:337
+#: src/util.rs:338
 #, rust-format
 msgid "{date}, {year}"
 msgstr "{year}年{date}"
 
-#: src/util.rs:341
+#: src/util.rs:342
 #, rust-format
 msgid "{label} ({date})"
 msgstr "{label}（{date}）"
 
-#: src/util.rs:375
+#: src/util.rs:376
 msgid "Monday"
 msgstr "周一"
 
-#: src/util.rs:376
+#: src/util.rs:377
 msgid "Tuesday"
 msgstr "周二"
 
-#: src/util.rs:377
+#: src/util.rs:378
 msgid "Wednesday"
 msgstr "周三"
 
-#: src/util.rs:378
+#: src/util.rs:379
 msgid "Thursday"
 msgstr "周四"
 
-#: src/util.rs:379
+#: src/util.rs:380
 msgid "Friday"
 msgstr "周五"
 
-#: src/util.rs:380
+#: src/util.rs:381
 msgid "Saturday"
 msgstr "周六"
 
-#: src/util.rs:381
+#: src/util.rs:382
 msgid "Sunday"
 msgstr "周日"
 
-#: src/util.rs:389
+#: src/util.rs:390
 msgid "January"
 msgstr "1月"
 
-#: src/util.rs:390
+#: src/util.rs:391
 msgid "February"
 msgstr "2月"
 
-#: src/util.rs:391
+#: src/util.rs:392
 msgid "March"
 msgstr "3月"
 
-#: src/util.rs:392
+#: src/util.rs:393
 msgid "April"
 msgstr "4月"
 
-#: src/util.rs:393
+#: src/util.rs:394
 msgid "May"
 msgstr "5月"
 
-#: src/util.rs:394
+#: src/util.rs:395
 msgid "June"
 msgstr "6月"
 
-#: src/util.rs:395
+#: src/util.rs:396
 msgid "July"
 msgstr "7月"
 
-#: src/util.rs:396
+#: src/util.rs:397
 msgid "August"
 msgstr "8月"
 
-#: src/util.rs:397
+#: src/util.rs:398
 msgid "September"
 msgstr "9月"
 
-#: src/util.rs:398
+#: src/util.rs:399
 msgid "October"
 msgstr "10月"
 
-#: src/util.rs:399
+#: src/util.rs:400
 msgid "November"
 msgstr "11月"
 
-#: src/util.rs:400
+#: src/util.rs:401
 msgid "December"
 msgstr "12月"
 
-#: src/util.rs:408
 #
+#: src/util.rs:410
 msgctxt "date month"
 msgid "January"
 msgstr "1月"
 
-#: src/util.rs:409
 #
+#: src/util.rs:411
 msgctxt "date month"
 msgid "February"
 msgstr "2月"
 
-#: src/util.rs:410
 #
+#: src/util.rs:412
 msgctxt "date month"
 msgid "March"
 msgstr "3月"
 
-#: src/util.rs:411
 #
+#: src/util.rs:413
 msgctxt "date month"
 msgid "April"
 msgstr "4月"
 
-#: src/util.rs:412
 #
+#: src/util.rs:414
 msgctxt "date month"
 msgid "May"
 msgstr "5月"
 
-#: src/util.rs:413
 #
+#: src/util.rs:415
 msgctxt "date month"
 msgid "June"
 msgstr "6月"
 
-#: src/util.rs:414
 #
+#: src/util.rs:416
 msgctxt "date month"
 msgid "July"
 msgstr "7月"
 
-#: src/util.rs:415
 #
+#: src/util.rs:417
 msgctxt "date month"
 msgid "August"
 msgstr "8月"
 
-#: src/util.rs:416
 #
+#: src/util.rs:418
 msgctxt "date month"
 msgid "September"
 msgstr "9月"
 
-#: src/util.rs:417
 #
+#: src/util.rs:419
 msgctxt "date month"
 msgid "October"
 msgstr "10月"
 
-#: src/util.rs:418
 #
+#: src/util.rs:420
 msgctxt "date month"
 msgid "November"
 msgstr "11月"
 
-#: src/util.rs:419
 #
+#: src/util.rs:421
 msgctxt "date month"
 msgid "December"
 msgstr "12月"
@@ -278,7 +278,7 @@ msgstr "草稿："
 msgid "Remove from favorites"
 msgstr "取消收藏"
 
-#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4122
+#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4123
 #: src/ui/dialogs.rs:1055 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "添加到收藏"
@@ -365,114 +365,114 @@ msgstr "语音消息（{duration}）未发送"
 msgid "Discard voice message"
 msgstr "放弃语音消息"
 
-#: src/ui/conversation.rs:2033 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2034 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} 条未读消息"
 
-#: src/ui/conversation.rs:3339 src/ui/conversation.rs:4131
+#: src/ui/conversation.rs:3340 src/ui/conversation.rs:4132
 msgid "Open in system player"
 msgstr "用系统播放器打开"
 
-#: src/ui/conversation.rs:3340 src/ui/conversation.rs:4200
+#: src/ui/conversation.rs:3341 src/ui/conversation.rs:4201
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "消息信息"
 
-#: src/ui/conversation.rs:4143 src/ui/image_preview.rs:62
+#: src/ui/conversation.rs:4144 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
 msgid "Copy image"
 msgstr "复制图片"
 
-#: src/ui/conversation.rs:4542
+#: src/ui/conversation.rs:4543
 msgid "Location"
 msgstr "位置"
 
-#: src/ui/conversation.rs:4568
+#: src/ui/conversation.rs:4569
 msgid "Live location ended"
 msgstr "实时位置已结束"
 
-#: src/ui/conversation.rs:4570 src/ui/conversation.rs:4760
+#: src/ui/conversation.rs:4571 src/ui/conversation.rs:4761
 msgid "Live location"
 msgstr "实时位置"
 
-#: src/ui/conversation.rs:4580
+#: src/ui/conversation.rs:4581
 #, rust-format
 msgid "Updated {time}"
 msgstr "更新于 {time}"
 
-#: src/ui/conversation.rs:4630
+#: src/ui/conversation.rs:4631
 msgid "Chat"
 msgstr "聊天"
 
-#: src/ui/conversation.rs:4644
+#: src/ui/conversation.rs:4645
 msgid "Add"
 msgstr "添加"
 
-#: src/ui/conversation.rs:4689
+#: src/ui/conversation.rs:4690
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} 个贴图"
 
-#: src/ui/conversation.rs:4702
+#: src/ui/conversation.rs:4703
 msgid "View stickers"
 msgstr "查看贴图"
 
-#: src/ui/conversation.rs:4768
+#: src/ui/conversation.rs:4769
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "在手机上打开 WhatsApp 即可查看。"
 
-#: src/ui/conversation.rs:4786
+#: src/ui/conversation.rs:4787
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr "一次性照片。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4790
+#: src/ui/conversation.rs:4791
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr "一次性视频。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4794
+#: src/ui/conversation.rs:4795
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr "一次性语音消息。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4798
+#: src/ui/conversation.rs:4799
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr "一次性音频。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4802
+#: src/ui/conversation.rs:4803
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr "一次性消息。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4804
+#: src/ui/conversation.rs:4805
 msgid "This message can only be seen on your phone."
 msgstr "此消息只能在手机上查看。"
 
-#: src/ui/conversation.rs:5645
+#: src/ui/conversation.rs:5646
 msgid "Open in a map"
 msgstr "在地图中打开"
 
-#: src/ui/conversation.rs:6264
+#: src/ui/conversation.rs:6265
 msgid "Pause"
 msgstr "暂停"
 
-#: src/ui/conversation.rs:6266 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6267 src/ui/settings.rs:1636
 msgid "Play"
 msgstr "播放"
 
-#: src/ui/conversation.rs:6293
+#: src/ui/conversation.rs:6294
 msgid "Back to the message (Esc)"
 msgstr "返回消息 (Esc)"
 
-#: src/ui/conversation.rs:6295
+#: src/ui/conversation.rs:6296
 msgid "Fill the window"
 msgstr "填满窗口"
 
-#: src/ui/conversation.rs:6325
+#: src/ui/conversation.rs:6326
 msgid "Unmute"
 msgstr "取消静音"
 
-#: src/ui/conversation.rs:6327
+#: src/ui/conversation.rs:6328
 msgid "Mute"
 msgstr "静音"
 

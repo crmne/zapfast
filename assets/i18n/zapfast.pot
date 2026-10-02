@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 11:13-0300\n"
+"POT-Creation-Date: 2026-10-02 12:49-0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -43,7 +43,7 @@ msgstr ""
 msgid "Channels"
 msgstr ""
 
-#: src/util.rs:226 src/util.rs:315
+#: src/util.rs:226 src/util.rs:316
 msgid "Yesterday"
 msgstr ""
 
@@ -82,157 +82,157 @@ msgstr ""
 msgid "last seen {date}"
 msgstr ""
 
-#: src/util.rs:314
+#: src/util.rs:315
 msgid "Today"
 msgstr ""
 
-#: src/util.rs:330
+#: src/util.rs:331
 #, rust-format
 msgid "{day} {month}"
 msgstr ""
 
-#: src/util.rs:337
+#: src/util.rs:338
 #, rust-format
 msgid "{date}, {year}"
 msgstr ""
 
-#: src/util.rs:341
+#: src/util.rs:342
 #, rust-format
 msgid "{label} ({date})"
 msgstr ""
 
-#: src/util.rs:375
+#: src/util.rs:376
 msgid "Monday"
 msgstr ""
 
-#: src/util.rs:376
+#: src/util.rs:377
 msgid "Tuesday"
 msgstr ""
 
-#: src/util.rs:377
+#: src/util.rs:378
 msgid "Wednesday"
 msgstr ""
 
-#: src/util.rs:378
+#: src/util.rs:379
 msgid "Thursday"
 msgstr ""
 
-#: src/util.rs:379
+#: src/util.rs:380
 msgid "Friday"
 msgstr ""
 
-#: src/util.rs:380
+#: src/util.rs:381
 msgid "Saturday"
 msgstr ""
 
-#: src/util.rs:381
+#: src/util.rs:382
 msgid "Sunday"
 msgstr ""
 
-#: src/util.rs:389
-msgid "January"
-msgstr ""
-
 #: src/util.rs:390
-msgid "February"
+msgid "January"
 msgstr ""
 
 #: src/util.rs:391
-msgid "March"
+msgid "February"
 msgstr ""
 
 #: src/util.rs:392
-msgid "April"
+msgid "March"
 msgstr ""
 
 #: src/util.rs:393
-msgid "May"
+msgid "April"
 msgstr ""
 
 #: src/util.rs:394
-msgid "June"
+msgid "May"
 msgstr ""
 
 #: src/util.rs:395
-msgid "July"
+msgid "June"
 msgstr ""
 
 #: src/util.rs:396
-msgid "August"
+msgid "July"
 msgstr ""
 
 #: src/util.rs:397
-msgid "September"
+msgid "August"
 msgstr ""
 
 #: src/util.rs:398
-msgid "October"
+msgid "September"
 msgstr ""
 
 #: src/util.rs:399
-msgid "November"
+msgid "October"
 msgstr ""
 
 #: src/util.rs:400
+msgid "November"
+msgstr ""
+
+#: src/util.rs:401
 msgid "December"
-msgstr ""
-
-#: src/util.rs:408
-msgctxt "date month"
-msgid "January"
-msgstr ""
-
-#: src/util.rs:409
-msgctxt "date month"
-msgid "February"
 msgstr ""
 
 #: src/util.rs:410
 msgctxt "date month"
-msgid "March"
+msgid "January"
 msgstr ""
 
 #: src/util.rs:411
 msgctxt "date month"
-msgid "April"
+msgid "February"
 msgstr ""
 
 #: src/util.rs:412
 msgctxt "date month"
-msgid "May"
+msgid "March"
 msgstr ""
 
 #: src/util.rs:413
 msgctxt "date month"
-msgid "June"
+msgid "April"
 msgstr ""
 
 #: src/util.rs:414
 msgctxt "date month"
-msgid "July"
+msgid "May"
 msgstr ""
 
 #: src/util.rs:415
 msgctxt "date month"
-msgid "August"
+msgid "June"
 msgstr ""
 
 #: src/util.rs:416
 msgctxt "date month"
-msgid "September"
+msgid "July"
 msgstr ""
 
 #: src/util.rs:417
 msgctxt "date month"
-msgid "October"
+msgid "August"
 msgstr ""
 
 #: src/util.rs:418
 msgctxt "date month"
-msgid "November"
+msgid "September"
 msgstr ""
 
 #: src/util.rs:419
+msgctxt "date month"
+msgid "October"
+msgstr ""
+
+#: src/util.rs:420
+msgctxt "date month"
+msgid "November"
+msgstr ""
+
+#: src/util.rs:421
 msgctxt "date month"
 msgid "December"
 msgstr ""
@@ -269,7 +269,7 @@ msgstr ""
 msgid "Remove from favorites"
 msgstr ""
 
-#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4122
+#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4123
 #: src/ui/dialogs.rs:1055 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr ""
@@ -356,116 +356,116 @@ msgstr ""
 msgid "Discard voice message"
 msgstr ""
 
-#: src/ui/conversation.rs:2033 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2034 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/conversation.rs:3339 src/ui/conversation.rs:4131
+#: src/ui/conversation.rs:3340 src/ui/conversation.rs:4132
 msgid "Open in system player"
 msgstr ""
 
-#: src/ui/conversation.rs:3340 src/ui/conversation.rs:4200
+#: src/ui/conversation.rs:3341 src/ui/conversation.rs:4201
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr ""
 
-#: src/ui/conversation.rs:4143 src/ui/image_preview.rs:62
+#: src/ui/conversation.rs:4144 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
 msgid "Copy image"
 msgstr ""
 
-#: src/ui/conversation.rs:4542
+#: src/ui/conversation.rs:4543
 msgid "Location"
 msgstr ""
 
-#: src/ui/conversation.rs:4568
+#: src/ui/conversation.rs:4569
 msgid "Live location ended"
 msgstr ""
 
-#: src/ui/conversation.rs:4570 src/ui/conversation.rs:4760
+#: src/ui/conversation.rs:4571 src/ui/conversation.rs:4761
 msgid "Live location"
 msgstr ""
 
-#: src/ui/conversation.rs:4580
+#: src/ui/conversation.rs:4581
 #, rust-format
 msgid "Updated {time}"
 msgstr ""
 
-#: src/ui/conversation.rs:4630
+#: src/ui/conversation.rs:4631
 msgid "Chat"
 msgstr ""
 
-#: src/ui/conversation.rs:4644
+#: src/ui/conversation.rs:4645
 msgid "Add"
 msgstr ""
 
-#: src/ui/conversation.rs:4689
+#: src/ui/conversation.rs:4690
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/conversation.rs:4702
+#: src/ui/conversation.rs:4703
 msgid "View stickers"
 msgstr ""
 
-#: src/ui/conversation.rs:4768
+#: src/ui/conversation.rs:4769
 msgid "Open WhatsApp on your phone to follow it."
 msgstr ""
 
-#: src/ui/conversation.rs:4786
+#: src/ui/conversation.rs:4787
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 
-#: src/ui/conversation.rs:4790
+#: src/ui/conversation.rs:4791
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 
-#: src/ui/conversation.rs:4794
+#: src/ui/conversation.rs:4795
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 
-#: src/ui/conversation.rs:4798
+#: src/ui/conversation.rs:4799
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 
-#: src/ui/conversation.rs:4802
+#: src/ui/conversation.rs:4803
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 
-#: src/ui/conversation.rs:4804
+#: src/ui/conversation.rs:4805
 msgid "This message can only be seen on your phone."
 msgstr ""
 
-#: src/ui/conversation.rs:5645
+#: src/ui/conversation.rs:5646
 msgid "Open in a map"
 msgstr ""
 
-#: src/ui/conversation.rs:6264
+#: src/ui/conversation.rs:6265
 msgid "Pause"
 msgstr ""
 
-#: src/ui/conversation.rs:6266 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6267 src/ui/settings.rs:1636
 msgid "Play"
 msgstr ""
 
-#: src/ui/conversation.rs:6293
+#: src/ui/conversation.rs:6294
 msgid "Back to the message (Esc)"
 msgstr ""
 
-#: src/ui/conversation.rs:6295
+#: src/ui/conversation.rs:6296
 msgid "Fill the window"
 msgstr ""
 
-#: src/ui/conversation.rs:6325
+#: src/ui/conversation.rs:6326
 msgid "Unmute"
 msgstr ""
 
-#: src/ui/conversation.rs:6327
+#: src/ui/conversation.rs:6328
 msgid "Mute"
 msgstr ""
 
