@@ -275,6 +275,25 @@ impl Palette {
         })
     }
 
+    /// A see-through tint of the text colour, for surfaces over a vibrant
+    /// window's material: white in a dark palette and black in a light one,
+    /// `strength` of the way to opaque, so the blur shows through.
+    pub fn tint(&self, strength: f32) -> Color32 {
+        let [r, g, b, _] = self.text.to_srgba_unmultiplied();
+        Color32::from_rgba_unmultiplied(r, g, b, (strength * 255.0).round() as u8)
+    }
+
+    /// Glass: what floats over a vibrant conversation, such as the header's
+    /// pills, the composer and the day chips.
+    pub fn glass(&self) -> Color32 {
+        self.vibrant_pill(self.chat)
+    }
+
+    /// The faint edge around glass.
+    pub fn glass_edge(&self) -> Stroke {
+        Stroke::new(1.0, self.text.gamma_multiply(0.08))
+    }
+
     /// The palette for a message bubble's contents. Secondary and dim text,
     /// and the read ticks, move toward the text colour just far enough to
     /// stay readable on the bubble: a grey that reads on the panel can vanish
@@ -466,6 +485,11 @@ impl fastframe_theme::Palette for Palette {
     }
 }
 
+/// How strong the tint of a field over a vibrant window is, and of a row
+/// under the pointer and a selected one.
+pub const TINT_FIELD: f32 = 0.08;
+pub const TINT_HOVER: f32 = 0.06;
+pub const TINT_SELECTED: f32 = 0.12;
 /// How opaque a vibrant theme's header is over the messages under it.
 const HEADER_TINT: f32 = 0.3;
 /// The same in a light palette, where a veil over dark content reads as fog.

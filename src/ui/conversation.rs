@@ -1619,8 +1619,15 @@ fn last_line<R>(ui: &mut egui::Ui, line: f32, add: impl FnOnce(&mut egui::Ui) ->
 
 /// The rounded field that holds the composer's controls, or the recorder.
 fn composer_pill(palette: &Palette) -> Frame {
+    // Glass over a vibrant conversation, as the header's.
+    let (fill, edge) = if palette.vibrant() {
+        (palette.glass(), palette.glass_edge())
+    } else {
+        (palette.bubble_in, Stroke::NONE)
+    };
     Frame::new()
-        .fill(palette.bubble_in)
+        .fill(fill)
+        .stroke(edge)
         .corner_radius(CornerRadius::same(COMPOSER_RADIUS))
         // The end buttons are inset by as much at the sides as above and
         // below, so they sit evenly in the rounded ends.

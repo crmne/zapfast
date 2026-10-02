@@ -597,10 +597,12 @@ pub fn search_field(
     let height = 34.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let has_focus = ui.memory(|memory| memory.has_focus(id));
-    let fill = if has_focus {
-        palette.surface_hover
-    } else {
-        palette.surface
+    // Over a vibrant window's material, a tint that lets it show through.
+    let fill = match (palette.vibrant(), has_focus) {
+        (true, false) => palette.tint(theme::TINT_FIELD),
+        (true, true) => palette.tint(theme::TINT_FIELD + theme::TINT_HOVER),
+        (false, true) => palette.surface_hover,
+        (false, false) => palette.surface,
     };
     ui.painter().rect_filled(rect, height / 2.0, fill);
     let icon_rect =
@@ -792,6 +794,18 @@ pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color3
 pub fn row_highlight(ui: &Ui, palette: &Palette, rect: Rect, color: Color32) {
     let card = rect.shrink2(vec2(8.0, 2.0));
     let radius = CornerRadius::same(theme::RADIUS + 2);
+    // Over a vibrant window's material, a flat tint: the selected row
+    // stronger than the one under the pointer.
+    if palette.vibrant() {
+        let strength = if color == palette.surface_active {
+            theme::TINT_SELECTED
+        } else {
+            theme::TINT_HOVER
+        };
+        ui.painter()
+            .rect_filled(card, radius, palette.tint(strength));
+        return;
+    }
     // Raised like a message bubble, only more gently: the list sits on a
     // flat panel, and a hovered row should not jump out.
     let mut shadow = palette.bubble_shadow();
@@ -1065,6 +1079,18 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     if ui.is_rect_visible(rect) {
         let radius = CornerRadius::from(rect.height() / 2.0);
+        if palette.vibrant() {
+            // Glass over a vibrant conversation, as the header's.
+            ui.painter().rect_filled(rect, radius, palette.glass());
+            ui.painter()
+                .rect_stroke(rect, radius, palette.glass_edge(), egui::StrokeKind::Inside);
+            ui.painter().galley(
+                rect.center() - galley.size() / 2.0,
+                galley,
+                palette.secondary,
+            );
+            return response;
+        }
         // A dark panel all but vanished on a dark chat; halfway to the
         // incoming bubble's colour it reads as a chip without shouting.
         let fill = if palette.dark {
@@ -1132,13 +1158,21 @@ pub fn dotted_chip(
             ui.painter()
                 .rect_filled(rect, radius, palette.accent.gamma_multiply(0.18));
         } else {
+            let (hover, edge) = if palette.vibrant() {
+                (
+                    palette.tint(theme::TINT_HOVER),
+                    palette.tint(theme::TINT_SELECTED + theme::TINT_HOVER),
+                )
+            } else {
+                (palette.surface, palette.surface_active)
+            };
             if response.hovered() {
-                ui.painter().rect_filled(rect, radius, palette.surface);
+                ui.painter().rect_filled(rect, radius, hover);
             }
             ui.painter().rect_stroke(
                 rect,
                 radius,
-                Stroke::new(1.0, palette.surface_active),
+                Stroke::new(1.0, edge),
                 egui::StrokeKind::Inside,
             );
         }
