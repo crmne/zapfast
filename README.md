@@ -27,6 +27,17 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 is ZapFast's sibling. Both are built on
 [fastframe](https://github.com/crmne/fastframe).
 
+## Sending through a rate limit
+
+Messages go out in order. Only a typed WhatsApp rate-limit refusal, or waiting
+behind its cooldown, shows **Waiting to send**. Waiting messages stay below new
+replies and send automatically when the cooldown ends. **Cancel** deletes a
+waiting message so it is never sent. A brief disconnect preserves that wait;
+quitting or changing the proxy makes it **Not sent**. Ordinary offline sends
+fail immediately, without joining the queue. An interrupted send shows **Send
+unconfirmed**, because it may have reached WhatsApp, and is never resent
+automatically. You can copy or delete it locally.
+
 ## Install
 
 ```sh
@@ -44,6 +55,9 @@ source, see [Getting started](https://zapfast.rocks/getting-started/).
 ```sh
 cargo run --features demo -- --demo   # offline sample chats, no WhatsApp connection
 ```
+
+The `queued-messages` and `queued-messages-stress` demo pages exercise this
+queue over a synthetic offline link, including replies during cooldowns.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers issues, pull requests, and checks;
 [AGENTS.md](AGENTS.md) the architecture; [DEMO.md](DEMO.md) demo pages,
