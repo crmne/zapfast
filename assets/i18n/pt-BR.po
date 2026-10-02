@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 00:01-0300\n"
+"POT-Creation-Date: 2026-10-02 10:17-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -179,7 +179,7 @@ msgstr "Trancadas"
 msgid "No favorites yet"
 msgstr "Ainda não há favoritas"
 
-#: src/ui/chats.rs:878 src/app.rs:1617
+#: src/ui/chats.rs:878 src/app.rs:1650
 msgid "Message yourself"
 msgstr "Envie uma mensagem para você mesmo"
 
@@ -191,7 +191,7 @@ msgstr "Rascunho:"
 msgid "Remove from favorites"
 msgstr "Remover dos favoritos"
 
-#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4190
+#: src/ui/chats.rs:1140 src/ui/chats.rs:1502 src/ui/conversation.rs:4198
 #: src/ui/dialogs.rs:1074 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Adicionar aos favoritos"
@@ -293,118 +293,118 @@ msgstr[1] "{} mensagens não lidas"
 msgid "Message from {sender} at {time}"
 msgstr "Mensagem de {sender} às {time}"
 
-#: src/ui/conversation.rs:3368 src/ui/conversation.rs:4199
+#: src/ui/conversation.rs:3368 src/ui/conversation.rs:4207
 msgid "Open in system player"
 msgstr "Abrir no player do sistema"
 
-#: src/ui/conversation.rs:3369 src/ui/conversation.rs:4268
+#: src/ui/conversation.rs:3369 src/ui/conversation.rs:4276
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Dados da mensagem"
 
-#: src/ui/conversation.rs:4211 src/ui/image_preview.rs:62
+#: src/ui/conversation.rs:4219 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
 msgid "Copy image"
 msgstr "Copiar imagem"
 
-#: src/ui/conversation.rs:4610
+#: src/ui/conversation.rs:4618
 #, fuzzy
 msgid "Location"
 msgstr "Localização em tempo real"
 
-#: src/ui/conversation.rs:4636
+#: src/ui/conversation.rs:4644
 msgid "Live location ended"
 msgstr "Localização em tempo real encerrada"
 
-#: src/ui/conversation.rs:4638 src/ui/conversation.rs:4828
+#: src/ui/conversation.rs:4646 src/ui/conversation.rs:4836
 msgid "Live location"
 msgstr "Localização em tempo real"
 
-#: src/ui/conversation.rs:4648
+#: src/ui/conversation.rs:4656
 #, rust-format
 msgid "Updated {time}"
 msgstr "Atualizada às {time}"
 
-#: src/ui/conversation.rs:4698
+#: src/ui/conversation.rs:4706
 msgid "Chat"
 msgstr "Conversar"
 
-#: src/ui/conversation.rs:4712
+#: src/ui/conversation.rs:4720
 msgid "Add"
 msgstr "Adicionar"
 
-#: src/ui/conversation.rs:4757
+#: src/ui/conversation.rs:4765
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} figurinha"
 msgstr[1] "{} figurinhas"
 
-#: src/ui/conversation.rs:4770
+#: src/ui/conversation.rs:4778
 msgid "View stickers"
 msgstr "Ver figurinhas"
 
-#: src/ui/conversation.rs:4836
+#: src/ui/conversation.rs:4844
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Abra o WhatsApp no seu celular para acompanhá-la."
 
-#: src/ui/conversation.rs:4854
+#: src/ui/conversation.rs:4862
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Foto de visualização única. Para sua privacidade, ela só abre no seu celular."
 
-#: src/ui/conversation.rs:4858
+#: src/ui/conversation.rs:4866
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Vídeo de visualização única. Para sua privacidade, ele só abre no seu "
 "celular."
 
-#: src/ui/conversation.rs:4862
+#: src/ui/conversation.rs:4870
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Mensagem de voz de reprodução única. Para sua privacidade, ela só abre no "
 "seu celular."
 
-#: src/ui/conversation.rs:4866
+#: src/ui/conversation.rs:4874
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Áudio de reprodução única. Para sua privacidade, ele só abre no seu celular."
 
-#: src/ui/conversation.rs:4870
+#: src/ui/conversation.rs:4878
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Mensagem de visualização única. Para sua privacidade, ela só abre no seu "
 "celular."
 
-#: src/ui/conversation.rs:4872
+#: src/ui/conversation.rs:4880
 msgid "This message can only be seen on your phone."
 msgstr "Esta mensagem só pode ser vista no seu celular."
 
-#: src/ui/conversation.rs:5713
+#: src/ui/conversation.rs:5721
 msgid "Open in a map"
 msgstr "Abrir em um mapa"
 
-#: src/ui/conversation.rs:6332
+#: src/ui/conversation.rs:6340
 msgid "Pause"
 msgstr "Pausar"
 
-#: src/ui/conversation.rs:6334 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6342 src/ui/settings.rs:1636
 msgid "Play"
 msgstr "Reproduzir"
 
-#: src/ui/conversation.rs:6361
+#: src/ui/conversation.rs:6369
 msgid "Back to the message (Esc)"
 msgstr "Voltar à mensagem (Esc)"
 
-#: src/ui/conversation.rs:6363
+#: src/ui/conversation.rs:6371
 msgid "Fill the window"
 msgstr "Preencher a janela"
 
-#: src/ui/conversation.rs:6393
+#: src/ui/conversation.rs:6401
 msgid "Unmute"
 msgstr "Ativar som"
 
-#: src/ui/conversation.rs:6395
+#: src/ui/conversation.rs:6403
 msgid "Mute"
 msgstr "Silenciar"
 
@@ -480,8 +480,12 @@ msgid ""
 msgid_plural ""
 "This removes the selected messages from this computer. Your phone will not "
 "send them again. This cannot be undone."
-msgstr[0] "Isso remove a mensagem selecionada deste computador. Seu telefone não a enviará novamente. Isso não pode ser desfeito."
-msgstr[1] "Isso remove as mensagens selecionadas deste computador. Seu telefone não as enviará novamente. Isso não pode ser desfeito."
+msgstr[0] ""
+"Isso remove a mensagem selecionada deste computador. Seu telefone não a "
+"enviará novamente. Isso não pode ser desfeito."
+msgstr[1] ""
+"Isso remove as mensagens selecionadas deste computador. Seu telefone não as "
+"enviará novamente. Isso não pode ser desfeito."
 
 #: src/ui/dialogs.rs:1123
 #, rust-format
@@ -491,8 +495,12 @@ msgid ""
 msgid_plural ""
 "Everyone in this chat will see \"This message was deleted\" in place of the "
 "selected messages. This cannot be undone."
-msgstr[0] "Todos nesta conversa verão \"Esta mensagem foi apagada\" no lugar da mensagem selecionada. Isso não pode ser desfeito."
-msgstr[1] "Todos nesta conversa verão \"Esta mensagem foi apagada\" no lugar das mensagens selecionadas. Isso não pode ser desfeito."
+msgstr[0] ""
+"Todos nesta conversa verão \"Esta mensagem foi apagada\" no lugar da "
+"mensagem selecionada. Isso não pode ser desfeito."
+msgstr[1] ""
+"Todos nesta conversa verão \"Esta mensagem foi apagada\" no lugar das "
+"mensagens selecionadas. Isso não pode ser desfeito."
 
 #: src/ui/dialogs.rs:1216
 msgid "Leave this channel?"
@@ -1103,29 +1111,29 @@ msgstr[1] "{} restantes"
 msgid "No one yet"
 msgstr "Ninguém ainda"
 
-#: src/app.rs:1538
+#: src/app.rs:1571
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Já existe uma etiqueta chamada “{name}”."
 
-#: src/app.rs:1598
+#: src/app.rs:1631
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Você)"
 
-#: src/app.rs:1599 src/app.rs:1618
+#: src/app.rs:1632 src/app.rs:1651
 msgid "You"
 msgstr "Você"
 
-#: src/app.rs:2437
+#: src/app.rs:2470
 msgid "Could not use this image"
 msgstr "Não foi possível usar esta imagem"
 
-#: src/app.rs:2903
+#: src/app.rs:2936
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Não enviado: o ZapFast não está conectado ao WhatsApp."
 
-#: src/app.rs:2907
+#: src/app.rs:2940
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1133,36 +1141,36 @@ msgstr ""
 "Não enviado: a mensagem que você está respondendo não está disponível neste "
 "computador. Cancele a resposta para enviar sem citação."
 
-#: src/app.rs:4324
+#: src/app.rs:4357
 msgid "Added to favorites"
 msgstr "Adicionada aos favoritos"
 
-#: src/app.rs:4399
+#: src/app.rs:4432
 msgid "Sending the sticker pack…"
 msgstr "Enviando o pacote de figurinhas…"
 
-#: src/app.rs:4687 src/ui/labels.rs:237
+#: src/app.rs:4720 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Você tem {limit} etiquetas, o máximo que o ZapFast guarda."
 
-#: src/app.rs:5323
+#: src/app.rs:5364
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5331
+#: src/app.rs:5372
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5444
+#: src/app.rs:5485
 msgid "This video opens in your system player"
 msgstr "Este vídeo abre no player do sistema"
 
-#: src/app.rs:5979
+#: src/app.rs:6020
 msgid "Copied image"
 msgstr "Imagem copiada"
 
-#: src/app.rs:5982 src/app.rs:5987
+#: src/app.rs:6023 src/app.rs:6028
 msgid "Failed to copy image"
 msgstr "Falha ao copiar imagem"
 
