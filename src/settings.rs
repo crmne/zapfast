@@ -371,6 +371,9 @@ pub struct Settings {
     pub theme: ThemeChoice,
     /// The interface's typeface.
     pub font: FontChoice,
+    /// ZapFast's copy of the font file chosen in Settings; leads the interface
+    /// fonts. `None`: the Font choice alone.
+    pub custom_font: Option<std::path::PathBuf>,
     /// Interface language. `None` follows the operating system's locale.
     pub interface_language: Option<crate::i18n::Locale>,
     /// Filename of the selected local JSON palette.
@@ -478,6 +481,7 @@ impl Default for Settings {
             version: SETTINGS_VERSION,
             theme: ThemeChoice::Dark,
             font: FontChoice::System,
+            custom_font: None,
             interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,
@@ -721,6 +725,19 @@ mod tests {
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();
         assert_eq!(saved["font"], "inter");
+    }
+
+    #[test]
+    fn the_custom_font_is_absent_in_older_files_and_round_trips() {
+        let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
+        assert_eq!(older.custom_font, None);
+        let chosen: Settings = serde_json::from_str(r#"{"custom_font":"/x/a.ttf"}"#).unwrap();
+        assert_eq!(
+            chosen.custom_font.as_deref(),
+            Some(std::path::Path::new("/x/a.ttf"))
+        );
+        let saved = serde_json::to_value(&chosen).unwrap();
+        assert_eq!(saved["custom_font"], "/x/a.ttf");
     }
 
     #[test]

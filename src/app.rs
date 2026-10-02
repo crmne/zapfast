@@ -363,6 +363,9 @@ pub struct App {
     zoom_applied: bool,
     /// The wallpaper image named in the settings, decoded off this thread.
     pub wallpaper_image: crate::wallpaper::CustomImage,
+    /// Counts font picks and font changes, so a font file that finishes
+    /// importing after a newer choice is ignored.
+    custom_font_request: u64,
 
     pub link: LinkStatus,
     /// Whether link-time history sync is active.
@@ -960,6 +963,7 @@ impl App {
             reveal_theme_changes: !cfg!(test),
             zoom_applied: false,
             wallpaper_image: crate::wallpaper::CustomImage::default(),
+            custom_font_request: 0,
             link: LinkStatus::Starting,
             syncing: false,
             sync_percent: None,
@@ -1372,7 +1376,7 @@ impl App {
         // Colour emoji in labels, menus, tooltips and text fields; message
         // bodies paint their own over placeholders, which it leaves alone.
         ctx.add_plugin(crate::emoji::plugin());
-        crate::theme::set_font(ctx, self.settings.font);
+        self.apply_font(ctx);
         crate::theme::install(ctx);
         // Use a faster wheel speed for short chat rows.
         ctx.options_mut(|options| options.input_options.line_scroll_speed = 120.0);
@@ -2469,6 +2473,20 @@ impl App {
                 }
                 Event::DownloadFolderPicked(path) => {
                     self.actions.push(Action::SetDownloadFolder(Some(path)));
+                }
+                Event::CustomFontPicked { request, .. } if request != self.custom_font_request => {
+                    // A newer pick or font choice replaced this one.
+                }
+                Event::CustomFontPicked {
+                    result: Ok(path), ..
+                } => {
+                    self.actions.push(Action::SetCustomFont(path));
+                }
+                Event::CustomFontPicked {
+                    result: Err(error), ..
+                } => {
+                    let message = crate::i18n::gettext(self.locale, "Could not use this font");
+                    self.toast_error(format!("{message}: {error}"));
                 }
                 Event::WallpaperImagePicked(Ok(path)) => {
                     // The copy may keep the earlier one's name: decode it anew.
@@ -3596,6 +3614,40 @@ impl App {
         if changed {
             self.mark_settings_dirty();
         }
+    }
+
+    /// Installs the chosen interface font, and the custom font when there is
+    /// one. A custom font that cannot be read is dropped, with its copy.
+    fn apply_font(&mut self, ctx: &egui::Context) {
+        if let Err(error) = crate::theme::set_font(
+            ctx,
+            self.settings.font,
+            self.settings.custom_font.as_deref(),
+        ) {
+            log::warn!("custom font not used: {error}");
+            self.settings.custom_font = None;
+            self.mark_settings_dirty();
+            self.remove_custom_font();
+            let message = crate::i18n::gettext(self.locale, "Could not use this font");
+            self.toast_error(message);
+        }
+        ctx.request_repaint();
+    }
+
+    /// Forgets the custom font and deletes its copy. Any font still being
+    /// imported is dropped, not applied later.
+    fn remove_custom_font(&mut self) {
+        self.settings.custom_font = None;
+        self.claim_custom_font_request();
+        self.backend.send(Command::RemoveCustomFont);
+    }
+
+    /// Numbers a new font action and marks it as the newest in the backend
+    /// at once, so an import still running for an older one is dropped.
+    fn claim_custom_font_request(&mut self) -> u64 {
+        self.custom_font_request += 1;
+        crate::custom_font::claim(self.custom_font_request);
+        self.custom_font_request
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
@@ -4913,9 +4965,25 @@ impl App {
             }
             Action::SetFont(choice) => {
                 self.settings.font = choice;
+                self.remove_custom_font();
                 self.mark_settings_dirty();
-                crate::theme::set_font(ctx, choice);
-                ctx.request_repaint();
+                self.apply_font(ctx);
+            }
+            Action::PickCustomFont => {
+                let request = self.claim_custom_font_request();
+                self.backend.send(Command::PickCustomFont {
+                    request,
+                    title: crate::i18n::gettext(self.locale, "Choose a font file").into_owned(),
+                    filter: crate::i18n::gettext(self.locale, "Font files").into_owned(),
+                });
+            }
+            Action::SetCustomFont(path) => {
+                self.settings.custom_font = Some(path.clone());
+                self.mark_settings_dirty();
+                self.apply_font(ctx);
+                if self.settings.custom_font.is_some() {
+                    self.backend.send(Command::PruneCustomFonts { keep: path });
+                }
             }
             Action::SetInterfaceLanguage(choice) => {
                 self.settings.interface_language = choice;
@@ -6269,6 +6337,7 @@ fn allowed_while_locked(action: &Action) -> bool {
             | Action::SetChatSound { .. }
             | Action::SetNotificationSound { .. }
             | Action::SetDownloadFolder(_)
+            | Action::SetCustomFont(_)
     )
 }
 
@@ -8819,6 +8888,32 @@ mod tests {
         app.apply(Action::SetFont(FontChoice::System), &ctx);
         assert_eq!(app.settings.font, FontChoice::System);
         assert!(!crate::theme::inter_chosen());
+    }
+
+    /// A font file leads the interface fonts until a font is chosen from the
+    /// menu, and one that cannot be read is dropped.
+    #[test]
+    fn a_custom_font_is_kept_until_another_font_is_chosen() {
+        use crate::settings::FontChoice;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("face.ttf");
+        let font = egui::FontDefinitions::default().font_data["Ubuntu-Light"]
+            .font
+            .to_vec();
+        std::fs::write(&file, font).unwrap();
+        app.apply(Action::SetCustomFont(file.clone()), &ctx);
+        assert_eq!(app.settings.custom_font.as_deref(), Some(file.as_path()));
+        app.apply(Action::SetFont(FontChoice::Inter), &ctx);
+        assert_eq!(app.settings.custom_font, None);
+
+        let garbage = dir.path().join("garbage.ttf");
+        std::fs::write(&garbage, "plain text").unwrap();
+        app.apply(Action::SetCustomFont(garbage), &ctx);
+        assert_eq!(app.settings.custom_font, None);
+        app.apply(Action::SetFont(FontChoice::System), &ctx);
     }
 
     /// A video opens over the window at a size worth the room, goes back to

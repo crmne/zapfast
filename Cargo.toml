@@ -41,8 +41,9 @@ directories = "6"
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
 egui = "0.36"
 egui_extras = { version = "0.36", features = ["file", "image", "svg", "webp", "gif"] }
-# Reads the colour emoji font's bitmaps for the demo tour's GIF fixtures. Keep
-# skrifa aligned with epaint to avoid compiling two versions.
+# Reads the colour emoji font's bitmaps for the demo tour's GIF fixtures, and
+# validates the custom interface font. Keep skrifa aligned with epaint to avoid
+# compiling two versions.
 skrifa = "0.44"
 # Decodes JPEG, PNG, WebP, and GIF images.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }

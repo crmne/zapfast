@@ -135,6 +135,12 @@ impl AppDirs {
         self.state.join(format!("wallpaper.{extension}"))
     }
 
+    /// ZapFast's copy of the font file chosen in Settings. User data, so it
+    /// sits in the state directory beside the wallpaper image.
+    pub fn custom_font_dir(&self) -> PathBuf {
+        self.state.join("font")
+    }
+
     /// Cached profile-picture path. `full` selects the info-dialog size.
     pub fn avatar_file(&self, id: &str, full: bool) -> PathBuf {
         let stem: String = id

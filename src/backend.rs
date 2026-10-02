@@ -389,6 +389,19 @@ pub enum Command {
     PickWallpaperImage,
     /// Deletes the copied wallpaper image.
     RemoveWallpaperImage,
+    /// Asks for a font file and copies it into the state directory. The
+    /// dialog's title and filter label arrive translated.
+    PickCustomFont {
+        request: u64,
+        title: String,
+        filter: String,
+    },
+    /// Deletes the copied font files.
+    RemoveCustomFont,
+    /// Deletes every copied font file except the one the settings use.
+    PruneCustomFonts {
+        keep: std::path::PathBuf,
+    },
     /// Changes our display name and About text; `None` keeps the current one.
     SetProfile {
         name: Option<String>,
@@ -886,6 +899,11 @@ pub enum Event {
     DownloadFolderPicked(std::path::PathBuf),
     /// The copy of a chosen wallpaper image, or why it could not be used.
     WallpaperImagePicked(Result<std::path::PathBuf, String>),
+    /// The copy of a chosen font file, or why it could not be used.
+    CustomFontPicked {
+        request: u64,
+        result: Result<std::path::PathBuf, String>,
+    },
     /// An audio file chosen as a notification sound.
     NotificationSoundPicked {
         mention: bool,

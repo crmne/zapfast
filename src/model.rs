@@ -1613,6 +1613,11 @@ pub enum Action {
     SetTheme(crate::settings::ThemeChoice),
     /// Draws the interface in the platform's font or in the bundled Inter.
     SetFont(crate::settings::FontChoice),
+    /// Asks for a font file to lead the interface fonts.
+    PickCustomFont,
+    /// Leads the interface fonts with a font file already copied into the
+    /// state directory.
+    SetCustomFont(std::path::PathBuf),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),

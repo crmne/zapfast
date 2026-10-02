@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 15:31-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -179,7 +179,7 @@ msgstr "Verrouillés"
 msgid "No favorites yet"
 msgstr "Pas encore de favoris"
 
-#: src/ui/chats.rs:878 src/app.rs:1617
+#: src/ui/chats.rs:878 src/app.rs:1654
 msgid "Message yourself"
 msgstr "Envoyez-vous un message"
 
@@ -386,7 +386,7 @@ msgstr "Ouvrir dans une carte"
 msgid "Pause"
 msgstr "Pause"
 
-#: src/ui/conversation.rs:6237 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6237 src/ui/settings.rs:1654
 msgid "Play"
 msgstr "Lire"
 
@@ -447,7 +447,7 @@ msgid "Send"
 msgstr "Envoyer"
 
 #: src/ui/dialogs.rs:1062 src/ui/dialogs.rs:1217 src/ui/settings.rs:910
-#: src/ui/settings.rs:1446 src/ui/lock.rs:142
+#: src/ui/settings.rs:1464 src/ui/lock.rs:142
 msgid "Cancel"
 msgstr "Annuler"
 
@@ -640,7 +640,7 @@ msgstr "Code secret"
 msgid "Clear"
 msgstr "Effacer"
 
-#: src/ui/settings.rs:436 src/ui/settings.rs:1764
+#: src/ui/settings.rs:436 src/ui/settings.rs:1782
 msgid "Notifications"
 msgstr "Notifications"
 
@@ -654,7 +654,7 @@ msgstr ""
 "Pour les discussions que vous ne regardez pas. Les discussions en sourdine "
 "restent silencieuses."
 
-#: src/ui/settings.rs:449 src/ui/settings.rs:1771
+#: src/ui/settings.rs:449 src/ui/settings.rs:1789
 msgid "Play sounds for group messages"
 msgstr "Jouer un son pour les messages de groupe"
 
@@ -772,24 +772,24 @@ msgid "For GIF search. Get a free key at developers.giphy.com."
 msgstr ""
 "Pour la recherche de GIF. Obtenez une clé gratuite sur developers.giphy.com."
 
-#: src/ui/settings.rs:648 src/ui/settings.rs:1818 src/ui/settings.rs:1824
+#: src/ui/settings.rs:648 src/ui/settings.rs:1836 src/ui/settings.rs:1842
 msgid "Account"
 msgstr "Compte"
 
-#: src/ui/settings.rs:651 src/ui/settings.rs:1372
+#: src/ui/settings.rs:651 src/ui/settings.rs:1390
 msgid "Your name"
 msgstr "Votre nom"
 
-#: src/ui/settings.rs:652 src/ui/settings.rs:732 src/ui/settings.rs:1380
-#: src/ui/settings.rs:1535
+#: src/ui/settings.rs:652 src/ui/settings.rs:732 src/ui/settings.rs:1398
+#: src/ui/settings.rs:1553
 msgid "About"
 msgstr "À propos"
 
-#: src/ui/settings.rs:653 src/ui/settings.rs:1349
+#: src/ui/settings.rs:653 src/ui/settings.rs:1367
 msgid "Change profile picture"
 msgstr "Changer la photo de profil"
 
-#: src/ui/settings.rs:654 src/ui/settings.rs:1416 src/ui/settings.rs:1820
+#: src/ui/settings.rs:654 src/ui/settings.rs:1434 src/ui/settings.rs:1838
 msgid "Unlink this computer"
 msgstr "Déconnecter cet ordinateur"
 
@@ -825,11 +825,11 @@ msgstr "Journal"
 msgid "Open"
 msgstr "Ouvrir"
 
-#: src/ui/settings.rs:736 src/ui/settings.rs:1524
+#: src/ui/settings.rs:736 src/ui/settings.rs:1542
 msgid "Keyboard shortcuts"
 msgstr "Raccourcis clavier"
 
-#: src/ui/settings.rs:737 src/ui/settings.rs:1546
+#: src/ui/settings.rs:737 src/ui/settings.rs:1564
 msgid "Source code"
 msgstr "Code source"
 
@@ -923,79 +923,89 @@ msgstr ""
 msgid "How to make a theme"
 msgstr "Créer un thème"
 
-#: src/ui/settings.rs:1046 src/ui/settings.rs:1055
+#: src/ui/settings.rs:1048
+#, fuzzy
+msgid "Choose another font file"
+msgstr "Choisir un fichier…"
+
+#: src/ui/settings.rs:1050 src/app.rs:4947
+#, fuzzy
+msgid "Choose a font file"
+msgstr "Choisir un fichier…"
+
+#: src/ui/settings.rs:1064 src/ui/settings.rs:1073
 msgid "Auto"
 msgstr "Automatique"
 
-#: src/ui/settings.rs:1142
+#: src/ui/settings.rs:1160
 msgid "Add doodles"
 msgstr "Ajouter des dessins"
 
-#: src/ui/settings.rs:1146
+#: src/ui/settings.rs:1164
 msgid "Show the default doodles over the selected colour."
 msgstr "Afficher les dessins par défaut sur la couleur sélectionnée."
 
-#: src/ui/settings.rs:1230
+#: src/ui/settings.rs:1248
 msgid "Choose image…"
 msgstr "Choisir une image…"
 
-#: src/ui/settings.rs:1231
+#: src/ui/settings.rs:1249
 msgid "Remove image"
 msgstr "Retirer l’image"
 
-#: src/ui/settings.rs:1259
+#: src/ui/settings.rs:1277
 msgctxt "wallpaper colour"
 msgid "Theme"
 msgstr "Thème"
 
-#: src/ui/settings.rs:1388
+#: src/ui/settings.rs:1406
 msgid "Linked device"
 msgstr "Appareil connecté"
 
-#: src/ui/settings.rs:1399
+#: src/ui/settings.rs:1417
 msgid "Edit your name and About"
 msgstr "Modifier votre nom et votre actu"
 
-#: src/ui/settings.rs:1436
+#: src/ui/settings.rs:1454
 msgid "Save"
 msgstr "Enregistrer"
 
-#: src/ui/settings.rs:1503
+#: src/ui/settings.rs:1521
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "Un client WhatsApp natif conçu avec Rust, egui et whatsapp-rust."
 
-#: src/ui/settings.rs:1514
+#: src/ui/settings.rs:1532
 #, rust-format
 msgid "Update to {version}"
 msgstr "Mettre à jour vers {version}"
 
-#: src/ui/settings.rs:1592
+#: src/ui/settings.rs:1610
 msgid "Mention sound"
 msgstr "Son de mention"
 
-#: src/ui/settings.rs:1593
+#: src/ui/settings.rs:1611
 msgid "When a group mentions you or replies to you."
 msgstr "Quand quelqu’un vous mentionne ou vous répond dans un groupe."
 
-#: src/ui/settings.rs:1596
+#: src/ui/settings.rs:1614
 msgid "Message sound"
 msgstr "Son des messages"
 
-#: src/ui/settings.rs:1613
+#: src/ui/settings.rs:1631
 msgid "Pidgin alert"
 msgstr "Alerte Pidgin"
 
-#: src/ui/settings.rs:1614
+#: src/ui/settings.rs:1632
 msgid "System default"
 msgstr "Son du système"
 
 #. Translators: no notification sound.
-#: src/ui/settings.rs:1616
+#: src/ui/settings.rs:1634
 msgctxt "sound"
 msgid "None"
 msgstr "Aucun"
 
-#: src/ui/settings.rs:1653
+#: src/ui/settings.rs:1671
 msgid "Choose a file…"
 msgstr "Choisir un fichier…"
 
@@ -1068,29 +1078,34 @@ msgstr[1] "{} restants"
 msgid "No one yet"
 msgstr "Personne pour l’instant"
 
-#: src/app.rs:1538
+#: src/app.rs:1575
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Une étiquette nommée « {name} » existe déjà."
 
-#: src/app.rs:1598
+#: src/app.rs:1635
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Vous)"
 
-#: src/app.rs:1599 src/app.rs:1618
+#: src/app.rs:1636 src/app.rs:1655
 msgid "You"
 msgstr "Vous"
 
-#: src/app.rs:2437
+#: src/app.rs:2478 src/app.rs:3603
+#, fuzzy
+msgid "Could not use this font"
+msgstr "Impossible d’utiliser cette image"
+
+#: src/app.rs:2488
 msgid "Could not use this image"
 msgstr "Impossible d’utiliser cette image"
 
-#: src/app.rs:2903
+#: src/app.rs:2954
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Non envoyé : ZapFast n’est pas connecté à WhatsApp."
 
-#: src/app.rs:2907
+#: src/app.rs:2958
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1098,36 +1113,40 @@ msgstr ""
 "Non envoyé : le message auquel vous répondez n’est pas disponible sur cet "
 "ordinateur. Annulez la réponse pour l’envoyer sans citation."
 
-#: src/app.rs:4324
+#: src/app.rs:4409
 msgid "Added to favorites"
 msgstr "Ajouté aux favoris"
 
-#: src/app.rs:4399
+#: src/app.rs:4484
 msgid "Sending the sticker pack…"
 msgstr "Envoi du pack de stickers…"
 
-#: src/app.rs:4687 src/ui/labels.rs:237
+#: src/app.rs:4772 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Vous avez {limit} étiquettes, le maximum que ZapFast conserve."
 
-#: src/app.rs:5323
+#: src/app.rs:4948
+msgid "Font files"
+msgstr "Fichiers de police"
+
+#: src/app.rs:5432
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5331
+#: src/app.rs:5440
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5444
+#: src/app.rs:5553
 msgid "This video opens in your system player"
 msgstr "Cette vidéo s'ouvre dans le lecteur du système"
 
-#: src/app.rs:5979
+#: src/app.rs:6088
 msgid "Copied image"
 msgstr "Image copiée"
 
-#: src/app.rs:5982 src/app.rs:5987
+#: src/app.rs:6091 src/app.rs:6096
 msgid "Failed to copy image"
 msgstr "Impossible de copier l'image"
 
