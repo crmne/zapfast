@@ -378,13 +378,18 @@ pub enum Command {
     PickWallpaperImage,
     /// Deletes the copied wallpaper image.
     RemoveWallpaperImage,
-    /// Asks for a font file and copies it into the state directory.
+    /// Asks for a font file and copies it into the state directory. The
+    /// dialog's title and filter label arrive translated.
     PickCustomFont {
         request: u64,
+        title: String,
+        filter: String,
     },
-    /// Deletes the copied font file and cancels any import still running.
-    RemoveCustomFont {
-        request: u64,
+    /// Deletes the copied font files.
+    RemoveCustomFont,
+    /// Deletes every copied font file except the one the settings use.
+    PruneCustomFonts {
+        keep: std::path::PathBuf,
     },
     /// Changes our display name and About text; `None` keeps the current one.
     SetProfile {

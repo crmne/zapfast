@@ -3610,10 +3610,16 @@ impl App {
     /// imported is dropped, not applied later.
     fn remove_custom_font(&mut self) {
         self.settings.custom_font = None;
+        self.claim_custom_font_request();
+        self.backend.send(Command::RemoveCustomFont);
+    }
+
+    /// Numbers a new font action and marks it as the newest in the backend
+    /// at once, so an import still running for an older one is dropped.
+    fn claim_custom_font_request(&mut self) -> u64 {
         self.custom_font_request += 1;
-        self.backend.send(Command::RemoveCustomFont {
-            request: self.custom_font_request,
-        });
+        crate::custom_font::claim(self.custom_font_request);
+        self.custom_font_request
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
@@ -4935,15 +4941,20 @@ impl App {
                 self.apply_font(ctx);
             }
             Action::PickCustomFont => {
-                self.custom_font_request += 1;
+                let request = self.claim_custom_font_request();
                 self.backend.send(Command::PickCustomFont {
-                    request: self.custom_font_request,
+                    request,
+                    title: crate::i18n::gettext(self.locale, "Choose a font file").into_owned(),
+                    filter: crate::i18n::gettext(self.locale, "Font files").into_owned(),
                 });
             }
             Action::SetCustomFont(path) => {
-                self.settings.custom_font = Some(path);
+                self.settings.custom_font = Some(path.clone());
                 self.mark_settings_dirty();
                 self.apply_font(ctx);
+                if self.settings.custom_font.is_some() {
+                    self.backend.send(Command::PruneCustomFonts { keep: path });
+                }
             }
             Action::SetInterfaceLanguage(choice) => {
                 self.settings.interface_language = choice;

@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 12:16-0300\n"
+"POT-Creation-Date: 2026-10-02 15:31-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Spanish\n"
@@ -917,7 +917,7 @@ msgstr "Cómo crear un tema"
 msgid "Choose another font file"
 msgstr "Elegir un archivo…"
 
-#: src/ui/settings.rs:1050
+#: src/ui/settings.rs:1050 src/app.rs:4947
 #, fuzzy
 msgid "Choose a font file"
 msgstr "Elegir un archivo…"
@@ -1102,36 +1102,40 @@ msgstr ""
 "No enviado: el mensaje al que respondes no está disponible en este equipo. "
 "Cancela la respuesta para enviarlo sin cita."
 
-#: src/app.rs:4403
+#: src/app.rs:4409
 msgid "Added to favorites"
 msgstr "Añadido a favoritos"
 
-#: src/app.rs:4478
+#: src/app.rs:4484
 msgid "Sending the sticker pack…"
 msgstr "Enviando el paquete de stickers…"
 
-#: src/app.rs:4766 src/ui/labels.rs:237
+#: src/app.rs:4772 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Tienes {limit} etiquetas, el máximo que guarda ZapFast."
 
-#: src/app.rs:5421
+#: src/app.rs:4948
+msgid "Font files"
+msgstr "Archivos de fuente"
+
+#: src/app.rs:5432
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5429
+#: src/app.rs:5440
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5542
+#: src/app.rs:5553
 msgid "This video opens in your system player"
 msgstr "Este vídeo se abre en el reproductor del sistema"
 
-#: src/app.rs:6077
+#: src/app.rs:6088
 msgid "Copied image"
 msgstr "Imagen copiada"
 
-#: src/app.rs:6080 src/app.rs:6085
+#: src/app.rs:6091 src/app.rs:6096
 msgid "Failed to copy image"
 msgstr "Error al copiar la imagen"
 

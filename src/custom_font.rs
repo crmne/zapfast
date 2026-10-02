@@ -32,84 +32,116 @@ pub fn system_directory() -> Option<PathBuf> {
 
 /// A validated font file, ready to lead the interface font families.
 pub struct Face {
-    bytes: Vec<u8>,
+    path: PathBuf,
     /// The font has a `wght` axis, so each weight gets its own coordinate.
     variable_weight: bool,
 }
 
-/// Checks that `bytes` hold a font that maps characters. For a collection,
-/// the first font is the one used.
-pub fn parse(bytes: Vec<u8>) -> Result<Face, String> {
-    let variable_weight = {
-        let font = skrifa::FontRef::from_index(&bytes, 0).map_err(|_| "not a font".to_owned())?;
-        if font.charmap().mappings().next().is_none() {
-            return Err("font has no characters".to_owned());
-        }
-        let wght = skrifa::Tag::new(b"wght");
-        font.axes().iter().any(|axis| axis.tag() == wght)
-    };
-    Ok(Face {
-        bytes,
-        variable_weight,
-    })
+/// Checks that `bytes` hold a font that maps characters, and tells whether it
+/// has a `wght` axis. For a collection, the first font is the one used.
+fn validate(bytes: &[u8]) -> Result<bool, String> {
+    let font = skrifa::FontRef::from_index(bytes, 0).map_err(|_| "not a font".to_owned())?;
+    if font.charmap().mappings().next().is_none() {
+        return Err("font has no characters".to_owned());
+    }
+    let wght = skrifa::Tag::new(b"wght");
+    Ok(font.axes().iter().any(|axis| axis.tag() == wght))
 }
 
 /// Reads and validates the font file at `path`.
 pub fn load(path: &Path) -> Result<Face, String> {
-    parse(std::fs::read(path).map_err(|error| error.to_string())?)
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    Ok(Face {
+        path: path.to_owned(),
+        variable_weight: validate(&bytes)?,
+    })
 }
 
 /// Marks `request` as the newest font action, so an import still running for
-/// an older one is dropped instead of applied.
+/// an older one is dropped instead of applied. Call it when the action is
+/// issued, before the dialog opens.
 pub fn claim(request: u64) {
     LATEST.store(request, Ordering::SeqCst);
 }
 
-/// The newest font action, and the lock that keeps imports and removals
-/// from touching the font directory at once.
+/// The newest font action, and the lock that keeps imports and clean-up from
+/// touching the font directory at once.
 static LATEST: AtomicU64 = AtomicU64::new(0);
 static DIRECTORY: Mutex<()> = Mutex::new(());
 
-/// Copies a chosen font file into ZapFast's font directory, so the original
-/// may move or go. Any earlier copy is removed once the new one is in place.
-/// `None`: a newer request arrived first, and nothing was written.
+/// Copies a chosen font file into a new folder of ZapFast's font directory,
+/// so the original may move or go. Earlier copies are left alone, so an
+/// import that loses to a newer request can never delete the font in use;
+/// [`keep_only`] clears them once a result is applied.
+/// `None`: a newer request arrived first, and nothing was kept.
 pub fn import(source: &Path, dirs: &AppDirs, request: u64) -> Option<Result<PathBuf, String>> {
     let bytes = match std::fs::read(source) {
         Ok(bytes) => bytes,
         Err(error) => return Some(Err(error.to_string())),
     };
+    if let Err(error) = validate(&bytes) {
+        return Some(Err(error));
+    }
+    let Some(name) = source.file_name() else {
+        return Some(Err("not a file".to_owned()));
+    };
     let _guard = DIRECTORY.lock().unwrap_or_else(|e| e.into_inner());
     if LATEST.load(Ordering::SeqCst) != request {
         return None;
     }
-    Some(copy(source, bytes, dirs))
+    let staged = stage(name, &bytes, dirs);
+    if LATEST.load(Ordering::SeqCst) != request {
+        if let Ok(target) = &staged
+            && let Some(folder) = target.parent()
+        {
+            let _ = std::fs::remove_dir_all(folder);
+        }
+        return None;
+    }
+    Some(staged)
 }
 
-fn copy(source: &Path, bytes: Vec<u8>, dirs: &AppDirs) -> Result<PathBuf, String> {
-    parse(bytes.clone())?;
-    let name = source.file_name().ok_or_else(|| "not a file".to_owned())?;
-    let directory = dirs.custom_font_dir();
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let target = directory.join(name);
-    let temporary = directory.join("import.tmp");
-    std::fs::write(&temporary, bytes)
-        .and_then(|()| std::fs::rename(&temporary, &target))
-        .map_err(|error| {
-            let _ = std::fs::remove_file(&temporary);
-            error.to_string()
-        })?;
-    if let Ok(entries) = std::fs::read_dir(&directory) {
-        for entry in entries.flatten().filter(|entry| entry.path() != target) {
-            let _ = std::fs::remove_file(entry.path());
+/// Writes `bytes` as `name` in a folder no earlier import used.
+fn stage(name: &std::ffi::OsStr, bytes: &[u8], dirs: &AppDirs) -> Result<PathBuf, String> {
+    let root = dirs.custom_font_dir();
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let mut number = 0u32;
+    let folder = loop {
+        let folder = root.join(number.to_string());
+        match std::fs::create_dir(&folder) {
+            Ok(()) => break folder,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => number += 1,
+            Err(error) => return Err(error.to_string()),
         }
-    }
+    };
+    let target = folder.join(name);
+    std::fs::write(&target, bytes).map_err(|error| {
+        let _ = std::fs::remove_dir_all(&folder);
+        error.to_string()
+    })?;
     Ok(target)
 }
 
-/// Deletes ZapFast's copy of the custom font, and with it any import still
-/// running for an older request.
-pub fn remove(dirs: &AppDirs, request: u64) {
-    claim(request);
+/// Deletes every copied font except the one at `keep`. Run it after a
+/// result is applied, so what the settings point to is all that remains.
+pub fn keep_only(dirs: &AppDirs, keep: &Path) {
+    let root = dirs.custom_font_dir();
+    let Some(current) = keep.parent().filter(|_| keep.starts_with(&root)) else {
+        return;
+    };
+    let _guard = DIRECTORY.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return;
+    };
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if path != current {
+            let _ = std::fs::remove_dir_all(&path).or_else(|_| std::fs::remove_file(&path));
+        }
+    }
+}
+
+/// Deletes ZapFast's copies of the custom font.
+pub fn remove(dirs: &AppDirs) {
     let _guard = DIRECTORY.lock().unwrap_or_else(|e| e.into_inner());
     match std::fs::remove_dir_all(dirs.custom_font_dir()) {
         Ok(()) => {}
@@ -120,12 +152,21 @@ pub fn remove(dirs: &AppDirs, request: u64) {
 
 impl Face {
     /// Puts this font first in each interface family, so it draws what it
-    /// has and the families' own fonts draw the rest.
+    /// has and the families' own fonts draw the rest. The file is read again
+    /// here, so only egui holds the font's bytes while it is installed.
     pub fn lead(&self, fonts: &mut egui::FontDefinitions) {
         use fastframe_fonts::Weight;
+        let bytes = match std::fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                log::warn!("custom font not read: {error}");
+                return;
+            }
+        };
         if self.variable_weight {
+            // egui's font data owns its bytes, so each weight holds a copy.
             for weight in Weight::ALL {
-                let mut data = egui::FontData::from_owned(self.bytes.clone());
+                let mut data = egui::FontData::from_owned(bytes.clone());
                 data.tweak.coords =
                     egui::epaint::text::VariationCoords::new([(b"wght", weight.value())]);
                 lead_family(
@@ -136,7 +177,7 @@ impl Face {
                 );
             }
         } else {
-            let data = std::sync::Arc::new(egui::FontData::from_owned(self.bytes.clone()));
+            let data = std::sync::Arc::new(egui::FontData::from_owned(bytes));
             fonts.font_data.insert(CUSTOM_KEY.to_owned(), data);
             for weight in Weight::ALL {
                 if let Some(family) = fonts.families.get_mut(&weight.family()) {
@@ -179,62 +220,75 @@ mod tests {
         fastframe_fonts::FontSetup::default().definitions()
     }
 
-    #[test]
-    fn parse_tells_static_from_variable_fonts() {
-        assert!(!parse(static_font()).unwrap().variable_weight);
-        assert!(
-            parse(fastframe_fonts::INTER.to_vec())
-                .unwrap()
-                .variable_weight
-        );
-        assert!(parse(b"not a font".to_vec()).is_err());
+    fn written(root: &Path, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = root.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
     }
 
     #[test]
-    fn import_keeps_only_the_latest_font() {
+    fn load_tells_static_from_variable_fonts() {
+        let root = tempfile::tempdir().unwrap();
+        let fixed = written(root.path(), "fixed.ttf", &static_font());
+        assert!(!load(&fixed).unwrap().variable_weight);
+        let inter = written(root.path(), "inter.ttf", fastframe_fonts::INTER);
+        assert!(load(&inter).unwrap().variable_weight);
+        let text = written(root.path(), "text.ttf", b"not a font");
+        assert!(load(&text).is_err());
+    }
+
+    #[test]
+    fn a_stale_import_never_deletes_the_font_in_use() {
         let root = tempfile::tempdir().unwrap();
         let dirs = AppDirs::under(&root.path().join("app"));
-        let chosen = |name: &str| {
-            let path = root.path().join(name);
-            std::fs::write(&path, static_font()).unwrap();
-            path
-        };
+        let chosen = |name: &str| written(root.path(), name, &static_font());
+
         claim(1);
-        import(&chosen("a.ttf"), &dirs, 1).unwrap().unwrap();
-        let copy = import(&chosen("b.ttf"), &dirs, 1).unwrap().unwrap();
-        assert_eq!(copy, dirs.custom_font_dir().join("b.ttf"));
-        let names: Vec<_> = std::fs::read_dir(dirs.custom_font_dir())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(names, ["b.ttf"]);
+        let first = import(&chosen("a.ttf"), &dirs, 1).unwrap().unwrap();
+        keep_only(&dirs, &first);
 
-        let text = root.path().join("x.ttf");
-        std::fs::write(&text, "plain text").unwrap();
-        assert!(import(&text, &dirs, 1).unwrap().is_err());
-        assert!(!dirs.custom_font_dir().join("x.ttf").exists());
-        assert!(copy.exists(), "a rejected font keeps the earlier copy");
-
+        // A same-named font from a newer pick does not overwrite the copy.
         claim(2);
-        assert!(
-            import(&chosen("c.ttf"), &dirs, 1).is_none(),
-            "an import overtaken by a newer request is dropped"
-        );
-        assert!(!dirs.custom_font_dir().join("c.ttf").exists());
-        assert!(copy.exists());
+        let second = import(&chosen("a.ttf"), &dirs, 2).unwrap().unwrap();
+        assert_ne!(first, second);
+        assert!(first.exists() && second.exists());
 
-        remove(&dirs, 3);
-        assert!(
-            import(&chosen("d.ttf"), &dirs, 2).is_none(),
-            "removing the font also cancels an import still running"
-        );
+        // Request 2 is canceled by a third, whose dialog is then dismissed:
+        // the import overtaken by it is dropped, and the copy in use stays.
+        claim(3);
+        assert!(import(&chosen("c.ttf"), &dirs, 2).is_none());
+        assert!(first.exists());
+        assert!(!first.parent().unwrap().join("c.ttf").exists());
+
+        // Applying a result clears every other copy.
+        keep_only(&dirs, &second);
+        assert!(!first.exists());
+        assert!(second.exists());
+        let folders = std::fs::read_dir(dirs.custom_font_dir()).unwrap().count();
+        assert_eq!(folders, 1);
+
+        // A rejected font leaves the copy alone.
+        claim(4);
+        let text = written(root.path(), "x.ttf", b"plain text");
+        assert!(import(&text, &dirs, 4).unwrap().is_err());
+        assert!(second.exists());
+
+        // A path outside the font directory prunes nothing.
+        keep_only(&dirs, &root.path().join("elsewhere").join("b.ttf"));
+        assert!(second.exists());
+
+        // Choosing System or Inter removes the copy.
+        remove(&dirs);
         assert!(!dirs.custom_font_dir().exists());
     }
 
     #[test]
     fn static_font_leads_every_weight_with_one_face() {
+        let root = tempfile::tempdir().unwrap();
         let mut fonts = definitions();
-        parse(static_font()).unwrap().lead(&mut fonts);
+        load(&written(root.path(), "fixed.ttf", &static_font()))
+            .unwrap()
+            .lead(&mut fonts);
         assert_eq!(
             fonts
                 .font_data
@@ -250,8 +304,9 @@ mod tests {
 
     #[test]
     fn variable_font_leads_each_weight_at_its_coordinate() {
+        let root = tempfile::tempdir().unwrap();
         let mut fonts = definitions();
-        parse(fastframe_fonts::INTER.to_vec())
+        load(&written(root.path(), "inter.ttf", fastframe_fonts::INTER))
             .unwrap()
             .lead(&mut fonts);
         for weight in Weight::ALL {
