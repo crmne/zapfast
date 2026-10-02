@@ -734,7 +734,7 @@ msgstr "用于 GIF 搜索。会替换此版本内置的密钥。"
 msgid "For GIF search. Get a free key at developers.giphy.com."
 msgstr "用于 GIF 搜索。可在 developers.giphy.com 获取免费密钥。"
 
-#: src/ui/settings.rs:648 src/ui/settings.rs:1816 src/ui/settings.rs:1822
+#: src/ui/settings.rs:648 src/ui/settings.rs:1818 src/ui/settings.rs:1824
 msgid "Account"
 msgstr "账号"
 
@@ -751,7 +751,7 @@ msgstr "关于"
 msgid "Change profile picture"
 msgstr "更换头像"
 
-#: src/ui/settings.rs:654 src/ui/settings.rs:1416 src/ui/settings.rs:1818
+#: src/ui/settings.rs:654 src/ui/settings.rs:1416 src/ui/settings.rs:1820
 msgid "Unlink this computer"
 msgstr "取消关联此电脑"
 

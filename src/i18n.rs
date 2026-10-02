@@ -194,10 +194,7 @@ mod tests {
             Locale::from_system("pt_BR.UTF-8"),
             Some(Locale::PortugueseBrazil)
         );
-        assert_eq!(
-            Locale::from_system("tr_TR.UTF-8"),
-            Some(Locale::Turkish)
-        );
+        assert_eq!(Locale::from_system("tr_TR.UTF-8"), Some(Locale::Turkish));
     }
 
     /// The suite asserts the English source strings, so the language of the
@@ -377,10 +374,7 @@ mod tests {
     #[test]
     fn turkish_contexts_stay_separate_from_plain_lookups() {
         assert_eq!(gettext(Locale::Turkish, "About"), "Hakkımda");
-        assert_eq!(
-            pgettext(Locale::Turkish, "privacy", "About"),
-            "Hakkımda"
-        );
+        assert_eq!(pgettext(Locale::Turkish, "privacy", "About"), "Hakkımda");
         assert_eq!(gettext(Locale::Turkish, "Groups"), "Gruplar");
         assert_eq!(pgettext(Locale::Turkish, "sound", "None"), "Yok");
         assert_eq!(gettext(Locale::Turkish, "None"), "None");

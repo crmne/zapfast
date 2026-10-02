@@ -740,7 +740,7 @@ msgstr ""
 msgid "For GIF search. Get a free key at developers.giphy.com."
 msgstr ""
 
-#: src/ui/settings.rs:648 src/ui/settings.rs:1816 src/ui/settings.rs:1822
+#: src/ui/settings.rs:648 src/ui/settings.rs:1818 src/ui/settings.rs:1824
 msgid "Account"
 msgstr ""
 
@@ -757,7 +757,7 @@ msgstr ""
 msgid "Change profile picture"
 msgstr ""
 
-#: src/ui/settings.rs:654 src/ui/settings.rs:1416 src/ui/settings.rs:1818
+#: src/ui/settings.rs:654 src/ui/settings.rs:1416 src/ui/settings.rs:1820
 msgid "Unlink this computer"
 msgstr ""
 

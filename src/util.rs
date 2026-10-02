@@ -903,12 +903,7 @@ mod tests {
             .to_zoned(jiff::tz::TimeZone::UTC);
         let date = when.date();
         assert_eq!(
-            stamp_relative_to(
-                Locale::Turkish,
-                date,
-                date.tomorrow().expect("date"),
-                &when
-            ),
+            stamp_relative_to(Locale::Turkish, date, date.tomorrow().expect("date"), &when),
             "Dün"
         );
         assert_eq!(
