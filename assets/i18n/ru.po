@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 11:10-0300\n"
+"POT-Creation-Date: 2026-10-02 11:55-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -382,31 +382,31 @@ msgstr ""
 msgid "This message can only be seen on your phone."
 msgstr "Это сообщение можно посмотреть только на телефоне."
 
-#: src/ui/conversation.rs:5671
+#: src/ui/conversation.rs:5694
 msgid "Open in a map"
 msgstr "Открыть на карте"
 
-#: src/ui/conversation.rs:6290
+#: src/ui/conversation.rs:6313
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/ui/conversation.rs:6292 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6315 src/ui/settings.rs:1636
 msgid "Play"
 msgstr "Воспроизвести"
 
-#: src/ui/conversation.rs:6319
+#: src/ui/conversation.rs:6342
 msgid "Back to the message (Esc)"
 msgstr "Вернуть в сообщение (Esc)"
 
-#: src/ui/conversation.rs:6321
+#: src/ui/conversation.rs:6344
 msgid "Fill the window"
 msgstr "На всё окно"
 
-#: src/ui/conversation.rs:6351
+#: src/ui/conversation.rs:6374
 msgid "Unmute"
 msgstr "Включить звук"
 
-#: src/ui/conversation.rs:6353
+#: src/ui/conversation.rs:6376
 msgid "Mute"
 msgstr "Выключить звук"
 

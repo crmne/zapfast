@@ -5471,7 +5471,13 @@ fn rich_body(
                     let present = if kind == "quote" {
                         message.quoted.is_some()
                     } else {
-                        matches!(message.content, Content::Text { preview: Some(_), .. })
+                        matches!(
+                            message.content,
+                            Content::Text {
+                                preview: Some(_),
+                                ..
+                            }
+                        )
                     };
                     if !present {
                         continue;
