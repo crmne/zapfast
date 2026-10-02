@@ -181,6 +181,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   leading zeroes, and numbers outside 7 to 15 digits are rejected.
   Number checks report network failures and keep the dialog open for retry.
   Cancelling a lookup prevents its delayed response from opening a different chat.
+  Unlinking ends pending checks; after linking again you can retry the number.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
   applies on your phone and to desktop notifications. Mute changes from your
   phone survive history arriving later, including during initial linking.
