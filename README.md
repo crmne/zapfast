@@ -177,6 +177,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   WAV or FLAC, goes as a document so the recipient gets the original file.
   An MP4 video goes with a preview picture, its size, and its length, so it
   shows as a video before it is downloaded and plays in its message here too.
+- **Keep your place in history.** The date of the top visible message stays
+  above the conversation when its day separator has scrolled out of view.
+  Recent days include the calendar date, such as **Yesterday (September 29th)**
+  or **Saturday (September 26th)**; today stays **Today**. Day separators use
+  the same labels.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
   applies on your phone and to desktop notifications. Mute changes from your
   phone survive history arriving later, including during initial linking.
