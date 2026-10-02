@@ -274,7 +274,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   attachment's right-click menu keeps a copy wherever you choose, starting in
   your Downloads folder. Pictures and videos sent as a WhatsApp album appear
   in one compact grid; **Download all** fetches its missing items and shows
-  a per-item failure for oversized attachments. **Save all…**
+  a per-item failure for oversized attachments. Hover a failed tile to see why.
+  **Save all…**
   copies every downloaded item into one folder. Profile pictures and downloaded images support
   Windows drive paths and filenames with spaces or non-ASCII characters.
   If an attachment has expired, ZapFast asks your

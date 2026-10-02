@@ -5340,6 +5340,11 @@ fn album_tile(
             }
         }
     }
+    let response = if let MediaState::Failed(error) = &media.state {
+        response.on_hover_text(error)
+    } else {
+        response
+    };
     if response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
