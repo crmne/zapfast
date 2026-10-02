@@ -2268,6 +2268,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                         let first_in_run =
                             new_day || previous.is_none_or(|previous| !same_run(previous, message));
                         // Messages curls its tail under a run's last bubble.
+                        // The sender's picture: beside the first message of a
+                        // run in WhatsApp's style, beside the last in Messages.
+                        let show_avatar = if palette.bubbles == theme::BubbleStyle::Messages {
+                            shows_sender_pictures(chat)
+                                && !message.from_me
+                                && last_of_run(&conversation.messages, index)
+                        } else {
+                            show_sender
+                        };
                         let tailed = if palette.bubbles == theme::BubbleStyle::Messages {
                             last_bubble_of_run(&palette, &conversation.messages, index)
                         } else {
@@ -2280,8 +2289,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             .as_ref()
                             .filter(|jump| jump.message == message.id)
                             .map(|_| (ui.painter().add(egui::Shape::Noop), ui.cursor().top()));
-                        let response =
-                            bubble(ui, &view, message, show_sender, tailed, &mut actions);
+                        let response = bubble(
+                            ui,
+                            &view,
+                            message,
+                            show_sender,
+                            show_avatar,
+                            tailed,
+                            &mut actions,
+                        );
                         if let Some((slot, top)) = flash {
                             if view.anchor == Some(message.id.as_str()) && response.is_some() {
                                 jump_since.set(Some(time));
@@ -2935,6 +2951,7 @@ fn bubble(
     view: &View<'_>,
     message: &Message,
     show_sender: bool,
+    show_avatar: bool,
     tailed: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
@@ -2980,35 +2997,8 @@ fn bubble(
         |ui| {
             if with_avatar {
                 ui.horizontal_top(|ui| {
-                    let (rect, avatar) = ui.allocate_exact_size(
-                        Vec2::splat(SENDER_AVATAR),
-                        if show_sender {
-                            Sense::CLICK
-                        } else {
-                            Sense::hover()
-                        },
-                    );
-                    theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR / 2.0);
-                    if show_sender
-                        && avatar
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                    {
-                        actions.push(Action::ShowDialog(Dialog::ChatInfo(message.sender.clone())));
-                    }
-                    if show_sender && ui.is_rect_visible(rect) {
-                        let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
-                        widgets::paint_avatar(
-                            ui,
-                            &view.palette,
-                            rect,
-                            name.trim_start_matches('~'),
-                            &message.sender,
-                            view.avatars
-                                .get(&message.sender)
-                                .and_then(|picture| picture.as_deref()),
-                        );
-                    }
+                    let (space, _) =
+                        ui.allocate_exact_size(Vec2::splat(SENDER_AVATAR), Sense::hover());
                     // Keep bubble content vertically laid out inside the row.
                     ui.vertical(|ui| {
                         response = Some(bubble_frame(
@@ -3021,6 +3011,45 @@ fn bubble(
                             actions,
                         ));
                     });
+                    if !show_avatar {
+                        return;
+                    }
+                    // Messages puts the avatar beside the run's last message,
+                    // level with its bottom; WhatsApp beside the first, at
+                    // its top.
+                    let rect = match &response {
+                        Some(bubble) if view.palette.bubbles == theme::BubbleStyle::Messages => {
+                            Rect::from_min_size(
+                                pos2(
+                                    space.left(),
+                                    (bubble.rect.bottom() - SENDER_AVATAR).max(space.top()),
+                                ),
+                                Vec2::splat(SENDER_AVATAR),
+                            )
+                        }
+                        _ => space,
+                    };
+                    let avatar = ui.interact(rect, id.with("avatar"), Sense::CLICK);
+                    theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR / 2.0);
+                    if avatar
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        actions.push(Action::ShowDialog(Dialog::ChatInfo(message.sender.clone())));
+                    }
+                    if ui.is_rect_visible(rect) {
+                        let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
+                        widgets::paint_avatar(
+                            ui,
+                            &view.palette,
+                            rect,
+                            name.trim_start_matches('~'),
+                            &message.sender,
+                            view.avatars
+                                .get(&message.sender)
+                                .and_then(|picture| picture.as_deref()),
+                        );
+                    }
                 });
             } else {
                 response = Some(bubble_frame(
@@ -3351,6 +3380,16 @@ fn bubbleless(palette: &Palette, message: &Message) -> bool {
         Content::Sticker { .. } | Content::Video { note: true, .. }
     ) || matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty())
         || bare_picture(palette, message)
+}
+
+/// Whether `messages[index]` ends its run: the next message is from the other
+/// side, another sender, or another day.
+fn last_of_run(messages: &[Message], index: usize) -> bool {
+    let message = &messages[index];
+    messages.get(index + 1).is_none_or(|next| {
+        !same_run(message, next)
+            || crate::util::day_key(message.timestamp) != crate::util::day_key(next.timestamp)
+    })
 }
 
 /// Whether `messages[index]` is the last bubble of its run, which Messages
@@ -7686,7 +7725,33 @@ mod reaction_tests {
         let run = [text.clone(), photo.clone(), mine, text.clone()];
         assert!(last_bubble_of_run(&messages, &run, 0));
         // WhatsApp frames the photo, so there it is the last bubble.
-        assert!(!last_bubble_of_run(&Palette::dark(), &[text, photo], 0));
+        assert!(!last_bubble_of_run(
+            &Palette::dark(),
+            &[text.clone(), photo.clone()],
+            0
+        ));
+    }
+
+    /// The avatar Messages puts beside a run goes to its last message,
+    /// bubble or not, and a run ends with another sender or another day.
+    #[test]
+    fn a_run_ends_with_its_last_message() {
+        let from = |sender: &str, timestamp: i64| Message {
+            sender: sender.into(),
+            timestamp,
+            ..with_reactions(Vec::new())
+        };
+        let run = [
+            from("a", 0),
+            from("a", 60),
+            from("b", 120),
+            from("b", 2 * 86_400),
+        ];
+        assert!(!last_of_run(&run, 0));
+        assert!(last_of_run(&run, 1));
+        // Another day starts another run, from the same sender too.
+        assert!(last_of_run(&run, 2));
+        assert!(last_of_run(&run, 3));
     }
 
     /// Messages draws a photo alone in its message without a bubble, with
