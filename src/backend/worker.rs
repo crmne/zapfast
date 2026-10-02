@@ -9297,7 +9297,7 @@ mod tests {
         let mut queued = pending.reserve_dispatch();
         assert!(active.wait().await);
         worker.revoke(row.chat.clone(), row.id.clone());
-        active.completion.take().unwrap().send(()).unwrap();
+        active.completion.send(()).unwrap();
         assert!(!queued.wait().await);
         assert!(!worker.pending_edits.contains_key(&key));
     }
