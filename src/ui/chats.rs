@@ -377,7 +377,7 @@ pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
 /// Filter chips under the search field. Search lists every match, so the
 /// chips hide there.
 /// Width of the fade over the filter chips' right edge.
-const CHIP_FADE: f32 = 16.0;
+pub(super) const CHIP_FADE: f32 = 16.0;
 
 fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     if !app.locked_folder_open() && !app.search.trim().is_empty() {
@@ -387,6 +387,8 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(8.0);
     let output = egui::ScrollArea::horizontal()
         .id_salt("chat-filters")
+        // A floating bar would cover the chips; the edge fade shows the row scrolls.
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .animated(false)
         .auto_shrink([false, true])
         .show(ui, |ui| {
@@ -1805,6 +1807,71 @@ mod tests {
             "clicking an avatar opens that chat: {:?}",
             app.actions
         );
+    }
+
+    #[test]
+    fn hovering_the_chip_rows_draws_no_scroll_bar_over_the_chips() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        app.labels = (0..8)
+            .map(|index| crate::model::Label {
+                id: index.to_string(),
+                name: format!("Label {index}"),
+                color_hex: "#25d366".into(),
+                created_at: 0,
+            })
+            .collect();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        // Narrow enough that both rows scroll.
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(220.0, 400.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| filter_chips(&mut app, ui),
+            );
+            output.textures_delta.clear();
+            output.shapes
+        };
+        frame(vec![]);
+        let chip = ctx
+            .data(|data| data.get_temp::<Rect>(filter_chip_id(ChatFilter::All)))
+            .expect("the filter chips are drawn");
+        let labels = ctx
+            .data(|data| data.get_temp::<Rect>(super::labels::chip_row_id()))
+            .expect("the label chips are drawn");
+        for (row, pointer) in [("filter", chip.center()), ("label", labels.center())] {
+            let mut shapes = Vec::new();
+            for _ in 0..5 {
+                shapes = frame(vec![egui::Event::PointerMoved(pointer)]);
+            }
+            // A scroll bar handle is a thin rectangle; chips are taller.
+            fn thin_rects(shape: &egui::Shape, bars: &mut Vec<Rect>) {
+                match shape {
+                    egui::Shape::Vec(shapes) => {
+                        shapes.iter().for_each(|shape| thin_rects(shape, bars));
+                    }
+                    egui::Shape::Rect(rect)
+                        if rect.rect.height() < 12.0 && rect.rect.width() > 12.0 =>
+                    {
+                        bars.push(rect.rect);
+                    }
+                    _ => {}
+                }
+            }
+            let mut bars = Vec::new();
+            for clipped in &shapes {
+                thin_rects(&clipped.shape, &mut bars);
+            }
+            assert!(
+                bars.is_empty(),
+                "the {row} row drew a scroll bar at {bars:?}"
+            );
+        }
     }
 
     /// An app with `count` chats, newest first, and a context to draw it in.
