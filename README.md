@@ -118,7 +118,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   the text has more than one. Carets and copied text stay on the logical message.
   Text uses the system's interface font (San Francisco on macOS, Segoe UI
   on Windows, the desktop's `system-ui` font on Linux), or the bundled Inter
-  if you choose it under **Settings > Appearance > Font**, and emoji look as they
+  if you choose it under **Settings > Appearance > Font**, or a `.ttf`, `.otf`,
+  `.ttc`, or `.otc` file of your own via **Choose a font file** in the same menu
+  (ZapFast keeps its own copy in the `font` folder of its state directory, and
+  choosing System or Inter deletes it; a collection uses its first font), and emoji look as they
   do in the system's other apps: Apple Color Emoji on macOS, Segoe UI Emoji on
   Windows, and the desktop's emoji font on Linux. The bundled Noto Color Emoji
   draws whatever those lack (country flags on Windows, or every emoji on a
@@ -754,6 +757,7 @@ from the environment and honors `NO_PROXY`.
 | Attachments, avatars | `~/.cache/zapfast/` | Safe to delete; **Settings > Files > Change…** sends new downloads to another folder, leaving earlier ones in place |
 | Favorite stickers and packs | `~/.local/state/zapfast/stickers/` | Plain WebP files; each pack is a folder |
 | Wallpaper image | `~/.local/state/zapfast/wallpaper.jpg` | Copy of the chosen picture, or `.png`, `.webp`, `.gif`; deleted by **Remove image** |
+| Custom interface font | `~/.local/state/zapfast/font/` | Copy of the font file chosen under **Settings > Appearance > Font**; deleted when System or Inter is chosen |
 | Log of the last run | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more; **Settings > Files > Log > Open** shows it in its folder when no app opens it |
 
 macOS and Windows use the standard platform directories selected by the

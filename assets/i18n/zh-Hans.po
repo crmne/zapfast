@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 12:15-0300\n"
+"POT-Creation-Date: 2026-10-02 12:16-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -179,7 +179,7 @@ msgstr "已锁定"
 msgid "No favorites yet"
 msgstr "还没有收藏"
 
-#: src/ui/chats.rs:878 src/app.rs:1650
+#: src/ui/chats.rs:878 src/app.rs:1654
 msgid "Message yourself"
 msgstr "给自己发消息"
 
@@ -1035,69 +1035,69 @@ msgstr[0] "剩余 {}"
 msgid "No one yet"
 msgstr "还没有人"
 
-#: src/app.rs:1571
+#: src/app.rs:1575
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "已存在名为“{name}”的标签。"
 
-#: src/app.rs:1631
+#: src/app.rs:1635
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name}（你）"
 
-#: src/app.rs:1632 src/app.rs:1651
+#: src/app.rs:1636 src/app.rs:1655
 msgid "You"
 msgstr "你"
 
-#: src/app.rs:2467 src/app.rs:3592
+#: src/app.rs:2478 src/app.rs:3603
 #, fuzzy
 msgid "Could not use this font"
 msgstr "无法使用此图片"
 
-#: src/app.rs:2477
+#: src/app.rs:2488
 msgid "Could not use this image"
 msgstr "无法使用此图片"
 
-#: src/app.rs:2943
+#: src/app.rs:2954
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "未发送：ZapFast 未连接到 WhatsApp。"
 
-#: src/app.rs:2947
+#: src/app.rs:2958
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr "未发送：你要回复的消息不在这台电脑上。取消回复即可不带引用发送。"
 
-#: src/app.rs:4382
+#: src/app.rs:4403
 msgid "Added to favorites"
 msgstr "已添加到收藏"
 
-#: src/app.rs:4457
+#: src/app.rs:4478
 msgid "Sending the sticker pack…"
 msgstr "正在发送贴图包…"
 
-#: src/app.rs:4745 src/ui/labels.rs:237
+#: src/app.rs:4766 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
 
-#: src/app.rs:5397
+#: src/app.rs:5421
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5405
+#: src/app.rs:5429
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5518
+#: src/app.rs:5542
 msgid "This video opens in your system player"
 msgstr "此视频将用系统播放器打开"
 
-#: src/app.rs:6053
+#: src/app.rs:6077
 msgid "Copied image"
 msgstr "已复制图片"
 
-#: src/app.rs:6056 src/app.rs:6061
+#: src/app.rs:6080 src/app.rs:6085
 msgid "Failed to copy image"
 msgstr "复制图片失败"
 

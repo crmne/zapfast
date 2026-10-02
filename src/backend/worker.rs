@@ -4521,7 +4521,8 @@ impl Worker {
                 });
             }
             Command::RemoveWallpaperImage => crate::wallpaper::remove(&self.dirs),
-            Command::PickCustomFont => {
+            Command::PickCustomFont { request } => {
+                crate::custom_font::claim(request);
                 let dirs = self.dirs.clone();
                 let events = self.events.clone();
                 let waker = self.waker.clone();
@@ -4535,12 +4536,15 @@ impl Worker {
                     let Some(path) = dialog.pick_file() else {
                         return;
                     };
-                    let result = crate::custom_font::import(&path, &dirs);
-                    let _ = events.send(Event::CustomFontPicked(result));
-                    waker.wake();
+                    if let Some(result) = crate::custom_font::import(&path, &dirs, request) {
+                        let _ = events.send(Event::CustomFontPicked { request, result });
+                        waker.wake();
+                    }
                 });
             }
-            Command::RemoveCustomFont => crate::custom_font::remove(&self.dirs),
+            Command::RemoveCustomFont { request } => {
+                crate::custom_font::remove(&self.dirs, request)
+            }
             Command::SetProfile { name, about } => self.set_profile(name, about),
             Command::PickProfilePicture => {
                 let commands = self.commands.clone();

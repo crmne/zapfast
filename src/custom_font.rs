@@ -4,6 +4,8 @@
 //! move or go, the same way it keeps the chat wallpaper image.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use skrifa::MetadataProvider;
 
@@ -15,17 +17,17 @@ pub const EXTENSIONS: [&str; 4] = ["ttf", "otf", "ttc", "otc"];
 /// Where the file picker starts: the first of the platform's installed font
 /// folders that exists.
 pub fn system_directory() -> Option<PathBuf> {
-    let candidates: &[&str] = if cfg!(target_os = "windows") {
-        &["C:\\Windows\\Fonts"]
+    let windows = std::env::var_os("WINDIR")
+        .map_or_else(|| PathBuf::from("C:\\Windows"), PathBuf::from)
+        .join("Fonts");
+    let candidates: Vec<PathBuf> = if cfg!(target_os = "windows") {
+        vec![windows]
     } else if cfg!(target_os = "macos") {
-        &["/Library/Fonts", "/System/Library/Fonts"]
+        vec!["/Library/Fonts".into(), "/System/Library/Fonts".into()]
     } else {
-        &["/usr/share/fonts", "/usr/local/share/fonts"]
+        vec!["/usr/share/fonts".into(), "/usr/local/share/fonts".into()]
     };
-    candidates
-        .iter()
-        .map(PathBuf::from)
-        .find(|directory| directory.is_dir())
+    candidates.into_iter().find(|directory| directory.is_dir())
 }
 
 /// A validated font file, ready to lead the interface font families.
@@ -57,10 +59,33 @@ pub fn load(path: &Path) -> Result<Face, String> {
     parse(std::fs::read(path).map_err(|error| error.to_string())?)
 }
 
+/// Marks `request` as the newest font action, so an import still running for
+/// an older one is dropped instead of applied.
+pub fn claim(request: u64) {
+    LATEST.store(request, Ordering::SeqCst);
+}
+
+/// The newest font action, and the lock that keeps imports and removals
+/// from touching the font directory at once.
+static LATEST: AtomicU64 = AtomicU64::new(0);
+static DIRECTORY: Mutex<()> = Mutex::new(());
+
 /// Copies a chosen font file into ZapFast's font directory, so the original
 /// may move or go. Any earlier copy is removed once the new one is in place.
-pub fn import(source: &Path, dirs: &AppDirs) -> Result<PathBuf, String> {
-    let bytes = std::fs::read(source).map_err(|error| error.to_string())?;
+/// `None`: a newer request arrived first, and nothing was written.
+pub fn import(source: &Path, dirs: &AppDirs, request: u64) -> Option<Result<PathBuf, String>> {
+    let bytes = match std::fs::read(source) {
+        Ok(bytes) => bytes,
+        Err(error) => return Some(Err(error.to_string())),
+    };
+    let _guard = DIRECTORY.lock().unwrap_or_else(|e| e.into_inner());
+    if LATEST.load(Ordering::SeqCst) != request {
+        return None;
+    }
+    Some(copy(source, bytes, dirs))
+}
+
+fn copy(source: &Path, bytes: Vec<u8>, dirs: &AppDirs) -> Result<PathBuf, String> {
     parse(bytes.clone())?;
     let name = source.file_name().ok_or_else(|| "not a file".to_owned())?;
     let directory = dirs.custom_font_dir();
@@ -81,8 +106,11 @@ pub fn import(source: &Path, dirs: &AppDirs) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-/// Deletes ZapFast's copy of the custom font.
-pub fn remove(dirs: &AppDirs) {
+/// Deletes ZapFast's copy of the custom font, and with it any import still
+/// running for an older request.
+pub fn remove(dirs: &AppDirs, request: u64) {
+    claim(request);
+    let _guard = DIRECTORY.lock().unwrap_or_else(|e| e.into_inner());
     match std::fs::remove_dir_all(dirs.custom_font_dir()) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -171,8 +199,9 @@ mod tests {
             std::fs::write(&path, static_font()).unwrap();
             path
         };
-        import(&chosen("a.ttf"), &dirs).unwrap();
-        let copy = import(&chosen("b.ttf"), &dirs).unwrap();
+        claim(1);
+        import(&chosen("a.ttf"), &dirs, 1).unwrap().unwrap();
+        let copy = import(&chosen("b.ttf"), &dirs, 1).unwrap().unwrap();
         assert_eq!(copy, dirs.custom_font_dir().join("b.ttf"));
         let names: Vec<_> = std::fs::read_dir(dirs.custom_font_dir())
             .unwrap()
@@ -182,11 +211,23 @@ mod tests {
 
         let text = root.path().join("x.ttf");
         std::fs::write(&text, "plain text").unwrap();
-        assert!(import(&text, &dirs).is_err());
+        assert!(import(&text, &dirs, 1).unwrap().is_err());
         assert!(!dirs.custom_font_dir().join("x.ttf").exists());
         assert!(copy.exists(), "a rejected font keeps the earlier copy");
 
-        remove(&dirs);
+        claim(2);
+        assert!(
+            import(&chosen("c.ttf"), &dirs, 1).is_none(),
+            "an import overtaken by a newer request is dropped"
+        );
+        assert!(!dirs.custom_font_dir().join("c.ttf").exists());
+        assert!(copy.exists());
+
+        remove(&dirs, 3);
+        assert!(
+            import(&chosen("d.ttf"), &dirs, 2).is_none(),
+            "removing the font also cancels an import still running"
+        );
         assert!(!dirs.custom_font_dir().exists());
     }
 

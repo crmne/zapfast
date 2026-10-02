@@ -360,6 +360,9 @@ pub struct App {
     zoom_applied: bool,
     /// The wallpaper image named in the settings, decoded off this thread.
     pub wallpaper_image: crate::wallpaper::CustomImage,
+    /// Counts font picks and font changes, so a font file that finishes
+    /// importing after a newer choice is ignored.
+    custom_font_request: u64,
 
     pub link: LinkStatus,
     /// Whether link-time history sync is active.
@@ -957,6 +960,7 @@ impl App {
             reveal_theme_changes: !cfg!(test),
             zoom_applied: false,
             wallpaper_image: crate::wallpaper::CustomImage::default(),
+            custom_font_request: 0,
             link: LinkStatus::Starting,
             syncing: false,
             sync_percent: None,
@@ -2460,10 +2464,17 @@ impl App {
                 Event::DownloadFolderPicked(path) => {
                     self.actions.push(Action::SetDownloadFolder(Some(path)));
                 }
-                Event::CustomFontPicked(Ok(path)) => {
+                Event::CustomFontPicked { request, .. } if request != self.custom_font_request => {
+                    // A newer pick or font choice replaced this one.
+                }
+                Event::CustomFontPicked {
+                    result: Ok(path), ..
+                } => {
                     self.actions.push(Action::SetCustomFont(path));
                 }
-                Event::CustomFontPicked(Err(error)) => {
+                Event::CustomFontPicked {
+                    result: Err(error), ..
+                } => {
                     let message = crate::i18n::gettext(self.locale, "Could not use this font");
                     self.toast_error(format!("{message}: {error}"));
                 }
@@ -3588,11 +3599,21 @@ impl App {
             log::warn!("custom font not used: {error}");
             self.settings.custom_font = None;
             self.mark_settings_dirty();
-            self.backend.send(Command::RemoveCustomFont);
+            self.remove_custom_font();
             let message = crate::i18n::gettext(self.locale, "Could not use this font");
             self.toast_error(message);
         }
         ctx.request_repaint();
+    }
+
+    /// Forgets the custom font and deletes its copy. Any font still being
+    /// imported is dropped, not applied later.
+    fn remove_custom_font(&mut self) {
+        self.settings.custom_font = None;
+        self.custom_font_request += 1;
+        self.backend.send(Command::RemoveCustomFont {
+            request: self.custom_font_request,
+        });
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
@@ -4909,13 +4930,16 @@ impl App {
             }
             Action::SetFont(choice) => {
                 self.settings.font = choice;
-                if self.settings.custom_font.take().is_some() {
-                    self.backend.send(Command::RemoveCustomFont);
-                }
+                self.remove_custom_font();
                 self.mark_settings_dirty();
                 self.apply_font(ctx);
             }
-            Action::PickCustomFont => self.backend.send(Command::PickCustomFont),
+            Action::PickCustomFont => {
+                self.custom_font_request += 1;
+                self.backend.send(Command::PickCustomFont {
+                    request: self.custom_font_request,
+                });
+            }
             Action::SetCustomFont(path) => {
                 self.settings.custom_font = Some(path);
                 self.mark_settings_dirty();
@@ -6273,6 +6297,7 @@ fn allowed_while_locked(action: &Action) -> bool {
             | Action::SetChatSound { .. }
             | Action::SetNotificationSound { .. }
             | Action::SetDownloadFolder(_)
+            | Action::SetCustomFont(_)
     )
 }
 
