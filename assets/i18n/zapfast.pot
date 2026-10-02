@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:25-0300\n"
+"POT-Creation-Date: 2026-10-02 11:19-0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -182,7 +182,7 @@ msgstr ""
 msgid "No favorites yet"
 msgstr ""
 
-#: src/ui/chats.rs:878 src/app.rs:1654
+#: src/ui/chats.rs:878 src/app.rs:1660
 msgid "Message yourself"
 msgstr ""
 
@@ -1029,64 +1029,64 @@ msgstr[1] ""
 msgid "No one yet"
 msgstr ""
 
-#: src/app.rs:1575
+#: src/app.rs:1581
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr ""
 
-#: src/app.rs:1635
+#: src/app.rs:1641
 #, rust-format
 msgid "{name} (You)"
 msgstr ""
 
-#: src/app.rs:1636 src/app.rs:1655
+#: src/app.rs:1642 src/app.rs:1661
 msgid "You"
 msgstr ""
 
-#: src/app.rs:2474
+#: src/app.rs:2480
 msgid "Could not use this image"
 msgstr ""
 
-#: src/app.rs:2940
+#: src/app.rs:2946
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr ""
 
-#: src/app.rs:2944
+#: src/app.rs:2950
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:4366
+#: src/app.rs:4372
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:4441
+#: src/app.rs:4447
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:4732 src/ui/labels.rs:237
+#: src/app.rs:4738 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
-#: src/app.rs:5376
+#: src/app.rs:5382
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5384
+#: src/app.rs:5390
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5497
+#: src/app.rs:5503
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/app.rs:6136
+#: src/app.rs:6160
 msgid "Copied image"
 msgstr ""
 
-#: src/app.rs:6139 src/app.rs:6144
+#: src/app.rs:6163 src/app.rs:6168
 msgid "Failed to copy image"
 msgstr ""
 

@@ -5862,7 +5862,13 @@ impl App {
             return;
         }
         ctx.data_mut(|data| data.insert_temp(frame_id, (frame, false)));
-        if ctx.input(|input| !input.focused || input.events.iter().any(|event| matches!(event, egui::Event::WindowFocused(false)))) {
+        if ctx.input(|input| {
+            !input.focused
+                || input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::WindowFocused(false)))
+        }) {
             self.saw_paste_command = false;
             self.paste_was_focused = false;
         }
@@ -5878,7 +5884,8 @@ impl App {
                                 ..
                             }
                         ) && !self.ordinary_v_down
-                            && (self.saw_paste_command || (self.paste_was_focused && input.modifiers.command))
+                            && (self.saw_paste_command
+                                || (self.paste_was_focused && input.modifiers.command))
                             && !input.events.iter().any(|event| {
                                 matches!(
                                     event,
@@ -5908,7 +5915,8 @@ impl App {
                 input.modifiers.command,
             )
         });
-        let requested = paste && (text || self.paste_was_focused) && (text || !self.paste_before_release);
+        let requested =
+            paste && (text || self.paste_was_focused) && (text || !self.paste_before_release);
         self.paste_was_focused = focused;
         // egui-winit swallows Ctrl/Cmd+V's press even for an image-only
         // clipboard. A release after an observed command modifier can be that
@@ -6874,8 +6882,24 @@ mod tests {
             *modifiers = egui::Modifiers::NONE;
         }
         assert_eq!(clipboard_frame(&mut app, &ctx, vec![], true), 0);
-        assert_eq!(clipboard_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)], true), 0);
-        clipboard_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), release.clone()], true);
+        assert_eq!(
+            clipboard_frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
+                true
+            ),
+            0
+        );
+        clipboard_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                release.clone(),
+            ],
+            true,
+        );
         assert_eq!(app.pending.len(), 1);
         clipboard_frame(&mut app, &ctx, vec![release], true);
         assert_eq!(app.pending.len(), 2, "each shortcut stages one image");
@@ -6886,17 +6910,34 @@ mod tests {
         let (mut app, ctx) = clipboard_app();
         let mut reads = 0;
         let mut release = paste_release();
-        if let egui::Event::Key { modifiers, .. } = &mut release { *modifiers = egui::Modifiers::NONE; }
+        if let egui::Event::Key { modifiers, .. } = &mut release {
+            *modifiers = egui::Modifiers::NONE;
+        }
         for (focused, events) in [
-            (true, vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND)]),
+            (
+                true,
+                vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND)],
+            ),
             (false, vec![]),
             (true, vec![release]),
         ] {
-            let mut output = ctx.run_ui(egui::RawInput { focused, events, ..Default::default() }, |ui| {
-                app.take_clipboard_paste(ui.ctx(), || { reads += 1; Some(ClipboardPaste::Image {
-                    width: 2, height: 2, rgba: vec![200; 16],
-                }) });
-            });
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    focused,
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.take_clipboard_paste(ui.ctx(), || {
+                        reads += 1;
+                        Some(ClipboardPaste::Image {
+                            width: 2,
+                            height: 2,
+                            rgba: vec![200; 16],
+                        })
+                    });
+                },
+            );
             output.textures_delta.clear();
         }
         assert_eq!(reads, 0);

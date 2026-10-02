@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:25-0300\n"
+"POT-Creation-Date: 2026-10-02 11:19-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -180,7 +180,7 @@ msgstr "Заблокированные"
 msgid "No favorites yet"
 msgstr "Пока нет избранных"
 
-#: src/ui/chats.rs:878 src/app.rs:1654
+#: src/ui/chats.rs:878 src/app.rs:1660
 msgid "Message yourself"
 msgstr "Написать себе"
 
@@ -1069,29 +1069,29 @@ msgstr[2] "ещё {}"
 msgid "No one yet"
 msgstr "Пока никто"
 
-#: src/app.rs:1575
+#: src/app.rs:1581
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Метка «{name}» уже есть."
 
-#: src/app.rs:1635
+#: src/app.rs:1641
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Вы)"
 
-#: src/app.rs:1636 src/app.rs:1655
+#: src/app.rs:1642 src/app.rs:1661
 msgid "You"
 msgstr "Вы"
 
-#: src/app.rs:2474
+#: src/app.rs:2480
 msgid "Could not use this image"
 msgstr "Не удалось использовать это изображение"
 
-#: src/app.rs:2940
+#: src/app.rs:2946
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
 
-#: src/app.rs:2944
+#: src/app.rs:2950
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1099,36 +1099,36 @@ msgstr ""
 "Не отправлено: сообщение, на которое вы отвечаете, недоступно на этом "
 "компьютере. Отмените ответ, чтобы отправить без цитаты."
 
-#: src/app.rs:4366
+#: src/app.rs:4372
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: src/app.rs:4441
+#: src/app.rs:4447
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:4732 src/ui/labels.rs:237
+#: src/app.rs:4738 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
 
-#: src/app.rs:5376
+#: src/app.rs:5382
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5384
+#: src/app.rs:5390
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5497
+#: src/app.rs:5503
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
 
-#: src/app.rs:6136
+#: src/app.rs:6160
 msgid "Copied image"
 msgstr "Изображение скопировано"
 
-#: src/app.rs:6139 src/app.rs:6144
+#: src/app.rs:6163 src/app.rs:6168
 msgid "Failed to copy image"
 msgstr "Не удалось скопировать изображение"
 
