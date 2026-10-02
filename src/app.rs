@@ -3638,6 +3638,7 @@ impl App {
         }
     }
 
+    /// Resets egui drag state only after native drag success; failures retain input state.
     fn finish_attachment_drag(
         &mut self,
         ctx: &egui::Context,
@@ -3654,6 +3655,7 @@ impl App {
         ctx.request_repaint();
     }
 
+    /// Applies queued view actions after drawing, routing state changes and backend commands.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the

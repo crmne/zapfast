@@ -5641,6 +5641,7 @@ fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> Str
 /// Default image bounds based on [`CARD_WIDTH`].
 const PICTURE_WIDTH: f32 = CARD_WIDTH;
 
+/// Enables primary-button dragging only for a locally available attachment.
 fn attachment_drag_sense() -> Sense {
     if crate::file_drag::SUPPORTED {
         Sense::click_and_drag()
@@ -5649,6 +5650,7 @@ fn attachment_drag_sense() -> Sense {
     }
 }
 
+/// Queues a native file drag when this attachment's primary-button drag begins.
 fn attachment_drag(response: &egui::Response, path: &Path, actions: &mut Vec<Action>) {
     if crate::file_drag::SUPPORTED && response.drag_started_by(egui::PointerButton::Primary) {
         actions.push(Action::DragAttachment(path.to_owned()));
@@ -6619,6 +6621,7 @@ fn fit_within(size: Vec2, rect: Rect) -> Rect {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Draws a document attachment with its download, open and native-drag controls.
 fn attachment(
     ui: &mut egui::Ui,
     view: &View<'_>,

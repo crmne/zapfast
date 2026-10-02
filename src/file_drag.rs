@@ -11,6 +11,7 @@ pub enum Failure {
     Native(String),
 }
 
+/// Returns the selected locale's explanation for a native attachment-drag failure.
 pub fn failure_message(locale: crate::i18n::Locale, failure: &Failure) -> String {
     let summary = crate::i18n::gettext(locale, "Could not drag the attachment");
     let details = match failure {
@@ -60,6 +61,7 @@ mod native {
     struct Ole;
 
     impl Ole {
+        /// Initializes OLE on the current UI thread and owns its matching uninitialization.
         fn initialize() -> Result<Self> {
             // SAFETY: All calls and the matching uninitialization run on the
             // UI thread. A successful S_FALSE also needs OleUninitialize.
@@ -71,6 +73,7 @@ mod native {
     }
 
     impl Drop for Ole {
+        /// Balances this UI thread's successful OLE initialization.
         fn drop(&mut self) {
             // SAFETY: Balances the successful initialization on this thread.
             unsafe {
@@ -79,6 +82,7 @@ mod native {
         }
     }
 
+    /// Creates a Shell file-drop data object without reading attachment contents.
     fn data_object(path: &Path) -> Result<IDataObject> {
         let name = HSTRING::from(path.as_os_str());
         // SAFETY: The string lives through the call. The returned COM objects
@@ -90,6 +94,7 @@ mod native {
         }
     }
 
+    /// Runs the Windows Shell drag operation with copy as its only allowed effect.
     pub(super) fn start(path: &Path) -> Result<()> {
         let _ole = Ole::initialize()?;
         let data = data_object(path)?;
