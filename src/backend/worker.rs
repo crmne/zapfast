@@ -1757,7 +1757,6 @@ impl Worker {
     }
 
     async fn stop_bot(&mut self) {
-        self.contact_generation = self.contact_generation.wrapping_add(1);
         self.client = None;
         // A batch still going belongs to the session that was sending it, and
         // every send is its own task: one can report its tick after this
@@ -2610,6 +2609,7 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
         self.stop_bot().await;
         if let Err(error) = self.archive.clear() {
@@ -8935,11 +8935,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn contact_completions_cannot_cross_connection_generations() {
+    async fn contact_completions_cannot_cross_account_sessions() {
         for full_name in [None, Some("Fixture".to_owned())] {
             let (mut worker, events, _, _) = super::receipt_tests::worker();
             let generation = worker.contact_generation;
-            worker.stop_bot().await;
+            worker.on_logged_out().await;
+            events.try_iter().for_each(drop);
             worker.handle_command(Command::ContactChecked {
                 generation, request: 42, phone: "15550000001".into(),
                 full_name, first_name: None, to_phone: true, registered: Ok(true),
@@ -8951,6 +8952,14 @@ mod tests {
             assert!(events.try_iter().next().is_none());
             assert!(worker.archive.contact("15550000001@s.whatsapp.net").unwrap().is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn reconnecting_the_same_account_keeps_contact_checks_current() {
+        let (mut worker, _, _, _) = super::receipt_tests::worker();
+        let generation = worker.contact_generation;
+        worker.stop_bot().await;
+        assert_eq!(worker.contact_generation, generation);
     }
 
     #[test]
