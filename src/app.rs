@@ -272,8 +272,44 @@ impl Conversation {
             let added = self.messages.len() - old_len;
             self.messages.rotate_right(added);
         }
-        self.messages
-            .sort_by_key(|message| (message.timestamp, message.history_order.unwrap_or(i64::MAX)));
+        self.sort();
+    }
+
+    /// Chat order: by time, with messages waiting to send last.
+    fn sort(&mut self) {
+        self.messages.sort_by_key(|message| {
+            (
+                message.waiting_to_send(),
+                message.timestamp,
+                message.history_order.unwrap_or(i64::MAX),
+            )
+        });
+    }
+
+    /// Moves one row whose time or waiting state changed to its place in
+    /// chat order, after the rows it ties with, or before them when it is
+    /// `first`. The queue changes rows one at a time in sending order, so a
+    /// burst sent within one second keeps its order when it starts waiting
+    /// and when it goes out. A send refused again is the first to go out.
+    fn reposition(&mut self, id: &str, first: bool) {
+        let Some(index) = self.messages.iter().position(|row| row.id == id) else {
+            return;
+        };
+        let row = self.messages.remove(index);
+        let key = (
+            row.waiting_to_send(),
+            row.timestamp,
+            row.history_order.unwrap_or(i64::MAX),
+        );
+        let at = self.messages.partition_point(|other| {
+            let other = (
+                other.waiting_to_send(),
+                other.timestamp,
+                other.history_order.unwrap_or(i64::MAX),
+            );
+            if first { other < key } else { other <= key }
+        });
+        self.messages.insert(at, row);
     }
 
     pub fn message_mut(&mut self, id: &str) -> Option<&mut Message> {
@@ -447,6 +483,8 @@ pub struct App {
     pub reaction_beside_menu: bool,
     /// Demo/test: keep this message's context menu open.
     pub open_message_menu: Option<String>,
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) queued_demo: Option<crate::demo::queued::QueueDemo>,
     /// Demo/test: keep this chat row's context menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_chat_menu: Option<ChatId>,
@@ -1034,6 +1072,8 @@ impl App {
             reaction_anchor: None,
             reaction_beside_menu: false,
             open_message_menu: None,
+            #[cfg(any(test, feature = "demo"))]
+            queued_demo: None,
             #[cfg(any(test, feature = "demo"))]
             open_chat_menu: None,
             #[cfg(any(test, feature = "demo"))]
@@ -2374,6 +2414,44 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Applies a changed row. A requeued one is a send refused again: it
+    /// goes first among the waiting rows it ties with.
+    fn message_updated(&mut self, message: Message, requeued: bool) {
+        if let Some(conversation) = self.conversations.get_mut(&message.chat)
+            && let Some(existing) = conversation.message_mut(&message.id)
+        {
+            let moved = (requeued
+                || existing.timestamp != message.timestamp
+                || existing.waiting_to_send() != message.waiting_to_send())
+            .then(|| message.id.clone());
+            let state = existing.content.media().map(|media| media.state.clone());
+            let carousel_states = match &existing.content {
+                Content::Interactive {
+                    card: Some(card), ..
+                } => card
+                    .carousel
+                    .iter()
+                    .map(|card| card.image.as_ref().map(|media| media.state.clone()))
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            };
+            *existing = message;
+            for (index, state) in carousel_states.into_iter().enumerate() {
+                if let (Some(state), Some(media)) =
+                    (state, existing.content.media_at_mut(Some(index)))
+                {
+                    media.state = state;
+                }
+            }
+            if let (Some(state), Some(media)) = (state, existing.content.media_mut()) {
+                media.state = state;
+            }
+            if let Some(id) = moved {
+                conversation.reposition(&id, requeued);
+            }
+        }
+    }
+
     fn handle_events(&mut self) {
         let mut removed = Vec::new();
         let mut deferred = Vec::new();
@@ -2577,35 +2655,8 @@ impl App {
                     self.toast_error(error);
                 }
             }
-            Event::MessageUpdated(message) => {
-                let message = *message;
-                if let Some(conversation) = self.conversations.get_mut(&message.chat)
-                    && let Some(existing) = conversation.message_mut(&message.id)
-                {
-                    let state = existing.content.media().map(|media| media.state.clone());
-                    let carousel_states = match &existing.content {
-                        Content::Interactive {
-                            card: Some(card), ..
-                        } => card
-                            .carousel
-                            .iter()
-                            .map(|card| card.image.as_ref().map(|media| media.state.clone()))
-                            .collect::<Vec<_>>(),
-                        _ => Vec::new(),
-                    };
-                    *existing = message;
-                    for (index, state) in carousel_states.into_iter().enumerate() {
-                        if let (Some(state), Some(media)) =
-                            (state, existing.content.media_at_mut(Some(index)))
-                        {
-                            media.state = state;
-                        }
-                    }
-                    if let (Some(state), Some(media)) = (state, existing.content.media_mut()) {
-                        media.state = state;
-                    }
-                }
-            }
+            Event::MessageUpdated(message) => self.message_updated(*message, false),
+            Event::MessageRequeued(message) => self.message_updated(*message, true),
             Event::Contacts(contacts) => {
                 for contact in contacts {
                     self.contacts.insert(contact.id.clone(), contact);
@@ -2885,6 +2936,20 @@ impl App {
                         self.toast_error(error);
                     }
                 }
+            }
+            Event::SendFailed { connection } => {
+                let message = if connection {
+                    crate::i18n::gettext(
+                        self.locale,
+                        "This message could not be sent. Check your connection before sending it again.",
+                    )
+                } else {
+                    crate::i18n::gettext(
+                        self.locale,
+                        "This message could not be sent. Try again later.",
+                    )
+                };
+                self.toast_error(message.into_owned());
             }
             Event::UpdateAvailable { version, url } => {
                 let notice = crate::updates::Release { version, url };
@@ -4056,6 +4121,8 @@ impl App {
             }
             actions = std::mem::take(&mut self.actions);
         }
+        #[cfg(any(test, feature = "demo"))]
+        crate::demo::queued::respond(self, ctx, Instant::now());
     }
 
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
@@ -4069,6 +4136,29 @@ impl App {
                     message,
                 });
             }
+            return;
+        }
+        let remote_target = match &action {
+            Action::DeleteForEveryone { chat, id } | Action::DeleteForMe { chat, id } => {
+                Some((chat.as_str(), id.as_str()))
+            }
+            Action::Edit(id) | Action::Reply(id) => {
+                self.open_chat.as_deref().map(|chat| (chat, id.as_str()))
+            }
+            _ => None,
+        };
+        if let Some((chat, id)) = remote_target
+            && self
+                .conversations
+                .get(chat)
+                .and_then(|conversation| conversation.message(id))
+                .is_some_and(|row| {
+                    row.from_me
+                        && row.status.is_local()
+                        && !(row.status == Delivery::Unconfirmed
+                            && matches!(action, Action::DeleteForMe { .. }))
+                })
+        {
             return;
         }
         match action {
@@ -4561,6 +4651,9 @@ impl App {
                     self.emoji_start = None;
                     self.mention_start = None;
                 }
+            }
+            Action::CancelQueued { chat, id } => {
+                self.backend.send(Command::CancelQueued { chat, id })
             }
             Action::DeleteForEveryone { chat, id } => {
                 if let Some(message) = self
@@ -9322,6 +9415,190 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+        }
+    }
+
+    /// A failed send asks the reader to check the connection only when the
+    /// link was the cause; other failures get a neutral line.
+    #[test]
+    fn a_failed_send_names_the_connection_only_when_it_was_the_cause() {
+        for (connection, expected) in [
+            (
+                true,
+                "This message could not be sent. Check your connection before sending it again.",
+            ),
+            (false, "This message could not be sent. Try again later."),
+        ] {
+            let mut app = app();
+            let (backend, events) = Backend::detached();
+            app.backend = backend;
+            events.send(Event::SendFailed { connection }).unwrap();
+            app.handle_events();
+            let toasts: Vec<_> = app.toasts.iter().map(|toast| &toast.message).collect();
+            assert_eq!(toasts, [expected], "{connection}");
+        }
+    }
+
+    #[test]
+    fn queued_or_sending_rows_cannot_be_removed_by_a_stale_delete_action() {
+        for status in [Delivery::Queued, Delivery::Pending] {
+            let mut app = app();
+            let chat = "fixture@s.whatsapp.net";
+            app.conversations.entry(chat.into()).or_default().merge(
+                vec![Message {
+                    status,
+                    from_me: true,
+                    ..message(chat, "waiting", 100)
+                }],
+                false,
+            );
+            app.apply(
+                Action::DeleteForMe {
+                    chat: chat.into(),
+                    id: "waiting".into(),
+                },
+                &egui::Context::default(),
+            );
+            assert!(
+                app.conversations[chat].message("waiting").is_some(),
+                "an unsent or in-flight message must not silently disappear"
+            );
+        }
+    }
+
+    /// D2: a message waiting for a rate-limit cooldown stays at the bottom,
+    /// below whatever arrives meanwhile, and keeps its place once it goes
+    /// out at its dispatch time.
+    #[test]
+    fn waiting_messages_stay_last_and_follow_their_dispatch_time() {
+        let mut app = app();
+        let chat = "fixture@s.whatsapp.net";
+        let waiting = Message {
+            from_me: true,
+            status: Delivery::Queued,
+            ..message(chat, "waiting", 100)
+        };
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![waiting.clone(), message(chat, "theirs", 200)], false);
+        let order = |app: &App| {
+            app.conversations[chat]
+                .messages
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&app), ["theirs", "waiting"]);
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        events
+            .send(Event::MessageUpdated(Box::new(Message {
+                status: Delivery::Pending,
+                timestamp: 300,
+                ..waiting.clone()
+            })))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(order(&app), ["theirs", "waiting"]);
+        // A row that stops waiting without a new time returns to its time.
+        events
+            .send(Event::MessageUpdated(Box::new(Message {
+                status: Delivery::Failed,
+                ..waiting
+            })))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(order(&app), ["waiting", "theirs"]);
+    }
+
+    /// A burst sent within one second starts waiting, and later goes out,
+    /// one row at a time in queue order. It keeps its order both times,
+    /// and goes out below a reply that came in the same second.
+    #[test]
+    fn rows_that_change_state_within_one_second_keep_their_order() {
+        let mut app = app();
+        let chat = "fixture@s.whatsapp.net";
+        let ids = ["first", "second", "third"];
+        let ours = |id: &str, status| Message {
+            from_me: true,
+            status,
+            ..message(chat, id, 100)
+        };
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(ids.map(|id| ours(id, Delivery::Pending)).into(), false);
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let order = |app: &App| {
+            app.conversations[chat]
+                .messages
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>()
+        };
+        for id in ids {
+            let row = ours(id, Delivery::Queued);
+            events.send(Event::MessageUpdated(Box::new(row))).unwrap();
+        }
+        app.handle_events();
+        assert_eq!(order(&app), ids);
+        events
+            .send(Event::Messages {
+                chat: chat.into(),
+                messages: vec![message(chat, "theirs", 200)],
+                older: false,
+                complete: false,
+            })
+            .unwrap();
+        for id in ids {
+            let row = Message {
+                timestamp: 200,
+                ..ours(id, Delivery::Pending)
+            };
+            events.send(Event::MessageUpdated(Box::new(row))).unwrap();
+        }
+        app.handle_events();
+        assert_eq!(order(&app), ["theirs", "first", "second", "third"]);
+    }
+
+    /// A send refused again goes back to the head of the waiting rows, also
+    /// when it went out in the same second it first waited.
+    #[test]
+    fn a_send_refused_again_waits_ahead_of_the_rows_behind_it() {
+        for dispatched_at in [100, 300] {
+            let mut app = app();
+            let chat = "fixture@s.whatsapp.net";
+            let ids = ["first", "second", "third"];
+            let ours = |id: &str, status, timestamp| Message {
+                from_me: true,
+                status,
+                ..message(chat, id, timestamp)
+            };
+            app.conversations
+                .entry(chat.into())
+                .or_default()
+                .merge(ids.map(|id| ours(id, Delivery::Queued, 100)).into(), false);
+            let (backend, events) = Backend::detached();
+            app.backend = backend;
+            let order = |app: &App| {
+                app.conversations[chat]
+                    .messages
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .collect::<Vec<_>>()
+            };
+            let first = ours("first", Delivery::Pending, dispatched_at);
+            events.send(Event::MessageUpdated(Box::new(first))).unwrap();
+            app.handle_events();
+            assert_eq!(order(&app), ids);
+            let first = ours("first", Delivery::Queued, 100);
+            events
+                .send(Event::MessageRequeued(Box::new(first)))
+                .unwrap();
+            app.handle_events();
+            assert_eq!(order(&app), ids, "dispatched at {dispatched_at}");
         }
     }
 

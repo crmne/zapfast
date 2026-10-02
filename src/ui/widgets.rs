@@ -306,7 +306,8 @@ pub fn ticks_in(ui: &Ui, palette: &Palette, rect: Rect, status: Delivery, plain:
 pub fn tick_icon(status: Delivery) -> Option<Icon> {
     Some(match status {
         Delivery::None => return None,
-        Delivery::Pending => Icon::Clock,
+        Delivery::Pending | Delivery::Queued => Icon::Clock,
+        Delivery::Unconfirmed => Icon::CircleAlert,
         Delivery::Sent => Icon::DeliveryTick,
         Delivery::Delivered | Delivery::Read | Delivery::Played => Icon::DeliveryTicks,
         Delivery::Failed => Icon::CircleAlert,

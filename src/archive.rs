@@ -309,6 +309,8 @@ fn searched_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
 fn status_rank(status: Delivery) -> i64 {
     match status {
         Delivery::None => 0,
+        Delivery::Queued => -1,
+        Delivery::Unconfirmed => -3,
         Delivery::Pending => 1,
         Delivery::Sent => 2,
         Delivery::Delivered => 3,
@@ -329,6 +331,8 @@ fn stamp_column(status: Delivery) -> Option<&'static str> {
 
 fn status_from_rank(rank: i64) -> Delivery {
     match rank {
+        -1 => Delivery::Queued,
+        -3 => Delivery::Unconfirmed,
         1 => Delivery::Pending,
         2 => Delivery::Sent,
         3 => Delivery::Delivered,
@@ -390,6 +394,13 @@ impl Archive {
                 ))?;
             }
         }
+        // Scheduling is session-only. No prior worker owns these rows now.
+        // A queued row was not sent; a Pending row may have been transmitted.
+        connection.execute(
+            "UPDATE messages SET status = CASE status WHEN -1 THEN 6 ELSE -3 END
+             WHERE from_me = 1 AND status IN (-1, 1)",
+            [],
+        )?;
         favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
@@ -1012,6 +1023,7 @@ impl Archive {
                 sender_name = COALESCE(excluded.sender_name, sender_name),
                 content = excluded.content,
                 status = CASE
+                    WHEN messages.status = -3 AND excluded.status = 1 THEN messages.status
                     WHEN messages.status > excluded.status AND excluded.status <> ?18
                     THEN messages.status
                     ELSE excluded.status
@@ -1737,7 +1749,64 @@ impl Archive {
         Ok(changed > 0)
     }
 
+    /// Changes a locally owned outgoing row without regressing a receipt.
+    pub fn set_outgoing_state(&self, chat: &str, id: &str, status: Delivery) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE messages SET status = ?3 WHERE chat = ?1 AND id = ?2
+             AND from_me = 1 AND status IN (-1, 1)",
+            params![chat, id, status_rank(status)],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Starts sending a waiting message: it becomes pending at `at`, the
+    /// time it goes out, so it is the chat's newest message. Only a waiting
+    /// row moves, and the reply is the time it waited at; anything else keeps
+    /// its time and reports `None`.
+    pub fn dispatch_outgoing(&self, chat: &str, id: &str, at: i64) -> Result<Option<i64>> {
+        let queued_at: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT timestamp FROM messages
+                 WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND status = ?3",
+                params![chat, id, status_rank(Delivery::Queued)],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if queued_at.is_some() {
+            self.connection.execute(
+                "UPDATE messages SET status = ?3, timestamp = ?4 WHERE chat = ?1 AND id = ?2",
+                params![chat, id, status_rank(Delivery::Pending), at],
+            )?;
+            self.connection.execute(
+                "UPDATE chats SET last_activity = MAX(last_activity, ?2) WHERE id = ?1",
+                params![chat, at],
+            )?;
+        }
+        Ok(queued_at)
+    }
+
+    /// Puts a send that went out and was refused again back to waiting, at
+    /// the time it waited at, so it stays ahead of the rows queued behind
+    /// it. Only a pending send of ours moves.
+    pub fn requeue_outgoing(&self, chat: &str, id: &str, queued_at: i64) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE messages SET status = ?3, timestamp = ?4
+             WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND status = ?5",
+            params![
+                chat,
+                id,
+                status_rank(Delivery::Queued),
+                queued_at,
+                status_rank(Delivery::Pending)
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Advances outgoing messages through `timestamp` to `status` and returns changed ids.
+    /// Only messages the server accepted catch up: a send still waiting or
+    /// on the wire has nothing a later message's receipt can prove.
     pub fn advance_statuses(
         &self,
         chat: &str,
@@ -1746,24 +1815,25 @@ impl Archive {
         at: i64,
     ) -> Result<Vec<String>> {
         let rank = status_rank(status);
+        let sent = status_rank(Delivery::Sent);
         let mut statement = self.connection.prepare(
-            "SELECT id FROM messages WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status > 0 AND status < ?3",
+            "SELECT id FROM messages WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status >= ?4 AND status < ?3",
         )?;
         let ids: Vec<String> = statement
-            .query_map(params![chat, up_to, rank], |row| row.get(0))?
+            .query_map(params![chat, up_to, rank, sent], |row| row.get(0))?
             .collect::<Result<_>>()?;
         if let Some(column) = stamp_column(status) {
             self.connection.execute(
                 &format!(
                     "UPDATE messages SET status = ?3, {column} = COALESCE({column}, ?4)
-                     WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status > 0 AND status < ?3"
+                     WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status >= ?5 AND status < ?3"
                 ),
-                params![chat, up_to, rank, at],
+                params![chat, up_to, rank, at, sent],
             )?;
         } else {
             self.connection.execute(
-                "UPDATE messages SET status = ?3 WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status > 0 AND status < ?3",
-                params![chat, up_to, rank],
+                "UPDATE messages SET status = ?3 WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status >= ?4 AND status < ?3",
+                params![chat, up_to, rank, sent],
             )?;
         }
         Ok(ids)
@@ -3109,6 +3179,54 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn reopening_releases_only_own_stale_sends_without_replaying_them() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("interrupted-send.db");
+        let key = [73; 32];
+        let chat = "1@s.whatsapp.net";
+        let cases = [
+            ("pending", true, Delivery::Pending, Delivery::Unconfirmed),
+            ("incoming", false, Delivery::Pending, Delivery::Pending),
+            ("incoming-queued", false, Delivery::Queued, Delivery::Queued),
+            ("queued", true, Delivery::Queued, Delivery::Failed),
+            ("sent", true, Delivery::Sent, Delivery::Sent),
+            ("delivered", true, Delivery::Delivered, Delivery::Delivered),
+            ("read", true, Delivery::Read, Delivery::Read),
+            ("played", true, Delivery::Played, Delivery::Played),
+        ];
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat(chat, "Fixture").unwrap();
+            for (id, from_me, status, _) in cases {
+                let mut row = message(chat, id, 100, from_me);
+                row.status = status;
+                archive.insert_message(&row, None).unwrap();
+            }
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        for (id, _, _, expected) in cases {
+            let row = archive.message(chat, id).unwrap().unwrap();
+            assert_eq!(row.status, expected, "{id}");
+            assert_eq!(row.content, message(chat, id, 100, true).content);
+        }
+        // Reopening again must not turn uncertainty into failure or retry work.
+        drop(archive);
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert_eq!(
+            archive.message(chat, "pending").unwrap().unwrap().status,
+            Delivery::Unconfirmed
+        );
+        let mut replay = message(chat, "pending", 100, true);
+        replay.status = Delivery::Pending;
+        archive.insert_message(&replay, None).unwrap();
+        assert_eq!(
+            archive.message(chat, "pending").unwrap().unwrap().status,
+            Delivery::Unconfirmed,
+            "a replay is not a new worker claim"
+        );
+    }
+
+    #[test]
     fn statuses_only_move_forward() {
         let archive = Archive::in_memory().expect("opens");
         let chat = "1@s.whatsapp.net";
@@ -3217,13 +3335,20 @@ pub(crate) mod tests {
         let chat = "1@s.whatsapp.net";
         archive.ensure_chat(chat, "A").expect("chat");
         for (id, timestamp) in [("m1", 100), ("m2", 200), ("m3", 300)] {
-            archive
-                .insert_message(&message(chat, id, timestamp, true), None)
-                .expect("insert");
+            let mut row = message(chat, id, timestamp, true);
+            row.status = Delivery::Sent;
+            archive.insert_message(&row, None).expect("insert");
         }
         archive
             .insert_message(&message(chat, "theirs", 250, false), None)
             .expect("insert");
+        // A send still in flight, or waiting, has no receipt to catch up on.
+        archive
+            .insert_message(&message(chat, "in-flight", 150, true), None)
+            .expect("insert");
+        let mut waiting = message(chat, "waiting", 160, true);
+        waiting.status = Delivery::Queued;
+        archive.insert_message(&waiting, None).expect("insert");
         let changed = archive
             .advance_statuses(chat, 200, Delivery::Read, 400)
             .expect("advance");
@@ -3234,12 +3359,97 @@ pub(crate) mod tests {
             statuses,
             vec![
                 Delivery::Read,
+                Delivery::Pending,
+                Delivery::Queued,
                 Delivery::Read,
                 Delivery::None,
-                Delivery::Pending
+                Delivery::Sent
             ]
         );
         assert_eq!(messages[0].read_at, Some(400));
+    }
+
+    #[test]
+    fn dispatching_a_waiting_message_moves_it_to_the_dispatch_time() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "A").expect("chat");
+        let mut waiting = message(chat, "waiting", 100, true);
+        waiting.status = Delivery::Queued;
+        archive.insert_message(&waiting, None).expect("insert");
+        archive
+            .insert_message(&message(chat, "theirs", 200, false), None)
+            .expect("insert");
+        assert_eq!(
+            archive
+                .dispatch_outgoing(chat, "waiting", 500)
+                .expect("dispatch"),
+            Some(100)
+        );
+        let row = archive
+            .message(chat, "waiting")
+            .expect("read")
+            .expect("row");
+        assert_eq!((row.status, row.timestamp), (Delivery::Pending, 500));
+        assert_eq!(
+            archive
+                .chat(chat)
+                .expect("read")
+                .expect("chat")
+                .last_activity,
+            500
+        );
+        // Only a waiting row moves; a sending or incoming one keeps its time.
+        assert_eq!(
+            archive
+                .dispatch_outgoing(chat, "waiting", 600)
+                .expect("dispatch"),
+            None
+        );
+        assert_eq!(
+            archive
+                .dispatch_outgoing(chat, "theirs", 600)
+                .expect("dispatch"),
+            None
+        );
+        assert_eq!(
+            archive
+                .message(chat, "waiting")
+                .expect("read")
+                .expect("row")
+                .timestamp,
+            500
+        );
+        // Refused again, it waits at its first time; the chat keeps its
+        // activity. Only a pending send of ours goes back.
+        assert!(
+            archive
+                .requeue_outgoing(chat, "waiting", 100)
+                .expect("requeue")
+        );
+        let row = archive
+            .message(chat, "waiting")
+            .expect("read")
+            .expect("row");
+        assert_eq!((row.status, row.timestamp), (Delivery::Queued, 100));
+        assert_eq!(
+            archive
+                .chat(chat)
+                .expect("read")
+                .expect("chat")
+                .last_activity,
+            500
+        );
+        assert!(
+            !archive
+                .requeue_outgoing(chat, "waiting", 50)
+                .expect("requeue")
+        );
+        assert!(
+            !archive
+                .requeue_outgoing(chat, "theirs", 50)
+                .expect("requeue")
+        );
     }
 
     #[test]
