@@ -3,8 +3,9 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
-"POT-Creation-Date: 2026-09-29 15:36+0200\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-10-02 00:01-0300\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -389,6 +390,15 @@ msgstr "Duraklat"
 msgid "Play"
 msgstr "Oynat"
 
+#: src/ui/conversation.rs
+msgid "Back to the message (Esc)"
+msgstr "Mesaja geri dön (Esc)"
+
+
+#: src/ui/conversation.rs
+msgid "Fill the window"
+msgstr "Pencereyi kapla"
+
 #: src/ui/conversation.rs:6191
 msgid "Unmute"
 msgstr "Sesi aç"
@@ -396,6 +406,31 @@ msgstr "Sesi aç"
 #: src/ui/conversation.rs:6193
 msgid "Mute"
 msgstr "Sessize al"
+
+#: src/ui/dialogs.rs:391 src/ui/dialogs.rs:470
+#
+msgid "Message a number"
+msgstr "Bir numaraya mesaj gönder"
+
+#: src/ui/dialogs.rs:476
+msgid ""
+"Enter a phone number with its country code. You do not need to save it as a "
+"contact."
+msgstr "Ülke koduyla birlikte bir telefon numarası girin. Kişi olarak kaydetmeniz gerekmez."
+
+#: src/ui/dialogs.rs:500
+msgid "Checking the number…"
+msgstr "Numara kontrol ediliyor…"
+
+#: src/ui/dialogs.rs:511
+#
+msgid "Message"
+msgstr "Mesaj gönder"
+
+#: src/ui/dialogs.rs:1010 src/ui/dialogs.rs:1165 src/ui/settings.rs:902
+#: src/ui/settings.rs:1416 src/ui/lock.rs:142
+msgid "Cancel"
+msgstr "İptal"
 
 #: src/ui/dialogs.rs:621
 msgid "Show shortcut hints under the message box"
@@ -436,11 +471,6 @@ msgstr "Bunu tanımlayan emojiler (ör. 😂 veya ❤️)"
 #: src/ui/dialogs.rs:995
 msgid "Send"
 msgstr "Gönder"
-
-#: src/ui/dialogs.rs:1010 src/ui/dialogs.rs:1165 src/ui/settings.rs:902
-#: src/ui/settings.rs:1416 src/ui/lock.rs:142
-msgid "Cancel"
-msgstr "İptal"
 
 #: src/ui/dialogs.rs:1119
 msgid "Leave this channel?"
@@ -542,6 +572,18 @@ msgstr "Sistemi takip et, Omarchy renklerinizi kullanır."
 #: src/ui/settings.rs:315
 msgid "Theme"
 msgstr "Tema"
+
+#: src/ui/settings.rs
+msgid "Font"
+msgstr "Yazı tipi"
+
+#: src/ui/settings.rs
+msgid ""
+"System is your desktop's interface font. Inter looks the same on every "
+"computer."
+msgstr ""
+"Sistem, masaüstünüzün arayüz yazı tipidir. Inter ise her bilgisayarda aynı "
+"görünür."
 
 #: src/ui/settings.rs:317
 msgid "Wallpaper"
@@ -1046,6 +1088,23 @@ msgstr[1] "{} kaldı"
 msgid "No one yet"
 msgstr "Henüz kimse yok"
 
+#: src/app.rs:726
+msgid "Could not check the number. Please try again."
+msgstr "Numara kontrol edilemedi. Lütfen tekrar deneyin."
+
+#: src/app.rs:730
+msgid "This number is not on WhatsApp"
+msgstr "Bu numara WhatsApp'ta kayıtlı değil"
+
+#: src/app.rs:733
+#
+msgid "Not connected to WhatsApp"
+msgstr "WhatsApp'a bağlı değil"
+
+#: src/app.rs:736 src/app.rs:4670
+msgid "Enter a valid international phone number"
+msgstr "Geçerli bir uluslararası telefon numarası girin"
+
 #: src/app.rs:1503
 #, rust-format
 msgid "A label named “{name}” already exists."
@@ -1513,23 +1572,3 @@ msgstr "15 dakika sonra"
 #: src/settings.rs:319
 msgid "After 1 hour"
 msgstr "1 saat sonra"
-
-#: src/ui/settings.rs
-msgid "Font"
-msgstr "Yazı tipi"
-
-#: src/ui/settings.rs
-msgid ""
-"System is your desktop's interface font. Inter looks the same on every "
-"computer."
-msgstr ""
-"Sistem, masaüstünüzün arayüz yazı tipidir. Inter ise her bilgisayarda aynı "
-"görünür."
-
-#: src/ui/conversation.rs
-msgid "Fill the window"
-msgstr "Pencereyi kapla"
-
-#: src/ui/conversation.rs
-msgid "Back to the message (Esc)"
-msgstr "Mesaja geri dön (Esc)"
