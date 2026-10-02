@@ -9240,17 +9240,63 @@ mod tests {
         assert_ne!(old, current);
         let _ = events.try_iter().count();
         let request = |text: &str| EditRequest {
-            text: text.to_owned(), mentions: Vec::new(),
-            draft: EditDraft { text: text.to_owned(), mentions: Vec::new() },
+            text: text.to_owned(),
+            mentions: Vec::new(),
+            draft: EditDraft {
+                text: text.to_owned(),
+                mentions: Vec::new(),
+            },
         };
-        let version = |generation| EditVersion { generation, content: row.content.clone(), edited: row.edited };
-        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Old account"), Some("Old refusal".to_owned()), version(old));
-        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Old account"), None, version(old));
+        let version = |generation| EditVersion {
+            generation,
+            content: row.content.clone(),
+            edited: row.edited,
+        };
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Old account"),
+            Some("Old refusal".to_owned()),
+            version(old),
+        );
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Old account"),
+            None,
+            version(old),
+        );
         assert!(events.try_recv().is_err());
-        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, row.content);
-        assert!(worker.pending_edits[&(PEER.to_owned(), row.id.clone())].outstanding.contains(&current));
-        worker.finish_edit(PEER.to_owned(), row.id.clone(), request("Current account"), None, version(current));
-        assert_eq!(worker.archive.message(PEER, &row.id).unwrap().unwrap().content, Content::text("Current account"));
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            row.content
+        );
+        assert!(
+            worker.pending_edits[&(PEER.to_owned(), row.id.clone())]
+                .outstanding
+                .contains(&current)
+        );
+        worker.finish_edit(
+            PEER.to_owned(),
+            row.id.clone(),
+            request("Current account"),
+            None,
+            version(current),
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, &row.id)
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::text("Current account")
+        );
     }
 
     /// A timed-out earlier request releases the settlement barrier while a
