@@ -404,9 +404,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   desktop asks (its font settings through the desktop portal, else
   fontconfig), and follows changes to them without a restart.
 - **Copy text.** Select part of a message or copy across messages in
-  WhatsApp's `[time, date] Name:` format. Contact names and numbers are also
-  selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
-  `(DDD) XXXXX-XXXX`.
+  WhatsApp's `[time, date] Name:` format. A drag can begin in the padding
+  around the message text, so it does not need to land precisely on a letter.
+  Contact names and numbers are also selectable, with Brazilian numbers shown
+  as `(DDD) XXXX-XXXX` or `(DDD) XXXXX-XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` or `Ctrl+Shift+F` searches your chats,
   where `↑`/`↓` selects a matching chat and Enter opens it ready for typing;
   `Ctrl+F` searches the open chat as in WhatsApp (`↑`/`↓` walk the results

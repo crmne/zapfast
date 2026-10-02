@@ -8162,6 +8162,80 @@ mod tests {
     }
 
     #[test]
+    fn message_text_selection_starts_in_the_bubble_padding() {
+        let mut app = app();
+        let chat = sample_ids()[0].to_owned();
+        app.conversations.get_mut(&chat).unwrap().messages = vec![message(
+            &chat,
+            "padding-target",
+            false,
+            1_700_000_000,
+            Content::text("A forgiving selection target"),
+        )];
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+
+        let id = crate::ui::conversation::bubble_id(&chat, "padding-target");
+        let body = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("body")))
+            .expect("the message body is on screen");
+        let target = ctx
+            .read_response(id.with("body-text"))
+            .expect("the selection target is on screen")
+            .rect;
+        let bubble = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+            .expect("the message bubble is on screen");
+        assert!(target.contains(bubble.center()));
+        let from = egui::pos2(target.right() - 2.0, target.bottom() - 2.0);
+        let to = body.center();
+        assert!(target.contains(from));
+        assert!(
+            !body.contains(from),
+            "the sweep starts outside the text: {from:?}"
+        );
+
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 780.0));
+        let mut copied = None;
+        for events in [
+            vec![egui::Event::PointerMoved(from), press(from, true)],
+            vec![egui::Event::PointerMoved(to)],
+            vec![press(to, false)],
+            vec![egui::Event::Copy],
+            vec![],
+        ] {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            });
+            output.textures_delta.clear();
+            for command in output.platform_output.commands {
+                if let egui::OutputCommand::CopyText(text) = command {
+                    copied = Some(text);
+                }
+            }
+        }
+
+        let copied = copied.expect("a sweep from the padding copies text");
+        assert!(!copied.trim().is_empty(), "{copied:?}");
+        assert!("A forgiving selection target".contains(copied.trim()));
+    }
+
+    #[test]
     fn a_drag_selects_short_messages_on_opposite_sides_of_the_chat() {
         let mut app = app();
         let chat = sample_ids()[0].to_owned();
