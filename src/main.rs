@@ -200,8 +200,6 @@ fn run() -> eframe::Result<()> {
     if !demo {
         dirs.adopt_previous_names()
             .map_err(|error| eframe::Error::AppCreation(error.into()))?;
-        dirs.adopt_single_account()
-            .map_err(|error| eframe::Error::AppCreation(error.into()))?;
     }
     // Do not open logs, settings, or either database unless their parent
     // directories have been created and secured successfully.
@@ -221,6 +219,12 @@ fn run() -> eframe::Result<()> {
     logging
         .init()
         .map_err(|error| eframe::Error::AppCreation(error.into()))?;
+    // Moving a single-account setup into its account folder needs the
+    // keyring; when it cannot finish, the log says why.
+    if !demo && let Err(error) = dirs.adopt_single_account() {
+        log::error!("could not move the linked account into its folder: {error}");
+        return Err(eframe::Error::AppCreation(error.into()));
+    }
     let settings = settings::Settings::load(&dirs.settings_file());
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
 

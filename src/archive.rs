@@ -11,7 +11,7 @@ use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, Mess
 
 mod drafts;
 mod encryption;
-pub use encryption::copy_archive_key;
+pub use encryption::{archive_key_identity, copy_archive_key, forget_archive_key};
 mod favorites;
 pub use favorites::Favorite;
 mod labels;

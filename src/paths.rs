@@ -117,33 +117,47 @@ impl AppDirs {
         }
     }
 
-    /// Moves a pre-0.18 single-account layout into `accounts/1/`.
-    /// Copies the archive keyring entry before renaming files.
+    /// Moves a single-account layout (databases at the root of the state
+    /// directory) into `accounts/1/`.
+    ///
+    /// The archive is the only copy of the history, so nothing moves unless
+    /// all of it can: a file already waiting at the destination stops the
+    /// move before anything changes, and an encrypted archive moves only once
+    /// its keyring key has been copied to the new folder's identity and read
+    /// back. SQLite's side files move before their database, so an
+    /// interrupted move is finished by the next start rather than leaving a
+    /// write-ahead log behind.
     pub fn adopt_single_account(&self) -> std::io::Result<()> {
-        let legacy_session = self.state.join("session.db");
-        let legacy_archive = self.state.join("archive.db");
-        if !legacy_session.exists() && !legacy_archive.exists() {
-            return Ok(());
-        }
-        let dest = self.account(&AccountId::first());
-        dest.ensure()?;
-        if legacy_archive.exists() {
-            crate::archive::copy_archive_key(&legacy_archive, &dest.archive_db()).map_err(
-                |error| std::io::Error::other(format!("could not copy the archive key: {error:#}")),
-            )?;
-        }
-        for name in [
-            "session.db",
+        self.adopt_single_account_with(|from, to| {
+            crate::archive::copy_archive_key(from, to)
+                .map_err(|error| std::io::Error::other(format!("{error:#}")))
+        })
+    }
+
+    fn adopt_single_account_with(
+        &self,
+        copy_key: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        // Side files first: a database is only moved after its log.
+        const DATABASES: [&str; 8] = [
             "session.db-wal",
             "session.db-shm",
             "session.db-journal",
-            "archive.db",
+            "session.db",
             "archive.db-wal",
             "archive.db-shm",
             "archive.db-journal",
-        ] {
-            move_file(&self.state.join(name), &dest.state.join(name))?;
+            "archive.db",
+        ];
+        let pending: Vec<&str> = DATABASES
+            .into_iter()
+            .filter(|name| self.state.join(name).exists())
+            .collect();
+        let dest = self.account(&AccountId::first());
+        if !pending.is_empty() {
+            self.adopt_databases(&dest, &pending, copy_key)?;
         }
+        // Caches and pictures carry no key; an interrupted move finishes here.
         adopt_directory(&self.state.join("stickers"), &dest.saved_sticker_dir())?;
         adopt_directory(&self.cache.join("media"), &dest.media_cache_dir())?;
         adopt_directory(&self.cache.join("avatars"), &dest.avatar_cache_dir())?;
@@ -153,6 +167,52 @@ impl AppDirs {
                 &self.state.join(format!("wallpaper.{extension}")),
                 &dest.wallpaper_file(extension),
             )?;
+        }
+        Ok(())
+    }
+
+    fn adopt_databases(
+        &self,
+        dest: &AccountDirs,
+        pending: &[&str],
+        copy_key: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        dest.ensure()?;
+        // Refuse to mix two setups. Only an unrelated earlier file can be in
+        // the way: a rename leaves nothing behind at its source.
+        let mut blocked: Vec<PathBuf> = pending
+            .iter()
+            .map(|name| dest.state.join(name))
+            .filter(|to| to.exists())
+            .collect();
+        if self.state.join("stickers").is_dir() && dest.saved_sticker_dir().exists() {
+            blocked.push(dest.saved_sticker_dir());
+        }
+        if !blocked.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} holds a single-account setup, but {} already exists. Nothing was moved; move one of them away and start ZapFast again",
+                    self.state.display(),
+                    blocked[0].display()
+                ),
+            ));
+        }
+        let legacy_archive = self.state.join("archive.db");
+        if legacy_archive.exists() {
+            copy_key(&legacy_archive, &dest.archive_db()).map_err(|error| {
+                std::io::Error::other(format!(
+                    "Could not move the archive's key to the new account folder, so the archive was left where it is: {error}"
+                ))
+            })?;
+        }
+        for name in pending {
+            std::fs::rename(self.state.join(name), dest.state.join(name))?;
+        }
+        // Make the renames durable before anything opens the databases.
+        #[cfg(unix)]
+        for dir in [&self.state, &dest.state] {
+            std::fs::File::open(dir)?.sync_all()?;
         }
         Ok(())
     }
@@ -551,6 +611,113 @@ mod tests {
             b"wall"
         );
         assert!(!dirs.state.join("wallpaper.png").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A single-account setup with an encrypted-looking archive and its log.
+    fn legacy(name: &str) -> (PathBuf, AppDirs) {
+        let root = root(name);
+        let dirs = AppDirs::under(&root);
+        dirs.ensure().unwrap();
+        std::fs::write(dirs.session_db(), b"session").unwrap();
+        std::fs::write(dirs.archive_db(), b"encrypted pages").unwrap();
+        std::fs::write(dirs.state.join("archive.db-wal"), b"committed").unwrap();
+        (root, dirs)
+    }
+
+    #[test]
+    fn an_archive_whose_key_cannot_move_stays_where_it_is() {
+        let (root, dirs) = legacy("key-refused");
+        let error = dirs
+            .adopt_single_account_with(|_, _| Err(std::io::Error::other("keyring locked")))
+            .unwrap_err();
+        assert!(error.to_string().contains("keyring locked"), "{error}");
+        assert_eq!(
+            std::fs::read(dirs.archive_db()).unwrap(),
+            b"encrypted pages"
+        );
+        assert_eq!(
+            std::fs::read(dirs.state.join("archive.db-wal")).unwrap(),
+            b"committed"
+        );
+        assert_eq!(std::fs::read(dirs.session_db()).unwrap(), b"session");
+        let account = dirs.account(&AccountId::first());
+        assert!(!account.archive_db().exists());
+        assert!(!account.session_db().exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_key_is_copied_before_the_archive_moves() {
+        let (root, dirs) = legacy("key-first");
+        let account = dirs.account(&AccountId::first());
+        let mut seen = None;
+        dirs.adopt_single_account_with(|from, to| {
+            // The archive is still at its old place while its key is copied.
+            assert!(from.exists() && !to.exists());
+            seen = Some((from.to_path_buf(), to.to_path_buf()));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(seen, Some((dirs.archive_db(), account.archive_db())));
+        assert_eq!(
+            std::fs::read(account.archive_db()).unwrap(),
+            b"encrypted pages"
+        );
+        assert_eq!(
+            std::fs::read(account.state.join("archive.db-wal")).unwrap(),
+            b"committed"
+        );
+        // A second start finds nothing left to move and asks for no key.
+        dirs.adopt_single_account_with(|_, _| panic!("nothing to copy"))
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_interrupted_move_finishes_with_its_log() {
+        let (root, dirs) = legacy("interrupted");
+        let account = dirs.account(&AccountId::first());
+        account.ensure().unwrap();
+        // The log went first, then the process stopped.
+        std::fs::rename(
+            dirs.state.join("archive.db-wal"),
+            account.state.join("archive.db-wal"),
+        )
+        .unwrap();
+        dirs.adopt_single_account_with(|_, _| Ok(())).unwrap();
+        assert_eq!(
+            std::fs::read(account.archive_db()).unwrap(),
+            b"encrypted pages"
+        );
+        assert_eq!(
+            std::fs::read(account.state.join("archive.db-wal")).unwrap(),
+            b"committed"
+        );
+        assert!(!dirs.archive_db().exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_account_folder_in_the_way_stops_the_move_before_anything_changes() {
+        let (root, dirs) = legacy("in-the-way");
+        let account = dirs.account(&AccountId::first());
+        account.ensure().unwrap();
+        std::fs::write(account.archive_db(), b"another history").unwrap();
+        let error = dirs
+            .adopt_single_account_with(|_, _| panic!("no key is copied"))
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            std::fs::read(dirs.archive_db()).unwrap(),
+            b"encrypted pages"
+        );
+        assert_eq!(std::fs::read(dirs.session_db()).unwrap(), b"session");
+        assert_eq!(
+            std::fs::read(account.archive_db()).unwrap(),
+            b"another history"
+        );
+        assert!(!account.session_db().exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

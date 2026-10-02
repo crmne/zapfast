@@ -16,7 +16,7 @@ fn plaintext(path: &Path) -> Result<bool> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
         Err(error) => return Err(error.into()),
     };
-    if file.metadata()?.len() < 16 {
+    if file.metadata()?.len() == 0 {
         return Ok(true);
     }
     let mut header = [0; 16];
@@ -94,7 +94,35 @@ fn copy_archive_key_in(
         .set_secret(key.as_ref())
         .map_err(keyring_error)
         .context("Could not save the archive key in the OS keyring")?;
+    // Read back before the only copy of the history moves under this key.
+    let saved = Zeroizing::new(
+        new_entry
+            .get_secret()
+            .map_err(keyring_error)
+            .context("Could not verify the copied archive key")?,
+    );
+    ensure!(
+        saved.as_slice() == key.as_ref(),
+        "The OS keyring did not retain the copied archive key"
+    );
     Ok(())
+}
+
+/// Deletes the keyring entry of an archive folder that is gone for good,
+/// such as a removed account's. Never call it while the archive exists.
+pub fn forget_archive_key(identity: &str) -> Result<()> {
+    let entry = platform_store()?
+        .build("rocks.zapfast.ZapFast", identity, None)
+        .map_err(keyring_error)?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
+        Err(error) => Err(keyring_error(error)),
+    }
+}
+
+/// The keyring identity of the archive at `path`, while its folder exists.
+pub fn archive_key_identity(path: &Path) -> Result<String> {
+    identity_for(path.parent().context("Archive has no parent directory")?)
 }
 
 fn identity_for(parent: &Path) -> Result<String> {
