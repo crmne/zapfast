@@ -9637,6 +9637,7 @@ mod tests {
             assert!(app.reply_to.is_none());
             assert!(app.composer.is_empty());
             // A new private send in the replacement lifetime still recovers normally.
+            app.open_chat(group.into());
             app.apply(
                 Action::ReplyPrivately {
                     chat: group.into(),
