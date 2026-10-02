@@ -1699,6 +1699,7 @@ fn shows_sender_pictures(chat: &Chat) -> bool {
     chat.is_group()
 }
 
+/// Draws virtualized transcript rows and records selection, scrolling and message actions.
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     // Taken up front: `names_or` below borrows the rest of `app` for the

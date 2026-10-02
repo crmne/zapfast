@@ -1691,6 +1691,7 @@ fn wallpaper_image_sample(app: &mut App) {
     app.settings.wallpaper_image = Some(path);
 }
 
+/// Configures synthetic offline demo states and appearance for tests and screenshots.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -2772,6 +2773,7 @@ fn unlink(app: &mut App) {
     app.me = None;
 }
 
+/// Builds synthetic history rows spanning multiple dates for the scrolling-date demo.
 fn history_date_sample(app: &mut App) {
     let chat = SAMPLES[0].id;
     let base = crate::util::now() - 3 * 86_400;

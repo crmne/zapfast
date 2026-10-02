@@ -305,6 +305,7 @@ pub fn day_label(locale: Locale, unix_seconds: i64) -> String {
     day_label_relative_to(locale, when.date(), today())
 }
 
+/// Formats a localized day label relative to a supplied reference date.
 fn day_label_relative_to(locale: Locale, date: Date, today: Date) -> String {
     let days = today
         .since(date)
@@ -402,6 +403,7 @@ fn month_name(locale: Locale, month: i8) -> String {
     .into_owned()
 }
 
+/// Returns a date-context month name, allowing language-specific grammatical forms.
 fn date_month_name(locale: Locale, month: i8) -> String {
     use crate::i18n::pgettext;
     match month {
