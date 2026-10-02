@@ -9176,6 +9176,26 @@ mod tests {
         let _ = first.completion.send(());
         assert!(!second.wait().await);
     }
+
+    /// Clearing older rows cancels their queued dispatches and keeps newer rows editable.
+    #[tokio::test]
+    async fn clearing_a_chat_cancels_only_edits_whose_rows_were_removed() {
+        let (mut worker, _, _, _) = super::receipt_tests::worker();
+        let older = super::receipt_tests::own_message("older-edit", 100);
+        let newer = super::receipt_tests::own_message("newer-edit", 200);
+        worker.archive.ensure_chat(&older.chat, "Fixture").unwrap();
+        for row in [&older, &newer] {
+            worker.archive.insert_message(row, None).unwrap();
+            worker.begin_edit(&row.chat, &row.id);
+        }
+        let key = (older.chat.clone(), older.id.clone());
+        let mut removed = worker.pending_edits.get_mut(&key).unwrap().reserve_dispatch();
+        let key = (newer.chat.clone(), newer.id.clone());
+        let mut retained = worker.pending_edits.get_mut(&key).unwrap().reserve_dispatch();
+        assert!(worker.empty_chat(&older.chat, 100, false));
+        assert!(!removed.wait().await);
+        assert!(retained.wait().await);
+    }
     use std::io::Cursor;
 
     #[test]
