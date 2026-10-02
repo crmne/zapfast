@@ -67,6 +67,7 @@ impl Locale {
         fastframe_i18n::LanguageTag::parse(identifier).and_then(|tag| Self::from_tag(&tag))
     }
 
+    /// Resolves a supported locale from its persisted or platform language tag.
     fn from_tag(tag: &fastframe_i18n::LanguageTag) -> Option<Locale> {
         Some(match tag.language.as_str() {
             "en" => Self::English,
@@ -94,6 +95,7 @@ impl Locale {
 }
 
 impl fastframe_i18n::Locale for Locale {
+    /// Returns the embedded gettext catalog for the requested supported locale.
     fn catalog(self) -> Option<&'static dyn fastframe_i18n::Translator> {
         match self {
             Self::PortugueseBrazil => Some(&pt_br::Translator),

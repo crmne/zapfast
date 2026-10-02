@@ -787,6 +787,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     }
 }
 
+/// Draws text, reply and attachment composition controls and queues explicit send actions.
 fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     let shown = egui::Panel::bottom("composer")

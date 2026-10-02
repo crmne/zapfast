@@ -751,6 +751,7 @@ impl Pending {
 /// The app outlives its window: closing it with "keep running" on hides
 /// ZapFast, and the tray, a notification or another launch brings it back.
 impl fastframe_shell::Resident for App {
+    /// Chooses background residency or process exit after the window closes.
     fn closed(&self) -> fastframe_shell::Closed {
         if !self.quit_requested && self.hide_intent {
             fastframe_shell::Closed::Hide
@@ -905,6 +906,7 @@ impl App {
         }
     }
 
+    /// Constructs application state around the supplied backend and persisted settings.
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
         let palette = settings
             .cached_palette()
@@ -2073,6 +2075,7 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Drains backend events into UI state, checking request ownership before applying results.
     fn handle_events(&mut self) {
         for event in self.backend.poll() {
             match event {
@@ -2584,6 +2587,7 @@ impl App {
         }
     }
 
+    /// Applies link transitions and clears account-owned state when the device is unlinked.
     fn handle_link(&mut self, status: LinkStatus) {
         match &status {
             LinkStatus::Connected => {
@@ -2842,6 +2846,7 @@ impl App {
         });
     }
 
+    /// Removes a locked chat's visible state and protects its drafts from unauthenticated access.
     fn hide_locked_chat(&mut self, id: &str) {
         // A locked chat still exists, so its unsent text waits as a draft.
         // Text emptied in the composer clears the stored copy too.
@@ -3119,6 +3124,7 @@ impl App {
         self.backend.send(Command::MarkUnread(chat.to_owned()));
     }
 
+    /// Saves the departing chat's draft state and restores the destination's permitted state.
     fn open_chat(&mut self, id: ChatId) {
         // Notifications and stale actions must not open a locked chat from
         // outside the authenticated folder.
@@ -3348,6 +3354,7 @@ impl App {
         (text, mentions)
     }
 
+    /// Stores staged attachments, caption mentions and reply under their originating chat.
     fn save_attachment_draft(&mut self, chat: &str) {
         if self.pending.is_empty() {
             self.attachment_drafts.remove(chat);
@@ -3379,6 +3386,7 @@ impl App {
         self.composer_mentions.clone()
     }
 
+    /// Dispatches the active chat's staged attachments and clears their persisted caption.
     fn send_pending(&mut self, chat: ChatId, caption: String, mentions: Vec<ComposerMention>) {
         // A queued send from a view that was replaced cannot consume the
         // next chat's attachments or reply. Keep its caption with its draft.
@@ -3666,6 +3674,7 @@ impl App {
         }
     }
 
+    /// Applies queued view actions after drawing, routing state changes and backend commands.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the
