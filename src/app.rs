@@ -2921,6 +2921,12 @@ impl App {
         unsent: Unsent,
         reason: Refusal,
     ) {
+        // Removing the destination also discards recovery of its private replies.
+        if quoting.as_ref().is_some_and(|target| target.chat.is_some())
+            && self.chat(&chat).is_none()
+        {
+            return;
+        }
         let open = self.open_chat.as_deref() == Some(chat.as_str());
         // Re-arm the reply banner, unless the user has moved on to another
         // reply or an edit since.
@@ -9521,6 +9527,48 @@ mod tests {
         assert!(app.reply_to.is_none());
         app.open_chat(sender.into());
         assert_eq!(app.reply_to, Some(target));
+    }
+
+    /// Late refusals cannot restore a deleted recipient's private quote, text or voice.
+    #[test]
+    fn private_reply_refusals_do_not_recreate_deleted_destination_drafts() {
+        for voice in [false, true] {
+            let mut app = app();
+            let (backend, mut commands) = Backend::recording();
+            app.backend = backend;
+            let ctx = egui::Context::default();
+            let group = "12345@g.us";
+            let recipient = "15550002222@s.whatsapp.net";
+            app.chats.push(Chat::new(group.into(), "Group fixture".into()));
+            let mut original = message(group, "original", 100);
+            original.sender = recipient.into();
+            app.conversations.entry(group.into()).or_default().merge(vec![original], false);
+            app.open_chat = Some(group.into());
+            app.apply(Action::ReplyPrivately { chat: group.into(), message: "original".into() }, &ctx);
+            let target = app.reply_to.clone().unwrap();
+            let unsent = if voice {
+                let samples = vec![0.0; 10];
+                app.unsent_voice = Some((recipient.into(), samples.clone()));
+                app.apply(Action::SendRecording, &ctx);
+                Unsent::Voice(samples)
+            } else {
+                app.apply(Action::SendText { chat: recipient.into(), text: "Private draft".into(), quoting: Some(target.clone()) }, &ctx);
+                Unsent::Text("Private draft".into())
+            };
+            assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+                Command::SendText { quoting: Some(quote), .. } | Command::SendVoice { quoting: Some(quote), .. } if quote == target
+            )));
+            app.forget_chat(recipient);
+            app.send_refused(recipient.into(), Some(target), unsent, Refusal::Offline);
+            assert!(!app.private_reply_drafts.contains_key(recipient));
+            assert!(!app.drafts.contains_key(recipient));
+            assert!(app.reply_to.is_none());
+            assert!(app.unsent_voice.is_none());
+            app.chats.push(Chat::new(recipient.into(), "Recreated recipient fixture".into()));
+            app.open_chat(recipient.into());
+            assert!(app.reply_to.is_none());
+            assert!(app.composer.is_empty());
+        }
     }
 
     /// Closing and reopening a recipient restores its private quote, while cancel removes it.
