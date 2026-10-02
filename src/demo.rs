@@ -3263,8 +3263,12 @@ mod tests {
         render(&mut app, &ctx);
         let body = "Call +00 (00) 00000-0000";
         let start = body.find('+').unwrap();
-        let phone = crate::ui::conversation::bubble_id(chat, "ada-link")
-            .with(("phone-link", start, body.len(), 0usize));
+        let phone = crate::ui::conversation::bubble_id(chat, "ada-link").with((
+            "phone-link",
+            start,
+            body.len(),
+            0usize,
+        ));
         ctx.memory_mut(|memory| memory.request_focus(phone));
         ctx.run_ui(
             egui::RawInput {

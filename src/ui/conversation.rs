@@ -5534,8 +5534,12 @@ fn rich_body(
             let link = ui
                 .interact(
                     bounds.translate(origin.to_vec2()).expand(2.0),
-                    bubble_id(&view.chat.id, &message.id)
-                        .with(("phone-link", range.start, range.end, row)),
+                    bubble_id(&view.chat.id, &message.id).with((
+                        "phone-link",
+                        range.start,
+                        range.end,
+                        row,
+                    )),
                     Sense::CLICK,
                 )
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -5557,12 +5561,8 @@ fn rich_body(
                             to_phone: None,
                         });
                     }
-                    if widgets::menu_item(
-                        ui,
-                        &view.palette,
-                        Some(Icon::Copy),
-                        copy_number.as_ref(),
-                    ) {
+                    if widgets::menu_item(ui, &view.palette, Some(Icon::Copy), copy_number.as_ref())
+                    {
                         actions.push(Action::CopyText(phone.to_owned()));
                     }
                 });
