@@ -5908,7 +5908,7 @@ impl App {
                 input.modifiers.command,
             )
         });
-        let requested = paste && (text || !self.paste_before_release);
+        let requested = paste && (text || self.paste_was_focused) && (text || !self.paste_before_release);
         self.paste_was_focused = focused;
         // egui-winit swallows Ctrl/Cmd+V's press even for an image-only
         // clipboard. A release after an observed command modifier can be that
@@ -6787,6 +6787,11 @@ mod tests {
             .push(Chat::new("fixture".into(), "Fixture".into()));
         app.composer = "caption".into();
         let ctx = egui::Context::default();
+        // A running app has drawn a focused frame before a shortcut arrives.
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.take_clipboard_paste(ui.ctx(), || None);
+        });
+        output.textures_delta.clear();
         ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("composer-text")));
         clipboard_frame(&mut app, &ctx, vec![], false);
         (app, ctx)
