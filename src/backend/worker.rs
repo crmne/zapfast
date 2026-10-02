@@ -1118,6 +1118,7 @@ impl Worker {
         self.group_info_tries.remove(chat);
         match self.archive.remove_chat_through(chat, through, true) {
             Ok(removed) => {
+                self.discard_removed_edits(chat);
                 self.pending_older.remove(chat);
                 if delete_media {
                     self.drop_cached_media(&removed.media);
@@ -1149,6 +1150,7 @@ impl Worker {
     fn empty_chat(&mut self, chat: &str, through: i64, delete_media: bool) -> bool {
         match self.archive.remove_chat_through(chat, through, false) {
             Ok(removed) => {
+                self.discard_removed_edits(chat);
                 self.pending_older.remove(chat);
                 if delete_media {
                     self.drop_cached_media(&removed.media);
@@ -3092,6 +3094,7 @@ impl Worker {
             };
             match protocol.r#type {
                 Some(Type::REVOKE) => {
+                    self.pending_edits.remove(&(chat.clone(), target.clone()));
                     if let Ok(true) =
                         self.archive
                             .set_content(&chat, &target, &Content::Revoked, false)
@@ -4505,6 +4508,7 @@ impl Worker {
             Command::Revoke { chat, id } => self.revoke(chat, id),
             Command::DeleteLocal { chat, id } => {
                 if let Ok(true) = self.archive.delete_message(&chat, &id) {
+                    self.pending_edits.remove(&(chat.clone(), id.clone()));
                     self.emit(Event::MessageDeleted {
                         chat: chat.clone(),
                         id,
@@ -6969,6 +6973,14 @@ impl Worker {
     /// increasing sequence prevents a late completion matching a new account's edit.
     fn invalidate_pending_edits(&mut self) {
         self.pending_edits.clear();
+    }
+
+    /// Cancels queued edits to rows removed by a clear or delete boundary.
+    fn discard_removed_edits(&mut self, chat: &str) {
+        let archive = &self.archive;
+        self.pending_edits.retain(|(source, id), _| {
+            source != chat || archive.message(source, id).ok().flatten().is_some()
+        });
     }
 
     /// Validates and dispatches an edit using the current eligibility-check time.
