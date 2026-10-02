@@ -1146,12 +1146,12 @@ fn confirm_delete_messages(
 ) {
     let palette = app.palette;
     let heading = if for_everyone {
-        "Delete for everyone?"
+        crate::i18n::gettext(app.locale, "Delete for everyone?")
     } else {
-        "Delete for me?"
+        crate::i18n::gettext(app.locale, "Delete for me?")
     };
     let body = deletion_body(app.locale, for_everyone, selection.then_some(ids.len()));
-    title(ui, app, heading);
+    title(ui, app, heading.as_ref());
     if selection && !ids.is_empty() {
         theme::text(
             ui,
@@ -1164,7 +1164,7 @@ fn confirm_delete_messages(
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if danger_button(ui, app, "Delete") {
+            if danger_button(ui, app, crate::i18n::gettext(app.locale, "Delete").as_ref()) {
                 for id in ids {
                     let (chat, id) = (chat.to_owned(), id.clone());
                     let action = if for_everyone {
@@ -1177,7 +1177,7 @@ fn confirm_delete_messages(
                 app.actions.push(Action::CancelSelection);
                 app.actions.push(Action::CloseDialog);
             }
-            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+            if theme::pill_button(ui, &palette, crate::i18n::gettext(app.locale, "Cancel").as_ref(), false).clicked() {
                 app.actions.push(Action::CloseDialog);
             }
         });
