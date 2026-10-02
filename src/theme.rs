@@ -85,9 +85,10 @@ pub struct Palette {
     pub link: Color32,
     /// Read-receipt blue.
     pub read: Color32,
-    /// How message bubbles are shaped. Palette files cannot set it, so
-    /// custom themes keep WhatsApp's.
-    #[serde(default)]
+    /// How message bubbles are shaped. Neither palette files nor the copy
+    /// of a palette cached in settings can set it, so custom themes keep
+    /// WhatsApp's: only the built-in Messages palettes choose another.
+    #[serde(skip)]
     pub bubbles: BubbleStyle,
 }
 
@@ -1501,6 +1502,16 @@ mod tests {
             ],
             4.5,
         );
+    }
+
+    /// The bubble style never comes from a stored palette, so a cached or
+    /// edited one cannot turn a custom theme into the Messages style.
+    #[test]
+    fn stored_palettes_keep_whatsapp_bubbles() {
+        let mut stored = serde_json::to_value(Palette::messages()).unwrap();
+        stored["bubbles"] = "messages".into();
+        let palette: Palette = serde_json::from_value(stored).unwrap();
+        assert_eq!(palette.bubbles, BubbleStyle::WhatsApp);
     }
 
     /// Bubble contents stay readable for every palette, custom ones included.
