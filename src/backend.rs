@@ -115,6 +115,12 @@ pub struct CreatedPoll {
 
 #[derive(Debug)]
 pub enum Command {
+    /// Stores locally generated text in the encrypted message archive.
+    SaveVoiceTranscript {
+        chat: ChatId,
+        message: String,
+        text: String,
+    },
     RefreshPoll {
         chat: ChatId,
         message: String,
@@ -709,6 +715,11 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    /// Persisted local transcripts accompanying a message page.
+    VoiceTranscripts {
+        chat: ChatId,
+        transcripts: Vec<(String, String)>,
+    },
     InteractiveReplyState {
         chat: ChatId,
         message: String,

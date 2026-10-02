@@ -1319,6 +1319,11 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
+    /// Transcribes a downloaded voice message locally.
+    TranscribeVoice {
+        chat: ChatId,
+        message: String,
+    },
     /// Plays or pauses a downloaded voice or audio message.
     PlayVoice {
         message: String,

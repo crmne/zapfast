@@ -1655,6 +1655,7 @@ struct View<'a> {
     /// Animate media only while this window is active.
     animate: bool,
     player: &'a crate::audio::Player,
+    transcription: &'a crate::transcription::Transcription,
     video: &'a crate::video::Player,
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
 }
@@ -1710,6 +1711,20 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // An explicit jump (Ctrl+End, or the return-to-bottom button) must reach
     // the bottom even while a message bubble retains keyboard focus.
     let scroll_forced = std::mem::take(&mut app.scroll_to_bottom_forced);
+    let transcription_changed = ui.ctx().data_mut(|data| {
+        let id = egui::Id::new("voice-transcription-revision");
+        let revision = app.transcription.revision(&chat.id);
+        let previous = data.get_temp::<(ChatId, u64)>(id);
+        data.insert_temp(id, (chat.id.clone(), revision));
+        previous.is_some_and(|(previous_chat, previous)| {
+            previous_chat == chat.id && previous != revision
+        })
+    });
+    // A transcript expands an existing bubble; it must not pull the reader
+    // to its end through either the initial pin or egui's sticky bottom.
+    if transcription_changed && !scroll_forced {
+        app.scroll_to_bottom = false;
+    }
     // Check out the conversation while drawing rows and collecting actions.
     let mut conversation = app.conversations.remove(&chat.id).unwrap_or_default();
     let typing = app.typing_in(&chat.id);
@@ -1761,6 +1776,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         now: crate::util::now(),
         animate: app.window_focused,
         player: &app.player,
+        transcription: &app.transcription,
         video: &app.video,
         copy_rows: app.copy_rows.as_ref(),
     };
@@ -1888,7 +1904,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
-        .stick_to_bottom(view.reaction.is_none())
+        .stick_to_bottom(view.reaction.is_none() && (!transcription_changed || scroll_forced))
         .scroll_source(if view.reaction.is_some() {
             egui::scroll_area::ScrollSource::NONE
         } else {
@@ -4459,9 +4475,44 @@ fn content(
             media,
             seconds,
             waveform,
-            ..
+            voice_note,
         } => {
             voice_player(ui, view, message, media, *seconds, waveform, width, actions);
+            if !voice_note {
+                return None;
+            }
+            let state = view.transcription.state(&view.chat.id, &message.id);
+            if let Some(crate::transcription::State::Ready(text)) = state {
+                return rich_body(
+                    ui,
+                    view,
+                    message,
+                    text,
+                    width,
+                    Some(reserve),
+                    Some(width),
+                    actions,
+                );
+            }
+            match state {
+                Some(crate::transcription::State::Running) => {
+                    theme::text(
+                        ui,
+                        "Transcribing…",
+                        theme::regular(12.0),
+                        view.palette.secondary,
+                    );
+                }
+                Some(crate::transcription::State::Failed) => {
+                    theme::text(
+                        ui,
+                        "Transcription failed. Click the transcription icon to retry.",
+                        theme::regular(12.0),
+                        view.palette.secondary,
+                    );
+                }
+                _ => {}
+            }
             None
         }
         Content::Document {
@@ -6648,7 +6699,25 @@ fn voice_player(
     // The chip appears with the playable clip; the waveform takes its space
     // back while the audio is still downloading.
     let shows_chip = media.path.is_some();
-    let wave_width = (width - button - 10.0 - if shows_chip { chip + 10.0 } else { 0.0 }).max(0.0);
+    let can_transcribe = view.transcription.available()
+        && media.path.is_some()
+        && matches!(
+            message.content,
+            Content::Audio {
+                voice_note: true,
+                ..
+            }
+        );
+    const TRANSCRIPTION_ICON_SIZE: f32 = 20.0;
+    const TRANSCRIPTION_SPACE: f32 = 32.0;
+    let transcription_space = if can_transcribe {
+        TRANSCRIPTION_SPACE + 10.0
+    } else {
+        0.0
+    };
+    let wave_width =
+        (width - transcription_space - button - 10.0 - if shows_chip { chip + 10.0 } else { 0.0 })
+            .max(0.0);
     let bars: Vec<u8> = if !waveform.is_empty() {
         waveform.to_vec()
     } else if let Some(bars) = view.player.bars(&message.id) {
@@ -6673,6 +6742,7 @@ fn voice_player(
         vec2(width.max(0.0), button),
         Layout::left_to_right(Align::Center),
         |ui| {
+            ui.set_min_width(width.max(0.0));
             ui.spacing_mut().item_spacing.x = 10.0;
             match (&media.path, &media.state) {
                 (None, MediaState::Downloading) => waiting(ui),
@@ -6721,6 +6791,36 @@ fn voice_player(
                         }
                     }
                 },
+            }
+            if can_transcribe {
+                let id = bubble_id(&view.chat.id, &message.id);
+                let pending_or_done = matches!(
+                    view.transcription.state(&view.chat.id, &message.id),
+                    Some(
+                        crate::transcription::State::Running
+                            | crate::transcription::State::Ready(_)
+                    )
+                );
+                let response = ui
+                    .add_enabled_ui(!pending_or_done, |ui| {
+                        theme::icon_button(
+                            ui,
+                            Icon::SpeechText,
+                            TRANSCRIPTION_ICON_SIZE,
+                            palette.secondary,
+                            palette.text,
+                            "Transcribe voice message",
+                        )
+                    })
+                    .inner;
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(id.with("transcription"), response.rect));
+                if response.clicked() {
+                    actions.push(Action::TranscribeVoice {
+                        chat: view.chat.id.clone(),
+                        message: message.id.clone(),
+                    });
+                }
             }
             let mut wave_middle = None;
             ui.vertical(|ui| {

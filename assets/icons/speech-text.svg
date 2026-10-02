@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="26 50 210 156" fill="none">
+  <g stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <!-- waveform -->
+    <path d="M34 106v44"/>
+    <path d="M58 86v84"/>
+    <path d="M82 58v140"/>
+    <path d="M106 92v76"/>
+    <path d="M130 110v40"/>
+
+    <!-- transcript panel -->
+    <path d="M154 58h50a24 24 0 0 1 24 24v92a24 24 0 0 1-24 24h-50"/>
+    <path d="M154 58h-8a16 16 0 0 0-16 16v10"/>
+    <path d="M154 198h-8a16 16 0 0 1-16-16v-2"/>
+
+    <!-- text lines -->
+    <path d="M158 102h42"/>
+    <path d="M158 130h42"/>
+    <path d="M158 158h28"/>
+  </g>
+</svg>

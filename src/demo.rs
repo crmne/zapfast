@@ -1698,6 +1698,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     for part in page.split(',').map(str::trim) {
         match part {
             "chat" | "" => {}
+            "voice-transcription" => {
+                app.transcription.sample(SAMPLES[0].id, "ada-voice", crate::transcription::State::Ready("Let's meet at the library tomorrow morning. I will bring the notes from our last conversation.".into()));
+                app.transcription.sample(
+                    SAMPLES[0].id,
+                    "you-voice",
+                    crate::transcription::State::Running,
+                );
+            }
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
             "chat-header-menu" => app.open_header_menu = app.open_chat.clone(),
             "interactive-actions" => interactive_actions_sample(app),
@@ -4103,6 +4111,113 @@ mod tests {
     }
 
     #[test]
+    fn voice_transcription_is_selectable_and_its_retry_icon_stays_in_the_bubble() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("voice,voice-transcription"));
+        render(&mut app, &ctx);
+        let rows = app.copy_rows.lock().unwrap();
+        assert!(
+            rows.iter()
+                .any(|row| row.body.contains("Let's meet at the library"))
+        );
+        drop(rows);
+        app.transcription.sample(
+            SAMPLES[0].id,
+            "you-voice",
+            crate::transcription::State::Failed,
+        );
+        render(&mut app, &ctx);
+        let id = crate::ui::conversation::bubble_id(SAMPLES[0].id, "you-voice");
+        let icon = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("transcription")))
+            .unwrap();
+        let bubble = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+            .unwrap();
+        assert!(bubble.contains_rect(icon));
+        let speed = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(crate::ui::conversation::speed_chip_id(
+                    SAMPLES[0].id,
+                    "you-voice",
+                ))
+            })
+            .unwrap();
+        let labels = accessible_labels(&mut app, &ctx);
+        assert!(
+            labels
+                .iter()
+                .any(|label| label == "Transcribe voice message")
+        );
+        assert!(icon.right() < speed.left());
+        assert!((icon.left() - bubble.left()) < 60.0);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(icon.center())],
+        );
+        app.actions.clear();
+        for pressed in [true, false] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events: vec![egui::Event::PointerButton {
+                        pos: icon.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ui| crate::ui::show(&mut app, ui),
+            );
+            output.textures_delta.clear();
+        }
+        assert!(app.actions.iter().any(|action| matches!(action, crate::model::Action::TranscribeVoice { chat, message } if chat == SAMPLES[0].id && message == "you-voice")));
+    }
+
+    #[test]
+    fn a_long_voice_transcript_keeps_the_readers_scroll_position() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = SAMPLES[0].id;
+        let conversation = app.conversations.get_mut(chat).unwrap();
+        let voice = conversation.message("you-voice").unwrap().clone();
+        conversation
+            .messages
+            .retain(|row| row.timestamp < voice.timestamp);
+        conversation.messages.push(voice);
+        app.transcription
+            .sample(chat, "you-voice", crate::transcription::State::Running);
+        app.scroll_to_bottom = true;
+        render(&mut app, &ctx);
+        assert!(app.at_bottom);
+        let before = scroll_metrics(&ctx, chat).0;
+        app.transcription.sample(
+            chat,
+            "you-voice",
+            crate::transcription::State::Ready("A long synthetic voice transcript. ".repeat(200)),
+        );
+        render(&mut app, &ctx);
+        let after = scroll_metrics(&ctx, chat).0;
+        assert!(
+            (after - before).abs() < 1.0,
+            "scroll moved from {before} to {after}"
+        );
+        assert!(!app.at_bottom);
+        app.scroll_to_bottom = true;
+        app.scroll_to_bottom_forced = true;
+        render(&mut app, &ctx);
+        assert!(app.at_bottom, "an explicit jump still reaches the bottom");
+    }
+
+    #[test]
     fn every_surface_lays_out() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -4242,6 +4357,7 @@ mod tests {
             "compose-emoji",
             "voice",
             "voice,voice-menu",
+            "voice,voice-transcription",
             "recording",
             "preview",
             "gifs",
