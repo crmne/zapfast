@@ -2539,6 +2539,42 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 hits.sort_by_key(|message| std::cmp::Reverse(message.timestamp));
                 app.search_hits = hits;
             }
+            "audio-types" => {
+                let chat = app.open_chat.clone().unwrap_or_default();
+                if let Some(conversation) = app.conversations.get_mut(&chat) {
+                    let source = conversation
+                        .messages
+                        .iter()
+                        .find(|message| message.id == "ada-voice")
+                        .cloned();
+                    if let Some(source) = source {
+                        conversation.messages = [
+                            ("audio-original", true, false, 8),
+                            ("audio-file", false, false, 52),
+                            ("audio-forwarded", false, true, 52),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (id, voice_note, forwarded, seconds))| {
+                            let mut row = source.clone();
+                            row.id = id.into();
+                            row.timestamp += index as i64;
+                            row.forwarded = forwarded;
+                            if let Content::Audio {
+                                seconds: duration,
+                                voice_note: note,
+                                ..
+                            } = &mut row.content
+                            {
+                                *duration = Some(seconds);
+                                *note = voice_note;
+                            }
+                            row
+                        })
+                        .collect();
+                    }
+                }
+            }
             "voice" => {
                 // Use a valid clip for playback tests.
                 let tone: Vec<f32> = (0..crate::voice::RATE * 6)
@@ -11326,6 +11362,67 @@ mod bubble_detail_tests {
         apply_flags(&mut app, Some("photos"));
         frames(&mut app, &ctx, egui::vec2(1180.0, 1400.0));
         (app, ctx)
+    }
+
+    /// Both audio types keep their own player treatment and forwarding label
+    /// across themes, bubble sides, download states, and narrow layouts.
+    #[test]
+    fn audio_files_have_a_track_and_music_badge_independent_of_forwarding() {
+        for light in [false, true] {
+            for from_me in [false, true] {
+                for downloaded in [false, true] {
+                    for width in [1180.0, 560.0] {
+                        let mut app = app();
+                        apply_flags(
+                            &mut app,
+                            Some(if light {
+                                "audio-types,light"
+                            } else {
+                                "audio-types"
+                            }),
+                        );
+                        let chat = app.open_chat.clone().unwrap();
+                        for row in &mut app.conversations.get_mut(&chat).unwrap().messages {
+                            row.from_me = from_me;
+                            if downloaded && let Content::Audio { media, .. } = &mut row.content {
+                                media.path =
+                                    Some(app.dirs.media_cache_dir().join("synthetic-audio.ogg"));
+                            }
+                        }
+                        let ctx = egui::Context::default();
+                        app.attach(&ctx);
+                        frames(&mut app, &ctx, egui::vec2(width, 780.0));
+                        for (id, voice, forwarded) in [
+                            ("audio-original", true, false),
+                            ("audio-file", false, false),
+                            ("audio-forwarded", false, true),
+                        ] {
+                            let bubble = crate::ui::conversation::bubble_id(&chat, id);
+                            let frame =
+                                rect(&ctx, bubble.with("rect")).expect("audio bubble drawn");
+                            assert_eq!(rect(&ctx, bubble.with("voice-waveform")).is_some(), voice);
+                            assert_eq!(rect(&ctx, bubble.with("audio-track")).is_some(), !voice);
+                            let badge = rect(&ctx, bubble.with("audio-file"));
+                            assert_eq!(badge.is_some(), !voice);
+                            if let Some(badge) = badge {
+                                assert!(frame.contains_rect(badge), "music badge fits in bubble");
+                            }
+                            let chip =
+                                rect(&ctx, crate::ui::conversation::speed_chip_id(&chat, id));
+                            assert_eq!(
+                                chip.is_some(),
+                                downloaded,
+                                "playable audio retains speed control"
+                            );
+                            if let Some(chip) = chip {
+                                assert!(frame.contains_rect(chip), "speed control fits in bubble");
+                            }
+                            assert_eq!(rect(&ctx, bubble.with("forwarded")).is_some(), forwarded);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// "Forwarded" sits at the start of the bubble, just under its top, on
