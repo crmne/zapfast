@@ -2680,6 +2680,11 @@ impl App {
                 }
             }
             LinkStatus::LoggedOut => {
+                // Account-scoped lookup results are discarded by the worker.
+                // End their UI requests too, so a later account can retry.
+                self.new_contact_request = None;
+                self.new_contact_dialog_request = None;
+                self.new_contact_pending = false;
                 self.poll_voting.clear();
                 self.interactive_sending.clear();
                 self.poll_creating = false;
@@ -3178,6 +3183,7 @@ impl App {
         self.backend.send(Command::MarkUnread(chat.to_owned()));
     }
 
+    /// Cancels dialog-owned lookups while preserving shared-contact requests.
     fn cancel_contact_dialog_request(&mut self) {
         if self.new_contact_dialog_request.take().is_some() {
             self.new_contact_request = None;
@@ -6545,6 +6551,39 @@ mod tests {
         assert!(app.dialog.is_none());
         assert!(app.actions.iter().any(|action| matches!(action, Action::StartChat { id, .. } if id == "15550000002@s.whatsapp.net")));
         assert!(commands.try_recv().is_ok());
+    }
+
+    #[test]
+    fn logout_ends_number_lookups_and_allows_retry_after_reconnect() {
+        let mut app = app();
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let lookup = || Action::NewContact {
+            phone: "15550000001".into(), first: String::new(), last: String::new(), to_phone: None,
+        };
+        app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
+        app.apply(lookup(), &ctx);
+        let old_request = app.new_contact_request.unwrap();
+        app.handle_link(LinkStatus::LoggedOut);
+        assert!(!app.new_contact_pending);
+        assert!(app.new_contact_request.is_none());
+        assert!(app.new_contact_dialog_request.is_none());
+        app.handle_link(LinkStatus::Connected);
+        app.apply(lookup(), &ctx);
+        let retry = app.new_contact_request.unwrap();
+        assert_ne!(retry, old_request);
+        events.send(Event::ContactReady {
+            request: old_request, id: "15550000001@s.whatsapp.net".into(), name: None,
+        }).unwrap();
+        app.handle_events();
+        assert_eq!(app.new_contact_request, Some(retry));
+        assert!(app.new_contact_pending);
+        assert_eq!(app.dialog, Some(Dialog::MessageNumber));
+        assert!(!app.actions.iter().any(|action| matches!(action, Action::StartChat { .. })));
+        events.send(Event::ContactFailed { request: retry, error: "Fixture retry failure".into() }).unwrap();
+        app.handle_events();
+        assert!(!app.new_contact_pending);
     }
 
     /// egui redoes a discarded pass without the frame's input events. However
