@@ -261,6 +261,10 @@ pub enum Delivery {
     /// Incoming message without outgoing receipts.
     #[default]
     None,
+    /// Waiting for a rate-limit cooldown to end; cancellation is still safe.
+    Queued,
+    /// No worker owns this interrupted send; it may have been transmitted.
+    Unconfirmed,
     /// Sent to the backend but not acknowledged by the server.
     Pending,
     Sent,
@@ -268,6 +272,14 @@ pub enum Delivery {
     Read,
     Played,
     Failed,
+}
+
+impl Delivery {
+    /// These rows have no confirmed successful send. They cannot be edited,
+    /// revoked, quoted, or forwarded as already-sent messages.
+    pub fn is_local(self) -> bool {
+        matches!(self, Self::Queued | Self::Pending | Self::Unconfirmed)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -323,6 +335,12 @@ impl Message {
     /// One-line summary used in chat rows and quotes.
     pub fn summary(&self) -> String {
         self.content.summary()
+    }
+
+    /// Our message waiting for a rate-limit cooldown. It is the chat's
+    /// newest, whatever arrives meanwhile, and goes out at its dispatch time.
+    pub fn waiting_to_send(&self) -> bool {
+        self.from_me && self.status == Delivery::Queued
     }
 
     /// The line of this message that contains `query`, for a search result's
@@ -1254,6 +1272,10 @@ pub enum Scroll {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    CancelQueued {
+        chat: ChatId,
+        id: String,
+    },
     Open(Page),
     /// Opens settings, or closes them when they are already showing.
     ToggleSettings,

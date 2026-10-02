@@ -44,10 +44,15 @@ use early_events::WaitingReaction;
 mod favorite_chats;
 mod interactive;
 mod link_watch;
+mod outgoing;
 mod poll_history;
 mod polls;
 mod sticker_pace;
 mod stickers;
+#[cfg(any(test, feature = "demo"))]
+mod synthetic;
+#[cfg(any(test, feature = "demo"))]
+pub(crate) use synthetic::SyntheticLink;
 
 use super::{Command, Event, GroupEdit, LinkStatus, Refusal, Unsent, Waker, read_sync::ReadSync};
 use crate::app::PAGE;
@@ -544,7 +549,7 @@ pub async fn run(
         receipts_pruned: Instant::now(),
         early: Default::default(),
         link_watch: Default::default(),
-        forward_queue: None,
+        outgoing: Default::default(),
     };
     worker.load_state();
     worker.backfill();
@@ -559,6 +564,7 @@ pub async fn run(
     let mut tick = tokio::time::interval(Duration::from_secs(5));
     loop {
         let deadline = worker.sync_deadline;
+        let outgoing_deadline = worker.outgoing_deadline();
         tokio::select! {
             command = inbox.recv() => {
                 match command {
@@ -589,7 +595,14 @@ pub async fn run(
                 worker.set_syncing(false);
                 worker.emit_chats();
             }
+            _ = async {
+                match outgoing_deadline {
+                    Some(due) => tokio::time::sleep_until(tokio::time::Instant::from_std(due)).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => worker.pump_outgoing(),
             _ = tick.tick() => {
+                worker.pump_outgoing();
                 worker.watch_link();
                 worker.reveal_unconfirmed_after_grace();
                 worker.settle_presence();
@@ -823,66 +836,7 @@ struct Worker {
     first_names_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
-    /// Serial forward in flight. The next send waits for the running one.
-    forward_queue: Option<ForwardQueue<ForwardJob>>,
-}
-
-/// A queued forward: where it goes, the protobuf, and its disappearing timer.
-type ForwardJob = (ChatId, Jid, wa::Message, Option<u32>);
-
-/// Pure queue behind a serial forward. `T` is one job's payload.
-struct ForwardQueue<T> {
-    remaining: VecDeque<(String, T)>,
-    current: Option<String>,
-}
-
-enum ForwardStep<T> {
-    /// The ack belongs to something else.
-    Ignore,
-    Next {
-        id: String,
-        payload: T,
-    },
-    Finished,
-}
-
-impl<T> ForwardQueue<T> {
-    fn new() -> Self {
-        Self {
-            remaining: VecDeque::new(),
-            current: None,
-        }
-    }
-
-    /// Queues a batch and returns the job to start now, when the queue is idle.
-    /// A batch that arrives while one runs waits behind it, in order.
-    fn push(&mut self, jobs: Vec<(String, T)>) -> Option<(String, T)> {
-        let mut jobs = jobs.into_iter();
-        if self.current.is_some() {
-            self.remaining.extend(jobs);
-            return None;
-        }
-        let (id, payload) = jobs.next()?;
-        self.current = Some(id.clone());
-        self.remaining.extend(jobs);
-        Some((id, payload))
-    }
-
-    fn ack(&mut self, id: &str) -> ForwardStep<T> {
-        if self.current.as_deref() != Some(id) {
-            return ForwardStep::Ignore;
-        }
-        match self.remaining.pop_front() {
-            Some((next, payload)) => {
-                self.current = Some(next.clone());
-                ForwardStep::Next { id: next, payload }
-            }
-            None => {
-                self.current = None;
-                ForwardStep::Finished
-            }
-        }
-    }
+    outgoing: outgoing::Outgoing,
 }
 
 /// Decoded history chunk waiting to be canonicalized and archived.
@@ -1198,6 +1152,9 @@ impl Worker {
             log::info!("link: {}", status.log_label());
             self.status = status.clone();
             self.emit(Event::Link(status));
+            // A lost link fails unsent messages at once; a restored one
+            // sends what waits.
+            self.pump_outgoing();
         }
     }
 
@@ -1785,13 +1742,9 @@ impl Worker {
 
     async fn stop_bot(&mut self) {
         self.client = None;
-        // A batch still going belongs to the session that was sending it, and
-        // every send is its own task: one can report its tick after this
-        // returns, up to the shutdown timeout. With the queue dropped the ack
-        // finds nothing to advance, instead of resuming the batch through the
-        // session that comes next. Message ids are fresh per send, so an ack
-        // can never match a job queued after the stop.
-        self.abandon_forwards();
+        // Queued sends belong to this session. Abort unresolved transport work;
+        // its in-flight row becomes unconfirmed because transmission is uncertain.
+        self.abandon_outgoing();
         if let Some(handle) = self.handle.take()
             && tokio::time::timeout(Duration::from_secs(5), handle.shutdown())
                 .await
@@ -2656,7 +2609,6 @@ impl Worker {
         self.poll_sending.clear();
         self.interactive_sending.clear();
         self.poll_history = Default::default();
-        self.forward_queue = None;
         self.pending_older.clear();
         self.pending_avatars.clear();
         self.me_pn = None;
@@ -4264,6 +4216,24 @@ impl Worker {
     // --- commands --------------------------------------------------------
 
     async fn handle_command(&mut self, command: Command) {
+        let remote_target = match &command {
+            Command::EditText { chat, id, .. }
+            | Command::Revoke { chat, id }
+            | Command::React {
+                chat, message: id, ..
+            } => Some((chat, id)),
+            _ => None,
+        };
+        if let Some((chat, id)) = remote_target
+            && self
+                .archive
+                .message(chat, id)
+                .ok()
+                .flatten()
+                .is_some_and(|row| row.from_me && row.status.is_local())
+        {
+            return;
+        }
         let destination = match &command {
             Command::SendText { chat, .. }
             | Command::ReplyInteractive { chat, .. }
@@ -4459,6 +4429,17 @@ impl Worker {
             } => self.edit_text(chat, id, text, mentions),
             Command::Revoke { chat, id } => self.revoke(chat, id),
             Command::DeleteLocal { chat, id } => {
+                // A send on the wire keeps its row; a waiting one is deleted
+                // by the cancel, so it is never sent.
+                if self
+                    .outgoing
+                    .running
+                    .as_ref()
+                    .is_some_and(|job| job.chat == chat && job.id == id)
+                    || self.cancel_queued(&chat, &id)
+                {
+                    return;
+                }
                 if let Ok(true) = self.archive.delete_message(&chat, &id) {
                     self.emit(Event::MessageDeleted {
                         chat: chat.clone(),
@@ -5495,6 +5476,12 @@ impl Worker {
                     self.start_bot().await;
                 }
             }
+            Command::CancelQueued { chat, id } => {
+                self.cancel_queued(&chat, &id);
+            }
+            Command::OutgoingFinished { chat, id, result } => {
+                self.outgoing_finished(chat, id, result)
+            }
             Command::Shutdown => {}
             Command::OlderFailed { chat, error } => {
                 let explicit = self
@@ -5544,7 +5531,6 @@ impl Worker {
                     .set_status(&chat, &id, status, crate::util::now());
                 self.emit_message(&chat, &id);
                 self.emit_chat(&chat);
-                self.advance_serial_forward(&id);
                 if let Some(error) = error {
                     self.emit(Event::Error(format!("Message not sent: {error}")));
                 }
@@ -5888,7 +5874,7 @@ impl Worker {
             .message(chat, id)
             .map_err(|_| unavailable)?
             .ok_or(unavailable)?;
-        if matches!(row.content, Content::Revoked) {
+        if matches!(row.content, Content::Revoked) || (row.from_me && row.status.is_local()) {
             return Err(unavailable);
         }
         let raw = self
@@ -5974,19 +5960,11 @@ impl Worker {
             thumbnail: None,
         };
         self.store_message(row, Some(message.encode_to_vec()), None);
-        tokio::spawn(send_outgoing(
-            client,
-            self.commands.clone(),
-            chat,
-            jid,
-            id,
-            message,
-            expiration,
-        ));
+        self.queue_outgoing(chat, jid, id, message, expiration);
     }
 
     fn forward_messages(&mut self, from_chat: ChatId, messages: Vec<String>, to_chat: ChatId) {
-        let Some(client) = self.client.clone() else {
+        let Some(_client) = self.client.clone() else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
@@ -6006,106 +5984,9 @@ impl Worker {
         if jobs.is_empty() {
             return;
         }
-        let first = match self.forward_queue.as_mut() {
-            Some(queue) => queue.push(jobs),
-            None => {
-                let mut queue = ForwardQueue::new();
-                let first = queue.push(jobs);
-                self.forward_queue = Some(queue);
-                first
-            }
-        };
-        let Some((id, (to_chat, jid, message, expiration))) = first else {
-            // A batch is already going: these follow it, in order.
-            return;
-        };
-        tokio::spawn(send_outgoing(
-            client,
-            self.commands.clone(),
-            to_chat,
-            jid,
-            id,
-            message,
-            expiration,
-        ));
-    }
-
-    /// Starts the next queued forward once `id` reports its first tick, or its
-    /// failure. An ack that is not the running job's is ignored.
-    fn advance_serial_forward(&mut self, id: &str) {
-        let next = match self.forward_queue.as_mut() {
-            Some(queue) => queue.ack(id),
-            None => return,
-        };
-        let (id, job) = match next {
-            ForwardStep::Ignore => return,
-            ForwardStep::Next { id, payload } => (id, payload),
-            ForwardStep::Finished => {
-                self.forward_queue = None;
-                return;
-            }
-        };
-        let Some(client) = self.client.clone() else {
-            // The link went away; the rest of the batch cannot be sent.
-            let mut failed = vec![(job.0, id)];
-            failed.extend(self.take_queued_forwards());
-            self.fail_forwards(failed);
-            return;
-        };
-        let (to_chat, jid, message, expiration) = job;
-        tokio::spawn(send_outgoing(
-            client,
-            self.commands.clone(),
-            to_chat,
-            jid,
-            id,
-            message,
-            expiration,
-        ));
-    }
-
-    /// Drops a batch whose session ended. Its queued messages are already in
-    /// the archive as pending, and nothing resends pending messages, so they
-    /// are marked failed rather than left waiting forever. The running send
-    /// still reports for itself.
-    fn abandon_forwards(&mut self) {
-        let queued = self.take_queued_forwards();
-        self.fail_forwards(queued);
-    }
-
-    /// Empties the forward queue, returning the chat and id of each job that
-    /// had not started.
-    fn take_queued_forwards(&mut self) -> Vec<(ChatId, String)> {
-        self.forward_queue
-            .take()
-            .map(|queue| {
-                queue
-                    .remaining
-                    .into_iter()
-                    .map(|(id, (chat, ..))| (chat, id))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn fail_forwards(&mut self, messages: Vec<(ChatId, String)>) {
-        if messages.is_empty() {
-            return;
+        for (id, (chat, jid, message, expiration)) in jobs {
+            self.queue_outgoing(chat, jid, id, message, expiration);
         }
-        let at = crate::util::now();
-        let mut chats = HashSet::new();
-        for (chat, id) in &messages {
-            let _ = self.archive.set_status(chat, id, Delivery::Failed, at);
-            self.emit_message(chat, id);
-            chats.insert(chat.clone());
-        }
-        for chat in &chats {
-            self.emit_chat(chat);
-        }
-        self.emit(Event::Error(
-            "Not connected to WhatsApp: the rest of the forwarded messages were not sent"
-                .to_owned(),
-        ));
     }
 
     /// Prepares one forwarded message: its stored row and the outgoing
@@ -6851,6 +6732,23 @@ impl Worker {
                 if !complete {
                     messages.remove(0);
                 }
+                if before.is_none() {
+                    // A message waiting out a cooldown is the chat's newest,
+                    // whatever arrived meanwhile: the first page carries it.
+                    let waiting: Vec<String> = self
+                        .outgoing
+                        .waiting
+                        .iter()
+                        .filter(|job| job.waited && &job.chat == chat)
+                        .filter(|job| !messages.iter().any(|row| row.id == job.id))
+                        .map(|job| job.id.clone())
+                        .collect();
+                    for id in waiting {
+                        if let Ok(Some(row)) = self.archive.message(chat, &id) {
+                            messages.push(row);
+                        }
+                    }
+                }
                 for message in &mut messages {
                     self.polish(message);
                 }
@@ -7297,7 +7195,7 @@ impl Worker {
 
     /// Archives and sends an uploaded attachment message.
     fn outbound(&mut self, chat: ChatId, row: Message, raw: Vec<u8>) {
-        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
+        let (Some(_client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
@@ -7309,15 +7207,7 @@ impl Worker {
         let raw = message.encode_to_vec();
         let id = row.id.clone();
         self.store_message(row, Some(raw), None);
-        tokio::spawn(send_outgoing(
-            client,
-            self.commands.clone(),
-            chat,
-            jid,
-            id,
-            message,
-            expiration,
-        ));
+        self.queue_outgoing(chat, jid, id, message, expiration);
     }
 
     fn react(&mut self, chat: ChatId, id: String, emoji: String) {
@@ -7386,7 +7276,7 @@ async fn send_outgoing(
                 .groups()
                 .routing_info(&jid)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| outgoing::classify_send_error(error.into()))?;
             let lids = group
                 .participants
                 .iter()
@@ -7411,9 +7301,15 @@ async fn send_outgoing(
                     lids,
                     stored,
                 })
-                .map_err(|_| "The application is shutting down".to_owned())?;
+                .map_err(|_| super::SendFailure::Failed {
+                    kind: "shutting down",
+                    code: None,
+                })?;
             if saved.recv().await != Some(true) {
-                return Err("Could not save the group message recipients".to_owned());
+                return Err(super::SendFailure::Failed {
+                    kind: "group recipients not saved",
+                    code: None,
+                });
             }
         }
         let mut options = SendOptions::default().with_message_id(id.clone());
@@ -7423,15 +7319,11 @@ async fn send_outgoing(
         client
             .send_message_with_options(jid, message, options)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(outgoing::classify_send_error)?;
         Ok(())
     }
     .await;
-    let _ = commands.send(Command::Sent {
-        chat,
-        id,
-        error: result.err(),
-    });
+    let _ = commands.send(Command::OutgoingFinished { chat, id, result });
 }
 
 fn forwarded_row(
@@ -8759,7 +8651,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
                 Some(Status::PLAYED) => Delivery::Played,
                 Some(Status::DELIVERY_ACK) => Delivery::Delivered,
                 Some(Status::SERVER_ACK) => Delivery::Sent,
-                Some(Status::PENDING) => Delivery::Pending,
+                Some(Status::PENDING) => Delivery::Unconfirmed,
                 Some(Status::ERROR) => Delivery::Failed,
                 _ => Delivery::Sent,
             }
@@ -10769,6 +10661,101 @@ mod tests {
     }
 }
 
+/// A connected worker with an in-memory archive and no WhatsApp client, for
+/// tests and the offline demo. Nothing creates its directory unless a
+/// download or cache write needs it.
+#[cfg(any(test, feature = "demo"))]
+fn offline_worker(
+    me: &str,
+) -> (
+    Worker,
+    std::sync::mpsc::Receiver<Event>,
+    mpsc::UnboundedReceiver<Command>,
+    mpsc::UnboundedReceiver<RuntimeEvent>,
+) {
+    let (events, events_rx) = std::sync::mpsc::channel();
+    let (commands, inbox) = mpsc::unbounded_channel();
+    let (wa_sender, wa_events) = mpsc::unbounded_channel();
+    // Each worker gets its own directory: tests run in parallel, and one
+    // test's cached avatar or download must not answer another's lookup.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("zapfast-worker-test-{}-{n}", std::process::id()));
+    let worker = Worker {
+        privacy_ready: true,
+        privacy_confirmed: true,
+        privacy_snapshot: false,
+        privacy_reveal_at: None,
+        privacy_attempts: 0,
+        privacy_warned: false,
+        privacy_recovering: false,
+        privacy_generation: 0,
+        privacy_retry: Instant::now(),
+        withheld_pages: Vec::new(),
+        dirs: AppDirs::under(&root),
+        events,
+        commands,
+        waker: Waker::default(),
+        archive: Archive::in_memory().expect("archive"),
+        client: None,
+        handle: None,
+        wa_sender,
+        me_pn: Some(me.to_owned()),
+        me_lid: None,
+        me_name: None,
+        me_about: None,
+        lid_to_pn: HashMap::new(),
+        contacts: HashMap::new(),
+        status: LinkStatus::Connected,
+        pairing_phone: None,
+        pair_code: None,
+        qr: None,
+        syncing: false,
+        sync_deadline: None,
+        group_info_requested: HashSet::new(),
+        leave_generation: HashMap::new(),
+        subject_generation: HashMap::new(),
+        group_info_queue: std::collections::VecDeque::new(),
+        group_info_tries: HashMap::new(),
+        group_info_retry: Vec::new(),
+        presence_subscribed: HashSet::new(),
+        download_folder: None,
+        online_wanted: false,
+        online_changed: Instant::now(),
+        online_sent: None,
+        pending_older: HashMap::new(),
+        older_warned: HashSet::new(),
+        pending_avatars: HashMap::new(),
+        channel_pictures: Default::default(),
+        sticker_fetches: HashSet::new(),
+        sticker_downloads: HashSet::new(),
+        recent_hashes: HashMap::new(),
+        emoji_cache: HashMap::new(),
+        favorite_fetches: HashSet::new(),
+        sticker_pace: Default::default(),
+        sticker_failed: HashSet::new(),
+        favorites_pushing: false,
+        favorites_again: false,
+        favorites_recovered: true,
+        favorites_recovering: false,
+        first_names_recovered: true,
+        first_names_recovering: false,
+        downloads: HashSet::new(),
+        read_sync: ReadSync::default(),
+        favorite_chats: Default::default(),
+        poll_decrypting: 0,
+        poll_history: Default::default(),
+        poll_sending: HashSet::new(),
+        interactive_sending: HashMap::new(),
+        receipts_watch: None,
+        receipts_pruned: Instant::now(),
+        early: Default::default(),
+        link_watch: Default::default(),
+        outgoing: Default::default(),
+    };
+    (worker, events_rx, inbox, wa_events)
+}
+
 #[cfg(test)]
 mod receipt_tests {
     use super::*;
@@ -11249,189 +11236,13 @@ mod receipt_tests {
         assert_eq!(worker.group_info_tries.get("busy@g.us"), Some(&1));
     }
 
-    #[test]
-    fn a_serial_forward_starts_the_next_job_on_the_running_one_ack() {
-        let mut queue = ForwardQueue::new();
-        assert!(queue.push(Vec::new()).is_none());
-
-        let first = queue.push(vec![("only".into(), 7)]).expect("first job");
-        assert_eq!(first, ("only".to_owned(), 7));
-        assert!(matches!(queue.ack("only"), ForwardStep::Finished));
-        assert!(queue.current.is_none());
-
-        let first = queue
-            .push(vec![("a".into(), 1), ("b".into(), 2), ("c".into(), 3)])
-            .expect("first job");
-        assert_eq!(first, ("a".to_owned(), 1));
-        // A second batch waits behind the running one, in order.
-        assert!(queue.push(vec![("d".into(), 4)]).is_none());
-        assert!(matches!(queue.ack("other"), ForwardStep::Ignore));
-        assert_eq!(queue.current.as_deref(), Some("a"));
-
-        let ForwardStep::Next { id, payload } = queue.ack("a") else {
-            panic!("the running job's ack starts the next one");
-        };
-        assert_eq!((id.as_str(), payload), ("b", 2));
-        // A failed send reports the same ack; a stall would leave current as b.
-        let ForwardStep::Next { id, payload } = queue.ack("b") else {
-            panic!("a failed send still starts the next job");
-        };
-        assert_eq!((id.as_str(), payload), ("c", 3));
-        let ForwardStep::Next { id, payload } = queue.ack("c") else {
-            panic!("the batch queued behind it follows");
-        };
-        assert_eq!((id.as_str(), payload), ("d", 4));
-        assert!(matches!(queue.ack("d"), ForwardStep::Finished));
-        assert!(queue.current.is_none());
-        assert!(queue.remaining.is_empty());
-    }
-
-    /// A batch belongs to the session that was sending it. The proxy-change
-    /// reconnect stops the bot and starts another, and every send is its own
-    /// task, so one can report its tick after the stop, inside the window the
-    /// connection teardown waits for. Dropping the queue with the session is
-    /// what keeps that tick from resuming the batch through the one after it.
-    #[tokio::test]
-    async fn stopping_the_bot_drops_a_running_forward_batch() {
-        let (mut worker, _events, _inbox, _wa) = worker();
-        let to_chat = PEER.to_owned();
-        let jid = Jid::pn(PEER);
-        let mut queue = ForwardQueue::new();
-        let running = queue
-            .push(vec![
-                (
-                    "a".to_owned(),
-                    (to_chat.clone(), jid.clone(), wa::Message::default(), None),
-                ),
-                (
-                    "b".to_owned(),
-                    (to_chat.clone(), jid.clone(), wa::Message::default(), None),
-                ),
-            ])
-            .expect("the first job of the batch");
-        assert_eq!(running.0, "a");
-        worker.forward_queue = Some(queue);
-        for id in ["a", "b"] {
-            let pending = Message {
-                status: Delivery::Pending,
-                ..own_message(id, 1)
-            };
-            worker.store_message(pending, None, None);
-        }
-
-        worker.stop_bot().await;
-
-        // Nothing resends a pending message, so the one that never started is
-        // failed, visibly; the running one still reports for itself.
-        let status = |worker: &Worker, id| {
-            worker
-                .archive
-                .message(PEER, id)
-                .expect("read")
-                .expect("stored")
-                .status
-        };
-        assert_eq!(status(&worker, "b"), Delivery::Failed);
-        assert_eq!(status(&worker, "a"), Delivery::Pending);
-
-        assert!(
-            worker.forward_queue.is_none(),
-            "the batch goes with the session that was sending it"
-        );
-        // The stale tick therefore has nothing to advance, whichever job it
-        // names: the queue it belonged to is gone.
-        worker.advance_serial_forward("a");
-        assert!(worker.forward_queue.is_none());
-    }
-
     pub(super) fn worker() -> (
         Worker,
         std::sync::mpsc::Receiver<Event>,
         mpsc::UnboundedReceiver<Command>,
         mpsc::UnboundedReceiver<RuntimeEvent>,
     ) {
-        let (events, events_rx) = std::sync::mpsc::channel();
-        let (commands, inbox) = mpsc::unbounded_channel();
-        let (wa_sender, wa_events) = mpsc::unbounded_channel();
-        // Each worker gets its own directory: tests run in parallel, and one
-        // test's cached avatar or download must not answer another's lookup.
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let root =
-            std::env::temp_dir().join(format!("zapfast-worker-test-{}-{n}", std::process::id()));
-        let worker = Worker {
-            privacy_ready: true,
-            privacy_confirmed: true,
-            privacy_snapshot: false,
-            privacy_reveal_at: None,
-            privacy_attempts: 0,
-            privacy_warned: false,
-            privacy_recovering: false,
-            privacy_generation: 0,
-            privacy_retry: Instant::now(),
-            withheld_pages: Vec::new(),
-            dirs: AppDirs::under(&root),
-            events,
-            commands,
-            waker: Waker::default(),
-            archive: Archive::in_memory().expect("archive"),
-            client: None,
-            handle: None,
-            wa_sender,
-            me_pn: Some(ME.to_owned()),
-            me_lid: None,
-            me_name: None,
-            me_about: None,
-            lid_to_pn: HashMap::new(),
-            contacts: HashMap::new(),
-            status: LinkStatus::Connected,
-            pairing_phone: None,
-            pair_code: None,
-            qr: None,
-            syncing: false,
-            sync_deadline: None,
-            group_info_requested: HashSet::new(),
-            leave_generation: HashMap::new(),
-            subject_generation: HashMap::new(),
-            group_info_queue: std::collections::VecDeque::new(),
-            group_info_tries: HashMap::new(),
-            group_info_retry: Vec::new(),
-            presence_subscribed: HashSet::new(),
-            download_folder: None,
-            online_wanted: false,
-            online_changed: Instant::now(),
-            online_sent: None,
-            pending_older: HashMap::new(),
-            older_warned: HashSet::new(),
-            pending_avatars: HashMap::new(),
-            channel_pictures: Default::default(),
-            sticker_fetches: HashSet::new(),
-            sticker_downloads: HashSet::new(),
-            recent_hashes: HashMap::new(),
-            emoji_cache: HashMap::new(),
-            favorite_fetches: HashSet::new(),
-            sticker_pace: Default::default(),
-            sticker_failed: HashSet::new(),
-            favorites_pushing: false,
-            favorites_again: false,
-            favorites_recovered: true,
-            favorites_recovering: false,
-            first_names_recovered: true,
-            first_names_recovering: false,
-            downloads: HashSet::new(),
-            read_sync: ReadSync::default(),
-            favorite_chats: Default::default(),
-            poll_decrypting: 0,
-            poll_history: Default::default(),
-            poll_sending: HashSet::new(),
-            interactive_sending: HashMap::new(),
-            receipts_watch: None,
-            receipts_pruned: Instant::now(),
-            early: Default::default(),
-            link_watch: Default::default(),
-            forward_queue: None,
-        };
-        (worker, events_rx, inbox, wa_events)
+        super::offline_worker(ME)
     }
 
     /// View-once photos filed as attachments before they were recognised

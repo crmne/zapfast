@@ -210,7 +210,20 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Settings turns this off. Linux uses MPRIS, so any player that implements it
   works; macOS has no public API for this, so the switch is hidden there.
 - **Send messages.** Press Enter to send text and Shift+Enter for a new line.
-  You can swap these keys in Settings. The composer is focused when you open
+  You can swap these keys in Settings. Messages go out one at a time, in
+  order, and look as they always did: a clock, then a tick. Only when
+  WhatsApp limits how fast you can send does a message show **Waiting to
+  send**, with the messages after it. Waiting messages stay at the bottom of
+  the chat, below messages that arrive meanwhile, and send by themselves in
+  order when the limit ends, each as a new message. **Cancel** deletes a
+  waiting message so it is never sent. Waiting messages keep waiting if the
+  connection drops for a moment. If ZapFast quits, or you change the proxy or
+  unlink first, they show **Not sent**. A message you send while offline
+  shows **Not sent** at once. A message that was sending when ZapFast quit or
+  you changed the proxy shows **Send unconfirmed**: it may have been sent, so
+  ZapFast does not send it again.
+  You can copy it or delete it from this computer. The composer is focused
+  when you open
   or return to a conversation, and clicking empty conversation space returns
   focus to it; invoking search keeps focus in search, and
   Escape clears search and returns to the composer; another Escape closes the
@@ -931,7 +944,11 @@ vCard data, or `--demo-page interactive` for text and button messages, or
 `--demo-page interactive-list-dialog` for its grouped choice dialog, `--demo-page carousel`
 for a scrolling strip or `--demo-page carousel-pair` for two cards, and `--demo-page poll-empty`, `poll-voted`, or `poll-results`
 for voting states. Use `--demo-page interactive-actions` for reply, list, copy-code, and unavailable
-form actions. Add `,light` to
+form actions. `--demo-page queued-messages` runs the real send queue over an
+offline synthetic link: it opens on each sending state, and the messages you
+type meet a 15-second limit after five sends within 10 seconds, with replies
+from the contact while you wait. `--demo-page queued-messages-stress` sends 25
+messages across two chats by itself. Add `,light` to
 preview any of these in the light theme. Capture the app's own frame without desktop
 content:
 

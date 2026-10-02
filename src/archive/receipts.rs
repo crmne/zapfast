@@ -33,6 +33,19 @@ impl Archive {
         transaction.commit()
     }
 
+    /// A typed pre-send refusal makes the unused audience obsolete. The retry
+    /// must snapshot its actual recipients, not union them with this attempt.
+    /// Never erase an observed receipt or touch an already-sent message.
+    pub fn discard_unsent_group_audience(&self, chat: &str, id: &str) -> Result<()> {
+        self.connection.execute(
+            "DELETE FROM group_receipts WHERE chat = ?1 AND id = ?2 AND status = 0
+             AND EXISTS (SELECT 1 FROM messages WHERE chat = ?1 AND id = ?2
+                         AND from_me = 1 AND status = -1)",
+            params![chat, id],
+        )?;
+        Ok(())
+    }
+
     /// Records only the named message: a group member reading a later message
     /// does not prove that all members read any earlier ones.
     pub fn group_receipt(
