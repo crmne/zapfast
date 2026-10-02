@@ -492,6 +492,7 @@ pub enum Command {
     },
     /// Internal contact-save result.
     ContactSaved {
+        generation: u64,
         id: String,
         name: String,
         first_name: Option<String>,
@@ -507,6 +508,7 @@ pub enum Command {
     },
     /// Internal number-lookup result.
     ContactChecked {
+        generation: u64,
         request: u64,
         phone: String,
         full_name: Option<String>,
