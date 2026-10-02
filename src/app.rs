@@ -3922,6 +3922,22 @@ impl App {
                 self.backend
                     .send(Command::SaveAttachmentAs { source: path, name });
             }
+            Action::DragAttachment(path) => {
+                #[cfg(test)]
+                ctx.data_mut(|data| {
+                    data.insert_temp(egui::Id::new("fixture-native-drag"), path.clone())
+                });
+                if !cfg!(test)
+                    && let Err(error) = crate::file_drag::start(&path)
+                {
+                    self.toast_error(crate::file_drag::failure_message(self.locale, &error));
+                }
+                // The native drag loop consumes the button release. Drop egui's
+                // retained pointer grab so the next click starts normally.
+                ctx.stop_dragging();
+                ctx.input_mut(|input| input.pointer = Default::default());
+                ctx.request_repaint();
+            }
             Action::OpenFolder(path) => {
                 if path.is_dir() {
                     if let Err(error) = open::that_detached(&path) {

@@ -5640,6 +5640,67 @@ fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> Str
 
 /// Default image bounds based on [`CARD_WIDTH`].
 const PICTURE_WIDTH: f32 = CARD_WIDTH;
+
+fn attachment_drag_sense() -> Sense {
+    if crate::file_drag::SUPPORTED {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    }
+}
+
+fn attachment_drag(response: &egui::Response, path: &Path, actions: &mut Vec<Action>) {
+    if crate::file_drag::SUPPORTED && response.drag_started_by(egui::PointerButton::Primary) {
+        actions.push(Action::DragAttachment(path.to_owned()));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod attachment_drag_tests {
+    use super::*;
+
+    #[test]
+    fn a_primary_drag_queues_a_file_copy_without_activating_the_picture() {
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+        let path = Path::new("fixture.png");
+        let mut rect = Rect::NOTHING;
+        let mut clicked = false;
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let (area, response) =
+                        ui.allocate_exact_size(vec2(120.0, 120.0), attachment_drag_sense());
+                    rect = area;
+                    clicked |= response.clicked();
+                    attachment_drag(&response, path, &mut actions);
+                },
+            );
+            output.textures_delta.clear();
+            rect
+        };
+        let area = frame(vec![]);
+        frame(vec![
+            egui::Event::PointerMoved(area.center()),
+            egui::Event::PointerButton {
+                pos: area.center(),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        frame(vec![egui::Event::PointerMoved(
+            area.center() + vec2(25.0, 0.0),
+        )]);
+        assert!(!clicked);
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(&actions[0], Action::DragAttachment(file) if file == path));
+    }
+}
 const PICTURE_HEIGHT: f32 = 440.0;
 const STICKER_SIDE: f32 = 180.0;
 /// Height of a header row, the chat list's and the conversation's alike, so
@@ -5775,9 +5836,10 @@ fn picture(
                     image
                         .fit_to_exact_size(size)
                         .corner_radius(if sticker.is_some() { 0.0 } else { 6.0 })
-                        .sense(Sense::click()),
+                        .sense(attachment_drag_sense()),
                 );
                 let rect = response.rect;
+                attachment_drag(&response, path, actions);
                 if response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
@@ -5969,7 +6031,25 @@ fn video(
         limit,
         PICTURE_HEIGHT.min(limit * 1.3),
     );
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        size,
+        if media.path.is_some() {
+            attachment_drag_sense()
+        } else {
+            Sense::click()
+        },
+    );
+    if let Some(path) = &media.path {
+        attachment_drag(&response, path, actions);
+    }
+    #[cfg(any(test, feature = "demo"))]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            bubble_id(&message.chat, &message.id).with("drag-media"),
+            rect,
+        )
+    });
+
     let playing = match (&media.path, gif) {
         (Some(path), true) => Some(animation::frame(
             ui,
@@ -6370,7 +6450,25 @@ fn video_note(
 ) -> f32 {
     use crate::video::State;
     let palette = view.palette;
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(NOTE_SIDE), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::splat(NOTE_SIDE),
+        if media.path.is_some() {
+            attachment_drag_sense()
+        } else {
+            Sense::click()
+        },
+    );
+    if let Some(path) = &media.path {
+        attachment_drag(&response, path, actions);
+    }
+    #[cfg(any(test, feature = "demo"))]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            bubble_id(&message.chat, &message.id).with("drag-media"),
+            rect,
+        )
+    });
+
     let status = media
         .path
         .as_ref()
@@ -6609,9 +6707,16 @@ fn attachment(
         .interact(
             response.rect,
             ui.id().with(("attachment", &message.id)),
-            Sense::click(),
+            if media.path.is_some() {
+                attachment_drag_sense()
+            } else {
+                Sense::click()
+            },
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if let Some(path) = &media.path {
+        attachment_drag(&response, path, actions);
+    }
     if response.clicked() && !auto {
         match &media.path {
             Some(path) => actions.push(Action::OpenFile(path.clone())),
