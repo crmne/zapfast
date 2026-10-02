@@ -9067,75 +9067,80 @@ mod tests {
     #[test]
     fn a_private_quote_returns_to_its_source_group() {
         for source_present in [true, false] {
-        let ctx = egui::Context::default();
-        let mut app = app();
-        let group = SAMPLES[1].id;
-        let original = app
-            .conversations
-            .get(group)
-            .unwrap()
-            .message("group-photo")
-            .unwrap()
-            .clone();
-        let chat = original.sender.clone();
-        let mut reply = message(
-            &chat,
-            "private-reply",
-            true,
-            original.timestamp + 1,
-            Content::text("See you there"),
-        );
-        reply.quoted = Some(Quoted {
-            chat: Some(group.into()),
-            id: original.id,
-            sender: original.sender,
-            sender_name: original.sender_name,
-            summary: original.content.summary(),
-            mentions: original.mentions,
-        });
-        app.chats.push(Chat::new(chat.clone(), "Tom".into()));
-        app.conversations.insert(
-            chat.clone(),
-            crate::app::Conversation {
-                messages: vec![reply],
-                requested: true,
-                complete: true,
-                ..Default::default()
-            },
-        );
-        app.open_chat = Some(chat.clone());
-        if !source_present {
-            app.chats.retain(|known| known.id != group);
-            app.conversations.remove(group);
-        }
-        app.attach(&ctx);
-        render(&mut app, &ctx);
-        let rect = ctx
-            .data(|data| {
-                data.get_temp::<egui::Rect>(
-                    crate::ui::conversation::bubble_id(&chat, "private-reply").with("quote"),
-                )
-            })
-            .expect("the private quote is drawn");
-        let pos = rect.center();
-        for pressed in [true, false] {
-            accessible_nodes(
-                &mut app,
-                &ctx,
-                vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
+            let ctx = egui::Context::default();
+            let mut app = app();
+            let group = SAMPLES[1].id;
+            let original = app
+                .conversations
+                .get(group)
+                .unwrap()
+                .message("group-photo")
+                .unwrap()
+                .clone();
+            let chat = original.sender.clone();
+            let mut reply = message(
+                &chat,
+                "private-reply",
+                true,
+                original.timestamp + 1,
+                Content::text("See you there"),
             );
-        }
-        assert_eq!(app.open_chat.as_deref(), Some(if source_present { group } else { &chat }));
-        if source_present { assert_eq!(app.scroll_anchor.as_deref(), Some("group-photo")); }
+            reply.quoted = Some(Quoted {
+                chat: Some(group.into()),
+                id: original.id,
+                sender: original.sender,
+                sender_name: original.sender_name,
+                summary: original.content.summary(),
+                mentions: original.mentions,
+            });
+            app.chats.push(Chat::new(chat.clone(), "Tom".into()));
+            app.conversations.insert(
+                chat.clone(),
+                crate::app::Conversation {
+                    messages: vec![reply],
+                    requested: true,
+                    complete: true,
+                    ..Default::default()
+                },
+            );
+            app.open_chat = Some(chat.clone());
+            if !source_present {
+                app.chats.retain(|known| known.id != group);
+                app.conversations.remove(group);
             }
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let rect = ctx
+                .data(|data| {
+                    data.get_temp::<egui::Rect>(
+                        crate::ui::conversation::bubble_id(&chat, "private-reply").with("quote"),
+                    )
+                })
+                .expect("the private quote is drawn");
+            let pos = rect.center();
+            for pressed in [true, false] {
+                accessible_nodes(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(
+                app.open_chat.as_deref(),
+                Some(if source_present { group } else { &chat })
+            );
+            if source_present {
+                assert_eq!(app.scroll_anchor.as_deref(), Some("group-photo"));
+            }
+        }
     }
 
     /// Long translated unavailable-quote labels leave Cancel visible and clickable.
@@ -9151,24 +9156,38 @@ mod tests {
                 app.attach(&ctx);
                 let mut cancel = None;
                 let mut frame = |events| {
-                    let mut output = ctx.run_ui(egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 780.0))),
-                        events, ..Default::default()
-                    }, |ui| {
-                        let ctx = ui.ctx().clone();
-                        app.background_frame(&ctx);
-                        app.frame_ui(ui);
-                    });
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 780.0),
+                            )),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let ctx = ui.ctx().clone();
+                            app.background_frame(&ctx);
+                            app.frame_ui(ui);
+                        },
+                    );
                     output.textures_delta.clear();
                     if let Some(tree) = output.platform_output.accesskit_update {
                         for (_, node) in tree.nodes {
-                            if node.label() == Some(crate::i18n::gettext(locale, "Cancel reply (Esc)").as_str())
+                            if node.label()
+                                == Some(crate::i18n::gettext(locale, "Cancel reply (Esc)").as_str())
                                 && let Some(bounds) = node.bounds()
                             {
                                 let scale = ctx.pixels_per_point() as f64;
                                 cancel = Some(egui::Rect::from_min_max(
-                                    egui::pos2((bounds.x0 / scale) as f32, (bounds.y0 / scale) as f32),
-                                    egui::pos2((bounds.x1 / scale) as f32, (bounds.y1 / scale) as f32),
+                                    egui::pos2(
+                                        (bounds.x0 / scale) as f32,
+                                        (bounds.y0 / scale) as f32,
+                                    ),
+                                    egui::pos2(
+                                        (bounds.x1 / scale) as f32,
+                                        (bounds.y1 / scale) as f32,
+                                    ),
                                 ));
                             }
                         }
@@ -9177,14 +9196,26 @@ mod tests {
                 };
                 frame(vec![]);
                 let cancel = frame(vec![]).expect("the unavailable quote exposes Cancel");
-                let strip = ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::reply_strip_id())).unwrap();
-                assert!(strip.contains_rect(cancel), "{locale:?}: {strip:?} {cancel:?}");
+                let strip = ctx
+                    .data(|data| {
+                        data.get_temp::<egui::Rect>(crate::ui::conversation::reply_strip_id())
+                    })
+                    .unwrap();
+                assert!(
+                    strip.contains_rect(cancel),
+                    "{locale:?}: {strip:?} {cancel:?}"
+                );
                 assert!(cancel.left() >= 0.0 && cancel.right() <= width);
                 for pressed in [true, false] {
-                    frame(vec![egui::Event::PointerMoved(cancel.center()), egui::Event::PointerButton {
-                        pos: cancel.center(), button: egui::PointerButton::Primary, pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    }]);
+                    frame(vec![
+                        egui::Event::PointerMoved(cancel.center()),
+                        egui::Event::PointerButton {
+                            pos: cancel.center(),
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ]);
                 }
                 assert!(app.reply_to.is_none());
             }
