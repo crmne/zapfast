@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 00:01-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: German\n"
@@ -384,27 +384,27 @@ msgstr "Diese Nachricht ist nur auf deinem Telefon zu sehen."
 msgid "Open in a map"
 msgstr "In einer Karte öffnen"
 
-#: src/ui/conversation.rs:6235
+#: src/ui/conversation.rs:6315
 msgid "Pause"
 msgstr "Pause"
 
-#: src/ui/conversation.rs:6237 src/ui/settings.rs:1636
+#: src/ui/conversation.rs:6317 src/ui/settings.rs:1636
 msgid "Play"
 msgstr "Abspielen"
 
-#: src/ui/conversation.rs:6264
+#: src/ui/conversation.rs:6344
 msgid "Back to the message (Esc)"
 msgstr "Zurück zur Nachricht (Esc)"
 
-#: src/ui/conversation.rs:6266
+#: src/ui/conversation.rs:6346
 msgid "Fill the window"
 msgstr "Fenster füllen"
 
-#: src/ui/conversation.rs:6296
+#: src/ui/conversation.rs:6376
 msgid "Unmute"
 msgstr "Ton an"
 
-#: src/ui/conversation.rs:6298
+#: src/ui/conversation.rs:6378
 msgid "Mute"
 msgstr "Stumm"
 
@@ -1098,36 +1098,36 @@ msgstr ""
 "Nicht gesendet: Die Nachricht, auf die du antwortest, ist auf diesem "
 "Computer nicht verfügbar. Brich die Antwort ab, um ohne Zitat zu senden."
 
-#: src/app.rs:4324
+#: src/app.rs:4340
 msgid "Added to favorites"
 msgstr "Zu Favoriten hinzugefügt"
 
-#: src/app.rs:4399
+#: src/app.rs:4415
 msgid "Sending the sticker pack…"
 msgstr "Sticker-Pack wird gesendet…"
 
-#: src/app.rs:4687 src/ui/labels.rs:237
+#: src/app.rs:4703 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Du hast {limit} Labels, mehr hebt ZapFast nicht auf."
 
-#: src/app.rs:5323
+#: src/app.rs:5339
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5331
+#: src/app.rs:5347
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5444
+#: src/app.rs:5460
 msgid "This video opens in your system player"
 msgstr "Dieses Video öffnet sich im Systemplayer"
 
-#: src/app.rs:5979
+#: src/app.rs:5995
 msgid "Copied image"
 msgstr "Bild kopiert"
 
-#: src/app.rs:5982 src/app.rs:5987
+#: src/app.rs:5998 src/app.rs:6003
 msgid "Failed to copy image"
 msgstr "Bild konnte nicht kopiert werden"
 
@@ -1535,3 +1535,16 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+
+#: src/file_drag.rs:15
+#
+msgid "Could not drag the attachment"
+msgstr "Der Anhang konnte nicht gezogen werden"
+
+#: src/file_drag.rs:19
+msgid "The attachment is unavailable. Download it before dragging it."
+msgstr "Der Anhang ist nicht verfügbar. Lade ihn vor dem Ziehen herunter."
+
+#: src/file_drag.rs:24
+msgid "Dragging attachments out is currently available on Windows only."
+msgstr "Anhänge können derzeit nur unter Windows herausgezogen werden."
