@@ -4353,7 +4353,10 @@ mod tests {
             );
             if page == "forward-review" {
                 assert!(labels.iter().any(|label| label == "Voltar"), "{labels:?}");
-                assert!(labels.iter().any(|label| label == "Encaminhar"), "{labels:?}");
+                assert!(
+                    labels.iter().any(|label| label == "Encaminhar"),
+                    "{labels:?}"
+                );
             }
         }
     }
