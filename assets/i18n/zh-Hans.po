@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -292,6 +292,10 @@ msgstr "用系统播放器打开"
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "消息信息"
+
+#: src/ui/conversation.rs:4061
+msgid "Open in the viewer"
+msgstr "在预览中打开"
 
 #: src/ui/conversation.rs:4114 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
@@ -1405,13 +1409,86 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "静音未知来电"
 
+#: src/ui/image_preview.rs:203
+msgid "Close preview (Esc)"
+msgstr "关闭预览 (Esc)"
+
 #: src/ui/image_preview.rs:174
 msgid "Save as…"
 msgstr "另存为…"
 
+#: src/ui/image_preview.rs:374 src/ui/image_preview.rs:660
+#: src/ui/image_preview.rs:668 src/ui/image_preview.rs:748
+msgid "Download"
+msgstr "下载"
+
+#: src/ui/image_preview.rs:393
+msgid "Show in the chat"
+msgstr "在聊天中显示"
+
+#: src/ui/image_preview.rs:584
+msgid "This image could not be displayed in ZapFast."
+msgstr "ZapFast 无法显示此图片。"
+
+#: src/ui/image_preview.rs:587
+msgid "Open externally"
+msgstr "用外部程序打开"
+
+#: src/ui/image_preview.rs:746
+msgid "Play or pause the video"
+msgstr "播放或暂停视频"
+
+#: src/ui/image_preview.rs:886
+msgid "Video"
+msgstr "视频"
+
+#: src/ui/image_preview.rs:888
+msgid "Photo"
+msgstr "照片"
+
+#: src/ui/image_preview.rs:1025
+msgid "Previous (,)"
+msgstr "上一个 (,)"
+
+#: src/ui/image_preview.rs:1031
+msgid "Next (.)"
+msgstr "下一个 (.)"
+
 #: src/ui/image_preview.rs:176
 msgid "Open in another app"
 msgstr "在其他应用中打开"
+
+#: src/ui/image_preview.rs:252
+msgid "Zoom in"
+msgstr "放大"
+
+#: src/ui/image_preview.rs:262
+msgid "Fit"
+msgstr "适应"
+
+#: src/ui/image_preview.rs:263
+msgid "Show at original size"
+msgstr "按原始尺寸显示"
+
+#: src/ui/image_preview.rs:269
+msgid "Fit to the window (0)"
+msgstr "适应窗口 (0)"
+
+#: src/ui/image_preview.rs:285
+msgid "Zoom out"
+msgstr "缩小"
+
+#: src/ui/image_preview.rs:301
+msgid "Reply"
+msgstr "回复"
+
+#: src/ui/image_preview.rs:314
+msgid "React"
+msgstr "回应"
+
+#: src/ui/image_preview.rs:333
+msgid "Forward"
+msgstr "转发"
 
 #: src/ui/lock.rs:17
 msgid "ZapFast is locked"
@@ -1477,3 +1554,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+

@@ -3,7 +3,7 @@
 //! The backend translates protocol types into these models, keeping protobufs
 //! out of views and giving the archive a stable shape.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -618,6 +618,13 @@ pub const GROUP_NAME_LIMIT: usize = whatsapp_rust::wacore::iq::groups::GROUP_SUB
 /// WhatsApp's longest live location share, in seconds.
 pub const LIVE_LOCATION_LIMIT: i64 = 8 * 60 * 60;
 
+/// A photo or a playable video, as the in-app viewer album counts them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GalleryKind {
+    Photo,
+    Video,
+}
+
 impl Content {
     /// Whether a live location sent at `sent` has stopped by `now`: its
     /// sender ended it, or it has outlived the longest share.
@@ -783,6 +790,18 @@ impl Content {
         }
     }
 
+    /// Whether this message belongs in the viewer album, and as what.
+    ///
+    /// A GIF is not a video here: it plays inline as an animation, so it is
+    /// left out.
+    pub fn gallery_kind(&self) -> Option<GalleryKind> {
+        match self {
+            Self::Image { .. } => Some(GalleryKind::Photo),
+            Self::Video { gif: false, .. } => Some(GalleryKind::Video),
+            _ => None,
+        }
+    }
+
     /// Carries downloaded file paths over from `old` when rederiving content
     /// from the raw protobuf: the main attachment and each carousel card's image.
     pub fn keep_local_paths(&mut self, old: &Content) {
@@ -818,6 +837,27 @@ impl Content {
             } => card.image.as_mut(),
             _ => None,
         }
+    }
+}
+
+/// The viewer kind of a file on disk, from its name alone.
+pub(crate) fn gallery_kind_for_path(path: &Path) -> Option<GalleryKind> {
+    gallery_file(&path.file_name()?.to_string_lossy())
+}
+
+/// The viewer kind of a file, from its name. A GIF is an inline animation, not
+/// a clip, so it is left out, and a photo is only a format the image crate is
+/// built to draw (`jpeg`, `png`, `webp`): a `bmp` or a `tif` opens the viewer
+/// and fails to decode, where the system viewer draws it.
+fn gallery_file(file_name: &str) -> Option<GalleryKind> {
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())?;
+    match ext.as_str() {
+        "jpg" | "jpeg" | "png" | "webp" => Some(GalleryKind::Photo),
+        "mp4" | "m4v" | "mov" | "webm" | "mkv" | "3gp" | "3gpp" => Some(GalleryKind::Video),
+        _ => None,
     }
 }
 
@@ -1364,7 +1404,19 @@ pub enum Action {
     /// extension and existence are checked here, and anything else opens
     /// externally; an image that then fails to decode shows a message with an
     /// Open externally button inside the preview.
-    PreviewImage(PathBuf),
+    PreviewImage {
+        path: PathBuf,
+        /// The chat whose album the viewer browses from here.
+        chat: ChatId,
+        /// The message this picture came from, so the album can be positioned.
+        message: String,
+    },
+    /// Moves the viewer to the next (`1`) or previous (`-1`) item of the album.
+    ViewerStep(i8),
+    /// Shows one item of the album the viewer already has, by message id.
+    ViewImage {
+        message: String,
+    },
     ZoomImageIn,
     /// Scales the previewed image by a factor, as the wheel or a pinch asks.
     ZoomImageBy(f32),
@@ -1949,6 +2001,35 @@ mod tests {
             path: None,
             state: MediaState::Idle,
         }
+    }
+
+    /// The album holds photos and playable clips: an image, and a video that
+    /// is not a GIF, which plays inline as an animation instead. A file the
+    /// sender attached is a document, not an album item, whatever its name.
+    #[test]
+    fn the_album_holds_photos_and_playable_clips() {
+        use super::{Content, GalleryKind};
+        let picture = Content::Image {
+            caption: None,
+            media: media(),
+        };
+        assert_eq!(picture.gallery_kind(), Some(GalleryKind::Photo));
+        let clip = |gif: bool| Content::Video {
+            caption: None,
+            media: media(),
+            seconds: None,
+            gif,
+            note: false,
+        };
+        assert_eq!(clip(false).gallery_kind(), Some(GalleryKind::Video));
+        assert_eq!(clip(true).gallery_kind(), None, "a GIF plays inline");
+        let file = Content::Document {
+            media: media(),
+            file_name: "holiday.jpg".into(),
+            caption: None,
+            pages: None,
+        };
+        assert_eq!(file.gallery_kind(), None);
     }
 
     #[test]

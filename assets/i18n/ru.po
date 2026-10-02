@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -299,6 +299,10 @@ msgstr "Открыть в системном плеере"
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Данные сообщения"
+
+#: src/ui/conversation.rs:4061
+msgid "Open in the viewer"
+msgstr "Открыть в просмотре"
 
 #: src/ui/conversation.rs:4114 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
@@ -1464,13 +1468,86 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Заглушать неизвестных абонентов"
 
+#: src/ui/image_preview.rs:203
+msgid "Close preview (Esc)"
+msgstr "Закрыть просмотр (Esc)"
+
 #: src/ui/image_preview.rs:174
 msgid "Save as…"
 msgstr "Сохранить как…"
 
+#: src/ui/image_preview.rs:374 src/ui/image_preview.rs:660
+#: src/ui/image_preview.rs:668 src/ui/image_preview.rs:748
+msgid "Download"
+msgstr "Скачать"
+
+#: src/ui/image_preview.rs:393
+msgid "Show in the chat"
+msgstr "Показать в чате"
+
+#: src/ui/image_preview.rs:584
+msgid "This image could not be displayed in ZapFast."
+msgstr "ZapFast не смог показать это изображение."
+
+#: src/ui/image_preview.rs:587
+msgid "Open externally"
+msgstr "Открыть в другой программе"
+
+#: src/ui/image_preview.rs:746
+msgid "Play or pause the video"
+msgstr "Воспроизвести или приостановить видео"
+
+#: src/ui/image_preview.rs:886
+msgid "Video"
+msgstr "Видео"
+
+#: src/ui/image_preview.rs:888
+msgid "Photo"
+msgstr "Фото"
+
+#: src/ui/image_preview.rs:1025
+msgid "Previous (,)"
+msgstr "Назад (,)"
+
+#: src/ui/image_preview.rs:1031
+msgid "Next (.)"
+msgstr "Далее (.)"
+
 #: src/ui/image_preview.rs:176
 msgid "Open in another app"
 msgstr "Открыть в другом приложении"
+
+#: src/ui/image_preview.rs:252
+msgid "Zoom in"
+msgstr "Увеличить"
+
+#: src/ui/image_preview.rs:262
+msgid "Fit"
+msgstr "Вписать"
+
+#: src/ui/image_preview.rs:263
+msgid "Show at original size"
+msgstr "Показать в исходном размере"
+
+#: src/ui/image_preview.rs:269
+msgid "Fit to the window (0)"
+msgstr "Вписать в окно (0)"
+
+#: src/ui/image_preview.rs:285
+msgid "Zoom out"
+msgstr "Уменьшить"
+
+#: src/ui/image_preview.rs:301
+msgid "Reply"
+msgstr "Ответить"
+
+#: src/ui/image_preview.rs:314
+msgid "React"
+msgstr "Реакция"
+
+#: src/ui/image_preview.rs:333
+msgid "Forward"
+msgstr "Переслать"
 
 #: src/ui/lock.rs:17
 msgid "ZapFast is locked"
@@ -1536,3 +1613,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+

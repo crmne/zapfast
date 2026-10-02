@@ -246,11 +246,19 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   after they expire on the phone.
   A clock badge on chat avatars shows enabled timers and follows changes from
   the phone. Changing the default timer for new chats leaves existing chats alone.
+- **Media viewer.** Clicking a photo in a chat opens it across the whole
+  window, as WhatsApp's own viewer does: the chat's other photos and clips
+  along the bottom to move between them, arrows, and the comma and full-stop
+  keys, with zoom and pan on the picture itself. A clip plays in place there,
+  with sound, and reaches the viewer through **Open in the viewer** in the
+  message's menu: clicking a clip in the chat plays it in its own bubble
+  instead. Reply, react, forward, download and show in the chat are one click
+  away from the header, and a click on the empty field closes it.
 - **View attachments.** ZapFast downloads files up to 64 MiB automatically or
   on click. Photos, stickers, GIFs, voice messages, audio, locations, contacts,
   polls, and link previews appear in the chat. Click a downloaded JPEG, PNG,
-  WebP, or GIF photo to preview it in ZapFast with fit and zoom controls, or
-  choose **Open externally**. In the preview, the mouse wheel and Ctrl+wheel
+  or WebP photo to preview it in ZapFast with fit and zoom controls, or
+  choose **Open externally**. In the viewer, the mouse wheel and Ctrl+wheel
   (Cmd+wheel on macOS) zoom around the pointer, as does a trackpad pinch on
   macOS and Windows. Drag a zoomed picture to move it; where a trackpad scrolls
   smoothly (macOS, Wayland), two-finger scrolling moves it instead of zooming.

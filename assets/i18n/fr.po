@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"POT-Creation-Date: 2026-10-02 05:47\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -296,6 +296,10 @@ msgstr "Ouvrir dans le lecteur du système"
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Infos du message"
+
+#: src/ui/conversation.rs:4061
+msgid "Open in the viewer"
+msgstr "Ouvrir dans l'aperçu"
 
 #: src/ui/conversation.rs:4114 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
@@ -1463,13 +1467,86 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Mettre en silence les appels inconnus"
 
+#: src/ui/image_preview.rs:203
+msgid "Close preview (Esc)"
+msgstr "Fermer l'aperçu (Échap)"
+
 #: src/ui/image_preview.rs:174
 msgid "Save as…"
 msgstr "Enregistrer sous…"
 
+#: src/ui/image_preview.rs:374 src/ui/image_preview.rs:660
+#: src/ui/image_preview.rs:668 src/ui/image_preview.rs:748
+msgid "Download"
+msgstr "Télécharger"
+
+#: src/ui/image_preview.rs:393
+msgid "Show in the chat"
+msgstr "Afficher dans la discussion"
+
+#: src/ui/image_preview.rs:584
+msgid "This image could not be displayed in ZapFast."
+msgstr "ZapFast n'a pas pu afficher cette image."
+
+#: src/ui/image_preview.rs:587
+msgid "Open externally"
+msgstr "Ouvrir à l'extérieur"
+
+#: src/ui/image_preview.rs:746
+msgid "Play or pause the video"
+msgstr "Lire ou mettre en pause la vidéo"
+
+#: src/ui/image_preview.rs:886
+msgid "Video"
+msgstr "Vidéo"
+
+#: src/ui/image_preview.rs:888
+msgid "Photo"
+msgstr "Photo"
+
+#: src/ui/image_preview.rs:1025
+msgid "Previous (,)"
+msgstr "Précédent (,)"
+
+#: src/ui/image_preview.rs:1031
+msgid "Next (.)"
+msgstr "Suivant (.)"
+
 #: src/ui/image_preview.rs:176
 msgid "Open in another app"
 msgstr "Ouvrir dans une autre application"
+
+#: src/ui/image_preview.rs:252
+msgid "Zoom in"
+msgstr "Zoom avant"
+
+#: src/ui/image_preview.rs:262
+msgid "Fit"
+msgstr "Ajuster"
+
+#: src/ui/image_preview.rs:263
+msgid "Show at original size"
+msgstr "Afficher à la taille d'origine"
+
+#: src/ui/image_preview.rs:269
+msgid "Fit to the window (0)"
+msgstr "Ajuster à la fenêtre (0)"
+
+#: src/ui/image_preview.rs:285
+msgid "Zoom out"
+msgstr "Zoom arrière"
+
+#: src/ui/image_preview.rs:301
+msgid "Reply"
+msgstr "Répondre"
+
+#: src/ui/image_preview.rs:314
+msgid "React"
+msgstr "Réagir"
+
+#: src/ui/image_preview.rs:333
+msgid "Forward"
+msgstr "Transférer"
 
 #: src/ui/lock.rs:17
 msgid "ZapFast is locked"
@@ -1535,3 +1612,4 @@ msgstr ""
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr ""
+
