@@ -1074,8 +1074,9 @@ impl Archive {
         // or starts with `www.` are read: finding a bare domain the way the
         // bubble underlines it would parse every text row of a long chat on
         // the worker thread, so a bare domain without a preview is not
-        // listed. The rows read are the newest `limit`, and the bubble's
-        // parser then keeps the ones that do hold an address.
+        // listed. The bubble's parser then keeps the rows that do hold an
+        // address, and the reading stops at the newest `limit` of those, so
+        // text such as "http://x" never takes the place of an older link.
         let sql = format!(
             "SELECT {BARE_COLUMNS}
              FROM messages
@@ -1085,14 +1086,18 @@ impl Archive {
                     OR json_extract(content, '$.text') LIKE '%http://%'
                     OR json_extract(content, '$.text') LIKE '%https://%'
                     OR json_extract(content, '$.text') LIKE '%www.%')
-             ORDER BY timestamp DESC, rowid DESC
-             LIMIT ?2"
+             ORDER BY timestamp DESC, rowid DESC"
         );
         let mut statement = self.connection.prepare(&sql)?;
-        for row in statement.query_map(params![chat, limit as i64], searched_message)? {
+        let mut links = 0;
+        for row in statement.query_map(params![chat], searched_message)? {
             let row = row?;
             if !row.content.web_links().is_empty() {
                 rows.push(row);
+                links += 1;
+                if links == limit {
+                    break;
+                }
             }
         }
         rows.sort_by_key(|row| std::cmp::Reverse(row.timestamp));
@@ -3664,6 +3669,31 @@ mod media_path_tests {
         assert_eq!(
             ids(archive.media_docs_links(chat, 1).expect("rows")),
             ["preview", "clip", "doc"]
+        );
+    }
+
+    /// Text that only looks like a link in SQL never takes the place of an
+    /// older link: the limit counts rows that hold one.
+    #[test]
+    fn rows_that_hold_no_link_do_not_use_up_the_limit() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        let rows = [
+            ("link", 1, "see https://engine.rocks"),
+            ("scheme", 2, "type http:// first"),
+            ("prefix", 3, "a www. and nothing"),
+            ("bare", 4, "http://x"),
+        ];
+        for (id, timestamp, text) in rows {
+            let mut row = super::tests::message(chat, id, timestamp, false);
+            row.content = Content::text(text);
+            archive.insert_message(&row, None).expect("stored");
+        }
+        let ids = |rows: Vec<Message>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(archive.media_docs_links(chat, 2).expect("rows")),
+            ["link"]
         );
     }
 }
