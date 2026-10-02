@@ -5159,6 +5159,7 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Action::ShowWindow => {
+                self.hide_intent = false;
                 if self.window_hidden {
                     // The headless loop in `main` will create the window.
                     self.wants_show = true;
@@ -5179,13 +5180,20 @@ impl App {
             }
             Action::HideWindow => {
                 if self.tray.is_some() {
-                    self.hide_intent = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    self.hide_window(ctx);
                 }
             }
             // Route through the configured window-close behavior.
             Action::CloseWindow => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
+    }
+
+    /// Makes an explicit hide supersede any pending window recreation or show request.
+    fn hide_window(&mut self, ctx: &egui::Context) {
+        self.reopen = false;
+        self.wants_show = false;
+        self.hide_intent = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     pub fn toast(&mut self, message: impl Into<String>) {
@@ -7470,6 +7478,24 @@ mod tests {
         app.apply(Action::ShowWindow, &ctx);
         assert!(!app.reopen, "elsewhere the window is only focused");
         assert_ne!(app.closed(), Closed::Reopen);
+    }
+
+    /// A later hide wins over Wayland recreation; a subsequent explicit show still works.
+    #[test]
+    fn window_visibility_follows_the_latest_explicit_request() {
+        use fastframe_shell::{Closed, Resident};
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.wayland = true;
+        app.apply(Action::ShowWindow, &ctx);
+        assert_eq!(app.closed(), Closed::Reopen);
+        app.wants_show = true;
+        app.hide_window(&ctx);
+        assert_eq!(app.closed(), Closed::Hide);
+        assert!(!app.reopen && !app.wants_show);
+        app.apply(Action::ShowWindow, &ctx);
+        assert_eq!(app.closed(), Closed::Reopen);
+        assert!(!app.hide_intent);
     }
 
     #[test]
