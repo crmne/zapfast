@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:29-0300\n"
+"POT-Creation-Date: 2026-10-02 11:23-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -1090,36 +1090,36 @@ msgstr ""
 "Non inviato: il messaggio a cui stai rispondendo non è disponibile su questo "
 "computer. Annulla la risposta per inviare senza citazione."
 
-#: src/app.rs:4373
+#: src/app.rs:4385
 msgid "Added to favorites"
 msgstr "Aggiunto ai preferiti"
 
-#: src/app.rs:4448
+#: src/app.rs:4460
 msgid "Sending the sticker pack…"
 msgstr "Invio del pacchetto di sticker…"
 
-#: src/app.rs:4736 src/ui/labels.rs:237
+#: src/app.rs:4748 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Hai {limit} etichette, il massimo che ZapFast conserva."
 
-#: src/app.rs:5380
+#: src/app.rs:5392
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5388
+#: src/app.rs:5400
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5501
+#: src/app.rs:5513
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"
 
-#: src/app.rs:6036
+#: src/app.rs:6048
 msgid "Copied image"
 msgstr "Immagine copiata"
 
-#: src/app.rs:6039 src/app.rs:6044
+#: src/app.rs:6051 src/app.rs:6056
 msgid "Failed to copy image"
 msgstr "Impossibile copiare l'immagine"
 
@@ -1538,5 +1538,4 @@ msgstr "L’allegato non è disponibile. Scaricalo prima di trascinarlo."
 
 #: src/file_drag.rs:24
 msgid "Dragging attachments out is currently available on Windows only."
-msgstr ""
-"Il trascinamento degli allegati all’esterno è disponibile solo su Windows."
+msgstr "Il trascinamento degli allegati all’esterno è disponibile solo su Windows."

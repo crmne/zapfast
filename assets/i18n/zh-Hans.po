@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-02 10:29-0300\n"
+"POT-Creation-Date: 2026-10-02 11:23-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -1053,36 +1053,36 @@ msgid ""
 "Cancel the reply to send without a quote."
 msgstr "未发送：你要回复的消息不在这台电脑上。取消回复即可不带引用发送。"
 
-#: src/app.rs:4373
+#: src/app.rs:4385
 msgid "Added to favorites"
 msgstr "已添加到收藏"
 
-#: src/app.rs:4448
+#: src/app.rs:4460
 msgid "Sending the sticker pack…"
 msgstr "正在发送贴图包…"
 
-#: src/app.rs:4736 src/ui/labels.rs:237
+#: src/app.rs:4748 src/ui/labels.rs:237
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
 
-#: src/app.rs:5380
+#: src/app.rs:5392
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5388
+#: src/app.rs:5400
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5501
+#: src/app.rs:5513
 msgid "This video opens in your system player"
 msgstr "此视频将用系统播放器打开"
 
-#: src/app.rs:6036
+#: src/app.rs:6048
 msgid "Copied image"
 msgstr "已复制图片"
 
-#: src/app.rs:6039 src/app.rs:6044
+#: src/app.rs:6051 src/app.rs:6056
 msgid "Failed to copy image"
 msgstr "复制图片失败"
 

@@ -3638,7 +3638,11 @@ impl App {
         }
     }
 
-    fn finish_attachment_drag(&mut self, ctx: &egui::Context, result: Result<(), crate::file_drag::Failure>) {
+    fn finish_attachment_drag(
+        &mut self,
+        ctx: &egui::Context,
+        result: Result<(), crate::file_drag::Failure>,
+    ) {
         match result {
             Ok(()) => {
                 // Only a native drag loop can consume the button release.
@@ -3939,7 +3943,11 @@ impl App {
                 ctx.data_mut(|data| {
                     data.insert_temp(egui::Id::new("fixture-native-drag"), path.clone())
                 });
-                let result = if cfg!(test) { Ok(()) } else { crate::file_drag::start(&path) };
+                let result = if cfg!(test) {
+                    Ok(())
+                } else {
+                    crate::file_drag::start(&path)
+                };
                 self.finish_attachment_drag(ctx, result);
             }
             Action::OpenFolder(path) => {
@@ -6305,15 +6313,26 @@ mod tests {
     fn native_drag_failure_preserves_the_pointer_until_a_drag_succeeds() {
         let mut app = app();
         let ctx = egui::Context::default();
-        let mut output = ctx.run_ui(egui::RawInput { events: vec![
-            egui::Event::PointerMoved(egui::pos2(20.0, 20.0)),
-            egui::Event::PointerButton { pos: egui::pos2(20.0, 20.0), button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
-        ], ..Default::default() }, |ui| {
-            app.finish_attachment_drag(ui.ctx(), Err(crate::file_drag::Failure::Unavailable));
-            assert!(ui.input(|input| input.pointer.primary_down()));
-            app.finish_attachment_drag(ui.ctx(), Ok(()));
-            assert!(!ui.input(|input| input.pointer.primary_down()));
-        });
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![
+                    egui::Event::PointerMoved(egui::pos2(20.0, 20.0)),
+                    egui::Event::PointerButton {
+                        pos: egui::pos2(20.0, 20.0),
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                app.finish_attachment_drag(ui.ctx(), Err(crate::file_drag::Failure::Unavailable));
+                assert!(ui.input(|input| input.pointer.primary_down()));
+                app.finish_attachment_drag(ui.ctx(), Ok(()));
+                assert!(!ui.input(|input| input.pointer.primary_down()));
+            },
+        );
         output.textures_delta.clear();
     }
 
