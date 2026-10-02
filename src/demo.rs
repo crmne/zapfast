@@ -4292,6 +4292,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks header layout at different zoom levels with the sidebar shown or hidden.
     fn macos_headers_fit_when_zoomed_with_and_without_the_sidebar() {
         for zoom in [0.6, 1.0, 2.0] {
             for page in [
@@ -4867,6 +4868,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks that scrolling within a day retains the visible transcript date label.
     fn scrolling_inside_a_day_keeps_its_date_visible() {
         let mut app = app();
         let ctx = egui::Context::default();

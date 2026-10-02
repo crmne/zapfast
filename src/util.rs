@@ -803,6 +803,7 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Checks recent relative day labels include the calendar date while Today stays concise.
     fn recent_day_labels_include_the_calendar_date_except_today() {
         let today = Date::new(2026, 9, 30).unwrap();
         for (day, expected) in [
@@ -828,6 +829,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks English calendar dates include the correct ordinal suffixes, including teens.
     fn english_calendar_dates_handle_ordinal_endings() {
         for (day, suffix) in [
             (1, "st"),
@@ -850,6 +852,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks relative date templates and month names use each tested locale's grammar.
     fn translated_recent_dates_use_local_grammar() {
         let date = Date::new(2026, 9, 29).unwrap();
         for (locale, expected) in [
