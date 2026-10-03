@@ -4026,8 +4026,15 @@ impl Worker {
                 // A direct chat's receipt times date its ticks. A group's may
                 // be partial, so they only fill in "Message info".
                 let group = ChatKind::from_id(&id) == ChatKind::Group;
+                // A zero timestamp means the time is unknown: kept, it would
+                // win `min()` and date the tick to the Unix epoch.
                 let first = |at: fn(&wa::UserReceipt) -> Option<i64>| {
-                    message.receipts.iter().filter_map(at).min()
+                    message
+                        .receipts
+                        .iter()
+                        .filter_map(at)
+                        .filter(|&at| at > 0)
+                        .min()
                 };
                 let read = matches!(message.status, Delivery::Read | Delivery::Played);
                 let delivered_at = first(|receipt| receipt.receipt_timestamp)
@@ -8768,6 +8775,8 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         };
         // A group's individual receipts may be only a partial list. Only the
         // phone's aggregate status proves delivery/read for historical groups.
+        // A zero receipt time proves nothing: WhatsApp sends one when a
+        // contact does not share read receipts.
         if from_me
             && ChatKind::from_id(&conversation.id) != ChatKind::Group
             && status < Delivery::Read
@@ -8775,14 +8784,14 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
             if info
                 .user_receipt
                 .iter()
-                .any(|receipt| receipt.read_timestamp.is_some())
+                .any(|receipt| receipt.read_timestamp.is_some_and(|at| at > 0))
             {
                 status = Delivery::Read;
             } else if status < Delivery::Delivered
                 && info
                     .user_receipt
                     .iter()
-                    .any(|receipt| receipt.receipt_timestamp.is_some())
+                    .any(|receipt| receipt.receipt_timestamp.is_some_and(|at| at > 0))
             {
                 status = Delivery::Delivered;
             }
@@ -12272,6 +12281,68 @@ mod receipt_tests {
         assert_eq!(receipts[0].id, PEER);
         assert!(!receipts[0].expected, "a partial list is not the audience");
         assert_eq!(receipts[0].read_at, Some(123));
+    }
+
+    #[test]
+    fn a_zero_history_receipt_time_neither_reads_nor_dates_a_message() {
+        use wa::web_message_info::Status;
+        let conversation = |id: &str, status| {
+            parse_conversation(wa::Conversation {
+                id: PEER.into(),
+                messages: vec![wa::HistorySyncMsg {
+                    message: MessageField::some(wa::WebMessageInfo {
+                        key: MessageField::some(wa::MessageKey {
+                            id: Some(id.into()),
+                            from_me: Some(true),
+                            ..Default::default()
+                        }),
+                        message: MessageField::some(wa::Message {
+                            conversation: Some("hello".into()),
+                            ..Default::default()
+                        }),
+                        message_timestamp: Some(90),
+                        status: Some(status),
+                        user_receipt: vec![wa::UserReceipt {
+                            user_jid: PEER.into(),
+                            receipt_timestamp: Some(100),
+                            read_timestamp: Some(0),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+        };
+        // A contact who hides read receipts: the phone says delivered.
+        let hidden = conversation("hidden", Status::DELIVERY_ACK);
+        assert_eq!(hidden.messages[0].status, Delivery::Delivered);
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let mut chats = vec![hidden];
+        // The phone says read, but the receipt carries no read time.
+        chats[0]
+            .messages
+            .extend(conversation("read", Status::READ).messages);
+        worker.apply_history(
+            ParsedHistory {
+                chats,
+                push_names: Vec::new(),
+                lids: Vec::new(),
+                stickers: Vec::new(),
+            },
+            true,
+        );
+        let hidden = worker.archive.message(PEER, "hidden").unwrap().unwrap();
+        assert_eq!(hidden.status, Delivery::Delivered);
+        assert_eq!(hidden.read_at, None);
+        assert_eq!(hidden.delivered_at, Some(100));
+        let read = worker.archive.message(PEER, "read").unwrap().unwrap();
+        assert_eq!(read.status, Delivery::Read);
+        assert_eq!(
+            read.read_at, None,
+            "\"Message info\" says the time was not recorded"
+        );
     }
 
     /// A duplicate delivery or a history replay reclassifies the same message,
