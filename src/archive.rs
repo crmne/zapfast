@@ -904,10 +904,20 @@ impl Archive {
              SELECT ?2, id FROM message_removals WHERE chat = ?1",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")],
         )?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO message_removals (chat, id)
+             SELECT ?1, id FROM message_removals WHERE chat = ?2",
+            params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")],
+        )?;
         let removed = self.connection.execute(
-            "DELETE FROM messages WHERE chat = ?1 AND id IN
+            "DELETE FROM messages WHERE chat IN (?1, ?2) AND id IN
              (SELECT id FROM message_removals WHERE chat = ?1)",
-            params![format!("{pn}@s.whatsapp.net")],
+            params![format!("{pn}@s.whatsapp.net"), format!("{lid}@lid")],
+        )?;
+        self.connection.execute(
+            "DELETE FROM pending_message_removals WHERE chat IN (?1, ?2) AND id IN
+             (SELECT id FROM message_removals WHERE chat = ?1)",
+            params![format!("{pn}@s.whatsapp.net"), format!("{lid}@lid")],
         )?;
         let changed = self.connection.execute(
             "INSERT INTO chats (id, name, kind, pinned, pinned_at, pin_updated_at,
@@ -1327,22 +1337,27 @@ impl Archive {
 
     /// Atomically deletes a message and records a durable barrier against replay.
     pub fn delete_message(&self, chat: &str, id: &str) -> Result<bool> {
-        self.delete_message_alias(chat, chat, id)
+        self.delete_message_aliases(&[chat.to_owned()], id)
     }
 
-    /// Commits the deletion under both identities if mapping changed while sending.
-    pub fn delete_message_alias(&self, chat: &str, canonical: &str, id: &str) -> Result<bool> {
+    /// Commits removal, barriers, and pending cleanup for every known identity.
+    pub fn delete_message_aliases(&self, chats: &[String], id: &str) -> Result<bool> {
         let transaction = self.connection.unchecked_transaction()?;
-        self.connection.execute(
-            "INSERT OR IGNORE INTO message_removals (chat, id) VALUES (?1, ?3), (?2, ?3)",
-            params![chat, canonical, id],
-        )?;
-        let deleted = self.connection.execute(
-            "DELETE FROM messages WHERE chat IN (?1, ?2) AND id = ?3",
-            params![chat, canonical, id],
-        )?;
-        self.cancel_message_removal(chat, id)?;
-        self.cancel_message_removal(canonical, id)?;
+        let mut deleted = 0;
+        for chat in chats {
+            transaction.execute(
+                "INSERT OR IGNORE INTO message_removals (chat, id) VALUES (?1, ?2)",
+                params![chat, id],
+            )?;
+            deleted += transaction.execute(
+                "DELETE FROM messages WHERE chat = ?1 AND id = ?2",
+                params![chat, id],
+            )?;
+            transaction.execute(
+                "DELETE FROM pending_message_removals WHERE chat = ?1 AND id = ?2",
+                params![chat, id],
+            )?;
+        }
         transaction.commit()?;
         Ok(deleted > 0)
     }
@@ -3139,19 +3154,27 @@ pub(crate) mod tests {
         let archive = Archive::in_memory().unwrap();
         let chat = "1@s.whatsapp.net";
         archive.ensure_chat(chat, "Fixture").unwrap();
-        archive
-            .insert_message(&message(chat, "kept", 100, true), None)
-            .unwrap();
-        archive
-            .queue_message_removal("fixture-account", chat, "kept")
-            .unwrap();
-        archive.connection.execute_batch("CREATE TRIGGER refuse_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
-        assert!(archive.delete_message(chat, "kept").is_err());
-        assert!(archive.message(chat, "kept").unwrap().is_some());
-        assert!(!archive.message_removed(chat, "kept").unwrap());
+        let aliases = [chat.to_owned(), "9@lid".to_owned()];
+        for alias in &aliases {
+            archive
+                .insert_message(&message(alias, "kept", 100, true), None)
+                .unwrap();
+            archive
+                .queue_message_removal("fixture-account", alias, "kept")
+                .unwrap();
+        }
+        archive.connection.execute_batch("CREATE TRIGGER refuse_delete BEFORE DELETE ON messages WHEN OLD.chat = '9@lid' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        assert!(archive.delete_message_aliases(&aliases, "kept").is_err());
+        for alias in &aliases {
+            assert!(archive.message(alias, "kept").unwrap().is_some());
+            assert!(!archive.message_removed(alias, "kept").unwrap());
+        }
         assert_eq!(
-            archive.pending_message_removals("fixture-account").unwrap(),
-            [(chat.into(), "kept".into())]
+            archive
+                .pending_message_removals("fixture-account")
+                .unwrap()
+                .len(),
+            2
         );
     }
 

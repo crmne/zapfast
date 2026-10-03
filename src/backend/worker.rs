@@ -1852,13 +1852,16 @@ impl Worker {
             self.emit_chats();
         }
         let chat = format!("{pn}@s.whatsapp.net");
+        let lid_chat = format!("{lid}@lid");
         match self.archive.removed_message_ids(&chat) {
             Ok(ids) => {
                 for id in ids {
-                    self.emit(Event::MessageDeleted {
-                        chat: chat.clone(),
-                        id,
-                    });
+                    for alias in [&chat, &lid_chat] {
+                        self.emit(Event::MessageDeleted {
+                            chat: alias.clone(),
+                            id: id.clone(),
+                        });
+                    }
                 }
             }
             Err(_) => self.emit(Event::Error("Could not refresh deleted messages".into())),
@@ -1868,7 +1871,6 @@ impl Worker {
         for id in self.archive.waiting_receipts(&chat).unwrap_or_default() {
             self.settle_early_receipts(&chat, &id);
         }
-        let lid_chat = format!("{lid}@lid");
         let mapped = self.canonical_str(&lid_chat);
         for id in self.early.rekey(&lid_chat, &mapped) {
             if matches!(self.archive.message(&mapped, &id), Ok(Some(_))) {
@@ -2550,8 +2552,8 @@ impl Worker {
                 let _ = self.empty_chat(&chat, through, update.delete_media);
             }
             E::DeleteMessageForMeUpdate(update) => {
-                let chat = self.canonical_sync_chat(&update.chat_jid).await;
-                self.delete_message_here(&chat, &update.message_id);
+                self.canonical_sync_chat(&update.chat_jid).await;
+                self.delete_message_here(&update.chat_jid.to_string(), &update.message_id);
             }
             E::MarkChatAsReadUpdate(update) => {
                 let chat = self.canonical(&update.jid);
@@ -7140,19 +7142,25 @@ impl Worker {
     /// Persists an accepted deletion and wakes the UI, including for unseen messages.
     fn delete_message_here(&mut self, chat: &str, id: &str) {
         let canonical = self.canonical_str(chat);
-        match self.archive.delete_message_alias(chat, &canonical, id) {
+        let mut aliases = vec![chat.to_owned(), canonical.clone()];
+        if let Some(pn) = canonical.strip_suffix("@s.whatsapp.net") {
+            aliases.extend(
+                self.lid_to_pn
+                    .iter()
+                    .filter(|(_, mapped)| mapped.as_str() == pn)
+                    .map(|(lid, _)| format!("{lid}@lid")),
+            );
+        }
+        aliases.sort_unstable();
+        aliases.dedup();
+        match self.archive.delete_message_aliases(&aliases, id) {
             Ok(_) => {
-                self.emit(Event::MessageDeleted {
-                    chat: chat.to_owned(),
-                    id: id.to_owned(),
-                });
-                self.emit_chat(chat);
-                if canonical != chat {
+                for chat in aliases {
                     self.emit(Event::MessageDeleted {
-                        chat: canonical.clone(),
+                        chat: chat.clone(),
                         id: id.to_owned(),
                     });
-                    self.emit_chat(&canonical);
+                    self.emit_chat(&chat);
                 }
             }
             Err(_) => self.emit(Event::Error(
@@ -13776,6 +13784,124 @@ mod chat_removal_tests {
     use crate::model::{Content, Delivery};
 
     const CHAT: &str = "4915700000001@s.whatsapp.net";
+
+    /// Mapping discovered after canonical acceptance also removes the old copy.
+    #[tokio::test]
+    async fn deletion_before_mapping_reconciles_the_original_copy() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        worker
+            .archive
+            .insert_message(
+                &crate::archive::tests::message("9@lid", "m100", 100, true),
+                None,
+            )
+            .unwrap();
+        worker
+            .archive
+            .queue_message_removal(&worker.me(), "9@lid", "m100")
+            .unwrap();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::DeleteMessageForMeUpdate(
+                wa_events::DeleteMessageForMeUpdate::builder()
+                    .chat_jid(CHAT.parse().unwrap())
+                    .message_id("m100".to_owned())
+                    .from_me(true)
+                    .timestamp(std::time::SystemTime::now().into())
+                    .action(Box::default())
+                    .from_full_sync(false)
+                    .build(),
+            )))
+            .await;
+        events.try_iter().for_each(drop);
+        worker.learn_lid("9", CHAT.split('@').next().unwrap());
+        assert!(worker.archive.message("9@lid", "m100").unwrap().is_none());
+        assert!(worker.archive.message_removed("9@lid", "m100").unwrap());
+        assert!(
+            worker
+                .archive
+                .pending_message_removals(&worker.me())
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(stored(&worker, CHAT), ["m200"]);
+        assert!(events.try_iter().any(|event| matches!(event, Event::MessageDeleted { chat, id } if chat == "9@lid" && id == "m100")));
+    }
+
+    /// Incoming acceptance cleans every alias even after the local reply is lost.
+    #[tokio::test]
+    async fn incoming_deletion_reconciles_all_known_aliases() {
+        for source in [CHAT, "9@lid"] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            worker.apply_history(history(CHAT, &[100, 200]), true);
+            for lid in ["9@lid", "10@lid"] {
+                worker
+                    .archive
+                    .insert_message(
+                        &crate::archive::tests::message(lid, "m100", 100, true),
+                        None,
+                    )
+                    .unwrap();
+                worker
+                    .archive
+                    .queue_message_removal(&worker.me(), lid, "m100")
+                    .unwrap();
+                worker
+                    .handle_command(Command::MessageDeletedForMe {
+                        generation: 0,
+                        chat: lid.into(),
+                        id: "m100".into(),
+                        outcome: MessageRemovalOutcome::Uncertain,
+                    })
+                    .await;
+                worker.learn_lid(
+                    lid.split('@').next().unwrap(),
+                    CHAT.split('@').next().unwrap(),
+                );
+            }
+            events.try_iter().for_each(drop);
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::DeleteMessageForMeUpdate(
+                    wa_events::DeleteMessageForMeUpdate::builder()
+                        .chat_jid(source.parse().unwrap())
+                        .message_id("m100".to_owned())
+                        .from_me(true)
+                        .timestamp(std::time::SystemTime::now().into())
+                        .action(Box::default())
+                        .from_full_sync(false)
+                        .build(),
+                )))
+                .await;
+            assert!(
+                worker
+                    .archive
+                    .pending_message_removals(&worker.me())
+                    .unwrap()
+                    .is_empty()
+            );
+            let notified: HashSet<_> = events
+                .try_iter()
+                .filter_map(|event| match event {
+                    Event::MessageDeleted { chat, id } if id == "m100" => Some(chat),
+                    _ => None,
+                })
+                .collect();
+            for chat in [CHAT, "9@lid", "10@lid"] {
+                assert!(worker.archive.message(chat, "m100").unwrap().is_none());
+                assert!(worker.archive.message_removed(chat, "m100").unwrap());
+                assert!(notified.contains(chat));
+                worker
+                    .archive
+                    .insert_message(
+                        &crate::archive::tests::message(chat, "m100", 100, true),
+                        None,
+                    )
+                    .unwrap();
+                assert!(worker.archive.message(chat, "m100").unwrap().is_none());
+            }
+            assert_eq!(stored(&worker, CHAT), ["m200"]);
+        }
+    }
 
     /// Lost acknowledgements retain intent and rows until acceptance is known.
     #[tokio::test]
