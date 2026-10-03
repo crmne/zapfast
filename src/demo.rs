@@ -1720,6 +1720,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     for part in page.split(',').map(str::trim) {
         match part {
             "chat" | "" => {}
+            "phone-menu" => phone_menu_sample(app),
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
             "chat-header-menu" => app.open_header_menu = app.open_chat.clone(),
             "interactive-actions" => interactive_actions_sample(app),
@@ -2779,6 +2780,30 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     }
 }
 
+const PHONE_MENU_SAMPLE: &str = "Call +1 (555) 010-2040 to arrange the pickup.";
+
+fn phone_menu_sample(app: &mut App) {
+    let Some(row) = app
+        .conversations
+        .get_mut(SAMPLES[0].id)
+        .and_then(|conversation| conversation.message_mut("ada-link"))
+    else {
+        return;
+    };
+    row.content = Content::text(PHONE_MENU_SAMPLE);
+    row.from_me = false;
+    app.open_chat = Some(SAMPLES[0].id.into());
+    app.scroll_to_bottom = true;
+}
+
+pub fn phone_menu_popup_id() -> egui::Id {
+    let start = PHONE_MENU_SAMPLE.find('+').unwrap();
+    let end = start + "+1 (555) 010-2040".len();
+    crate::ui::conversation::bubble_id(SAMPLES[0].id, "ada-link")
+        .with(("phone-link", start, end, 0usize))
+        .with("popup")
+}
+
 fn unlink(app: &mut App) {
     app.chats.clear();
     app.conversations.clear();
@@ -3183,7 +3208,7 @@ mod tests {
             .unwrap()
             .message_mut("ada-link")
             .unwrap();
-        let body = "اتصل على +00 (00) 00000-0000";
+        let body = "اتصل على +00 (000) 00000-0000";
         row.content = Content::text(body);
         row.from_me = false;
 
@@ -3196,14 +3221,14 @@ mod tests {
             "phone-link",
             start,
             end,
-            0usize,
+            1usize,
         ));
         let run = |app: &mut App, events| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
-                        egui::vec2(1180.0, 780.0),
+                        egui::vec2(400.0, 780.0),
                     )),
                     events,
                     ..Default::default()
@@ -3220,6 +3245,7 @@ mod tests {
         let open_menu = |app: &mut App| {
             ctx.memory_mut(|memory| memory.request_focus(phone));
             run(app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+            run(app, vec![]);
             assert!(egui::Popup::is_id_open(&ctx, phone.with("popup")));
         };
         let click = |app: &mut App, rect: egui::Rect| {
@@ -3245,13 +3271,15 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        assert_eq!(copied, "+00 (00) 00000-0000");
+        assert_eq!(copied, "+00 (000) 00000-0000");
 
         open_menu(&mut app);
         let message_rect = ctx
             .data(|data| data.get_temp::<egui::Rect>(phone.with("test-message-action")))
             .unwrap();
         click(&mut app, message_rect);
+        // The menu is activated through the existing NewContact command,
+        // whose worker path checks whether the number is registered.
         assert!(
             app.backend
                 .take_demo_commands()
@@ -3262,7 +3290,7 @@ mod tests {
                         phone,
                         full_name: None,
                         ..
-                    } if phone == "0000000000000"
+                    } if phone == "00000000000000"
                 ))
         );
     }

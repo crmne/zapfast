@@ -5475,7 +5475,7 @@ fn rich_body(
                         range.end,
                         row,
                     )),
-                    Sense::CLICK,
+                    Sense::click(),
                 )
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             link.widget_info(|| {
