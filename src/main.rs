@@ -273,6 +273,15 @@ fn run() -> eframe::Result<()> {
         .idle(fastframe_tray::idle)
         .run(|lease| {
             let receipt = update_receipt.take();
+            // The latest geometry lives in the app waiting in the shell, so
+            // a reopened window (tray, notification, Wayland reopen) uses
+            // what the last one remembered, not what the process started
+            // with. Demo runs keep their fixed screenshot size.
+            let geometry = if demo_persistence.is_some() {
+                zapfast::window::Geometry::default()
+            } else {
+                lease.peek(|app: &app::App| app.settings.window_geometry())
+            };
             #[cfg(feature = "demo")]
             let shot = shot.clone();
             #[cfg(feature = "demo")]
@@ -291,7 +300,7 @@ fn run() -> eframe::Result<()> {
             });
             eframe::run_native(
                 "ZapFast",
-                native_options(demo_persistence.clone()),
+                native_options(demo_persistence.clone(), geometry),
                 Box::new(move |cc| {
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
@@ -404,8 +413,11 @@ fn tour_script(name: &str) -> zapfast::demo::tour::Script {
     zapfast::demo::tour::Script::from_name(name).unwrap_or_default()
 }
 
-fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::NativeOptions {
-    let demo_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
+fn native_options(
+    demo_persistence: Option<std::path::PathBuf>,
+    geometry: zapfast::window::Geometry,
+) -> eframe::NativeOptions {
+    let default_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
     let demo = demo_persistence.is_some();
     let viewport = egui::ViewportBuilder::default()
         .with_title(if demo { "ZapFast Demo" } else { "ZapFast" })
@@ -413,8 +425,16 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
             "zapfast-demo".to_owned()
         } else {
             std::env::var("FLATPAK_ID").unwrap_or_else(|_| "zapfast".to_owned())
-        })
-        .with_inner_size(demo_size)
+        });
+    // The remembered size and position, from the settings. eframe's own
+    // stored window (when present from an earlier version) still wins over
+    // this, and is then remembered here on the first frame.
+    let viewport = if demo {
+        viewport.with_inner_size(default_size)
+    } else {
+        zapfast::window::viewport(viewport, geometry, default_size)
+    };
+    let viewport = viewport
         // Keep the floor small enough that Windows can still snap the window
         // into narrow Aero Snap and LG Screen Split zones (a 2560 px ultrawide
         // split four ways is about 640 px wide, which a 720 px minimum blocks).

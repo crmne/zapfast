@@ -471,6 +471,19 @@ pub struct Settings {
     pub app_lock_hash: Option<String>,
     /// How long ZapFast may go unused before the app lock locks it.
     pub app_lock_after: AutoLock,
+    /// Last window size in points, remembered across restarts. `None` uses
+    /// the default size.
+    pub window_width: Option<f32>,
+    /// Last window height in points. See [`Self::window_width`].
+    pub window_height: Option<f32>,
+    /// Last window position in points, as `ViewportBuilder::with_position`
+    /// takes it. `None` lets the window manager place the window, which is
+    /// also the case on Wayland where the position is not known.
+    pub window_x: Option<f32>,
+    /// Last window vertical position. See [`Self::window_x`].
+    pub window_y: Option<f32>,
+    /// Whether the window was maximized when it last closed.
+    pub window_maximized: bool,
 }
 
 impl Default for Settings {
@@ -518,6 +531,11 @@ impl Default for Settings {
             chat_lock_hint_dismissed: false,
             app_lock_hash: None,
             app_lock_after: AutoLock::default(),
+            window_width: None,
+            window_height: None,
+            window_x: None,
+            window_y: None,
+            window_maximized: false,
         }
     }
 }
@@ -571,6 +589,17 @@ impl Settings {
             .map(str::trim)
             .filter(|key| !key.is_empty())
             .map(str::to_owned)
+    }
+
+    /// The remembered window geometry for the next window.
+    pub fn window_geometry(&self) -> crate::window::Geometry {
+        crate::window::Geometry {
+            width: self.window_width,
+            height: self.window_height,
+            x: self.window_x,
+            y: self.window_y,
+            maximized: self.window_maximized,
+        }
     }
 
     pub fn load(path: &Path) -> Self {
@@ -865,6 +894,24 @@ mod tests {
         assert!(parsed.show_wallpaper);
         assert_eq!(parsed.wallpaper_color, WallpaperColor::Theme);
         assert!(parsed.pause_other_media);
+        assert_eq!(parsed.window_width, None);
+        assert_eq!(parsed.window_height, None);
+        assert_eq!(parsed.window_x, None);
+        assert_eq!(parsed.window_y, None);
+        assert!(!parsed.window_maximized);
+    }
+
+    #[test]
+    fn the_window_geometry_defaults_to_unset() {
+        // Files written before the window was remembered open with the
+        // default size; the full round-trip lives in `window::tests`.
+        let settings = Settings::default();
+        assert_eq!(
+            settings.window_geometry(),
+            crate::window::Geometry::default()
+        );
+        let older: Settings = serde_json::from_str(r#"{"zoom":1.25}"#).unwrap();
+        assert_eq!(older.window_geometry(), crate::window::Geometry::default());
     }
 
     fn load_from(contents: &str) -> (Settings, serde_json::Value) {
