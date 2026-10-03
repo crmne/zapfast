@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS chat_removals (
     through INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS message_removals (
+    account TEXT NOT NULL DEFAULT '',
     chat TEXT NOT NULL,
     id TEXT NOT NULL,
     PRIMARY KEY (chat, id)
@@ -146,6 +147,7 @@ const CHAT_COLUMNS: &str =
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
+    ("message_removals", "account", "TEXT NOT NULL DEFAULT ''"),
     (
         "pending_message_removals",
         "confirmed",
@@ -906,29 +908,36 @@ impl Archive {
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through)",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")])?;
         self.connection.execute(
-            "INSERT OR IGNORE INTO message_removals (chat, id)
-             SELECT chat, id FROM pending_message_removals WHERE confirmed = 1 AND chat IN (?1, ?2)
-             AND account = (SELECT value FROM meta WHERE key = 'me_pn')",
+            "INSERT INTO message_removals (account, chat, id)
+             SELECT account, chat, id FROM pending_message_removals WHERE confirmed = 1 AND chat IN (?1, ?2)
+             AND account = (SELECT value FROM meta WHERE key = 'me_pn')
+             ON CONFLICT(chat, id) DO UPDATE SET account = excluded.account",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")],
         )?;
         self.connection.execute(
-            "INSERT OR IGNORE INTO message_removals (chat, id)
-             SELECT ?2, id FROM message_removals WHERE chat = ?1",
+            "INSERT INTO message_removals (account, chat, id)
+             SELECT account, ?2, id FROM message_removals WHERE chat = ?1
+             AND account = COALESCE((SELECT value FROM meta WHERE key = 'me_pn'), '')
+             ON CONFLICT(chat, id) DO UPDATE SET account = excluded.account",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")],
         )?;
         self.connection.execute(
-            "INSERT OR IGNORE INTO message_removals (chat, id)
-             SELECT ?1, id FROM message_removals WHERE chat = ?2",
+            "INSERT INTO message_removals (account, chat, id)
+             SELECT account, ?1, id FROM message_removals WHERE chat = ?2
+             AND account = COALESCE((SELECT value FROM meta WHERE key = 'me_pn'), '')
+             ON CONFLICT(chat, id) DO UPDATE SET account = excluded.account",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")],
         )?;
         let removed = self.connection.execute(
             "DELETE FROM messages WHERE chat IN (?1, ?2) AND id IN
-             (SELECT id FROM message_removals WHERE chat = ?1)",
+             (SELECT id FROM message_removals WHERE chat = ?1
+                AND account = COALESCE((SELECT value FROM meta WHERE key = 'me_pn'), ''))",
             params![format!("{pn}@s.whatsapp.net"), format!("{lid}@lid")],
         )?;
         self.connection.execute(
             "DELETE FROM pending_message_removals WHERE chat IN (?1, ?2) AND id IN
-             (SELECT id FROM message_removals WHERE chat = ?1)",
+             (SELECT id FROM message_removals WHERE chat = ?1
+                AND account = COALESCE((SELECT value FROM meta WHERE key = 'me_pn'), ''))",
             params![format!("{pn}@s.whatsapp.net"), format!("{lid}@lid")],
         )?;
         let changed = self.connection.execute(
@@ -1358,7 +1367,9 @@ impl Archive {
         let mut deleted = 0;
         for chat in chats {
             transaction.execute(
-                "INSERT OR IGNORE INTO message_removals (chat, id) VALUES (?1, ?2)",
+                "INSERT INTO message_removals (account, chat, id)
+                 VALUES (COALESCE((SELECT value FROM meta WHERE key = 'me_pn'), ''), ?1, ?2)
+                 ON CONFLICT(chat, id) DO UPDATE SET account = excluded.account",
                 params![chat, id],
             )?;
             deleted += transaction.execute(
@@ -1437,7 +1448,8 @@ impl Archive {
     /// Whether an account deletion prevents this message from being imported again.
     pub fn message_removed(&self, chat: &str, id: &str) -> Result<bool> {
         self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM message_removals WHERE chat = ?1 AND id = ?2)
+            "SELECT EXISTS(SELECT 1 FROM message_removals WHERE chat = ?1 AND id = ?2
+                AND account = COALESCE((SELECT value FROM meta WHERE key = 'me_pn'), ''))
                 OR EXISTS(SELECT 1 FROM pending_message_removals WHERE chat = ?1 AND id = ?2 AND confirmed = 1
                     AND account = (SELECT value FROM meta WHERE key = 'me_pn'))",
             params![chat, id],
@@ -1447,9 +1459,10 @@ impl Archive {
 
     /// Deletion barriers to reconcile when a privacy id gains its canonical chat.
     pub fn removed_message_ids(&self, chat: &str) -> Result<Vec<String>> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT id FROM message_removals WHERE chat = ?1")?;
+        let mut statement = self.connection.prepare(
+            "SELECT id FROM message_removals WHERE chat = ?1
+                AND account = COALESCE((SELECT value FROM meta WHERE key = 'me_pn'), '')",
+        )?;
         statement.query_map([chat], |row| row.get(0))?.collect()
     }
 
@@ -1905,6 +1918,39 @@ pub(crate) mod tests {
         } else {
             "DROP TRIGGER reject_message_deletion"
         }).unwrap();
+    }
+
+    /// Failed unlink cannot apply the previous account's terminal barriers.
+    #[test]
+    fn completed_deletion_barriers_remain_owned_after_failed_unlink() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1-1@g.us";
+        archive.set_meta("me_pn", "old-account").unwrap();
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive
+            .insert_message(&message(chat, "removed", 100, true), None)
+            .unwrap();
+        archive.delete_message(chat, "removed").unwrap();
+        archive
+            .insert_message(&message(chat, "kept", 200, true), None)
+            .unwrap();
+        set_message_deletion_failure(&archive, true);
+        assert!(archive.clear().is_err());
+        set_message_deletion_failure(&archive, false);
+        archive.set_meta("me_pn", "new-account").unwrap();
+        assert!(!archive.message_removed(chat, "removed").unwrap());
+        assert!(archive.removed_message_ids(chat).unwrap().is_empty());
+        archive
+            .insert_message(&message(chat, "removed", 100, true), None)
+            .unwrap();
+        assert!(archive.message(chat, "removed").unwrap().is_some());
+        archive.set_meta("me_pn", "old-account").unwrap();
+        assert!(archive.message_removed(chat, "removed").unwrap());
+        archive.set_meta("me_pn", "new-account").unwrap();
+        archive.delete_message(chat, "removed").unwrap();
+        assert!(archive.message_removed(chat, "removed").unwrap());
+        archive.set_meta("me_pn", "old-account").unwrap();
+        assert!(!archive.message_removed(chat, "removed").unwrap());
     }
 
     /// Confirmed work survives encrypted restart and blocks replay before cleanup.

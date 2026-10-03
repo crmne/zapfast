@@ -11727,6 +11727,7 @@ mod receipt_tests {
             link_watch: Default::default(),
             forward_queue: None,
         };
+        worker.archive.set_meta("me_pn", ME).unwrap();
         (worker, events_rx, inbox, wa_events)
     }
 
