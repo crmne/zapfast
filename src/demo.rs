@@ -3243,14 +3243,6 @@ mod tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         render(&mut app, &ctx);
-        let start = body[..body.find('+').unwrap()].chars().count();
-        let end = body.chars().count();
-        let phone = crate::ui::conversation::bubble_id(chat, "ada-link").with((
-            "phone-link",
-            start,
-            end,
-            1usize,
-        ));
         let run = |app: &mut App, events| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -3270,11 +3262,37 @@ mod tests {
             output.textures_delta.clear();
             output.platform_output.commands
         };
-        let open_menu = |app: &mut App| {
-            ctx.memory_mut(|memory| memory.request_focus(phone));
+        // Register controls at the same width used by synthetic keyboard
+        // input so a wrapped link has the same hit-region id in both passes.
+        run(&mut app, vec![]);
+        let phone_links = crate::ui::focus::stops(&ctx)
+            .into_iter()
+            .filter_map(|(stop, id)| {
+                matches!(stop, crate::ui::focus::Stop::PhoneLink(_)).then_some(id)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            phone_links.len() > 1,
+            "the phone link wraps across hit regions"
+        );
+        let phone = phone_links[0];
+        let phone_last = *phone_links.last().unwrap();
+        let first_row = crate::ui::conversation::bubble_id(chat, "ada-link").with((
+            "phone-link",
+            body[..body.find('+').unwrap()].chars().count(),
+            body.chars().count(),
+            0usize,
+        ));
+        assert_eq!(phone, first_row);
+        let previous = crate::ui::focus::control(&ctx, crate::ui::focus::Stop::Emoji).unwrap();
+        let next = crate::ui::focus::control(&ctx, crate::ui::focus::Stop::ChatSearch).unwrap();
+        let open_menu = |app: &mut App, from: egui::Id, target: egui::Id, tab: egui::Modifiers| {
+            ctx.memory_mut(|memory| memory.request_focus(from));
+            run(app, vec![key(egui::Key::Tab, tab)]);
+            assert_eq!(ctx.memory(|memory| memory.focused()), Some(target));
             run(app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
             run(app, vec![]);
-            assert!(egui::Popup::is_id_open(&ctx, phone.with("popup")));
+            assert!(egui::Popup::is_id_open(&ctx, target.with("popup")));
         };
         let click = |app: &mut App, rect: egui::Rect| {
             let pos = rect.center();
@@ -3288,7 +3306,7 @@ mod tests {
             run(app, vec![button(false)])
         };
 
-        open_menu(&mut app);
+        open_menu(&mut app, previous, phone, egui::Modifiers::NONE);
         let copy_rect = ctx
             .data(|data| data.get_temp::<egui::Rect>(phone.with("test-copy-action")))
             .unwrap();
@@ -3301,9 +3319,9 @@ mod tests {
             .unwrap();
         assert_eq!(copied, "+00 (000) 00000-0000");
 
-        open_menu(&mut app);
+        open_menu(&mut app, next, phone_last, egui::Modifiers::SHIFT);
         let message_rect = ctx
-            .data(|data| data.get_temp::<egui::Rect>(phone.with("test-message-action")))
+            .data(|data| data.get_temp::<egui::Rect>(phone_last.with("test-message-action")))
             .unwrap();
         click(&mut app, message_rect);
         // The menu is activated through the existing NewContact command,

@@ -19,7 +19,7 @@ use crate::model::{
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
-use super::focus::{Stop, TabStop};
+use super::focus::{self, Stop, TabStop};
 use super::widgets;
 
 /// Group-message avatar size.
@@ -5476,7 +5476,7 @@ fn rich_body(
             laid.placements().to_vec(),
         ));
     // Click links and drag to select text.
-    // Text selection and pointer links do not need a sequential Tab stop.
+    // Text selection and web links do not need a sequential Tab stop.
     // The surrounding transcript remains available to accessibility readers.
     let (_, rect) = ui.allocate_space(allocation);
     // egui matches selection endpoints to widgets by id every frame and drops
@@ -5540,6 +5540,7 @@ fn rich_body(
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), number)
             });
             theme::reveal_focus(&link);
+            let link = focus::phone_link(link);
             egui::Popup::menu(&link)
                 .id(link.id.with("popup"))
                 .width(widgets::menu_width(ui, &menu_labels, true))
