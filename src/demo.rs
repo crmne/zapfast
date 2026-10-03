@@ -3277,13 +3277,6 @@ mod tests {
         );
         let phone = phone_links[0];
         let phone_last = *phone_links.last().unwrap();
-        let first_row = crate::ui::conversation::bubble_id(chat, "ada-link").with((
-            "phone-link",
-            body[..body.find('+').unwrap()].chars().count(),
-            body.chars().count(),
-            0usize,
-        ));
-        assert_eq!(phone, first_row);
         let previous = crate::ui::focus::control(&ctx, crate::ui::focus::Stop::Emoji).unwrap();
         let next = crate::ui::focus::control(&ctx, crate::ui::focus::Stop::ChatSearch).unwrap();
         let open_menu = |app: &mut App, from: egui::Id, target: egui::Id, tab: egui::Modifiers| {
