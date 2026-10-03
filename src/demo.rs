@@ -2294,6 +2294,17 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
             }
+            "messages" => {
+                app.settings.theme = ThemeChoice::Messages;
+            }
+            // Messages follows the system; this shows its light side anywhere.
+            "messages-light" => {
+                app.settings.custom_theme = Some("Messages light.json".into());
+                app.settings.custom_theme_cache = Some(crate::theme::CustomTheme {
+                    filename: "Messages light.json".into(),
+                    palette: crate::theme::Palette::messages_light(),
+                });
+            }
             "login" => {
                 unlink(app);
                 app.link = LinkStatus::Unlinked {

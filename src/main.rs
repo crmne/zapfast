@@ -345,6 +345,9 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
         .with_icon(app_icon())
         // macOS uses a full-size content view under the traffic lights.
         .with_fullsize_content_view(true)
+        // Transparent on macOS, so the Messages theme can show the desktop
+        // through its sidebar; every other theme paints the window opaque.
+        .with_transparent(cfg!(target_os = "macos"))
         .with_titlebar_shown(false)
         .with_title_shown(false);
     eframe::NativeOptions {
@@ -422,6 +425,16 @@ impl Shell {
 }
 
 impl eframe::App for Shell {
+    /// What shows where the interface paints nothing: the window colour, or
+    /// on a vibrant theme nothing, so the material behind the window shows.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        if self.app.palette.vibrant() {
+            [0.0; 4]
+        } else {
+            self.app.palette.window.to_normalized_gamma_f32()
+        }
+    }
+
     #[cfg(feature = "demo")]
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         if let Some(tour) = &mut self.tour {
@@ -467,6 +480,8 @@ impl eframe::App for Shell {
             28.0 / ctx.zoom_factor()
         };
         fastframe_macos::align_traffic_lights(frame, ctx, title_bar);
+        #[cfg(target_os = "macos")]
+        zapfast::macos::vibrancy(frame, &app.palette);
         #[cfg(feature = "demo")]
         {
             // Keep requesting the configured screenshot size until it is applied.

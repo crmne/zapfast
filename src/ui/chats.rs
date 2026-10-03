@@ -23,7 +23,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             260.0..=520.0
         })
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
+        .frame(
+            Frame::new()
+                .fill(palette.sidebar())
+                .inner_margin(Margin::ZERO),
+        );
     let response = panel.show(ui, |ui| {
         header(app, ui);
         list(app, ui);
@@ -493,7 +497,11 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     // scrolls on.
     let hidden = output.content_size.x - output.state.offset.x - output.inner_rect.width();
     if hidden > 0.5 {
-        widgets::fade_right(ui, output.inner_rect, CHIP_FADE, palette.panel);
+        // A translucent sidebar would show the fade as a band; the chips
+        // are only cut there.
+        if !palette.vibrant() {
+            widgets::fade_right(ui, output.inner_rect, CHIP_FADE, palette.panel);
+        }
     }
     labels::chip_row(app, ui, &palette);
 }
@@ -1271,7 +1279,11 @@ pub fn compact_show(app: &mut App, ui: &mut egui::Ui) {
         .resizable(false)
         .exact_size(compact_width(ui.ctx()))
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
+        .frame(
+            Frame::new()
+                .fill(palette.sidebar())
+                .inner_margin(Margin::ZERO),
+        );
     let response = panel.show(ui, |ui| {
         let inset = theme::traffic_light_inset(ui.ctx());
         if inset > 0.0 {

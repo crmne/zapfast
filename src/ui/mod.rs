@@ -4,6 +4,7 @@ pub mod chats;
 pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
+mod glass;
 pub mod image_preview;
 pub mod keys;
 pub mod labels;
@@ -95,7 +96,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn central_background(app: &App) -> egui::Color32 {
-    if app.page == Page::Chats {
+    if app.page == Page::Chats && app.palette.vibrant() {
+        // The conversation paints its own translucent background.
+        egui::Color32::TRANSPARENT
+    } else if app.page == Page::Chats {
         app.settings.wallpaper_background(&app.palette)
     } else {
         app.palette.panel
