@@ -473,13 +473,17 @@ fn phone_at(text: &str, at: usize) -> Option<(usize, String)> {
     let following = text[end..].chars().next();
     // ISO dates have enough digits to look like phone numbers, even with a
     // time after them, but are not.
-    let iso_date = text.as_bytes().get(at..at + 10).is_some_and(|date| {
-        date[4] == b'-'
-            && date[7] == b'-'
-            && date[..4].iter().all(u8::is_ascii_digit)
-            && date[5..7].iter().all(u8::is_ascii_digit)
-            && date[8..].iter().all(u8::is_ascii_digit)
-    });
+    let date_at = at + usize::from(text[at..].starts_with('('));
+    let iso_date = text
+        .as_bytes()
+        .get(date_at..date_at + 10)
+        .is_some_and(|date| {
+            date[4] == b'-'
+                && date[7] == b'-'
+                && date[..4].iter().all(u8::is_ascii_digit)
+                && date[5..7].iter().all(u8::is_ascii_digit)
+                && date[8..].iter().all(u8::is_ascii_digit)
+        });
     (digits.len() >= 7
         && digits.len() <= 15
         && !iso_date
@@ -872,6 +876,7 @@ mod tests {
             "+1 (212) 555-1212"
         );
         assert!(links("Date 2026-10-01").is_empty());
+        assert!(links("Date (2026-10-01)").is_empty());
         assert!(links("Date 2026-10-01 12:30").is_empty());
         assert_eq!(
             links("1234567@example.com"),
