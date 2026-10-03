@@ -1385,6 +1385,9 @@ impl App {
         ctx.add_plugin(crate::emoji::plugin());
         crate::theme::set_font(ctx, self.settings.font);
         crate::theme::install(ctx);
+        // Zoom stays in the settings, so egui must not change it behind the
+        // app's back: the shortcuts below go through `Action::ZoomBy`.
+        ctx.options_mut(|options| options.zoom_with_keyboard = false);
         // A keystroke that wraps the draft is applied in one pass, and the
         // bottom panel holding the composer only takes the new height in
         // the next: three passes keep it from showing a frame out of place.
@@ -3580,6 +3583,14 @@ impl App {
         }
     }
 
+    /// Remembers the window's size, position and maximized state in the
+    /// settings; see [`crate::window::Snapshot`].
+    fn sync_window_state(&mut self, ctx: &egui::Context) {
+        if crate::window::Snapshot::read(ctx).remember(&mut self.settings) {
+            self.mark_settings_dirty();
+        }
+    }
+
     pub fn load_custom_themes(&mut self) {
         let waker = self.waker.clone();
         self.custom_themes.start(
@@ -5727,6 +5738,7 @@ impl App {
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = None;
         self.apply_theme(ctx);
+        self.sync_window_state(ctx);
         if ctx.input(|input| input.events.iter().any(is_user_input)) {
             self.app_lock.note_input();
         }
@@ -6345,6 +6357,17 @@ mod tests {
         assert!(app.badge.is_none());
         #[cfg(target_os = "windows")]
         assert!(app.taskbar_badge_count().is_none());
+    }
+
+    /// Window geometry syncing lives in `window::tests`: this frame only
+    /// forwards the snapshot and marks the settings dirty.
+    #[test]
+    fn sync_window_state_marks_the_settings_dirty_on_change() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        // A headless context carries no viewport, so nothing is remembered.
+        app.sync_window_state(&ctx);
+        assert!(!app.settings_dirty);
     }
 
     /// A short chat asks the phone by itself; only the reader scrolling to
