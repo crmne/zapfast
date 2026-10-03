@@ -1580,7 +1580,7 @@ msgstr ""
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "Todas as pessoas neste chat vão ver \"Esta mensagem foi apagada\" no lugar dela. Isso não pode ser desfeito."
 
 #: src/ui/dialogs.rs:1124
 msgid ""

@@ -880,10 +880,17 @@ impl Archive {
     /// the favorite mark to the canonical chat. Returns whether that chat's
     /// preferences were touched.
     pub fn put_lid(&self, lid: &str, pn: &str) -> Result<bool> {
-        self.merge_group_recipient(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
-        let favorite =
-            self.move_favorite(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
         let transaction = self.connection.unchecked_transaction()?;
+        Self::merge_group_recipient(
+            &transaction,
+            &format!("{lid}@lid"),
+            &format!("{pn}@s.whatsapp.net"),
+        )?;
+        let favorite = Self::move_favorite(
+            &transaction,
+            &format!("{lid}@lid"),
+            &format!("{pn}@s.whatsapp.net"),
+        )?;
         self.connection.execute(
             "INSERT INTO lids (lid, pn) VALUES (?1, ?2) ON CONFLICT(lid) DO UPDATE SET pn = excluded.pn",
             params![lid, pn],
@@ -3161,11 +3168,27 @@ pub(crate) mod tests {
             .insert_message(&message(chat, "kept", 200, false), None)
             .unwrap();
         archive.delete_message("9@lid", "removed").unwrap();
+        archive.connection.execute_batch(
+            "INSERT INTO group_receipts (chat, id, recipient, expected) VALUES ('1-1@g.us', 'fixture', '9@lid', 1);
+             INSERT INTO favorites (chat, jid, position) VALUES ('9@lid', '9@lid', 0);
+             INSERT INTO favorite_changes (chat, favorite) VALUES ('9@lid', 1);"
+        ).unwrap();
+        let identity = |table: &str, column: &str| {
+            archive
+                .connection
+                .query_row(&format!("SELECT {column} FROM {table}"), [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap()
+        };
         archive.connection.execute_batch("CREATE TRIGGER refuse_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
         assert!(archive.put_lid("9", "1").is_err());
         assert!(archive.lids().unwrap().is_empty());
         assert!(!archive.message_removed(chat, "removed").unwrap());
         assert!(archive.message(chat, "removed").unwrap().is_some());
+        assert_eq!(identity("group_receipts", "recipient"), "9@lid");
+        assert_eq!(identity("favorites", "chat"), "9@lid");
+        assert_eq!(identity("favorite_changes", "chat"), "9@lid");
         archive
             .connection
             .execute_batch("DROP TRIGGER refuse_delete")
@@ -3174,6 +3197,9 @@ pub(crate) mod tests {
         assert!(archive.message_removed(chat, "removed").unwrap());
         assert!(archive.message(chat, "removed").unwrap().is_none());
         assert!(archive.message(chat, "kept").unwrap().is_some());
+        assert_eq!(identity("group_receipts", "recipient"), chat);
+        assert_eq!(identity("favorites", "chat"), chat);
+        assert_eq!(identity("favorite_changes", "chat"), chat);
     }
 
     /// Interrupted requests persist independently of acceptance and clear on unlink.
