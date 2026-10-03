@@ -572,6 +572,9 @@ pub async fn run(
             }
             Some(event) = wa_events.recv() => match event {
                 RuntimeEvent::WhatsApp(event) => worker.handle_wa_event(event).await,
+                RuntimeEvent::MessageRemoval { generation, event } => {
+                    worker.handle_session_deletion(generation, event).await;
+                }
                 RuntimeEvent::PreferencesRecovered {
                     generation,
                     locks,
@@ -615,6 +618,10 @@ pub async fn run(
 
 enum RuntimeEvent {
     WhatsApp(Arc<wa_events::Event>),
+    MessageRemoval {
+        generation: u64,
+        event: Arc<wa_events::Event>,
+    },
     PreferencesRecovered {
         generation: u64,
         locks: bool,
@@ -693,11 +700,25 @@ fn privacy_backoff(attempts: u32) -> Duration {
         .min(Duration::from_secs(15 * 60))
 }
 
-struct UiEvents(mpsc::UnboundedSender<RuntimeEvent>);
+struct UiEvents {
+    sender: mpsc::UnboundedSender<RuntimeEvent>,
+    generation: u64,
+}
 
 impl wa_events::EventHandler for UiEvents {
     fn handle_event(&self, event: Arc<wa_events::Event>) {
-        let _ = self.0.send(RuntimeEvent::WhatsApp(event));
+        let event = if matches!(
+            event.as_ref(),
+            wa_events::Event::DeleteMessageForMeUpdate(_)
+        ) {
+            RuntimeEvent::MessageRemoval {
+                generation: self.generation,
+                event,
+            }
+        } else {
+            RuntimeEvent::WhatsApp(event)
+        };
+        let _ = self.sender.send(event);
     }
 }
 
@@ -1584,7 +1605,10 @@ impl Worker {
                     .with_version(app_version())
                     .with_platform_type(wa::device_props::PlatformType::DESKTOP),
             )
-            .with_event_handler(UiEvents(sender))
+            .with_event_handler(UiEvents {
+                sender,
+                generation: self.privacy_generation,
+            })
             .build()
             .await;
         match bot {
@@ -2253,6 +2277,13 @@ impl Worker {
     }
 
     // --- WhatsApp events -------------------------------------------------
+
+    /// The callback owns its original generation, even if it runs after logout.
+    async fn handle_session_deletion(&mut self, generation: u64, event: Arc<wa_events::Event>) {
+        if generation == self.privacy_generation {
+            self.handle_wa_event(event).await;
+        }
+    }
 
     async fn handle_wa_event(&mut self, event: Arc<wa_events::Event>) {
         use wa_events::Event as E;
@@ -13773,6 +13804,55 @@ mod chat_removal_tests {
     use crate::model::{Content, Delivery};
 
     const CHAT: &str = "4915700000001@s.whatsapp.net";
+
+    /// A callback from the old bot stays fenced even when delivered after unlink.
+    #[tokio::test]
+    async fn stale_incoming_deletion_does_not_repopulate_an_unlinked_archive() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        let (sender, mut inbox) = mpsc::unbounded_channel();
+        let old = UiEvents {
+            sender: sender.clone(),
+            generation: 0,
+        };
+        worker.privacy_generation = 1;
+        worker.archive.clear().unwrap();
+        let deletion = |id: &str| {
+            Arc::new(wa_events::Event::DeleteMessageForMeUpdate(
+                wa_events::DeleteMessageForMeUpdate::builder()
+                    .chat_jid(CHAT.parse().unwrap())
+                    .message_id(id.to_owned())
+                    .from_me(true)
+                    .timestamp(std::time::SystemTime::now().into())
+                    .action(Box::default())
+                    .from_full_sync(false)
+                    .build(),
+            ))
+        };
+        wa_events::EventHandler::handle_event(&old, deletion("m100"));
+        let RuntimeEvent::MessageRemoval { generation, event } = inbox.try_recv().unwrap() else {
+            panic!("deletion must be session tagged");
+        };
+        worker.handle_session_deletion(generation, event).await;
+        assert!(!worker.archive.message_removed(CHAT, "m100").unwrap());
+        assert!(
+            events
+                .try_iter()
+                .all(|event| !matches!(event, Event::MessageDeleted { .. }))
+        );
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        assert_eq!(stored(&worker, CHAT), ["m100", "m200"]);
+        let current = UiEvents {
+            sender,
+            generation: 1,
+        };
+        wa_events::EventHandler::handle_event(&current, deletion("m200"));
+        let RuntimeEvent::MessageRemoval { generation, event } = inbox.try_recv().unwrap() else {
+            panic!("deletion must be session tagged");
+        };
+        worker.handle_session_deletion(generation, event).await;
+        assert_eq!(stored(&worker, CHAT), ["m100"]);
+        assert!(worker.archive.message_removed(CHAT, "m200").unwrap());
+    }
 
     /// Mapping discovered after canonical acceptance also removes the old copy.
     #[tokio::test]
