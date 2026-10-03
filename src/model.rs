@@ -436,6 +436,12 @@ pub enum Content {
         /// message keeps its start time so updates do not reorder the chat.
         #[serde(default)]
         updated: i64,
+        /// Whether the sender's phone has posted positions this device cannot
+        /// read. WhatsApp keeps live locations off linked devices, so the
+        /// card holds the last position it was given and says where the
+        /// newer ones are.
+        #[serde(default)]
+        newer_on_phone: bool,
     },
     Contact {
         display_name: String,
@@ -2124,6 +2130,7 @@ mod tests {
             sequence: 7,
             ended: true,
             updated: 1_700_000_000,
+            newer_on_phone: true,
         };
         let json = serde_json::to_string(&content).expect("serializes");
         let back: Content = serde_json::from_str(&json).expect("parses");
@@ -2143,6 +2150,7 @@ mod tests {
                 sequence: 0,
                 ended: false,
                 updated: 0,
+                newer_on_phone: false,
             }
         );
     }
@@ -2158,6 +2166,7 @@ mod tests {
             sequence: 1,
             ended,
             updated: 0,
+            newer_on_phone: false,
         };
         assert!(!live(false).live_location_over(1_000, 1_000 + LIVE_LOCATION_LIMIT));
         assert!(live(false).live_location_over(1_000, 1_001 + LIVE_LOCATION_LIMIT));
