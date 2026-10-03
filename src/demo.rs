@@ -245,7 +245,7 @@ pub const RTL_SELF_CHAT: [&str; 3] = [
 
 /// Numbers inside right-to-left text on the `rtl` page: Arabic-Indic and
 /// European digits, a time, and a phone number, each reading left to right.
-const RTL_NUMBERS: &str = "لدي ٤٥ رسالة، الساعة ١٢:٣٠\nعندي 45 رسالة\nاتصل على +49 170 1234567";
+const RTL_NUMBERS: &str = "لدي ٤٥ رسالة، الساعة ١٢:٣٠\nعندي 45 رسالة\nاتصل على +00 (00) 00000-0000";
 
 fn message(chat: &str, id: &str, from_me: bool, timestamp: i64, content: Content) -> Message {
     Message {
@@ -1698,6 +1698,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     for part in page.split(',').map(str::trim) {
         match part {
             "chat" | "" => {}
+            "phone-menu" => phone_menu_sample(app),
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
             "chat-header-menu" => app.open_header_menu = app.open_chat.clone(),
             "interactive-actions" => interactive_actions_sample(app),
@@ -2764,6 +2765,30 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     }
 }
 
+const PHONE_MENU_SAMPLE: &str = "Call +1 (555) 010-2040 to arrange the pickup.";
+
+fn phone_menu_sample(app: &mut App) {
+    let Some(row) = app
+        .conversations
+        .get_mut(SAMPLES[0].id)
+        .and_then(|conversation| conversation.message_mut("ada-link"))
+    else {
+        return;
+    };
+    row.content = Content::text(PHONE_MENU_SAMPLE);
+    row.from_me = false;
+    app.open_chat = Some(SAMPLES[0].id.into());
+    app.scroll_to_bottom = true;
+}
+
+pub fn phone_menu_popup_id() -> egui::Id {
+    let start = PHONE_MENU_SAMPLE.find('+').unwrap();
+    let end = start + "+1 (555) 010-2040".len();
+    crate::ui::conversation::bubble_id(SAMPLES[0].id, "ada-link")
+        .with(("phone-link", start, end, 0usize))
+        .with("popup")
+}
+
 fn unlink(app: &mut App) {
     app.chats.clear();
     app.conversations.clear();
@@ -3197,6 +3222,115 @@ mod tests {
         assert_eq!(
             run(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]),
             vec!["https://example.com/"]
+        );
+    }
+
+    #[test]
+    fn phone_number_link_opens_its_actions_from_the_keyboard() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        let chat = SAMPLES[0].id;
+        let row = app
+            .conversations
+            .get_mut(chat)
+            .unwrap()
+            .message_mut("ada-link")
+            .unwrap();
+        let body = "اتصل على +00 (000) 00000-0000";
+        row.content = Content::text(body);
+        row.from_me = false;
+
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let run = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output.platform_output.commands
+        };
+        // Register controls at the same width used by synthetic keyboard
+        // input so a wrapped link has the same hit-region id in both passes.
+        run(&mut app, vec![]);
+        let phone_links = crate::ui::focus::stops(&ctx)
+            .into_iter()
+            .filter_map(|(stop, id)| {
+                matches!(stop, crate::ui::focus::Stop::PhoneLink(_)).then_some(id)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            phone_links.len() > 1,
+            "the phone link wraps across hit regions"
+        );
+        let phone = phone_links[0];
+        let phone_last = *phone_links.last().unwrap();
+        let previous = crate::ui::focus::control(&ctx, crate::ui::focus::Stop::Emoji).unwrap();
+        let next = crate::ui::focus::control(&ctx, crate::ui::focus::Stop::ChatSearch).unwrap();
+        let open_menu = |app: &mut App, from: egui::Id, target: egui::Id, tab: egui::Modifiers| {
+            ctx.memory_mut(|memory| memory.request_focus(from));
+            run(app, vec![key(egui::Key::Tab, tab)]);
+            assert_eq!(ctx.memory(|memory| memory.focused()), Some(target));
+            run(app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+            run(app, vec![]);
+            assert!(egui::Popup::is_id_open(&ctx, target.with("popup")));
+        };
+        let click = |app: &mut App, rect: egui::Rect| {
+            let pos = rect.center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos,
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: egui::Modifiers::NONE,
+            };
+            run(app, vec![egui::Event::PointerMoved(pos), button(true)]);
+            run(app, vec![button(false)])
+        };
+
+        open_menu(&mut app, previous, phone, egui::Modifiers::NONE);
+        let copy_rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(phone.with("test-copy-action")))
+            .unwrap();
+        let copied = click(&mut app, copy_rect)
+            .into_iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(copied, "+00 (000) 00000-0000");
+
+        open_menu(&mut app, next, phone_last, egui::Modifiers::SHIFT);
+        let message_rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(phone_last.with("test-message-action")))
+            .unwrap();
+        click(&mut app, message_rect);
+        // The menu is activated through the existing NewContact command,
+        // whose worker path checks whether the number is registered.
+        assert!(
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    crate::backend::Command::NewContact {
+                        phone,
+                        full_name: None,
+                        ..
+                    } if phone == "00000000000000"
+                ))
         );
     }
 

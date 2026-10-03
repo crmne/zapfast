@@ -72,8 +72,18 @@ pub fn layout_field(ui: &egui::Ui, text: &str, format: &TextFormat, wrap: f32) -
 /// caret, so callers must not assume the first cursor is the left edge.
 pub fn char_bounds(galley: &Galley, start: usize, end: usize) -> Option<Rect> {
     let mut rect: Option<Rect> = None;
+    for (_, bounds) in char_bounds_by_row(galley, start, end) {
+        rect = Some(rect.map_or(bounds, |rect| rect.union(bounds)));
+    }
+    rect
+}
+
+/// Visual bounds of a logical character range, kept separate for each row.
+pub fn char_bounds_by_row(galley: &Galley, start: usize, end: usize) -> Vec<(usize, Rect)> {
+    let mut bounds = Vec::new();
     let mut index = 0usize;
-    for placed in &galley.rows {
+    for (row_index, placed) in galley.rows.iter().enumerate() {
+        let mut rect: Option<Rect> = None;
         for glyph in &placed.row.glyphs {
             if index >= start && index < end && glyph.advance_width > 0.01 {
                 let glyph_rect = glyph.logical_rect().translate(placed.pos.to_vec2());
@@ -87,8 +97,11 @@ pub fn char_bounds(galley: &Galley, start: usize, end: usize) -> Option<Rect> {
         if placed.ends_with_newline {
             index += 1;
         }
+        if let Some(rect) = rect {
+            bounds.push((row_index, rect));
+        }
     }
-    rect
+    bounds
 }
 
 /// Whether the first paragraph's base direction is right to left.
@@ -909,7 +922,7 @@ mod tests {
             "عندي 45 رسالة",
             "الساعة ١٢:٣٠ الآن",
             "القيمة 3.14 تقريبا",
-            "اتصل على +49 170 1234567 الآن",
+            "اتصل على +00 (00) 00000-0000 الآن",
             "יש לי 45 הודעות",
             "המחיר 3.14 ש״ח",
             "Order ٤٥ today",

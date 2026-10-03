@@ -112,7 +112,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   a time, each starting once the one before it reached WhatsApp, so a picture
   cannot overtake the text that came before it.
 - **WhatsApp formatting.** Bold, italic, strikethrough, code, lists, quotes,
-  mentions, and link previews are supported. Links are clickable. Hebrew,
+  mentions, and link previews are supported. Links are clickable. Phone numbers
+  in messages open actions to start a chat or copy the number. Hebrew,
   Arabic, and mixed lines follow the Unicode Bidirectional Algorithm, so
   numbers, punctuation, and embedded words stay in reading order and brackets
   face the right way. As in WhatsApp, a message whose first strong character is
@@ -857,6 +858,7 @@ upgrade. No account or additional service is needed.
 cargo run --features demo -- --demo            # sample chats, no connection
 cargo run --features demo -- --demo-page login # or settings, pair, info, light, …
 cargo run --features demo -- --demo-shot shot.png --demo-page chat,light
+cargo run --features demo -- --demo-shot phone-menu.png --demo-page phone-menu
 cargo run --features demo -- --demo-tour      # Space starts/replays a 41-second tour
 cargo run --features demo -- --demo-tour --demo-tour-script whats-new # what 0.16 added
 cargo run --features demo -- --demo-hover 900,400 # holds a fake pointer there
@@ -919,6 +921,8 @@ and its attachment and poll menu. `typing`, `mention`, and
 Use `--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page chat-header-menu` for the menu at the top of an open chat, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
+Use `--demo-page phone-menu` to preview the phone-number actions with synthetic
+content; add `,light` for the light theme.
 `--demo-page video` shows a video and round video messages,
 `--demo-page video-expanded` the video over the whole window, and
 `video-playing` or `note-playing` starts one of them, silently.

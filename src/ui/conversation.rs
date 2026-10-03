@@ -19,7 +19,7 @@ use crate::model::{
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
-use super::focus::{Stop, TabStop};
+use super::focus::{self, Stop, TabStop};
 use super::widgets;
 
 /// Group-message avatar size.
@@ -5476,7 +5476,7 @@ fn rich_body(
             laid.placements().to_vec(),
         ));
     // Click links and drag to select text.
-    // Text selection and pointer links do not need a sequential Tab stop.
+    // Text selection and web links do not need a sequential Tab stop.
     // The surrounding transcript remains available to accessibility readers.
     let (_, rect) = ui.allocate_space(allocation);
     // egui matches selection endpoints to widgets by id every frame and drops
@@ -5508,13 +5508,88 @@ fn rich_body(
     if visible || selection_alive {
         markup::paint_selectable(ui, &laid, &response, origin, palette.text, visible);
     }
+    let message_number = crate::i18n::gettext(view.locale, "Message");
+    let copy_number = crate::i18n::gettext(view.locale, "Copy number");
+    let menu_labels = [message_number.as_ref(), copy_number.as_ref()];
+    for (range, url) in &laid.links {
+        let Some(phone) = url.strip_prefix("tel:") else {
+            continue;
+        };
+        let number = phone.strip_prefix('+').unwrap_or(phone);
+        let copy_text: String = laid
+            .galley
+            .text()
+            .chars()
+            .skip(range.start)
+            .take(range.len())
+            .collect();
+        for (row, bounds) in crate::bidi::char_bounds_by_row(&laid.galley, range.start, range.end) {
+            let link = ui
+                .interact(
+                    bounds.translate(origin.to_vec2()).expand(2.0),
+                    bubble_id(&view.chat.id, &message.id).with((
+                        "phone-link",
+                        range.start,
+                        range.end,
+                        row,
+                    )),
+                    Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            link.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), number)
+            });
+            theme::reveal_focus(&link);
+            let link = focus::phone_link(link);
+            egui::Popup::menu(&link)
+                .id(link.id.with("popup"))
+                .width(widgets::menu_width(ui, &menu_labels, true))
+                .frame(widgets::menu_frame(&view.palette))
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                .show(|ui| {
+                    #[cfg(test)]
+                    let message_rect =
+                        Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 28.0));
+                    let message_clicked =
+                        widgets::menu_item(ui, &view.palette, None, message_number.as_ref());
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(link.id.with("test-message-action"), message_rect);
+                    });
+                    if message_clicked {
+                        actions.push(Action::NewContact {
+                            phone: number.to_owned(),
+                            first: String::new(),
+                            last: String::new(),
+                            to_phone: None,
+                        });
+                    }
+                    #[cfg(test)]
+                    let copy_rect =
+                        Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 28.0));
+                    let copy_clicked = widgets::menu_item(
+                        ui,
+                        &view.palette,
+                        Some(Icon::Copy),
+                        copy_number.as_ref(),
+                    );
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(link.id.with("test-copy-action"), copy_rect);
+                    });
+                    if copy_clicked {
+                        actions.push(Action::CopyText(copy_text.clone()));
+                    }
+                });
+        }
+    }
     if !laid.links.is_empty()
         && let Some(pos) = response.hover_pos()
     {
         let cursor = laid.galley.cursor_from_pos(pos - origin);
         if let Some(url) = laid.link_at(cursor.index.0) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            if response.clicked() {
+            if !url.starts_with("tel:") && response.clicked() {
                 actions.push(Action::OpenUrl(url.to_owned()));
             }
         }
