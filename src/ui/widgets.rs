@@ -831,26 +831,64 @@ pub fn fade_right(ui: &Ui, rect: Rect, width: f32, color: Color32) {
     ui.painter().add(egui::Shape::mesh(mesh));
 }
 
+/// How far the shadow of a bar or panel reaches over the content beside it.
+const SHADOW_REACH: f32 = 9.0;
+
 /// A soft shadow cast downward from `edge`, for a bar that content scrolls
 /// under, beneath a hairline in the palette's outline colour. One gradient
 /// quad.
 pub fn paint_shadow_below(ui: &Ui, palette: &Palette, left: f32, right: f32, edge: f32) {
-    let height = 9.0;
-    let dark = palette.lift_shadow().gamma_multiply(0.64);
     ui.painter().rect_filled(
         Rect::from_min_max(pos2(left, edge - 1.0), pos2(right, edge)),
         0.0,
         palette.outline,
     );
+    let rect = Rect::from_min_max(pos2(left, edge), pos2(right, edge + SHADOW_REACH));
+    ui.painter()
+        .add(shadow_mesh(palette, rect, [true, true, false, false]));
+}
+
+/// The hairline down the right edge of a panel beside content, in the
+/// palette's outline colour and inside the panel, as the one along a bar's
+/// bottom is. A stroke centred on the edge would lose the half the content
+/// beside it paints over, and all but vanish at some display scales.
+pub fn paint_edge_beside(ui: &Ui, palette: &Palette, panel: Rect) {
+    ui.painter().rect_filled(
+        Rect::from_min_max(
+            pos2(panel.right() - 1.0, panel.top()),
+            pos2(panel.right(), panel.bottom()),
+        ),
+        0.0,
+        palette.outline,
+    );
+}
+
+/// The same shadow cast to the right of `edge`, from `top` to `bottom`: for
+/// a panel beside content on a lower level, as the chat list is beside the
+/// conversation. The panel draws its own hairline.
+pub fn paint_shadow_beside(ui: &Ui, palette: &Palette, edge: f32, top: f32, bottom: f32) {
+    let rect = Rect::from_min_max(pos2(edge, top), pos2(edge + SHADOW_REACH, bottom));
+    ui.painter()
+        .add(shadow_mesh(palette, rect, [true, false, false, true]));
+}
+
+/// One gradient quad over `rect`, dark at the corners marked in `dark`
+/// (left top, right top, right bottom, left bottom) and clear at the others.
+fn shadow_mesh(palette: &Palette, rect: Rect, dark: [bool; 4]) -> egui::Shape {
+    let shade = palette.lift_shadow().gamma_multiply(0.64);
     let mut mesh = egui::Mesh::default();
-    let rect = Rect::from_min_max(pos2(left, edge), pos2(right, edge + height));
-    mesh.colored_vertex(rect.left_top(), dark);
-    mesh.colored_vertex(rect.right_top(), dark);
-    mesh.colored_vertex(rect.right_bottom(), Color32::TRANSPARENT);
-    mesh.colored_vertex(rect.left_bottom(), Color32::TRANSPARENT);
+    let corners = [
+        rect.left_top(),
+        rect.right_top(),
+        rect.right_bottom(),
+        rect.left_bottom(),
+    ];
+    for (corner, dark) in corners.into_iter().zip(dark) {
+        mesh.colored_vertex(corner, if dark { shade } else { Color32::TRANSPARENT });
+    }
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
-    ui.painter().add(egui::Shape::mesh(mesh));
+    egui::Shape::mesh(mesh)
 }
 
 /// The side a message bubble's tail points to.
@@ -1085,6 +1123,46 @@ pub fn dotted_chip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The header's shadow and the chat list's are one shadow turned a
+    /// quarter: as dark at the edge casting it, clear as far into the content.
+    #[test]
+    fn a_panel_casts_beside_it_the_shadow_a_bar_casts_below() {
+        let palette = Palette::dark();
+        let mesh = |shape: egui::Shape| match shape {
+            egui::Shape::Mesh(mesh) => mesh,
+            other => panic!("not a mesh: {other:?}"),
+        };
+        let below = mesh(shadow_mesh(
+            &palette,
+            Rect::from_min_max(pos2(100.0, 50.0), pos2(400.0, 50.0 + SHADOW_REACH)),
+            [true, true, false, false],
+        ));
+        let beside = mesh(shadow_mesh(
+            &palette,
+            Rect::from_min_max(pos2(100.0, 50.0), pos2(100.0 + SHADOW_REACH, 300.0)),
+            [true, false, false, true],
+        ));
+        let shade = palette.lift_shadow().gamma_multiply(0.64);
+        assert_ne!(shade, Color32::TRANSPARENT);
+        for vertex in &below.vertices {
+            let at_edge = vertex.pos.y == 50.0;
+            assert_eq!(vertex.color == shade, at_edge, "{:?}", vertex.pos);
+            assert!(at_edge || vertex.color == Color32::TRANSPARENT);
+        }
+        for vertex in &beside.vertices {
+            let at_edge = vertex.pos.x == 100.0;
+            assert_eq!(vertex.color == shade, at_edge, "{:?}", vertex.pos);
+            assert!(at_edge || vertex.color == Color32::TRANSPARENT);
+        }
+        // Both reach equally far from their edge.
+        let reach = |mesh: &egui::Mesh, along: fn(&egui::epaint::Vertex) -> f32| {
+            let values: Vec<f32> = mesh.vertices.iter().map(along).collect();
+            values.iter().cloned().fold(f32::MIN, f32::max)
+                - values.iter().cloned().fold(f32::MAX, f32::min)
+        };
+        assert_eq!(reach(&below, |v| v.pos.y), reach(&beside, |v| v.pos.x));
+    }
 
     /// Sent shows one tick and delivered or read two, drawn from our own
     /// glyphs, where the second tick reaches as high as the first (#249).

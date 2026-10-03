@@ -55,6 +55,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         header.right(),
         header.bottom(),
     );
+    // The chat list, or its rail of avatars, stands at the header's level
+    // beside the conversation: it casts the same shadow across it, from
+    // under the header down.
+    widgets::paint_shadow_beside(
+        ui,
+        &app.palette,
+        header.left(),
+        header.bottom(),
+        ui.max_rect().bottom(),
+    );
 }
 
 fn empty(app: &mut App, ui: &mut egui::Ui) {
@@ -2252,6 +2262,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let complete = conversation.complete;
     let loading = conversation.loading_older;
     let fetching = conversation.fetching_phone;
+    let fetching_explicit = conversation.phone_explicit;
     let exhausted = conversation.phone_exhausted;
     conversation.rows = rows;
     // Keep the rows on screen where they were when rows above them changed
@@ -2344,8 +2355,18 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // request more immediately.
     let fits = output.content_size.y <= output.inner_rect.height() + 1.0;
     let near_top = output.state.offset.y < 80.0;
-    if (near_top || fits) && ((!complete && !loading) || (complete && !fetching && !exhausted)) {
-        actions.push(Action::LoadOlder(chat.id.clone()));
+    // Only a transcript the reader scrolled up through is their ask; a short
+    // chat, or one still on its way to the end, is not.
+    let explicit = near_top && !fits && !scroll_to_bottom;
+    // A reader reaching the top while an automatic request waits claims it.
+    let claim = fetching && explicit && !fetching_explicit;
+    if (near_top || fits)
+        && ((!complete && !loading) || (complete && (!fetching || claim) && !exhausted))
+    {
+        actions.push(Action::LoadOlder {
+            chat: chat.id.clone(),
+            explicit,
+        });
     }
     app.actions.extend(actions);
     if edge_scrolled_up {
@@ -4230,6 +4251,35 @@ struct SharedContact {
     /// parameter WhatsApp adds, or a number written in international form.
     /// A local number without a country code cannot name one.
     account: Option<String>,
+    /// The first name from the card's structured `N` property, middle names
+    /// included, for the contact editor; none when the card has none.
+    first_name: Option<String>,
+}
+
+/// The first name in a vCard `N` value
+/// (`family;given;additional;prefix;suffix`), middle names included.
+/// Components are split at unescaped semicolons only.
+fn vcard_first_name(value: &str) -> Option<String> {
+    let mut parts = vec![String::new()];
+    let mut chars = value.chars();
+    while let Some(character) = chars.next() {
+        match character {
+            '\\' => match chars.next() {
+                Some('n' | 'N') => parts.last_mut()?.push(' '),
+                Some(escaped) => parts.last_mut()?.push(escaped),
+                None => {}
+            },
+            ';' => parts.push(String::new()),
+            _ => parts.last_mut()?.push(character),
+        }
+    }
+    let part = |index: usize| parts.get(index).map_or("", |part| part.trim());
+    let first = [part(1), part(2)]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!first.is_empty()).then_some(first)
 }
 
 fn vcard_tel_account(property: &str, value: &str) -> Option<String> {
@@ -4249,6 +4299,7 @@ fn vcard_tel_account(property: &str, value: &str) -> Option<String> {
 
 fn shared_contact_details(vcard: &str, fallback_name: &str) -> Option<SharedContact> {
     let mut name = None;
+    let mut first_name = None;
     let mut first_phone = None;
     let mut preferred_phone: Option<(u8, (String, Option<String>))> = None;
     let mut first_card: Vec<String> = Vec::new();
@@ -4284,6 +4335,8 @@ fn shared_contact_details(vcard: &str, fallback_name: &str) -> Option<SharedCont
         let property_name = raw_name.rsplit('.').next().unwrap_or(raw_name);
         if property_name.eq_ignore_ascii_case("FN") {
             name = Some(value.trim().to_owned());
+        } else if property_name.eq_ignore_ascii_case("N") {
+            first_name = vcard_first_name(value);
         } else if property_name.eq_ignore_ascii_case("TEL") {
             let number = value.trim().to_owned();
             if number.chars().filter(char::is_ascii_digit).count() < 7 {
@@ -4310,6 +4363,7 @@ fn shared_contact_details(vcard: &str, fallback_name: &str) -> Option<SharedCont
         name,
         number,
         account,
+        first_name,
     })
 }
 
@@ -4581,6 +4635,7 @@ fn content(
                     match details.as_ref() {
                         Some(SharedContact {
                             account: Some(account),
+                            first_name,
                             ..
                         }) => {
                             let id = format!("{account}@s.whatsapp.net");
@@ -4607,7 +4662,10 @@ fn content(
                                     )
                                     .clicked()
                                 {
-                                    let (first, last) = crate::util::split_name(name);
+                                    // Split where the card's first name ends, so a
+                                    // first name of several words stays whole.
+                                    let (first, last) =
+                                        crate::util::editor_names(name, first_name.as_deref());
                                     actions.push(Action::NewContact {
                                         phone: account.clone(),
                                         first,
@@ -5420,7 +5478,7 @@ fn rich_body(
     // Click links and drag to select text.
     // Text selection and pointer links do not need a sequential Tab stop.
     // The surrounding transcript remains available to accessibility readers.
-    let (rect, _) = ui.allocate_exact_size(allocation, Sense::hover());
+    let (_, rect) = ui.allocate_space(allocation);
     // egui matches selection endpoints to widgets by id every frame and drops
     // the selection when one is missed. A positional auto id shifts whenever
     // a sibling allocates differently (virtualized rows), killing the
@@ -6001,7 +6059,10 @@ fn video(
 ) -> f32 {
     use crate::video::State;
     let palette = view.palette;
-    let Some(thumbnail) = message.thumbnail.as_deref() else {
+    // A video sent before ZapFast made thumbnails has none; its file is
+    // here, so its first frame stands in. Without either, it is a file card.
+    let thumbnail = message.thumbnail.as_deref();
+    if thumbnail.is_none() && media.path.is_none() {
         let title = if gif { "GIF" } else { "Video" };
         let mut detail = Vec::new();
         if let Some(seconds) = seconds {
@@ -6020,9 +6081,16 @@ fn video(
             actions,
         );
         return width;
-    };
+    }
     let limit = width.min(PICTURE_WIDTH);
-    let size = frame_size(media, Some((16, 9)), limit, PICTURE_HEIGHT.min(limit * 1.3));
+    // Without its size, a widescreen frame that fills the bubble: the hint is
+    // in pixels, so a bare 16 by 9 would shrink it to the narrowest picture.
+    let size = frame_size(
+        media,
+        Some((1280, 720)),
+        limit,
+        PICTURE_HEIGHT.min(limit * 1.3),
+    );
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let playing = match (&media.path, gif) {
         (Some(path), true) => Some(animation::frame(
@@ -6071,14 +6139,31 @@ fn video(
                     6.0,
                 );
             }
-            None => {
-                // Registering the poster decodes it, so it waits for the row to show.
-                let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
-                egui::Image::new(uri)
-                    .fit_to_exact_size(size)
-                    .corner_radius(6.0)
-                    .paint_at(ui, rect);
-            }
+            None => match (thumbnail, &media.path) {
+                (Some(thumbnail), _) => {
+                    // Registering the poster decodes it, so it waits for the row to show.
+                    let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
+                    egui::Image::new(uri)
+                        .fit_to_exact_size(size)
+                        .corner_radius(6.0)
+                        .paint_at(ui, rect);
+                }
+                (None, Some(path)) => {
+                    ui.painter().rect_filled(rect, 6.0, Color32::BLACK);
+                    if let animation::Frame::Ready(texture) =
+                        animation::frame(ui, path, rect, false)
+                    {
+                        paint_texture(
+                            ui,
+                            fit_within(texture.size_vec2(), rect),
+                            texture.id(),
+                            Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                            6.0,
+                        );
+                    }
+                }
+                (None, None) => {}
+            },
         }
         let state = status.as_ref().map(|status| status.state);
         if state != Some(State::Playing) {
@@ -6115,7 +6200,20 @@ fn video(
                 if status.state == State::Paused
                     || (status.state == State::Playing && ui.rect_contains_pointer(rect))
                 {
-                    video_controls(ui, view, message, path, rect, status, actions);
+                    video_controls(
+                        ui,
+                        &VideoControls {
+                            player: view.video,
+                            locale: view.locale,
+                            accent: view.palette.accent,
+                            expanded: false,
+                        },
+                        &message.id,
+                        path,
+                        rect,
+                        status,
+                        actions,
+                    );
                 }
             }
             _ => {
@@ -6162,11 +6260,20 @@ fn video(
             message: message.id.clone(),
         });
     }
-    if response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.clicked() {
         video_clicked(view, message, media, gif, auto, actions);
+    }
+    // The two clicks of a double-click play and pause between them; the
+    // video then opens over the window as it was.
+    if response.double_clicked()
+        && !gif
+        && let Some(path) = &media.path
+    {
+        actions.push(Action::ExpandVideo {
+            message: message.id.clone(),
+            path: path.clone(),
+        });
     }
     size.x
 }
@@ -6204,12 +6311,22 @@ fn video_clicked(
     }
 }
 
-/// Play/pause, the time, a seek bar, and a sound switch along the bottom of
-/// a playing video.
-fn video_controls(
+/// What the video controls need besides the video: the bubble and the view
+/// covering the window share them.
+pub(crate) struct VideoControls<'a> {
+    pub player: &'a crate::video::Player,
+    pub locale: crate::i18n::Locale,
+    pub accent: Color32,
+    /// Whether the video covers the window; its button then puts it back.
+    pub expanded: bool,
+}
+
+/// Play/pause, the time, a seek bar, a sound switch, and the switch between
+/// the message and the whole window, along the bottom of a playing video.
+pub(crate) fn video_controls(
     ui: &mut egui::Ui,
-    view: &View<'_>,
-    message: &Message,
+    controls: &VideoControls<'_>,
+    message: &str,
     path: &Path,
     rect: Rect,
     status: &crate::video::Status,
@@ -6226,7 +6343,7 @@ fn video_controls(
         },
         Color32::from_black_alpha(150),
     );
-    let id = ui.id().with(("video-controls", &message.id));
+    let id = ui.id().with(("video-controls", message));
     let toggle = Rect::from_center_size(pos2(bar.left() + 18.0, bar.center().y), Vec2::splat(26.0));
     let playing = status.state == crate::video::State::Playing;
     theme::paint_icon(
@@ -6237,9 +6354,9 @@ fn video_controls(
         Color32::WHITE,
     );
     let tooltip = if playing {
-        crate::i18n::gettext(view.locale, "Pause")
+        crate::i18n::gettext(controls.locale, "Pause")
     } else {
-        crate::i18n::gettext(view.locale, "Play")
+        crate::i18n::gettext(controls.locale, "Play")
     };
     if ui
         .interact(toggle, id.with("toggle"), Sense::click())
@@ -6248,12 +6365,48 @@ fn video_controls(
         .clicked()
     {
         actions.push(Action::PlayVideo {
-            message: message.id.clone(),
+            message: message.to_owned(),
             path: path.to_owned(),
         });
     }
-    let sound = Rect::from_center_size(pos2(bar.right() - 18.0, bar.center().y), Vec2::splat(26.0));
-    let muted = view.video.muted();
+    let window =
+        Rect::from_center_size(pos2(bar.right() - 18.0, bar.center().y), Vec2::splat(26.0));
+    theme::paint_icon(
+        ui,
+        if controls.expanded {
+            Icon::Minimize
+        } else {
+            Icon::Maximize
+        },
+        window,
+        16.0,
+        Color32::WHITE,
+    );
+    let tooltip = if controls.expanded {
+        crate::i18n::gettext(controls.locale, "Back to the message (Esc)")
+    } else {
+        crate::i18n::gettext(controls.locale, "Fill the window")
+    };
+    if ui
+        .interact(window, id.with("window"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tooltip.as_ref())
+        .clicked()
+    {
+        actions.push(if controls.expanded {
+            Action::CollapseVideo
+        } else {
+            Action::ExpandVideo {
+                message: message.to_owned(),
+                path: path.to_owned(),
+            }
+        });
+    }
+    let sound = Rect::from_center_size(
+        pos2(window.left() - 15.0, bar.center().y),
+        Vec2::splat(26.0),
+    );
+    let muted = controls.player.muted();
     theme::paint_icon(
         ui,
         if muted { Icon::VolumeX } else { Icon::Volume2 },
@@ -6262,9 +6415,9 @@ fn video_controls(
         Color32::WHITE,
     );
     let tooltip = if muted {
-        crate::i18n::gettext(view.locale, "Unmute")
+        crate::i18n::gettext(controls.locale, "Unmute")
     } else {
-        crate::i18n::gettext(view.locale, "Mute")
+        crate::i18n::gettext(controls.locale, "Mute")
     };
     if ui
         .interact(sound, id.with("sound"), Sense::click())
@@ -6311,14 +6464,14 @@ fn video_controls(
     ui.painter().rect_filled(
         Rect::from_min_max(line.min, pos2(played.x, line.bottom())),
         1.5,
-        view.palette.accent,
+        controls.accent,
     );
-    ui.painter().circle_filled(played, 5.0, view.palette.accent);
+    ui.painter().circle_filled(played, 5.0, controls.accent);
     if (response.clicked() || response.drag_stopped())
         && let Some(fraction) = pointed
     {
         actions.push(Action::SeekVideo {
-            message: message.id.clone(),
+            message: message.to_owned(),
             fraction,
         });
     }
@@ -7002,7 +7155,43 @@ mod tests {
             name: name.to_owned(),
             number: number.to_owned(),
             account: account.map(str::to_owned),
+            first_name: None,
         })
+    }
+
+    #[test]
+    fn a_shared_contact_keeps_the_first_name_of_its_card() {
+        let first = |card: &str| {
+            shared_contact_details(card, "Fallback")
+                .expect("a contact")
+                .first_name
+        };
+        // A first name of two words stays whole, as the card has it (#314).
+        assert_eq!(
+            first("BEGIN:VCARD\nN:;My Dih;;;\nFN:My Dih\nTEL:+15550101234\nEND:VCARD").as_deref(),
+            Some("My Dih")
+        );
+        assert_eq!(
+            first("BEGIN:VCARD\nN:Evans;Mary;Ann;;\nTEL:+15550101234\nEND:VCARD").as_deref(),
+            Some("Mary Ann")
+        );
+        assert_eq!(
+            first("BEGIN:VCARD\nN:Smith;Ada\\;Jo;;\nTEL:+15550101234\nEND:VCARD").as_deref(),
+            Some("Ada;Jo")
+        );
+        assert_eq!(
+            first("BEGIN:VCARD\nN:山田;太郎;;;\nTEL:+15550101234\nEND:VCARD").as_deref(),
+            Some("太郎")
+        );
+        // Without a structured first name nothing is known.
+        assert_eq!(
+            first("BEGIN:VCARD\nN:Evans;;;;\nTEL:+15550101234\nEND:VCARD"),
+            None
+        );
+        assert_eq!(
+            first("BEGIN:VCARD\nFN:Ada Lovelace\nTEL:+15550101234\nEND:VCARD"),
+            None
+        );
     }
 
     #[test]

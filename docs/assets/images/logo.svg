@@ -1,6 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <circle cx="256" cy="256" r="248" fill="#00a884"/>
-  <g transform="translate(112 102) scale(12)" fill="none" stroke="#ffffff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+<defs>
+<linearGradient id="b" x1="0" y1="2" x2="0" y2="126" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#009676"/>
+<stop offset="1" stop-color="#006b55"/>
+</linearGradient>
+<linearGradient id="f" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#3ed3b0"/>
+<stop offset="0.55" stop-color="#00a884"/>
+<stop offset="1" stop-color="#008e70"/>
+</linearGradient>
+<linearGradient id="r" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#d9fff5"/>
+<stop offset="0.5" stop-color="#6fe3c8" stop-opacity="0.35"/>
+<stop offset="1" stop-color="#00574a" stop-opacity="0.9"/>
+</linearGradient>
+<filter id="s" color-interpolation-filters="sRGB" x="-30%" y="-30%" width="160%" height="160%">
+<feGaussianBlur in="SourceAlpha" stdDeviation="1.6"/>
+<feOffset dy="1.6"/>
+<feComponentTransfer>
+<feFuncA type="linear" slope="0.3"/>
+</feComponentTransfer>
+<feMerge>
+<feMergeNode/>
+<feMergeNode in="SourceGraphic"/>
+</feMerge>
+</filter>
+</defs>
+<circle cx="64" cy="64" r="62" fill="url(#b)"/>
+<circle cx="64" cy="64" r="54.4" fill="url(#f)"/>
+<circle cx="64" cy="64" r="55" fill="none" stroke="url(#r)" stroke-width="1.2"/>
+<g filter="url(#s)">
+<g transform="translate(23.35 21.13) scale(3.48)" fill="none" stroke="#0b0e0c" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
+</g>
+</g>
 </svg>

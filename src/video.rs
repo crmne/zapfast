@@ -22,10 +22,15 @@ use crate::backend::Waker;
 
 /// Longest side of a decoded frame in pixels: about twice the widest bubble.
 const MAX_SIDE: u32 = 720;
+/// Longest side of a frame while the video covers the window.
+const EXPANDED_SIDE: u32 = 1920;
 /// Frames decoded ahead of the clock.
 const AHEAD: usize = 4;
 /// How far the clock may drift from the sound before it follows it.
 const DRIFT: Duration = Duration::from_millis(60);
+/// How far ahead of the clock a decoder at another size starts, so its
+/// first frames are ready by the time they are due.
+const LEAD: Duration = Duration::from_millis(400);
 /// How long a playing video may stay off screen before it pauses.
 const UNSEEN: Duration = Duration::from_millis(1500);
 /// Longest wait between repaints while a video plays, for the progress.
@@ -183,7 +188,7 @@ impl Sound {
     /// track, or a computer without an output device, plays silently.
     fn open(path: &Path, from: Duration, muted: bool) -> Option<Self> {
         let decoder = sound_decoder(path, from)?;
-        let device = match rodio::DeviceSinkBuilder::open_default_sink() {
+        let device = match crate::audio::open_output() {
             Ok(device) => device,
             Err(error) => {
                 log::warn!("video plays without sound: {error}");
@@ -280,6 +285,18 @@ struct Session {
     clock: Clock,
     sound: Option<Sound>,
     total: Duration,
+    /// Longest side of the frames the decoder in use sends.
+    side: u32,
+    /// A decoder at another size, taking over once its frames are due.
+    resize: Option<Resize>,
+}
+
+/// Frames of another size on their way: the video keeps playing the ones it
+/// has, sound and all, until these catch up with the clock.
+struct Resize {
+    side: u32,
+    frames: Receiver<Delivery>,
+    queue: VecDeque<(Duration, ColorImage)>,
 }
 
 impl Session {
@@ -331,6 +348,9 @@ pub struct Player {
     audible: bool,
     /// When the playing video's message was last drawn on screen.
     seen: Cell<Instant>,
+    /// Longest side frames are decoded to: larger while the video covers
+    /// the window.
+    side: u32,
 }
 
 impl Player {
@@ -341,6 +361,7 @@ impl Player {
             muted: false,
             audible: true,
             seen: Cell::new(Instant::now()),
+            side: MAX_SIDE,
         }
     }
 
@@ -374,16 +395,24 @@ impl Player {
     /// Jumps to a fraction from 0 to 1 of the playing video, keeping it
     /// playing or paused.
     pub fn seek(&mut self, message: &str, fraction: f32) {
-        let muted = self.muted;
         let Some(session) = self
             .session
-            .as_mut()
+            .as_ref()
             .filter(|session| session.message == message && !session.total.is_zero())
         else {
             return;
         };
-        let now = Instant::now();
         let to = session.total.mul_f32(fraction.clamp(0.0, 1.0));
+        self.restart(to);
+    }
+
+    /// Decodes again from `to`, keeping the video playing or paused.
+    fn restart(&mut self, to: Duration) {
+        let (muted, side) = (self.muted, self.side);
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
         session.resume = match session.state {
             State::Loading => session.resume,
             State::Playing => true,
@@ -394,10 +423,55 @@ impl Player {
         session.clock.seek(to, now);
         session.queue.clear();
         session.decoded = false;
-        session.frames = spawn_decoder(&session.path, to, self.waker.clone());
+        session.side = side;
+        session.resize = None;
+        session.frames = spawn_decoder(&session.path, to, side, self.waker.clone());
         if let Some(sound) = &mut session.sound {
             sound.restart(&session.path, to, muted);
         }
+    }
+
+    /// Decodes larger frames while the video covers the window, and the
+    /// bubble's size again once it is back in its message. A playing video
+    /// carries on without a break: the frames and the sound it has keep
+    /// going while the other size catches up.
+    pub fn set_expanded(&mut self, expanded: bool) {
+        let side = if expanded { EXPANDED_SIDE } else { MAX_SIDE };
+        if std::mem::replace(&mut self.side, side) == side {
+            return;
+        }
+        let waker = self.waker.clone();
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let position = session.clock.position(Instant::now());
+        if session.state != State::Playing {
+            // Nothing to interrupt: decode again from where it stands.
+            self.restart(position);
+        } else if session.side == side {
+            // Back to the size still playing: the other one is not needed.
+            session.resize = None;
+        } else {
+            session.resize = Some(Resize {
+                side,
+                frames: spawn_decoder(&session.path, position + LEAD, side, waker),
+                queue: VecDeque::new(),
+            });
+        }
+    }
+
+    /// Whether frames of another size are still on their way.
+    #[cfg(test)]
+    fn resizing(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.resize.is_some())
+    }
+
+    /// Longest side frames are decoded to.
+    #[cfg(test)]
+    pub fn side(&self) -> u32 {
+        self.side
     }
 
     pub fn muted(&self) -> bool {
@@ -425,6 +499,18 @@ impl Player {
         self.session.as_ref().is_some_and(|session| {
             session.state == State::Playing || (session.state == State::Loading && session.resume)
         })
+    }
+
+    /// Plays the loaded video if it is paused.
+    pub fn resume(&mut self) {
+        if let Some(session) = self.session.as_mut() {
+            session.play(Instant::now());
+        }
+    }
+
+    /// The file of the loaded video.
+    pub fn path(&self) -> Option<&Path> {
+        self.session.as_ref().map(|session| session.path.as_path())
     }
 
     /// The message whose video is loaded, playing or not.
@@ -471,7 +557,7 @@ impl Player {
             path: path.to_owned(),
             state: State::Loading,
             resume: true,
-            frames: spawn_decoder(path, from, self.waker.clone()),
+            frames: spawn_decoder(path, from, self.side, self.waker.clone()),
             queue: VecDeque::new(),
             decoded: false,
             texture: None,
@@ -481,6 +567,8 @@ impl Player {
                 .then(|| Sound::open(path, from, self.muted))
                 .flatten(),
             total: Duration::ZERO,
+            side: self.side,
+            resize: None,
         });
     }
 
@@ -491,6 +579,30 @@ impl Player {
         let now = Instant::now();
         if now.saturating_duration_since(self.seen.get()) > UNSEEN {
             session.pause(now);
+        }
+        // Paused while another size was on its way: that decoder aimed past
+        // where the video stopped, so decode again from here instead.
+        if session.resize.is_some() && session.state != State::Playing {
+            let position = session.clock.position(now);
+            self.restart(position);
+        }
+        let session = self.session.as_mut()?;
+        if let Some(resize) = session.resize.as_mut() {
+            while resize.queue.len() < AHEAD {
+                match resize.frames.try_recv() {
+                    Ok(Delivery::Frame(at, image)) => resize.queue.push_back((at, image)),
+                    Ok(Delivery::Length(_)) => {}
+                    Err(TryRecvError::Empty) => break,
+                    // It ended or failed before taking over: keep the frames in use.
+                    Ok(Delivery::End | Delivery::Unsupported(_))
+                    | Err(TryRecvError::Disconnected) => {
+                        if resize.queue.is_empty() {
+                            session.resize = None;
+                        }
+                        break;
+                    }
+                }
+            }
         }
         while session.queue.len() < AHEAD {
             match session.frames.try_recv() {
@@ -533,6 +645,18 @@ impl Player {
             session.clock.follow(sound, now);
         }
         let position = session.clock.position(now);
+        // The other size takes over with its first frame that is due.
+        if session
+            .resize
+            .as_ref()
+            .is_some_and(|resize| resize.queue.front().is_some_and(|(at, _)| *at <= position))
+            && let Some(resize) = session.resize.take()
+        {
+            session.frames = resize.frames;
+            session.queue = resize.queue;
+            session.side = resize.side;
+            session.decoded = false;
+        }
         if let Some(image) = take_due(&mut session.queue, position) {
             session.show(ctx, image);
         }
@@ -557,7 +681,7 @@ impl Player {
 
 /// Starts decoding `path` from `from` on its own thread. Dropping the
 /// receiver stops the thread at its next frame.
-fn spawn_decoder(path: &Path, from: Duration, waker: Waker) -> Receiver<Delivery> {
+fn spawn_decoder(path: &Path, from: Duration, side: u32, waker: Waker) -> Receiver<Delivery> {
     let (sender, receiver) = std::sync::mpsc::sync_channel(AHEAD);
     let path = path.to_owned();
     let spawned = std::thread::Builder::new()
@@ -565,7 +689,7 @@ fn spawn_decoder(path: &Path, from: Duration, waker: Waker) -> Receiver<Delivery
         .spawn(move || {
             // A decoder panic reports the video as unsupported.
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                decode(&path, from, &sender, &waker)
+                decode(&path, from, side, &sender, &waker)
             }))
             .unwrap_or_else(|_| Err("the decoder stopped".to_owned()));
             let last = match outcome {
@@ -708,6 +832,7 @@ fn fitted(width: u32, height: u32, max_side: u32) -> (u32, u32) {
 fn decode(
     path: &Path,
     from: Duration,
+    side: u32,
     frames: &SyncSender<Delivery>,
     waker: &Waker,
 ) -> Result<(), String> {
@@ -763,6 +888,7 @@ fn decode(
     let mut output = Output {
         from,
         turns,
+        side,
         held: None,
         frames,
         waker,
@@ -805,6 +931,8 @@ const FRAME: Duration = Duration::from_millis(100);
 struct Output<'a> {
     from: Duration,
     turns: u8,
+    /// Longest side of the pictures sent.
+    side: u32,
     /// The newest frame before `from`, which shows at `from` until the next
     /// frame is due.
     held: Option<ColorImage>,
@@ -818,7 +946,7 @@ impl Output<'_> {
     fn frame(&mut self, at: Duration, yuv: &openh264::decoder::DecodedYUV<'_>) -> bool {
         if at < self.from {
             if at + FRAME >= self.from {
-                self.held = picture(yuv, self.turns);
+                self.held = picture(yuv, self.turns, self.side);
             }
             return true;
         }
@@ -828,7 +956,7 @@ impl Output<'_> {
         {
             return false;
         }
-        let Some(image) = picture(yuv, self.turns) else {
+        let Some(image) = picture(yuv, self.turns, self.side) else {
             return true;
         };
         let sent = self.frames.send(Delivery::Frame(at, image)).is_ok();
@@ -837,16 +965,16 @@ impl Output<'_> {
     }
 }
 
-/// Turns one decoded frame into an upright picture no larger than
-/// [`MAX_SIDE`].
-fn picture(yuv: &openh264::decoder::DecodedYUV<'_>, turns: u8) -> Option<ColorImage> {
+/// Turns one decoded frame into an upright picture no larger than `side`
+/// on its longest side.
+fn picture(yuv: &openh264::decoder::DecodedYUV<'_>, turns: u8, side: u32) -> Option<ColorImage> {
     use openh264::formats::YUVSource;
 
     let (width, height) = yuv.dimensions();
     if width == 0 || height == 0 {
         return None;
     }
-    let (out_width, out_height) = fitted(width as u32, height as u32, MAX_SIDE);
+    let (out_width, out_height) = fitted(width as u32, height as u32, side);
     let planes = Planes {
         y: yuv.y(),
         u: yuv.u(),
@@ -939,7 +1067,7 @@ mod tests {
 
     fn collect(path: &Path, from: Duration) -> Vec<Delivery> {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1024);
-        let outcome = decode(path, from, &sender, &Waker::default());
+        let outcome = decode(path, from, MAX_SIDE, &sender, &Waker::default());
         if let Err(reason) = outcome {
             sender.send(Delivery::Unsupported(reason)).unwrap();
         }
@@ -1031,6 +1159,67 @@ mod tests {
         assert_eq!(player.status("clip").unwrap().state, State::Paused);
         player.stop();
         assert!(player.message().is_none());
+    }
+
+    /// Covering the window asks for larger frames. A playing video does not
+    /// stop for them: it stays playing, its clock runs on, and the larger
+    /// decoder takes over on its own.
+    #[test]
+    fn changing_size_does_not_interrupt_a_playing_video() {
+        let ctx = egui::Context::default();
+        let mut player = Player::new(Waker::default());
+        player.silence();
+        let path = Path::new(SAMPLE);
+        player.toggle("clip", path);
+        let step = |player: &mut Player| {
+            player.saw("clip");
+            player.poll(&ctx);
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let started = Instant::now();
+        while player.status("clip").unwrap().state != State::Playing {
+            assert!(started.elapsed() < Duration::from_secs(5));
+            step(&mut player);
+        }
+        let before = player.status("clip").unwrap().position;
+        player.set_expanded(true);
+        assert_eq!(player.side(), EXPANDED_SIDE);
+        assert!(player.resizing());
+        assert_eq!(player.status("clip").unwrap().state, State::Playing);
+        let started = Instant::now();
+        while player.resizing() {
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "never took over"
+            );
+            // Not once does it fall back to loading.
+            assert_eq!(player.status("clip").unwrap().state, State::Playing);
+            step(&mut player);
+        }
+        let after = player.status("clip").unwrap();
+        assert_eq!(after.state, State::Playing);
+        assert!(after.position >= before + LEAD);
+        assert_eq!(player.session.as_ref().unwrap().side, EXPANDED_SIDE);
+
+        // Back again before the larger frames are even wanted elsewhere.
+        player.set_expanded(false);
+        player.set_expanded(true);
+        assert!(
+            !player.resizing(),
+            "the size still playing needs no new decoder"
+        );
+
+        // Paused, there is nothing to interrupt: it decodes again in place.
+        player.toggle("clip", path);
+        let paused = player.status("clip").unwrap().position;
+        player.set_expanded(false);
+        assert!(!player.resizing());
+        let started = Instant::now();
+        while player.status("clip").unwrap().state != State::Paused {
+            assert!(started.elapsed() < Duration::from_secs(5));
+            step(&mut player);
+        }
+        assert_eq!(player.status("clip").unwrap().position, paused);
     }
 
     #[test]

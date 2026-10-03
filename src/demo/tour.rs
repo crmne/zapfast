@@ -21,7 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const PHOTO_CAPTION: &str = "A little poster for launch day ⚡";
+const PHOTO_CAPTION: &str = "Launch day ⚡";
 /// Length of the input-driven launch tour, excluding its optional start delay.
 pub const DURATION: Duration = Duration::from_secs(41);
 
@@ -84,7 +84,7 @@ impl Script {
 pub fn prepare(app: &mut App) {
     common_setup(app);
     super::apply_flags(app, Some("voice"));
-    show_photos(app, PHOTO_CAPTION);
+    show_photos(app, super::stock::LAUNCH, PHOTO_CAPTION);
     if let Some(quote) = app
         .conversations
         .get_mut(super::SAMPLES[0].id)
@@ -143,15 +143,16 @@ fn common_setup(app: &mut App) {
     }
 }
 
-/// Shows fully loaded photos, with `caption` on Ada's, instead of the
-/// deliberately blurry download previews used by the screenshot fixtures.
-fn show_photos(app: &mut App, caption: &str) {
-    let (photo, _) = super::sample_files(app);
-    for (chat, id, caption) in [
-        (super::SAMPLES[0].id, "ada-photo", caption),
+/// Shows fully loaded photos, `photo` with `caption` as Ada's, instead of
+/// the deliberately blurry download previews used by the screenshot fixtures.
+fn show_photos(app: &mut App, photo: super::stock::Photo, caption: &str) {
+    let dir = app.dirs.media_cache_dir();
+    for (chat, id, photo, caption) in [
+        (super::SAMPLES[0].id, "ada-photo", photo, caption),
         (
             super::SAMPLES[1].id,
             "group-photo",
+            super::stock::VENUE,
             "Tonight's meetup, doors at 18:30",
         ),
     ] {
@@ -164,9 +165,10 @@ fn show_photos(app: &mut App, caption: &str) {
                 caption: text,
             } = &mut row.content
         {
-            media.path = Some(photo.clone());
-            media.width = Some(900);
-            media.height = Some(1200);
+            media.path = Some(super::stock::save_photo(&dir, photo));
+            media.width = Some(photo.width);
+            media.height = Some(photo.height);
+            row.thumbnail = Some(super::stock::thumbnail(photo));
             *text = Some(caption.to_owned());
         }
     }

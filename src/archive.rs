@@ -158,6 +158,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // NULL until the group's metadata says whether only admins edit its info.
     ("chats", "info_locked", "INTEGER"),
     ("chats", "group_admin", "INTEGER NOT NULL DEFAULT 0"),
+    // Set once the phone says it holds nothing older than what it sent.
+    ("chats", "history_start", "INTEGER NOT NULL DEFAULT 0"),
     ("contacts", "first_name", "TEXT"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
@@ -459,6 +461,29 @@ impl Archive {
             params![id, left],
         )?;
         Ok(())
+    }
+
+    /// Records that the phone holds nothing older for this chat, so asking
+    /// it for earlier history again is pointless.
+    pub fn set_history_start(&self, id: &str) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET history_start = 1 WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Whether the phone said this chat's history starts at what we hold.
+    pub fn history_start(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT history_start FROM chats WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
     }
 
     pub fn rename_chat(&self, id: &str, name: &str) -> Result<()> {
@@ -2181,6 +2206,28 @@ pub(crate) mod tests {
             .set_group_info(id, Some("Rust"), &["1@s.whatsapp.net".into()], false)
             .unwrap();
         assert_eq!(archive.chat(id).unwrap().unwrap().info_locked, Some(true));
+    }
+
+    /// An archive from before the history-start mark migrates every chat as
+    /// worth asking, and the mark persists once the phone sets it.
+    #[test]
+    fn history_start_migrates_unset_and_persists() {
+        let connection = Connection::open_in_memory().expect("opens");
+        connection.execute_batch(SCHEMA).expect("the older schema");
+        connection
+            .execute_batch(
+                "INSERT INTO chats (id, name, kind) VALUES ('1@s.whatsapp.net', 'A', 'direct');",
+            )
+            .expect("row");
+        let archive = Archive::prepare(connection).expect("the migration adds the column");
+        let id = "1@s.whatsapp.net";
+        assert!(!archive.history_start(id).unwrap());
+        archive.set_history_start(id).unwrap();
+        assert!(archive.history_start(id).unwrap());
+        assert!(
+            !archive.history_start("2@s.whatsapp.net").unwrap(),
+            "an unknown chat has not reached its start"
+        );
     }
 
     #[test]

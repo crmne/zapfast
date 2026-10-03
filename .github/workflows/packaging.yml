@@ -41,7 +41,7 @@ jobs:
   packaging:
     permissions:
       contents: write
-    uses: crmne/native-packages/.github/workflows/package.yml@8025372579b1864b09b579255484f4e15f65bc78 # main after v0.7.0: tap deploy key
+    uses: crmne/native-packages/.github/workflows/package.yml@999768410cf53cdc68c8679c09cb14de1a6bca7b # v0.8.1
     with:
       targets: linux-amd64,linux-arm64
       version: ${{ inputs.version || 'v0.13.1' }}
@@ -68,6 +68,40 @@ jobs:
         env:
           IMAGE: ${{ matrix.image }}
         run: bash packaging/test-install.sh "$IMAGE" dist/native-packages
+
+  # The AppImage carries no libraries of its own, so the runner supplies
+  # ALSA as a desktop would. Runners have no FUSE: it unpacks itself to run.
+  appimage:
+    name: AppImage (${{ matrix.os }})
+    needs: packaging
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-amd64
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            arch: aarch64
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-packages
+          path: dist/native-packages
+      - name: Run the AppImage
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2t64
+          set -- dist/native-packages/packages/"$TARGET"/appimage/zapfast-*-"$ARCH".AppImage
+          test "$#" -eq 1
+          chmod +x "$1"
+          "$1" --appimage-extract-and-run --version | grep -Ex '(zapfast|fastsapp) [0-9]+\.[0-9]+\.[0-9]+.*'
 
   user-installer:
     name: User installer

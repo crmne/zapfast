@@ -49,7 +49,30 @@ features:
 
 <p class="sibling"><strong>Want Spotify just as fast and native?</strong> <a href="https://spotifast.rocks">Spotifast</a> is ZapFast's sibling: the same native interface, for Spotify. Both are built on <a href="https://github.com/crmne/fastframe">fastframe</a>, the shared foundation for native Rust apps built with egui.</p>
 
+<video class="hero-film image-src" controls muted loop playsinline preload="metadata" poster="{{ '/assets/images/launch-film-poster.jpg' | relative_url }}" aria-label="ZapFast in under a minute: a film of the app, made with its built-in demo content" hidden>
+  <source src="{{ '/assets/videos/launch-film.mp4' | relative_url }}" type="video/mp4">
+</video>
+
+<script>
+  // The theme's hero takes a picture; the film takes its place where
+  // scripts run, and the screenshot stays where they do not.
+  (function () {
+    var film = document.querySelector(".hero-film");
+    var slot = document.querySelector(".VPHero .image-container");
+    if (!film || !slot) return;
+    slot.replaceChildren(film);
+    film.hidden = false;
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      film.play().catch(function () {});
+    }
+  })();
+</script>
+
 <style>
+  .hero-film {
+    display: block;
+    background: #0b141a;
+  }
   .sibling {
     max-width: 1152px;
     margin: 48px auto 0;

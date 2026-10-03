@@ -13,12 +13,14 @@ is ZapFast's sibling: the same native interface, for Spotify. Both are built
 on [fastframe](https://github.com/crmne/fastframe), the shared foundation for
 native Rust apps built with egui.
 
+https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
+
+See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
   <img src="docs/screenshot.png" alt="ZapFast showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview">
 </picture>
-
-See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-group-light.png">
@@ -67,7 +69,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Unnamed groups use a shared participant summary for their title and subtitle.
   It names each saved contact by its whole first name as saved on the phone (the
   first word of the name when none is known), repeated names appear as `Andrea ×3`, and your
-  own entry is shown as `You`.
+  own entry is shown as `You`. The sender before a group's last message goes by
+  the same name. Contacts synced by an older version are read once more from the
+  phone after updating, so their first names are known too.
   Incomplete group metadata preserves known names and retries with backoff;
   an empty cached subject remains eligible for recovery.
   Typing indicators show other participants, excluding your own linked devices.
@@ -116,7 +120,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Hebrew or Arabic is aligned to the right, with its time on its own line when
   the text has more than one. Carets and copied text stay on the logical message.
   Text uses the system's interface font (San Francisco on macOS, Segoe UI
-  on Windows, the desktop's `system-ui` font on Linux), and emoji look as they
+  on Windows, the desktop's `system-ui` font on Linux), or the bundled Inter
+  if you choose it under **Settings > Appearance > Font**, and emoji look as they
   do in the system's other apps: Apple Color Emoji on macOS, Segoe UI Emoji on
   Windows, and the desktop's emoji font on Linux. The bundled Noto Color Emoji
   draws whatever those lack (country flags on Windows, or every emoji on a
@@ -163,14 +168,16 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   seconds. Error messages stay above the composer until you dismiss them, and
   a button copies their text for a bug report. A repeated error replaces its
   earlier copy, and only the three newest are kept.
-- **Send attachments with captions.** Paste a picture, drop files, or choose
-  **Send files** from the plus menu. They stay in the composer until you send them or press Escape.
+- **Send attachments with captions.** Paste a picture or copied files, drop
+  files, or choose **Send files** from the plus menu. They stay in the composer until you send them or press Escape.
   Pasting a picture uses its image data without adding the source URL or HTML
   to your caption. Files copied in Finder, Explorer, or a Linux file manager
   paste as the files themselves, not their icons. Text-only clipboard contents
   still paste as text.
   MP3, M4A, AAC, and OGG files go as audio messages; other audio, such as
   WAV or FLAC, goes as a document so the recipient gets the original file.
+  An MP4 video goes with a preview picture, its size, and its length, so it
+  shows as a video before it is downloaded and plays in its message here too.
 - **Mute chats** for eight hours, one week, or indefinitely. The setting also
   applies on your phone and to desktop notifications. Mute changes from your
   phone survive history arriving later, including during initial linking.
@@ -213,7 +220,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   a chat's draft in its row, after "Draft:". Open menus, dialogs, and
   unfinished actions are dismissed first. Sending while reading older messages
   keeps your place; use the newest-message button or End to return to the latest
-  message. Type `:name` to autocomplete an emoji without leaving the composer,
+  message. The chat list scrolls to the top after you send, where the chat now
+  is; under the Favorites chip the list keeps the phone's order and stays in
+  place. Type `:name` to autocomplete an emoji without leaving the composer,
   or `@` in a group to mention a member.
   Reply, react with any emoji, edit, forward, delete, and check when a message was sent,
   delivered, or read. Replies can be text, attachments, voice messages,
@@ -256,7 +265,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Ctrl+C (Cmd+C on macOS); a downloaded image's message menu has **Copy image**
   too, without opening the preview. Click a video to play it in its message, with
   sound, a seek bar, and a mute switch; round video messages play inside their
-  circle with a progress ring, like on the phone. A video that is not
+  circle with a progress ring, like on the phone. Double-click a video, or use
+  the button at the end of its controls, to play it over the whole window at a
+  higher resolution: there Space plays and pauses, the left and right arrows
+  jump five seconds, M mutes, and Escape, the close button, or a click beside
+  the picture puts it back in its message. A video that is not
   downloaded yet downloads first and then plays. Videos in codecs other than
   H.264, such as HEVC, open in your system player, and so does **Open in system
   player** in a video's right-click menu. Unsupported pictures and documents
@@ -466,6 +479,7 @@ Builds for every release are on the
 | Platform | File |
 | --- | --- |
 | Linux x86_64 and arm64 | `zapfast-vX.Y.Z-<target>.tar.gz`, with the desktop file and icon in `packaging/` |
+| Linux x86_64 and arm64, one file | `zapfast-X.Y.Z-x86_64.AppImage` or `-aarch64.AppImage`: make it executable and run it |
 | Windows x64 and arm64 | `zapfast-vX.Y.Z-<target>-setup.exe` (no administrator rights needed), or the `.zip` |
 | macOS, universal | `zapfast-vX.Y.Z-macos-universal.dmg` |
 
@@ -587,8 +601,10 @@ way. The pencil opens **New chat**, with **Message yourself** and
 lets you message a new number without saving it. **Also save to your phone's
 contacts** in that dialog adds the contact to your phone's address book too, as
 the phone asks; the next contact starts from your last choice. You
-can also open a group member's contact card. Saved names sync through WhatsApp
-to your phone and linked devices.
+can also open a group member's contact card. Renaming a contact opens with its
+first and last name as saved, each of which may hold several words; a name
+saved without a separate first name opens whole in the first-name field. Saved
+names sync through WhatsApp to your phone and linked devices.
 
 ### Locked chats
 
@@ -718,9 +734,9 @@ English. `Ctrl+F` on the Settings page focuses the field, and `Esc` clears it.
 **Settings > Appearance > Language** chooses the interface language. **Auto**
 follows the first of the operating system's preferred languages that ZapFast
 has a translation for, and falls back to English when it has none. Brazilian
-Portuguese, German, Spanish, Italian, French, Russian, and Simplified Chinese
-cover the chat list, search, composer, shortcut hints, Settings, and dates.
-Translations are compiled from gettext PO
+Portuguese, German, Spanish, Italian, French, Russian, Simplified Chinese,
+and Turkish cover the chat list, search, composer, shortcut hints, Settings,
+and dates. Translations are compiled from gettext PO
 files at build time, with no runtime parsing or network access. Message
 contents, contact names, logs, and protocol errors are never translated, and
 copied messages keep WhatsApp's `[time, date] Name:` format.
@@ -833,7 +849,7 @@ See [update signing](packaging/UPDATE_SIGNING.md) for key custody and recovery.
 The in-app updater supports marked portable downloads, the Windows installer,
 and the macOS app in Applications. Keep `zapfast-portable.txt` beside a portable
 executable. AUR, DEB, RPM, Flatpak, Cargo and Homebrew installations use their
-package manager. Older portable downloads without the marker need one manual
+package manager, and an AppImage is replaced by downloading the new one. Older portable downloads without the marker need one manual
 upgrade. No account or additional service is needed.
 
 ## Developing
@@ -880,8 +896,10 @@ and selects Reply, types quickly, completes emoji and mentions, searches the GIF
 picker and sends a still sticker, opens group information and the shortcut list,
 and changes themes through Settings. It uses the normal mouse and keyboard handlers;
 a local responder handles outgoing messages with no WhatsApp connection.
-The GIF-search thumbnails and still stickers are rendered from the bundled
-Noto emoji font; demo GIF search uses these local fixtures. The tour makes no
+The demo's profile pictures, photos, video clips, GIF-search thumbnails, and captioned stickers
+are stock media compiled into demo builds only, all CC0 or in the public domain
+(`assets/demo/SOURCES.md` lists each source); demo GIF search uses these local
+fixtures, and the remaining stickers come from the bundled Noto emoji font. The tour makes no
 sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
@@ -905,7 +923,8 @@ Use `--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
 Use `--demo-page phone-menu` to preview the phone-number actions with synthetic
 content; add `,light` for the light theme.
-`--demo-page video` shows a video and round video messages, and
+`--demo-page video` shows a video and round video messages,
+`--demo-page video-expanded` the video over the whole window, and
 `video-playing` or `note-playing` starts one of them, silently.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy

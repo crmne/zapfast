@@ -37,6 +37,12 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.18.2" date="2026-09-30">
+      <url>https://github.com/crmne/zapfast/releases/tag/v0.18.2</url>
+    </release>
+    <release version="0.18.1" date="2026-09-30">
+      <url>https://github.com/crmne/zapfast/releases/tag/v0.18.1</url>
+    </release>
     <release version="0.17.0" date="2026-09-26">
       <url>https://github.com/crmne/zapfast/releases/tag/v0.17.0</url>
     </release>

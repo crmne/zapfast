@@ -24,7 +24,11 @@ pub fn prepare(app: &mut App) {
     super::common_setup(app);
     app.settings.interface_language = Some(crate::i18n::Locale::English);
     app.locale = crate::i18n::Locale::English;
-    super::show_photos(app, "The difference engine, finally assembled");
+    super::show_photos(
+        app,
+        super::super::stock::ENGINE,
+        "The difference engine, finally assembled",
+    );
     super::super::labels_sample(app);
     app.label_filter = None;
     app.chat_filter = crate::model::ChatFilter::All;
@@ -54,47 +58,50 @@ pub fn prepare(app: &mut App) {
 /// A video from Grace and a round video message of our own, both downloaded.
 fn videos(app: &mut App) {
     let grace = super::super::SAMPLES[2].id;
-    let path = app.dirs.media_cache_dir().join("tour-video.mp4");
-    let _ = std::fs::create_dir_all(app.dirs.media_cache_dir());
-    let _ = std::fs::write(&path, super::super::DEMO_VIDEO);
+    let dir = app.dirs.media_cache_dir();
+    let stock = super::super::stock::save(&dir, "tour-video.mp4", super::super::stock::VIDEO);
+    let round = super::super::stock::save(&dir, "tour-note.mp4", super::super::stock::NOTE);
     let clip = |note: bool| {
-        let mut media = super::super::media(
-            "video/mp4",
-            super::super::DEMO_VIDEO.len() as u64,
-            Some(320),
-            Some(180),
-        );
-        media.path = Some(path.clone());
+        let (bytes, side, file) = if note {
+            (super::super::stock::NOTE, (360, 360), &round)
+        } else {
+            (super::super::stock::VIDEO, (640, 360), &stock)
+        };
+        let mut media =
+            super::super::media("video/mp4", bytes.len() as u64, Some(side.0), Some(side.1));
+        media.path = Some(file.clone());
         Content::Video {
-            caption: (!note).then(|| "The relay, running again".to_owned()),
+            caption: (!note).then(|| "Liftoff, from the press site".to_owned()),
             media,
-            seconds: Some(3),
+            seconds: Some(super::super::stock::CLIP_SECONDS),
             gif: false,
             note,
         }
     };
     // The clip's own picture as the poster, not a blurry placeholder.
-    let poster = crate::animation::video_frame(&path, 12).and_then(|frame| {
-        let [width, height] = frame.size;
-        let rgb: Vec<u8> = frame
-            .pixels
-            .iter()
-            .flat_map(|pixel| {
-                let [r, g, b, _] = pixel.to_srgba_unmultiplied();
-                [r, g, b]
-            })
-            .collect();
-        let mut jpeg = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
-            .encode(
-                &rgb,
-                width as u32,
-                height as u32,
-                image::ExtendedColorType::Rgb8,
-            )
-            .ok()?;
-        Some(jpeg)
-    });
+    let poster = |path: &std::path::Path| {
+        crate::animation::video_frame(path, 12).and_then(|frame| {
+            let [width, height] = frame.size;
+            let rgb: Vec<u8> = frame
+                .pixels
+                .iter()
+                .flat_map(|pixel| {
+                    let [r, g, b, _] = pixel.to_srgba_unmultiplied();
+                    [r, g, b]
+                })
+                .collect();
+            let mut jpeg = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+                .encode(
+                    &rgb,
+                    width as u32,
+                    height as u32,
+                    image::ExtendedColorType::Rgb8,
+                )
+                .ok()?;
+            Some(jpeg)
+        })
+    };
     let Some(conversation) = app.conversations.get_mut(grace) else {
         return;
     };
@@ -114,9 +121,8 @@ fn videos(app: &mut App) {
             clip(note),
         );
         row.thumbnail = Some(
-            poster
-                .clone()
-                .unwrap_or_else(|| super::super::sample_thumbnail(index as u32 + 5)),
+            poster(if note { &round } else { &stock })
+                .unwrap_or_else(|| super::super::stock::thumbnail(super::super::stock::LAUNCH)),
         );
         conversation.messages.push(row);
     }

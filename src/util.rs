@@ -229,13 +229,23 @@ fn stamp_relative_to(locale: Locale, date: Date, today: Date, when: &Zoned) -> S
     }
 }
 
-/// Splits a display name into first name and surname for editor defaults.
-pub fn split_name(name: &str) -> (String, String) {
+/// The first-name and last-name fields of the contact editor for a saved
+/// `name`, given the first name saved with it.
+///
+/// Both may hold several words, so the name is never cut at a space: the
+/// last name is what follows the saved first name. Without a first name to go
+/// by (a profile name, a contact synced before first names were kept, or a
+/// first name the full name does not start with) the whole name stays in the
+/// first field, so saving it unchanged keeps it whole.
+pub fn editor_names(name: &str, first: Option<&str>) -> (String, String) {
     let name = name.trim();
-    match name.split_once(' ') {
-        Some((first, rest)) => (first.to_owned(), rest.trim().to_owned()),
-        None => (name.to_owned(), String::new()),
+    if let Some(first) = first.map(str::trim).filter(|first| !first.is_empty())
+        && let Some(rest) = name.strip_prefix(first)
+        && (rest.is_empty() || rest.starts_with(char::is_whitespace))
+    {
+        return (first.to_owned(), rest.trim().to_owned());
     }
+    (name.to_owned(), String::new())
 }
 
 /// Message-info timestamp with date and minute.
@@ -570,36 +580,40 @@ pub fn hue(seed: &str) -> f32 {
 
 /// Embedded SVG app logo used across platform surfaces.
 const MARK: &[u8] = include_bytes!("../packaging/icons/zapfast.svg");
+/// The same mark without its rim and shading, which blur below this size.
+const SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zapfast-small.svg");
+const SMALL_BELOW: usize = 40;
 
 /// Rasterizes the logo to straight-alpha RGBA.
 pub fn app_icon_rgba(size: usize) -> Vec<u8> {
-    let side = size.max(1) as u32;
-    let rendered = resvg::usvg::Tree::from_data(MARK, &resvg::usvg::Options::default())
-        .ok()
-        .and_then(|tree| {
-            let mut pixmap = resvg::tiny_skia::Pixmap::new(side, side)?;
-            let scale = side as f32 / tree.size().width();
-            resvg::render(
-                &tree,
-                resvg::tiny_skia::Transform::from_scale(scale, scale),
-                &mut pixmap.as_mut(),
-            );
-            Some(
-                pixmap
-                    .pixels()
-                    .iter()
-                    .flat_map(|pixel| {
-                        let color = pixel.demultiply();
-                        [color.red(), color.green(), color.blue(), color.alpha()]
-                    })
-                    .collect::<Vec<u8>>(),
-            )
-        });
-    match rendered {
+    let mark = if size < SMALL_BELOW { SMALL_MARK } else { MARK };
+    match render_mark(mark, size) {
         Some(rgba) => rgba,
         // Fall back to an accent disc if the embedded SVG cannot render.
         None => plain_disc(size),
     }
+}
+
+fn render_mark(mark: &[u8], size: usize) -> Option<Vec<u8>> {
+    let side = size.max(1) as u32;
+    let tree = resvg::usvg::Tree::from_data(mark, &resvg::usvg::Options::default()).ok()?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(side, side)?;
+    let scale = side as f32 / tree.size().width();
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    Some(
+        pixmap
+            .pixels()
+            .iter()
+            .flat_map(|pixel| {
+                let color = pixel.demultiply();
+                [color.red(), color.green(), color.blue(), color.alpha()]
+            })
+            .collect(),
+    )
 }
 
 fn plain_disc(size: usize) -> Vec<u8> {
@@ -621,13 +635,17 @@ fn plain_disc(size: usize) -> Vec<u8> {
     rgba
 }
 
-/// Converts the logo to a monochrome macOS menu-bar template.
+/// Converts the logo to a monochrome macOS menu-bar template: the disc,
+/// with the bubble cut out of it.
 pub fn tray_template_rgba(size: usize) -> Vec<u8> {
-    let mut rgba = app_icon_rgba(size);
+    // The flat mark at every size: a template has no room for shading.
+    let mut rgba = render_mark(SMALL_MARK, size).unwrap_or_else(|| plain_disc(size));
+    // The disc's green against the ink's says how much of a pixel is disc.
+    const INK: f32 = 14.0;
+    const DISC: f32 = 168.0;
     for pixel in rgba.as_chunks_mut::<4>().0 {
-        if pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200 {
-            pixel[3] = 0;
-        }
+        let disc = ((f32::from(pixel[1]) - INK) / (DISC - INK)).clamp(0.0, 1.0);
+        pixel[3] = (f32::from(pixel[3]) * disc).round() as u8;
         pixel[0] = 0;
         pixel[1] = 0;
         pixel[2] = 0;
@@ -637,6 +655,32 @@ pub fn tray_template_rgba(size: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_contact_editor_keeps_names_as_they_were_saved() {
+        let names = |name, first| super::editor_names(name, first);
+        let pair = |first: &str, last: &str| (first.to_owned(), last.to_owned());
+        // A first name of several words, alone or with a last name (#314).
+        assert_eq!(
+            names("first second", Some("first second")),
+            pair("first second", "")
+        );
+        assert_eq!(
+            names("first second third", Some("first second")),
+            pair("first second", "third")
+        );
+        assert_eq!(names("My Dih", Some("My Dih")), pair("My Dih", ""));
+        // A first name the full name merely starts with, letter for letter,
+        // is not the first word.
+        assert_eq!(names("Mary Ann", Some("Mar")), pair("Mary Ann", ""));
+        // Without a first name nothing is guessed at a space.
+        assert_eq!(names(" Mary Ann Evans ", None), pair("Mary Ann Evans", ""));
+        assert_eq!(names("Bob", Some("  ")), pair("Bob", ""));
+        // Names written without spaces stay whole.
+        assert_eq!(names("山田太郎", None), pair("山田太郎", ""));
+        assert_eq!(names("山田太郎", Some("太郎")), pair("山田太郎", ""));
+        assert_eq!(names("محمد علي", Some("محمد")), pair("محمد", "علي"));
+    }
+
     #[test]
     fn a_day_filter_covers_the_local_day_across_clock_changes() {
         use jiff::civil::date;
@@ -889,6 +933,27 @@ mod tests {
     }
 
     #[test]
+    fn turkish_stamps_are_translated() {
+        let when = Timestamp::from_second(1_700_000_000)
+            .expect("valid")
+            .to_zoned(jiff::tz::TimeZone::UTC);
+        let date = when.date();
+        assert_eq!(
+            stamp_relative_to(Locale::Turkish, date, date.tomorrow().expect("date"), &when),
+            "Dün"
+        );
+        assert_eq!(
+            stamp_relative_to(
+                Locale::Turkish,
+                date,
+                date.checked_add(jiff::Span::new().days(3)).expect("date"),
+                &when
+            ),
+            "Salı"
+        );
+    }
+
+    #[test]
     fn sizes_and_durations_read_naturally() {
         assert_eq!(bytes(512), "512 B");
         assert_eq!(bytes(2_048), "2.0 KB");
@@ -902,5 +967,33 @@ mod tests {
         assert_eq!(icon[3], 0);
         let middle = (16 * 32 + 16) * 4;
         assert_eq!(icon[middle + 3], 255);
+    }
+
+    /// The menu-bar template is the disc with the bubble cut out: solid in
+    /// the bubble's middle, clear along its outline and outside the disc.
+    #[test]
+    fn the_tray_template_cuts_the_bubble_out_of_the_disc() {
+        let size = 64;
+        let template = tray_template_rgba(size);
+        let alpha = |x: usize, y: usize| template[(y * size + x) * 4 + 3];
+        assert_eq!(alpha(0, 0), 0);
+        assert_eq!(alpha(32, 32), 255, "inside the bubble is disc");
+        assert_eq!(alpha(32, 4), 255, "so is the rim above it");
+        let outline = (0..32).map(|y| alpha(32, y)).min().unwrap();
+        assert!(outline < 40, "the outline is cut out: {outline}");
+        assert!(
+            template
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|p| p[..3] == [0, 0, 0])
+        );
+    }
+
+    /// Both marks render, the large one with its filters.
+    #[test]
+    fn both_marks_render() {
+        assert!(render_mark(MARK, 128).is_some());
+        assert!(render_mark(SMALL_MARK, 22).is_some());
     }
 }

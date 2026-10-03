@@ -171,6 +171,9 @@ pub struct Conversation {
     pub requested: bool,
     /// Whether a phone history request is active.
     pub fetching_phone: bool,
+    /// Whether the active phone request is the reader's own (see
+    /// [`Command::FetchOlder`]).
+    pub phone_explicit: bool,
     /// Whether phone history is exhausted or unavailable.
     pub phone_exhausted: bool,
     /// Last phone response time for request throttling.
@@ -379,6 +382,8 @@ pub struct App {
     pub open_chat: Option<ChatId>,
     /// Chat row to reveal after keyboard navigation.
     pub scroll_chat_into_view: Option<ChatId>,
+    /// A sent message moves its chat up, so the chat list goes to the top.
+    pub scroll_chats_to_top: bool,
     /// Composer drafts by chat.
     pub drafts: HashMap<ChatId, String>,
     draft_mentions: HashMap<ChatId, Vec<ComposerMention>>,
@@ -467,6 +472,10 @@ pub struct App {
     /// Picker anchor at the composer button.
     pub picker_anchor: Option<egui::Rect>,
     pub picker_search: String,
+    /// Recent emoji as they stood when the emoji picker opened. The row keeps
+    /// that order while the picker is open, so the same emoji can be sent
+    /// again from where it was; it catches up the next time it opens (#294).
+    pub picker_recent: Option<Vec<String>>,
     /// Whether the newly opened picker should focus search.
     pub picker_focus: bool,
     /// Message the full emoji reaction picker is targeting.
@@ -517,6 +526,8 @@ pub struct App {
     pauses_media: bool,
     /// Image currently shown in the native preview.
     pub image_preview: Option<PreviewState>,
+    /// Whether the loaded video covers the window instead of its bubble.
+    pub video_expanded: bool,
     /// Voice messages with a sent played receipt.
     played_told: HashSet<String>,
     /// Message bodies registered for transcript copy formatting.
@@ -658,6 +669,13 @@ pub struct App {
     pub hide_intent: bool,
     /// Whether a headless app should create a window.
     pub wants_show: bool,
+    /// Whether this session draws through Wayland, where a compositor ignores
+    /// a programmatic focus or unminimize request and the window is closed and
+    /// reopened instead.
+    wayland: bool,
+    /// Whether the current window close should reopen a fresh one at once
+    /// (`Closed::Reopen`) rather than stop drawing.
+    reopen: bool,
     /// Requests received from later launches.
     control_commands: Option<std::sync::Arc<std::sync::Mutex<Vec<ControlCommand>>>>,
     /// Chats and messages from clicked notifications.
@@ -738,11 +756,34 @@ impl Pending {
     }
 }
 
+/// Whether this session draws through Wayland, where a compositor ignores an
+/// app's request to focus or unminimize one of its own windows: winit's
+/// Wayland `focus_window` is a no-op and `set_minimized(false)` only warns.
+/// Mirrors winit's own choice: Wayland when either variable is non-empty.
+#[cfg(target_os = "linux")]
+fn wayland_session() -> bool {
+    ["WAYLAND_DISPLAY", "WAYLAND_SOCKET"]
+        .into_iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+}
+
+/// Wayland is Linux-only; elsewhere a window focuses and restores normally.
+#[cfg(not(target_os = "linux"))]
+fn wayland_session() -> bool {
+    false
+}
+
 /// The app outlives its window: closing it with "keep running" on hides
 /// ZapFast, and the tray, a notification or another launch brings it back.
 impl fastframe_shell::Resident for App {
     fn closed(&self) -> fastframe_shell::Closed {
-        if !self.quit_requested && self.hide_intent {
+        if self.quit_requested {
+            fastframe_shell::Closed::Quit
+        } else if self.reopen {
+            // The window was closed only to make a fresh one, which is how a
+            // Wayland session brings a minimized or covered window forward.
+            fastframe_shell::Closed::Reopen
+        } else if self.hide_intent {
             fastframe_shell::Closed::Hide
         } else {
             fastframe_shell::Closed::Quit
@@ -933,6 +974,7 @@ impl App {
             conversations: HashMap::new(),
             open_chat,
             scroll_chat_into_view: None,
+            scroll_chats_to_top: false,
             drafts: HashMap::new(),
             draft_mentions: HashMap::new(),
             composer: String::new(),
@@ -986,6 +1028,7 @@ impl App {
             picker: None,
             picker_anchor: None,
             picker_search: String::new(),
+            picker_recent: None,
             picker_focus: false,
             reaction_target: None,
             reaction_anchor: None,
@@ -1009,6 +1052,7 @@ impl App {
             media_hold: None,
             pauses_media: false,
             image_preview: None,
+            video_expanded: false,
             played_told: HashSet::new(),
             copy_rows: Default::default(),
             selection_view: Default::default(),
@@ -1092,6 +1136,8 @@ impl App {
             window_hidden: false,
             hide_intent: false,
             wants_show: false,
+            wayland: wayland_session(),
+            reopen: false,
             control_commands: None,
             notification_opens: Default::default(),
             notifications: Default::default(),
@@ -1329,6 +1375,7 @@ impl App {
         // Colour emoji in labels, menus, tooltips and text fields; message
         // bodies paint their own over placeholders, which it leaves alone.
         ctx.add_plugin(crate::emoji::plugin());
+        crate::theme::set_font(ctx, self.settings.font);
         crate::theme::install(ctx);
         // Use a faster wheel speed for short chat rows.
         ctx.options_mut(|options| options.input_options.line_scroll_speed = 120.0);
@@ -1348,6 +1395,7 @@ impl App {
         self.paste_before_release = false;
         self.hide_intent = false;
         self.wants_show = false;
+        self.reopen = false;
         self.refocus_composer(ctx);
         // Before the tray: muda keeps the first menu handler it is given, and
         // the tray installs one when it makes its item on the first window.
@@ -1538,6 +1586,22 @@ impl App {
 
     /// Resolves a consistent display name using settings and an optional
     /// message-provided fallback. Our own id becomes "You".
+    /// The short name WhatsApp shows where space is short (a group's member
+    /// line, the sender before a group's last message) for `id`, whose full
+    /// display name is `name`: the first name saved with the contact, whole,
+    /// as it can hold several words. Without one (a profile name, or a
+    /// contact the phone has not sent since first names were kept) the first
+    /// word of the name; a phone number and our own "You" stay whole.
+    pub fn short_name<'a>(&'a self, id: &str, name: &'a str) -> &'a str {
+        if self.me.as_deref() == Some(id) || name.starts_with('+') {
+            return name;
+        }
+        if let Some(first) = self.contacts.get(id).and_then(Contact::first_name) {
+            return first;
+        }
+        name.split_whitespace().next().unwrap_or(name)
+    }
+
     pub fn display_name_or(&self, id: &str, hint: Option<&str>) -> String {
         if self.me.as_deref() == Some(id) {
             return "You".to_owned();
@@ -1778,17 +1842,7 @@ impl App {
             if name.starts_with('+') || name == "Unknown" {
                 numbers.push(name);
             } else {
-                // The saved first name, as WhatsApp shows here, whole: it can
-                // hold several words. Without one (a profile name, or a
-                // contact synced before first names were kept), the first
-                // word, so the line stays short.
-                let first = self.contacts.get(id).and_then(Contact::first_name);
-                let name = name.trim_start_matches('~');
-                names.push(
-                    first
-                        .unwrap_or_else(|| name.split_whitespace().next().unwrap_or(name))
-                        .to_owned(),
-                );
+                names.push(self.short_name(id, name.trim_start_matches('~')).to_owned());
             }
         }
         names.sort_by_key(|name| name.to_lowercase());
@@ -1893,8 +1947,7 @@ impl App {
             })
             .collect();
         // The Favorites chip keeps the phone's order below the pinned chats.
-        let favorites_order =
-            filtering && self.label_filter.is_none() && self.chat_filter == ChatFilter::Favorites;
+        let favorites_order = self.favorites_order();
         chats.sort_by(|a, b| {
             b.pinned.cmp(&a.pinned).then_with(|| {
                 if a.pinned && b.pinned {
@@ -1909,6 +1962,16 @@ impl App {
             })
         });
         chats
+    }
+
+    /// Whether the chat list keeps the phone's favorites order instead of the
+    /// latest activity, so a sent message does not move its chat up.
+    fn favorites_order(&self) -> bool {
+        self.label_filter.is_none()
+            && self.chat_filter == ChatFilter::Favorites
+            && !self.show_archived
+            && crate::util::search_key(self.search.trim()).is_empty()
+            && !self.locked_folder_open()
     }
 
     /// Matching individual contacts without an existing chat, sorted by name.
@@ -2134,7 +2197,7 @@ impl App {
                             self.scroll_to_bottom = true;
                         }
                         if bare {
-                            self.fetch_older(&chat);
+                            self.fetch_older(&chat, false);
                         }
                         // After the first page, load toward a pending search anchor once.
                         if !older
@@ -2362,6 +2425,7 @@ impl App {
                 Event::OlderFetched { chat, more } => {
                     let conversation = self.conversations.entry(chat).or_default();
                     conversation.fetching_phone = false;
+                    conversation.phone_explicit = false;
                     conversation.phone_exhausted = !more;
                     conversation.phone_answered = Some(Instant::now());
                     if conversation.phone_delivered {
@@ -3013,7 +3077,7 @@ impl App {
         }
     }
 
-    pub fn load_older(&mut self, chat: &str) {
+    pub fn load_older(&mut self, chat: &str, explicit: bool) {
         let Some(conversation) = self.conversations.get_mut(chat) else {
             return;
         };
@@ -3024,7 +3088,7 @@ impl App {
             return;
         };
         if conversation.complete {
-            self.fetch_older(chat);
+            self.fetch_older(chat, explicit);
             return;
         }
         conversation.loading_older = true;
@@ -3037,11 +3101,25 @@ impl App {
     }
 
     /// Requests older phone history when available and outside the cooldown.
-    pub fn fetch_older(&mut self, chat: &str) {
+    /// `explicit` when the reader asked by scrolling to the top; automatic
+    /// requests never report a silent phone.
+    pub fn fetch_older(&mut self, chat: &str, explicit: bool) {
         let Some(conversation) = self.conversations.get_mut(chat) else {
             return;
         };
-        if conversation.fetching_phone || conversation.phone_exhausted {
+        if conversation.phone_exhausted {
+            return;
+        }
+        if conversation.fetching_phone {
+            if explicit && !conversation.phone_explicit {
+                // The reader scrolled up while an automatic request waits:
+                // the worker makes that request theirs instead of asking twice.
+                conversation.phone_explicit = true;
+                self.backend.send(Command::FetchOlder {
+                    chat: chat.to_owned(),
+                    explicit,
+                });
+            }
             return;
         }
         // Back off after empty responses. Only a connected phone can answer.
@@ -3057,11 +3135,15 @@ impl App {
             return;
         }
         conversation.fetching_phone = true;
+        conversation.phone_explicit = explicit;
         self.scroll_anchor = conversation
             .messages
             .first()
             .map(|oldest| oldest.id.clone());
-        self.backend.send(Command::FetchOlder(chat.to_owned()));
+        self.backend.send(Command::FetchOlder {
+            chat: chat.to_owned(),
+            explicit,
+        });
     }
 
     fn mark_read(&mut self, chat: &str) {
@@ -3162,7 +3244,7 @@ impl App {
             .get(&id)
             .is_some_and(|conversation| conversation.complete && conversation.messages.is_empty())
         {
-            self.fetch_older(&id);
+            self.fetch_older(&id, false);
         }
         if self
             .chat(&id)
@@ -3236,8 +3318,16 @@ impl App {
     /// Keeps following outgoing messages only when the reader was already at
     /// the newest edge. Sending from older history must not lose their place.
     fn follow_outgoing(&mut self) {
+        self.follow_sent_chat();
         if self.at_bottom {
             self.scroll_to_bottom = true;
+        }
+    }
+
+    /// Scrolls the chat list to the top, where a sent message moves its chat.
+    fn follow_sent_chat(&mut self) {
+        if !self.favorites_order() {
+            self.scroll_chats_to_top = true;
         }
     }
 
@@ -3759,6 +3849,7 @@ impl App {
                         Ok(draft) => {
                             self.poll_creating = true;
                             self.backend.send(Command::CreatePoll { chat, draft });
+                            self.follow_sent_chat();
                         }
                         Err(error) => self.toast_error(error),
                     }
@@ -3786,8 +3877,8 @@ impl App {
             }
             Action::MarkRead(chat) => self.mark_read(&chat),
             Action::MarkUnread(chat) => self.mark_unread(&chat),
-            Action::LoadOlder(chat) => self.load_older(&chat),
-            Action::FetchOlder(chat) => self.fetch_older(&chat),
+            Action::LoadOlder { chat, explicit } => self.load_older(&chat, explicit),
+            Action::FetchOlder(chat) => self.fetch_older(&chat, true),
             Action::Download {
                 card,
                 chat,
@@ -3938,6 +4029,7 @@ impl App {
                     messages,
                     to_chat,
                 });
+                self.follow_sent_chat();
                 self.dialog = None;
                 self.forward_search.clear();
                 self.selection = None;
@@ -4099,6 +4191,21 @@ impl App {
             }
             Action::SeekVideo { message, fraction } => self.video.seek(&message, fraction),
             Action::ToggleVideoSound => self.video.toggle_mute(),
+            Action::ExpandVideo { message, path } => {
+                if self.video.message() != Some(message.as_str()) {
+                    self.video.set_expanded(true);
+                    self.play_video(message, path);
+                }
+                if self.video.message().is_some() {
+                    self.video.set_expanded(true);
+                    self.video.resume();
+                    self.video_expanded = true;
+                }
+            }
+            Action::CollapseVideo => {
+                self.video_expanded = false;
+                self.video.set_expanded(false);
+            }
             Action::SeekVoice {
                 message,
                 path,
@@ -4375,6 +4482,7 @@ impl App {
                         "Sending the sticker pack…",
                     ));
                     self.backend.send(Command::SendStickerPack { chat, dir });
+                    self.follow_sent_chat();
                 }
             }
             Action::SetStickerPack {
@@ -4560,8 +4668,9 @@ impl App {
                 self.group_name_edit = None;
                 self.refocus_composer(ctx);
             }
-            Action::EditContact(prefill) => {
-                self.contact_edit = Some(crate::util::split_name(&prefill));
+            Action::EditContact { id, name } => {
+                let first = self.contacts.get(&id).and_then(Contact::first_name);
+                self.contact_edit = Some(crate::util::editor_names(&name, first));
             }
             Action::SaveContact { id, first, last } => {
                 self.contact_edit = None;
@@ -4825,6 +4934,12 @@ impl App {
                 self.mark_settings_dirty();
                 self.apply_theme(ctx);
             }
+            Action::SetFont(choice) => {
+                self.settings.font = choice;
+                self.mark_settings_dirty();
+                crate::theme::set_font(ctx, choice);
+                ctx.request_repaint();
+            }
             Action::SetInterfaceLanguage(choice) => {
                 self.settings.interface_language = choice;
                 self.locale = crate::i18n::resolve(choice);
@@ -5077,6 +5192,14 @@ impl App {
                 if self.window_hidden {
                     // The headless loop in `main` will create the window.
                     self.wants_show = true;
+                } else if self.wayland {
+                    // Wayland drops a programmatic focus or unminimize
+                    // request, so a minimized or covered window cannot come
+                    // forward that way. Close it and let the shell open a
+                    // fresh one at once: the compositor raises a new toplevel,
+                    // and a notification click lands on a visible window.
+                    self.reopen = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 } else {
                     // Focus alone leaves a minimized window where it is on
                     // Windows, so restore it first.
@@ -5404,6 +5527,10 @@ impl App {
         if self.video.message().is_some() && self.video_chat != self.open_chat {
             self.video.stop();
         }
+        if self.video_expanded && self.video.message().is_none() {
+            self.video_expanded = false;
+            self.video.set_expanded(false);
+        }
         if let Some(crate::video::Notice::Unsupported(path)) = self.video.poll(ctx) {
             self.toast(crate::i18n::gettext(
                 self.locale,
@@ -5576,6 +5703,7 @@ impl App {
                     samples,
                     quoting,
                 });
+                self.follow_sent_chat();
             }
             Err(error) => self.toast_error(format!("Could not record: {error}")),
         }
@@ -6365,6 +6493,54 @@ mod tests {
         assert!(app.taskbar_badge_count().is_none());
     }
 
+    /// A short chat asks the phone by itself; only the reader scrolling to
+    /// the top makes a request theirs, so only then may a silent phone be
+    /// reported (#325). Scrolling up during an automatic request claims it
+    /// once rather than asking twice.
+    #[test]
+    fn only_the_reader_scrolling_up_asks_the_phone_explicitly() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.link = LinkStatus::Connected;
+        let chat = "4915700000003@s.whatsapp.net";
+        let conversation = app.conversations.entry(chat.into()).or_default();
+        conversation.merge(vec![message(chat, "m1", 100)], false);
+        conversation.complete = true;
+        let mut asked = || {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::FetchOlder { explicit, .. } => Some(explicit),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        app.load_older(chat, false);
+        assert_eq!(asked(), [false]);
+        app.load_older(chat, false);
+        assert_eq!(asked(), [false; 0], "one request at a time");
+        app.load_older(chat, true);
+        assert_eq!(asked(), [true], "the reader claims the waiting request");
+        app.load_older(chat, true);
+        assert_eq!(asked(), [false; 0], "and only once");
+
+        events
+            .send(Event::OlderFetched {
+                chat: chat.into(),
+                more: false,
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(!app.conversations[chat].phone_explicit);
+        app.load_older(chat, true);
+        assert_eq!(
+            asked(),
+            [false; 0],
+            "a chat at its start is not asked again"
+        );
+    }
+
     #[test]
     fn the_new_contact_box_remembers_whether_to_save_to_the_phone() {
         let mut app = app();
@@ -6941,6 +7117,28 @@ mod tests {
         assert!(app.tray.is_none());
         assert!(!Resident::start_hidden(&mut app), "no tray, no way back");
         assert!(!app.hide_intent);
+    }
+
+    /// A Wayland compositor ignores an app's focus and unminimize requests, so
+    /// a notification click or a second launch closes the window and asks the
+    /// shell for a fresh one, which the compositor raises. Elsewhere the
+    /// window is only told to restore and focus.
+    #[test]
+    fn a_wayland_show_reopens_the_window_instead_of_focusing_it() {
+        use fastframe_shell::{Closed, Resident};
+        let ctx = egui::Context::default();
+
+        let mut app = app();
+        app.wayland = true;
+        app.apply(Action::ShowWindow, &ctx);
+        assert!(app.reopen, "Wayland closes the window to make a fresh one");
+        assert_eq!(app.closed(), Closed::Reopen);
+
+        let mut app = self::app();
+        app.wayland = false;
+        app.apply(Action::ShowWindow, &ctx);
+        assert!(!app.reopen, "elsewhere the window is only focused");
+        assert_ne!(app.closed(), Closed::Reopen);
     }
 
     #[test]
@@ -8631,6 +8829,72 @@ mod tests {
         assert!(app.video.message().is_none());
     }
 
+    /// Choosing a font saves the choice and installs it at once.
+    #[test]
+    fn choosing_a_font_saves_and_applies_it() {
+        use crate::settings::FontChoice;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        assert_eq!(app.settings.font, FontChoice::System);
+        app.apply(Action::SetFont(FontChoice::Inter), &ctx);
+        assert_eq!(app.settings.font, FontChoice::Inter);
+        assert!(crate::theme::inter_chosen());
+        app.apply(Action::SetFont(FontChoice::System), &ctx);
+        assert_eq!(app.settings.font, FontChoice::System);
+        assert!(!crate::theme::inter_chosen());
+    }
+
+    /// A video opens over the window at a size worth the room, goes back to
+    /// its message at the bubble's, and does not outlive the chat.
+    #[test]
+    fn a_video_covers_the_window_and_goes_back_to_its_message() {
+        let mut app = app();
+        app.video.silence();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        let ctx = egui::Context::default();
+        let path = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/video/sample.mp4"
+        ));
+        let bubble = app.video.side();
+        let expand = || Action::ExpandVideo {
+            message: "clip".into(),
+            path: path.clone(),
+        };
+
+        // Not loaded yet: it starts, already at the larger size.
+        app.apply(expand(), &ctx);
+        assert_eq!(app.video.message(), Some("clip"));
+        assert!(app.video_expanded && app.video.is_active());
+        assert!(app.video.side() > bubble);
+
+        app.apply(Action::CollapseVideo, &ctx);
+        assert!(!app.video_expanded);
+        assert_eq!(app.video.side(), bubble);
+        assert_eq!(app.video.message(), Some("clip"), "it stays loaded");
+
+        // Paused in its bubble, expanding it plays it.
+        app.apply(
+            Action::PlayVideo {
+                message: "clip".into(),
+                path: path.clone(),
+            },
+            &ctx,
+        );
+        assert!(!app.video.is_active());
+        app.apply(expand(), &ctx);
+        assert!(app.video_expanded && app.video.is_active());
+
+        // Leaving the chat stops the video and takes the view down with it.
+        app.open_chat = None;
+        app.tick_video(&ctx);
+        assert!(app.video.message().is_none());
+        assert!(!app.video_expanded);
+        assert_eq!(app.video.side(), bubble);
+    }
+
     #[test]
     fn repeated_download_clicks_do_not_queue_more_requests() {
         let mut app = app();
@@ -8795,6 +9059,66 @@ mod tests {
             .filter(|toast| toast.kind == ToastKind::Error)
             .map(|toast| toast.message.clone())
             .collect()
+    }
+
+    #[test]
+    fn sending_a_message_scrolls_the_chat_list_to_the_top() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        let sends = [
+            Action::SendText {
+                chat: chat.into(),
+                text: "Text fixture".into(),
+                quoting: None,
+            },
+            Action::SendSticker(PathBuf::from("sticker.webp")),
+            Action::ShareStickerPack(PathBuf::from("sticker-pack")),
+            Action::Forward {
+                from_chat: chat.into(),
+                messages: vec!["fixture-message".into()],
+                to_chat: "other@s.whatsapp.net".into(),
+            },
+            Action::CreatePoll {
+                chat: chat.into(),
+                draft: crate::model::PollDraft {
+                    question: "Question fixture".into(),
+                    options: vec!["One".into(), "Two".into()],
+                    multiple: false,
+                },
+            },
+        ];
+        for send in sends {
+            let name = format!("{send:?}");
+            app.scroll_chats_to_top = false;
+            app.apply(send, &ctx);
+            assert!(app.scroll_chats_to_top, "{name} scrolls the list up");
+        }
+    }
+
+    #[test]
+    fn sending_under_the_favorites_chip_keeps_the_list_in_place() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands) = Backend::recording();
+        app.backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        // Favorites keep the phone's order, so the chat does not move up.
+        app.chat_filter = ChatFilter::Favorites;
+        app.apply(
+            Action::SendText {
+                chat: chat.into(),
+                text: "Text fixture".into(),
+                quoting: None,
+            },
+            &egui::Context::default(),
+        );
+        assert!(!app.scroll_chats_to_top);
     }
 
     #[test]
@@ -10446,6 +10770,82 @@ mod name_tests {
         assert_eq!(
             app.participant_names(&chat),
             "Bob, Grace, Mary, My Dih, Stray"
+        );
+        // The sender before a group's last message goes by the same name.
+        assert_eq!(
+            app.short_name("15550000010@s.whatsapp.net", "My Dih"),
+            "My Dih"
+        );
+        assert_eq!(
+            app.short_name("15550000011@s.whatsapp.net", "Grace Hopper"),
+            "Grace"
+        );
+        assert_eq!(app.short_name("2@s.whatsapp.net", "~Bob Builder"), "~Bob");
+        assert_eq!(
+            app.short_name("3@s.whatsapp.net", "+1 555 0100"),
+            "+1 555 0100"
+        );
+        let me = app.me.clone().unwrap();
+        assert_eq!(app.short_name(&me, "You"), "You");
+    }
+
+    #[test]
+    fn the_contact_editor_opens_with_the_saved_first_name_whole() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let saved = |app: &mut App, id: &str, full: &str, first: Option<&str>| {
+            app.contacts.insert(
+                id.into(),
+                Contact {
+                    id: id.into(),
+                    full_name: Some(full.into()),
+                    first_name: first.map(Into::into),
+                    push_name: None,
+                },
+            );
+        };
+        let edit = |app: &mut App, id: &str, name: &str| {
+            app.apply(
+                Action::EditContact {
+                    id: id.into(),
+                    name: name.into(),
+                },
+                &ctx,
+            );
+            app.contact_edit.take().expect("the editor opens")
+        };
+        let pair = |first: &str, last: &str| (first.to_owned(), last.to_owned());
+        // #314: a first name of two words, without and with a last name.
+        saved(
+            &mut app,
+            "15550000020@s.whatsapp.net",
+            "first second",
+            Some("first second"),
+        );
+        assert_eq!(
+            edit(&mut app, "15550000020@s.whatsapp.net", "first second"),
+            pair("first second", "")
+        );
+        saved(
+            &mut app,
+            "15550000021@s.whatsapp.net",
+            "first second third",
+            Some("first second"),
+        );
+        assert_eq!(
+            edit(&mut app, "15550000021@s.whatsapp.net", "first second third"),
+            pair("first second", "third")
+        );
+        // Without a saved first name the whole name stays first, so saving
+        // it unchanged cannot shorten the first name to one word.
+        saved(&mut app, "15550000022@s.whatsapp.net", "My Dih", None);
+        assert_eq!(
+            edit(&mut app, "15550000022@s.whatsapp.net", "My Dih"),
+            pair("My Dih", "")
+        );
+        assert_eq!(
+            compose_name("My Dih", ""),
+            (Some("My Dih".into()), Some("My Dih".into()))
         );
     }
 

@@ -10,6 +10,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         preview_keys(app, ctx);
         return;
     }
+    if app.video_expanded {
+        video_keys(app, ctx);
+        return;
+    }
     let editing_text = ctx.text_edit_focused();
     let find = find_action(app);
     let mut actions = Vec::new();
@@ -292,6 +296,57 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) {
         input
             .events
             .retain(|event| !crate::image_preview::consumes_key(event));
+    });
+    app.actions.extend(actions);
+}
+
+/// Handles keys while a video covers the window: Escape puts it back, Space
+/// plays or pauses, M mutes, and the arrows jump five seconds. No chat
+/// shortcut runs and nothing is typed into the composer under it.
+fn video_keys(app: &mut App, ctx: &egui::Context) {
+    let Some((message, path)) = app
+        .video
+        .message()
+        .map(str::to_owned)
+        .zip(app.video.path().map(std::path::Path::to_owned))
+    else {
+        return;
+    };
+    let status = app.video.status(&message);
+    let jump = |seconds: f32| {
+        let status = status.as_ref()?;
+        let total = status.total.as_secs_f32();
+        (total > 0.0).then(|| Action::SeekVideo {
+            message: message.clone(),
+            fraction: ((status.position.as_secs_f32() + seconds) / total).clamp(0.0, 1.0),
+        })
+    };
+    let mut actions = Vec::new();
+    ctx.input_mut(|input| {
+        if input.consume_key(Modifiers::NONE, Key::Escape) {
+            actions.push(Action::CollapseVideo);
+        }
+        if input.consume_key(Modifiers::NONE, Key::Space) {
+            actions.push(Action::PlayVideo {
+                message: message.clone(),
+                path: path.clone(),
+            });
+        }
+        if input.consume_key(Modifiers::NONE, Key::M) {
+            actions.push(Action::ToggleVideoSound);
+        }
+        if input.consume_key(Modifiers::NONE, Key::ArrowLeft) {
+            actions.extend(jump(-5.0));
+        }
+        if input.consume_key(Modifiers::NONE, Key::ArrowRight) {
+            actions.extend(jump(5.0));
+        }
+        input.events.retain(|event| {
+            !matches!(
+                event,
+                egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Paste(_)
+            )
+        });
     });
     app.actions.extend(actions);
 }

@@ -205,8 +205,14 @@ pub enum Command {
         chat: ChatId,
         before: Option<PageKey>,
     },
-    /// Requests messages before the archive's earliest message.
-    FetchOlder(ChatId),
+    /// Requests messages before the archive's earliest message. `explicit`
+    /// marks a request the reader made by scrolling to the top: only those
+    /// report a phone that did not answer, since automatic requests (short
+    /// or empty chats) are often legitimately left unanswered.
+    FetchOlder {
+        chat: ChatId,
+        explicit: bool,
+    },
     Download {
         card: Option<usize>,
         chat: ChatId,
@@ -340,6 +346,11 @@ pub enum Command {
     FavoritesPushed,
     /// Internal: the one-time replay of the phone's favorites finished.
     FavoritesRecovered {
+        complete: bool,
+    },
+    /// Internal: the one-time replay of the phone's contacts, for the first
+    /// names saved before ZapFast kept them, finished.
+    FirstNamesRecovered {
         complete: bool,
     },
     /// Internal: a favorite from the phone finished downloading.

@@ -46,6 +46,28 @@ impl ThemeChoice {
     }
 }
 
+/// The typeface the interface is drawn with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FontChoice {
+    /// The platform's own interface font.
+    #[default]
+    System,
+    /// The bundled Inter, the same on every machine.
+    Inter,
+}
+
+impl FontChoice {
+    pub const ALL: [FontChoice; 2] = [Self::System, Self::Inter];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Inter => "Inter",
+        }
+    }
+}
+
 /// Background colours offered by WhatsApp's wallpaper picker, after the
 /// active theme's own chat colour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -347,6 +369,8 @@ pub struct Settings {
     #[serde(default)]
     pub version: u32,
     pub theme: ThemeChoice,
+    /// The interface's typeface.
+    pub font: FontChoice,
     /// Interface language. `None` follows the operating system's locale.
     pub interface_language: Option<crate::i18n::Locale>,
     /// Filename of the selected local JSON palette.
@@ -453,6 +477,7 @@ impl Default for Settings {
         Self {
             version: SETTINGS_VERSION,
             theme: ThemeChoice::Dark,
+            font: FontChoice::System,
             interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,
@@ -684,6 +709,18 @@ mod tests {
         assert_eq!(settings.message_sound, NotificationSound::System);
         assert_eq!(settings.mention_sound, NotificationSound::Alert);
         assert!(settings.group_sounds);
+    }
+
+    /// Settings written before the font could be chosen draw with the
+    /// platform's; the choice is saved by name.
+    #[test]
+    fn the_font_defaults_to_the_platform_and_is_saved_by_name() {
+        let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
+        assert_eq!(older.font, FontChoice::System);
+        let chosen: Settings = serde_json::from_str(r#"{"font":"inter"}"#).unwrap();
+        assert_eq!(chosen.font, FontChoice::Inter);
+        let saved = serde_json::to_value(&chosen).unwrap();
+        assert_eq!(saved["font"], "inter");
     }
 
     #[test]

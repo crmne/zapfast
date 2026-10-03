@@ -30,11 +30,13 @@ pub enum Locale {
     Russian,
     #[serde(rename = "zh-Hans")]
     ChineseSimplified,
+    #[serde(rename = "tr")]
+    Turkish,
 }
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 8] = [
+    pub const ALL: [Locale; 9] = [
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -43,6 +45,7 @@ impl Locale {
         Self::French,
         Self::Russian,
         Self::ChineseSimplified,
+        Self::Turkish,
     ];
 
     /// The language's own name, for the picker.
@@ -56,6 +59,7 @@ impl Locale {
             Self::French => "Français",
             Self::Russian => "Русский",
             Self::ChineseSimplified => "简体中文",
+            Self::Turkish => "Türkçe",
         }
     }
 
@@ -76,6 +80,7 @@ impl Locale {
             "it" => Self::Italian,
             "fr" => Self::French,
             "ru" => Self::Russian,
+            "tr" => Self::Turkish,
             "zh" => match (tag.script.as_deref(), tag.region.as_deref()) {
                 // An explicit script decides on its own: a tag that asks for
                 // Simplified and names a region where Traditional is the
@@ -103,6 +108,7 @@ impl fastframe_i18n::Locale for Locale {
             Self::Italian => Some(&it::Translator),
             Self::Russian => Some(&ru::Translator),
             Self::ChineseSimplified => Some(&zh_hans::Translator),
+            Self::Turkish => Some(&tr::Translator),
             Self::English => None,
         }
     }
@@ -169,6 +175,8 @@ mod tests {
         assert_eq!(Locale::from_system("zh-TW"), None);
         assert_eq!(Locale::from_system("zh-Hant"), None);
         assert_eq!(Locale::from_system("zh-CHT"), None);
+        assert_eq!(Locale::from_system("tr-TR"), Some(Locale::Turkish));
+        assert_eq!(Locale::from_system("tr"), Some(Locale::Turkish));
         assert_eq!(Locale::from_system("en-US"), Some(Locale::English));
         assert_eq!(Locale::from_system("ja-JP"), None);
         assert_eq!(Locale::default(), Locale::English);
@@ -186,6 +194,7 @@ mod tests {
             Locale::from_system("pt_BR.UTF-8"),
             Some(Locale::PortugueseBrazil)
         );
+        assert_eq!(Locale::from_system("tr_TR.UTF-8"), Some(Locale::Turkish));
     }
 
     /// The suite asserts the English source strings, so the language of the
@@ -337,5 +346,37 @@ mod tests {
             ngettext(Locale::English, "{} member", "{} members", 2),
             "{} members"
         );
+    }
+
+    #[test]
+    fn turkish_catalog_translates() {
+        assert_eq!(gettext(Locale::Turkish, "Chats"), "Sohbetler");
+        assert_eq!(gettext(Locale::Turkish, "Search"), "Ara");
+        assert_eq!(gettext(Locale::Turkish, "Settings"), "Ayarlar");
+        assert_eq!(
+            gettext(Locale::Turkish, "Type a message"),
+            "Bir mesaj yazın"
+        );
+        assert_eq!(gettext(Locale::Turkish, "Monday"), "Pazartesi");
+        assert_eq!(gettext(Locale::Turkish, "Yesterday"), "Dün");
+    }
+
+    #[test]
+    fn turkish_plural_rules_cover_singular_and_plural() {
+        for (count, expected) in [(1, "{} üye"), (2, "{} üye"), (5, "{} üye")] {
+            assert_eq!(
+                ngettext(Locale::Turkish, "{} member", "{} members", count),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn turkish_contexts_stay_separate_from_plain_lookups() {
+        assert_eq!(gettext(Locale::Turkish, "About"), "Hakkımda");
+        assert_eq!(pgettext(Locale::Turkish, "privacy", "About"), "Hakkımda");
+        assert_eq!(gettext(Locale::Turkish, "Groups"), "Gruplar");
+        assert_eq!(pgettext(Locale::Turkish, "sound", "None"), "Yok");
+        assert_eq!(gettext(Locale::Turkish, "None"), "None");
     }
 }

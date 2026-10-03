@@ -226,8 +226,7 @@ pub fn play_sound(sound: NotificationSound) {
             let played = (|| -> Result<(), String> {
                 let reader = source().map_err(|error| error.to_string())?;
                 let decoder = rodio::Decoder::new(reader).map_err(|error| error.to_string())?;
-                let device = rodio::DeviceSinkBuilder::open_default_sink()
-                    .map_err(|error| error.to_string())?;
+                let device = crate::audio::open_output().map_err(|error| error.to_string())?;
                 let player = rodio::Player::connect_new(device.mixer());
                 player.append(decoder);
                 player.sleep_until_end();

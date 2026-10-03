@@ -423,7 +423,16 @@ fn decode_video(path: &Path, limit: usize) -> Option<Decoded> {
 fn decode_mp4(path: &Path, limit: usize) -> Option<Decoded> {
     let file = std::fs::File::open(path).ok()?;
     let size = file.metadata().ok()?.len();
-    let mut mp4 = mp4::Mp4Reader::read_header(std::io::BufReader::new(file), size).ok()?;
+    decode_mp4_from(std::io::BufReader::new(file), size, limit)
+}
+
+/// Decodes the video track of an MP4 of `size` bytes read from `reader`.
+fn decode_mp4_from<R: std::io::Read + std::io::Seek>(
+    reader: R,
+    size: u64,
+    limit: usize,
+) -> Option<Decoded> {
+    let mut mp4 = mp4::Mp4Reader::read_header(reader, size).ok()?;
     let (track_id, timescale, sps, pps, count) = {
         let track = mp4
             .tracks()
@@ -476,6 +485,51 @@ fn decode_mp4(path: &Path, limit: usize) -> Option<Decoded> {
         }
     }
     (!frames.is_empty()).then_some(Decoded { frames })
+}
+
+/// What an MP4 says about itself, with a picture from its start: what the
+/// message sending it carries, so it shows as a video before it is downloaded.
+pub(crate) struct Poster {
+    /// A frame about a second in (openings are often black), scaled down.
+    /// `None` when the codec is not one decoded in-process.
+    pub picture: Option<image::RgbImage>,
+    pub width: u32,
+    pub height: u32,
+    pub seconds: u32,
+}
+
+/// Reads the size, length, and a poster frame of the MP4 in `bytes`.
+pub(crate) fn poster(bytes: &[u8]) -> Option<Poster> {
+    let size = bytes.len() as u64;
+    let mp4 = mp4::Mp4Reader::read_header(std::io::Cursor::new(bytes), size).ok()?;
+    let track = mp4
+        .tracks()
+        .values()
+        .find(|track| track.track_type().ok() == Some(mp4::TrackType::Video))?;
+    let (width, height) = (u32::from(track.width()), u32::from(track.height()));
+    let seconds = mp4.duration().as_secs_f64().round() as u32;
+    // A second in, within what a sixty-frame clip costs to decode.
+    let frames = (track.frame_rate().round() as usize).clamp(1, 60);
+    let picture = decode_mp4_from(std::io::Cursor::new(bytes), size, frames)
+        .and_then(|decoded| decoded.frames.into_iter().last())
+        .and_then(|(frame, _)| {
+            let [frame_width, frame_height] = frame.size;
+            let rgb = frame
+                .pixels
+                .iter()
+                .flat_map(|pixel| {
+                    let [r, g, b, _] = pixel.to_srgba_unmultiplied();
+                    [r, g, b]
+                })
+                .collect();
+            image::RgbImage::from_raw(frame_width as u32, frame_height as u32, rgb)
+        });
+    (width > 0 && height > 0).then_some(Poster {
+        picture,
+        width,
+        height,
+        seconds,
+    })
 }
 
 /// Frame `index` of a video (or its last, if shorter), for demo posters.
@@ -690,6 +744,21 @@ mod tests {
     }
 
     use super::*;
+
+    /// A video being sent gets its picture, size, and length from its bytes.
+    #[test]
+    fn a_video_says_its_size_and_length_and_shows_a_frame() {
+        let bytes = include_bytes!("../tests/fixtures/video/sample.mp4");
+        let poster = poster(bytes).expect("an MP4");
+        assert_eq!((poster.width, poster.height, poster.seconds), (320, 180, 3));
+        let picture = poster.picture.expect("H.264 decodes in-process");
+        assert_eq!(picture.width() * 180, picture.height() * 320);
+        // Bars of colour, not a blank frame.
+        let first = picture.get_pixel(4, picture.height() / 2);
+        let last = picture.get_pixel(picture.width() - 4, picture.height() / 2);
+        assert_ne!(first, last);
+        assert!(super::poster(b"not a video").is_none());
+    }
 
     /// Verifies animated WebP frame disposal.
     #[test]
@@ -1386,5 +1455,16 @@ mod probe {
             started.elapsed()
         );
         assert!(!decoded.frames.is_empty());
+        let started = Instant::now();
+        let bytes = std::fs::read(&path).expect("the file");
+        let poster = poster(&bytes).expect("its size and length");
+        eprintln!(
+            "poster {:?} of {}x{}, {} s, in {:?}",
+            poster.picture.as_ref().map(|picture| picture.dimensions()),
+            poster.width,
+            poster.height,
+            poster.seconds,
+            started.elapsed()
+        );
     }
 }

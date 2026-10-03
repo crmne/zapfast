@@ -26,6 +26,20 @@ fn rate() -> NonZero<u32> {
     NonZero::new(voice::RATE).expect("48 kHz is not zero")
 }
 
+/// Opens the default output device for playback.
+///
+/// rodio reports the sink's drop through `stderr` by default. A desktop launch
+/// can have that closed: ZapFast inherits `stderr` from whatever started it,
+/// and that process can exit while ZapFast runs on. Rust ignores `SIGPIPE`, so
+/// the next write there fails with `Broken pipe` and the print macro panics,
+/// which aborts the whole app in a release build. Keep it off, and report
+/// failures of our own through the log instead.
+pub fn open_output() -> Result<rodio::MixerDeviceSink, rodio::DeviceSinkError> {
+    let mut output = rodio::DeviceSinkBuilder::open_default_sink()?;
+    output.log_on_drop(false);
+    Ok(output)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Idle,
@@ -470,8 +484,7 @@ impl Player {
         let total = clip_length(loaded.samples.len());
         let offset = ((fraction.clamp(0.0, 1.0) * buffer.len() as f32) as usize).min(buffer.len());
         if self.output.is_none() {
-            let device = rodio::DeviceSinkBuilder::open_default_sink()
-                .map_err(|error| format!("No sound output: {error}"))?;
+            let device = open_output().map_err(|error| format!("No sound output: {error}"))?;
             let sink = rodio::Player::connect_new(device.mixer());
             self.output = Some((device, sink));
         }

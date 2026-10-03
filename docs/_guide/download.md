@@ -34,6 +34,14 @@ and icon:
 - [{{ name }}-v{{ v }}-x86_64-unknown-linux-gnu.tar.gz]({{ base }}/{{ name }}-v{{ v }}-x86_64-unknown-linux-gnu.tar.gz)
 - [{{ name }}-v{{ v }}-aarch64-unknown-linux-gnu.tar.gz]({{ base }}/{{ name }}-v{{ v }}-aarch64-unknown-linux-gnu.tar.gz)
 
+Or take the AppImage: one file to make executable and run, with no
+installation. It uses the same libraries as the tarball and needs FUSE (or
+run it with `--appimage-extract-and-run`). It does not update itself; download
+the new file when {{ app }} says a release is out.
+
+- [{{ name }}-{{ v }}-x86_64.AppImage]({{ base }}/{{ name }}-{{ v }}-x86_64.AppImage)
+- [{{ name }}-{{ v }}-aarch64.AppImage]({{ base }}/{{ name }}-{{ v }}-aarch64.AppImage)
+
 {{ app }} needs the standard egui libraries and ALSA:
 `libglvnd`, `libxkbcommon`, `wayland`, `libx11`, and `alsa-lib` (on
 Debian or Ubuntu: `libasound2`, `libgl1`, `libxkbcommon0`, `libwayland-client0`).

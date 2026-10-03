@@ -37,6 +37,7 @@ use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
 mod bot_replies;
 mod channel_pictures;
+mod contact_names;
 mod device_store;
 mod early_events;
 use early_events::WaitingReaction;
@@ -45,6 +46,7 @@ mod interactive;
 mod link_watch;
 mod poll_history;
 mod polls;
+mod sticker_pace;
 mod stickers;
 
 use super::{Command, Event, GroupEdit, LinkStatus, Refusal, Unsent, Waker, read_sync::ReadSync};
@@ -461,6 +463,17 @@ pub async fn run(
             && archive
                 .set_meta(stickers::FAVORITES_RECOVERED, "complete")
                 .is_ok());
+    // Likewise only contacts synced before first names were kept lack them.
+    let first_names_recovered = archive
+        .meta(contact_names::FIRST_NAMES_RECOVERED)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("complete")
+        || (archive.chats().is_ok_and(|chats| chats.is_empty())
+            && archive
+                .set_meta(contact_names::FIRST_NAMES_RECOVERED, "complete")
+                .is_ok());
     let mut worker = Worker {
         privacy_ready: privacy_confirmed,
         privacy_confirmed,
@@ -512,10 +525,14 @@ pub async fn run(
         recent_hashes: HashMap::new(),
         emoji_cache: HashMap::new(),
         favorite_fetches: HashSet::new(),
+        sticker_pace: Default::default(),
+        sticker_failed: HashSet::new(),
         favorites_pushing: false,
         favorites_again: false,
         favorites_recovered,
         favorites_recovering: false,
+        first_names_recovered,
+        first_names_recovering: false,
         downloads: HashSet::new(),
         read_sync: ReadSync::default(),
         favorite_chats: Default::default(),
@@ -580,6 +597,7 @@ pub async fn run(
                 worker.expire_older_requests();
                 worker.retry_avatars();
                 worker.pump_group_info();
+                worker.pump_favorite_stickers();
                 worker.pump_read_sync();
                 worker.pump_favorite_chats();
                 worker.pump_poll_votes();
@@ -768,9 +786,10 @@ struct Worker {
     online_changed: Instant,
     /// The presence last announced on this connection.
     online_sent: Option<bool>,
-    /// Pending phone-history request time and boundary by chat.
-    pending_older: HashMap<ChatId, (Instant, super::PageKey)>,
-    /// Chats already notified about a phone-history timeout.
+    /// Pending phone-history requests by chat.
+    pending_older: HashMap<ChatId, OlderRequest>,
+    /// Chats already told that the phone did not answer; cleared when the
+    /// phone sends that chat's history or the link reconnects.
     older_warned: HashSet<ChatId>,
     /// Deferred profile-picture requests and retry counts.
     pending_avatars: HashMap<(String, bool), u32>,
@@ -786,6 +805,10 @@ struct Worker {
     emoji_cache: HashMap<PathBuf, EmojiStamp>,
     /// Favorite stickers being fetched from the phone's list, by hash.
     favorite_fetches: HashSet<String>,
+    /// Favorites waiting for their turn, and the pause the server asked for.
+    sticker_pace: sticker_pace::Pace,
+    /// Recent stickers whose download failed this session, not asked again.
+    sticker_failed: HashSet<String>,
     /// Whether favorite changes are on their way to the phone.
     favorites_pushing: bool,
     /// More favorite changes arrived while a push was running.
@@ -794,6 +817,10 @@ struct Worker {
     favorites_recovered: bool,
     /// That replay is running.
     favorites_recovering: bool,
+    /// The phone's contacts from before first names were kept were replayed.
+    first_names_recovered: bool,
+    /// That replay is running.
+    first_names_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
     /// Serial forward in flight. The next send waits for the running one.
@@ -865,6 +892,16 @@ struct ParsedHistory {
     lids: Vec<(String, String)>,
     /// Recent phone stickers included with history sync.
     stickers: Vec<wa::StickerMetadata>,
+}
+
+/// A phone-history request waiting for its chunk.
+struct OlderRequest {
+    asked: Instant,
+    /// The oldest archived message when it was asked.
+    before: super::PageKey,
+    /// Whether the reader asked by scrolling to the top. Only these report a
+    /// phone that does not answer.
+    explicit: bool,
 }
 
 struct ParsedChat {
@@ -2219,6 +2256,8 @@ impl Worker {
                 };
                 self.remember_identity(pn, lid, name);
                 self.set_status(LinkStatus::Connected);
+                // A new connection may reach a phone that was away before.
+                self.older_warned.clear();
                 self.refresh_legacy_preferences();
                 self.retry_avatars();
                 self.pump_read_sync();
@@ -2227,6 +2266,7 @@ impl Worker {
                 self.push_favorites();
                 self.fetch_missing_favorites();
                 self.recover_favorites();
+                self.recover_first_names();
                 let _ = self.archive.retry_poll_votes();
                 self.pump_poll_votes();
                 if let Some(client) = self.client.clone() {
@@ -4093,6 +4133,11 @@ impl Worker {
             {
                 let _ = self.archive.history_marked_unread(&id, marked);
             }
+            if chat.more_on_phone == Some(false) {
+                // The phone holds nothing older (or will not share it): later
+                // sessions skip asking instead of waiting out a silent phone.
+                let _ = self.archive.set_history_start(&id);
+            }
             filed.push((id, count, chat.more_on_phone));
         }
         self.pump_poll_votes();
@@ -4107,7 +4152,15 @@ impl Worker {
     fn answer_older(&mut self, filed: Vec<(ChatId, usize, Option<bool>)>) {
         for (chat, count, more_on_phone) in filed {
             let more = count > 0 && more_on_phone != Some(false);
-            let Some((_, (before_time, before_id))) = self.pending_older.remove(&chat) else {
+            if count > 0 {
+                // The phone answers for this chat again; a later silence is news.
+                self.older_warned.remove(&chat);
+            }
+            let Some(OlderRequest {
+                before: (before_time, before_id),
+                ..
+            }) = self.pending_older.remove(&chat)
+            else {
                 // Late responses are already archived; tell the app to page again.
                 self.emit(Event::OlderFetched { chat, more });
                 continue;
@@ -4138,17 +4191,23 @@ impl Worker {
         let expired: Vec<ChatId> = self
             .pending_older
             .iter()
-            .filter(|(_, (asked, _))| asked.elapsed() > PHONE_PATIENCE)
+            .filter(|(_, request)| request.asked.elapsed() > PHONE_PATIENCE)
             .map(|(chat, _)| chat.clone())
             .collect();
         for chat in expired {
-            self.pending_older.remove(&chat);
+            let explicit = self
+                .pending_older
+                .remove(&chat)
+                .is_some_and(|request| request.explicit);
             self.emit(Event::OlderFetched {
                 chat: chat.clone(),
                 more: true,
             });
-            // Report the timeout once per chat; later retries back off silently.
-            if self.older_warned.insert(chat) {
+            // A phone often leaves an automatic request for a short or empty
+            // chat unanswered when it has nothing to add, so only a request
+            // the reader made reports the silence, once per chat; later
+            // retries back off quietly.
+            if explicit && self.older_warned.insert(chat) {
                 self.emit(Event::Error(
                     "Your phone did not send older messages. Check that it is online".to_owned(),
                 ));
@@ -4156,8 +4215,15 @@ impl Worker {
         }
     }
 
-    fn fetch_older(&mut self, chat: ChatId) {
-        if self.pending_older.contains_key(&chat) {
+    fn fetch_older(&mut self, chat: ChatId, explicit: bool) {
+        if let Some(request) = self.pending_older.get_mut(&chat) {
+            // The reader scrolled up while an automatic request was waiting.
+            request.explicit |= explicit;
+            return;
+        }
+        if self.archive.history_start(&chat).unwrap_or(false) {
+            // The phone already said it has nothing older.
+            self.emit(Event::OlderFetched { chat, more: false });
             return;
         }
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
@@ -4170,8 +4236,14 @@ impl Worker {
             Ok(Some(oldest)) => (oldest.id, oldest.from_me, oldest.timestamp),
             _ => (String::new(), false, crate::util::now()),
         };
-        self.pending_older
-            .insert(chat.clone(), (Instant::now(), (timestamp, id.clone())));
+        self.pending_older.insert(
+            chat.clone(),
+            OlderRequest {
+                asked: Instant::now(),
+                before: (timestamp, id.clone()),
+                explicit,
+            },
+        );
         let commands = self.commands.clone();
         tokio::spawn(async move {
             if let Err(error) = client
@@ -4346,7 +4418,7 @@ impl Worker {
                 }
             }
             Command::LoadChat { chat, before } => self.load_chat(chat, before),
-            Command::FetchOlder(chat) => self.fetch_older(chat),
+            Command::FetchOlder { chat, explicit } => self.fetch_older(chat, explicit),
             Command::LoadUntil { chat, id, before } => self.load_until(chat, id, before),
             Command::SearchMessages { query } => self.search_messages(query),
             Command::SearchChatMessages {
@@ -4441,6 +4513,7 @@ impl Worker {
             Command::FavoritesPushed => self.favorites_pushed(),
             Command::FavoriteFetched { hash, result } => self.favorite_fetched(&hash, result),
             Command::FavoritesRecovered { complete } => self.favorites_recovered(complete),
+            Command::FirstNamesRecovered { complete } => self.first_names_recovered(complete),
             Command::ImportStickerUrl { url } => {
                 let commands = self.commands.clone();
                 let packs = self.packs_dir();
@@ -5120,8 +5193,17 @@ impl Worker {
                             log::warn!("could not file a sticker");
                         }
                     }
-                    Err(_error) => log::warn!("could not fetch a sticker"),
+                    Err(error) if sticker_pace::rate_limited(&error) => {
+                        log::warn!("sticker downloads paused: the server asked to slow down");
+                        self.sticker_pace.limited(Instant::now());
+                    }
+                    Err(_error) => {
+                        log::warn!("could not fetch a sticker");
+                        self.sticker_failed.insert(hash);
+                    }
                 }
+                // The next missing ones take the freed places.
+                self.fetch_missing_stickers();
                 // Recent is sorted by use, so each arrival lands mid-grid and
                 // shifts every tile after it. Publish the batch once, instead
                 // of reshuffling the open picker under the reader (#165).
@@ -5415,9 +5497,18 @@ impl Worker {
             }
             Command::Shutdown => {}
             Command::OlderFailed { chat, error } => {
-                self.pending_older.remove(&chat);
-                self.emit(Event::OlderFetched { chat, more: true });
-                self.emit(Event::Error(error));
+                let explicit = self
+                    .pending_older
+                    .remove(&chat)
+                    .is_some_and(|request| request.explicit);
+                self.emit(Event::OlderFetched {
+                    chat: chat.clone(),
+                    more: true,
+                });
+                // Automatic requests retry quietly, as their timeouts do.
+                if explicit && self.older_warned.insert(chat) {
+                    self.emit(Event::Error(error));
+                }
             }
             Command::GroupInfoFailed { chat, permanent } => {
                 self.handle_failed_group(chat, permanent);
@@ -6480,6 +6571,11 @@ impl Worker {
         let Some(client) = self.client.clone() else {
             return;
         };
+        // A few at a time, and none while the server asked to wait: each
+        // arrival starts the next (#298).
+        if !self.sticker_pace.open(Instant::now()) {
+            return;
+        }
         let phone = match self.archive.phone_stickers() {
             Ok(list) => list,
             Err(error) => {
@@ -6489,7 +6585,12 @@ impl Worker {
         };
         let dir = self.dirs.sticker_cache_dir();
         for sticker in phone.into_iter().filter(|sticker| sticker.path.is_none()) {
-            if !self.sticker_fetches.insert(sticker.hash.clone()) {
+            if self.sticker_fetches.len() >= sticker_pace::IN_FLIGHT {
+                break;
+            }
+            if self.sticker_failed.contains(&sticker.hash)
+                || !self.sticker_fetches.insert(sticker.hash.clone())
+            {
                 continue;
             }
             let Ok(meta) = wa::StickerMetadata::decode_from_slice(&sticker.raw) else {
@@ -8115,28 +8216,56 @@ async fn prepare_media(
     let size = bytes.len() as u64;
     let mime_owned = mime.to_owned();
     if kind == "video" {
+        // The picture, size, and length phones show before downloading it.
+        // Reading a second of frames takes a moment, so off the runtime.
+        let poster = {
+            let bytes = bytes.clone();
+            tokio::task::spawn_blocking(move || crate::animation::poster(&bytes))
+                .await
+                .ok()
+                .flatten()
+        };
+        let thumbnail = poster
+            .as_ref()
+            .and_then(|poster| poster.picture.clone())
+            .and_then(|picture| thumbnail_jpeg(&image::DynamicImage::ImageRgb8(picture)));
+        let size_in_pixels = poster.as_ref().map(|poster| (poster.width, poster.height));
+        let seconds = poster.as_ref().map(|poster| poster.seconds);
         let upload = client
             .upload(bytes.clone(), MediaType::Video, UploadOptions::default())
             .await
             .map_err(|error| error.to_string())?;
-        let message = video_message(
+        let mut message = video_message(
             upload,
             VideoOptions {
                 mimetype: Some(mime_owned.clone()),
                 gif_playback: Some(gif),
+                jpeg_thumbnail: thumbnail.clone(),
+                duration_seconds: seconds,
                 ..Default::default()
             },
         );
+        if let (Some(video), Some((width, height))) =
+            (message.video_message.as_option_mut(), size_in_pixels)
+        {
+            video.width = Some(width);
+            video.height = Some(height);
+        }
         return Ok(Prepared {
             message,
             content: Content::Video {
                 caption: None,
-                media: media(Some(&mime_owned), Some(size), None, None),
-                seconds: None,
+                media: media(
+                    Some(&mime_owned),
+                    Some(size),
+                    size_in_pixels.map(|(width, _)| width),
+                    size_in_pixels.map(|(_, height)| height),
+                ),
+                seconds,
                 gif,
                 note: false,
             },
-            thumbnail: None,
+            thumbnail,
             bytes,
             mime: mime_owned,
             file_name: file_name.map(str::to_owned),
@@ -8894,6 +9023,60 @@ mod tests {
         );
         let stored = worker.archive.contact(ID).expect("reads").expect("stored");
         assert_eq!(stored.first_name, None);
+    }
+
+    #[test]
+    fn the_contact_replay_brings_first_names_saved_before_they_were_kept() {
+        const ID: &str = "15551234568@s.whatsapp.net";
+        let (mut worker, _events, _inbox, _wa) = receipt_tests::worker();
+        worker.first_names_recovered = false;
+        // Synced before first names were kept: the full name alone.
+        let contact = Contact {
+            id: ID.into(),
+            full_name: Some("Mary Ann Evans".into()),
+            first_name: None,
+            push_name: None,
+        };
+        worker.archive.upsert_contact(&contact).expect("stores");
+        worker.contacts.insert(ID.into(), contact);
+        // The snapshot replays the contact with its first name.
+        worker.on_contact_update(
+            &wa_events::ContactUpdate::builder()
+                .jid(Jid::pn("15551234568"))
+                .timestamp(whatsapp_rust::wacore::time::from_millis_or_now(1))
+                .action(Box::new(wa::sync_action_value::ContactAction {
+                    full_name: Some("Mary Ann Evans".into()),
+                    first_name: Some("Mary Ann".into()),
+                    ..Default::default()
+                }))
+                .from_full_sync(true)
+                .build(),
+        );
+        let stored = worker.archive.contact(ID).expect("reads").expect("stored");
+        assert_eq!(stored.first_name.as_deref(), Some("Mary Ann"));
+
+        // An unfinished replay is asked again on the next connection.
+        worker.first_names_recovering = true;
+        worker.first_names_recovered(false);
+        assert!(!worker.first_names_recovered && !worker.first_names_recovering);
+        assert_eq!(
+            worker
+                .archive
+                .meta(contact_names::FIRST_NAMES_RECOVERED)
+                .unwrap(),
+            None
+        );
+        // A finished one is never asked again.
+        worker.first_names_recovered(true);
+        assert!(worker.first_names_recovered);
+        assert_eq!(
+            worker
+                .archive
+                .meta(contact_names::FIRST_NAMES_RECOVERED)
+                .unwrap()
+                .as_deref(),
+            Some("complete")
+        );
     }
 
     #[test]
@@ -11227,10 +11410,14 @@ mod receipt_tests {
             recent_hashes: HashMap::new(),
             emoji_cache: HashMap::new(),
             favorite_fetches: HashSet::new(),
+            sticker_pace: Default::default(),
+            sticker_failed: HashSet::new(),
             favorites_pushing: false,
             favorites_again: false,
             favorites_recovered: true,
             favorites_recovering: false,
+            first_names_recovered: true,
+            first_names_recovering: false,
             downloads: HashSet::new(),
             read_sync: ReadSync::default(),
             favorite_chats: Default::default(),
@@ -13440,7 +13627,7 @@ mod chat_removal_tests {
     }
 
     /// A history chunk holding one chat with a message at each timestamp.
-    fn history(chat: &str, timestamps: &[i64]) -> ParsedHistory {
+    pub(super) fn history(chat: &str, timestamps: &[i64]) -> ParsedHistory {
         ParsedHistory {
             chats: vec![ParsedChat {
                 id: chat.to_owned(),
@@ -13671,5 +13858,138 @@ mod chat_removal_tests {
             clear_boundary(Ok(empty)).is_some(),
             "an empty archive clears through now"
         );
+    }
+}
+
+#[cfg(test)]
+mod older_history_tests {
+    use super::*;
+
+    const CHAT: &str = "4915700000002@s.whatsapp.net";
+
+    /// A phone-history request that has waited past the patience.
+    fn waiting(worker: &mut Worker, explicit: bool) {
+        worker.pending_older.insert(
+            CHAT.to_owned(),
+            OlderRequest {
+                asked: Instant::now()
+                    .checked_sub(PHONE_PATIENCE * 2)
+                    .expect("the clock runs past the patience"),
+                before: (100, "m100".into()),
+                explicit,
+            },
+        );
+    }
+
+    fn drain(events: &std::sync::mpsc::Receiver<Event>) -> Vec<Event> {
+        std::iter::from_fn(|| events.try_recv().ok()).collect()
+    }
+
+    fn warnings(events: &[Event]) -> usize {
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::Error(_)))
+            .count()
+    }
+
+    fn fetched(events: &[Event]) -> Option<bool> {
+        events.iter().find_map(|event| match event {
+            Event::OlderFetched { chat, more } if chat == CHAT => Some(*more),
+            _ => None,
+        })
+    }
+
+    /// Opening a short or empty chat asks the phone on its own; a phone with
+    /// nothing to add leaves that unanswered, which is no news (#325).
+    #[test]
+    fn an_unanswered_automatic_request_stays_silent() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, false);
+        worker.expire_older_requests();
+        let events = drain(&events);
+        assert_eq!(warnings(&events), 0);
+        assert_eq!(
+            fetched(&events),
+            Some(true),
+            "the app backs off and may retry"
+        );
+        assert!(worker.pending_older.is_empty());
+    }
+
+    #[test]
+    fn a_reader_request_warns_once_until_the_phone_answers() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 0, "once per chat");
+
+        // The phone sends this chat's history: a later silence is news again.
+        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
+        worker.answer_older(filed);
+        drain(&events);
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+    }
+
+    #[test]
+    fn scrolling_up_during_an_automatic_request_makes_it_the_readers() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, false);
+        worker.fetch_older(CHAT.to_owned(), true);
+        assert!(worker.pending_older[CHAT].explicit);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_automatic_request_stays_silent() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        for (explicit, expected) in [(false, 0), (true, 1)] {
+            waiting(&mut worker, explicit);
+            worker
+                .handle_command(Command::OlderFailed {
+                    chat: CHAT.to_owned(),
+                    error: "fixture failure".into(),
+                })
+                .await;
+            let events = drain(&events);
+            assert_eq!(warnings(&events), expected, "explicit: {explicit}");
+            assert_eq!(fetched(&events), Some(true));
+        }
+    }
+
+    /// A chat the phone said it holds nothing older for is never asked again,
+    /// even in a later session.
+    #[test]
+    fn a_chat_at_its_start_is_not_asked_again() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        let mut history = chat_removal_tests::history(CHAT, &[100]);
+        history.chats[0].more_on_phone = Some(false);
+        worker.apply_history(history, true);
+        assert!(worker.archive.history_start(CHAT).unwrap());
+        drain(&events);
+
+        worker.fetch_older(CHAT.to_owned(), true);
+        assert_eq!(
+            fetched(&drain(&events)),
+            Some(false),
+            "the app stops asking"
+        );
+        assert!(worker.pending_older.is_empty());
+    }
+
+    #[test]
+    fn more_on_the_phone_keeps_the_chat_open_to_asking() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let mut history = chat_removal_tests::history(CHAT, &[100]);
+        history.chats[0].more_on_phone = Some(true);
+        worker.apply_history(history, true);
+        worker.apply_history(chat_removal_tests::history(CHAT, &[90]), true);
+        assert!(!worker.archive.history_start(CHAT).unwrap());
     }
 }

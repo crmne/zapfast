@@ -76,7 +76,8 @@ The sticker is a 512 × 512 WebP under WhatsApp's 100 KB limit.
 
 ## Attachments
 
-Paste a picture, drop files on the window, or select them with the paperclip.
+Paste a picture or copied files, drop files on the window, or select them with
+the paperclip.
 They stay above the composer until you send them, with the typed text as a
 caption. Press Escape or click a file's close button to remove it. Incoming
 non-sticker attachments up to 64 MiB download when they enter view if automatic
@@ -207,7 +208,8 @@ the newest message (when the input is empty).
 
 Sending while reading older messages keeps your place. Use the
 newest-message button or `End` to return to the latest message when you are
-ready.
+ready. The chat list scrolls to the top after you send, where the chat now is.
+Under the **Favorites** chip, the list keeps the phone's order and stays in place.
 
 A shared contact message shows the name from its vCard. When the card names a
 WhatsApp account, **Chat** opens a private conversation with it and, if the

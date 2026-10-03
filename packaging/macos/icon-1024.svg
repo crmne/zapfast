@@ -1,16 +1,78 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="face" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#08b494"/>
-      <stop offset="1" stop-color="#00a884"/>
-    </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feGaussianBlur stdDeviation="24"/>
-    </filter>
-  </defs>
-  <rect x="104" y="126" width="816" height="816" rx="188" fill="#001a15" opacity=".28" filter="url(#shadow)"/>
-  <rect x="104" y="82" width="816" height="816" rx="188" fill="url(#face)"/>
-  <g transform="translate(224 204) scale(24)" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<defs>
+<linearGradient id="bg" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#1c2422"/>
+<stop offset="1" stop-color="#0b0e0d"/>
+</linearGradient>
+<linearGradient id="ed" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+<stop offset="0.5" stop-color="#ffffff" stop-opacity="0.03"/>
+<stop offset="1" stop-color="#ffffff" stop-opacity="0.06"/>
+</linearGradient>
+<radialGradient id="gl" cx="512" cy="540" r="420" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#00a884" stop-opacity="0.26"/>
+<stop offset="0.75" stop-color="#00a884" stop-opacity="0"/>
+</radialGradient>
+<filter id="sh" color-interpolation-filters="sRGB" x="-30%" y="-30%" width="160%" height="160%">
+<feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
+<feOffset dy="10"/>
+<feComponentTransfer>
+<feFuncA type="linear" slope="0.45"/>
+</feComponentTransfer>
+<feMerge>
+<feMergeNode/>
+<feMergeNode in="SourceGraphic"/>
+</feMerge>
+</filter>
+<filter id="ts" color-interpolation-filters="sRGB" x="-10%" y="-10%" width="120%" height="125%">
+<feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+<feOffset dy="12"/>
+<feComponentTransfer>
+<feFuncA type="linear" slope="0.3"/>
+</feComponentTransfer>
+</filter>
+</defs>
+<path d="M285.4 100 H738.6 A185.4 185.4 0 0 1 924 285.4 V738.6 A185.4 185.4 0 0 1 738.6 924 H285.4 A185.4 185.4 0 0 1 100 738.6 V285.4 A185.4 185.4 0 0 1 285.4 100 Z" fill="#000" filter="url(#ts)"/>
+<path d="M285.4 100 H738.6 A185.4 185.4 0 0 1 924 285.4 V738.6 A185.4 185.4 0 0 1 738.6 924 H285.4 A185.4 185.4 0 0 1 100 738.6 V285.4 A185.4 185.4 0 0 1 285.4 100 Z" fill="url(#bg)"/>
+<path d="M285.4 100 H738.6 A185.4 185.4 0 0 1 924 285.4 V738.6 A185.4 185.4 0 0 1 738.6 924 H285.4 A185.4 185.4 0 0 1 100 738.6 V285.4 A185.4 185.4 0 0 1 285.4 100 Z" fill="url(#gl)"/>
+<path d="M285.4 100 H738.6 A185.4 185.4 0 0 1 924 285.4 V738.6 A185.4 185.4 0 0 1 738.6 924 H285.4 A185.4 185.4 0 0 1 100 738.6 V285.4 A185.4 185.4 0 0 1 285.4 100 Z" fill="none" stroke="url(#ed)" stroke-width="3"/>
+<g filter="url(#sh)">
+<g transform="translate(239.81 239.81) scale(4.2529)">
+<defs>
+<linearGradient id="m_b" x1="0" y1="2" x2="0" y2="126" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#009676"/>
+<stop offset="1" stop-color="#006b55"/>
+</linearGradient>
+<linearGradient id="m_f" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#3ed3b0"/>
+<stop offset="0.55" stop-color="#00a884"/>
+<stop offset="1" stop-color="#008e70"/>
+</linearGradient>
+<linearGradient id="m_r" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#d9fff5"/>
+<stop offset="0.5" stop-color="#6fe3c8" stop-opacity="0.35"/>
+<stop offset="1" stop-color="#00574a" stop-opacity="0.9"/>
+</linearGradient>
+<filter id="m_s" color-interpolation-filters="sRGB" x="-30%" y="-30%" width="160%" height="160%">
+<feGaussianBlur in="SourceAlpha" stdDeviation="1.6"/>
+<feOffset dy="1.6"/>
+<feComponentTransfer>
+<feFuncA type="linear" slope="0.3"/>
+</feComponentTransfer>
+<feMerge>
+<feMergeNode/>
+<feMergeNode in="SourceGraphic"/>
+</feMerge>
+</filter>
+</defs>
+<circle cx="64" cy="64" r="62" fill="url(#m_b)"/>
+<circle cx="64" cy="64" r="54.4" fill="url(#m_f)"/>
+<circle cx="64" cy="64" r="55" fill="none" stroke="url(#m_r)" stroke-width="1.2"/>
+<g filter="url(#m_s)">
+<g transform="translate(23.35 21.13) scale(3.48)" fill="none" stroke="#0b0e0c" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
+</g>
+</g>
+</g>
+</g>
 </svg>

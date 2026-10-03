@@ -114,7 +114,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Attest release packages
-        uses: crmne/native-packages/.github/actions/attest@dc0cb1586894ca0239c53fd02d4da8064712671c # v0.7.0
+        uses: crmne/native-packages/.github/actions/attest@999768410cf53cdc68c8679c09cb14de1a6bca7b # v0.8.1
         with:
           subject-path: |
             dist/*.tar.gz
@@ -164,12 +164,16 @@ jobs:
             target/aarch64-apple-darwin/release/zapfast \
             target/x86_64-apple-darwin/release/zapfast \
             -output universal/zapfast
+          # The two release builds fill most of the runner's disk; the DMG
+          # and its notarization copy need room of their own.
+          rm -rf target
+          df -h "$RUNNER_TEMP"
 
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '4.0'
       - name: Install native packaging
-        run: gem install native-packages --version 0.7.0 --no-document
+        run: gem install native-packages --version 0.8.1 --no-document
 
       - name: App bundle
         run: |
@@ -189,7 +193,7 @@ jobs:
         run: bash packaging/macos/verify.sh "dist/zapfast-${GITHUB_REF_NAME}-macos-universal.dmg"
 
       - name: Attest macOS package
-        uses: crmne/native-packages/.github/actions/attest@dc0cb1586894ca0239c53fd02d4da8064712671c # v0.7.0
+        uses: crmne/native-packages/.github/actions/attest@999768410cf53cdc68c8679c09cb14de1a6bca7b # v0.8.1
         with:
           subject-path: dist/*.dmg
       - uses: actions/upload-artifact@v7
@@ -229,7 +233,7 @@ jobs:
           cache: false
           upload-artifact: false
       - name: Attest Flatpak bundle
-        uses: crmne/native-packages/.github/actions/attest@dc0cb1586894ca0239c53fd02d4da8064712671c # v0.7.0
+        uses: crmne/native-packages/.github/actions/attest@999768410cf53cdc68c8679c09cb14de1a6bca7b # v0.8.1
         with:
           subject-path: "*.flatpak"
       - uses: actions/upload-artifact@v7
@@ -257,7 +261,7 @@ jobs:
         with:
           ruby-version: '4.0'
       - name: Sign update manifest
-        uses: crmne/native-packages/.github/actions/sign-release@dc0cb1586894ca0239c53fd02d4da8064712671c # v0.7.0
+        uses: crmne/native-packages/.github/actions/sign-release@999768410cf53cdc68c8679c09cb14de1a6bca7b # v0.8.1
         with:
           directory: dist
           public-key: assets/update-public-key.hex

@@ -34,6 +34,13 @@ enum Row {
 }
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
+    if app.picker == Some(PickerTab::Emoji) && app.reaction_target.is_none() {
+        if app.picker_recent.is_none() {
+            app.picker_recent = Some(app.settings.recent_emoji.clone());
+        }
+    } else {
+        app.picker_recent = None;
+    }
     if app.reaction_target.is_some() {
         reaction_picker(app, ctx);
         return;
@@ -360,8 +367,9 @@ fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         },
     );
     let has_recent = app
-        .settings
-        .recent_emoji
+        .picker_recent
+        .as_ref()
+        .unwrap_or(&app.settings.recent_emoji)
         .iter()
         .any(|emoji| emojis::get(emoji).is_some());
     category_tabs(app, ui, palette, "emoji-grid", "Recent", has_recent);
@@ -637,7 +645,9 @@ fn emoji_grid(
     let recent = if app.reaction_target.is_some() {
         &frequent
     } else {
-        &app.settings.recent_emoji
+        app.picker_recent
+            .as_ref()
+            .unwrap_or(&app.settings.recent_emoji)
     };
     let rows = rows_for(&app.picker_search, recent, columns, recent_label);
     let emoji_count = rows

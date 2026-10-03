@@ -1311,8 +1311,14 @@ pub enum Action {
     /// Marks a read chat unread, here and on the phone; does not invent a
     /// pending count.
     MarkUnread(ChatId),
-    LoadOlder(ChatId),
-    /// Requests messages older than the local archive.
+    /// Pages older messages from the archive, then the phone. `explicit` when
+    /// the reader scrolled to the top, rather than a short chat filling its
+    /// view: only the reader's own requests report a phone that is silent.
+    LoadOlder {
+        chat: ChatId,
+        explicit: bool,
+    },
+    /// Requests messages older than the local archive, for the reader.
     FetchOlder(ChatId),
     Download {
         card: Option<usize>,
@@ -1346,6 +1352,14 @@ pub enum Action {
     },
     /// Mutes or unmutes video playback.
     ToggleVideoSound,
+    /// Shows a downloaded video over the whole window, starting it if it is
+    /// not the one loaded.
+    ExpandVideo {
+        message: String,
+        path: PathBuf,
+    },
+    /// Puts the video covering the window back in its message.
+    CollapseVideo,
     /// Starts, cancels, or sends a voice recording.
     StartRecording,
     CancelRecording,
@@ -1494,8 +1508,12 @@ pub enum Action {
         sticker: PathBuf,
         member: bool,
     },
-    /// Opens the prefilled contact-name editor.
-    EditContact(String),
+    /// Opens the contact-name editor for `id`, prefilled with `name` and
+    /// split as the contact's saved first name says.
+    EditContact {
+        id: String,
+        name: String,
+    },
     /// Saves a contact through WhatsApp contact sync. `first` is the short
     /// display name and `last` completes the full name.
     SaveContact {
@@ -1593,6 +1611,8 @@ pub enum Action {
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
+    /// Draws the interface in the platform's font or in the bundled Inter.
+    SetFont(crate::settings::FontChoice),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),

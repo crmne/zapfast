@@ -488,16 +488,41 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     ctx.set_global_style(style);
 }
 
-/// The platform's interface font at four weights (Inter where there is
-/// none, and in tests, so layouts do not depend on the machine), egui's own
-/// fonts behind it, and installed fonts for the scripts it lacks, hinted as
-/// the desktop asks. Inter also draws the [`tabular`] timers.
-fn install_fonts(ctx: &egui::Context) {
-    let primary = if cfg!(test) {
+/// Whether the interface is drawn in the bundled Inter instead of the
+/// platform's font (Settings, Appearance, Font).
+static INTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Chooses the interface's typeface and installs it. Call it before
+/// [`install`] with the saved choice, and again when the choice changes.
+pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
+    let inter = font == crate::settings::FontChoice::Inter;
+    if INTER.swap(inter, std::sync::atomic::Ordering::AcqRel) != inter {
+        install_fonts(ctx);
+    }
+}
+
+/// Whether Inter is the chosen typeface.
+#[cfg(test)]
+pub fn inter_chosen() -> bool {
+    INTER.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// The typeface the interface is asked to draw with: the setting's, and
+/// always Inter in tests, so layouts do not depend on the machine.
+fn primary_font() -> fastframe_fonts::Primary {
+    if cfg!(test) || INTER.load(std::sync::atomic::Ordering::Acquire) {
         fastframe_fonts::Primary::Inter
     } else {
         fastframe_fonts::Primary::System
-    };
+    }
+}
+
+/// The chosen interface font at four weights (the platform's, or Inter
+/// where there is none), egui's own fonts behind it, and installed fonts
+/// for the scripts it lacks, hinted as the desktop asks. Inter also draws
+/// the [`tabular`] timers.
+fn install_fonts(ctx: &egui::Context) {
+    let primary = primary_font();
     let mut fonts = fastframe_fonts::FontSetup::default()
         .primary(primary)
         .definitions();
@@ -747,13 +772,40 @@ pub fn circle_button(
     }
 }
 
-/// Draws the app logo.
+/// Draws the app's mark as it ships: the lit disc and the ink bubble of
+/// `packaging/icons/zapfast.svg`, rendered once per pixel size.
+pub fn mark(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
+    let ctx = ui.ctx();
+    let pixels = (diameter * ctx.pixels_per_point()).round().max(1.0) as usize;
+    let id = egui::Id::new(("zapfast-mark", pixels));
+    let texture = match ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(id)) {
+        Some(texture) => texture,
+        None => {
+            let rgba = crate::util::app_icon_rgba(pixels);
+            let image = egui::ColorImage::from_rgba_unmultiplied([pixels, pixels], &rgba);
+            let texture = ctx.load_texture(
+                format!("zapfast-mark-{pixels}"),
+                image,
+                egui::TextureOptions::LINEAR,
+            );
+            ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
+            texture
+        }
+    };
+    let rect = egui::Rect::from_center_size(center, Vec2::splat(diameter));
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+}
+
+/// Draws the logo's shape in two flat colours, for the empty conversation's
+/// faint watermark.
 pub fn logo(ui: &egui::Ui, center: egui::Pos2, diameter: f32, disc: Color32, glyph: Color32) {
     ui.painter().circle_filled(center, diameter / 2.0, disc);
-    // Match `packaging/icons/zapfast.svg`.
-    let icon_size = diameter * 0.56;
+    // Match `packaging/icons/zapfast-small.svg`: the bubble sits a little
+    // right of and above the centre, where its tail balances it.
+    let icon_size = diameter * 0.674;
     let icon_rect = egui::Rect::from_center_size(
-        center - Vec2::new(0.0, diameter * 0.02),
+        center + Vec2::new(diameter * 0.009, -diameter * 0.009),
         Vec2::splat(icon_size),
     );
     Icon::MessageCircle
