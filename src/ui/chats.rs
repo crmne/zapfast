@@ -37,11 +37,27 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     widgets::paint_edge_beside(ui, &palette, response.response.rect);
 }
 
+/// The chat list across the whole window, when the window is too narrow to
+/// hold it beside a conversation. Opening a chat replaces it.
+pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
+    search_keyboard(app, ui);
+    let palette = app.palette;
+    egui::CentralPanel::default()
+        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO))
+        .show(ui, |ui| {
+            header(app, ui);
+            list(app, ui);
+        });
+}
+
 /// Walks matching chats while the global search field keeps keyboard focus.
-/// Enter leaves search and opens the reached chat ready for typing.
+/// Enter leaves search and opens the reached chat ready for typing. A
+/// disabled list (beneath a narrow window's sliding chat) leaves the keys
+/// to the view coming in.
 fn search_keyboard(app: &mut App, ui: &egui::Ui) {
     let field = egui::Id::new("chat-search");
-    if app.search.trim().is_empty()
+    if !ui.is_enabled()
+        || app.search.trim().is_empty()
         || app.locked_folder_open()
         || app.secret_code_matched()
         || !ui.memory(|memory| memory.has_focus(field))
@@ -216,16 +232,17 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             app.actions
                                 .push(Action::ShowDialog(crate::model::Dialog::NewChat));
                         }
-                        if theme::icon_button(
-                            ui,
-                            Icon::PanelLeft,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            "Hide the chat list (Ctrl+B)",
-                        )
-                        .tab_stop(Stop::Sidebar)
-                        .clicked()
+                        if !super::narrow(ui.ctx())
+                            && theme::icon_button(
+                                ui,
+                                Icon::PanelLeft,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                "Hide the chat list (Ctrl+B)",
+                            )
+                            .tab_stop(Stop::Sidebar)
+                            .clicked()
                         {
                             app.actions.push(Action::ToggleSidebar);
                         }
@@ -250,7 +267,8 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             if text != app.search {
                 app.actions.push(Action::Search(text));
             }
-            if app.focus_search {
+            // A disabled field cannot take the keyboard; the request waits.
+            if app.focus_search && ui.is_enabled() {
                 app.focus_search = false;
                 response.request_focus();
             }
@@ -325,16 +343,17 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     {
                         app.actions.push(Action::ShowDialog(Dialog::NewChat));
                     }
-                    if theme::icon_button(
-                        ui,
-                        Icon::PanelLeft,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        "Hide the chat list (⌘B)",
-                    )
-                    .tab_stop(Stop::Sidebar)
-                    .clicked()
+                    if !super::narrow(ui.ctx())
+                        && theme::icon_button(
+                            ui,
+                            Icon::PanelLeft,
+                            18.0,
+                            palette.secondary,
+                            palette.text,
+                            "Hide the chat list (⌘B)",
+                        )
+                        .tab_stop(Stop::Sidebar)
+                        .clicked()
                     {
                         app.actions.push(Action::ToggleSidebar);
                     }
@@ -356,7 +375,8 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             if text != app.search {
                 app.actions.push(Action::Search(text));
             }
-            if app.focus_search {
+            // A disabled field cannot take the keyboard; the request waits.
+            if app.focus_search && ui.is_enabled() {
                 app.focus_search = false;
                 response.request_focus();
             }
@@ -560,7 +580,22 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         .scroll_chat_into_view
         .as_ref()
         .and_then(|target| chats.iter().position(|chat| chat.id == *target));
-    if let Some(target_row) = target_row {
+    // The copies a narrow window's slide draws have widget ids of their own:
+    // they show the real list's offset instead of keeping one.
+    let copy = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(slide_copy_id()))
+        .is_some();
+    if copy
+        && let Some(offset) = ui
+            .ctx()
+            .data(|data| data.get_temp::<f32>(shared_offset_id()))
+    {
+        scroll_area = scroll_area.vertical_scroll_offset(offset);
+    }
+    // A disabled list leaves the request and any carried scroll to the list
+    // drawn for real.
+    if let Some(target_row) = target_row.filter(|_| ui.is_enabled()) {
         let id = ui.make_persistent_id(egui::IdSalt::new("chat-list"));
         let current = egui::scroll_area::State::load(ui.ctx(), id)
             .unwrap_or_default()
@@ -577,7 +612,11 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         app.scroll_chat_into_view = None;
     }
     // A scroll gesture that began over the list stays with it (#274).
-    let carried = app.scroll_route.take(crate::app::ScrollPane::Chats);
+    let carried = if ui.is_enabled() {
+        app.scroll_route.take(crate::app::ScrollPane::Chats)
+    } else {
+        0.0
+    };
     let output = scroll_area.show_rows(ui, row_height, total, |ui, range| {
         if carried != 0.0 {
             ui.scroll_with_delta_animation(
@@ -603,11 +642,25 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+    if !copy {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(shared_offset_id(), output.state.offset.y));
+    }
     app.scroll_route
         .place(crate::app::ScrollPane::Chats, output.inner_rect);
     #[cfg(test)]
     ui.ctx()
         .data_mut(|data| data.insert_temp(list_offset_id(), output.state.offset.y));
+}
+
+/// Set while a narrow window's slide draws copies of the list.
+pub(crate) fn slide_copy_id() -> egui::Id {
+    egui::Id::new("chat-list-slide-copy")
+}
+
+/// The real list's scroll offset, for the copies a slide draws.
+fn shared_offset_id() -> egui::Id {
+    egui::Id::new("chat-list-real-offset")
 }
 
 /// Where the chat list's scroll offset is kept for tests.
@@ -731,7 +784,8 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
             if !chats.is_empty() {
                 section(ui, &palette, "Chats");
                 for chat in &chats {
-                    let reveal = app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
+                    let reveal = ui.is_enabled()
+                        && app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
                     let response = ui
                         .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
                         .inner;

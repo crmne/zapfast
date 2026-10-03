@@ -433,6 +433,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   It shows the same chats as the full list under the current filter, with
   unread badges (dimmed for muted chats); hovering names a chat, clicking opens
   it, and `Ctrl+B` brings the full list back.
+- **Narrow windows.** A window narrower than 620 points shows the chat list or
+  one chat, not both. The list fills the window until a chat is opened; the
+  chat then fills it, and the back arrow beside its Search returns to the list.
+  An opened chat slides in from the right over the list; going back slides the
+  list in from the left.
 - **Local storage.** Messages, contacts and sticker metadata are stored in a
   SQLCipher-encrypted archive, unlocked automatically through your OS keyring.
   Existing plaintext archives are migrated on first use. Attachments remain
