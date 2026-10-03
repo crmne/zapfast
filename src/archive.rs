@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS message_removals (
     PRIMARY KEY (chat, id)
 );
 CREATE TABLE IF NOT EXISTS pending_message_removals (
+    account TEXT NOT NULL,
     chat TEXT NOT NULL,
     id TEXT NOT NULL,
     PRIMARY KEY (chat, id)
@@ -144,6 +145,11 @@ const CHAT_COLUMNS: &str =
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
+    (
+        "pending_message_removals",
+        "account",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
     ("messages", "thumbnail", "BLOB"),
     ("messages", "mentions", "TEXT NOT NULL DEFAULT '[]'"),
     ("chats", "participants", "TEXT NOT NULL DEFAULT '[]'"),
@@ -1314,25 +1320,32 @@ impl Archive {
 
     /// Atomically deletes a message and records a durable barrier against replay.
     pub fn delete_message(&self, chat: &str, id: &str) -> Result<bool> {
+        self.delete_message_alias(chat, chat, id)
+    }
+
+    /// Commits the deletion under both identities if mapping changed while sending.
+    pub fn delete_message_alias(&self, chat: &str, canonical: &str, id: &str) -> Result<bool> {
         let transaction = self.connection.unchecked_transaction()?;
         self.connection.execute(
-            "INSERT OR IGNORE INTO message_removals (chat, id) VALUES (?1, ?2)",
-            params![chat, id],
+            "INSERT OR IGNORE INTO message_removals (chat, id) VALUES (?1, ?3), (?2, ?3)",
+            params![chat, canonical, id],
         )?;
         let deleted = self.connection.execute(
-            "DELETE FROM messages WHERE chat = ?1 AND id = ?2",
-            params![chat, id],
+            "DELETE FROM messages WHERE chat IN (?1, ?2) AND id = ?3",
+            params![chat, canonical, id],
         )?;
         self.cancel_message_removal(chat, id)?;
+        self.cancel_message_removal(canonical, id)?;
         transaction.commit()?;
         Ok(deleted > 0)
     }
 
     /// Records intent before sending so interruption cannot lose the deletion.
-    pub fn queue_message_removal(&self, chat: &str, id: &str) -> Result<()> {
+    pub fn queue_message_removal(&self, account: &str, chat: &str, id: &str) -> Result<()> {
         self.connection.execute(
-            "INSERT OR IGNORE INTO pending_message_removals (chat, id) VALUES (?1, ?2)",
-            params![chat, id],
+            "INSERT INTO pending_message_removals (account, chat, id) VALUES (?1, ?2, ?3)
+             ON CONFLICT(chat, id) DO UPDATE SET account = excluded.account",
+            params![account, chat, id],
         )?;
         Ok(())
     }
@@ -1347,12 +1360,12 @@ impl Archive {
     }
 
     /// Incomplete account deletions to retry through the protocol client.
-    pub fn pending_message_removals(&self) -> Result<Vec<(String, String)>> {
+    pub fn pending_message_removals(&self, account: &str) -> Result<Vec<(String, String)>> {
         let mut statement = self
             .connection
-            .prepare("SELECT chat, id FROM pending_message_removals")?;
+            .prepare("SELECT chat, id FROM pending_message_removals WHERE account = ?1")?;
         statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map([account], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect()
     }
 
@@ -3122,13 +3135,15 @@ pub(crate) mod tests {
         archive
             .insert_message(&message(chat, "kept", 100, true), None)
             .unwrap();
-        archive.queue_message_removal(chat, "kept").unwrap();
+        archive
+            .queue_message_removal("fixture-account", chat, "kept")
+            .unwrap();
         archive.connection.execute_batch("CREATE TRIGGER refuse_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
         assert!(archive.delete_message(chat, "kept").is_err());
         assert!(archive.message(chat, "kept").unwrap().is_some());
         assert!(!archive.message_removed(chat, "kept").unwrap());
         assert_eq!(
-            archive.pending_message_removals().unwrap(),
+            archive.pending_message_removals("fixture-account").unwrap(),
             [(chat.into(), "kept".into())]
         );
     }
@@ -3174,19 +3189,68 @@ pub(crate) mod tests {
             archive
                 .insert_message(&message(chat, "own", 100, true), None)
                 .unwrap();
-            archive.queue_message_removal(chat, "own").unwrap();
+            archive
+                .queue_message_removal("fixture-account", chat, "own")
+                .unwrap();
         }
         let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert!(
+            archive
+                .pending_message_removals("another-account")
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
-            archive.pending_message_removals().unwrap(),
+            archive.pending_message_removals("fixture-account").unwrap(),
             [(chat.into(), "own".into())]
         );
         assert!(archive.message(chat, "own").unwrap().is_some());
         archive.delete_message(chat, "own").unwrap();
-        assert!(archive.pending_message_removals().unwrap().is_empty());
-        archive.queue_message_removal(chat, "kept").unwrap();
+        assert!(
+            archive
+                .pending_message_removals("fixture-account")
+                .unwrap()
+                .is_empty()
+        );
+        archive
+            .queue_message_removal("fixture-account", chat, "kept")
+            .unwrap();
         archive.clear().unwrap();
-        assert!(archive.pending_message_removals().unwrap().is_empty());
+        assert!(
+            archive
+                .pending_message_removals("fixture-account")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Failed unlink cleanup cannot make old requests recoverable by another account.
+    #[test]
+    fn pending_deletions_remain_owned_after_cleanup_failure() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1-1@g.us";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive
+            .insert_message(&message(chat, "own", 100, true), None)
+            .unwrap();
+        archive
+            .queue_message_removal("old-account", chat, "own")
+            .unwrap();
+        archive.connection.execute_batch("CREATE TRIGGER refuse_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        assert!(archive.clear().is_err());
+        assert_eq!(
+            archive
+                .pending_message_removals("old-account")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            archive
+                .pending_message_removals("new-account")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

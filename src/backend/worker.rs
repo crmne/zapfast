@@ -483,6 +483,7 @@ pub async fn run(
         privacy_warned: false,
         privacy_recovering: false,
         privacy_generation: 0,
+        message_removals_in_flight: HashSet::new(),
         privacy_retry: Instant::now(),
         withheld_pages: Vec::new(),
         dirs,
@@ -720,6 +721,8 @@ struct Worker {
     privacy_warned: bool,
     privacy_recovering: bool,
     privacy_generation: u64,
+    /// Serializes requests for one message, including across privacy-id mapping.
+    message_removals_in_flight: HashSet<(ChatId, String)>,
     privacy_retry: Instant,
     /// Transcript pages asked for while private content was withheld. Their
     /// answers never reached the interface, which still waits for them, so
@@ -2672,6 +2675,7 @@ impl Worker {
 
     async fn on_logged_out(&mut self) {
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
+        self.message_removals_in_flight.clear();
         self.stop_bot().await;
         if let Err(error) = self.archive.clear() {
             log::warn!("could not clear the archive: {error}");
@@ -4507,6 +4511,8 @@ impl Worker {
                 if generation != self.privacy_generation {
                     return;
                 }
+                self.message_removals_in_flight
+                    .remove(&(chat.clone(), id.clone()));
                 if deleted {
                     self.delete_message_here(&chat, &id);
                 } else {
@@ -7012,6 +7018,9 @@ impl Worker {
 
     /// Sends the account deletion through whatsapp-rust before removing our copy.
     fn delete_message_for_me(&mut self, chat: ChatId, id: String) {
+        if self.message_removal_in_flight(&chat, &id) {
+            return;
+        }
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error(
                 "Connect to WhatsApp to delete this message".to_owned(),
@@ -7044,11 +7053,23 @@ impl Worker {
         } else {
             None
         };
-        if self.archive.queue_message_removal(&chat, &id).is_err() {
+        let Some(account) = self.me_pn.as_deref() else {
+            self.emit(Event::Error(
+                "Could not identify the account for this deletion".into(),
+            ));
+            return;
+        };
+        if self
+            .archive
+            .queue_message_removal(account, &chat, &id)
+            .is_err()
+        {
             self.emit(Event::Error("Could not save the pending deletion".into()));
             return;
         }
         let generation = self.privacy_generation;
+        self.message_removals_in_flight
+            .insert((chat.clone(), id.clone()));
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let deleted = client
@@ -7074,7 +7095,10 @@ impl Worker {
 
     /// Retries interrupted deletions after reconnect without relying on redelivery.
     fn retry_message_removals(&mut self) {
-        match self.archive.pending_message_removals() {
+        let Some(account) = self.me_pn.as_deref() else {
+            return;
+        };
+        match self.archive.pending_message_removals(account) {
             Ok(pending) => {
                 for (chat, id) in pending {
                     self.delete_message_for_me(chat, id);
@@ -7084,15 +7108,31 @@ impl Worker {
         }
     }
 
+    /// Mapping can change while an attempt is running, but it is still one message.
+    fn message_removal_in_flight(&self, chat: &str, id: &str) -> bool {
+        let canonical = self.canonical_str(chat);
+        self.message_removals_in_flight
+            .iter()
+            .any(|(active, message)| message == id && self.canonical_str(active) == canonical)
+    }
+
     /// Persists an accepted deletion and wakes the UI, including for unseen messages.
     fn delete_message_here(&mut self, chat: &str, id: &str) {
-        match self.archive.delete_message(chat, id) {
+        let canonical = self.canonical_str(chat);
+        match self.archive.delete_message_alias(chat, &canonical, id) {
             Ok(_) => {
                 self.emit(Event::MessageDeleted {
                     chat: chat.to_owned(),
                     id: id.to_owned(),
                 });
                 self.emit_chat(chat);
+                if canonical != chat {
+                    self.emit(Event::MessageDeleted {
+                        chat: canonical.clone(),
+                        id: id.to_owned(),
+                    });
+                    self.emit_chat(&canonical);
+                }
             }
             Err(_) => self.emit(Event::Error(
                 "WhatsApp accepted the deletion, but ZapFast could not remove its copy".to_owned(),
@@ -11522,6 +11562,7 @@ mod receipt_tests {
             privacy_warned: false,
             privacy_recovering: false,
             privacy_generation: 0,
+            message_removals_in_flight: HashSet::new(),
             privacy_retry: Instant::now(),
             withheld_pages: Vec::new(),
             dirs: crate::paths::AppDirs::under(&root).as_account(),
@@ -13957,7 +13998,10 @@ mod chat_removal_tests {
     async fn stale_deletion_completion_preserves_the_current_account() {
         let (mut worker, _events, _, _) = receipt_tests::worker();
         worker.apply_history(history(CHAT, &[100]), true);
-        worker.archive.queue_message_removal(CHAT, "m100").unwrap();
+        worker
+            .archive
+            .queue_message_removal(&worker.me(), CHAT, "m100")
+            .unwrap();
         worker.privacy_generation = 1;
         worker
             .handle_command(Command::MessageDeletedForMe {
@@ -13968,10 +14012,21 @@ mod chat_removal_tests {
             })
             .await;
         assert_eq!(stored(&worker, CHAT), ["m100"]);
-        assert_eq!(worker.archive.pending_message_removals().unwrap().len(), 1);
+        assert_eq!(
+            worker
+                .archive
+                .pending_message_removals(&worker.me())
+                .unwrap()
+                .len(),
+            1
+        );
         worker.retry_message_removals();
         assert_eq!(
-            worker.archive.pending_message_removals().unwrap().len(),
+            worker
+                .archive
+                .pending_message_removals(&worker.me())
+                .unwrap()
+                .len(),
             1,
             "offline recovery keeps the intent"
         );
@@ -13987,10 +14042,92 @@ mod chat_removal_tests {
         assert!(
             worker
                 .archive
-                .pending_message_removals()
+                .pending_message_removals(&worker.me())
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// A mapping learned during a request updates both identities on acceptance.
+    #[tokio::test]
+    async fn in_flight_deletion_follows_a_new_privacy_mapping() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        let lid = "9@lid";
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        worker
+            .archive
+            .insert_message(
+                &crate::archive::tests::message(lid, "m100", 100, true),
+                None,
+            )
+            .unwrap();
+        worker
+            .archive
+            .queue_message_removal(&worker.me(), lid, "m100")
+            .unwrap();
+        worker
+            .message_removals_in_flight
+            .insert((lid.into(), "m100".into()));
+        worker.learn_lid("9", CHAT.split('@').next().unwrap());
+        assert!(worker.message_removal_in_flight(CHAT, "m100"));
+        events.try_iter().for_each(drop);
+        worker
+            .handle_command(Command::DeleteLocal {
+                chat: CHAT.into(),
+                id: "m100".into(),
+            })
+            .await;
+        worker.retry_message_removals();
+        assert!(
+            events.try_iter().next().is_none(),
+            "overlapping attempts never reach the client"
+        );
+        worker
+            .handle_command(Command::MessageDeletedForMe {
+                generation: 0,
+                chat: lid.into(),
+                id: "m100".into(),
+                deleted: true,
+            })
+            .await;
+        assert!(!worker.message_removal_in_flight(CHAT, "m100"));
+        assert!(worker.archive.message_removed(CHAT, "m100").unwrap());
+        assert!(worker.archive.message_removed(lid, "m100").unwrap());
+        assert_eq!(stored(&worker, CHAT), ["m200"]);
+        assert!(
+            worker
+                .archive
+                .pending_message_removals(&worker.me())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(events.try_iter().any(|event|
+            matches!(event, Event::MessageDeleted { chat, id } if chat == CHAT && id == "m100")));
+        worker.apply_history(history(CHAT, &[100, 200]), false);
+        assert_eq!(stored(&worker, CHAT), ["m200"]);
+    }
+
+    /// Recovery never submits a surviving request belonging to another account.
+    #[test]
+    fn deletion_recovery_skips_other_accounts() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100]), true);
+        worker
+            .archive
+            .queue_message_removal("old-account", CHAT, "m100")
+            .unwrap();
+        events.try_iter().for_each(drop);
+        worker.retry_message_removals();
+        assert!(events.try_iter().next().is_none());
+        assert_eq!(
+            worker
+                .archive
+                .pending_message_removals("old-account")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(stored(&worker, CHAT), ["m100"]);
     }
 
     /// Own group messages use the account deletion event without a participant key.
