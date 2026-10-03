@@ -49,7 +49,10 @@ mod polls;
 mod sticker_pace;
 mod stickers;
 
-use super::{Command, Event, GroupEdit, LinkStatus, Refusal, Unsent, Waker, read_sync::ReadSync};
+use super::{
+    Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, Unsent, Waker,
+    read_sync::ReadSync,
+};
 use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
@@ -706,6 +709,19 @@ enum WithheldPage {
     Page(ChatId, Option<super::PageKey>),
     /// `Command::LoadUntil`.
     Until(ChatId, String, super::PageKey),
+}
+
+/// Only invalid arguments are definitely rejected before sending. Transport,
+/// patch, and acknowledgement failures share the library's remaining errors.
+fn message_removal_outcome(
+    result: Result<(), whatsapp_rust::AppStateError>,
+) -> MessageRemovalOutcome {
+    use whatsapp_rust::AppStateError;
+    match result {
+        Ok(()) => MessageRemovalOutcome::Accepted,
+        Err(AppStateError::InvalidRequest(_)) => MessageRemovalOutcome::InvalidRequest,
+        Err(_) => MessageRemovalOutcome::Uncertain,
+    }
 }
 
 struct Worker {
@@ -4506,22 +4522,27 @@ impl Worker {
                 generation,
                 chat,
                 id,
-                deleted,
+                outcome,
             } => {
                 if generation != self.privacy_generation {
                     return;
                 }
                 self.message_removals_in_flight
                     .remove(&(chat.clone(), id.clone()));
-                if deleted {
-                    self.delete_message_here(&chat, &id);
-                } else {
-                    if self.archive.cancel_message_removal(&chat, &id).is_err() {
-                        self.emit(Event::Error("Could not cancel the pending deletion".into()));
+                match outcome {
+                    MessageRemovalOutcome::Accepted => self.delete_message_here(&chat, &id),
+                    MessageRemovalOutcome::InvalidRequest => {
+                        if self.archive.cancel_message_removal(&chat, &id).is_err() {
+                            self.emit(Event::Error("Could not cancel the pending deletion".into()));
+                        }
+                        self.emit(Event::Error(
+                            "The deletion request was invalid. The message was kept".to_owned(),
+                        ));
                     }
-                    self.emit(Event::Error(
-                        "WhatsApp did not accept the deletion. Try again when connected".to_owned(),
-                    ));
+                    MessageRemovalOutcome::Uncertain => self.emit(Event::Error(
+                        "Could not confirm the deletion. It will be retried after reconnecting"
+                            .into(),
+                    )),
                 }
             }
             Command::PickFiles(chat) => {
@@ -7072,7 +7093,7 @@ impl Worker {
             .insert((chat.clone(), id.clone()));
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            let deleted = client
+            let result = client
                 .chat_actions()
                 .delete_message_for_me(
                     &jid,
@@ -7082,13 +7103,13 @@ impl Worker {
                     true,
                     Some(message.timestamp),
                 )
-                .await
-                .is_ok();
+                .await;
+            let outcome = message_removal_outcome(result);
             let _ = commands.send(Command::MessageDeletedForMe {
                 generation,
                 chat,
                 id,
-                deleted,
+                outcome,
             });
         });
     }
@@ -13756,6 +13777,75 @@ mod chat_removal_tests {
 
     const CHAT: &str = "4915700000001@s.whatsapp.net";
 
+    /// Lost acknowledgements retain intent and rows until acceptance is known.
+    #[tokio::test]
+    async fn uncertain_deletion_remains_recoverable() {
+        use whatsapp_rust::AppStateError;
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100]), true);
+        for error in [
+            AppStateError::NotConnected,
+            AppStateError::Internal(anyhow::anyhow!("fixture lost acknowledgement")),
+        ] {
+            worker
+                .archive
+                .queue_message_removal(&worker.me(), CHAT, "m100")
+                .unwrap();
+            worker
+                .message_removals_in_flight
+                .insert((CHAT.into(), "m100".into()));
+            let outcome = message_removal_outcome(Err(error));
+            assert_eq!(outcome, MessageRemovalOutcome::Uncertain);
+            worker
+                .handle_command(Command::MessageDeletedForMe {
+                    generation: 0,
+                    chat: CHAT.into(),
+                    id: "m100".into(),
+                    outcome,
+                })
+                .await;
+            assert!(!worker.message_removal_in_flight(CHAT, "m100"));
+            assert_eq!(stored(&worker, CHAT), ["m100"]);
+            assert!(!worker.archive.message_removed(CHAT, "m100").unwrap());
+            worker.retry_message_removals();
+            assert_eq!(
+                worker
+                    .archive
+                    .pending_message_removals(&worker.me())
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        let outcome = message_removal_outcome(Err(AppStateError::InvalidRequest("fixture".into())));
+        assert_eq!(outcome, MessageRemovalOutcome::InvalidRequest);
+        worker
+            .handle_command(Command::MessageDeletedForMe {
+                generation: 0,
+                chat: CHAT.into(),
+                id: "m100".into(),
+                outcome,
+            })
+            .await;
+        assert!(
+            worker
+                .archive
+                .pending_message_removals(&worker.me())
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(stored(&worker, CHAT), ["m100"]);
+        assert!(
+            events
+                .try_iter()
+                .all(|event| !matches!(event, Event::MessageDeleted { .. }))
+        );
+        assert_eq!(
+            message_removal_outcome(Ok(())),
+            MessageRemovalOutcome::Accepted
+        );
+    }
+
     #[tokio::test]
     async fn deletion_resolves_a_mapping_known_only_to_the_protocol_library() {
         let directory = tempfile::tempdir().unwrap();
@@ -13932,7 +14022,7 @@ mod chat_removal_tests {
                 generation: 0,
                 chat: CHAT.into(),
                 id: "m100".into(),
-                deleted: false,
+                outcome: MessageRemovalOutcome::InvalidRequest,
             })
             .await;
         assert_eq!(stored(&worker, CHAT), ["m100", "m200"]);
@@ -13941,7 +14031,7 @@ mod chat_removal_tests {
                 generation: 0,
                 chat: CHAT.into(),
                 id: "m100".into(),
-                deleted: true,
+                outcome: MessageRemovalOutcome::Accepted,
             })
             .await;
         assert_eq!(stored(&worker, CHAT), ["m200"]);
@@ -14008,7 +14098,7 @@ mod chat_removal_tests {
                 generation: 0,
                 chat: CHAT.into(),
                 id: "m100".into(),
-                deleted: true,
+                outcome: MessageRemovalOutcome::Accepted,
             })
             .await;
         assert_eq!(stored(&worker, CHAT), ["m100"]);
@@ -14035,7 +14125,7 @@ mod chat_removal_tests {
                 generation: 1,
                 chat: CHAT.into(),
                 id: "m100".into(),
-                deleted: true,
+                outcome: MessageRemovalOutcome::Accepted,
             })
             .await;
         assert!(stored(&worker, CHAT).is_empty());
@@ -14087,7 +14177,7 @@ mod chat_removal_tests {
                 generation: 0,
                 chat: lid.into(),
                 id: "m100".into(),
-                deleted: true,
+                outcome: MessageRemovalOutcome::Accepted,
             })
             .await;
         assert!(!worker.message_removal_in_flight(CHAT, "m100"));

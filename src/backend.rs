@@ -19,6 +19,15 @@ pub(crate) mod sticker_store;
 mod worker;
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS};
 
+/// Result of a deletion request, without protocol errors crossing the bridge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageRemovalOutcome {
+    Accepted,
+    InvalidRequest,
+    /// The library cannot establish whether the write was accepted.
+    Uncertain,
+}
+
 /// Phone-link state.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LinkStatus {
@@ -275,7 +284,7 @@ pub enum Command {
         generation: u64,
         chat: ChatId,
         id: String,
-        deleted: bool,
+        outcome: MessageRemovalOutcome,
     },
     /// Selects and sends files with the desktop picker.
     PickFiles(ChatId),
