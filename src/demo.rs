@@ -7094,6 +7094,8 @@ mod tests {
             ("delete-message-mine", "ada-format", false),
         ] {
             let mut app = app();
+            let (backend, mut commands, events) = crate::backend::Backend::recording_with_events();
+            app.backend = backend;
             apply_flags(&mut app, Some(page));
             assert_eq!(
                 app.dialog,
@@ -7149,7 +7151,22 @@ mod tests {
                     "{page}: a revoked message stays as a tombstone"
                 );
             } else {
-                assert!(row.is_none(), "{page}: a local delete removes the row");
+                assert!(
+                    row.is_some(),
+                    "{page}: the message waits for sync acceptance"
+                );
+                assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(
+                    |command| matches!(command, crate::backend::Command::DeleteLocal { chat, id }
+                        if chat == SAMPLES[0].id && id == message)
+                ));
+                events
+                    .send(crate::backend::Event::MessageDeleted {
+                        chat: SAMPLES[0].id.to_owned(),
+                        id: message.to_owned(),
+                    })
+                    .unwrap();
+                app.background_frame(&ctx);
+                assert!(app.conversations[SAMPLES[0].id].message(message).is_none());
             }
         }
     }
@@ -7165,6 +7182,8 @@ mod tests {
             ("delete-message-mine", "ada-format", false),
         ] {
             let mut app = app();
+            let (backend, mut commands, events) = crate::backend::Backend::recording_with_events();
+            app.backend = backend;
             apply_flags(&mut app, Some(page));
             app.open_chat = Some(SAMPLES[1].id.to_owned());
             let ctx = egui::Context::default();
@@ -7202,7 +7221,19 @@ mod tests {
                     "{page}: the message is revoked in its own chat"
                 );
             } else {
-                assert!(row.is_none(), "{page}: the message leaves its own chat");
+                assert!(row.is_some(), "{page}: the message waits in its own chat");
+                assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(
+                    |command| matches!(command, crate::backend::Command::DeleteLocal { chat, id }
+                        if chat == own_chat && id == message)
+                ));
+                events
+                    .send(crate::backend::Event::MessageDeleted {
+                        chat: own_chat.to_owned(),
+                        id: message.to_owned(),
+                    })
+                    .unwrap();
+                app.background_frame(&ctx);
+                assert!(app.conversations[own_chat].message(message).is_none());
             }
         }
     }

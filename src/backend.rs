@@ -270,6 +270,12 @@ pub enum Command {
         chat: ChatId,
         id: String,
     },
+    /// Completion of the account's deletion sync, before removing our copy.
+    MessageDeletedForMe {
+        chat: ChatId,
+        id: String,
+        deleted: bool,
+    },
     /// Selects and sends files with the desktop picker.
     PickFiles(ChatId),
     /// Sends files with the caption on the first.

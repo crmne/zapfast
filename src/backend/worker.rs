@@ -1132,6 +1132,17 @@ impl Worker {
             .is_some_and(|through| timestamp <= through)
     }
 
+    /// Blocks a deleted message's replay, failing closed if the barrier cannot be read.
+    fn message_was_removed(&self, chat: &str, id: &str) -> bool {
+        match self.archive.message_removed(chat, id) {
+            Ok(removed) => removed,
+            Err(_) => {
+                log::warn!("could not check a message's deletion state");
+                true
+            }
+        }
+    }
+
     fn emit_chats(&self) {
         match self.archive.chats() {
             Ok(mut chats) => {
@@ -2502,6 +2513,10 @@ impl Worker {
                 );
                 let _ = self.empty_chat(&chat, through, update.delete_media);
             }
+            E::DeleteMessageForMeUpdate(update) => {
+                let chat = self.canonical_sync_chat(&update.chat_jid).await;
+                self.delete_message_here(&chat, &update.message_id);
+            }
             E::MarkChatAsReadUpdate(update) => {
                 let chat = self.canonical(&update.jid);
                 self.ensure_chat(&chat, None);
@@ -3605,7 +3620,9 @@ impl Worker {
         push_name: Option<&str>,
         poll_baseline: bool,
     ) {
-        if self.predates_removal(&message.chat, message.timestamp) {
+        if self.predates_removal(&message.chat, message.timestamp)
+            || self.message_was_removed(&message.chat, &message.id)
+        {
             return;
         }
         let chat = message.chat.clone();
@@ -3973,6 +3990,9 @@ impl Worker {
             let count = chat.messages.len();
             let mut secrets = HashMap::new();
             for message in chat.messages {
+                if self.message_was_removed(&id, &message.id) {
+                    continue;
+                }
                 if let Some(secret) = message
                     .poll_secret
                     .as_deref()
@@ -4459,12 +4479,15 @@ impl Worker {
             } => self.edit_text(chat, id, text, mentions),
             Command::Revoke { chat, id } => self.revoke(chat, id),
             Command::DeleteLocal { chat, id } => {
-                if let Ok(true) = self.archive.delete_message(&chat, &id) {
-                    self.emit(Event::MessageDeleted {
-                        chat: chat.clone(),
-                        id,
-                    });
-                    self.emit_chat(&chat);
+                self.delete_message_for_me(chat, id);
+            }
+            Command::MessageDeletedForMe { chat, id, deleted } => {
+                if deleted {
+                    self.delete_message_here(&chat, &id);
+                } else {
+                    self.emit(Event::Error(
+                        "WhatsApp did not accept the deletion. Try again when connected".to_owned(),
+                    ));
                 }
             }
             Command::PickFiles(chat) => {
@@ -6957,6 +6980,69 @@ impl Worker {
                 });
             }
         });
+    }
+
+    /// Sends the account deletion through whatsapp-rust before removing our copy.
+    fn delete_message_for_me(&mut self, chat: ChatId, id: String) {
+        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
+            self.emit(Event::Error(
+                "Connect to WhatsApp to delete this message".to_owned(),
+            ));
+            return;
+        };
+        let message = match self.archive.message(&chat, &id) {
+            Ok(Some(message)) => message,
+            Ok(None) => return,
+            Err(_) => {
+                self.emit(Event::Error(
+                    "Could not read the message to delete".to_owned(),
+                ));
+                return;
+            }
+        };
+        let participant = if jid.is_group() && !message.from_me {
+            let Some(sender) = Self::jid_of(&message.sender) else {
+                self.emit(Event::Error(
+                    "Could not identify the message to delete".to_owned(),
+                ));
+                return;
+            };
+            Some(sender)
+        } else {
+            None
+        };
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            let deleted = client
+                .chat_actions()
+                .delete_message_for_me(
+                    &jid,
+                    participant.as_ref(),
+                    &id,
+                    message.from_me,
+                    true,
+                    Some(message.timestamp),
+                )
+                .await
+                .is_ok();
+            let _ = commands.send(Command::MessageDeletedForMe { chat, id, deleted });
+        });
+    }
+
+    /// Persists an accepted deletion and wakes the UI, including for unseen messages.
+    fn delete_message_here(&mut self, chat: &str, id: &str) {
+        match self.archive.delete_message(chat, id) {
+            Ok(_) => {
+                self.emit(Event::MessageDeleted {
+                    chat: chat.to_owned(),
+                    id: id.to_owned(),
+                });
+                self.emit_chat(chat);
+            }
+            Err(_) => self.emit(Event::Error(
+                "WhatsApp accepted the deletion, but ZapFast could not remove its copy".to_owned(),
+            )),
+        }
     }
 
     fn revoke(&mut self, chat: ChatId, id: String) {
@@ -13726,6 +13812,114 @@ mod chat_removal_tests {
 
         worker.apply_history(history(CHAT, &[300]), false);
         assert_eq!(stored(&worker, CHAT), ["m300"]);
+    }
+
+    #[tokio::test]
+    /// Offline and refused account writes keep the row; acceptance blocks replay.
+    async fn individual_deletion_waits_for_sync_and_blocks_replay() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        worker
+            .handle_command(Command::DeleteLocal {
+                chat: CHAT.into(),
+                id: "m100".into(),
+            })
+            .await;
+        assert_eq!(stored(&worker, CHAT), ["m100", "m200"]);
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Error(_)))
+        );
+        worker
+            .handle_command(Command::MessageDeletedForMe {
+                chat: CHAT.into(),
+                id: "m100".into(),
+                deleted: false,
+            })
+            .await;
+        assert_eq!(stored(&worker, CHAT), ["m100", "m200"]);
+        worker
+            .handle_command(Command::MessageDeletedForMe {
+                chat: CHAT.into(),
+                id: "m100".into(),
+                deleted: true,
+            })
+            .await;
+        assert_eq!(stored(&worker, CHAT), ["m200"]);
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::MessageDeleted { id, .. } if id == "m100"))
+        );
+        worker.apply_history(history(CHAT, &[100, 200]), false);
+        worker.store_message(
+            crate::archive::tests::message(CHAT, "m100", 100, false),
+            None,
+            None,
+        );
+        assert_eq!(stored(&worker, CHAT), ["m200"]);
+    }
+
+    #[tokio::test]
+    /// An incoming deletion may precede the phone's first history page.
+    async fn phone_deletion_before_history_prevents_message_import() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker
+            .handle_wa_event(Arc::new(
+                whatsapp_rust::types::events::Event::DeleteMessageForMeUpdate(
+                    whatsapp_rust::types::events::DeleteMessageForMeUpdate::builder()
+                        .chat_jid(CHAT.parse().unwrap())
+                        .message_id("m100".to_owned())
+                        .from_me(false)
+                        .timestamp(std::time::SystemTime::now().into())
+                        .action(Box::default())
+                        .from_full_sync(true)
+                        .build(),
+                ),
+            ))
+            .await;
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        assert_eq!(stored(&worker, CHAT), ["m200"]);
+    }
+
+    /// Own group messages use the account deletion event without a participant key.
+    #[tokio::test]
+    async fn own_group_deletion_keeps_other_messages_and_other_chats() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        let group = "1-1@g.us";
+        let other = "2-2@g.us";
+        for chat in [group, other] {
+            worker.archive.ensure_chat(chat, "Synthetic group").unwrap();
+            for id in ["own", "kept"] {
+                worker
+                    .archive
+                    .insert_message(&crate::archive::tests::message(chat, id, 100, true), None)
+                    .unwrap();
+            }
+        }
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::DeleteMessageForMeUpdate(
+                wa_events::DeleteMessageForMeUpdate::builder()
+                    .chat_jid(group.parse().unwrap())
+                    .message_id("own".to_owned())
+                    .from_me(true)
+                    .timestamp(std::time::SystemTime::now().into())
+                    .action(Box::default())
+                    .from_full_sync(false)
+                    .build(),
+            )))
+            .await;
+        assert_eq!(stored(&worker, group), ["kept"]);
+        assert_eq!(stored(&worker, other).len(), 2);
+        assert!(events.try_iter().any(|event|
+            matches!(event, Event::MessageDeleted { chat, id } if chat == group && id == "own")));
+        worker.store_message(
+            crate::archive::tests::message(group, "own", 100, true),
+            None,
+            None,
+        );
+        assert_eq!(stored(&worker, group), ["kept"]);
     }
 
     #[test]

@@ -252,8 +252,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   opens the full reaction picker for that message, so right-click is never required.
   Deleting a message asks first and says which copies go:
   deleting for everyone leaves "This message was deleted" in the chat, while
-  deleting for yourself removes the message from this computer only. Neither
-  can be undone, because the archive here is the only copy.
+  deleting for yourself removes the message from your phone and linked devices,
+  while other people keep their copy. Deleting for yourself needs a connection
+  and removes the local copy only after WhatsApp accepts the deletion. Phone
+  deletions sync here too, and history replay cannot restore deleted messages.
+  Neither operation can be undone.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
   timer, including replies, attachments, edits, and forwards. Forwarded copies
   use the destination chat's timer. Received messages remain in the local archive

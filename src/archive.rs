@@ -97,6 +97,11 @@ CREATE TABLE IF NOT EXISTS chat_removals (
     chat TEXT PRIMARY KEY,
     through INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS message_removals (
+    chat TEXT NOT NULL,
+    id TEXT NOT NULL,
+    PRIMARY KEY (chat, id)
+);
 CREATE TABLE IF NOT EXISTS lids (
     lid TEXT PRIMARY KEY,
     pn TEXT NOT NULL
@@ -875,6 +880,11 @@ impl Archive {
             "INSERT INTO chat_removals (chat, through) SELECT ?2, through FROM chat_removals WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through)",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")])?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO message_removals (chat, id)
+             SELECT ?2, id FROM message_removals WHERE chat = ?1",
+            params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")],
+        )?;
         let changed = self.connection.execute(
             "INSERT INTO chats (id, name, kind, pinned, pinned_at, pin_updated_at,
                 muted_until, mute_updated_at, locked, lock_updated_at, archived, archive_updated_at)
@@ -919,6 +929,9 @@ impl Archive {
     /// keeps the reactions already stored. Inserting a message is therefore one
     /// write instead of a read followed by a write.
     pub fn insert_message(&self, message: &Message, raw: Option<&[u8]>) -> Result<()> {
+        if self.message_removed(&message.chat, &message.id)? {
+            return Ok(());
+        }
         self.connection.execute(
             "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
@@ -1287,12 +1300,28 @@ impl Archive {
         Ok(())
     }
 
+    /// Atomically deletes a message and records a durable barrier against replay.
     pub fn delete_message(&self, chat: &str, id: &str) -> Result<bool> {
+        let transaction = self.connection.unchecked_transaction()?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO message_removals (chat, id) VALUES (?1, ?2)",
+            params![chat, id],
+        )?;
         let deleted = self.connection.execute(
             "DELETE FROM messages WHERE chat = ?1 AND id = ?2",
             params![chat, id],
         )?;
+        transaction.commit()?;
         Ok(deleted > 0)
+    }
+
+    /// Whether an account deletion prevents this message from being imported again.
+    pub fn message_removed(&self, chat: &str, id: &str) -> Result<bool> {
+        self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM message_removals WHERE chat = ?1 AND id = ?2)",
+            params![chat, id],
+            |row| row.get(0),
+        )
     }
 
     /// Removes a chat with everything stored for it.
@@ -1734,7 +1763,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }
@@ -3015,6 +3044,65 @@ pub(crate) mod tests {
         assert!(archive.delete_message(chat, "m3").expect("delete"));
         assert!(!archive.delete_message(chat, "m3").expect("delete"));
         assert!(archive.message(chat, "m3").expect("read").is_none());
+        archive
+            .insert_message(&message(chat, "m3", 103, false), None)
+            .unwrap();
+        assert!(
+            archive.message(chat, "m3").unwrap().is_none(),
+            "replay stays deleted"
+        );
+        archive.delete_message(chat, "not-yet-synced").unwrap();
+        archive
+            .insert_message(&message(chat, "not-yet-synced", 90, false), None)
+            .unwrap();
+        assert!(archive.message(chat, "not-yet-synced").unwrap().is_none());
+        archive.put_lid("9", "1").unwrap();
+        archive.delete_message("9@lid", "lid-deleted").unwrap();
+        archive.put_lid("9", "1").unwrap();
+        assert!(archive.message_removed(chat, "lid-deleted").unwrap());
+        archive.clear().unwrap();
+        assert!(!archive.message_removed(chat, "m3").unwrap());
+    }
+
+    #[test]
+    /// A failed SQL deletion must roll back its replay barrier as well as the row.
+    fn individual_deletion_rolls_back_on_storage_failure() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive
+            .insert_message(&message(chat, "kept", 100, true), None)
+            .unwrap();
+        archive.connection.execute_batch("CREATE TRIGGER refuse_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        assert!(archive.delete_message(chat, "kept").is_err());
+        assert!(archive.message(chat, "kept").unwrap().is_some());
+        assert!(!archive.message_removed(chat, "kept").unwrap());
+    }
+
+    #[test]
+    /// The encrypted archive retains only the deleted message's replay barrier.
+    fn individual_deletion_survives_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("fixture.db");
+        let key = [37; 32];
+        let chat = "1-1@g.us";
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat(chat, "Fixture").unwrap();
+            archive
+                .insert_message(&message(chat, "own", 100, true), None)
+                .unwrap();
+            archive.delete_message(chat, "own").unwrap();
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        archive
+            .insert_message(&message(chat, "own", 100, true), None)
+            .unwrap();
+        archive
+            .insert_message(&message(chat, "kept", 100, true), None)
+            .unwrap();
+        assert!(archive.message(chat, "own").unwrap().is_none());
+        assert!(archive.message(chat, "kept").unwrap().is_some());
     }
 
     #[test]

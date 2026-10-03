@@ -1574,3 +1574,17 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+
+#: src/ui/dialogs.rs:1114
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" instead. It "
+"cannot be undone."
+msgstr ""
+
+#: src/ui/dialogs.rs:1122
+msgid ""
+"This removes the message from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
+msgstr "Isso apaga a mensagem do seu telefone e dos dispositivos conectados. Outras pessoas mantêm suas cópias. Conecte-se ao WhatsApp para apagá-la. Isso não pode ser desfeito."
+

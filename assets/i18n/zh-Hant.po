@@ -1467,3 +1467,16 @@ msgstr "15 分鐘後"
 #: src/settings.rs:341
 msgid "After 1 hour"
 msgstr "1 小時後"
+
+
+#: src/ui/dialogs.rs:1114
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" instead. It "
+"cannot be undone."
+msgstr ""
+
+#: src/ui/dialogs.rs:1122
+msgid ""
+"This removes the message from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
+msgstr ""
