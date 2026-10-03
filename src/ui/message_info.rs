@@ -189,7 +189,7 @@ fn direct(app: &App, ui: &mut egui::Ui, message: &Message) {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 theme::text(ui, label, theme::medium(14.0), palette.text);
-                let when = match (reached, at) {
+                let when = match (reached, known_time(at)) {
                     (true, Some(at)) => crate::util::moment_stamp(locale, at),
                     (true, None) => gettext(locale, "Time not recorded").into_owned(),
                     (false, _) => "—".to_owned(),
@@ -304,7 +304,7 @@ fn section(
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 widgets::rich_text(ui, &name, theme::regular(14.0), palette.text);
-                if let Some(at) = at(recipient) {
+                if let Some(at) = known_time(at(recipient)) {
                     theme::text(
                         ui,
                         crate::util::moment_stamp(app.locale, at),
@@ -315,6 +315,12 @@ fn section(
             });
         });
     }
+}
+
+/// A receipt time of zero or less is unknown, not the Unix epoch. Archives
+/// filed before history receipts dropped it still hold a zero.
+fn known_time(at: Option<i64>) -> Option<i64> {
+    at.filter(|&at| at > 0)
 }
 
 /// Secondary text wrapped over as many lines as it needs.
@@ -330,4 +336,17 @@ fn note(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     );
     let (rect, _) = ui.allocate_exact_size(vec2(width, line.size().y), Sense::hover());
     line.paint(ui, rect.min, palette.secondary);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::known_time;
+
+    #[test]
+    fn a_zero_receipt_time_is_unknown() {
+        assert_eq!(known_time(Some(0)), None);
+        assert_eq!(known_time(Some(-1)), None);
+        assert_eq!(known_time(None), None);
+        assert_eq!(known_time(Some(1_700_000_000)), Some(1_700_000_000));
+    }
 }
