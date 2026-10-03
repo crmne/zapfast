@@ -49,8 +49,10 @@ protocol. These notes are for coding agents and new contributors.
   updates). Each `Account` in `src/account.rs` owns a `Backend`/`Worker`.
   Views draw the active account through `App`'s `Deref` to `Account`.
   Our own avatar at the top of the chat list opens the account switcher
-  (`src/ui/accounts.rs`): every account with its unread chats, Add account,
-  and Profile and settings. Events from an account that is not on screen are
+  (`src/ui/accounts.rs`) on every platform: only the accounts (picture, name
+  or number, unread chats, a check on the one on screen) and Add account; the
+  settings keep their own button. A dot on the avatar means another account
+  has unread chats. Events from an account that is not on screen are
   applied with `App::events_hidden` set: they update that account only, never
   the window's composer, dialogs, playback, or read state (a hidden account's
   remembered chat is not being read, so it sends no receipts). Process-wide

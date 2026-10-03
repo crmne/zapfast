@@ -1,11 +1,12 @@
 //! The account switcher: our own avatar at the top of the chat list opens a
-//! menu of the numbers linked here, with adding one and the settings below.
+//! menu of the numbers linked here and a way to add another. The settings
+//! keep their own button beside it.
 
 use egui::{Align2, CornerRadius, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::i18n::gettext;
-use crate::model::{AccountId, Action, Page};
+use crate::model::{AccountId, Action};
 use crate::theme::{self, Icon};
 
 use super::widgets;
@@ -29,11 +30,7 @@ pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Respo
     let me = app.me.clone().unwrap_or_default();
     let name = app.me_name.clone().unwrap_or_else(|| "You".to_owned());
     let picture = app.avatar(&me);
-    let label = if app.has_several_accounts() {
-        gettext(app.locale, "Switch account, profile and settings")
-    } else {
-        gettext(app.locale, "Accounts, profile and settings")
-    };
+    let label = gettext(app.locale, "Switch account");
     let response = ui
         .push_id(button_id(), |ui| {
             widgets::clickable_avatar(ui, &palette, &name, &me, size, picture.as_deref(), &label)
@@ -126,14 +123,6 @@ fn menu(app: &mut App, button: &egui::Response) {
                 &gettext(app.locale, "Add account"),
             ) {
                 app.actions.push(Action::AddAccount);
-            }
-            let settings = if app.page == Page::Settings {
-                gettext(app.locale, "Close settings")
-            } else {
-                gettext(app.locale, "Profile and settings")
-            };
-            if widgets::menu_item(ui, &palette, Some(Icon::Settings), &settings) {
-                app.actions.push(Action::ToggleSettings);
             }
         });
 }

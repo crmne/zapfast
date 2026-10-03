@@ -2305,6 +2305,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     });
             }
             "new-contact" => app.dialog = Some(Dialog::NewContact),
+            // The switcher under our avatar open with the one account.
+            "account-menu" => app.account_menu = true,
             // A second number linked beside the first, with unread chats of
             // its own, and the switcher under our avatar open.
             "accounts" | "accounts-closed" => {
@@ -4290,6 +4292,7 @@ mod tests {
             "accounts",
             "accounts,light",
             "accounts-closed",
+            "account-menu",
             "light",
             "archived",
             "chat-search",
@@ -6781,14 +6784,14 @@ mod tests {
         );
     }
 
-    /// While Settings are showing, the gear and the switcher's entry say what
-    /// a click does now: a screen reader reads the label, not the accent colour.
+    /// While Settings are showing, the gear says what a click does now: a
+    /// screen reader reads the label, not the accent colour. The avatar keeps
+    /// switching accounts.
     #[test]
-    fn the_header_buttons_say_they_close_settings() {
+    fn the_settings_button_says_it_closes_settings() {
         let mut app = app();
         let ctx = egui::Context::default();
-        // The macOS header carries neither button, so nothing follows the page
-        // there.
+        // The macOS header has no settings button: the app menu holds them.
         if crate::theme::macos_chrome(&ctx) {
             return;
         }
@@ -6825,7 +6828,7 @@ mod tests {
         };
         let closed = labels(&mut app, &ctx);
         assert!(
-            closed.contains(&"Accounts, profile and settings".to_owned()),
+            closed.contains(&"Switch account".to_owned()),
             "the avatar opens the account switcher: {closed:?}"
         );
         assert!(
@@ -6834,16 +6837,58 @@ mod tests {
         );
         app.actions
             .push(crate::model::Action::Open(crate::model::Page::Settings));
-        app.account_menu = true;
         let open = labels(&mut app, &ctx);
-        assert!(
-            open.contains(&"Close settings".to_owned()),
-            "the switcher says it closes settings: {open:?}"
-        );
         assert!(
             open.contains(&"Close settings (Ctrl+,)".to_owned()),
             "the gear says it closes settings: {open:?}"
         );
+    }
+
+    /// Our avatar opens the accounts and "Add account", nothing else: the
+    /// settings have their own button beside it. With one number that is how
+    /// a second one is added.
+    #[test]
+    fn the_switcher_lists_only_accounts_and_adding_one() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        app.account_menu = true;
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            labels = output
+                .platform_output
+                .accesskit_update
+                .expect("accessibility tree")
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| node.label().map(str::to_owned))
+                .collect();
+        }
+        assert!(labels.contains(&"Add account".to_owned()), "{labels:?}");
+        let name = app.account().display_label(app.locale);
+        assert!(
+            labels.iter().any(|label| label.starts_with(&name)),
+            "the one account is listed: {labels:?}"
+        );
+        for gone in ["Profile and settings", "Close settings"] {
+            assert!(!labels.contains(&gone.to_owned()), "{gone}: {labels:?}");
+        }
     }
 
     #[test]
@@ -10106,7 +10151,9 @@ mod tests {
             ]
             .into_iter()
             .filter(|stop| {
-                !crate::theme::macos_chrome(&ctx) || !matches!(stop, Stop::Profile | Stop::Settings)
+                // The Mac header keeps the account switcher; the settings
+                // live in the app menu there.
+                !crate::theme::macos_chrome(&ctx) || *stop != Stop::Settings
             })
             .collect();
             assert_eq!(

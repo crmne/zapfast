@@ -37,9 +37,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Links to your phone.** Scan a QR code or link with your phone number.
   Recent history is copied to this computer after linking and stored here.
   Several numbers can stay linked in one window: click your own picture at
-  the top of the chat list to switch between them or add another (on macOS
-  the picture appears once there is a second number; **Settings > Account >
-  Add account** works everywhere). Each number keeps its own keys, archive,
+  the top of the chat list to switch between them or to add another (a dot on
+  it means another number has unread chats; **Settings > Account > Add
+  account** works too). Each number keeps its own keys, archive,
   media, and per-number settings (notifications, receipts, typing, automatic
   downloads, wallpaper); the taskbar count adds up every number's unread
   chats. A setup from an earlier version moves into `accounts/1/` on the first

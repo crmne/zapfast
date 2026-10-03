@@ -280,12 +280,10 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                     );
                 } else {
-                    // The Mac header names no profile: the app menu holds the
-                    // settings. The switcher appears once there is a choice.
-                    if app.has_several_accounts() {
-                        super::accounts::avatar_button(app, ui, 30.0).tab_stop(Stop::Profile);
-                        ui.add_space(2.0);
-                    }
+                    // Our avatar opens the account switcher here as on the
+                    // other platforms, after the traffic lights' inset.
+                    super::accounts::avatar_button(app, ui, 30.0).tab_stop(Stop::Profile);
+                    ui.add_space(2.0);
                     theme::text(
                         ui,
                         crate::i18n::gettext(app.locale, "Chats"),
