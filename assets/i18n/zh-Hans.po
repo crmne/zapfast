@@ -179,34 +179,34 @@ msgstr "已锁定"
 msgid "No favorites yet"
 msgstr "还没有收藏"
 
-#: src/ui/chats.rs:865 src/app.rs:1931
+#: src/ui/chats.rs:885 src/app.rs:1931
 msgid "Message yourself"
 msgstr "给自己发消息"
 
-#: src/ui/chats.rs:1048
+#: src/ui/chats.rs:1068
 msgid "Draft:"
 msgstr "草稿："
 
-#: src/ui/chats.rs:1125 src/ui/chats.rs:1491 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1145 src/ui/chats.rs:1511 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "取消收藏"
 
-#: src/ui/chats.rs:1127 src/ui/chats.rs:1493 src/ui/conversation.rs:4104
+#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4104
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "添加到收藏"
 
-#: src/ui/chats.rs:1137 src/ui/chats.rs:1517 src/ui/conversation.rs:222
+#: src/ui/chats.rs:1157 src/ui/chats.rs:1537 src/ui/conversation.rs:222
 #: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
 msgid "Leave group"
 msgstr "退出群组"
 
-#: src/ui/chats.rs:1138 src/ui/chats.rs:1515 src/ui/conversation.rs:220
+#: src/ui/chats.rs:1158 src/ui/chats.rs:1535 src/ui/conversation.rs:220
 #: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
 msgid "Leave channel"
 msgstr "退出频道"
 
-#: src/ui/chats.rs:1153 src/ui/labels.rs:172 src/ui/labels.rs:219
+#: src/ui/chats.rs:1173 src/ui/labels.rs:172 src/ui/labels.rs:219
 msgid "Labels"
 msgstr "标签"
 

@@ -179,34 +179,34 @@ msgstr "Bloccati"
 msgid "No favorites yet"
 msgstr "Ancora nessun preferito"
 
-#: src/ui/chats.rs:865 src/app.rs:1931
+#: src/ui/chats.rs:885 src/app.rs:1931
 msgid "Message yourself"
 msgstr "Invia un messaggio a te stesso"
 
-#: src/ui/chats.rs:1048
+#: src/ui/chats.rs:1068
 msgid "Draft:"
 msgstr "Bozza:"
 
-#: src/ui/chats.rs:1125 src/ui/chats.rs:1491 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1145 src/ui/chats.rs:1511 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "Rimuovi dai preferiti"
 
-#: src/ui/chats.rs:1127 src/ui/chats.rs:1493 src/ui/conversation.rs:4104
+#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4104
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Aggiungi ai preferiti"
 
-#: src/ui/chats.rs:1137 src/ui/chats.rs:1517 src/ui/conversation.rs:222
+#: src/ui/chats.rs:1157 src/ui/chats.rs:1537 src/ui/conversation.rs:222
 #: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
 msgid "Leave group"
 msgstr "Esci dal gruppo"
 
-#: src/ui/chats.rs:1138 src/ui/chats.rs:1515 src/ui/conversation.rs:220
+#: src/ui/chats.rs:1158 src/ui/chats.rs:1535 src/ui/conversation.rs:220
 #: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
 msgid "Leave channel"
 msgstr "Esci dal canale"
 
-#: src/ui/chats.rs:1153 src/ui/labels.rs:172 src/ui/labels.rs:219
+#: src/ui/chats.rs:1173 src/ui/labels.rs:172 src/ui/labels.rs:219
 msgid "Labels"
 msgstr "Etichette"
 
