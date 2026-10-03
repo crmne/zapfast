@@ -1111,16 +1111,22 @@ fn confirm_delete_message(
     let (heading, body) = if for_everyone {
         (
             "Delete for everyone?",
-            "Everyone in this chat will see \"This message was deleted\" instead. It cannot be undone.",
+            crate::i18n::gettext(
+                app.locale,
+                "Everyone in this chat will see \"This message was deleted\" instead. It cannot be undone.",
+            ),
         )
     } else {
         (
             "Delete for me?",
-            "This removes the message from this computer. Other people keep their copy. Your phone will not send it again, so it cannot be undone.",
+            crate::i18n::gettext(
+                app.locale,
+                "This removes the message from your phone and linked devices. Other people keep their copy. Connect to WhatsApp to delete it. This cannot be undone.",
+            ),
         )
     };
     title(ui, app, heading);
-    theme::paragraph(ui, body, theme::regular(13.5), palette.text);
+    theme::paragraph(ui, body.into_owned(), theme::regular(13.5), palette.text);
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

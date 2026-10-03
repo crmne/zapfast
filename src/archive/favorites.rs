@@ -191,14 +191,17 @@ impl Archive {
 
     /// Files a favorite made under a privacy id under the phone number.
     /// Returns whether one moved.
-    pub(super) fn move_favorite(&self, from: &str, to: &str) -> Result<bool> {
-        let moved = self.connection.execute(
+    pub(super) fn move_favorite(
+        transaction: &rusqlite::Transaction<'_>,
+        from: &str,
+        to: &str,
+    ) -> Result<bool> {
+        let moved = transaction.execute(
             "UPDATE OR IGNORE favorites SET chat = ?2 WHERE chat = ?1",
             params![from, to],
         )? > 0;
-        self.connection
-            .execute("DELETE FROM favorites WHERE chat = ?1", params![from])?;
-        self.connection.execute(
+        transaction.execute("DELETE FROM favorites WHERE chat = ?1", params![from])?;
+        transaction.execute(
             "UPDATE favorite_changes SET chat = ?2 WHERE chat = ?1",
             params![from, to],
         )?;

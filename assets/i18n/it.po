@@ -179,34 +179,34 @@ msgstr "Bloccati"
 msgid "No favorites yet"
 msgstr "Ancora nessun preferito"
 
-#: src/ui/chats.rs:865 src/app.rs:1931
+#: src/ui/chats.rs:885 src/app.rs:1931
 msgid "Message yourself"
 msgstr "Invia un messaggio a te stesso"
 
-#: src/ui/chats.rs:1048
+#: src/ui/chats.rs:1068
 msgid "Draft:"
 msgstr "Bozza:"
 
-#: src/ui/chats.rs:1125 src/ui/chats.rs:1491 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1145 src/ui/chats.rs:1511 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "Rimuovi dai preferiti"
 
-#: src/ui/chats.rs:1127 src/ui/chats.rs:1493 src/ui/conversation.rs:4104
+#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4104
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Aggiungi ai preferiti"
 
-#: src/ui/chats.rs:1137 src/ui/chats.rs:1517 src/ui/conversation.rs:222
-#: src/ui/dialogs.rs:1225 src/ui/dialogs.rs:1743
+#: src/ui/chats.rs:1157 src/ui/chats.rs:1537 src/ui/conversation.rs:222
+#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
 msgid "Leave group"
 msgstr "Esci dal gruppo"
 
-#: src/ui/chats.rs:1138 src/ui/chats.rs:1515 src/ui/conversation.rs:220
-#: src/ui/dialogs.rs:1223 src/ui/dialogs.rs:1741
+#: src/ui/chats.rs:1158 src/ui/chats.rs:1535 src/ui/conversation.rs:220
+#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
 msgid "Leave channel"
 msgstr "Esci dal canale"
 
-#: src/ui/chats.rs:1153 src/ui/labels.rs:172 src/ui/labels.rs:219
+#: src/ui/chats.rs:1173 src/ui/labels.rs:172 src/ui/labels.rs:219
 msgid "Labels"
 msgstr "Etichette"
 
@@ -447,16 +447,16 @@ msgstr "Emoji che lo descrivono, come 😂 o ❤️"
 msgid "Send"
 msgstr "Invia"
 
-#: src/ui/dialogs.rs:1064 src/ui/dialogs.rs:1191 src/ui/dialogs.rs:1253
+#: src/ui/dialogs.rs:1064 src/ui/dialogs.rs:1197 src/ui/dialogs.rs:1259
 #: src/ui/settings.rs:937 src/ui/settings.rs:1500 src/ui/lock.rs:142
 msgid "Cancel"
 msgstr "Annulla"
 
-#: src/ui/dialogs.rs:1172
+#: src/ui/dialogs.rs:1178
 msgid "Remove this account?"
 msgstr "Rimuovere questo account?"
 
-#: src/ui/dialogs.rs:1178
+#: src/ui/dialogs.rs:1184
 msgid ""
 "This unlinks the number on this computer and deletes its local chats. Other "
 "accounts stay."
@@ -464,84 +464,84 @@ msgstr ""
 "Questo scollega il numero su questo computer ed elimina le chat locali. Gli "
 "altri account restano."
 
-#: src/ui/dialogs.rs:1187
+#: src/ui/dialogs.rs:1193
 msgid "Remove"
 msgstr "Rimuovi"
 
-#: src/ui/dialogs.rs:1207
+#: src/ui/dialogs.rs:1213
 msgid "Leave this channel?"
 msgstr "Uscire da questo canale?"
 
-#: src/ui/dialogs.rs:1209
+#: src/ui/dialogs.rs:1215
 msgid "Leave this group?"
 msgstr "Uscire da questo gruppo?"
 
-#: src/ui/dialogs.rs:1216
+#: src/ui/dialogs.rs:1222
 msgid ""
 "You will not receive new messages. The local history stays on this computer."
 msgstr ""
 "Non riceverai nuovi messaggi. La cronologia locale resta su questo computer."
 
-#: src/ui/dialogs.rs:1236
+#: src/ui/dialogs.rs:1242
 msgid "Leave channel and archive"
 msgstr "Esci dal canale e archivia"
 
-#: src/ui/dialogs.rs:1238
+#: src/ui/dialogs.rs:1244
 msgid "Leave group and archive"
 msgstr "Esci dal gruppo e archivia"
 
-#: src/ui/dialogs.rs:1463
+#: src/ui/dialogs.rs:1469
 msgid "Also save to your phone's contacts"
 msgstr "Salva anche nei contatti del telefono"
 
-#: src/ui/dialogs.rs:1528
+#: src/ui/dialogs.rs:1534
 msgid "Group"
 msgstr "Gruppo"
 
-#: src/ui/dialogs.rs:1530
+#: src/ui/dialogs.rs:1536
 msgid "Channel"
 msgstr "Canale"
 
-#: src/ui/dialogs.rs:1532
+#: src/ui/dialogs.rs:1538
 msgid "Contact"
 msgstr "Contatto"
 
-#: src/ui/dialogs.rs:1577
+#: src/ui/dialogs.rs:1583
 msgid "Edit group name"
 msgstr "Modifica il nome del gruppo"
 
-#: src/ui/dialogs.rs:1707
+#: src/ui/dialogs.rs:1713
 msgid "Saving…"
 msgstr "Salvataggio…"
 
-#: src/ui/dialogs.rs:1717
+#: src/ui/dialogs.rs:1723
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} membro"
 msgstr[1] "{} membri"
 
-#: src/ui/dialogs.rs:1980
+#: src/ui/dialogs.rs:1986
 msgid "Change group photo"
 msgstr "Cambia immagine del gruppo"
 
-#: src/ui/dialogs.rs:1986
+#: src/ui/dialogs.rs:1992
 msgid "Change photo"
 msgstr "Cambia immagine"
 
-#: src/ui/dialogs.rs:1987
+#: src/ui/dialogs.rs:1993
 msgid "Remove photo"
 msgstr "Rimuovi immagine"
 
-#: src/ui/dialogs.rs:2027
+#: src/ui/dialogs.rs:2033
 msgid "Group name"
 msgstr "Nome del gruppo"
 
-#: src/ui/dialogs.rs:2070
+#: src/ui/dialogs.rs:2076
 msgid "Save name (Enter)"
 msgstr "Salva nome (Invio)"
 
-#: src/ui/dialogs.rs:2082
+#: src/ui/dialogs.rs:2088
 msgid "Cancel (Escape)"
 msgstr "Annulla (Esc)"
 
@@ -1122,36 +1122,36 @@ msgstr ""
 "Non inviato: il messaggio a cui stai rispondendo non è disponibile su questo "
 "computer. Annulla la risposta per inviare senza citazione."
 
-#: src/app.rs:4786
+#: src/app.rs:4783
 msgid "Added to favorites"
 msgstr "Aggiunto ai preferiti"
 
-#: src/app.rs:4861
+#: src/app.rs:4858
 msgid "Sending the sticker pack…"
 msgstr "Invio del pacchetto di sticker…"
 
-#: src/app.rs:5154 src/ui/labels.rs:253
+#: src/app.rs:5151 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Hai {limit} etichette, il massimo che ZapFast conserva."
 
-#: src/app.rs:5834
+#: src/app.rs:5831
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5842
+#: src/app.rs:5839
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:5955
+#: src/app.rs:5952
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"
 
-#: src/app.rs:6387
+#: src/app.rs:6384
 msgid "Copied image"
 msgstr "Immagine copiata"
 
-#: src/app.rs:6390 src/app.rs:6395
+#: src/app.rs:6387 src/app.rs:6392
 msgid "Failed to copy image"
 msgstr "Impossibile copiare l'immagine"
 
@@ -1576,3 +1576,17 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+
+#: src/ui/dialogs.rs:1116
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" instead. It "
+"cannot be undone."
+msgstr ""
+
+#: src/ui/dialogs.rs:1124
+msgid ""
+"This removes the message from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
+msgstr ""
+
