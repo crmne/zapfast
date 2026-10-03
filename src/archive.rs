@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS pending_message_removals (
     account TEXT NOT NULL,
     chat TEXT NOT NULL,
     id TEXT NOT NULL,
+    confirmed INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (chat, id)
 );
 CREATE TABLE IF NOT EXISTS lids (
@@ -145,6 +146,11 @@ const CHAT_COLUMNS: &str =
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
+    (
+        "pending_message_removals",
+        "confirmed",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
     (
         "pending_message_removals",
         "account",
@@ -901,6 +907,12 @@ impl Archive {
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")])?;
         self.connection.execute(
             "INSERT OR IGNORE INTO message_removals (chat, id)
+             SELECT chat, id FROM pending_message_removals WHERE confirmed = 1 AND chat IN (?1, ?2)
+             AND account = (SELECT value FROM meta WHERE key = 'me_pn')",
+            params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")],
+        )?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO message_removals (chat, id)
              SELECT ?2, id FROM message_removals WHERE chat = ?1",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")],
         )?;
@@ -1366,10 +1378,41 @@ impl Archive {
     pub fn queue_message_removal(&self, account: &str, chat: &str, id: &str) -> Result<()> {
         self.connection.execute(
             "INSERT INTO pending_message_removals (account, chat, id) VALUES (?1, ?2, ?3)
-             ON CONFLICT(chat, id) DO UPDATE SET account = excluded.account",
+             ON CONFLICT(chat, id) DO UPDATE SET
+                confirmed = CASE WHEN account = excluded.account THEN confirmed ELSE 0 END,
+                account = excluded.account",
             params![account, chat, id],
         )?;
         Ok(())
+    }
+
+    /// Saves authoritative acceptance separately from fallible physical cleanup.
+    pub fn confirm_message_removal(&self, account: &str, chats: &[String], id: &str) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        // The caller supplies the current protocol account, including before its
+        // Connected event. Bind replay checks to that same persisted identity.
+        transaction.execute(
+            "INSERT INTO meta (key, value) VALUES ('me_pn', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [account],
+        )?;
+        for chat in chats {
+            transaction.execute(
+                "INSERT INTO pending_message_removals (account, chat, id, confirmed) VALUES (?1, ?2, ?3, 1)
+                 ON CONFLICT(chat, id) DO UPDATE SET account = excluded.account, confirmed = 1",
+                params![account, chat, id],
+            )?;
+        }
+        transaction.commit()
+    }
+
+    /// Accepted account deletions that need only local cleanup, never another send.
+    pub fn confirmed_message_removals(&self, account: &str) -> Result<Vec<(String, String)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id FROM pending_message_removals WHERE account = ?1 AND confirmed = 1",
+        )?;
+        statement
+            .query_map([account], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect()
     }
 
     /// Removes a refused request, or an intent completed with a durable barrier.
@@ -1383,9 +1426,9 @@ impl Archive {
 
     /// Incomplete account deletions to retry through the protocol client.
     pub fn pending_message_removals(&self, account: &str) -> Result<Vec<(String, String)>> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT chat, id FROM pending_message_removals WHERE account = ?1")?;
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id FROM pending_message_removals WHERE account = ?1 AND confirmed = 0",
+        )?;
         statement
             .query_map([account], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect()
@@ -1394,7 +1437,9 @@ impl Archive {
     /// Whether an account deletion prevents this message from being imported again.
     pub fn message_removed(&self, chat: &str, id: &str) -> Result<bool> {
         self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM message_removals WHERE chat = ?1 AND id = ?2)",
+            "SELECT EXISTS(SELECT 1 FROM message_removals WHERE chat = ?1 AND id = ?2)
+                OR EXISTS(SELECT 1 FROM pending_message_removals WHERE chat = ?1 AND id = ?2 AND confirmed = 1
+                    AND account = (SELECT value FROM meta WHERE key = 'me_pn'))",
             params![chat, id],
             |row| row.get(0),
         )
@@ -1854,6 +1899,92 @@ impl Archive {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    pub(crate) fn set_message_deletion_failure(archive: &super::Archive, fail: bool) {
+        archive.connection.execute_batch(if fail {
+            "CREATE TRIGGER reject_message_deletion BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
+        } else {
+            "DROP TRIGGER reject_message_deletion"
+        }).unwrap();
+    }
+
+    /// Confirmed work survives encrypted restart and blocks replay before cleanup.
+    #[test]
+    fn confirmed_deletion_survives_restart_without_an_outgoing_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("fixture.db");
+        let key = [73; 32];
+        let chat = "1@s.whatsapp.net";
+        let aliases = [chat.to_owned()];
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat(chat, "Fixture").unwrap();
+            archive
+                .insert_message(&message(chat, "removed", 100, true), None)
+                .unwrap();
+            archive
+                .confirm_message_removal("fixture-account", &aliases, "removed")
+                .unwrap();
+            set_message_deletion_failure(&archive, true);
+            assert!(archive.delete_message_aliases(&aliases, "removed").is_err());
+            // A confirmation for an unseen message also survives without message metadata.
+            archive
+                .confirm_message_removal("fixture-account", &aliases, "unseen")
+                .unwrap();
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert!(
+            archive
+                .confirmed_message_removals("another-account")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            archive
+                .confirmed_message_removals("fixture-account")
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(
+            archive
+                .pending_message_removals("fixture-account")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(archive.message_removed(chat, "removed").unwrap());
+        archive.set_meta("me_pn", "another-account").unwrap();
+        assert!(!archive.message_removed(chat, "removed").unwrap());
+        archive.set_meta("me_pn", "fixture-account").unwrap();
+        assert!(archive.message_removed(chat, "removed").unwrap());
+        archive
+            .insert_message(&message(chat, "unseen", 200, true), None)
+            .unwrap();
+        assert!(archive.message(chat, "unseen").unwrap().is_none());
+        set_message_deletion_failure(&archive, false);
+        for (chat, id) in archive
+            .confirmed_message_removals("fixture-account")
+            .unwrap()
+        {
+            archive.delete_message_aliases(&[chat], &id).unwrap();
+        }
+        assert!(archive.message(chat, "removed").unwrap().is_none());
+        assert!(
+            archive
+                .confirmed_message_removals("fixture-account")
+                .unwrap()
+                .is_empty()
+        );
+        archive
+            .confirm_message_removal("fixture-account", &aliases, "unlinked")
+            .unwrap();
+        archive.clear().unwrap();
+        assert!(
+            archive
+                .confirmed_message_removals("fixture-account")
+                .unwrap()
+                .is_empty()
+        );
+    }
     use super::*;
     use crate::model::Content;
 

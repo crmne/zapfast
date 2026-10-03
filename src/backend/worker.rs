@@ -1340,6 +1340,7 @@ impl Worker {
                 .map(|contact| (contact.id.clone(), contact))
                 .collect();
         }
+        self.retry_confirmed_message_removals();
         if self.me_pn.is_some() || self.me_lid.is_some() {
             self.emit(self.me_event());
         }
@@ -7064,6 +7065,19 @@ impl Worker {
         if self.message_removal_in_flight(&chat, &id) {
             return;
         }
+        match self.archive.message_removed(&chat, &id) {
+            Ok(true) => {
+                self.delete_message_here(&chat, &id);
+                return;
+            }
+            Ok(false) => {}
+            Err(_) => {
+                self.emit(Event::Error(
+                    "Could not read the message's deletion state".into(),
+                ));
+                return;
+            }
+        }
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error(
                 "Connect to WhatsApp to delete this message".to_owned(),
@@ -7138,6 +7152,7 @@ impl Worker {
 
     /// Retries interrupted deletions after reconnect without relying on redelivery.
     fn retry_message_removals(&mut self) {
+        self.retry_confirmed_message_removals();
         let Some(account) = self.me_pn.as_deref() else {
             return;
         };
@@ -7148,6 +7163,21 @@ impl Worker {
                 }
             }
             Err(_) => self.emit(Event::Error("Could not recover pending deletions".into())),
+        }
+    }
+
+    /// Replays accepted work locally even offline, without relying on redelivery.
+    fn retry_confirmed_message_removals(&mut self) {
+        let Some(account) = self.me_pn.as_deref() else {
+            return;
+        };
+        match self.archive.confirmed_message_removals(account) {
+            Ok(pending) => {
+                for (chat, id) in pending {
+                    self.delete_message_here(&chat, &id);
+                }
+            }
+            Err(_) => self.emit(Event::Error("Could not recover confirmed deletions".into())),
         }
     }
 
@@ -7173,6 +7203,28 @@ impl Worker {
         }
         aliases.sort_unstable();
         aliases.dedup();
+        let account = self.me_pn.clone().or_else(|| {
+            self.client
+                .as_ref()
+                .and_then(|client| client.pn())
+                .map(|jid| jid.to_non_ad_string())
+        });
+        let Some(account) = account else {
+            self.emit(Event::Error(
+                "Could not identify the account for the confirmed deletion".into(),
+            ));
+            return;
+        };
+        if self
+            .archive
+            .confirm_message_removal(&account, &aliases, id)
+            .is_err()
+        {
+            self.emit(Event::Error(
+                "Could not save the confirmed deletion for local recovery".into(),
+            ));
+            return;
+        }
         match self.archive.delete_message_aliases(&aliases, id) {
             Ok(_) => {
                 for chat in aliases {
@@ -7184,7 +7236,7 @@ impl Worker {
                 }
             }
             Err(_) => self.emit(Event::Error(
-                "WhatsApp accepted the deletion, but ZapFast could not remove its copy".to_owned(),
+                "WhatsApp accepted the deletion, but ZapFast could not remove its copy. Local cleanup is saved for restart or reconnect".to_owned(),
             )),
         }
     }
@@ -13804,6 +13856,60 @@ mod chat_removal_tests {
     use crate::model::{Content, Delivery};
 
     const CHAT: &str = "4915700000001@s.whatsapp.net";
+
+    /// An incoming confirmation survives failed cleanup and recovers offline.
+    #[tokio::test]
+    async fn incoming_confirmation_is_recoverable_after_storage_failure() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        crate::archive::tests::set_message_deletion_failure(&worker.archive, true);
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::DeleteMessageForMeUpdate(
+                wa_events::DeleteMessageForMeUpdate::builder()
+                    .chat_jid(CHAT.parse().unwrap())
+                    .message_id("m100".to_owned())
+                    .from_me(true)
+                    .timestamp(std::time::SystemTime::now().into())
+                    .action(Box::default())
+                    .from_full_sync(false)
+                    .build(),
+            )))
+            .await;
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Error(_)))
+        );
+        assert_eq!(
+            worker
+                .archive
+                .confirmed_message_removals(&worker.me())
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            worker
+                .archive
+                .pending_message_removals(&worker.me())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(worker.archive.message_removed(CHAT, "m100").unwrap());
+        worker.apply_history(history(CHAT, &[100, 200]), false);
+        crate::archive::tests::set_message_deletion_failure(&worker.archive, false);
+        assert!(worker.client.is_none());
+        worker.retry_confirmed_message_removals();
+        assert_eq!(stored(&worker, CHAT), ["m200"]);
+        assert!(
+            worker
+                .archive
+                .confirmed_message_removals(&worker.me())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(worker.archive.message_removed(CHAT, "m100").unwrap());
+    }
 
     /// A callback from the old bot stays fenced even when delivered after unlink.
     #[tokio::test]

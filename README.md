@@ -260,6 +260,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   archive and retried when that account reconnects, including requests whose
   acknowledgement was lost. Errors keep requests saved for retry. Unlinking clears those
   requests with the account's archive.
+  Confirmed deletions whose local cleanup fails are also saved for local repair
+  on restart or reconnect; they block history replay without another network request.
   Neither operation can be undone.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
   timer, including replies, attachments, edits, and forwards. Forwarded copies
