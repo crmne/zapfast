@@ -711,15 +711,12 @@ enum WithheldPage {
     Until(ChatId, String, super::PageKey),
 }
 
-/// Only invalid arguments are definitely rejected before sending. Transport,
-/// patch, and acknowledgement failures share the library's remaining errors.
+/// A failed attempt cannot settle any earlier attempt whose reply was lost.
 fn message_removal_outcome(
     result: Result<(), whatsapp_rust::AppStateError>,
 ) -> MessageRemovalOutcome {
-    use whatsapp_rust::AppStateError;
     match result {
         Ok(()) => MessageRemovalOutcome::Accepted,
-        Err(AppStateError::InvalidRequest(_)) => MessageRemovalOutcome::InvalidRequest,
         Err(_) => MessageRemovalOutcome::Uncertain,
     }
 }
@@ -4533,14 +4530,6 @@ impl Worker {
                     .remove(&(chat.clone(), id.clone()));
                 match outcome {
                     MessageRemovalOutcome::Accepted => self.delete_message_here(&chat, &id),
-                    MessageRemovalOutcome::InvalidRequest => {
-                        if self.archive.cancel_message_removal(&chat, &id).is_err() {
-                            self.emit(Event::Error("Could not cancel the pending deletion".into()));
-                        }
-                        self.emit(Event::Error(
-                            "The deletion request was invalid. The message was kept".to_owned(),
-                        ));
-                    }
                     MessageRemovalOutcome::Uncertain => self.emit(Event::Error(
                         "Could not confirm the deletion. It will be retried after reconnecting"
                             .into(),
@@ -13909,14 +13898,15 @@ mod chat_removal_tests {
         use whatsapp_rust::AppStateError;
         let (mut worker, events, _, _) = receipt_tests::worker();
         worker.apply_history(history(CHAT, &[100]), true);
+        worker
+            .archive
+            .queue_message_removal(&worker.me(), CHAT, "m100")
+            .unwrap();
         for error in [
             AppStateError::NotConnected,
             AppStateError::Internal(anyhow::anyhow!("fixture lost acknowledgement")),
+            AppStateError::InvalidRequest("no app state sync key available".into()),
         ] {
-            worker
-                .archive
-                .queue_message_removal(&worker.me(), CHAT, "m100")
-                .unwrap();
             worker
                 .message_removals_in_flight
                 .insert((CHAT.into(), "m100".into()));
@@ -13943,8 +13933,13 @@ mod chat_removal_tests {
                 1
             );
         }
-        let outcome = message_removal_outcome(Err(AppStateError::InvalidRequest("fixture".into())));
-        assert_eq!(outcome, MessageRemovalOutcome::InvalidRequest);
+        assert!(
+            events
+                .try_iter()
+                .all(|event| !matches!(event, Event::MessageDeleted { .. }))
+        );
+        let outcome = message_removal_outcome(Ok(()));
+        assert_eq!(outcome, MessageRemovalOutcome::Accepted);
         worker
             .handle_command(Command::MessageDeletedForMe {
                 generation: 0,
@@ -13960,16 +13955,8 @@ mod chat_removal_tests {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(stored(&worker, CHAT), ["m100"]);
-        assert!(
-            events
-                .try_iter()
-                .all(|event| !matches!(event, Event::MessageDeleted { .. }))
-        );
-        assert_eq!(
-            message_removal_outcome(Ok(())),
-            MessageRemovalOutcome::Accepted
-        );
+        assert!(stored(&worker, CHAT).is_empty());
+        assert!(worker.archive.message_removed(CHAT, "m100").unwrap());
     }
 
     #[tokio::test]
@@ -14148,7 +14135,7 @@ mod chat_removal_tests {
                 generation: 0,
                 chat: CHAT.into(),
                 id: "m100".into(),
-                outcome: MessageRemovalOutcome::InvalidRequest,
+                outcome: MessageRemovalOutcome::Uncertain,
             })
             .await;
         assert_eq!(stored(&worker, CHAT), ["m100", "m200"]);

@@ -23,7 +23,6 @@ pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageRemovalOutcome {
     Accepted,
-    InvalidRequest,
     /// The library cannot establish whether the write was accepted.
     Uncertain,
 }

@@ -258,7 +258,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   deletions sync here too, and history replay cannot restore deleted messages.
   Interrupted requests are saved for the signed-in account in the encrypted
   archive and retried when that account reconnects, including requests whose
-  acknowledgement was lost. Invalid requests are cancelled. Unlinking clears those
+  acknowledgement was lost. Errors keep requests saved for retry. Unlinking clears those
   requests with the account's archive.
   Neither operation can be undone.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
