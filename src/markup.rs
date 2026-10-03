@@ -471,14 +471,15 @@ fn phone_at(text: &str, at: usize) -> Option<(usize, String)> {
         end -= text[..end].chars().next_back()?.len_utf8();
     }
     let following = text[end..].chars().next();
-    // ISO dates have enough digits to look like phone numbers, but are not.
-    let candidate = &text[at..end];
-    let iso_date = candidate.len() == 10
-        && candidate.as_bytes()[4] == b'-'
-        && candidate.as_bytes()[7] == b'-'
-        && candidate[..4].bytes().all(|byte| byte.is_ascii_digit())
-        && candidate[5..7].bytes().all(|byte| byte.is_ascii_digit())
-        && candidate[8..].bytes().all(|byte| byte.is_ascii_digit());
+    // ISO dates have enough digits to look like phone numbers, even with a
+    // time after them, but are not.
+    let iso_date = text.as_bytes().get(at..at + 10).is_some_and(|date| {
+        date[4] == b'-'
+            && date[7] == b'-'
+            && date[..4].iter().all(u8::is_ascii_digit)
+            && date[5..7].iter().all(u8::is_ascii_digit)
+            && date[8..].iter().all(u8::is_ascii_digit)
+    });
     (digits.len() >= 7
         && digits.len() <= 15
         && !iso_date
@@ -853,9 +854,17 @@ mod tests {
         };
         assert_eq!(
             links("CPF 000.000.000-00; call 000 0000-0000 or +00 (00) 00000-0000."),
-            vec!["tel:00000000000", "tel:0000000000000"]
+            vec!["tel:00000000000", "tel:+0000000000000"]
         );
         assert_eq!(links("Call (212) 555-1212"), vec!["tel:2125551212"]);
+        assert_eq!(
+            parse("Call (212) 555-1212", &[])
+                .into_iter()
+                .find(|span| span.link.is_some())
+                .unwrap()
+                .text,
+            "(212) 555-1212"
+        );
         assert_eq!(links("Call +1 (212) 555-1212"), vec!["tel:+12125551212"]);
         let spans = parse("Call +1 (212) 555-1212", &[]);
         assert_eq!(
@@ -863,6 +872,7 @@ mod tests {
             "+1 (212) 555-1212"
         );
         assert!(links("Date 2026-10-01").is_empty());
+        assert!(links("Date 2026-10-01 12:30").is_empty());
         assert_eq!(
             links("1234567@example.com"),
             vec!["mailto:1234567@example.com"]

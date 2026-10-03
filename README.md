@@ -44,7 +44,8 @@ source, see [Getting started](https://zapfast.rocks/getting-started/).
 ## Developing
 
 ```sh
-cargo run --features demo -- --demo   # offline sample chats, no WhatsApp connection
+cargo run --features demo -- --demo            # offline sample chats, no WhatsApp connection
+cargo run --features demo -- --demo-page phone-menu
 ```
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers issues, pull requests, and checks;
