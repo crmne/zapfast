@@ -272,6 +272,7 @@ pub enum Command {
     },
     /// Completion of the account's deletion sync, before removing our copy.
     MessageDeletedForMe {
+        generation: u64,
         chat: ChatId,
         id: String,
         deleted: bool,

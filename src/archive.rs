@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS message_removals (
     id TEXT NOT NULL,
     PRIMARY KEY (chat, id)
 );
+CREATE TABLE IF NOT EXISTS pending_message_removals (
+    chat TEXT NOT NULL,
+    id TEXT NOT NULL,
+    PRIMARY KEY (chat, id)
+);
 CREATE TABLE IF NOT EXISTS lids (
     lid TEXT PRIMARY KEY,
     pn TEXT NOT NULL
@@ -869,13 +874,14 @@ impl Archive {
     /// the favorite mark to the canonical chat. Returns whether that chat's
     /// preferences were touched.
     pub fn put_lid(&self, lid: &str, pn: &str) -> Result<bool> {
+        self.merge_group_recipient(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
+        let favorite =
+            self.move_favorite(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
+        let transaction = self.connection.unchecked_transaction()?;
         self.connection.execute(
             "INSERT INTO lids (lid, pn) VALUES (?1, ?2) ON CONFLICT(lid) DO UPDATE SET pn = excluded.pn",
             params![lid, pn],
         )?;
-        self.merge_group_recipient(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
-        let favorite =
-            self.move_favorite(&format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
         self.connection.execute(
             "INSERT INTO chat_removals (chat, through) SELECT ?2, through FROM chat_removals WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through)",
@@ -884,6 +890,11 @@ impl Archive {
             "INSERT OR IGNORE INTO message_removals (chat, id)
              SELECT ?2, id FROM message_removals WHERE chat = ?1",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net")],
+        )?;
+        let removed = self.connection.execute(
+            "DELETE FROM messages WHERE chat = ?1 AND id IN
+             (SELECT id FROM message_removals WHERE chat = ?1)",
+            params![format!("{pn}@s.whatsapp.net")],
         )?;
         let changed = self.connection.execute(
             "INSERT INTO chats (id, name, kind, pinned, pinned_at, pin_updated_at,
@@ -912,7 +923,8 @@ impl Archive {
                 archive_updated_at = NULLIF(MAX(COALESCE(archive_updated_at, -1), COALESCE(excluded.archive_updated_at, -1)), -1)",
             params![format!("{lid}@lid"), format!("{pn}@s.whatsapp.net"), pn],
         )?;
-        Ok(changed > 0 || favorite)
+        transaction.commit()?;
+        Ok(changed > 0 || favorite || removed > 0)
     }
 
     pub fn lids(&self) -> Result<Vec<(String, String)>> {
@@ -1311,8 +1323,37 @@ impl Archive {
             "DELETE FROM messages WHERE chat = ?1 AND id = ?2",
             params![chat, id],
         )?;
+        self.cancel_message_removal(chat, id)?;
         transaction.commit()?;
         Ok(deleted > 0)
+    }
+
+    /// Records intent before sending so interruption cannot lose the deletion.
+    pub fn queue_message_removal(&self, chat: &str, id: &str) -> Result<()> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO pending_message_removals (chat, id) VALUES (?1, ?2)",
+            params![chat, id],
+        )?;
+        Ok(())
+    }
+
+    /// Removes a refused request, or an intent completed with a durable barrier.
+    pub fn cancel_message_removal(&self, chat: &str, id: &str) -> Result<()> {
+        self.connection.execute(
+            "DELETE FROM pending_message_removals WHERE chat = ?1 AND id = ?2",
+            params![chat, id],
+        )?;
+        Ok(())
+    }
+
+    /// Incomplete account deletions to retry through the protocol client.
+    pub fn pending_message_removals(&self) -> Result<Vec<(String, String)>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT chat, id FROM pending_message_removals")?;
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect()
     }
 
     /// Whether an account deletion prevents this message from being imported again.
@@ -1322,6 +1363,14 @@ impl Archive {
             params![chat, id],
             |row| row.get(0),
         )
+    }
+
+    /// Deletion barriers to reconcile when a privacy id gains its canonical chat.
+    pub fn removed_message_ids(&self, chat: &str) -> Result<Vec<String>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id FROM message_removals WHERE chat = ?1")?;
+        statement.query_map([chat], |row| row.get(0))?.collect()
     }
 
     /// Removes a chat with everything stored for it.
@@ -1763,7 +1812,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }
@@ -3073,10 +3122,71 @@ pub(crate) mod tests {
         archive
             .insert_message(&message(chat, "kept", 100, true), None)
             .unwrap();
+        archive.queue_message_removal(chat, "kept").unwrap();
         archive.connection.execute_batch("CREATE TRIGGER refuse_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
         assert!(archive.delete_message(chat, "kept").is_err());
         assert!(archive.message(chat, "kept").unwrap().is_some());
         assert!(!archive.message_removed(chat, "kept").unwrap());
+        assert_eq!(
+            archive.pending_message_removals().unwrap(),
+            [(chat.into(), "kept".into())]
+        );
+    }
+
+    /// Mapping removes an existing canonical copy and rolls back on storage failure.
+    #[test]
+    fn privacy_mapping_reconciles_deleted_messages_atomically() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive
+            .insert_message(&message(chat, "removed", 100, false), None)
+            .unwrap();
+        archive
+            .insert_message(&message(chat, "kept", 200, false), None)
+            .unwrap();
+        archive.delete_message("9@lid", "removed").unwrap();
+        archive.connection.execute_batch("CREATE TRIGGER refuse_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        assert!(archive.put_lid("9", "1").is_err());
+        assert!(archive.lids().unwrap().is_empty());
+        assert!(!archive.message_removed(chat, "removed").unwrap());
+        assert!(archive.message(chat, "removed").unwrap().is_some());
+        archive
+            .connection
+            .execute_batch("DROP TRIGGER refuse_delete")
+            .unwrap();
+        assert!(archive.put_lid("9", "1").unwrap());
+        assert!(archive.message_removed(chat, "removed").unwrap());
+        assert!(archive.message(chat, "removed").unwrap().is_none());
+        assert!(archive.message(chat, "kept").unwrap().is_some());
+    }
+
+    /// Interrupted requests persist independently of acceptance and clear on unlink.
+    #[test]
+    fn pending_message_deletion_survives_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("fixture.db");
+        let key = [37; 32];
+        let chat = "1-1@g.us";
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat(chat, "Fixture").unwrap();
+            archive
+                .insert_message(&message(chat, "own", 100, true), None)
+                .unwrap();
+            archive.queue_message_removal(chat, "own").unwrap();
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert_eq!(
+            archive.pending_message_removals().unwrap(),
+            [(chat.into(), "own".into())]
+        );
+        assert!(archive.message(chat, "own").unwrap().is_some());
+        archive.delete_message(chat, "own").unwrap();
+        assert!(archive.pending_message_removals().unwrap().is_empty());
+        archive.queue_message_removal(chat, "kept").unwrap();
+        archive.clear().unwrap();
+        assert!(archive.pending_message_removals().unwrap().is_empty());
     }
 
     #[test]

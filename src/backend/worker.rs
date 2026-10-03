@@ -1821,15 +1821,31 @@ impl Worker {
         if self.lid_to_pn.get(lid).is_some_and(|known| known == pn) {
             return;
         }
+        let changed = match self.archive.put_lid(lid, pn) {
+            Ok(changed) => changed,
+            Err(error) => {
+                log::warn!("could not remember an id mapping: {error}");
+                return;
+            }
+        };
         self.lid_to_pn.insert(lid.to_owned(), pn.to_owned());
-        match self.archive.put_lid(lid, pn) {
-            Ok(true) => self.emit_chats(),
-            Ok(false) => {}
-            Err(error) => log::warn!("could not remember an id mapping: {error}"),
+        if changed {
+            self.emit_chats();
+        }
+        let chat = format!("{pn}@s.whatsapp.net");
+        match self.archive.removed_message_ids(&chat) {
+            Ok(ids) => {
+                for id in ids {
+                    self.emit(Event::MessageDeleted {
+                        chat: chat.clone(),
+                        id,
+                    });
+                }
+            }
+            Err(_) => self.emit(Event::Error("Could not refresh deleted messages".into())),
         }
         // Receipts filed under the privacy id may name messages archived
         // under the phone number.
-        let chat = format!("{pn}@s.whatsapp.net");
         for id in self.archive.waiting_receipts(&chat).unwrap_or_default() {
             self.settle_early_receipts(&chat, &id);
         }
@@ -2267,6 +2283,7 @@ impl Worker {
                 };
                 self.remember_identity(pn, lid, name);
                 self.set_status(LinkStatus::Connected);
+                self.retry_message_removals();
                 // A new connection may reach a phone that was away before.
                 self.older_warned.clear();
                 self.refresh_legacy_preferences();
@@ -4481,10 +4498,21 @@ impl Worker {
             Command::DeleteLocal { chat, id } => {
                 self.delete_message_for_me(chat, id);
             }
-            Command::MessageDeletedForMe { chat, id, deleted } => {
+            Command::MessageDeletedForMe {
+                generation,
+                chat,
+                id,
+                deleted,
+            } => {
+                if generation != self.privacy_generation {
+                    return;
+                }
                 if deleted {
                     self.delete_message_here(&chat, &id);
                 } else {
+                    if self.archive.cancel_message_removal(&chat, &id).is_err() {
+                        self.emit(Event::Error("Could not cancel the pending deletion".into()));
+                    }
                     self.emit(Event::Error(
                         "WhatsApp did not accept the deletion. Try again when connected".to_owned(),
                     ));
@@ -6992,7 +7020,12 @@ impl Worker {
         };
         let message = match self.archive.message(&chat, &id) {
             Ok(Some(message)) => message,
-            Ok(None) => return,
+            Ok(None) => {
+                if self.archive.cancel_message_removal(&chat, &id).is_err() {
+                    self.emit(Event::Error("Could not clear the pending deletion".into()));
+                }
+                return;
+            }
             Err(_) => {
                 self.emit(Event::Error(
                     "Could not read the message to delete".to_owned(),
@@ -7011,6 +7044,11 @@ impl Worker {
         } else {
             None
         };
+        if self.archive.queue_message_removal(&chat, &id).is_err() {
+            self.emit(Event::Error("Could not save the pending deletion".into()));
+            return;
+        }
+        let generation = self.privacy_generation;
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let deleted = client
@@ -7025,8 +7063,25 @@ impl Worker {
                 )
                 .await
                 .is_ok();
-            let _ = commands.send(Command::MessageDeletedForMe { chat, id, deleted });
+            let _ = commands.send(Command::MessageDeletedForMe {
+                generation,
+                chat,
+                id,
+                deleted,
+            });
         });
+    }
+
+    /// Retries interrupted deletions after reconnect without relying on redelivery.
+    fn retry_message_removals(&mut self) {
+        match self.archive.pending_message_removals() {
+            Ok(pending) => {
+                for (chat, id) in pending {
+                    self.delete_message_for_me(chat, id);
+                }
+            }
+            Err(_) => self.emit(Event::Error("Could not recover pending deletions".into())),
+        }
     }
 
     /// Persists an accepted deletion and wakes the UI, including for unseen messages.
@@ -13833,6 +13888,7 @@ mod chat_removal_tests {
         );
         worker
             .handle_command(Command::MessageDeletedForMe {
+                generation: 0,
                 chat: CHAT.into(),
                 id: "m100".into(),
                 deleted: false,
@@ -13841,6 +13897,7 @@ mod chat_removal_tests {
         assert_eq!(stored(&worker, CHAT), ["m100", "m200"]);
         worker
             .handle_command(Command::MessageDeletedForMe {
+                generation: 0,
                 chat: CHAT.into(),
                 id: "m100".into(),
                 deleted: true,
@@ -13881,6 +13938,59 @@ mod chat_removal_tests {
             .await;
         worker.apply_history(history(CHAT, &[100, 200]), true);
         assert_eq!(stored(&worker, CHAT), ["m200"]);
+    }
+
+    /// Late mappings remove an already visible canonical copy and notify the UI.
+    #[test]
+    fn privacy_mapping_updates_visible_deletions() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        worker.archive.delete_message("9@lid", "m100").unwrap();
+        worker.learn_lid("9", CHAT.split('@').next().unwrap());
+        assert_eq!(stored(&worker, CHAT), ["m200"]);
+        assert!(events.try_iter().any(|event|
+            matches!(event, Event::MessageDeleted { chat, id } if chat == CHAT && id == "m100")));
+    }
+
+    /// A completion from an unlinked account cannot delete the new account's row.
+    #[tokio::test]
+    async fn stale_deletion_completion_preserves_the_current_account() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100]), true);
+        worker.archive.queue_message_removal(CHAT, "m100").unwrap();
+        worker.privacy_generation = 1;
+        worker
+            .handle_command(Command::MessageDeletedForMe {
+                generation: 0,
+                chat: CHAT.into(),
+                id: "m100".into(),
+                deleted: true,
+            })
+            .await;
+        assert_eq!(stored(&worker, CHAT), ["m100"]);
+        assert_eq!(worker.archive.pending_message_removals().unwrap().len(), 1);
+        worker.retry_message_removals();
+        assert_eq!(
+            worker.archive.pending_message_removals().unwrap().len(),
+            1,
+            "offline recovery keeps the intent"
+        );
+        worker
+            .handle_command(Command::MessageDeletedForMe {
+                generation: 1,
+                chat: CHAT.into(),
+                id: "m100".into(),
+                deleted: true,
+            })
+            .await;
+        assert!(stored(&worker, CHAT).is_empty());
+        assert!(
+            worker
+                .archive
+                .pending_message_removals()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// Own group messages use the account deletion event without a participant key.

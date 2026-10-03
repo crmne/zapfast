@@ -256,6 +256,8 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   while other people keep their copy. Deleting for yourself needs a connection
   and removes the local copy only after WhatsApp accepts the deletion. Phone
   deletions sync here too, and history replay cannot restore deleted messages.
+  Interrupted requests are saved in the encrypted archive and retried when
+  WhatsApp reconnects. Unlinking clears those requests with the account's archive.
   Neither operation can be undone.
 - **Disappearing-message timers.** Outgoing messages use the chat's known
   timer, including replies, attachments, edits, and forwards. Forwarded copies
