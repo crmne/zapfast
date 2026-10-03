@@ -30,7 +30,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("Image");
-                crate::ui::widgets::rich_text(ui, name, theme::semibold(14.0), palette.text);
+                // The buttons are laid out first, from the right, and the name
+                // takes what room they leave, scrolling if it needs more.
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
                         ui,
@@ -122,6 +123,16 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     {
                         app.actions.push(Action::ZoomImageOut);
                     }
+                    ui.add_space(8.0);
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        crate::ui::widgets::scrolling_text(
+                            ui,
+                            name,
+                            theme::semibold(14.0),
+                            palette.text,
+                            palette.overlay,
+                        );
+                    });
                 });
             });
             ui.separator();

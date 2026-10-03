@@ -4968,6 +4968,74 @@ mod tests {
         assert_eq!(ctx.zoom_factor(), interface_zoom);
     }
 
+    /// In a narrow window a long image name stays clear of the preview's
+    /// buttons: cut before the first of them, it rests at its start, scrolls
+    /// to its end, rests, and scrolls back.
+    #[test]
+    fn a_long_image_name_scrolls_beside_the_preview_buttons() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let (photo, _) = sample_files(&app);
+        let name = "holiday_photo_from_the_beach_with_everyone_at_sunset.jpg";
+        let long = photo.with_file_name(name);
+        std::fs::copy(&photo, &long).unwrap();
+        app.actions.push(crate::model::Action::PreviewImage(long));
+        let mut narrow = |time: f64| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(360.0, 640.0),
+                    )),
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output.shapes
+        };
+        // Where a text was painted, its width, and the rect it was clipped to.
+        let find = |shapes: &[egui::epaint::ClippedShape], text: &str| {
+            shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(shape) if shape.galley.job.text == text => {
+                        Some((shape.pos.x, shape.galley.size().x, clipped.clip_rect))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{text} was not painted"))
+        };
+        narrow(0.0);
+        let shapes = narrow(0.0);
+        let (x, width, clip) = find(&shapes, name);
+        let (fit, _, _) = find(&shapes, "Fit");
+        assert!(clip.right() < fit, "the name runs under the buttons");
+        assert!(
+            width > clip.width(),
+            "the name should not fit in 360 points"
+        );
+        assert_eq!(x, clip.left(), "the name starts at its start");
+
+        let travel = f64::from(width - clip.width()) / 40.0;
+        assert_eq!(find(&narrow(2.9), name).0, x, "it rests three seconds");
+        let (end, _, end_clip) = find(&narrow(3.0 + travel + 1.0), name);
+        assert!(
+            (end + width - end_clip.right()).abs() < 0.5,
+            "the name's end shows at the right edge"
+        );
+        assert_eq!(end_clip, clip, "the name stays inside its room");
+        assert_eq!(find(&narrow(3.0 + travel + 2.9), name).0, end);
+        let (back, _, _) = find(&narrow(2.0 * (3.0 + travel) + 0.5), name);
+        assert_eq!(back, x, "and it scrolls back to its start");
+    }
+
     /// Opens the sample photo in the preview and waits for it to decode, so
     /// input meets a settled, fitted picture. Returns the fitted scale.
     fn open_sample_preview(app: &mut App, ctx: &egui::Context) -> f32 {
