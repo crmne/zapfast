@@ -364,7 +364,15 @@ msgstr "檢視一次的訊息。為了保護您的隱私，只會在您的手機
 msgid "This message can only be seen on your phone."
 msgstr "此訊息只能在您的手機上查看。"
 
-#: src/ui/conversation.rs:5664
+#: src/ui/conversation.rs:5525
+msgid "Message"
+msgstr "傳訊息"
+
+#: src/ui/conversation.rs:5526
+msgid "Copy number"
+msgstr "複製號碼"
+
+#: src/ui/conversation.rs:5753
 msgid "Open in a map"
 msgstr "在地圖中開啟"
 

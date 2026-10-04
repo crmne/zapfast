@@ -395,21 +395,29 @@ fn link_and_mention(span: Span, mentions: &[Mention]) -> Vec<Span> {
                 .is_some_and(|c| c.is_alphanumeric());
         if at_boundary {
             if (bytes[i].is_ascii_digit() || matches!(bytes[i], b'+' | b'('))
-                && let Some((end, digits)) = phone_at(text, i)
+                && let Some((end, digits, valid)) = phone_at(text, i)
             {
-                push_plain(&mut out, &span, &text[plain_start..i]);
-                out.push(Span {
-                    text: text[i..end].to_owned(),
-                    link: Some(format!("tel:{digits}")),
-                    bold: span.bold,
-                    italic: span.italic,
-                    strike: span.strike,
-                    quote: span.quote,
-                    ..Default::default()
-                });
-                plain_start = end;
-                i = end;
-                continue;
+                if valid {
+                    push_plain(&mut out, &span, &text[plain_start..i]);
+                    out.push(Span {
+                        text: text[i..end].to_owned(),
+                        link: Some(format!("tel:{digits}")),
+                        bold: span.bold,
+                        italic: span.italic,
+                        strike: span.strike,
+                        quote: span.quote,
+                        ..Default::default()
+                    });
+                    plain_start = end;
+                    i = end;
+                    continue;
+                }
+                // Don't retry a suffix of an oversized number as a new link.
+                // Let the email parser inspect the whole token when it ends in @.
+                if digits.len() > 15 && text[end..].chars().next() != Some('@') {
+                    i = end;
+                    continue;
+                }
             }
             if bytes[i] == b'@'
                 && let Some((end, mention)) = mention_at(text, i, mentions)
@@ -450,9 +458,27 @@ fn link_and_mention(span: Span, mentions: &[Mention]) -> Vec<Span> {
     out
 }
 
-/// Finds a phone number with optional spaces, hyphens, and parentheses.
+/// Finds a phone candidate with optional spaces, hyphens, and parentheses.
 /// Dots are excluded so formatted tax IDs such as XXX.XXX.XXX-XX stay plain.
-fn phone_at(text: &str, at: usize) -> Option<(usize, String)> {
+/// The validity flag lets the caller skip an oversized number as one token.
+fn phone_at(text: &str, at: usize) -> Option<(usize, String, bool)> {
+    // Reject an ISO date before scanning through the space after it; the next
+    // token may be a time or a separate phone number.
+    let date_at = at + usize::from(text[at..].starts_with('('));
+    let iso_date = text
+        .as_bytes()
+        .get(date_at..date_at + 10)
+        .is_some_and(|date| {
+            date[4] == b'-'
+                && date[7] == b'-'
+                && date[..4].iter().all(u8::is_ascii_digit)
+                && date[5..7].iter().all(u8::is_ascii_digit)
+                && date[8..].iter().all(u8::is_ascii_digit)
+        });
+    if iso_date {
+        return Some((date_at + 10, String::new(), false));
+    }
+
     let mut end = at;
     let mut digits = String::new();
     for (offset, c) in text[at..].char_indices() {
@@ -471,30 +497,17 @@ fn phone_at(text: &str, at: usize) -> Option<(usize, String)> {
         end -= text[..end].chars().next_back()?.len_utf8();
     }
     let following = text[end..].chars().next();
-    // ISO dates have enough digits to look like phone numbers, even with a
-    // time after them, but are not.
-    let date_at = at + usize::from(text[at..].starts_with('('));
-    let iso_date = text
-        .as_bytes()
-        .get(date_at..date_at + 10)
-        .is_some_and(|date| {
-            date[4] == b'-'
-                && date[7] == b'-'
-                && date[..4].iter().all(u8::is_ascii_digit)
-                && date[5..7].iter().all(u8::is_ascii_digit)
-                && date[8..].iter().all(u8::is_ascii_digit)
-        });
-    (digits.len() >= 7
+    let valid = digits.len() >= 7
         && digits.len() <= 15
-        && !iso_date
-        && following.is_none_or(|c| !c.is_ascii_alphanumeric() && c != '@'))
-    .then_some((
+        && following.is_none_or(|c| !c.is_ascii_alphanumeric() && c != '@');
+    (!digits.is_empty()).then_some((
         end,
         if text[at..].starts_with('+') {
             format!("+{digits}")
         } else {
             digits
         },
+        valid,
     ))
 }
 
@@ -878,9 +891,15 @@ mod tests {
         assert!(links("Date 2026-10-01").is_empty());
         assert!(links("Date (2026-10-01)").is_empty());
         assert!(links("Date 2026-10-01 12:30").is_empty());
+        assert_eq!(links("Date 2026-10-01 1234567"), vec!["tel:1234567"]);
+        assert!(links("Reference 12345678-90123456").is_empty());
         assert_eq!(
             links("1234567@example.com"),
             vec!["mailto:1234567@example.com"]
+        );
+        assert_eq!(
+            links("1234567890123456@example.com"),
+            vec!["mailto:1234567890123456@example.com"]
         );
         assert!(links("id 000000; long id 0000000000000000").is_empty());
         assert!(links("abc00000000000").is_empty());

@@ -365,15 +365,16 @@ msgstr "一次性消息。为保护你的隐私，它只能在手机上打开。
 msgid "This message can only be seen on your phone."
 msgstr "此消息只能在手机上查看。"
 
-#: src/ui/conversation.rs:5664
-#: src/ui/conversation.rs:PHONE_MESSAGE
+
+#: src/ui/conversation.rs:5525
 msgid "Message"
 msgstr "发送消息"
 
-#: src/ui/conversation.rs:PHONE_COPY
+#: src/ui/conversation.rs:5526
 msgid "Copy number"
 msgstr "复制号码"
 
+#: src/ui/conversation.rs:5753
 msgid "Open in a map"
 msgstr "在地图中打开"
 

@@ -379,15 +379,16 @@ msgstr ""
 msgid "This message can only be seen on your phone."
 msgstr "Esta mensagem só pode ser vista no seu celular."
 
-#: src/ui/conversation.rs:5664
-#: src/ui/conversation.rs:PHONE_MESSAGE
+
+#: src/ui/conversation.rs:5525
 msgid "Message"
 msgstr "Conversar"
 
-#: src/ui/conversation.rs:PHONE_COPY
+#: src/ui/conversation.rs:5526
 msgid "Copy number"
 msgstr "Copiar número"
 
+#: src/ui/conversation.rs:5753
 msgid "Open in a map"
 msgstr "Abrir em um mapa"
 

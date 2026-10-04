@@ -380,15 +380,16 @@ msgstr ""
 msgid "This message can only be seen on your phone."
 msgstr "Bu mesaj yalnızca telefonunuzda görülebilir."
 
-#: src/ui/conversation.rs:5664
-#: src/ui/conversation.rs:PHONE_MESSAGE
+
+#: src/ui/conversation.rs:5525
 msgid "Message"
 msgstr "Mesaj gönder"
 
-#: src/ui/conversation.rs:PHONE_COPY
+#: src/ui/conversation.rs:5526
 msgid "Copy number"
 msgstr "Numarayı kopyala"
 
+#: src/ui/conversation.rs:5753
 msgid "Open in a map"
 msgstr "Haritada aç"
 
