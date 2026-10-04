@@ -470,6 +470,12 @@ WhatsApp lets you edit a group's info, rename it with the pencil beside its
 name and click its photo to change it. Clicking a `chat.whatsapp.com` invite
 link shows the group and joins it without leaving ZapFast.
 
+**Development builds** also show the group's description above its members.
+The text is selectable, preserves line breaks and emoji, and scrolls when long.
+Descriptions stay in each account's encrypted archive across restarts and update
+when WhatsApp announces changes. Groups without a description omit the section.
+Description editing still requires your phone.
+
 ## Links
 
 A phone number in a message is a link: clicking it offers to start a chat
