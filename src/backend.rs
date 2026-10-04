@@ -685,6 +685,9 @@ pub enum Command {
     GroupInfo {
         chat: ChatId,
         name: Option<String>,
+        description: String,
+        /// Description notice generation when this metadata was requested.
+        description_generation: u64,
         participants: Vec<String>,
         read_only: bool,
         ephemeral_expiration: Option<u32>,

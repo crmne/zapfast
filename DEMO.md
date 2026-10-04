@@ -81,6 +81,7 @@ with `app-lock` (the password is `demo-password`), `app-lock-wrong`,
 `unnamed-group`, and `react-picker` show those dialogs; `group-info`,
 `group-info-rename`, `group-info-saving`, and `group-info-locked` a group's
 editable info; `meta-ai` a Meta AI reply with code and a table.
+The editable group includes a multiline description; the locked group has none.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.
