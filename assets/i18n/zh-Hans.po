@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-09 09:58-0300\n"
+"POT-Creation-Date: 2026-10-09 10:02-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -197,12 +197,12 @@ msgid "Add to favorites"
 msgstr "添加到收藏"
 
 #: src/ui/chats.rs:1211 src/ui/chats.rs:1591 src/ui/conversation.rs:234
-#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
+#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1757
 msgid "Leave group"
 msgstr "退出群组"
 
 #: src/ui/chats.rs:1212 src/ui/chats.rs:1589 src/ui/conversation.rs:232
-#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
+#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1755
 msgid "Leave channel"
 msgstr "退出频道"
 
@@ -522,45 +522,45 @@ msgstr "频道"
 msgid "Contact"
 msgstr "联系人"
 
-#: src/ui/dialogs.rs:1583
+#: src/ui/dialogs.rs:1591
 msgid "Edit group name"
 msgstr "编辑群组名称"
 
-#: src/ui/dialogs.rs:1713
+#: src/ui/dialogs.rs:1721
 msgid "Saving…"
 msgstr "正在保存…"
 
-#: src/ui/dialogs.rs:1723
+#: src/ui/dialogs.rs:1731
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} 位成员"
 
-#: src/ui/dialogs.rs:1784
+#: src/ui/dialogs.rs:1787
 msgid "Description"
 msgstr ""
 
-#: src/ui/dialogs.rs:2017
+#: src/ui/dialogs.rs:2020
 msgid "Change group photo"
 msgstr "更换群组头像"
 
-#: src/ui/dialogs.rs:2023
+#: src/ui/dialogs.rs:2026
 msgid "Change photo"
 msgstr "更换头像"
 
-#: src/ui/dialogs.rs:2024
+#: src/ui/dialogs.rs:2027
 msgid "Remove photo"
 msgstr "移除头像"
 
-#: src/ui/dialogs.rs:2064
+#: src/ui/dialogs.rs:2067
 msgid "Group name"
 msgstr "群组名称"
 
-#: src/ui/dialogs.rs:2107
+#: src/ui/dialogs.rs:2110
 msgid "Save name (Enter)"
 msgstr "保存名称（Enter）"
 
-#: src/ui/dialogs.rs:2119
+#: src/ui/dialogs.rs:2122
 msgid "Cancel (Escape)"
 msgstr "取消（Esc）"
 

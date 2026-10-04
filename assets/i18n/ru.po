@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-09 09:58-0300\n"
+"POT-Creation-Date: 2026-10-09 10:02-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -198,12 +198,12 @@ msgid "Add to favorites"
 msgstr "Добавить в избранное"
 
 #: src/ui/chats.rs:1211 src/ui/chats.rs:1591 src/ui/conversation.rs:234
-#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
+#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1757
 msgid "Leave group"
 msgstr "Покинуть группу"
 
 #: src/ui/chats.rs:1212 src/ui/chats.rs:1589 src/ui/conversation.rs:232
-#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
+#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1755
 msgid "Leave channel"
 msgstr "Покинуть канал"
 
@@ -547,15 +547,15 @@ msgstr "Канал"
 msgid "Contact"
 msgstr "Контакт"
 
-#: src/ui/dialogs.rs:1583
+#: src/ui/dialogs.rs:1591
 msgid "Edit group name"
 msgstr "Изменить название группы"
 
-#: src/ui/dialogs.rs:1713
+#: src/ui/dialogs.rs:1721
 msgid "Saving…"
 msgstr "Сохранение…"
 
-#: src/ui/dialogs.rs:1723
+#: src/ui/dialogs.rs:1731
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
@@ -563,31 +563,31 @@ msgstr[0] "{} участник"
 msgstr[1] "{} участника"
 msgstr[2] "{} участников"
 
-#: src/ui/dialogs.rs:1784
+#: src/ui/dialogs.rs:1787
 msgid "Description"
 msgstr ""
 
-#: src/ui/dialogs.rs:2017
+#: src/ui/dialogs.rs:2020
 msgid "Change group photo"
 msgstr "Изменить фото группы"
 
-#: src/ui/dialogs.rs:2023
+#: src/ui/dialogs.rs:2026
 msgid "Change photo"
 msgstr "Изменить фото"
 
-#: src/ui/dialogs.rs:2024
+#: src/ui/dialogs.rs:2027
 msgid "Remove photo"
 msgstr "Удалить фото"
 
-#: src/ui/dialogs.rs:2064
+#: src/ui/dialogs.rs:2067
 msgid "Group name"
 msgstr "Название группы"
 
-#: src/ui/dialogs.rs:2107
+#: src/ui/dialogs.rs:2110
 msgid "Save name (Enter)"
 msgstr "Сохранить имя (Enter)"
 
-#: src/ui/dialogs.rs:2119
+#: src/ui/dialogs.rs:2122
 msgid "Cancel (Escape)"
 msgstr "Отмена (Escape)"
 

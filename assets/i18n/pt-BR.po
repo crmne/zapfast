@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-09 09:58-0300\n"
+"POT-Creation-Date: 2026-10-09 10:02-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -197,12 +197,12 @@ msgid "Add to favorites"
 msgstr "Adicionar aos favoritos"
 
 #: src/ui/chats.rs:1211 src/ui/chats.rs:1591 src/ui/conversation.rs:234
-#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
+#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1757
 msgid "Leave group"
 msgstr "Sair do grupo"
 
 #: src/ui/chats.rs:1212 src/ui/chats.rs:1589 src/ui/conversation.rs:232
-#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
+#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1755
 msgid "Leave channel"
 msgstr "Sair do canal"
 
@@ -545,46 +545,46 @@ msgstr "Canal"
 msgid "Contact"
 msgstr "Contato"
 
-#: src/ui/dialogs.rs:1583
+#: src/ui/dialogs.rs:1591
 msgid "Edit group name"
 msgstr "Editar nome do grupo"
 
-#: src/ui/dialogs.rs:1713
+#: src/ui/dialogs.rs:1721
 msgid "Saving…"
 msgstr "Salvando…"
 
-#: src/ui/dialogs.rs:1723
+#: src/ui/dialogs.rs:1731
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} membro"
 msgstr[1] "{} membros"
 
-#: src/ui/dialogs.rs:1784
+#: src/ui/dialogs.rs:1787
 msgid "Description"
 msgstr "Descrição"
 
-#: src/ui/dialogs.rs:2017
+#: src/ui/dialogs.rs:2020
 msgid "Change group photo"
 msgstr "Alterar foto do grupo"
 
-#: src/ui/dialogs.rs:2023
+#: src/ui/dialogs.rs:2026
 msgid "Change photo"
 msgstr "Alterar foto"
 
-#: src/ui/dialogs.rs:2024
+#: src/ui/dialogs.rs:2027
 msgid "Remove photo"
 msgstr "Remover foto"
 
-#: src/ui/dialogs.rs:2064
+#: src/ui/dialogs.rs:2067
 msgid "Group name"
 msgstr "Nome do grupo"
 
-#: src/ui/dialogs.rs:2107
+#: src/ui/dialogs.rs:2110
 msgid "Save name (Enter)"
 msgstr "Salvar nome (Enter)"
 
-#: src/ui/dialogs.rs:2119
+#: src/ui/dialogs.rs:2122
 msgid "Cancel (Escape)"
 msgstr "Cancelar (Esc)"
 

@@ -1538,9 +1538,17 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
         crate::i18n::gettext(app.locale, "Contact")
     };
     title(ui, app, heading.as_ref());
-    // Scale the photo and member list to fit the window.
-    let window = ui.ctx().content_rect().height();
-    let photo = (window * 0.34).clamp(120.0, 240.0);
+    let description = chat
+        .group_description
+        .as_deref()
+        .filter(|text| chat.is_group() && !text.trim().is_empty());
+    // Described groups also leave room around the dialog. In short windows,
+    // shrink the photo so the description and actions retain their space.
+    let window = ui.ctx().content_rect().height() - if description.is_some() { 112.0 } else { 0.0 };
+    let mut photo = (window * 0.34).clamp(120.0, 240.0);
+    if description.is_some() {
+        photo = photo.min((window - 400.0).max(96.0));
+    }
     let picture = app.avatar_full(id).or_else(|| app.avatar(id));
     let mine = app.me.as_deref() == Some(id);
     let editable = chat.phone().is_some() && !mine;
@@ -1772,12 +1780,7 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
     }
     ui.add_space(8.0);
     let mut description_height = 0.0;
-    if chat.is_group()
-        && let Some(description) = chat
-            .group_description
-            .as_deref()
-            .filter(|text| !text.trim().is_empty())
-    {
+    if let Some(description) = description {
         let top = ui.cursor().top();
         theme::text(
             ui,
