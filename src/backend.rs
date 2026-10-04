@@ -232,6 +232,11 @@ pub enum Command {
         chat: ChatId,
         message: String,
     },
+    /// Downloads a motion photo's clip.
+    DownloadMotion {
+        chat: ChatId,
+        message: String,
+    },
     /// Requests a profile picture; `full` selects the info-dialog size.
     FetchAvatar {
         id: String,
@@ -626,6 +631,12 @@ pub enum Command {
         id: String,
         result: Result<PathBuf, String>,
     },
+    /// Internal motion-clip download result.
+    MotionDownloaded {
+        chat: ChatId,
+        id: String,
+        result: Result<PathBuf, String>,
+    },
     /// Internal recent-sticker download result.
     StickerFetched {
         hash: String,
@@ -868,6 +879,12 @@ pub enum Event {
     },
     Media {
         card: Option<usize>,
+        chat: ChatId,
+        message: String,
+        result: Result<PathBuf, String>,
+    },
+    /// A motion photo's clip finished downloading, or failed.
+    Motion {
         chat: ChatId,
         message: String,
         result: Result<PathBuf, String>,

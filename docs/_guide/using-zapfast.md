@@ -217,6 +217,12 @@ Click a downloaded photo to preview it, with zoom (wheel, Ctrl+wheel, or a
 pinch) and **Copy image**. **Save as…** in a downloaded attachment's
 right-click menu keeps a copy wherever you choose.
 
+A motion photo has a play button in its corner. Click it to download the short
+clip to the local cache and play it over the photo, muted and in a loop; click
+again to return to the photo. In the photo's preview, the play button in the
+header plays the clip over the whole window with sound. The clip follows the
+same download limit.
+
 ## Polls
 
 Choose **Create poll** from the plus menu beside the message field to ask a

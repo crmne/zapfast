@@ -412,6 +412,9 @@ pub enum Content {
     Image {
         caption: Option<String>,
         media: Media,
+        /// The short clip of a motion photo.
+        #[serde(default)]
+        motion: Option<Motion>,
     },
     Video {
         caption: Option<String>,
@@ -834,6 +837,15 @@ impl Content {
             new.path = old.path.clone();
         }
         if let (
+            Self::Image { motion: new, .. },
+            Self::Image {
+                motion: Some(old), ..
+            },
+        ) = (&mut *self, old)
+        {
+            *new = Some(old.clone());
+        }
+        if let (
             Self::Interactive {
                 card: Some(new), ..
             },
@@ -913,6 +925,17 @@ impl Media {
     pub fn is_within_download_limit(&self) -> bool {
         self.size <= ATTACHMENT_DOWNLOAD_LIMIT
     }
+}
+
+/// A motion photo's clip. Its download keys stay in the archive.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Motion {
+    /// Decrypted downloaded file.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    /// Non-persisted download state.
+    #[serde(skip)]
+    pub state: MediaState,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1374,6 +1397,17 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
+    /// Downloads a motion photo's clip.
+    DownloadMotion {
+        chat: ChatId,
+        message: String,
+    },
+    /// Plays a motion photo's clip over its photo, downloading it first, or
+    /// goes back to the photo.
+    ToggleMotion {
+        chat: ChatId,
+        message: String,
+    },
     /// Plays or pauses a downloaded voice or audio message.
     PlayVoice {
         message: String,
@@ -1810,6 +1844,7 @@ mod tests {
         );
         // A caption is searched too, and previewed the same way.
         let photo = super::Content::Image {
+            motion: None,
             caption: Some("a photo of a Zebra".into()),
             media: media(),
         };
@@ -2078,6 +2113,7 @@ mod tests {
         assert_eq!(Content::text("hi\nthere").summary(), "hi");
         assert_eq!(
             Content::Image {
+                motion: None,
                 caption: Some("look".into()),
                 media: media()
             }
@@ -2086,6 +2122,7 @@ mod tests {
         );
         assert_eq!(
             Content::Image {
+                motion: None,
                 caption: None,
                 media: media()
             }
@@ -2109,6 +2146,7 @@ mod tests {
         assert_eq!(Content::text("hi\nthere").full_summary(), "hi\nthere");
         assert_eq!(
             Content::Image {
+                motion: None,
                 caption: Some("look\nat this".into()),
                 media: media()
             }

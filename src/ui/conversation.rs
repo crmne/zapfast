@@ -1654,6 +1654,8 @@ struct View<'a> {
     now: i64,
     /// Animate media only while this window is active.
     animate: bool,
+    /// The motion photo of this chat whose clip plays.
+    motion_playing: Option<&'a str>,
     player: &'a crate::audio::Player,
     video: &'a crate::video::Player,
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
@@ -1760,6 +1762,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         contacts: &app.contacts,
         now: crate::util::now(),
         animate: app.window_focused,
+        motion_playing: app
+            .motion_playing
+            .as_ref()
+            .filter(|(playing, _)| *playing == chat.id)
+            .map(|(_, message)| message.as_str()),
         player: &app.player,
         video: &app.video,
         copy_rows: app.copy_rows.as_ref(),
@@ -4449,8 +4456,15 @@ fn content(
             let span = (message.quoted.is_some() || preview.is_some()).then_some(width);
             rich_body(ui, view, message, text, width, Some(reserve), span, actions)
         }
-        Content::Image { caption, media } => {
+        Content::Image {
+            caption,
+            media,
+            motion,
+        } => {
             let drawn = picture(ui, view, message, media, width, None, actions);
+            if let Some(motion) = motion {
+                motion_clip(ui, view, message, motion, drawn, actions);
+            }
             ui.ctx().data_mut(|data| {
                 data.insert_temp(bubble_id(&view.chat.id, &message.id).with("picture"), drawn);
             });
@@ -5976,6 +5990,74 @@ fn picture(
         });
     }
     rect
+}
+
+/// Draws a motion photo's badge in the corner of its picture, and its clip
+/// over the picture while it plays, muted and looping.
+fn motion_clip(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    motion: &crate::model::Motion,
+    picture: Rect,
+    actions: &mut Vec<Action>,
+) {
+    if !ui.is_rect_visible(picture) {
+        return;
+    }
+    let playing = view.motion_playing == Some(message.id.as_str());
+    let toggle = || Action::ToggleMotion {
+        chat: view.chat.id.clone(),
+        message: message.id.clone(),
+    };
+    let badge = Rect::from_min_size(picture.min + vec2(6.0, 6.0), Vec2::splat(28.0));
+    let response = ui
+        .interact(
+            badge,
+            bubble_id(&view.chat.id, &message.id).with("motion"),
+            Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.clicked() {
+        actions.push(toggle());
+    }
+    let frame = motion
+        .path
+        .as_ref()
+        .filter(|_| playing)
+        .map(|path| (path, animation::frame(ui, path, picture, view.animate)));
+    let icon = match (&frame, &motion.state) {
+        (Some((_, animation::Frame::Ready(texture))), _) => {
+            ui.painter().rect_filled(picture, 6.0, Color32::BLACK);
+            paint_texture(
+                ui,
+                fit_within(texture.size_vec2(), picture),
+                texture.id(),
+                Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                6.0,
+            );
+            Some(Icon::Pause)
+        }
+        (Some((path, animation::Frame::Unavailable)), _) => {
+            // No decoder here plays it: the system player gets the clip.
+            actions.push(toggle());
+            actions.push(Action::OpenFile((*path).clone()));
+            Some(Icon::Play)
+        }
+        (Some((_, animation::Frame::Pending)), _) => None,
+        (None, MediaState::Downloading) if playing => None,
+        (None, MediaState::Failed(_)) if playing => Some(Icon::CircleAlert),
+        (None, _) => Some(Icon::Play),
+    };
+    ui.painter()
+        .circle_filled(badge.center(), 14.0, Color32::from_black_alpha(140));
+    match icon {
+        Some(icon) => theme::paint_icon(ui, icon, badge, 14.0, Color32::WHITE),
+        None => theme::paint_spinner(ui, badge, 16.0, Color32::WHITE),
+    }
+    if let MediaState::Failed(error) = &motion.state {
+        response.on_hover_text(error);
+    }
 }
 
 /// Stickers always download when visible, while other media follows the setting.

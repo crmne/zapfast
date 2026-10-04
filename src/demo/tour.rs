@@ -164,6 +164,7 @@ fn show_photos(app: &mut App, photo: super::stock::Photo, caption: &str) {
             && let Content::Image {
                 media,
                 caption: text,
+                ..
             } = &mut row.content
         {
             media.path = Some(super::stock::save_photo(&dir, photo));

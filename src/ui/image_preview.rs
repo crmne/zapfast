@@ -3,7 +3,7 @@
 use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Stroke, Vec2, vec2};
 
 use crate::app::App;
-use crate::model::Action;
+use crate::model::{Action, Content, MediaState};
 use crate::theme::{self, Icon};
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
@@ -11,6 +11,20 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         return;
     };
     let palette = app.palette;
+    // The motion photo this picture belongs to, when it is one.
+    let motion = app.open_chat.as_ref().and_then(|chat| {
+        let messages = &app.conversations.get(chat)?.messages;
+        messages.iter().find_map(|message| match &message.content {
+            Content::Image {
+                media,
+                motion: Some(motion),
+                ..
+            } if media.path.as_deref() == Some(preview.path()) => {
+                Some((chat.clone(), message.id.clone(), motion.clone()))
+            }
+            _ => None,
+        })
+    });
     let frame = Frame::new()
         .fill(palette.overlay)
         .stroke(Stroke::new(1.0, palette.outline))
@@ -74,6 +88,41 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     {
                         app.actions
                             .push(Action::CopyImage(preview.path().to_owned()));
+                    }
+                    if let Some((chat, message, motion)) = &motion {
+                        // A failed download says why, and a click tries again.
+                        let (icon, hint) = match &motion.state {
+                            MediaState::Failed(error) => (Icon::CircleAlert, error.as_str()),
+                            _ => (Icon::Play, "Play motion photo"),
+                        };
+                        if matches!(motion.state, MediaState::Downloading) {
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::hover());
+                            theme::paint_spinner(ui, rect, 18.0, palette.secondary);
+                        } else if theme::icon_button(
+                            ui,
+                            icon,
+                            18.0,
+                            palette.secondary,
+                            palette.text,
+                            hint,
+                        )
+                        .clicked()
+                        {
+                            match &motion.path {
+                                Some(path) => {
+                                    app.actions.push(Action::CloseImagePreview);
+                                    app.actions.push(Action::ExpandVideo {
+                                        message: message.clone(),
+                                        path: path.clone(),
+                                    });
+                                }
+                                None => app.actions.push(Action::DownloadMotion {
+                                    chat: chat.clone(),
+                                    message: message.clone(),
+                                }),
+                            }
+                        }
                     }
                     ui.add_space(8.0);
                     // Right to left: zoom in, the current scale, zoom out.

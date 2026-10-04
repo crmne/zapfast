@@ -54,6 +54,15 @@ pub struct Archive {
 
 pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
+/// Marks an archived photo whose clip is known as a motion photo. Only the
+/// photo's own sender can give it a clip.
+const MARK_MOTION: &str = "UPDATE messages SET content = json_set(content, '$.motion', json('{}'))
+    WHERE chat = ?1 AND id = ?2 AND json_valid(content)
+      AND json_extract(content, '$.kind') = 'image'
+      AND json_extract(content, '$.motion') IS NULL
+      AND EXISTS (SELECT 1 FROM motion_clips c
+                  WHERE c.chat = ?1 AND c.parent = ?2 AND c.sender = messages.sender)";
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS chats (
     id TEXT PRIMARY KEY,
@@ -82,6 +91,16 @@ CREATE TABLE IF NOT EXISTS messages (
     PRIMARY KEY (chat, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat, timestamp);
+CREATE TABLE IF NOT EXISTS motion_clips (
+    chat TEXT NOT NULL,
+    parent TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    raw BLOB NOT NULL,
+    PRIMARY KEY (chat, parent, sender)
+);
+CREATE TRIGGER IF NOT EXISTS delete_motion_clips AFTER DELETE ON messages BEGIN
+    DELETE FROM motion_clips WHERE chat = OLD.chat AND parent = OLD.id;
+END;
 CREATE INDEX IF NOT EXISTS messages_stickers ON messages (from_me, timestamp)
     WHERE json_extract(content, '$.kind') = 'sticker';
 CREATE TABLE IF NOT EXISTS contacts (
@@ -865,6 +884,68 @@ impl Archive {
         Ok(Some(message))
     }
 
+    /// Keeps the download keys of a motion photo's clip and marks its photo.
+    /// Returns whether an archived photo changed.
+    pub fn put_motion_clip(
+        &self,
+        chat: &str,
+        parent: &str,
+        sender: &str,
+        raw: &[u8],
+    ) -> Result<bool> {
+        if self.message_removed(chat, parent)? {
+            return Ok(false);
+        }
+        self.connection.execute(
+            "INSERT OR REPLACE INTO motion_clips (chat, parent, sender, raw) VALUES (?1, ?2, ?3, ?4)",
+            params![chat, parent, sender, raw],
+        )?;
+        Ok(self
+            .connection
+            .execute(MARK_MOTION, params![chat, parent])?
+            > 0)
+    }
+
+    /// The raw video message of a motion photo's clip, from the photo's sender.
+    pub fn motion_clip(&self, chat: &str, parent: &str) -> Result<Option<Vec<u8>>> {
+        self.connection
+            .query_row(
+                "SELECT c.raw FROM motion_clips c
+                 JOIN messages m ON m.chat = c.chat AND m.id = c.parent AND m.sender = c.sender
+                 WHERE c.chat = ?1 AND c.parent = ?2",
+                params![chat, parent],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn put_motion_path(&self, chat: &str, id: &str, path: Option<&Path>) -> Result<()> {
+        let Some(mut message) = self.message(chat, id)? else {
+            return Ok(());
+        };
+        if let Content::Image { motion, .. } = &mut message.content {
+            motion.get_or_insert_default().path = path.map(Path::to_path_buf);
+            self.set_content(chat, id, &message.content, message.edited)?;
+        }
+        Ok(())
+    }
+
+    /// Returns all recorded motion clip paths.
+    pub fn motion_paths(&self) -> Result<Vec<(String, String, PathBuf)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, json_extract(content, '$.motion.path') AS path
+             FROM messages WHERE path IS NOT NULL",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                PathBuf::from(row.get::<_, String>(2)?),
+            ))
+        })?;
+        rows.collect()
+    }
+
     /// Returns all recorded attachment paths.
     pub fn media_paths(&self) -> Result<Vec<(String, String, std::path::PathBuf)>> {
         let mut statement = self.connection.prepare(
@@ -1054,6 +1135,10 @@ impl Archive {
                 message.history_order,
             ],
         )?;
+        if matches!(message.content, Content::Image { motion: None, .. }) {
+            self.connection
+                .execute(MARK_MOTION, params![message.chat, message.id])?;
+        }
         self.connection.execute(
             "UPDATE chats SET last_activity = MAX(last_activity, ?2) WHERE id = ?1",
             params![message.chat, message.timestamp],
@@ -1340,6 +1425,17 @@ impl Archive {
         rows.collect()
     }
 
+    /// Messages filed as unsupported without a named kind, with their raw protobuf.
+    pub fn unsupported_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
+             AND json_extract(content, '$.kind') = 'unsupported'
+             AND json_extract(content, '$.what') = 'message'",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
     /// Interactive messages eligible for a derived presentation upgrade.
     /// Deleted and edited rows are left intact; callers preserve local media paths.
     pub fn interactive_placeholders(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
@@ -1576,6 +1672,7 @@ impl Archive {
     fn purge_chat_rows(&self, chat: &str) -> Result<()> {
         for table in [
             "messages",
+            "motion_clips",
             "group_receipts",
             "polls",
             "poll_history",
@@ -1605,6 +1702,8 @@ impl Archive {
                  SELECT json_extract(m.content, '$.media.path') AS file FROM messages m WHERE {filter}
                  UNION ALL
                  SELECT json_extract(m.content, '$.card.image.path') FROM messages m WHERE {filter}
+                 UNION ALL
+                 SELECT json_extract(m.content, '$.motion.path') FROM messages m WHERE {filter}
                  UNION ALL
                  SELECT json_extract(c.value, '$.image.path')
                  FROM messages m, json_each(m.content, '$.card.carousel') c WHERE {filter}
@@ -1928,7 +2027,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }
@@ -2650,6 +2749,74 @@ pub(crate) mod tests {
     /// downloaded image, a poll with its history and a vote, and a group
     /// receipt. The builder checks each table, so a missing row cannot let a
     /// broken purge pass.
+    #[test]
+    fn only_the_sender_of_a_photo_gives_it_a_motion_clip() {
+        let archive = Archive::in_memory().expect("archive");
+        let chat = "group@g.us";
+        archive.ensure_chat(chat, "Group").expect("chat");
+        let mut photo = message(chat, "photo", 100, false);
+        photo.sender = "alice@s.whatsapp.net".into();
+        photo.content = Content::Image {
+            motion: None,
+            caption: None,
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                path: None,
+                state: crate::model::MediaState::Idle,
+            },
+        };
+        archive.insert_message(&photo, None).expect("insert");
+        let marked = |archive: &Archive| {
+            matches!(
+                archive.message(chat, "photo").unwrap().unwrap().content,
+                Content::Image {
+                    motion: Some(_),
+                    ..
+                }
+            )
+        };
+        assert!(
+            !archive
+                .put_motion_clip(chat, "photo", "mallory@s.whatsapp.net", b"theirs")
+                .unwrap()
+        );
+        assert!(!marked(&archive));
+        assert_eq!(archive.motion_clip(chat, "photo").unwrap(), None);
+        assert!(
+            archive
+                .put_motion_clip(chat, "photo", "alice@s.whatsapp.net", b"hers")
+                .unwrap()
+        );
+        assert!(marked(&archive));
+        assert_eq!(
+            archive.motion_clip(chat, "photo").unwrap().as_deref(),
+            Some(&b"hers"[..])
+        );
+        // A clip that came first marks its photo when the photo is filed, and
+        // leaves with it.
+        archive
+            .put_motion_clip(chat, "later", "alice@s.whatsapp.net", b"early")
+            .unwrap();
+        photo.id = "later".into();
+        archive.insert_message(&photo, None).expect("insert");
+        assert!(matches!(
+            archive.message(chat, "later").unwrap().unwrap().content,
+            Content::Image {
+                motion: Some(_),
+                ..
+            }
+        ));
+        archive.delete_message(chat, "later").expect("delete");
+        let left: i64 = archive
+            .connection
+            .query_row("SELECT COUNT(*) FROM motion_clips", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 2);
+    }
+
     fn furnished_chat(archive: &Archive, chat: &str, media: &Path) -> String {
         archive.ensure_chat(chat, "Somebody").expect("chat");
         archive
@@ -2657,6 +2824,7 @@ pub(crate) mod tests {
             .expect("insert");
         let mut image = message(chat, "m2", 200, false);
         image.content = Content::Image {
+            motion: None,
             caption: None,
             media: crate::model::Media {
                 mime: "image/jpeg".into(),
@@ -3772,6 +3940,7 @@ pub(crate) mod tests {
         archive.ensure_chat(chat, "A").expect("chat");
         let mut picture = message(chat, "p1", 100, false);
         picture.content = Content::Image {
+            motion: None,
             caption: None,
             media: crate::model::Media {
                 mime: "image/jpeg".into(),
@@ -4001,6 +4170,7 @@ mod media_path_tests {
             from_me: false,
             timestamp: 1,
             content: Content::Image {
+                motion: None,
                 media: Media {
                     mime: "image/jpeg".into(),
                     size: 10,

@@ -77,6 +77,13 @@ protocol. These notes are for coding agents and new contributors.
   a disposable archive. Tests use fixtures and mock credentials only.
 - `src/model.rs` holds the app's own types. Views never touch a protobuf;
   the worker translates in `classify()` and `parse_conversation()`.
+- A motion photo is a photo plus a short clip sent as a second message in an
+  `associatedChildMessage` wrapper. The clip is never a message: its bare
+  video message goes to the archive's `motion_clips`, keyed by chat, photo id,
+  and sender, and only the photo's own sender gives it a clip. `Content::Image`
+  carries `motion`; the badge downloads the clip on a click
+  (`Command::DownloadMotion`, cache only, same limit) and plays it muted through
+  `animation::frame`; the image preview plays it through `Action::ExpandVideo`. Other wrapped children are not handled.
 - Individual **Delete for me** uses `Command::DeleteLocal` to send through
   `chat_actions().delete_message_for_me`, removing the local copy only after
   WhatsApp accepts it. `DeleteMessageForMeUpdate` applies deletions from other

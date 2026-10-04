@@ -486,6 +486,8 @@ pub struct App {
     pub image_preview: Option<PreviewState>,
     /// Whether the loaded video covers the window instead of its bubble.
     pub video_expanded: bool,
+    /// The motion photo whose clip plays over it: its chat and message.
+    pub motion_playing: Option<(ChatId, String)>,
     /// Message bodies registered for transcript copy formatting.
     pub copy_rows: std::sync::Arc<std::sync::Mutex<Vec<crate::transcript::Row>>>,
     /// Previous message-list rect used by the selection hook.
@@ -1052,6 +1054,7 @@ impl App {
             pauses_media: false,
             image_preview: None,
             video_expanded: false,
+            motion_playing: None,
             copy_rows: Default::default(),
             selection_view: Default::default(),
             gif_query: String::new(),
@@ -2707,6 +2710,36 @@ impl App {
                 message,
                 result,
             } => self.handle_media(&chat, &message, card, result),
+            Event::Motion {
+                chat,
+                message,
+                result,
+            } => {
+                // The preview asked for the clip to play it.
+                let previewed = !self.events_hidden
+                    && self.open_chat.as_deref() == Some(chat.as_str())
+                    && self.image_preview.as_ref().is_some_and(|preview| {
+                        self.conversations
+                            .get(&chat)
+                            .and_then(|conversation| conversation.message(&message))
+                            .and_then(|message| message.content.media())
+                            .and_then(|media| media.path.as_deref())
+                            == Some(preview.path())
+                    });
+                if let Some(motion) = self.motion_mut(&chat, &message) {
+                    match result {
+                        Ok(path) => {
+                            motion.path = Some(path.clone());
+                            motion.state = MediaState::Idle;
+                            if previewed {
+                                self.actions.push(Action::CloseImagePreview);
+                                self.actions.push(Action::ExpandVideo { message, path });
+                            }
+                        }
+                        Err(error) => motion.state = MediaState::Failed(error),
+                    }
+                }
+            }
             Event::Syncing(syncing) => {
                 if self.syncing && !syncing {
                     self.toast("History loaded");
@@ -3326,6 +3359,13 @@ impl App {
             chat: chat.to_owned(),
             text: text.to_owned(),
         });
+    }
+
+    fn motion_mut(&mut self, chat: &str, id: &str) -> Option<&mut crate::model::Motion> {
+        match &mut self.conversations.get_mut(chat)?.message_mut(id)?.content {
+            Content::Image { motion, .. } => motion.as_mut(),
+            _ => None,
+        }
     }
 
     fn handle_media(
@@ -4278,6 +4318,31 @@ impl App {
                 conversation.phone_explicit = true;
                 self.backend.send(Command::ReloadHistory { chat, message });
                 self.toast("Requesting earlier messages from your phone");
+            }
+            Action::ToggleMotion { chat, message } => {
+                let playing = (chat, message);
+                if self.motion_playing.as_ref() == Some(&playing) {
+                    self.motion_playing = None;
+                    return;
+                }
+                let (chat, message) = playing.clone();
+                self.motion_playing = Some(playing);
+                if self
+                    .motion_mut(&chat, &message)
+                    .is_some_and(|motion| motion.path.is_none())
+                {
+                    self.actions.push(Action::DownloadMotion { chat, message });
+                }
+            }
+            Action::DownloadMotion { chat, message } => {
+                let Some(motion) = self.motion_mut(&chat, &message) else {
+                    return;
+                };
+                if matches!(motion.state, MediaState::Downloading) {
+                    return;
+                }
+                motion.state = MediaState::Downloading;
+                self.backend.send(Command::DownloadMotion { chat, message });
             }
             Action::Download {
                 card,
@@ -9331,6 +9396,7 @@ mod tests {
         let chat = "fixture@s.whatsapp.net";
         let image = |path: Option<PathBuf>, state: MediaState| Message {
             content: Content::Image {
+                motion: None,
                 caption: None,
                 media: Media {
                     mime: "image/jpeg".into(),
@@ -9510,6 +9576,7 @@ mod tests {
         let chat = "fixture@s.whatsapp.net";
         let mut attachment = message(chat, "picture", 1);
         attachment.content = Content::Image {
+            motion: None,
             caption: None,
             media: Media {
                 mime: "image/jpeg".into(),
@@ -10085,6 +10152,7 @@ mod tests {
         let chat = "peer@s.whatsapp.net";
         let mut attachment = message(chat, "picture", 1);
         attachment.content = Content::Image {
+            motion: None,
             caption: None,
             media: Media {
                 mime: "image/jpeg".into(),
@@ -11590,6 +11658,7 @@ mod name_tests {
         // search results alike.
         let photo = Message {
             content: Content::Image {
+                motion: None,
                 caption: Some("@987654321012345 looks sharp".into()),
                 media: Media {
                     mime: "image/jpeg".into(),

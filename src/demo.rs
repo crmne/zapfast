@@ -537,6 +537,7 @@ pub fn populate(app: &mut App) {
                 false,
                 base + 30,
                 Content::Image {
+                    motion: None,
                     caption: Some("The difference engine, finally assembled".into()),
                     media: media(
                         "image/jpeg",
@@ -674,6 +675,7 @@ pub fn populate(app: &mut App) {
                 false,
                 older + 60 * 18,
                 Content::Image {
+                    motion: None,
                     caption: None,
                     media: media(
                         "image/jpeg",
@@ -772,6 +774,7 @@ pub fn populate(app: &mut App) {
                 false,
                 group_base + 60,
                 Content::Image {
+                    motion: None,
                     caption: Some("Tonight's venue, doors at 18:30".into()),
                     media: media(
                         "image/jpeg",
@@ -1524,6 +1527,7 @@ fn photos_sample(app: &mut App) {
         );
         media.path = Some(wide.clone());
         Content::Image {
+            motion: None,
             caption: caption.map(str::to_owned),
             media,
         }
@@ -1563,6 +1567,36 @@ fn photos_sample(app: &mut App) {
     app.conversations.entry(id.into()).or_default().messages = rows;
     app.open_chat = Some(id.into());
     app.scroll_to_bottom = true;
+}
+
+/// A motion photo with its clip downloaded. `playing` plays it in the bubble.
+fn motion_sample(app: &mut App, playing: bool) {
+    let id = SAMPLES[0].id;
+    let dir = app.dirs.media_cache_dir();
+    let mut media = media(
+        "image/jpeg",
+        stock::LAUNCH.bytes.len() as u64,
+        Some(stock::LAUNCH.width),
+        Some(stock::LAUNCH.height),
+    );
+    media.path = Some(stock::save_photo(&dir, stock::LAUNCH));
+    let photo = Content::Image {
+        caption: Some("Liftoff, as it happened".into()),
+        media,
+        motion: Some(crate::model::Motion {
+            path: Some(stock::save(&dir, "demo-video.mp4", stock::VIDEO)),
+            ..Default::default()
+        }),
+    };
+    app.conversations.entry(id.into()).or_default().messages = vec![message(
+        id,
+        "demo-motion",
+        false,
+        crate::util::now() - 60,
+        photo,
+    )];
+    app.open_chat = Some(id.into());
+    app.motion_playing = playing.then(|| (id.into(), "demo-motion".into()));
 }
 
 /// Replaces the first chat with videos: a downloaded one, a round video
@@ -1741,6 +1775,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     "Sounds good, see you at\nthe station".into(),
                 );
                 app.composer = "Still typing this one".into();
+            }
+            "motion" => motion_sample(app, false),
+            "motion-playing" => motion_sample(app, true),
+            "motion-preview" => {
+                motion_sample(app, false);
+                app.actions.push(crate::model::Action::PreviewImage(
+                    app.dirs.media_cache_dir().join(stock::LAUNCH.name),
+                ));
             }
             "video" => video_sample(app, None),
             "video-playing" => video_sample(app, Some("demo-video")),
@@ -4231,6 +4273,9 @@ mod tests {
             "message-info-unknown",
             "message-info-partial",
             "message-info-direct",
+            "motion",
+            "motion-playing",
+            "motion-preview",
             "video",
             "video-playing",
             "video-expanded",
@@ -6175,6 +6220,7 @@ mod tests {
                 false,
                 100,
                 Content::Image {
+                    motion: None,
                     caption: None,
                     media: photo,
                 },
@@ -10782,6 +10828,7 @@ mod tests {
                     false,
                     1_700_000_000 + index,
                     Content::Image {
+                        motion: None,
                         caption: None,
                         media,
                     },
@@ -11497,6 +11544,7 @@ mod picture_edge_tests {
                 let mut picture = media("image/jpeg", 402_113, None, None);
                 picture.path = Some(photo.clone());
                 row.content = Content::Image {
+                    motion: None,
                     caption: Some("Row 30 picture".into()),
                     media: picture,
                 };
