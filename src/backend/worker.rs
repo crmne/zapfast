@@ -2507,6 +2507,18 @@ impl Worker {
             E::GroupUpdate(update) => {
                 let chat = self.canonical(&update.group_jid);
                 use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+                // A group made on the phone can announce itself before any
+                // message arrives; without a row the metadata has nowhere to land.
+                // The row is dated by the notice, or it would sort last.
+                if matches!(&*update.action, GroupNotificationAction::Create { .. })
+                    && !self.predates_removal(&chat, update.timestamp.timestamp())
+                {
+                    self.ensure_chat(&chat, None);
+                    let _ = self
+                        .archive
+                        .touch_activity(&chat, update.timestamp.timestamp());
+                    self.emit_chat(&chat);
+                }
                 if let GroupNotificationAction::Ephemeral { expiration, .. } = &*update.action {
                     self.ensure_chat(&chat, None);
                     let timestamp = update.timestamp.timestamp();
@@ -11492,6 +11504,33 @@ mod receipt_tests {
                 "the metadata is refreshed too"
             );
         }
+    }
+
+    /// A group created on the phone gets a chat row before its first message.
+    #[tokio::test]
+    async fn created_group_notice_files_the_chat() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        use whatsapp_rust::wacore_binary::Node;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-789@g.us";
+        assert!(worker.archive.chat(group).unwrap().is_none());
+        let update = wa_events::GroupUpdate::builder()
+            .group_jid(group.parse().unwrap())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(100).unwrap())
+            .is_lid_addressing_mode(false)
+            .action(Box::new(GroupNotificationAction::Create {
+                raw: Node::default(),
+            }))
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
+            .await;
+        let chat = worker.archive.chat(group).unwrap().unwrap();
+        assert_eq!(chat.last_activity, 100, "dated by the notice, not last");
+        assert_eq!(
+            worker.group_info_queue.front().map(String::as_str),
+            Some(group)
+        );
     }
 
     fn errors(events: &std::sync::mpsc::Receiver<Event>) -> Vec<String> {
