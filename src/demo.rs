@@ -5696,7 +5696,12 @@ mod tests {
             .join("\n");
         for page in ["group-info", "group-info,light"] {
             for (width, height) in [(1280.0, 800.0), (900.0, 600.0)] {
-                for description in [None, Some(""), Some(long.as_str())] {
+                for description in [
+                    None,
+                    Some(""),
+                    Some("Description fixture first 🦀\nSecond line\nThird line"),
+                    Some(long.as_str()),
+                ] {
                     let mut app = app();
                     apply_flags(&mut app, Some(page));
                     app.chats
@@ -5730,6 +5735,27 @@ mod tests {
                         "{page}, {width}x{height}"
                     );
                     if description.is_some_and(|text| !text.is_empty()) {
+                        fn dialog_frame(shape: &egui::Shape) -> Option<egui::Rect> {
+                            match shape {
+                                egui::Shape::Rect(rect)
+                                    if rect.rect.width() > 360.0
+                                        && rect.rect.width() < 430.0
+                                        && rect.rect.height() > 300.0 =>
+                                {
+                                    Some(rect.rect)
+                                }
+                                egui::Shape::Vec(shapes) => shapes.iter().find_map(dialog_frame),
+                                _ => None,
+                            }
+                        }
+                        let frame = shapes
+                            .iter()
+                            .find_map(|shape| dialog_frame(&shape.shape))
+                            .expect("the group dialog frame is drawn");
+                        assert!(
+                            frame.top() >= 16.0 && frame.bottom() <= height - 16.0,
+                            "the dialog leaves space at both window edges: {page}, {width}x{height}: {frame:?}"
+                        );
                         fn footer(shape: &egui::Shape) -> Option<&egui::epaint::TextShape> {
                             match shape {
                                 egui::Shape::Text(text) if text.galley.text() == "Archive" => {
@@ -5754,11 +5780,13 @@ mod tests {
                                 description_shape(&clipped.shape).map(|text| (clipped, text))
                             })
                             .expect("the description is drawn");
-                        assert!(
-                            text.galley.text().contains("line 39"),
-                            "all lines remain available to scroll"
-                        );
-                        assert!(text.galley.rows.len() >= 40);
+                        if description == Some(long.as_str()) {
+                            assert!(
+                                text.galley.text().contains("line 39"),
+                                "all lines remain available to scroll"
+                            );
+                            assert!(text.galley.rows.len() >= 40);
+                        }
                         assert!(
                             clipped.clip_rect.height() <= 121.0,
                             "description scroll area stays bounded"
