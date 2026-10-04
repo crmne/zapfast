@@ -412,7 +412,9 @@ pub struct Settings {
     /// ZapFast's own copy of the chosen wallpaper image, drawn in place of the
     /// colour and doodles in light and dark mode alike.
     pub wallpaper_image: Option<std::path::PathBuf>,
-    /// Last open chat, restored at startup.
+    /// Whether startup opens the last chat. The chat remains remembered when off.
+    pub restore_last_chat: bool,
+    /// Last open chat, restored at startup when enabled.
     pub last_chat: Option<String>,
     /// The hint bar under the composer, hidden with its × and shown again
     /// from the Keyboard shortcuts dialog.
@@ -491,6 +493,7 @@ pub struct Settings {
 }
 
 impl Default for Settings {
+    /// Keeps the existing startup restoration behavior for older settings files.
     fn default() -> Self {
         Self {
             version: SETTINGS_VERSION,
@@ -511,6 +514,7 @@ impl Default for Settings {
             wallpaper_color: WallpaperColor::Theme,
             dark_wallpaper_color: WallpaperColor::Theme,
             wallpaper_image: None,
+            restore_last_chat: true,
             last_chat: None,
             show_shortcut_hints: true,
             recent_emoji: Vec::new(),
@@ -886,6 +890,20 @@ mod tests {
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();
         assert_eq!(saved["font"], "inter");
+    }
+
+    /// Existing files restore chats; a disabled preference survives a round trip.
+    #[test]
+    fn restoring_the_last_chat_defaults_on_and_persists_when_disabled() {
+        let older: Settings = serde_json::from_str(r#"{"last_chat":"chat"}"#).unwrap();
+        assert!(older.restore_last_chat);
+        let disabled: Settings =
+            serde_json::from_str(r#"{"restore_last_chat":false,"last_chat":"chat"}"#).unwrap();
+        assert!(!disabled.restore_last_chat);
+        assert_eq!(disabled.last_chat.as_deref(), Some("chat"));
+        let saved = serde_json::to_value(&disabled).unwrap();
+        assert_eq!(saved["restore_last_chat"], false);
+        assert_eq!(saved["last_chat"], "chat");
     }
 
     #[test]

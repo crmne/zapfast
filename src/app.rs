@@ -950,14 +950,21 @@ impl App {
         Self::with_accounts(dirs, settings, roster, vec![account], 0, waker)
     }
 
+    /// Builds the app from loaded accounts and applies the startup chat choice
+    /// only to the active account's initial selection.
     fn with_accounts(
         dirs: AppDirs,
         settings: Settings,
         roster: AccountRoster,
-        accounts: Vec<Account>,
+        mut accounts: Vec<Account>,
         active: usize,
         waker: Waker,
     ) -> Self {
+        if !settings.restore_last_chat {
+            // Only the startup selection changes. Keep the saved chat for a
+            // later launch, and leave account switching within this run alone.
+            accounts[active].open_chat = None;
+        }
         let palette = settings
             .cached_palette()
             .unwrap_or_else(|| match settings.theme {
@@ -11037,6 +11044,39 @@ mod tests {
         app.handle_events();
         assert!(app.open_chat.is_none());
         assert!(app.conversations.is_empty());
+    }
+
+    /// Disabling restoration leaves the saved chat intact and permits normal
+    /// opening during the session and restoration after re-enabling it.
+    #[test]
+    fn startup_can_leave_the_remembered_chat_closed_until_reenabled() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = Settings {
+            last_chat: Some("chat".into()),
+            restore_last_chat: false,
+            ..Default::default()
+        };
+        let (mut app, events) = App::headless(AppDirs::under(root.path()), settings.clone());
+        assert_eq!(app.page, Page::Chats);
+        assert!(app.open_chat.is_none());
+        assert_eq!(app.account().settings.last_chat.as_deref(), Some("chat"));
+        events
+            .send(Event::Chats(vec![Chat::new(
+                "chat".into(),
+                "Fixture".into(),
+            )]))
+            .unwrap();
+        app.handle_events();
+        assert!(app.open_chat.is_none());
+        app.open_chat("chat".into());
+        assert_eq!(app.open_chat.as_deref(), Some("chat"));
+
+        let enabled = Settings {
+            restore_last_chat: true,
+            ..settings
+        };
+        let (app, _) = App::headless(AppDirs::under(root.path()), enabled);
+        assert_eq!(app.open_chat.as_deref(), Some("chat"));
     }
 
     #[test]

@@ -1491,3 +1491,11 @@ msgid ""
 "This removes the message from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
 msgstr ""
+
+#: src/ui/settings.rs:405
+msgid "Restore last open chat"
+msgstr "還原上次開啟的聊天"
+
+#: src/ui/settings.rs:408
+msgid "When off, start on the chat list. Your last chat stays remembered."
+msgstr "關閉後，啟動時顯示聊天清單。上次開啟的聊天仍會保留。"
