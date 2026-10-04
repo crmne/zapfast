@@ -1852,8 +1852,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     // the `Ui`'s id, so the salt must go through the same `IdSalt::new` here
     // to land on the same id.
     let scroll_id = ui.make_persistent_id(egui::IdSalt::new(("messages", &chat.id)));
-    let offset =
-        egui::scroll_area::State::load(ui.ctx(), scroll_id).map_or(0.0, |state| state.offset.y);
+    let scroll_state = egui::scroll_area::State::load(ui.ctx(), scroll_id);
+    // The list has not been shown before: it starts at the top.
+    let first_show = scroll_state.is_none();
+    let offset = scroll_state.map_or(0.0, |state| state.offset.y);
     // A keyboard scroll under way stops for a jump to a message, for the
     // reaction bar, which holds the view still, and for a wheel or trackpad
     // turn over the message list, before it takes another step.
@@ -2283,6 +2285,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         state.store(ui.ctx(), output.id);
         ui.ctx()
             .request_discard("transcript rows above the viewport changed height");
+    }
+    // A jump to the end moves the offset only after the rows were painted at
+    // the old one. On a chat's first showing that is the top of its first
+    // page, which would flash for a frame before the end; redo the pass at
+    // the end instead.
+    if first_show && pinned && !redo && (output.state.offset.y - offset).abs() >= 0.5 {
+        ui.ctx().request_discard("scrolled to the end");
     }
     if reader_scrolled {
         key_scroll = None;
