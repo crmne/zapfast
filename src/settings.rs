@@ -1,5 +1,6 @@
 //! User preferences stored in JSON.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -437,6 +438,10 @@ pub struct Settings {
     /// Folder for new downloads. `None` keeps them in the cache. Files
     /// already downloaded stay where they are when this changes.
     pub download_folder: Option<std::path::PathBuf>,
+    /// Archived chats stay archived when a message arrives or is sent, as
+    /// with the phone's "Keep chats archived". Off, a new message brings the
+    /// chat back to the list.
+    pub keep_chats_archived: bool,
     /// Proxy for WhatsApp, media, and updates, such as
     /// `socks5h://127.0.0.1:9050`. Empty follows `ALL_PROXY` / `HTTPS_PROXY`.
     pub proxy: String,
@@ -470,6 +475,19 @@ pub struct Settings {
     pub app_lock_hash: Option<String>,
     /// How long ZapFast may go unused before the app lock locks it.
     pub app_lock_after: AutoLock,
+    /// Last window size in points, remembered across restarts. `None` uses
+    /// the default size.
+    pub window_width: Option<f32>,
+    /// Last window height in points. See [`Self::window_width`].
+    pub window_height: Option<f32>,
+    /// Last window position in points, as `ViewportBuilder::with_position`
+    /// takes it. `None` lets the window manager place the window, which is
+    /// also the case on Wayland where the position is not known.
+    pub window_x: Option<f32>,
+    /// Last window vertical position. See [`Self::window_x`].
+    pub window_y: Option<f32>,
+    /// Whether the window was maximized when it last closed.
+    pub window_maximized: bool,
 }
 
 impl Default for Settings {
@@ -504,6 +522,7 @@ impl Default for Settings {
             mention_sound: NotificationSound::Alert,
             group_sounds: true,
             download_folder: None,
+            keep_chats_archived: true,
             proxy: String::new(),
             check_for_updates: true,
             download_updates_automatically: false,
@@ -517,6 +536,11 @@ impl Default for Settings {
             chat_lock_hint_dismissed: false,
             app_lock_hash: None,
             app_lock_after: AutoLock::default(),
+            window_width: None,
+            window_height: None,
+            window_x: None,
+            window_y: None,
+            window_maximized: false,
         }
     }
 }
@@ -570,6 +594,17 @@ impl Settings {
             .map(str::trim)
             .filter(|key| !key.is_empty())
             .map(str::to_owned)
+    }
+
+    /// The remembered window geometry for the next window.
+    pub fn window_geometry(&self) -> crate::window::Geometry {
+        crate::window::Geometry {
+            width: self.window_width,
+            height: self.window_height,
+            x: self.window_x,
+            y: self.window_y,
+            maximized: self.window_maximized,
+        }
     }
 
     pub fn load(path: &Path) -> Self {
@@ -688,6 +723,136 @@ impl Settings {
     }
 }
 
+/// Preferences that belong to one WhatsApp account.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AccountSettings {
+    pub send_read_receipts: bool,
+    pub send_typing: bool,
+    #[serde(alias = "auto_download_images")]
+    pub auto_download: bool,
+    pub last_chat: Option<String>,
+    pub notifications: bool,
+    pub save_contacts_to_phone: bool,
+    /// This account's copy of the chosen chat wallpaper image.
+    pub wallpaper_image: Option<std::path::PathBuf>,
+}
+
+impl Default for AccountSettings {
+    fn default() -> Self {
+        Self {
+            send_read_receipts: true,
+            send_typing: true,
+            auto_download: true,
+            last_chat: None,
+            notifications: true,
+            save_contacts_to_phone: true,
+            wallpaper_image: None,
+        }
+    }
+}
+
+impl AccountSettings {
+    pub fn from_legacy(settings: &Settings) -> Self {
+        Self {
+            send_read_receipts: settings.send_read_receipts,
+            send_typing: settings.send_typing,
+            auto_download: settings.auto_download,
+            last_chat: settings.last_chat.clone(),
+            notifications: settings.notifications,
+            save_contacts_to_phone: settings.save_contacts_to_phone,
+            wallpaper_image: settings.wallpaper_image.clone(),
+        }
+    }
+
+    pub fn load(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|error| {
+                log::warn!("account settings are unreadable, using the defaults: {error}");
+                Self::default()
+            }),
+            Err(_) => Self::default(),
+        }
+    }
+
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let contents = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        let temp = path.with_extension("json.tmp");
+        std::fs::write(&temp, contents)?;
+        std::fs::rename(&temp, path)
+    }
+}
+
+/// Which accounts exist on this computer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AccountRoster {
+    pub next_id: u32,
+    pub active: String,
+    pub order: Vec<String>,
+}
+
+impl Default for AccountRoster {
+    fn default() -> Self {
+        Self {
+            next_id: 2,
+            active: "1".into(),
+            order: vec!["1".into()],
+        }
+    }
+}
+
+impl AccountRoster {
+    pub fn load(path: &Path) -> std::io::Result<Self> {
+        let mut roster = match std::fs::read_to_string(path) {
+            Ok(contents) => serde_json::from_str(&contents).map_err(std::io::Error::other)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(error) => return Err(error),
+        };
+        roster.sanitize();
+        Ok(roster)
+    }
+
+    /// Drops ids that cannot be folder names, so a hand-edited file cannot
+    /// point state or a later delete at an arbitrary path. Keeps the first
+    /// spelling of a repeated id so two workers never share one archive.
+    pub fn sanitize(&mut self) {
+        let mut seen = HashSet::new();
+        self.order
+            .retain(|id| crate::model::AccountId::is_safe(id) && seen.insert(id.clone()));
+        if !self.order.iter().any(|id| id == &self.active) {
+            self.active = self.order.first().cloned().unwrap_or_else(|| "1".into());
+        }
+        let highest = self
+            .order
+            .iter()
+            .filter_map(|id| id.parse::<u32>().ok())
+            .max()
+            .unwrap_or(1);
+        self.next_id = self.next_id.max(highest + 1).max(2);
+    }
+
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let contents = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        let temp = path.with_extension("json.tmp");
+        std::fs::write(&temp, contents)?;
+        std::fs::rename(&temp, path)
+    }
+
+    pub fn allocate(&mut self) -> crate::model::AccountId {
+        let id = crate::model::AccountId(self.next_id.to_string());
+        self.next_id += 1;
+        self.order.push(id.0.clone());
+        self.active = id.0.clone();
+        id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -734,6 +899,24 @@ mod tests {
         assert!(parsed.show_wallpaper);
         assert_eq!(parsed.wallpaper_color, WallpaperColor::Theme);
         assert!(parsed.pause_other_media);
+        assert_eq!(parsed.window_width, None);
+        assert_eq!(parsed.window_height, None);
+        assert_eq!(parsed.window_x, None);
+        assert_eq!(parsed.window_y, None);
+        assert!(!parsed.window_maximized);
+    }
+
+    #[test]
+    fn the_window_geometry_defaults_to_unset() {
+        // Files written before the window was remembered open with the
+        // default size; the full round-trip lives in `window::tests`.
+        let settings = Settings::default();
+        assert_eq!(
+            settings.window_geometry(),
+            crate::window::Geometry::default()
+        );
+        let older: Settings = serde_json::from_str(r#"{"zoom":1.25}"#).unwrap();
+        assert_eq!(older.window_geometry(), crate::window::Geometry::default());
     }
 
     fn load_from(contents: &str) -> (Settings, serde_json::Value) {
@@ -939,6 +1122,70 @@ mod tests {
             chosen,
             "loading again changes nothing"
         );
+    }
+
+    #[test]
+    fn a_hand_edited_account_id_cannot_leave_the_accounts_folder() {
+        use crate::model::AccountId;
+        assert!(AccountId::is_safe("1"));
+        assert!(AccountId::is_safe("12"));
+        assert!(!AccountId::is_safe(""));
+        assert!(!AccountId::is_safe("0"));
+        assert!(!AccountId::is_safe("01"));
+        assert!(!AccountId::is_safe(".."));
+        assert!(!AccountId::is_safe("/tmp"));
+        assert!(!AccountId::is_safe("1/../etc"));
+    }
+
+    #[test]
+    fn a_roster_drops_unsafe_ids() {
+        let mut roster = AccountRoster {
+            next_id: 4,
+            active: "../etc".into(),
+            order: vec!["1".into(), "..".into(), "/tmp".into()],
+        };
+        roster.sanitize();
+        assert_eq!(roster.order, ["1".to_string()]);
+        assert_eq!(roster.active, "1");
+        assert!(roster.next_id > 1);
+    }
+
+    #[test]
+    fn a_roster_keeps_the_first_copy_of_a_repeated_id() {
+        let mut roster = AccountRoster {
+            next_id: 3,
+            active: "1".into(),
+            order: vec!["1".into(), "1".into(), "2".into()],
+        };
+        roster.sanitize();
+        assert_eq!(roster.order, ["1".to_string(), "2".to_string()]);
+    }
+
+    #[test]
+    fn a_broken_roster_file_does_not_become_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("accounts.json");
+        std::fs::write(&path, "{").unwrap();
+        assert!(AccountRoster::load(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{");
+    }
+
+    #[test]
+    fn allocating_an_account_advances_the_roster() {
+        let mut roster = AccountRoster::default();
+        assert_eq!(roster.order, ["1".to_string()]);
+        let second = roster.allocate();
+        assert_eq!(second.as_str(), "2");
+        assert_eq!(roster.next_id, 3);
+        assert_eq!(roster.active, "2");
+        assert_eq!(roster.order, ["1".to_string(), "2".to_string()]);
+    }
+
+    #[test]
+    fn a_missing_roster_file_starts_with_the_first_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let roster = AccountRoster::load(&dir.path().join("accounts.json")).unwrap();
+        assert_eq!(roster, AccountRoster::default());
     }
 }
 

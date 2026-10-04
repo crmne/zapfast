@@ -25,6 +25,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::Shortcuts => shortcuts_width(ui.ctx().content_rect().width()),
                 Dialog::About => 380.0,
                 Dialog::ConfirmUnlink => 380.0,
+                Dialog::ConfirmRemoveAccount(_) => 380.0,
                 Dialog::ConfirmLeaveGroup(_) => 380.0,
                 Dialog::PairWithPhone => 380.0,
                 Dialog::NewContact => 380.0,
@@ -62,6 +63,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::Shortcuts => shortcuts(app, ui),
                 Dialog::About => about(app, ui),
                 Dialog::ConfirmUnlink => confirm_unlink(app, ui),
+                Dialog::ConfirmRemoveAccount(id) => confirm_remove(app, ui, id),
                 Dialog::ConfirmLeaveGroup(id) => confirm_leave_group(app, ui, &id),
                 Dialog::PairWithPhone => pair_with_phone(app, ui),
                 Dialog::NewContact => new_contact(app, ui),
@@ -1109,16 +1111,22 @@ fn confirm_delete_message(
     let (heading, body) = if for_everyone {
         (
             "Delete for everyone?",
-            "Everyone in this chat will see \"This message was deleted\" instead. It cannot be undone.",
+            crate::i18n::gettext(
+                app.locale,
+                "Everyone in this chat will see \"This message was deleted\" instead. It cannot be undone.",
+            ),
         )
     } else {
         (
             "Delete for me?",
-            "This removes the message from this computer. Other people keep their copy. Your phone will not send it again, so it cannot be undone.",
+            crate::i18n::gettext(
+                app.locale,
+                "This removes the message from your phone and linked devices. Other people keep their copy. Connect to WhatsApp to delete it. This cannot be undone.",
+            ),
         )
     };
     title(ui, app, heading);
-    theme::paragraph(ui, body, theme::regular(13.5), palette.text);
+    theme::paragraph(ui, body.into_owned(), theme::regular(13.5), palette.text);
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1155,6 +1163,40 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
                 app.actions.push(Action::Unlink);
             }
             if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
+                app.actions.push(Action::CloseDialog);
+            }
+        });
+    });
+}
+
+fn confirm_remove(app: &mut App, ui: &mut egui::Ui, id: crate::model::AccountId) {
+    let palette = app.palette;
+    let locale = app.locale;
+    title(
+        ui,
+        app,
+        &crate::i18n::gettext(locale, "Remove this account?"),
+    );
+    theme::paragraph(
+        ui,
+        crate::i18n::gettext(
+            locale,
+            "This unlinks the number on this computer and deletes its local chats. Other accounts stay.",
+        )
+        .as_ref(),
+        theme::regular(13.5),
+        palette.text,
+    );
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if danger_button(ui, app, &crate::i18n::gettext(locale, "Remove")) {
+                app.actions.push(Action::RemoveAccount(id));
+                app.actions.push(Action::CloseDialog);
+            }
+            if theme::pill_button(ui, &palette, &crate::i18n::gettext(locale, "Cancel"), false)
+                .clicked()
+            {
                 app.actions.push(Action::CloseDialog);
             }
         });
@@ -1839,7 +1881,10 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
         buttons.push((
             Icon::User,
             if known { "Rename" } else { "Add to contacts" },
-            vec![Action::EditContact(name.trim_start_matches('~').to_owned())],
+            vec![Action::EditContact {
+                id: id.to_owned(),
+                name: name.trim_start_matches('~').to_owned(),
+            }],
         ));
     }
     if let Some(phone) = chat.phone() {

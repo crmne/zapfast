@@ -264,6 +264,7 @@ impl Worker {
                 summary: source.content.summary(),
             }),
             reactions: Vec::new(),
+            history_order: None,
             edited: false,
             mentions: Vec::new(),
             forwarded: false,

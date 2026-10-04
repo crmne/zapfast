@@ -24,6 +24,33 @@ Editing uses the composer. Press Escape to cancel.
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 
+Deleting a message asks which copies to remove. **Delete for everyone**
+revokes it through WhatsApp. In **0.19.0**, **Delete for me** removes only this
+computer's copy, and individual deletions do not sync to or from your phone.
+
+**Development builds** now sync **Delete for me** with your phone and linked
+devices; other people keep their copy. This needs a connection, and the local
+copy disappears only after WhatsApp accepts the deletion. Phone deletions sync
+here too, and history replay cannot restore deleted messages. Interrupted
+requests remain saved for that account and retry when it reconnects, including
+when an acknowledgement was lost. Unlinking clears those requests. Confirmed
+deletions whose local cleanup failed are repaired on restart or reconnect
+without another network request. Neither deletion can be undone.
+
+**Delete chat** and **Clear chat** already sync in 0.19.0, as described under
+[Chats](#chats).
+
+**Development builds** preserve edited replies and the phone's order for
+messages sent within the same second when loading history. If an earlier
+build missed a message or put nearby messages in the wrong order, right-click
+a message just after the affected area and choose **Reload earlier messages**.
+This asks your phone for up to 50 messages before that point and merges them
+into the archive. Edited history snapshots restore the reply even when the
+original version was never stored on this computer. Keep your phone online.
+Availability depends on what the phone sends; messages deleted for you stay
+deleted. This action does not require unlinking your account or clearing the
+archive.
+
 ## Stickers
 
 The sticker tab works like WhatsApp's: a row of tabs holds **Recent**
@@ -77,14 +104,18 @@ The sticker is a 512 × 512 WebP under WhatsApp's 100 KB limit.
 ## Attachments
 
 Paste a picture or copied files, drop files on the window, or select them with
-the paperclip. On Wayland, dropping files does not work yet: copy them in the
-file manager and paste them instead.
+the paperclip.
 They stay above the composer until you send them, with the typed text as a
-caption. Press Escape or click a file's close button to remove it. Incoming
-non-sticker attachments up to 64 MiB download when they enter view if automatic
-downloads are on, or on click. Visible stickers download automatically up to the
-same limit. If an attachment has expired, ZapFast asks your phone to
-upload it again.
+caption. To reply with an attachment, start a reply and then attach the file.
+When sending several files, the caption and reply quote belong to the first
+one. Press Escape or click a file's close button to remove it.
+
+Incoming attachments up to 64 MiB download when they enter view if automatic
+downloads are on, or on click. Visible stickers download automatically even
+when that setting is off. The 64 MiB limit applies to both automatic and manual
+downloads, including videos and stickers; clicking a larger attachment does
+not bypass it. If an attachment has expired, ZapFast asks your phone to upload
+it again.
 
 ## Interactive messages
 
@@ -172,6 +203,30 @@ reply actions remain unavailable.
 
 ![Synthetic carousel cards in the light theme](/screenshot-carousel-light.png)
 
+## Videos and photos
+
+Click a video to download it to the local cache and play it in its message,
+with sound, a seek bar, and a mute switch; round video messages play inside
+their circle. Already downloaded videos play from their local file. Playback
+waits for the download to finish, and the [64 MiB download limit](#attachments)
+also applies to videos. Double-click one, or use the button at the end of its
+controls, to play it over the whole window:
+Space plays and pauses, the arrows jump five seconds, M mutes, and Escape puts
+it back. The built-in player supports H.264 video in MP4 files; other formats
+open in your system player.
+
+Click a downloaded photo to preview it, with zoom (wheel, Ctrl+wheel, or a
+pinch) and **Copy image**. **Save as…** in a downloaded attachment's
+right-click menu keeps a copy wherever you choose.
+
+## Polls
+
+Choose **Create poll** from the plus menu beside the message field to ask a
+question with 2 to 12 answers; turn off **Allow multiple answers** for a
+single choice. Click an answer to vote, and click it again to take the vote
+back. Creating polls in chats with disappearing messages is not supported
+yet.
+
 ## Voice messages
 
 Voice messages play in the chat with a seekable waveform. The chip beside the
@@ -203,13 +258,15 @@ messages stored on this computer; and finds contacts without an existing chat.
 Use `↑`/`↓` to select a matching chat and Enter to open it ready for typing.
 Click a message result to jump to it, or a contact to start a chat. Use
 `Alt+↑/↓`, or `Ctrl+Shift+[` and `Ctrl+Shift+]` as in WhatsApp, to switch chats
-without leaving the composer (Command instead of Ctrl on macOS). Within an open
+without leaving the composer (Command instead of Ctrl on macOS), and
+`Ctrl+1` through `Ctrl+9` to open the chat at that position in the list. Within an open
 chat, `PgUp`/`PgDn` scroll by about a page, and `Home`/`End` jump to the top or
 the newest message (when the input is empty).
 
 Sending while reading older messages keeps your place. Use the
 newest-message button or `End` to return to the latest message when you are
-ready.
+ready. The chat list scrolls to the top after you send, where the chat now is.
+Under the **Favorites** chip, the list keeps the phone's order and stays in place.
 
 A shared contact message shows the name from its vCard. When the card names a
 WhatsApp account, **Chat** opens a private conversation with it and, if the
@@ -217,14 +274,46 @@ person is not already in ZapFast's contacts, **Add** saves them, adding them to
 your phone's contacts if you chose that for the last contact you added. A card with only a local number shows the number.
 
 The chips under the search bar narrow the list to **Unread**, **Private**
-(one-to-one chats), or **Groups**. A chip with unread chats shows how many it
+(one-to-one chats), **Favorites** (in your phone's order), or **Groups**.
+Followed channels have their own **Channels** chip, and **Archived** opens the
+archived chats. A chip with unread chats shows how many it
 has. Click the active chip again, or **All**, to see every chat. The
 filter applies only to this list: search and the archive still show everything,
 and it resets when ZapFast restarts.
 
-Right-click a chat to pin, archive, or mute it for eight hours, one week, or
-indefinitely. These changes also apply on your phone. Click the chat header to
-see its picture, number, and group members.
+Right-click a chat to pin, favorite, archive, mark as unread, or mute it for
+eight hours, one week, or indefinitely. These changes also apply on your
+phone. **Delete chat** in the same menu and **Clear chat** in the chat
+header's menu need a connection: the phone acts first, and the chat leaves
+this computer once it confirms. Groups and channels can be left from the same
+menu, keeping their history here.
+
+Archived chats stay archived when new messages arrive. **Development builds**
+add **Keep chats archived** in Settings: turn it off to have a new message,
+received or sent, bring the chat back to the list. This setting applies to all
+accounts here. ZapFast does not read the phone's own setting yet, so set it
+here to match. Messages older than the archiving, duplicate deliveries, and
+history replay leave archived chats in place.
+
+The search icon in a chat's header (`Ctrl+F`) opens a pane listing that
+chat's matches, newest first. Its calendar narrows them to one day.
+
+Click the chat header to see its picture, number, and group members. When
+WhatsApp lets you edit a group's info, rename it with the pencil beside its
+name and click its photo to change it. Clicking a `chat.whatsapp.com` invite
+link shows the group and joins it without leaving ZapFast.
+
+## Locked chats
+
+**Lock chat** in a chat's right-click menu moves it into a locked folder: it
+leaves the chat list, search, and the unread count, and never raises a
+notification. The lock syncs with your phone and other linked devices.
+
+Choose **Locked** beside the chat filters and type your local code to open
+them; the first time, ZapFast offers to set one up. The code is separate from
+your phone's and adds no encryption beyond the encrypted message archive.
+Leaving the tab, changing the code, or closing the window hides them again.
+Locked chats are read-only in ZapFast for now.
 
 ## Labels
 
@@ -263,7 +352,7 @@ its regular taskbar icon size for overlays to appear. The count
 does not count toasts remaining in Windows notification history. On Linux and
 Windows, notifications show the chat picture and open the chat at the message
 they announced when clicked. Muted chats do not send notifications, and
-archived chats stay quiet until you unarchive them. You can change both settings.
+archived chats stay quiet while they remain archived. You can change both settings.
 
 Press `Ctrl+/` or click the keyboard button under the composer to list all
 shortcuts.

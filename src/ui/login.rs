@@ -137,6 +137,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     }
+    super::accounts::login_choices(app, ui);
     ui.add_space(18.0);
     theme::paragraph(
         ui,

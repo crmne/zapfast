@@ -29,7 +29,9 @@ separated action rows.
 
 ## Boundaries and accessibility
 
-No browser engine, hosted backend, telemetry, or additional account system.
+No browser engine, hosted backend, telemetry, or ZapFast-operated account system.
+Several WhatsApp accounts may be linked locally. Current feature limitations
+are not permanent exclusions; see the product boundaries in [AGENTS.md](AGENTS.md#product-boundaries).
 Avoid decorative dashboards and extra nested cards inside message bubbles.
 Retain keyboard operation, zoom, text selection, and light and dark themes.
 No additional accessibility certification target is specified by the project.

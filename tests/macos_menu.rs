@@ -25,7 +25,8 @@ fn main() {
         dirs,
         settings,
         zapfast::app::AppOptions { tray: true },
-    );
+    )
+    .expect("a fresh app over an empty folder");
     let ctx = egui::Context::default();
     app.attach(&ctx);
 

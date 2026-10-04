@@ -193,24 +193,41 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             0
         }
     });
-    if step != 0 {
+    // Numbered shortcuts use the same ordering and filters as the sidebar.
+    let number = if app.page == Page::Chats
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && app.recording.is_none()
+        && !menu_open
+    {
+        ctx.input_mut(take_chat_number)
+    } else {
+        None
+    };
+    if step != 0 || number.is_some() {
         let visible = app.visible_chats();
         if !visible.is_empty() {
             let current = app
                 .open_chat
                 .as_ref()
                 .and_then(|open| visible.iter().position(|chat| chat.id == *open));
-            let next = match current {
+            let next = number.unwrap_or_else(|| match current {
                 Some(index) => (index as i64 + step).rem_euclid(visible.len() as i64) as usize,
                 None => 0,
-            };
-            let next = visible[next].id.clone();
-            // Stepping through the Unread list must not shift it underfoot.
-            if app.search.trim().is_empty() && !app.show_archived {
-                actions.push(Action::KeepUnread(next.clone()));
+            });
+            if let Some(next) = visible.get(next).map(|chat| chat.id.clone()) {
+                if number.is_some() {
+                    app.search_selected = None;
+                }
+                // Stepping through the Unread list must not shift it underfoot.
+                if app.search.trim().is_empty() && !app.show_archived {
+                    actions.push(Action::KeepUnread(next.clone()));
+                }
+                app.scroll_chat_into_view = Some(next.clone());
+                actions.push(Action::OpenChat(next));
             }
-            app.scroll_chat_into_view = Some(next.clone());
-            actions.push(Action::OpenChat(next));
         }
     }
     // Arrow Up in an empty, focused composer edits the user's most recent
@@ -239,6 +256,39 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         actions.push(Action::Edit(id));
     }
     app.actions.extend(actions);
+}
+
+/// Takes an exact Command/Ctrl+1..9 press, leaving modified number keys alone.
+fn take_chat_number(input: &mut egui::InputState) -> Option<usize> {
+    let keys = [
+        Key::Num1,
+        Key::Num2,
+        Key::Num3,
+        Key::Num4,
+        Key::Num5,
+        Key::Num6,
+        Key::Num7,
+        Key::Num8,
+        Key::Num9,
+    ];
+    let mut number = None;
+    input.events.retain(|event| {
+        if number.is_none()
+            && let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            && modifiers.matches_exact(Modifiers::COMMAND)
+            && let Some(index) = keys.iter().position(|candidate| candidate == key)
+        {
+            number = Some(index);
+            return false;
+        }
+        true
+    });
+    number
 }
 
 /// Removes this frame's first plain (unmodified) press of `key`, if any, and
@@ -372,6 +422,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
     ("Ctrl+Shift+[ / ]", "Previous / next chat, as in WhatsApp"),
+    ("Ctrl+1..9", "Open a chat by its position in the chat list"),
     ("↑", "Edit the previous message (when the input is empty)"),
     ("Enter", "Send (Shift+Enter for a new line)"),
     (
@@ -698,6 +749,125 @@ mod tests {
                 assert_eq!(app.scroll_chat_into_view.as_ref(), Some(expected));
             }
         }
+    }
+
+    #[test]
+    fn numbered_shortcuts_open_each_position_with_platform_command_modifiers() {
+        let (_root, mut app, ids) = app_with_chats(9);
+        let ctx = egui::Context::default();
+        for modifiers in ctrl_shift().map(|modifiers| Modifiers {
+            shift: false,
+            ..modifiers
+        }) {
+            for (key, expected) in [
+                Key::Num1,
+                Key::Num2,
+                Key::Num3,
+                Key::Num4,
+                Key::Num5,
+                Key::Num6,
+                Key::Num7,
+                Key::Num8,
+                Key::Num9,
+            ]
+            .into_iter()
+            .zip(&ids)
+            {
+                app.actions.clear();
+                app.scroll_chat_into_view = None;
+                assert!(!press(&mut app, &ctx, key, modifiers));
+                assert!(app.actions.contains(&Action::OpenChat(expected.clone())));
+                assert_eq!(app.scroll_chat_into_view.as_ref(), Some(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn numbered_shortcuts_follow_pins_filters_search_and_archived_order() {
+        let (_root, mut app, ids) = app_with_chats(4);
+        let ctx = egui::Context::default();
+        app.chats[3].pinned = true;
+        app.chats[2].archived = true;
+        app.chats[1].locked = true;
+        assert!(!press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND));
+        assert!(app.actions.contains(&Action::OpenChat(ids[3].clone())));
+        app.actions.clear();
+        assert!(!press(&mut app, &ctx, Key::Num2, Modifiers::COMMAND));
+        assert!(app.actions.contains(&Action::OpenChat(ids[0].clone())));
+
+        app.chat_filter = crate::model::ChatFilter::Unread;
+        app.chats[0].unread = 1;
+        app.actions.clear();
+        press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND);
+        assert!(app.actions.contains(&Action::OpenChat(ids[0].clone())));
+        assert!(app.actions.contains(&Action::KeepUnread(ids[0].clone())));
+
+        app.search = "Chat 02".into();
+        app.search_selected = Some(ids[0].clone());
+        app.actions.clear();
+        press(&mut app, &ctx, Key::Num9, Modifiers::COMMAND);
+        assert!(app.actions.is_empty());
+        assert_eq!(app.search_selected.as_ref(), Some(&ids[0]));
+        press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND);
+        assert_eq!(app.actions, [Action::OpenChat(ids[2].clone())]);
+        assert!(app.search_selected.is_none());
+
+        app.search.clear();
+        app.show_archived = true;
+        app.actions.clear();
+        press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND);
+        assert_eq!(app.actions, [Action::OpenChat(ids[2].clone())]);
+    }
+
+    #[test]
+    fn numbered_shortcuts_do_not_wrap_missing_positions_or_change_zero_zoom() {
+        let (_root, mut app, ids) = app_with_chats(2);
+        let ctx = egui::Context::default();
+        app.open_chat = Some(ids[0].clone());
+        for key in [Key::Num3, Key::Num9] {
+            assert!(!press(&mut app, &ctx, key, Modifiers::COMMAND));
+            assert!(app.actions.is_empty());
+            assert!(app.scroll_chat_into_view.is_none());
+        }
+        app.chats.clear();
+        press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND);
+        assert!(app.actions.is_empty());
+        press(&mut app, &ctx, Key::Num0, Modifiers::COMMAND);
+        assert_eq!(app.actions, [Action::ResetZoom]);
+    }
+
+    #[test]
+    fn numbered_shortcuts_leave_plain_and_modified_numbers_alone() {
+        let (_root, mut app, _ids) = app_with_chats(2);
+        let ctx = egui::Context::default();
+        for modifiers in [
+            Modifiers::NONE,
+            Modifiers::SHIFT,
+            Modifiers::ALT,
+            Modifiers::COMMAND | Modifiers::SHIFT,
+            Modifiers::COMMAND | Modifiers::ALT,
+        ] {
+            assert!(press(&mut app, &ctx, Key::Num1, modifiers));
+            assert!(app.actions.is_empty());
+        }
+    }
+
+    #[test]
+    fn numbered_shortcuts_leave_settings_and_overlays_alone() {
+        let (_root, mut app, _ids) = app_with_chats(2);
+        let ctx = egui::Context::default();
+        app.page = Page::Settings;
+        assert!(press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND));
+        app.page = Page::Chats;
+        app.dialog = Some(Dialog::Shortcuts);
+        assert!(press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND));
+        app.dialog = None;
+        app.show_update = true;
+        assert!(press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND));
+        app.show_update = false;
+        app.reaction_target = Some(("chat-fixture".into(), "message-fixture".into()));
+        assert!(press(&mut app, &ctx, Key::Num1, Modifiers::COMMAND));
+        assert!(app.actions.is_empty());
     }
 
     #[test]

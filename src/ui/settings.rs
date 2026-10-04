@@ -100,6 +100,8 @@ enum Control {
     Row(Draw),
     /// A switch bound to a setting.
     Toggle(fn(&mut Settings) -> &mut bool),
+    /// A switch bound to the active WhatsApp account.
+    AccountToggle(fn(&mut crate::settings::AccountSettings) -> &mut bool),
     /// Something that lays itself out, like the account card.
     Block(Draw),
 }
@@ -146,6 +148,20 @@ impl Section {
         self.entries.push((row, Control::Toggle(field)));
     }
 
+    fn account_toggle(
+        &mut self,
+        title: impl Into<Text>,
+        description: impl Into<Text>,
+        field: fn(&mut crate::settings::AccountSettings) -> &mut bool,
+    ) {
+        let row = Row {
+            title: title.into(),
+            description: description.into(),
+            keywords: Vec::new(),
+        };
+        self.entries.push((row, Control::AccountToggle(field)));
+    }
+
     fn block(&mut self, keywords: Vec<Text>, draw: impl FnOnce(&mut egui::Ui, &mut App) + 'static) {
         let row = Row {
             keywords,
@@ -183,6 +199,9 @@ impl Section {
                     ),
                     Control::Toggle(field) => {
                         toggle(ui, app, &row.title.shown, &row.description.shown, field);
+                    }
+                    Control::AccountToggle(field) => {
+                        account_toggle(ui, app, &row.title.shown, &row.description.shown, field);
                     }
                     Control::Block(draw) => draw(ui, app),
                 }
@@ -325,7 +344,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Wallpaper"),
         Text::default(),
         move |ui, app| {
-            let label = if app.settings.wallpaper_image.is_some() {
+            let label = if app.account().settings.wallpaper_image.is_some() {
                 crate::i18n::gettext(app.locale, "Image").into_owned()
             } else {
                 wallpaper_label(app.locale, app.settings.wallpaper_color_for(palette.dark))
@@ -382,7 +401,7 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
     );
-    chats.toggle(
+    chats.account_toggle(
         translated(locale, "Download files automatically"),
         translated(
             locale,
@@ -398,6 +417,30 @@ fn sections(app: &App) -> Vec<Section> {
             |settings| &mut settings.pause_other_media,
         );
     }
+    chats.row(
+        translated(locale, "Keep chats archived"),
+        translated(
+            locale,
+            "When off, a new message brings an archived chat back to the list.",
+        ),
+        move |ui, app| {
+            let mut keep = app.settings.keep_chats_archived;
+            let response = widgets::switch(ui, &palette, &mut keep);
+            theme::reveal_focus(&response);
+            let label = crate::i18n::gettext(app.locale, "Keep chats archived");
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    keep,
+                    label.as_ref(),
+                )
+            });
+            if response.changed() {
+                app.actions.push(Action::SetKeepChatsArchived(keep));
+            }
+        },
+    );
     chats.row(
         translated(locale, "Locked chats code"),
         translated(
@@ -434,7 +477,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
 
     let mut notifications = Section::new(translated(locale, "Notifications"));
-    notifications.toggle(
+    notifications.account_toggle(
         translated(locale, "Desktop notifications"),
         translated(
             locale,
@@ -442,7 +485,7 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.notifications,
     );
-    if app.settings.notifications {
+    if app.account().settings.notifications {
         let (title, description) = sound_text(locale, false);
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
         notifications.toggle(
@@ -463,12 +506,12 @@ fn sections(app: &App) -> Vec<Section> {
     } else {
         translated(locale, "Let people see when you read their messages.")
     };
-    privacy.toggle(
+    privacy.account_toggle(
         translated(locale, "Send read receipts"),
         receipts_note,
         |settings| &mut settings.send_read_receipts,
     );
-    privacy.toggle(
+    privacy.account_toggle(
         translated(locale, "Show when you are typing"),
         "",
         |settings| &mut settings.send_typing,
@@ -649,19 +692,25 @@ fn sections(app: &App) -> Vec<Section> {
     account_section.block(
         vec![
             translated(locale, "Your name"),
-            translated(locale, "About"),
+            Text {
+                shown: crate::i18n::pgettext(locale, "profile", "About"),
+                source: "About".into(),
+            },
             translated(locale, "Change profile picture"),
             translated(locale, "Unlink this computer"),
+            translated(locale, "Add account"),
+            translated(locale, "Remove this account"),
         ],
         |ui, app| account(app, ui),
     );
 
     let mut files = Section::new(translated(locale, "Files"));
-    let state = app.dirs.state.clone();
+    // The account on screen: each number keeps its own archive and media.
+    let state = app.account().dirs.state.clone();
     let open_folder = crate::i18n::gettext(locale, "Open folder");
     files.row(
         translated(locale, "Message archive"),
-        app.dirs.archive_db().display().to_string(),
+        app.account().dirs.archive_db().display().to_string(),
         {
             let open_folder = open_folder.clone();
             move |ui, app| {
@@ -674,7 +723,9 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
     let custom = app.settings.download_folder.clone();
-    let media = custom.clone().unwrap_or_else(|| app.dirs.media_cache_dir());
+    let media = custom
+        .clone()
+        .unwrap_or_else(|| app.account().dirs.media_cache_dir());
     files.row(
         translated(locale, "Downloads"),
         media.display().to_string(),
@@ -1229,7 +1280,7 @@ fn image_buttons(app: &mut App, ui: &mut egui::Ui, width: f32) {
     let palette = app.palette;
     let choose = crate::i18n::gettext(app.locale, "Choose image…");
     let remove = crate::i18n::gettext(app.locale, "Remove image");
-    let has_image = app.settings.wallpaper_image.is_some();
+    let has_image = app.account().settings.wallpaper_image.is_some();
     let spacing = ui.spacing().item_spacing.x;
     let mut row_width = theme::soft_button_width(ui, &choose, true);
     if has_image {
@@ -1363,7 +1414,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             app.actions.push(Action::PickProfilePicture);
         }
         ui.vertical(|ui| {
-            ui.set_width((ui.available_width() - 230.0).max(160.0));
+            ui.set_width((ui.available_width() - 380.0).max(160.0));
             if let Some((draft_name, draft_about)) = &mut draft {
                 submitted |= profile_field(
                     ui,
@@ -1377,7 +1428,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                     ui,
                     &palette,
                     draft_about,
-                    &crate::i18n::gettext(app.locale, "About"),
+                    &crate::i18n::pgettext(app.locale, "profile", "About"),
                     139,
                 );
                 return;
@@ -1409,7 +1460,23 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             }
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if theme::soft_button(
+            // With other numbers here, unlinking this one also takes it off
+            // the switcher; the last one stays, waiting to be linked again.
+            if app.has_several_accounts() {
+                if theme::soft_button(
+                    ui,
+                    &palette,
+                    Some(Icon::LogOut),
+                    &crate::i18n::gettext(app.locale, "Remove this account"),
+                    false,
+                )
+                .clicked()
+                {
+                    let id = app.account().id.clone();
+                    app.actions
+                        .push(Action::ShowDialog(Dialog::ConfirmRemoveAccount(id)));
+                }
+            } else if theme::soft_button(
                 ui,
                 &palette,
                 Some(Icon::LogOut),
@@ -1419,6 +1486,17 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             .clicked()
             {
                 app.actions.push(Action::ShowDialog(Dialog::ConfirmUnlink));
+            }
+            if theme::soft_button(
+                ui,
+                &palette,
+                Some(Icon::Plus),
+                &crate::i18n::gettext(app.locale, "Add account"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::AddAccount);
             }
         });
     });
@@ -1580,6 +1658,30 @@ fn toggle(
     if changed {
         *field(&mut app.settings) = value;
         app.actions.push(Action::SettingsChanged);
+    }
+}
+
+fn account_toggle(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    label: &str,
+    description: &str,
+    field: impl Fn(&mut crate::settings::AccountSettings) -> &mut bool,
+) {
+    let palette = app.palette;
+    let mut value = *field(&mut app.account_mut().settings);
+    let mut changed = false;
+    widgets::setting_row(ui, &palette, label, description, |ui| {
+        let response = widgets::switch(ui, &palette, &mut value);
+        theme::reveal_focus(&response);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), value, label)
+        });
+        changed = response.changed();
+    });
+    if changed {
+        *field(&mut app.account_mut().settings) = value;
+        app.account_mut().mark_settings_dirty();
     }
 }
 

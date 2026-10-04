@@ -11,6 +11,46 @@ use serde::{Deserialize, Serialize};
 /// Chat JID string: `<phone>@s.whatsapp.net`, `<id>@g.us`, or `<id>@lid`.
 pub type ChatId = String;
 
+/// Stable folder name for a linked WhatsApp account on this computer.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AccountId(pub String);
+
+impl AccountId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn first() -> Self {
+        Self("1".into())
+    }
+
+    /// Folder name allocated by the roster: one or more digits, no leading
+    /// zero, so it cannot be an absolute path or climb out of `accounts/`.
+    pub fn is_safe(value: &str) -> bool {
+        let mut chars = value.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        first.is_ascii_digit() && first != '0' && chars.all(|character| character.is_ascii_digit())
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::is_safe(value).then(|| Self(value.to_owned()))
+    }
+}
+
+impl std::fmt::Display for AccountId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&str> for AccountId {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatKind {
@@ -282,6 +322,10 @@ pub struct Message {
     pub from_me: bool,
     /// Unix seconds.
     pub timestamp: i64,
+    /// The phone's order within a history conversation, used to break timestamp
+    /// ties. Live messages and older archives may not have one.
+    #[serde(default)]
+    pub history_order: Option<i64>,
     pub content: Content,
     pub status: Delivery,
     /// First delivered-receipt Unix timestamp for outgoing messages.
@@ -1070,6 +1114,7 @@ pub enum Dialog {
     Shortcuts,
     About,
     ConfirmUnlink,
+    ConfirmRemoveAccount(AccountId),
     /// Phone number used for pairing-code linking.
     PairWithPhone,
     /// Contacts and the self-chat shortcut.
@@ -1311,9 +1356,19 @@ pub enum Action {
     /// Marks a read chat unread, here and on the phone; does not invent a
     /// pending count.
     MarkUnread(ChatId),
-    LoadOlder(ChatId),
-    /// Requests messages older than the local archive.
+    /// Pages older messages from the archive, then the phone. `explicit` when
+    /// the reader scrolled to the top, rather than a short chat filling its
+    /// view: only the reader's own requests report a phone that is silent.
+    LoadOlder {
+        chat: ChatId,
+        explicit: bool,
+    },
+    /// Requests messages older than the local archive, for the reader.
     FetchOlder(ChatId),
+    ReloadHistory {
+        chat: ChatId,
+        message: String,
+    },
     Download {
         card: Option<usize>,
         chat: ChatId,
@@ -1502,8 +1557,12 @@ pub enum Action {
         sticker: PathBuf,
         member: bool,
     },
-    /// Opens the prefilled contact-name editor.
-    EditContact(String),
+    /// Opens the contact-name editor for `id`, prefilled with `name` and
+    /// split as the contact's saved first name says.
+    EditContact {
+        id: String,
+        name: String,
+    },
     /// Saves a contact through WhatsApp contact sync. `first` is the short
     /// display name and `last` completes the full name.
     SaveContact {
@@ -1663,6 +1722,8 @@ pub enum Action {
     RemoveGroupPicture(ChatId),
     /// Sets or resets (`None`) the folder for new downloads.
     SetDownloadFolder(Option<PathBuf>),
+    /// Keeps archived chats archived when a new message comes, or not.
+    SetKeepChatsArchived(bool),
     /// Saves the proxy setting and reconnects. Empty follows the environment.
     SetProxy(String),
     /// Plays a notification sound once, as a preview.
@@ -1698,6 +1759,14 @@ pub enum Action {
     HideWindow,
     /// Applies the configured close-button behavior.
     CloseWindow,
+    /// Shows another linked account in the window.
+    SwitchAccount(AccountId),
+    /// Starts linking another number beside the ones already here.
+    AddAccount,
+    /// Leaves an account being added before it was linked.
+    CancelAddAccount,
+    /// Unlinks an account and deletes what is stored here for it.
+    RemoveAccount(AccountId),
     /// Mutes until Unix time, indefinitely with `Some(0)`, or unmutes with `None`.
     SetMuted(ChatId, Option<i64>),
     /// Moves a chat into or out of the locked folder.

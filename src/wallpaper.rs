@@ -6,8 +6,6 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2, pos2};
 
-use crate::paths::AppDirs;
-
 /// The default doodle tile, drawn from Lucide icons (ISC, see
 /// `assets/icons/LICENSE.txt`). It is embedded so the wallpaper works offline
 /// and does not depend on a third-party request at runtime.
@@ -336,7 +334,7 @@ fn bounded(image: image::DynamicImage) -> image::DynamicImage {
 /// may move or go. An image larger than [`MAX_SIDE`] is scaled down first and
 /// stored as JPEG, or PNG when it has transparency; a smaller one is copied as
 /// it is. Earlier copies are removed once the new one is in place.
-pub fn import(source: &Path, dirs: &AppDirs) -> Result<PathBuf, String> {
+pub fn import(source: &Path, state: &Path) -> Result<PathBuf, String> {
     let bytes = std::fs::read(source).map_err(|error| error.to_string())?;
     let format = image::guess_format(&bytes).map_err(|_| "not an image".to_owned())?;
     let decoded =
@@ -353,9 +351,9 @@ pub fn import(source: &Path, dirs: &AppDirs) -> Result<PathBuf, String> {
         };
         (bytes, extension)
     };
-    std::fs::create_dir_all(&dirs.state).map_err(|error| error.to_string())?;
-    let target = dirs.wallpaper_file(extension);
-    let temporary = dirs.wallpaper_file("tmp");
+    std::fs::create_dir_all(state).map_err(|error| error.to_string())?;
+    let target = state.join(format!("wallpaper.{extension}"));
+    let temporary = state.join("wallpaper.tmp");
     std::fs::write(&temporary, contents)
         .and_then(|()| std::fs::rename(&temporary, &target))
         .map_err(|error| {
@@ -363,7 +361,7 @@ pub fn import(source: &Path, dirs: &AppDirs) -> Result<PathBuf, String> {
             error.to_string()
         })?;
     for other in EXTENSIONS.into_iter().filter(|other| *other != extension) {
-        let _ = std::fs::remove_file(dirs.wallpaper_file(other));
+        let _ = std::fs::remove_file(state.join(format!("wallpaper.{other}")));
     }
     Ok(target)
 }
@@ -388,9 +386,9 @@ fn encode(image: &image::DynamicImage) -> Result<(Vec<u8>, &'static str), String
 }
 
 /// Deletes ZapFast's copy of the wallpaper image, whatever its extension.
-pub fn remove(dirs: &AppDirs) {
+pub fn remove(state: &Path) {
     for extension in EXTENSIONS {
-        match std::fs::remove_file(dirs.wallpaper_file(extension)) {
+        match std::fs::remove_file(state.join(format!("wallpaper.{extension}"))) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => log::debug!("could not delete the wallpaper image: {error}"),
@@ -401,6 +399,7 @@ pub fn remove(dirs: &AppDirs) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::AppDirs;
     use egui::vec2;
 
     #[test]
@@ -491,7 +490,7 @@ mod tests {
         let chosen = root.path().join("holiday.png");
         write_image(&chosen, 64, 32);
 
-        let small = import(&chosen, &dirs).unwrap();
+        let small = import(&chosen, &dirs.state).unwrap();
         assert_eq!(small, dirs.wallpaper_file("png"));
         assert_eq!(
             std::fs::read(&small).unwrap(),
@@ -504,7 +503,7 @@ mod tests {
         // replaces the earlier copy.
         let large = root.path().join("panorama.jpg");
         write_image(&large, 4000, 1000);
-        let copy = import(&large, &dirs).unwrap();
+        let copy = import(&large, &dirs.state).unwrap();
         assert_eq!(copy, dirs.wallpaper_file("jpg"));
         assert!(!small.exists(), "the earlier copy is gone");
         let (width, height) = image::image_dimensions(&copy).unwrap();
@@ -514,16 +513,16 @@ mod tests {
         // Something that is not an image is refused and the copy survives.
         let text = root.path().join("notes.png");
         std::fs::write(&text, "not a picture").unwrap();
-        assert!(import(&text, &dirs).is_err());
+        assert!(import(&text, &dirs.state).is_err());
         assert!(copy.exists());
 
-        remove(&dirs);
+        remove(&dirs.state);
         assert!(!copy.exists());
         assert!(
             std::fs::read_dir(&dirs.state).unwrap().next().is_none(),
             "nothing is left behind"
         );
-        remove(&dirs);
+        remove(&dirs.state);
     }
 
     #[test]

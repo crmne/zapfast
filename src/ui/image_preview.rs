@@ -143,7 +143,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     }
                     let scroll_id =
                         ui.make_persistent_id(egui::IdSalt::new("image-preview-scroll"));
-                    let trackpad = app.scroll_from_trackpad();
+                    let trackpad = app.scrolling.from_trackpad();
                     // Read before the scroll area, which would otherwise take the
                     // wheel. The zoom itself is applied by `App` after the frame.
                     let zoom = zoom_input(ui, area, trackpad).and_then(|(factor, pointer)| {

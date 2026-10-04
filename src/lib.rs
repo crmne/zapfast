@@ -1,5 +1,6 @@
 //! ZapFast internals exposed for diagnostics and tests.
 
+pub mod account;
 pub mod animation;
 pub mod app;
 pub mod app_lock;
@@ -41,3 +42,4 @@ pub mod util;
 pub mod video;
 pub mod voice;
 pub mod wallpaper;
+pub mod window;

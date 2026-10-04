@@ -95,7 +95,8 @@ fn search_keyboard(app: &mut App, ui: &egui::Ui) {
     }
     app.search_selected = index.map(|index| chats[index].clone());
     if app.search_selected != before {
-        app.scroll_chat_into_view.clone_from(&app.search_selected);
+        let selected = app.search_selected.clone();
+        app.scroll_chat_into_view = selected;
     }
     if enter {
         let chat = app
@@ -158,34 +159,9 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             palette.text,
                         );
                     } else {
-                        let me = app.me.clone().unwrap_or_default();
-                        let name = app.me_name.clone().unwrap_or_else(|| "You".to_owned());
-                        let picture = app.avatar(&me);
-                        let tooltip = match &app.me_about {
-                            Some(about) => format!("{name}\n{about}"),
-                            None => name.clone(),
-                        };
-                        let response = widgets::clickable_avatar(
-                            ui,
-                            &palette,
-                            &name,
-                            &me,
-                            34.0,
-                            picture.as_deref(),
-                            // The label follows the action: while Settings are
-                            // showing, this click closes them.
-                            if app.page == Page::Settings {
-                                "Close settings"
-                            } else {
-                                "Your profile and settings"
-                            },
-                        )
-                        .tab_stop(Stop::Profile)
-                        .on_hover_text(tooltip)
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                        if response.clicked() {
-                            app.actions.push(Action::ToggleSettings);
-                        }
+                        // Our avatar opens the account switcher, with the
+                        // profile and settings below the accounts.
+                        super::accounts::avatar_button(app, ui, 34.0).tab_stop(Stop::Profile);
                         ui.add_space(2.0);
                         theme::text(
                             ui,
@@ -322,6 +298,10 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         palette.text,
                     );
                 } else {
+                    // Our avatar opens the account switcher here as on the
+                    // other platforms, after the traffic lights' inset.
+                    super::accounts::avatar_button(app, ui, 30.0).tab_stop(Stop::Profile);
+                    ui.add_space(2.0);
                     theme::text(
                         ui,
                         crate::i18n::gettext(app.locale, "Chats"),
@@ -397,7 +377,7 @@ pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
 /// Filter chips under the search field. Search lists every match, so the
 /// chips hide there.
 /// Width of the fade over the filter chips' right edge.
-const CHIP_FADE: f32 = 16.0;
+pub(super) const CHIP_FADE: f32 = 16.0;
 
 fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     if !app.locked_folder_open() && !app.search.trim().is_empty() {
@@ -407,6 +387,8 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(8.0);
     let output = egui::ScrollArea::horizontal()
         .id_salt("chat-filters")
+        // A floating bar would cover the chips; the edge fade shows the row scrolls.
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .animated(false)
         .auto_shrink([false, true])
         .show(ui, |ui| {
@@ -518,6 +500,8 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
 
 fn list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    // Taken here so a send seen while the list is hidden cannot move it later.
+    let to_top = std::mem::take(&mut app.scroll_chats_to_top);
     if app.locked_folder_open() {
         locked_list(app, ui);
         return;
@@ -569,6 +553,9 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-list")
         .auto_shrink([false, false]);
+    if to_top {
+        scroll_area = scroll_area.vertical_scroll_offset(0.0);
+    }
     let target_row = app
         .scroll_chat_into_view
         .as_ref()
@@ -718,14 +705,34 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
     }
     let chats: Vec<Chat> = chats.into_iter().cloned().collect();
     ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical()
+    let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("locked-chats")
-        .auto_shrink([false, false])
-        .show_rows(ui, theme::ROW_HEIGHT, chats.len(), |ui, range| {
-            for chat in &chats[range] {
-                ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
-            }
-        });
+        .auto_shrink([false, false]);
+    let target_row = app
+        .scroll_chat_into_view
+        .as_ref()
+        .and_then(|target| chats.iter().position(|chat| chat.id == *target));
+    if let Some(target_row) = target_row {
+        let id = ui.make_persistent_id(egui::IdSalt::new("locked-chats"));
+        let current = egui::scroll_area::State::load(ui.ctx(), id)
+            .unwrap_or_default()
+            .offset
+            .y;
+        let offset = row_scroll_offset(
+            current,
+            ui.available_height(),
+            target_row,
+            theme::ROW_HEIGHT,
+            ui.spacing().item_spacing.y,
+        );
+        scroll_area = scroll_area.vertical_scroll_offset(offset);
+        app.scroll_chat_into_view = None;
+    }
+    scroll_area.show_rows(ui, theme::ROW_HEIGHT, chats.len(), |ui, range| {
+        for chat in &chats[range] {
+            ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+        }
+    });
 }
 
 /// Returns the smallest offset that fully reveals a fixed-height row.
@@ -880,7 +887,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             x += who.size().x;
         } else if crate::model::ChatKind::from_id(&hit.chat) == crate::model::ChatKind::Group {
             let sender = app.display_name_or(&hit.sender, hit.sender_name.as_deref());
-            let first = sender.split_whitespace().next().unwrap_or(&sender);
+            let first = app.short_name(&hit.sender, &sender);
             let who = widgets::line(
                 ui,
                 &format!("{first}: "),
@@ -1141,7 +1148,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 x += 20.0;
             } else if chat.is_group() {
                 let sender = app.display_name_or(&last.sender, last.sender_name.as_deref());
-                let first = sender.split_whitespace().next().unwrap_or(&sender);
+                let first = app.short_name(&last.sender, &sender);
                 prefix = format!("{first}: ");
                 let sender = widgets::line(
                     ui,
@@ -1358,6 +1365,7 @@ pub fn compact_show(app: &mut App, ui: &mut egui::Ui) {
 /// The avatars: the chats the full list would show right now, under the same
 /// filter, search, archive, and locked-folder state.
 fn compact_list(app: &mut App, ui: &mut egui::Ui) {
+    let to_top = std::mem::take(&mut app.scroll_chats_to_top);
     if !app.locked_folder_open() && app.secret_code_matched() {
         // As in the full list, the secret code reveals only the way in.
         compact_locked_entry(app, ui);
@@ -1367,6 +1375,9 @@ fn compact_list(app: &mut App, ui: &mut egui::Ui) {
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-rail")
         .auto_shrink([false, false]);
+    if to_top {
+        scroll_area = scroll_area.vertical_scroll_offset(0.0);
+    }
     // Alt+Up/Down reveals the chat it opens here too.
     let target_row = app
         .scroll_chat_into_view
@@ -1804,6 +1815,114 @@ mod tests {
     }
 
     #[test]
+    fn a_sent_message_scrolls_the_chat_list_to_the_top() {
+        let (_directory, mut app, ids, ctx) = rail_app(24);
+        let frame = |app: &mut App| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 240.0))),
+                    ..Default::default()
+                },
+                |ui| list(app, ui),
+            );
+            output.textures_delta.clear();
+            ctx.data(|data| data.get_temp::<f32>(list_offset_id()))
+                .expect("chat-list offset")
+        };
+        app.scroll_chat_into_view = ids.last().cloned();
+        assert!(frame(&mut app) > 0.0, "the list starts scrolled down");
+
+        app.scroll_chats_to_top = true;
+        assert_eq!(frame(&mut app), 0.0, "the list is back at the top");
+        assert!(!app.scroll_chats_to_top, "the request was consumed");
+        assert_eq!(frame(&mut app), 0.0, "the list stays at the top");
+    }
+
+    #[test]
+    fn a_send_while_search_results_show_does_not_move_the_list_later() {
+        let (_directory, mut app, ids, ctx) = rail_app(24);
+        let frame = |app: &mut App| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 240.0))),
+                    ..Default::default()
+                },
+                |ui| list(app, ui),
+            );
+            output.textures_delta.clear();
+            ctx.data(|data| data.get_temp::<f32>(list_offset_id()))
+                .expect("chat-list offset")
+        };
+        app.scroll_chat_into_view = ids.last().cloned();
+        let scrolled = frame(&mut app);
+        assert!(scrolled > 0.0, "the list starts scrolled down");
+
+        app.search = "Chat".into();
+        app.scroll_chats_to_top = true;
+        frame(&mut app);
+        assert!(!app.scroll_chats_to_top, "the request was dropped");
+        app.search.clear();
+        assert_eq!(frame(&mut app), scrolled, "the list keeps its place");
+    }
+
+    #[test]
+    fn numbered_shortcuts_reveal_locked_chats_and_consume_the_scroll_request() {
+        let (_directory, mut app, ids, ctx) = rail_app(24);
+        for chat in &mut app.chats {
+            chat.locked = true;
+        }
+        app.page = Page::Chats;
+        app.settings.set_chat_lock_code(Some("fixture-code"));
+        app.actions
+            .push(Action::UnlockLockedFolder("fixture-code".into()));
+        app.background_frame(&ctx);
+        assert!(app.locked_folder_open());
+
+        let mut frame = |key: Option<Key>| {
+            let mut offset = 0.0;
+            let mut height = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 240.0))),
+                    events: key
+                        .into_iter()
+                        .map(|key| egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::COMMAND,
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
+                |ui| {
+                    super::super::keys::handle(&mut app, ui.ctx());
+                    let scroll_id = ui.make_persistent_id(egui::IdSalt::new("locked-chats"));
+                    height = ui.available_height();
+                    list(&mut app, ui);
+                    offset = egui::scroll_area::State::load(ui.ctx(), scroll_id)
+                        .expect("locked-chats scroll state")
+                        .offset
+                        .y;
+                },
+            );
+            output.textures_delta.clear();
+            (offset, height)
+        };
+        assert_eq!(frame(None).0, 0.0);
+        let (offset, height) = frame(Some(Key::Num9));
+        assert!(offset > 0.0, "the ninth locked chat starts off screen");
+        assert!(8.0 * theme::ROW_HEIGHT >= offset);
+        assert!(9.0 * theme::ROW_HEIGHT <= offset + height + 0.5);
+        let (offset, _) = frame(Some(Key::Num1));
+        assert_eq!(offset, 0.0, "navigating back reveals the first row");
+        assert!(app.actions.contains(&Action::OpenChat(ids[8].clone())));
+        assert!(app.actions.contains(&Action::OpenChat(ids[0].clone())));
+        assert!(app.scroll_chat_into_view.is_none(), "reveal was consumed");
+    }
+
+    #[test]
     fn the_collapsed_list_is_narrow_and_opens_a_chat_on_click() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _events) =
@@ -1861,6 +1980,71 @@ mod tests {
         );
     }
 
+    #[test]
+    fn hovering_the_chip_rows_draws_no_scroll_bar_over_the_chips() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        app.labels = (0..8)
+            .map(|index| crate::model::Label {
+                id: index.to_string(),
+                name: format!("Label {index}"),
+                color_hex: "#25d366".into(),
+                created_at: 0,
+            })
+            .collect();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        // Narrow enough that both rows scroll.
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(220.0, 400.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| filter_chips(&mut app, ui),
+            );
+            output.textures_delta.clear();
+            output.shapes
+        };
+        frame(vec![]);
+        let chip = ctx
+            .data(|data| data.get_temp::<Rect>(filter_chip_id(ChatFilter::All)))
+            .expect("the filter chips are drawn");
+        let labels = ctx
+            .data(|data| data.get_temp::<Rect>(super::labels::chip_row_id()))
+            .expect("the label chips are drawn");
+        for (row, pointer) in [("filter", chip.center()), ("label", labels.center())] {
+            let mut shapes = Vec::new();
+            for _ in 0..5 {
+                shapes = frame(vec![egui::Event::PointerMoved(pointer)]);
+            }
+            // A scroll bar handle is a thin rectangle; chips are taller.
+            fn thin_rects(shape: &egui::Shape, bars: &mut Vec<Rect>) {
+                match shape {
+                    egui::Shape::Vec(shapes) => {
+                        shapes.iter().for_each(|shape| thin_rects(shape, bars));
+                    }
+                    egui::Shape::Rect(rect)
+                        if rect.rect.height() < 12.0 && rect.rect.width() > 12.0 =>
+                    {
+                        bars.push(rect.rect);
+                    }
+                    _ => {}
+                }
+            }
+            let mut bars = Vec::new();
+            for clipped in &shapes {
+                thin_rects(&clipped.shape, &mut bars);
+            }
+            assert!(
+                bars.is_empty(),
+                "the {row} row drew a scroll bar at {bars:?}"
+            );
+        }
+    }
+
     /// An app with `count` chats, newest first, and a context to draw it in.
     fn rail_app(count: usize) -> (tempfile::TempDir, App, Vec<String>, egui::Context) {
         let directory = tempfile::tempdir().unwrap();
@@ -1907,6 +2091,30 @@ mod tests {
             drawn < 20,
             "a 400-point window has room for a few avatars, yet {drawn} were laid out"
         );
+    }
+
+    #[test]
+    fn a_sent_message_scrolls_the_collapsed_list_to_the_top() {
+        let (_directory, mut app, ids, ctx) = rail_app(40);
+        let laid_out = |id: &str| {
+            ctx.data(|data| data.get_temp::<Rect>(compact_chat_id(id)))
+                .is_some()
+        };
+        app.scroll_chat_into_view = Some(ids[39].clone());
+        rail_frame(&mut app, &ctx, vec![]);
+        rail_frame(&mut app, &ctx, vec![]);
+        assert!(laid_out(&ids[39]), "the rail starts scrolled to the end");
+
+        app.scroll_chats_to_top = true;
+        // Row rects stay in memory until replaced; forget the old ones.
+        ctx.data_mut(|data| {
+            data.remove::<Rect>(compact_chat_id(&ids[0]));
+            data.remove::<Rect>(compact_chat_id(&ids[39]));
+        });
+        rail_frame(&mut app, &ctx, vec![]);
+        assert!(!app.scroll_chats_to_top, "the request was consumed");
+        assert!(laid_out(&ids[0]), "the first avatar is back on screen");
+        assert!(!laid_out(&ids[39]), "the last avatar left the screen");
     }
 
     #[test]

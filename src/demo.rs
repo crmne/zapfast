@@ -269,6 +269,7 @@ fn message(chat: &str, id: &str, from_me: bool, timestamp: i64, content: Content
         read_at: None,
         quoted: None,
         reactions: Vec::new(),
+        history_order: None,
         edited: false,
         mentions: Vec::new(),
         forwarded: false,
@@ -412,7 +413,7 @@ fn sample_files(app: &App) -> (std::path::PathBuf, std::path::PathBuf) {
 pub fn populate(app: &mut App) {
     app.backend.set_offline(true);
     // Demo mode has no backend to handle downloads.
-    app.settings.auto_download = false;
+    app.account_mut().settings.auto_download = false;
     app.link = LinkStatus::Connected;
     app.me = Some(ME.to_owned());
     app.me_name = Some("Carmine".to_owned());
@@ -853,21 +854,35 @@ pub fn populate(app: &mut App) {
         .extend(group_extra);
 
     // Sync chat-row previews with each conversation's last message.
-    for chat in &mut app.chats {
-        if let Some(last) = app
-            .conversations
-            .get(&chat.id)
-            .and_then(|conversation| conversation.messages.last())
-        {
-            chat.last_activity = last.timestamp;
-            chat.last = Some(crate::model::LastMessage {
-                from_me: last.from_me,
-                sender: last.sender.clone(),
-                sender_name: last.sender_name.clone(),
-                summary: last.summary(),
-                full: last.content.full_summary(),
-                status: last.status,
-            });
+    // chats and conversations live on Account; Deref would treat a joint
+    // borrow as one exclusive lock, so the previews are collected first.
+    let previews: Vec<(crate::model::ChatId, i64, crate::model::LastMessage)> = app
+        .chats
+        .iter()
+        .filter_map(|chat| {
+            app.conversations
+                .get(&chat.id)
+                .and_then(|conversation| conversation.messages.last())
+                .map(|last| {
+                    (
+                        chat.id.clone(),
+                        last.timestamp,
+                        crate::model::LastMessage {
+                            from_me: last.from_me,
+                            sender: last.sender.clone(),
+                            sender_name: last.sender_name.clone(),
+                            summary: last.summary(),
+                            full: last.content.full_summary(),
+                            status: last.status,
+                        },
+                    )
+                })
+        })
+        .collect();
+    for (id, activity, last) in previews {
+        if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == id) {
+            chat.last_activity = activity;
+            chat.last = Some(last);
         }
     }
     app.typing.insert(
@@ -1688,7 +1703,7 @@ fn wallpaper_image_sample(app: &mut App) {
     let image = egui::ColorImage::new([width, height], pixels);
     let path = app.dirs.wallpaper_file("png");
     app.wallpaper_image.show_now(&path, image);
-    app.settings.wallpaper_image = Some(path);
+    app.account_mut().settings.wallpaper_image = Some(path);
 }
 
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
@@ -2291,6 +2306,35 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     });
             }
             "new-contact" => app.dialog = Some(Dialog::NewContact),
+            // The switcher under our avatar open with the one account.
+            "account-menu" => app.account_menu = true,
+            // A second number linked beside the first, with unread chats of
+            // its own, and the switcher under our avatar open.
+            "accounts" | "accounts-closed" => {
+                if app.accounts.len() < 2 {
+                    let id = crate::model::AccountId::parse("2").expect("demo account");
+                    if let Ok((mut work, _)) = crate::account::Account::detached(
+                        &app.dirs,
+                        id,
+                        crate::settings::AccountSettings::default(),
+                    ) {
+                        work.me = Some("15550002222@s.whatsapp.net".into());
+                        work.me_name = Some("Carmine (Studio)".into());
+                        work.link = crate::backend::LinkStatus::Connected;
+                        for (id, name, unread) in [
+                            ("15550003333@s.whatsapp.net", "Grace", 2),
+                            ("120363000000000099@g.us", "Studio team", 5),
+                        ] {
+                            let mut chat = Chat::new(id.into(), name.into());
+                            chat.unread = unread;
+                            chat.last_activity = crate::util::now();
+                            work.chats.push(chat);
+                        }
+                        app.accounts.push(work);
+                    }
+                }
+                app.account_menu = part == "accounts";
+            }
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
             }
@@ -2553,10 +2597,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     let _ = std::fs::write(&path, bytes);
                 }
                 let waveform = crate::voice::waveform(&tone);
+                let open = app.open_chat.clone().unwrap_or_default();
                 for id in ["ada-voice", "you-voice"] {
                     if let Some(message) = app
                         .conversations
-                        .get_mut(&app.open_chat.clone().unwrap_or_default())
+                        .get_mut(&open)
                         .and_then(|conversation| conversation.message_mut(id))
                         && let crate::model::Content::Audio {
                             media,
@@ -2826,6 +2871,49 @@ mod tests {
             // Headless tests must apply font-atlas updates themselves.
             output.textures_delta.clear();
         }
+    }
+
+    /// A sent message moves its chat up, and the scrolled chat list follows
+    /// it back to the top.
+    #[test]
+    fn sending_a_message_scrolls_the_chat_list_back_to_the_top() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let offset = || {
+            ctx.data(|data| data.get_temp::<f32>(crate::ui::chats::list_offset_id()))
+                .expect("the chat list was drawn")
+        };
+        // Short enough that the sample chats do not all fit.
+        let render = |app: &mut App| {
+            for _ in 0..3 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 420.0),
+                    )),
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                });
+                output.textures_delta.clear();
+            }
+        };
+        let last = app.visible_chats().last().map(|chat| chat.id.clone());
+        app.scroll_chat_into_view.clone_from(&last);
+        render(&mut app);
+        assert!(offset() > 0.0, "the list starts scrolled down");
+
+        app.actions.push(crate::model::Action::SendText {
+            chat: last.expect("sample chats"),
+            text: "Fixture".into(),
+            quoting: None,
+        });
+        render(&mut app);
+        assert_eq!(offset(), 0.0, "the list is back at the top");
     }
 
     /// A clicked notification lands on the message it announced and keeps it
@@ -4202,6 +4290,10 @@ mod tests {
             "delete-message",
             "delete-message-mine",
             "new-contact",
+            "accounts",
+            "accounts,light",
+            "accounts-closed",
+            "account-menu",
             "light",
             "archived",
             "chat-search",
@@ -6007,6 +6099,39 @@ mod tests {
         assert!(app.toasts.iter().any(|toast| toast.message == "Copied"));
     }
 
+    #[test]
+    fn history_fidelity_message_menu_requests_before_the_chosen_message() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = app();
+        apply_flags(&mut app, Some("react-menu"));
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let (_, _, pos) = nodes
+            .into_iter()
+            .find(|(label, _, _)| label == "Reload earlier messages")
+            .expect("reload action");
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        accessible_nodes(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), press(true)],
+        );
+        accessible_nodes(&mut app, &ctx, vec![press(false)]);
+        let commands = app.backend.take_demo_commands();
+        assert!(commands.iter().any(|command| matches!(command,
+            crate::backend::Command::ReloadHistory { chat, message }
+            if Some(chat) == app.open_chat.as_ref() && message == "ada-link")));
+        assert!(app.conversations[app.open_chat.as_ref().unwrap()].fetching_phone);
+    }
+
     /// Opening the log hands it to the worker, which waits to see it open or
     /// shows it in its folder, instead of the fire-and-forget attachment path
     /// that opened nothing on Linux desktops without a handler for it.
@@ -6693,14 +6818,14 @@ mod tests {
         );
     }
 
-    /// While Settings are showing, both header buttons say what a click does
-    /// now: a screen reader reads the label, not the accent colour.
+    /// While Settings are showing, the gear says what a click does now: a
+    /// screen reader reads the label, not the accent colour. The avatar keeps
+    /// switching accounts.
     #[test]
-    fn the_header_buttons_say_they_close_settings() {
+    fn the_settings_button_says_it_closes_settings() {
         let mut app = app();
         let ctx = egui::Context::default();
-        // The macOS header carries neither button, so nothing follows the page
-        // there.
+        // The macOS header has no settings button: the app menu holds them.
         if crate::theme::macos_chrome(&ctx) {
             return;
         }
@@ -6737,8 +6862,8 @@ mod tests {
         };
         let closed = labels(&mut app, &ctx);
         assert!(
-            closed.contains(&"Your profile and settings".to_owned()),
-            "the avatar opens settings: {closed:?}"
+            closed.contains(&"Switch account".to_owned()),
+            "the avatar opens the account switcher: {closed:?}"
         );
         assert!(
             closed.contains(&"Settings (Ctrl+,)".to_owned()),
@@ -6748,13 +6873,56 @@ mod tests {
             .push(crate::model::Action::Open(crate::model::Page::Settings));
         let open = labels(&mut app, &ctx);
         assert!(
-            open.contains(&"Close settings".to_owned()),
-            "the avatar says it closes settings: {open:?}"
-        );
-        assert!(
             open.contains(&"Close settings (Ctrl+,)".to_owned()),
             "the gear says it closes settings: {open:?}"
         );
+    }
+
+    /// Our avatar opens the accounts and "Add account", nothing else: the
+    /// settings have their own button beside it. With one number that is how
+    /// a second one is added.
+    #[test]
+    fn the_switcher_lists_only_accounts_and_adding_one() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        app.account_menu = true;
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            labels = output
+                .platform_output
+                .accesskit_update
+                .expect("accessibility tree")
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| node.label().map(str::to_owned))
+                .collect();
+        }
+        assert!(labels.contains(&"Add account".to_owned()), "{labels:?}");
+        let name = app.account().display_label(app.locale);
+        assert!(
+            labels.iter().any(|label| label.starts_with(&name)),
+            "the one account is listed: {labels:?}"
+        );
+        for gone in ["Profile and settings", "Close settings"] {
+            assert!(!labels.contains(&gone.to_owned()), "{gone}: {labels:?}");
+        }
     }
 
     #[test]
@@ -6960,6 +7128,8 @@ mod tests {
             ("delete-message-mine", "ada-format", false),
         ] {
             let mut app = app();
+            let (backend, mut commands, events) = crate::backend::Backend::recording_with_events();
+            app.backend = backend;
             apply_flags(&mut app, Some(page));
             assert_eq!(
                 app.dialog,
@@ -7015,7 +7185,22 @@ mod tests {
                     "{page}: a revoked message stays as a tombstone"
                 );
             } else {
-                assert!(row.is_none(), "{page}: a local delete removes the row");
+                assert!(
+                    row.is_some(),
+                    "{page}: the message waits for sync acceptance"
+                );
+                assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(
+                    |command| matches!(command, crate::backend::Command::DeleteLocal { chat, id }
+                        if chat == SAMPLES[0].id && id == message)
+                ));
+                events
+                    .send(crate::backend::Event::MessageDeleted {
+                        chat: SAMPLES[0].id.to_owned(),
+                        id: message.to_owned(),
+                    })
+                    .unwrap();
+                app.background_frame(&ctx);
+                assert!(app.conversations[SAMPLES[0].id].message(message).is_none());
             }
         }
     }
@@ -7031,6 +7216,8 @@ mod tests {
             ("delete-message-mine", "ada-format", false),
         ] {
             let mut app = app();
+            let (backend, mut commands, events) = crate::backend::Backend::recording_with_events();
+            app.backend = backend;
             apply_flags(&mut app, Some(page));
             app.open_chat = Some(SAMPLES[1].id.to_owned());
             let ctx = egui::Context::default();
@@ -7068,7 +7255,19 @@ mod tests {
                     "{page}: the message is revoked in its own chat"
                 );
             } else {
-                assert!(row.is_none(), "{page}: the message leaves its own chat");
+                assert!(row.is_some(), "{page}: the message waits in its own chat");
+                assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(
+                    |command| matches!(command, crate::backend::Command::DeleteLocal { chat, id }
+                        if chat == own_chat && id == message)
+                ));
+                events
+                    .send(crate::backend::Event::MessageDeleted {
+                        chat: own_chat.to_owned(),
+                        id: message.to_owned(),
+                    })
+                    .unwrap();
+                app.background_frame(&ctx);
+                assert!(app.conversations[own_chat].message(message).is_none());
             }
         }
     }
@@ -8875,6 +9074,84 @@ mod tests {
     }
 
     #[test]
+    fn numbered_shortcuts_clear_the_arrow_selection_in_search_results() {
+        let mut app = app();
+        let mut first = Chat::new("search-fixture-1@g.us".into(), "Search fixture one".into());
+        first.last_activity = 2_000_000_000;
+        let mut second = Chat::new("search-fixture-2@g.us".into(), "Search fixture two".into());
+        second.last_activity = first.last_activity - 1;
+        app.chats.extend([first, second]);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::K, egui::Modifiers::COMMAND)],
+        );
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Search fixture".into())],
+        );
+        let matches: Vec<_> = app
+            .visible_chats()
+            .into_iter()
+            .map(|chat| chat.id.clone())
+            .collect();
+        assert_eq!(matches.len(), 2);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.search_selected.as_ref(), matches.first());
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Num2, egui::Modifiers::COMMAND)],
+        );
+        render(&mut app, &ctx);
+        assert_eq!(app.open_chat.as_ref(), matches.get(1));
+        assert!(app.search_selected.is_none());
+        assert_eq!(app.search, "Search fixture");
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+    }
+
+    #[test]
+    fn numbered_shortcuts_switch_chats_keep_drafts_and_focus_the_composer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let original = app.open_chat.clone().unwrap();
+        assert_eq!(app.visible_chats()[0].id, original);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("unsent draft".into())],
+        );
+        let target = app.visible_chats()[1].id.clone();
+        assert_ne!(target, original);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Num2, egui::Modifiers::COMMAND)],
+        );
+        assert_eq!(app.open_chat.as_ref(), Some(&target));
+        render(&mut app, &ctx);
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Num1, egui::Modifiers::COMMAND)],
+        );
+        assert_eq!(app.open_chat.as_ref(), Some(&original));
+        assert_eq!(app.composer, "unsent draft");
+    }
+
+    #[test]
     fn a_quote_names_the_people_its_text_mentions() {
         let mut app = app();
         apply_flags(&mut app, Some("quotes"));
@@ -10017,7 +10294,9 @@ mod tests {
             ]
             .into_iter()
             .filter(|stop| {
-                !crate::theme::macos_chrome(&ctx) || !matches!(stop, Stop::Profile | Stop::Settings)
+                // The Mac header keeps the account switcher; the settings
+                // live in the app menu there.
+                !crate::theme::macos_chrome(&ctx) || *stop != Stop::Settings
             })
             .collect();
             assert_eq!(
@@ -10862,7 +11141,7 @@ mod wallpaper_tests {
 
         app.actions.push(crate::model::Action::RemoveWallpaperImage);
         let chat = shapes(&mut app, &ctx);
-        assert!(app.settings.wallpaper_image.is_none());
+        assert!(app.account().settings.wallpaper_image.is_none());
         assert_eq!(crate::wallpaper::texture_ids(&ctx).0, None);
         assert!(textured(&chat, image).is_empty());
         assert!(!textured(&chat, doodles).is_empty(), "the doodles return");

@@ -5,6 +5,11 @@ this repository. `AGENTS.md` is the canonical architecture, product-boundary,
 privacy, testing, and release guide. Keep changes narrowly scoped and preserve
 existing behavior unless the task explicitly changes it.
 
+Distinguish explicit product boundaries from current implementation limits.
+Missing features, codec restrictions, and download limits are not permanent
+exclusions. When documentation conflicts with the code, flag the stale claim
+instead of using it to reject supported behavior.
+
 ## Pull request scope and evidence
 
 Check these first, and report each failure as a blocker at the top of the

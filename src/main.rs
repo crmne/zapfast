@@ -125,6 +125,18 @@ fn default_log_filter(verbose: bool) -> &'static str {
 }
 
 fn main() -> eframe::Result<()> {
+    let result = run();
+    // A Windows release has no console, so an error that ends the start
+    // would otherwise leave the reader nothing to see (#349). `run` has
+    // already released the single-instance lock.
+    #[cfg(windows)]
+    if let Err(error) = &result {
+        startup_failure_dialog(error);
+    }
+    result
+}
+
+fn run() -> eframe::Result<()> {
     // First, before parsing the command line or touching any state: run the
     // update helper when asked (`--apply-update <job>`, then exit), and take
     // `--update-receipt` and `--update-error` off the command line.
@@ -207,6 +219,12 @@ fn main() -> eframe::Result<()> {
     logging
         .init()
         .map_err(|error| eframe::Error::AppCreation(error.into()))?;
+    // Moving a single-account setup into its account folder needs the
+    // keyring; when it cannot finish, the log says why.
+    if !demo && let Err(error) = dirs.adopt_single_account() {
+        log::error!("could not move the linked account into its folder: {error}");
+        return Err(eframe::Error::AppCreation(error.into()));
+    }
     let settings = settings::Settings::load(&dirs.settings_file());
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
 
@@ -215,6 +233,7 @@ fn main() -> eframe::Result<()> {
         app::App::headless(dirs, settings).0
     } else {
         app::App::new(&waker, dirs, settings, app::AppOptions { tray: true })
+            .map_err(|error| eframe::Error::AppCreation(error.into()))?
     };
     if cli.verbose {
         app.update_arguments.push("--verbose".into());
@@ -254,6 +273,15 @@ fn main() -> eframe::Result<()> {
         .idle(fastframe_tray::idle)
         .run(|lease| {
             let receipt = update_receipt.take();
+            // The latest geometry lives in the app waiting in the shell, so
+            // a reopened window (tray, notification, Wayland reopen) uses
+            // what the last one remembered, not what the process started
+            // with. Demo runs keep their fixed screenshot size.
+            let geometry = if demo_persistence.is_some() {
+                zapfast::window::Geometry::default()
+            } else {
+                lease.peek(|app: &app::App| app.settings.window_geometry())
+            };
             #[cfg(feature = "demo")]
             let shot = shot.clone();
             #[cfg(feature = "demo")]
@@ -272,7 +300,7 @@ fn main() -> eframe::Result<()> {
             });
             eframe::run_native(
                 "ZapFast",
-                native_options(demo_persistence.clone()),
+                native_options(demo_persistence.clone(), geometry),
                 Box::new(move |cc| {
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
@@ -298,6 +326,64 @@ fn main() -> eframe::Result<()> {
         })?;
     drop(instance);
     Ok(())
+}
+
+/// Whether eframe stopped because the graphics driver gave it no usable
+/// OpenGL: no pixel format, no context of any version it asks for, or a
+/// context the renderer cannot use.
+#[cfg(windows)]
+fn is_graphics_failure(error: &eframe::Error) -> bool {
+    matches!(
+        error,
+        eframe::Error::Glutin(_) | eframe::Error::NoGlutinConfigs(..) | eframe::Error::OpenGL(_)
+    )
+}
+
+/// The text of the dialog shown when ZapFast cannot start, kept apart from
+/// the dialog so it is tested on every platform.
+#[cfg(any(windows, test))]
+fn startup_failure_text(graphics: bool, details: &str, log: &std::path::Path) -> String {
+    let summary = if graphics {
+        "ZapFast could not start because the graphics driver does not offer \
+         OpenGL 2.1 or newer, which ZapFast needs to draw its window.\n\n\
+         Install the current driver from the maker of the graphics chip \
+         (Intel, AMD or NVIDIA). The Microsoft Basic Display Adapter, some \
+         virtual machines and some remote desktop sessions offer no usable \
+         OpenGL."
+    } else {
+        "ZapFast could not start."
+    };
+    format!(
+        "{summary}\n\nDetails: {details}\n\nThe log may say more: {}",
+        log.display()
+    )
+}
+
+/// Explains a failed start in a message box, the only thing a release
+/// without a console can show before its window exists.
+#[cfg(windows)]
+fn startup_failure_dialog(error: &eframe::Error) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MessageBoxW,
+    };
+    use windows::core::PCWSTR;
+
+    let text = startup_failure_text(
+        is_graphics_failure(error),
+        &error.to_string(),
+        &paths::AppDirs::discover().log_file(),
+    );
+    let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let (text, caption) = (wide(&text), wide("ZapFast"));
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(text.as_ptr()),
+            PCWSTR(caption.as_ptr()),
+            MB_OK | MB_ICONERROR | MB_SETFOREGROUND,
+        );
+    }
 }
 
 /// Summarises the WhatsApp library's lines, which can quote protocol
@@ -327,8 +413,11 @@ fn tour_script(name: &str) -> zapfast::demo::tour::Script {
     zapfast::demo::tour::Script::from_name(name).unwrap_or_default()
 }
 
-fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::NativeOptions {
-    let demo_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
+fn native_options(
+    demo_persistence: Option<std::path::PathBuf>,
+    geometry: zapfast::window::Geometry,
+) -> eframe::NativeOptions {
+    let default_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
     let demo = demo_persistence.is_some();
     let viewport = egui::ViewportBuilder::default()
         .with_title(if demo { "ZapFast Demo" } else { "ZapFast" })
@@ -336,8 +425,16 @@ fn native_options(demo_persistence: Option<std::path::PathBuf>) -> eframe::Nativ
             "zapfast-demo".to_owned()
         } else {
             std::env::var("FLATPAK_ID").unwrap_or_else(|_| "zapfast".to_owned())
-        })
-        .with_inner_size(demo_size)
+        });
+    // The remembered size and position, from the settings. eframe's own
+    // stored window (when present from an earlier version) still wins over
+    // this, and is then remembered here on the first frame.
+    let viewport = if demo {
+        viewport.with_inner_size(default_size)
+    } else {
+        zapfast::window::viewport(viewport, geometry, default_size)
+    };
+    let viewport = viewport
         // Keep the floor small enough that Windows can still snap the window
         // into narrow Aero Snap and LG Screen Split zones (a 2560 px ultrawide
         // split four ways is about 640 px wide, which a 720 px minimum blocks).
@@ -485,19 +582,25 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let app = &mut *self.app;
         app.frame_ui(ui);
-        let startup = app.backend.take_startup();
+        let startups: Vec<_> = app
+            .accounts
+            .iter_mut()
+            .filter_map(|account| account.backend.take_startup())
+            .collect();
         if let Some(receipt) = self.update_receipt.take() {
             std::thread::spawn(move || {
                 if let Err(error) = receipt.acknowledge() {
                     log::warn!("could not acknowledge the update: {error:#}");
                     return;
                 }
-                if let Some(startup) = startup {
+                for startup in startups {
                     let _ = startup.send(());
                 }
             });
-        } else if let Some(startup) = startup {
-            let _ = startup.send(());
+        } else {
+            for startup in startups {
+                let _ = startup.send(());
+            }
         }
         #[cfg(feature = "demo")]
         if let Some(tour) = self.tour.as_mut() {
@@ -594,6 +697,37 @@ mod tests {
             ])
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod startup_failure_tests {
+    use super::*;
+
+    #[test]
+    fn a_graphics_failure_names_the_driver_requirement_and_the_details() {
+        let log = std::path::Path::new("C:/zapfast/zapfast.log");
+        let text = startup_failure_text(
+            true,
+            "glutin error: extension to create ES context with wgl is not present",
+            log,
+        );
+        assert!(text.contains("OpenGL 2.1 or newer"));
+        assert!(text.contains("graphics driver"));
+        assert!(text.contains("ES context with wgl is not present"));
+        assert!(text.contains(&log.display().to_string()));
+    }
+
+    #[test]
+    fn any_other_failure_shows_its_details_without_blaming_the_driver() {
+        let text = startup_failure_text(
+            false,
+            "The directory is not writable",
+            std::path::Path::new("zapfast.log"),
+        );
+        assert!(text.starts_with("ZapFast could not start."));
+        assert!(!text.contains("OpenGL"));
+        assert!(text.contains("The directory is not writable"));
     }
 }
 

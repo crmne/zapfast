@@ -15,6 +15,6 @@
     <key>LSApplicationCategoryType</key><string>public.app-category.social-networking</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>ZapFast uses the microphone to record voice messages you choose to send.</string>
-    <key>NSHumanReadableCopyright</key><string>MIT License. Not affiliated with WhatsApp or Meta.</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 Carmine Paolino. Not affiliated with WhatsApp or Meta.</string>
 </dict>
 </plist>

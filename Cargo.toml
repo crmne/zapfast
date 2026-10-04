@@ -1,6 +1,6 @@
 [package]
 name = "zapfast"
-version = "0.18.2"
+version = "0.19.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -121,30 +121,34 @@ libwebp-sys2 = { version = "0.2", features = ["1_2"] }
 # Shared foundation of Carmine's egui apps (github.com/crmne/fastframe). Every
 # crate comes from the same revision.
 # Bundled gettext catalogs: lookups and system language detection.
-fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2" }
+fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
 # The icons! table, a loader that survives reduce_texture_memory, and the Lucide
 # icons shared with Spotifast.
-fastframe-icons = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2" }
+fastframe-icons = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
 # The platform's interface font (Inter where there is none), and installed
 # fonts for other scripts.
-fastframe-fonts = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2" }
+fastframe-fonts = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
 # Colour emoji in the platform's own style, with the bundled Noto behind
 # them, drawn off the interface thread.
-fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2" }
+fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
 # Follows the desktop's hinting and glyph coverage, live through the portal.
-fastframe-text = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2", features = ["watch"] }
+fastframe-text = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1", features = ["watch"] }
 # Palette files, the shared presets, and following Omarchy's theme live.
-fastframe-theme = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2" }
+fastframe-theme = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
 # Logs to stderr and a per-run file, and records panics without their payload.
-fastframe-log = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2" }
+fastframe-log = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
 # The tray item: StatusNotifier on Linux, tray-icon on Windows and macOS.
-fastframe-tray = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2" }
+fastframe-tray = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
 # Keeps ZapFast running without a window and recovers off-screen windows.
-fastframe-shell = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2" }
+fastframe-shell = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
 # Centres the macOS traffic lights on ZapFast's own header.
-fastframe-macos = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2" }
+fastframe-macos = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
+# One running copy per user: the lock, and the channel a second launch uses.
+fastframe-instance = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
+# The wheel step, and on Linux touchpad scale, glide and axis lock.
+fastframe-scroll = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1" }
 # Self-update from GitHub releases with signed checksums, a helper and rollback.
-fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2", features = ["reqwest"] }
+fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1", features = ["reqwest"] }
 
 [patch.crates-io]
 # crmne/egui apps-0.36, shared with Spotifast, RekordFlash and TonePush: egui
@@ -153,27 +157,36 @@ fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2",
 # (emilk/egui#8577), egui's busy-loop fix (emilk/egui#8398), and eframe pacing
 # Wayland frames by the compositor's frame callbacks so a window the
 # compositor stops showing never blocks in a vsync swap (emilk/egui#8631).
+# Each emoji cluster (families, skin tones, keycaps, flags) lays out one emoji
+# wide, and the Wayland clipboard shares winit's data device (see below).
+# Focus on a widget without an accessibility node goes to the root
+# (emilk/egui#8621, the group rename crash in #313), glow falls back to a
+# compatibility-profile context on old Windows drivers (#349,
+# emilk/egui#8655), and a saved window size keeps its zoom factor so a window
+# no longer shrinks each time it reopens (#293, emilk/egui#8656).
 # Every egui crate comes from the same revision so they share one emath and
 # epaint. Drop this once egui releases all three.
-ecolor = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
-eframe = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
-egui = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
-egui-wgpu = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
-egui-winit = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
-egui_extras = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
-egui_glow = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
-emath = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
-epaint = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
-epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "0b431145c22ee27b20b0aff7243d74f4b32e9a79" }
+ecolor = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
+eframe = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
+egui = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
+egui-wgpu = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
+egui-winit = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
+egui_extras = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
+egui_glow = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
+emath = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
+epaint = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
+epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "ba6790fe7cf46e58e8d27ce1524cbfdee745e938" }
 # crmne/winit apps-0.30, shared with the same apps: winit 0.30.13 plus Wayland
 # `Occluded` for the xdg-shell suspended state with commits on the app's behalf
 # while it isn't presenting (rust-windowing/winit#4709, #4710), macOS Quit
 # through close requests (winit#4692), and Windows drags between monitors of
 # different scale (winit#4694). eframe from the fork above calls the Occluded
-# API. File drops on Wayland (#178) are reverted: they gave winit a second
-# data device, and Hyprland sends the clipboard only to a client's first, so
-# pasting stopped working (crmne/spotifast#614).
-winit = { git = "https://github.com/crmne/winit", rev = "544a73716c7a54c916d97d6c86c0b1bdaa81234e" }
+# API. File drops on Wayland (#178), with egui's clipboard on winit's one
+# data device: Hyprland sends the clipboard only to a client's first data
+# device, so a second one stopped pasting (crmne/spotifast#614). A dropped
+# macOS window is ordered out before it closes, so a Touch Bar exception
+# cannot leave it on screen (#260, rust-windowing/winit#4728).
+winit = { git = "https://github.com/crmne/winit", rev = "ed7caa9023f10b397f5b6ec8284a840cbd8a6f65" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
@@ -188,7 +201,7 @@ libc = "0.2"
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 # The application menu bar, built with tray-icon's muda at the version
 # fastframe-tray uses.
-tray-icon = { version = "0.24", default-features = false }
+tray-icon = { version = "0.25", default-features = false }
 # AppKit calls for the application menus and editing commands, on the main
 # thread.
 objc2 = "0.6"
@@ -246,4 +259,4 @@ opt-level = 2
 [build-dependencies]
 # Compiles the PO catalogs to Rust, leaving out unfinished entries. Ordinary
 # builds do not need gettext tools.
-fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.2.2", features = ["build"] }
+fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.4.1", features = ["build"] }

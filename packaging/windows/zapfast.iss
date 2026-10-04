@@ -1,4 +1,4 @@
-; Windows installer built from a release binary with Inno Setup 6.3 or newer:
+﻿; Windows installer built from a release binary with Inno Setup 6.3 or newer:
 ;
 ;   iscc /DVersion=0.1.0 /DArch=x86_64 /DBinary=...\zapfast.exe ^
 ;        /DOutputDir=dist packaging\windows\zapfast.iss
@@ -38,6 +38,7 @@ AppName={#AppName}
 AppVersion={#Version}
 AppVerName={#AppName} {#Version}
 AppPublisher=Carmine Paolino
+AppCopyright=© 2026 Carmine Paolino
 AppPublisherURL=https://zapfast.rocks
 AppSupportURL=https://github.com/crmne/zapfast/issues
 AppUpdatesURL=https://github.com/crmne/zapfast/releases

@@ -27,30 +27,128 @@ fn plaintext(path: &Path) -> Result<bool> {
 pub(super) fn key_for(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
     let parent = path.parent().context("Archive has no parent directory")?;
     fs::create_dir_all(parent)?;
+    let store = platform_store()?;
+    let entry = store
+        .build("rocks.zapfast.ZapFast", &identity_for(parent)?, None)
+        .map_err(keyring_error)
+        .context("The OS keyring could not open ZapFast's archive key")?;
+    key_from_entry(path, &entry)
+}
+
+/// Copies the keyring entry when an archive moves to another folder.
+pub fn copy_archive_key(old_archive: &Path, new_archive: &Path) -> Result<()> {
+    if plaintext(old_archive)? {
+        return Ok(());
+    }
+    copy_archive_key_in(old_archive, new_archive, &*platform_store()?)
+}
+
+fn copy_archive_key_in(
+    old_archive: &Path,
+    new_archive: &Path,
+    store: &dyn CredentialStoreApi,
+) -> Result<()> {
+    let old_parent = old_archive
+        .parent()
+        .context("Archive has no parent directory")?;
+    let new_parent = new_archive
+        .parent()
+        .context("Archive has no parent directory")?;
+    if !old_parent.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(new_parent)?;
+    if old_parent.canonicalize()? == new_parent.canonicalize()? {
+        return Ok(());
+    }
+    let old_entry = store
+        .build("rocks.zapfast.ZapFast", &identity_for(old_parent)?, None)
+        .map_err(keyring_error)
+        .context("The OS keyring could not open ZapFast's archive key")?;
+    let key = match old_entry.get_secret() {
+        Ok(secret) => {
+            ensure!(
+                secret.len() == 32,
+                "The archive key in the OS keyring is invalid"
+            );
+            let mut key = Zeroizing::new([0; 32]);
+            key.copy_from_slice(&secret);
+            key
+        }
+        Err(keyring_core::Error::NoEntry) => {
+            ensure!(
+                plaintext(old_archive)?,
+                "The archive is encrypted but its OS keyring key is missing. Restore the original keyring; the archive has not been changed"
+            );
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(keyring_error(error)).context("Unlock your OS keyring and restart ZapFast");
+        }
+    };
+    let new_entry = store
+        .build("rocks.zapfast.ZapFast", &identity_for(new_parent)?, None)
+        .map_err(keyring_error)
+        .context("The OS keyring could not open ZapFast's archive key")?;
+    new_entry
+        .set_secret(key.as_ref())
+        .map_err(keyring_error)
+        .context("Could not save the archive key in the OS keyring")?;
+    // Read back before the only copy of the history moves under this key.
+    let saved = Zeroizing::new(
+        new_entry
+            .get_secret()
+            .map_err(keyring_error)
+            .context("Could not verify the copied archive key")?,
+    );
+    ensure!(
+        saved.as_slice() == key.as_ref(),
+        "The OS keyring did not retain the copied archive key"
+    );
+    Ok(())
+}
+
+/// Deletes the keyring entry of an archive folder that is gone for good,
+/// such as a removed account's. Never call it while the archive exists.
+pub fn forget_archive_key(identity: &str) -> Result<()> {
+    let entry = platform_store()?
+        .build("rocks.zapfast.ZapFast", identity, None)
+        .map_err(keyring_error)?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
+        Err(error) => Err(keyring_error(error)),
+    }
+}
+
+/// The keyring identity of the archive at `path`, while its folder exists.
+pub fn archive_key_identity(path: &Path) -> Result<String> {
+    identity_for(path.parent().context("Archive has no parent directory")?)
+}
+
+fn identity_for(parent: &Path) -> Result<String> {
     // Separate profiles must not overwrite each other's keys. The credential
     // label contains a digest, never a user path, phone number or message data.
     let digest = Sha256::digest(parent.canonicalize()?.as_os_str().as_encoded_bytes());
-    let identity = format!(
+    Ok(format!(
         "archive-{}",
         digest
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
-    );
+    ))
+}
+
+fn platform_store() -> Result<std::sync::Arc<dyn CredentialStoreApi>> {
     #[cfg(target_os = "linux")]
     let store = zbus_secret_service_keyring_store::Store::new();
     #[cfg(target_os = "macos")]
     let store = apple_native_keyring_store::keychain::Store::new();
     #[cfg(windows)]
     let store = windows_native_keyring_store::Store::new();
-    let store = store
+    Ok(store
         .map_err(keyring_error)
-        .context("Unlock your OS keyring and restart ZapFast")?;
-    let entry = store
-        .build("rocks.zapfast.ZapFast", &identity, None)
-        .map_err(keyring_error)
-        .context("The OS keyring could not open ZapFast's archive key")?;
-    key_from_entry(path, &entry)
+        .context("Unlock your OS keyring and restart ZapFast")?
+        as std::sync::Arc<dyn CredentialStoreApi>)
 }
 
 fn key_from_entry(path: &Path, entry: &keyring_core::Entry) -> Result<Zeroizing<[u8; 32]>> {

@@ -1,5 +1,4 @@
-closing: auto
-duplicates: close
+extends: crmne/github-automation:triage/account.yml
 followups: selective
 
 report_bots:
@@ -11,13 +10,14 @@ labels:
   documentation: Incorrect or missing documentation for this project.
   enhancement: A missing capability within the documented product scope.
   invalid: The premise is directly disproved by repository evidence.
-  out-of-scope: The exact request conflicts with a documented product boundary.
+  out-of-scope: The exact request conflicts with an explicit product boundary, not merely a current implementation limit.
   question: One specific missing technical fact prevents investigation.
   wontfix: The exact request is explicitly ruled out by repository documentation.
 sources:
+- AGENTS.md
+- PRODUCT.md
 - README.md
 - CONTRIBUTING.md
-- CHANGELOG.md
 - docs/_guide/*.md
 - docs/_reference/*.md
 - src/*.rs
@@ -62,10 +62,17 @@ instructions: |
   ZapFast is a native WhatsApp client using whatsapp-rust. A protobuf field
   alone does not prove a supported capability. No browser engine, telemetry,
   hosted backend, ZapFast-operated account, or feature that sends message
-  content to a third party. Use out-of-scope only for a documented product
-  boundary. Leave uncertain protocol support to the maintainer. Never repeat messages, phone numbers, device keys,
-  authorization values, or QR payloads; request only a redacted error if
-  needed.
+  content to a third party. Before using out-of-scope or wontfix, identify an
+  explicit product boundary in AGENTS.md or CONTRIBUTING.md that the exact
+  request conflicts with. A guide's "not yet supported" list, current local-only
+  behavior, codec fallback, download size limit, or missing upstream capability
+  is not such a boundary.
+  Check the relevant implementation and reported version before claiming a
+  feature is unsupported. When code and docs disagree, treat the documentation
+  as potentially stale, not as grounds to reject the report. Leave uncertain
+  protocol support and product decisions to the maintainer. Never repeat
+  messages, phone numbers, device keys, authorization values, or QR payloads;
+  request only a redacted error if needed.
 
   For user bug reports, ask one direct question only when its answer is necessary
   to investigate and has not already been supplied or requested. Do not select
@@ -85,12 +92,3 @@ instructions: |
   Address the latest human update and account for checks already tried. Do not
   repeat an answered question or a completed diagnostic step. If a bot replied
   most recently, only a useful new related-issue link warrants another comment.
-
-# github-automation: the account's board and pull request triage
-pull_requests:
-  reviews: copilot
-  out_of_scope: close
-
-board:
-  project: https://github.com/users/crmne/projects/1
-  assign_urgent_to: crmne

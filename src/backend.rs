@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::model::{Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack};
-use crate::paths::AppDirs;
+use crate::paths::AccountDirs;
 
 // Re-exported so the picker can detect pasted Signal pack links.
 mod read_sync;
@@ -18,6 +18,14 @@ mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS};
+
+/// Result of a deletion request, without protocol errors crossing the bridge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageRemovalOutcome {
+    Accepted,
+    /// The library cannot establish whether the write was accepted.
+    Uncertain,
+}
 
 /// Phone-link state.
 #[derive(Clone, Debug, PartialEq)]
@@ -67,7 +75,7 @@ mod tests {
     fn backend_waits_for_window_acknowledgement_before_touching_storage() {
         let directory = tempfile::tempdir().unwrap();
         let dirs = crate::paths::AppDirs::under(directory.path());
-        let mut backend = super::Backend::spawn(dirs.clone(), super::Waker::default());
+        let mut backend = super::Backend::spawn(dirs.as_account(), super::Waker::default());
         assert!(!dirs.session_db().exists());
         assert!(!dirs.archive_db().exists());
         // Closing before a first frame must cancel startup without connecting
@@ -205,8 +213,20 @@ pub enum Command {
         chat: ChatId,
         before: Option<PageKey>,
     },
-    /// Requests messages before the archive's earliest message.
-    FetchOlder(ChatId),
+    /// Requests messages before the archive's earliest message. `explicit`
+    /// marks a request the reader made by scrolling to the top: only those
+    /// report a phone that did not answer, since automatic requests (short
+    /// or empty chats) are often legitimately left unanswered.
+    FetchOlder {
+        chat: ChatId,
+        explicit: bool,
+    },
+    /// Requests phone history immediately before an archived message to repair
+    /// gaps or ordering inside an already loaded conversation.
+    ReloadHistory {
+        chat: ChatId,
+        message: String,
+    },
     Download {
         card: Option<usize>,
         chat: ChatId,
@@ -263,6 +283,13 @@ pub enum Command {
     DeleteLocal {
         chat: ChatId,
         id: String,
+    },
+    /// Completion of the account's deletion sync, before removing our copy.
+    MessageDeletedForMe {
+        generation: u64,
+        chat: ChatId,
+        id: String,
+        outcome: MessageRemovalOutcome,
     },
     /// Selects and sends files with the desktop picker.
     PickFiles(ChatId),
@@ -342,6 +369,11 @@ pub enum Command {
     FavoritesRecovered {
         complete: bool,
     },
+    /// Internal: the one-time replay of the phone's contacts, for the first
+    /// names saved before ZapFast kept them, finished.
+    FirstNamesRecovered {
+        complete: bool,
+    },
     /// Internal: a favorite from the phone finished downloading.
     FavoriteFetched {
         hash: String,
@@ -413,6 +445,9 @@ pub enum Command {
     },
     /// Where new downloads go; `None` is the cache.
     SetDownloadFolder(Option<std::path::PathBuf>),
+    /// Whether archived chats stay archived when a new message arrives or is
+    /// sent; when not, a new message unarchives the chat here.
+    SetKeepChatsArchived(bool),
     /// Asks where to save a copy of an attachment, then copies it there.
     SaveAttachmentAs {
         source: std::path::PathBuf,
@@ -566,6 +601,8 @@ pub enum Command {
     PairWithPhone(String),
     /// Unlinks the device remotely and locally.
     Unlink,
+    /// Unlinks this account and deletes its local folders.
+    RemoveAccount,
     Reconnect,
     /// Use this proxy setting and reconnect. Empty follows the environment.
     SetProxy(String),
@@ -920,6 +957,8 @@ pub enum Event {
         unsent: Unsent,
         reason: Refusal,
     },
+    /// The account folders were deleted after RemoveAccount.
+    AccountRemoved,
     Error(String),
     /// A change to a group's name or photo went to WhatsApp (`saving`), or
     /// WhatsApp answered it.
@@ -995,7 +1034,7 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn spawn(dirs: AppDirs, waker: Waker) -> Self {
+    pub fn spawn(dirs: AccountDirs, waker: Waker) -> Self {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = std::sync::mpsc::channel();
         let runtime = tokio::runtime::Builder::new_multi_thread()

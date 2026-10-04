@@ -229,13 +229,23 @@ fn stamp_relative_to(locale: Locale, date: Date, today: Date, when: &Zoned) -> S
     }
 }
 
-/// Splits a display name into first name and surname for editor defaults.
-pub fn split_name(name: &str) -> (String, String) {
+/// The first-name and last-name fields of the contact editor for a saved
+/// `name`, given the first name saved with it.
+///
+/// Both may hold several words, so the name is never cut at a space: the
+/// last name is what follows the saved first name. Without a first name to go
+/// by (a profile name, a contact synced before first names were kept, or a
+/// first name the full name does not start with) the whole name stays in the
+/// first field, so saving it unchanged keeps it whole.
+pub fn editor_names(name: &str, first: Option<&str>) -> (String, String) {
     let name = name.trim();
-    match name.split_once(' ') {
-        Some((first, rest)) => (first.to_owned(), rest.trim().to_owned()),
-        None => (name.to_owned(), String::new()),
+    if let Some(first) = first.map(str::trim).filter(|first| !first.is_empty())
+        && let Some(rest) = name.strip_prefix(first)
+        && (rest.is_empty() || rest.starts_with(char::is_whitespace))
+    {
+        return (first.to_owned(), rest.trim().to_owned());
     }
+    (name.to_owned(), String::new())
 }
 
 /// Message-info timestamp with date and minute.
@@ -645,6 +655,32 @@ pub fn tray_template_rgba(size: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_contact_editor_keeps_names_as_they_were_saved() {
+        let names = |name, first| super::editor_names(name, first);
+        let pair = |first: &str, last: &str| (first.to_owned(), last.to_owned());
+        // A first name of several words, alone or with a last name (#314).
+        assert_eq!(
+            names("first second", Some("first second")),
+            pair("first second", "")
+        );
+        assert_eq!(
+            names("first second third", Some("first second")),
+            pair("first second", "third")
+        );
+        assert_eq!(names("My Dih", Some("My Dih")), pair("My Dih", ""));
+        // A first name the full name merely starts with, letter for letter,
+        // is not the first word.
+        assert_eq!(names("Mary Ann", Some("Mar")), pair("Mary Ann", ""));
+        // Without a first name nothing is guessed at a space.
+        assert_eq!(names(" Mary Ann Evans ", None), pair("Mary Ann Evans", ""));
+        assert_eq!(names("Bob", Some("  ")), pair("Bob", ""));
+        // Names written without spaces stay whole.
+        assert_eq!(names("山田太郎", None), pair("山田太郎", ""));
+        assert_eq!(names("山田太郎", Some("太郎")), pair("山田太郎", ""));
+        assert_eq!(names("محمد علي", Some("محمد")), pair("محمد", "علي"));
+    }
+
     #[test]
     fn a_day_filter_covers_the_local_day_across_clock_changes() {
         use jiff::civil::date;
