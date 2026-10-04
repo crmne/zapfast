@@ -412,6 +412,10 @@ fn link_and_mention(span: Span, mentions: &[Mention]) -> Vec<Span> {
                     i = end;
                     continue;
                 }
+                if digits.is_empty() && end > i {
+                    i = end;
+                    continue;
+                }
                 // Don't retry a suffix of an oversized number as a new link.
                 // Let the email parser inspect the whole token when it ends in @.
                 if digits.len() > 15 && !text[end..].starts_with('@') {
