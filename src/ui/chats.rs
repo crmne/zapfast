@@ -365,110 +365,104 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     }
     let palette = app.palette;
     ui.add_space(8.0);
-    let output = egui::ScrollArea::horizontal()
-        .id_salt("chat-filters")
-        // A floating bar would cover the chips; the edge fade shows the row scrolls.
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .animated(false)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
-                for filter in ChatFilter::EVERY {
-                    let count = match filter {
-                        ChatFilter::All => 0,
-                        _ => app.unread_chats(filter),
-                    };
-                    let selected = !app.locked_folder_open()
-                        && !app.show_archived
-                        && app.label_filter.is_none()
-                        && app.chat_filter == filter;
-                    let chip = widgets::filter_chip(
-                        ui,
-                        &palette,
-                        filter.label(app.locale).as_ref(),
-                        count,
-                        selected,
-                    )
-                    .tab_stop(match filter {
-                        ChatFilter::All => Stop::All,
-                        ChatFilter::Unread => Stop::Unread,
-                        ChatFilter::Private => Stop::Private,
-                        ChatFilter::Favorites => Stop::Favorites,
-                        ChatFilter::Groups => Stop::Groups,
-                        ChatFilter::Channels => Stop::Channels,
+    let output = widgets::chip_scroll_row(ui, "chat-filters", |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
+            for filter in ChatFilter::EVERY {
+                let count = match filter {
+                    ChatFilter::All => 0,
+                    _ => app.unread_chats(filter),
+                };
+                let selected = !app.locked_folder_open()
+                    && !app.show_archived
+                    && app.label_filter.is_none()
+                    && app.chat_filter == filter;
+                let chip = widgets::filter_chip(
+                    ui,
+                    &palette,
+                    filter.label(app.locale).as_ref(),
+                    count,
+                    selected,
+                )
+                .tab_stop(match filter {
+                    ChatFilter::All => Stop::All,
+                    ChatFilter::Unread => Stop::Unread,
+                    ChatFilter::Private => Stop::Private,
+                    ChatFilter::Favorites => Stop::Favorites,
+                    ChatFilter::Groups => Stop::Groups,
+                    ChatFilter::Channels => Stop::Channels,
+                });
+                // Store the chip rect for interaction tests.
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(filter_chip_id(filter), chip.rect));
+                let chip = if filter == ChatFilter::Channels {
+                    let now = crate::util::now();
+                    let all_muted = app
+                        .chats
+                        .iter()
+                        .filter(|chat| chat.is_channel())
+                        .all(|chat| chat.muted(now));
+                    chip.context_menu(|ui| {
+                        let (icon, label) = if all_muted {
+                            (Icon::Bell, "Unmute all channels")
+                        } else {
+                            (Icon::BellOff, "Mute all channels")
+                        };
+                        if widgets::menu_item(ui, &palette, Some(icon), label) {
+                            app.actions.push(Action::MuteAllChannels(!all_muted));
+                            ui.close();
+                        }
                     });
-                    // Store the chip rect for interaction tests.
-                    ui.ctx()
-                        .data_mut(|data| data.insert_temp(filter_chip_id(filter), chip.rect));
-                    let chip = if filter == ChatFilter::Channels {
-                        let now = crate::util::now();
-                        let all_muted = app
-                            .chats
-                            .iter()
-                            .filter(|chat| chat.is_channel())
-                            .all(|chat| chat.muted(now));
-                        chip.context_menu(|ui| {
-                            let (icon, label) = if all_muted {
-                                (Icon::Bell, "Unmute all channels")
-                            } else {
-                                (Icon::BellOff, "Mute all channels")
-                            };
-                            if widgets::menu_item(ui, &palette, Some(icon), label) {
-                                app.actions.push(Action::MuteAllChannels(!all_muted));
-                                ui.close();
-                            }
-                        });
-                        chip
-                    } else {
-                        chip
-                    };
-                    if chip.clicked() {
-                        // A second click on the active chip returns to every chat.
-                        let next = if selected { ChatFilter::All } else { filter };
-                        app.actions.push(Action::SetChatFilter(next));
-                    }
-                }
-                if app.archived_count() > 0 || app.show_archived {
-                    let selected = app.show_archived;
-                    let chip = widgets::filter_chip(
-                        ui,
-                        &palette,
-                        crate::i18n::gettext(app.locale, "Archived").as_ref(),
-                        app.archived_unread(),
-                        selected,
-                    )
-                    .tab_stop(Stop::Archived);
-                    ui.ctx().data_mut(|data| {
-                        data.insert_temp(egui::Id::new("archived-chip"), chip.rect);
-                    });
-                    if chip.clicked() {
-                        app.actions.push(Action::ShowArchived(!selected));
-                    }
-                }
-                if app.locked_count() > 0 || app.locked_folder_open() {
-                    let selected = app.locked_folder_open();
-                    let chip = widgets::filter_chip(
-                        ui,
-                        &palette,
-                        crate::i18n::gettext(app.locale, "Locked").as_ref(),
-                        0,
-                        selected,
-                    )
-                    .tab_stop(Stop::Locked)
-                    .on_hover_text("Open locked chats with your local code");
-                    ui.ctx()
-                        .data_mut(|data| data.insert_temp(egui::Id::new("locked-chip"), chip.rect));
-                    if chip.clicked() {
-                        app.actions.push(Action::OpenLockedFolder);
-                    }
+                    chip
                 } else {
-                    ui.ctx()
-                        .data_mut(|data| data.remove::<egui::Rect>(egui::Id::new("locked-chip")));
+                    chip
+                };
+                if chip.clicked() {
+                    // A second click on the active chip returns to every chat.
+                    let next = if selected { ChatFilter::All } else { filter };
+                    app.actions.push(Action::SetChatFilter(next));
                 }
-                ui.add_space(4.0);
-            })
-        });
+            }
+            if app.archived_count() > 0 || app.show_archived {
+                let selected = app.show_archived;
+                let chip = widgets::filter_chip(
+                    ui,
+                    &palette,
+                    crate::i18n::gettext(app.locale, "Archived").as_ref(),
+                    app.archived_unread(),
+                    selected,
+                )
+                .tab_stop(Stop::Archived);
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(egui::Id::new("archived-chip"), chip.rect);
+                });
+                if chip.clicked() {
+                    app.actions.push(Action::ShowArchived(!selected));
+                }
+            }
+            if app.locked_count() > 0 || app.locked_folder_open() {
+                let selected = app.locked_folder_open();
+                let chip = widgets::filter_chip(
+                    ui,
+                    &palette,
+                    crate::i18n::gettext(app.locale, "Locked").as_ref(),
+                    0,
+                    selected,
+                )
+                .tab_stop(Stop::Locked)
+                .on_hover_text("Open locked chats with your local code");
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(egui::Id::new("locked-chip"), chip.rect));
+                if chip.clicked() {
+                    app.actions.push(Action::OpenLockedFolder);
+                }
+            } else {
+                ui.ctx()
+                    .data_mut(|data| data.remove::<egui::Rect>(egui::Id::new("locked-chip")));
+            }
+            ui.add_space(4.0);
+        })
+    });
     // Chips cut off at the edge fade into the panel, which says the row
     // scrolls on.
     let hidden = output.content_size.x - output.state.offset.x - output.inner_rect.width();
@@ -1926,8 +1920,11 @@ mod tests {
         );
     }
 
+    /// Both chip rows overflow in a narrow window. Each must show a scroll
+    /// bar, the bar must sit clear of the chips, dragging the bar must scroll
+    /// the row, and so must a plain vertical wheel over it.
     #[test]
-    fn hovering_the_chip_rows_draws_no_scroll_bar_over_the_chips() {
+    fn narrow_chip_rows_show_a_scroll_bar_clear_of_the_chips_and_follow_the_wheel() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _events) =
             App::headless(AppDirs::under(directory.path()), Settings::default());
@@ -1955,40 +1952,115 @@ mod tests {
             output.shapes
         };
         frame(vec![]);
-        let chip = ctx
-            .data(|data| data.get_temp::<Rect>(filter_chip_id(ChatFilter::All)))
-            .expect("the filter chips are drawn");
+        let chips = |ctx: &egui::Context| {
+            let mut rects: Vec<Rect> = ChatFilter::EVERY
+                .iter()
+                .filter_map(|filter| {
+                    ctx.data(|data| data.get_temp::<Rect>(filter_chip_id(*filter)))
+                })
+                .collect();
+            rects.extend((0..8).filter_map(|index| {
+                ctx.data(|data| data.get_temp::<Rect>(super::labels::chip_id(&index.to_string())))
+            }));
+            rects
+        };
+        let all = |ctx: &egui::Context| {
+            ctx.data(|data| data.get_temp::<Rect>(filter_chip_id(ChatFilter::All)))
+                .expect("the filter chips are drawn")
+        };
         let labels = ctx
             .data(|data| data.get_temp::<Rect>(super::labels::chip_row_id()))
             .expect("the label chips are drawn");
-        for (row, pointer) in [("filter", chip.center()), ("label", labels.center())] {
+
+        /// Collects every thin rectangle in `shape` into `bars`. A scroll
+        /// bar is a thin rectangle; chips are taller.
+        fn thin_rects(shape: &egui::Shape, bars: &mut Vec<Rect>) {
+            match shape {
+                egui::Shape::Vec(shapes) => {
+                    shapes.iter().for_each(|shape| thin_rects(shape, bars));
+                }
+                egui::Shape::Rect(rect)
+                    if rect.rect.height() < 12.0 && rect.rect.width() > 12.0 =>
+                {
+                    bars.push(rect.rect);
+                }
+                _ => {}
+            }
+        }
+        let mut filter_bar = None;
+        for (row, pointer) in [("filter", all(&ctx).center()), ("label", labels.center())] {
             let mut shapes = Vec::new();
             for _ in 0..5 {
                 shapes = frame(vec![egui::Event::PointerMoved(pointer)]);
-            }
-            // A scroll bar handle is a thin rectangle; chips are taller.
-            fn thin_rects(shape: &egui::Shape, bars: &mut Vec<Rect>) {
-                match shape {
-                    egui::Shape::Vec(shapes) => {
-                        shapes.iter().for_each(|shape| thin_rects(shape, bars));
-                    }
-                    egui::Shape::Rect(rect)
-                        if rect.rect.height() < 12.0 && rect.rect.width() > 12.0 =>
-                    {
-                        bars.push(rect.rect);
-                    }
-                    _ => {}
-                }
             }
             let mut bars = Vec::new();
             for clipped in &shapes {
                 thin_rects(&clipped.shape, &mut bars);
             }
             assert!(
-                bars.is_empty(),
-                "the {row} row drew a scroll bar at {bars:?}"
+                bars.len() >= 2,
+                "hovering the {row} row showed {} scroll bars, not one per row",
+                bars.len()
             );
+            if row == "filter" {
+                filter_bar = bars
+                    .iter()
+                    .copied()
+                    .min_by(|a, b| a.top().total_cmp(&b.top()));
+            }
+            for bar in &bars {
+                for chip in chips(&ctx) {
+                    assert!(
+                        !bar.intersects(chip.shrink(0.5)),
+                        "hovering the {row} row drew a scroll bar at {bar:?} over {chip:?}"
+                    );
+                }
+            }
         }
+
+        // Dragging the handle to the right scrolls the chips to the left.
+        let bar = filter_bar.expect("the filter row has a scroll bar");
+        let grab = egui::pos2(bar.left() + 10.0, bar.center().y);
+        let before = all(&ctx).left();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(grab)]);
+        frame(vec![button(grab, true)]);
+        for step in 1..=4 {
+            frame(vec![egui::Event::PointerMoved(
+                grab + vec2(10.0 * step as f32, 0.0),
+            )]);
+        }
+        frame(vec![button(grab + vec2(40.0, 0.0), false)]);
+        frame(vec![]);
+        assert!(
+            all(&ctx).left() < before - 1.0,
+            "dragging the scroll bar left the filter chips at {before}, now {}",
+            all(&ctx).left()
+        );
+
+        let before = all(&ctx).left();
+        // The middle of the row; the All chip has scrolled out of view.
+        let pointer = egui::pos2(110.0, all(&ctx).center().y);
+        frame(vec![
+            egui::Event::PointerMoved(pointer),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -60.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            },
+        ]);
+        frame(vec![egui::Event::PointerMoved(pointer)]);
+        assert!(
+            all(&ctx).left() < before - 1.0,
+            "a vertical wheel left the filter chips at {before}, now {}",
+            all(&ctx).left()
+        );
     }
 
     /// An app with `count` chats, newest first, and a context to draw it in.
