@@ -463,6 +463,17 @@ mod tests {
         assert_eq!(gettext(Locale::Indonesian, "Monday"), "Senin");
         assert_eq!(gettext(Locale::Indonesian, "Yesterday"), "Kemarin");
     }
+
+    #[test]
+    fn indonesian_plural_rules_cover_singular_and_plural() {
+        for (count, expected) in [(1, "{} anggota"), (2, "{} anggota"), (5, "{} anggota")] {
+            assert_eq!(
+                ngettext(Locale::Indonesian, "{} member", "{} members", count),
+                expected
+            );
+        }
+    }
+
     #[test]
     fn turkish_contexts_stay_separate_from_plain_lookups() {
         assert_eq!(gettext(Locale::Turkish, "About"), "Hakkımda");

@@ -9,7 +9,7 @@ msgstr ""
 "POT-Creation-Date: 2026-10-01 19:28-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
-"Language-Team: Indonesia
+"Language-Team: Indonesian\n"
 "Language: id\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -246,11 +246,13 @@ msgstr "Tambahkan keterangan"
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
-msgstr "Enter kirim · Shift+Enter untuk baris baru · *tebal* _miring_ ~coret~ · Ctrl+V"
+msgstr ""
+"Enter untuk kirim · Shift+Enter untuk baris baru · *tebal* _miring_ ~coret~ · "
+"Ctrl+V menempelkan gambar"
 
 #: src/ui/conversation.rs:1297
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-msgstr "Ctrl+Enter kirim · *tebal* miring_ ~coret~ · Ctrl+V untuk tempel gambar"
+msgstr "Ctrl+Enter untuk kirim · *tebal* _miring_ ~coret~ · Ctrl+V menempelkan gambar"
 
 #: src/ui/conversation.rs:1308
 msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
@@ -282,7 +284,8 @@ msgstr "Hapus pesan suara"
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
-msgstr "{} pesan belum dibaca"
+msgstr[0] "{} pesan belum dibaca"
+msgstr[1] "{} pesan belum dibaca"
 
 #: src/ui/conversation.rs:3321 src/ui/conversation.rs:4114
 msgid "Open in system player"
@@ -331,7 +334,8 @@ msgstr "Tambah"
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
-msgstr "{} Stiker"
+msgstr[0] "{} stiker"
+msgstr[1] "{} stiker"
 
 #: src/ui/conversation.rs:4734
 msgid "View stickers"
@@ -513,7 +517,8 @@ msgstr "Menyimpan…"
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
-msgstr "{} anggota"
+msgstr[0] "{} anggota"
+msgstr[1] "{} anggota"
 
 #: src/ui/dialogs.rs:1986
 msgid "Change group photo"
@@ -1066,7 +1071,8 @@ msgstr "Tersampaikan ke"
 #, rust-format
 msgid "{} remaining"
 msgid_plural "{} remaining"
-msgstr "tersisa {}"
+msgstr[0] "tersisa {}"
+msgstr[1] "tersisa {}"
 
 #: src/ui/message_info.rs:292
 msgid "No one yet"
@@ -1228,7 +1234,8 @@ msgstr "Warna berikutnya"
 #, rust-format
 msgid "{} chat"
 msgid_plural "{} chats"
-msgstr "{} chat"
+msgstr[0] "{} chat"
+msgstr[1] "{} chat"
 
 #: src/ui/labels.rs:412
 msgid "Rename or recolour"
