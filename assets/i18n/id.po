@@ -1,0 +1,1541 @@
+# Indonesia translation of the ZapFast navigation pilot.
+# Distributed under the same MIT license as ZapFast.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
+"template=translation.yml\n"
+"POT-Creation-Date: 2026-10-01 19:28-0300\n"
+"PO-Revision-Date: 2026-09-22 00:00-0300\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: Indonesia
+"Language: id\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/model.rs:113
+msgid "All"
+msgstr "Semua"
+
+#: src/model.rs:114
+msgid "Unread"
+msgstr "Belum dibaca"
+
+#: src/model.rs:115
+msgid "Private"
+msgstr "Pribadi"
+
+#: src/model.rs:116 src/ui/picker.rs:1188
+msgid "Favorites"
+msgstr "Favorit"
+
+#: src/model.rs:117
+msgid "Groups"
+msgstr "Grup"
+
+#: src/model.rs:118
+msgid "Channels"
+msgstr "Saluran"
+
+#: src/util.rs:226 src/util.rs:323
+msgid "Yesterday"
+msgstr "Kemarin"
+
+#: src/util.rs:263
+#, rust-format
+msgid "Yesterday at {time}"
+msgstr "Kemarin pukul {time}"
+
+#: src/util.rs:264
+#, rust-format
+msgid "{weekday} at {time}"
+msgstr "{weekday} pukul {time}"
+
+#: src/util.rs:267
+#, rust-format
+msgid "{date} at {time}"
+msgstr "{date} pukul {time}"
+
+#: src/util.rs:293
+#, rust-format
+msgid "last seen today at {time}"
+msgstr "terakhir dilihat hari ini pukul {time}"
+
+#: src/util.rs:294
+#, rust-format
+msgid "last seen yesterday at {time}"
+msgstr "terakhir dilihat kemarin pukul {time}"
+
+#: src/util.rs:302
+#, rust-format
+msgid "last seen {weekday} at {time}"
+msgstr "terakhir dilihat {weekday} pukul {time}"
+
+#: src/util.rs:306
+#, rust-format
+msgid "last seen {date}"
+msgstr "terakhir dilihat tanggal {date}"
+
+#: src/util.rs:322
+msgid "Today"
+msgstr "Hari ini"
+
+#: src/util.rs:358
+msgid "Monday"
+msgstr "Senin"
+
+#: src/util.rs:359
+msgid "Tuesday"
+msgstr "Selasa"
+
+#: src/util.rs:360
+msgid "Wednesday"
+msgstr "Rabu"
+
+#: src/util.rs:361
+msgid "Thursday"
+msgstr "Kamis"
+
+#: src/util.rs:362
+msgid "Friday"
+msgstr "Jum'at"
+
+#: src/util.rs:363
+msgid "Saturday"
+msgstr "Sabtu"
+
+#: src/util.rs:364
+msgid "Sunday"
+msgstr "Minggu"
+
+#: src/util.rs:372
+msgid "January"
+msgstr "Januari"
+
+#: src/util.rs:373
+msgid "February"
+msgstr "Februari"
+
+#: src/util.rs:374
+msgid "March"
+msgstr "Maret"
+
+#: src/util.rs:375
+msgid "April"
+msgstr "April"
+
+#: src/util.rs:376
+msgid "May"
+msgstr "Mei"
+
+#: src/util.rs:377
+msgid "June"
+msgstr "Juni"
+
+#: src/util.rs:378
+msgid "July"
+msgstr "Juli"
+
+#: src/util.rs:379
+msgid "August"
+msgstr "Agustus"
+
+#: src/util.rs:380
+msgid "September"
+msgstr "September"
+
+#: src/util.rs:381
+msgid "October"
+msgstr "Oktober"
+
+#: src/util.rs:382
+msgid "November"
+msgstr "November"
+
+#: src/util.rs:383
+msgid "December"
+msgstr "Desember"
+
+#: src/ui/chats.rs:152 src/ui/chats.rs:289 src/ui/settings.rs:398
+msgid "Chats"
+msgstr "Pesan"
+
+#: src/ui/chats.rs:222 src/ui/chats.rs:332 src/ui/pane.rs:169
+msgid "Search"
+msgstr "Cari"
+
+#: src/ui/chats.rs:437
+msgid "Archived"
+msgstr "Arsip"
+
+#: src/ui/chats.rs:454
+msgid "Locked"
+msgstr "Terkunci"
+
+#: src/ui/chats.rs:512
+msgid "No favorites yet"
+msgstr "Belum ada favorit"
+
+#: src/ui/chats.rs:885 src/app.rs:1942
+msgid "Message yourself"
+msgstr "Kirim pesan ke diri sendiri"
+
+#: src/ui/chats.rs:1068
+msgid "Draft:"
+msgstr "Draft:"
+
+#: src/ui/chats.rs:1145 src/ui/chats.rs:1511 src/ui/picker.rs:1615
+msgid "Remove from favorites"
+msgstr "Hapus dari favorit"
+
+#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4105
+#: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
+msgid "Add to favorites"
+msgstr "Tambah ke favorit"
+
+#: src/ui/chats.rs:1157 src/ui/chats.rs:1537 src/ui/conversation.rs:222
+#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
+msgid "Leave group"
+msgstr "Keluar dari grup"
+
+#: src/ui/chats.rs:1158 src/ui/chats.rs:1535 src/ui/conversation.rs:220
+#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
+msgid "Leave channel"
+msgstr "Keluar dari saluran"
+
+#: src/ui/chats.rs:1173 src/ui/labels.rs:172 src/ui/labels.rs:219
+msgid "Labels"
+msgstr "Label"
+
+#: src/ui/conversation.rs:104
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Ctrl+K untuk mencari · ? untuk pintasan"
+
+#: src/ui/conversation.rs:321 src/ui/pane.rs:133
+msgid "Search messages"
+msgstr "Cari pesan"
+
+#: src/ui/conversation.rs:818
+msgid "You left this channel"
+msgstr "Kamu meninggalkan saluran ini"
+
+#: src/ui/conversation.rs:822
+msgid "Channels are read-only in ZapFast"
+msgstr "Saluran bersifat read-only di ZapFast"
+
+#: src/ui/conversation.rs:851
+msgid "You left this group"
+msgstr "Kamu meninggalkan grup ini"
+
+#: src/ui/conversation.rs:999
+msgid "Attach"
+msgstr "Lampiran"
+
+#: src/ui/conversation.rs:1095
+msgid "Type a message"
+msgstr "Ketik pesan"
+
+#: src/ui/conversation.rs:1098
+msgid "Add a caption"
+msgstr "Tambahkan keterangan"
+
+#: src/ui/conversation.rs:1295
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
+"pastes a picture"
+msgstr "Enter kirim · Shift+Enter untuk baris baru · *tebal* _miring_ ~coret~ · Ctrl+V"
+
+#: src/ui/conversation.rs:1297
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Ctrl+Enter kirim · *tebal* miring_ ~coret~ · Ctrl+V untuk tempel gambar"
+
+#: src/ui/conversation.rs:1308
+msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
+msgstr "Sembunyikan petunjuk pintasan (tampilkan kembali dari Pintasan keyboard)"
+
+#: src/ui/conversation.rs:1323
+#, rust-format
+msgid "All shortcuts ({})"
+msgstr "Semua pintasan ({})"
+
+#: src/ui/conversation.rs:1453
+msgid "Send files"
+msgstr "Kirim dokumen"
+
+#: src/ui/conversation.rs:1457
+msgid "Create poll"
+msgstr "Buat polling"
+
+#: src/ui/conversation.rs:1519
+#, rust-format
+msgid "Voice message ({duration}) not sent"
+msgstr "Pesan suara ({duration}) gagal terkirim"
+
+#: src/ui/conversation.rs:1521
+msgid "Discard voice message"
+msgstr "Hapus pesan suara"
+
+#: src/ui/conversation.rs:2028 src/notify/badge_windows.rs:255
+#, rust-format
+msgid "{} unread message"
+msgid_plural "{} unread messages"
+msgstr "{} pesan belum dibaca"
+
+#: src/ui/conversation.rs:3321 src/ui/conversation.rs:4114
+msgid "Open in system player"
+msgstr "Buka di pemutar sistem"
+
+#: src/ui/conversation.rs:3322 src/ui/conversation.rs:4183
+#: src/ui/message_info.rs:17
+msgid "Message info"
+msgstr "Info pesan"
+
+#: src/ui/conversation.rs:3323 src/ui/conversation.rs:4195
+msgid "Reload earlier messages"
+msgstr "Muat ulang pesan sebelumnya"
+
+#: src/ui/conversation.rs:4126 src/ui/image_preview.rs:62
+#: src/ui/image_preview.rs:173
+msgid "Copy image"
+msgstr "Salin gambar"
+
+#: src/ui/conversation.rs:4570
+msgid "Location"
+msgstr "Lokasi"
+
+#: src/ui/conversation.rs:4596
+msgid "Live location ended"
+msgstr "Lokasi terkini berakhir"
+
+#: src/ui/conversation.rs:4598 src/ui/conversation.rs:4792
+msgid "Live location"
+msgstr "Lokasi terkini"
+
+#: src/ui/conversation.rs:4608
+#, rust-format
+msgid "Updated {time}"
+msgstr "Diperbarui {time}"
+
+#: src/ui/conversation.rs:4659
+msgid "Chat"
+msgstr "Chat"
+
+#: src/ui/conversation.rs:4673
+msgid "Add"
+msgstr "Tambah"
+
+#: src/ui/conversation.rs:4721
+#, rust-format
+msgid "{} sticker"
+msgid_plural "{} stickers"
+msgstr "{} Stiker"
+
+#: src/ui/conversation.rs:4734
+msgid "View stickers"
+msgstr "Lihat stiker"
+
+#: src/ui/conversation.rs:4800
+msgid "Open WhatsApp on your phone to follow it."
+msgstr "Buka WhatsApp di ponselmu untuk mengikuti ini."
+
+#: src/ui/conversation.rs:4818
+msgid "View once photo. For your privacy, it opens only on your phone."
+msgstr "Foto sekali lihat. Untuk privasi Anda, foto ini hanya dapat dibuka melalui aplikasi WhatsApp di ponsel."
+
+#: src/ui/conversation.rs:4822
+msgid "View once video. For your privacy, it opens only on your phone."
+msgstr "Video sekali lihat. Untuk privasi Anda, video ini hanya dapat dibuka melalui aplikasi WhatsApp di ponsel."
+
+#: src/ui/conversation.rs:4826
+msgid "View once voice message. For your privacy, it opens only on your phone."
+msgstr "Pesan suara sekali lihat. Untuk privasi Anda, pesan suara ini hanya dapat dibuka melalui aplikasi WhatsApp di ponsel."
+
+#: src/ui/conversation.rs:4830
+msgid "View once audio. For your privacy, it opens only on your phone."
+msgstr "Audio sekali lihat. Untuk privasi Anda, audio ini hanya dapat dibuka melalui aplikasi WhatsApp di ponsel."
+
+#: src/ui/conversation.rs:4834
+msgid "View once message. For your privacy, it opens only on your phone."
+msgstr "Pesan sekali lihat. Untuk privasi Anda, pesan ini hanya dapat dibuka melalui aplikasi WhatsApp di ponsel."
+
+#: src/ui/conversation.rs:4836
+msgid "This message can only be seen on your phone."
+msgstr "Pesan ini hanya dapat dilihat melalui ponsel anda."
+
+#: src/ui/conversation.rs:5678
+msgid "Open in a map"
+msgstr "Buka di map"
+
+#: src/ui/conversation.rs:6297
+msgid "Pause"
+msgstr "Jeda"
+
+#: src/ui/conversation.rs:6299 src/ui/settings.rs:1738
+msgid "Play"
+msgstr "Mulai"
+
+#: src/ui/conversation.rs:6326
+msgid "Back to the message (Esc)"
+msgstr "Kembali ke pesan (Esc)"
+
+#: src/ui/conversation.rs:6328
+msgid "Fill the window"
+msgstr "Penuhi jendela"
+
+#: src/ui/conversation.rs:6358
+msgid "Unmute"
+msgstr "Batalkan bisu"
+
+#: src/ui/conversation.rs:6360
+msgid "Mute"
+msgstr "Bisukan"
+
+#: src/ui/dialogs.rs:681
+msgid "Show shortcut hints under the message box"
+msgstr "Tampilkan tips pintasan di bawah kotak pesan"
+
+#: src/ui/dialogs.rs:883
+msgid "Sticker pack"
+msgstr "Paket Stiker"
+
+#: src/ui/dialogs.rs:888
+msgid "Downloading the pack…"
+msgstr "Mengunduh paket…"
+
+#: src/ui/dialogs.rs:912
+msgid "Add to my stickers"
+msgstr "Tambahkan ke stiker saya"
+
+#: src/ui/dialogs.rs:919 src/ui/message_info.rs:28 src/ui/labels.rs:230
+msgid "Close"
+msgstr "Tutup"
+
+#: src/ui/dialogs.rs:936
+msgid "Make a sticker"
+msgstr "Buat stiker"
+
+#: src/ui/dialogs.rs:1000
+msgid "Size"
+msgstr "Ukuran"
+
+#: src/ui/dialogs.rs:1015
+msgid "Keep the transparent background"
+msgstr "Pertahankan latar belakang transparan"
+
+#: src/ui/dialogs.rs:1032
+msgid "Emojis that describe it, like 😂 or ❤️"
+msgstr "Emoji yang menggambarkan, seperti 😂 atau ❤️"
+
+#: src/ui/dialogs.rs:1049
+msgid "Send"
+msgstr "Kirim"
+
+#: src/ui/dialogs.rs:1064 src/ui/dialogs.rs:1197 src/ui/dialogs.rs:1259
+#: src/ui/settings.rs:961 src/ui/settings.rs:1524 src/ui/lock.rs:142
+msgid "Cancel"
+msgstr "Batal"
+
+#: src/ui/dialogs.rs:1116
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" instead. It "
+"cannot be undone."
+msgstr "Semua orang di chat ini akan melihat \"Pesan ini telah dihapus\". Tindakan ini tidak dapat diurungkan."
+
+#: src/ui/dialogs.rs:1124
+msgid ""
+"This removes the message from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
+msgstr "Ini akan menghapus pesan dari telepon Anda dan perangkat tertaut. Orang lain tetap menyimpan salinannya. Hubungkan ke WhatsApp untuk menghapusnya. Tindakan ini tidak dapat diurungkan."
+
+#: src/ui/dialogs.rs:1178
+msgid "Remove this account?"
+msgstr "Hapus akun ini?"
+
+#: src/ui/dialogs.rs:1184
+msgid ""
+"This unlinks the number on this computer and deletes its local chats. Other "
+"accounts stay."
+msgstr "Ini akan memutuskan tautan nomor di komputer ini dan menghapus chat lokalnya. Akun lain tetap ada."
+
+#: src/ui/dialogs.rs:1193
+msgid "Remove"
+msgstr "Hapus"
+
+#: src/ui/dialogs.rs:1213
+msgid "Leave this channel?"
+msgstr "Tinggalkan saluran?"
+
+#: src/ui/dialogs.rs:1215
+msgid "Leave this group?"
+msgstr "Tinggalkan grup?"
+
+#: src/ui/dialogs.rs:1222
+msgid ""
+"You will not receive new messages. The local history stays on this computer."
+msgstr "Anda tidak akan menerima pesan baru. Riwayat lokal tetap di komputer ini."
+
+#: src/ui/dialogs.rs:1242
+msgid "Leave channel and archive"
+msgstr "Tinggalkan saluran dan arsipkan"
+
+#: src/ui/dialogs.rs:1244
+msgid "Leave group and archive"
+msgstr "Tinggalkan grup dan arsipkan"
+
+#: src/ui/dialogs.rs:1469
+msgid "Also save to your phone's contacts"
+msgstr "Simpan juga ke kontak ponsel Anda"
+
+#: src/ui/dialogs.rs:1534
+msgid "Group"
+msgstr "Grup"
+
+#: src/ui/dialogs.rs:1536
+msgid "Channel"
+msgstr "Saluran"
+
+#: src/ui/dialogs.rs:1538
+msgid "Contact"
+msgstr "Kontak"
+
+#: src/ui/dialogs.rs:1583
+msgid "Edit group name"
+msgstr "Ubah nama grup"
+
+#: src/ui/dialogs.rs:1713
+msgid "Saving…"
+msgstr "Menyimpan…"
+
+#: src/ui/dialogs.rs:1723
+#, rust-format
+msgid "{} member"
+msgid_plural "{} members"
+msgstr "{} anggota"
+
+#: src/ui/dialogs.rs:1986
+msgid "Change group photo"
+msgstr "Ubah foto grup"
+
+#: src/ui/dialogs.rs:1992
+msgid "Change photo"
+msgstr "Ubah foto"
+
+#: src/ui/dialogs.rs:1993
+msgid "Remove photo"
+msgstr "Hapus foto"
+
+#: src/ui/dialogs.rs:2033
+msgid "Group name"
+msgstr "Nama grup"
+
+#: src/ui/dialogs.rs:2076
+msgid "Save name (Enter)"
+msgstr "Simpan nama (Enter)"
+
+#: src/ui/dialogs.rs:2088
+msgid "Cancel (Escape)"
+msgstr "Batal (Escape)"
+
+#: src/ui/settings.rs:255
+msgid "Settings"
+msgstr "Pengaturan"
+
+#: src/ui/settings.rs:272
+#, rust-format
+msgid "No settings match “{query}”."
+msgstr "Tidak ada pengaturan yang cocok dengan “{query}”."
+
+#: src/ui/settings.rs:305
+msgid "Search settings"
+msgstr "Cari pengaturan"
+
+#: src/ui/settings.rs:323
+msgid "Appearance"
+msgstr "Tampilan"
+
+#: src/ui/settings.rs:330
+msgid "Follow system uses your Omarchy colours."
+msgstr "Ikuti sistem dengan warna Omarchy Anda."
+
+#: src/ui/settings.rs:334
+msgid "Theme"
+msgstr "Tema"
+
+#: src/ui/settings.rs:336
+msgid "Font"
+msgstr "Font"
+
+#: src/ui/settings.rs:339
+msgid ""
+"System is your desktop's interface font. Inter looks the same on every "
+"computer."
+msgstr "Sistem menggunakan font antarmuka desktop Anda. Inter tampak sama di setiap komputer."
+
+#: src/ui/settings.rs:344
+msgid "Wallpaper"
+msgstr "Wallpaper"
+
+#: src/ui/settings.rs:348
+msgid "Image"
+msgstr "Gambar"
+
+#: src/ui/settings.rs:358
+msgid "Zoom"
+msgstr "Zoom"
+
+#: src/ui/settings.rs:361
+msgid "Ctrl+Plus and Ctrl+Minus work anywhere, and Ctrl+0 resets it."
+msgstr "Ctrl+Plus dan Ctrl+Minus berfungsi di mana saja, dan Ctrl+0 untuk meresetnya."
+
+#: src/ui/settings.rs:370
+msgid "Larger"
+msgstr "Lebih besar"
+
+#: src/ui/settings.rs:388
+msgid "Smaller"
+msgstr "Lebih kecil"
+
+#: src/ui/settings.rs:396
+msgid "Language"
+msgstr "Bahasa"
+
+#: src/ui/settings.rs:400
+msgid "Enter sends"
+msgstr "Enter untuk mengirim"
+
+#: src/ui/settings.rs:401
+msgid "When off, Ctrl+Enter sends."
+msgstr "Saat nonaktif, Ctrl+Enter untuk mengirim."
+
+#: src/ui/settings.rs:405
+msgid "Download files automatically"
+msgstr "Unduh berkas secara otomatis"
+
+#: src/ui/settings.rs:408
+msgid "Files up to 64 MiB download as they come into view."
+msgstr "Berkas hingga 64 MiB diunduh saat tampil."
+
+#: src/ui/settings.rs:415
+msgid "Pause other media while recording or playing"
+msgstr "Jeda media lain saat merekam atau memutar"
+
+#: src/ui/settings.rs:416
+msgid "Music and videos in other apps resume afterwards."
+msgstr "Musik dan Video di aplikasi lain dilanjutkan setelahnya."
+
+#: src/ui/settings.rs:421 src/ui/settings.rs:430
+msgid "Keep chats archived"
+msgstr "Tetap arsipkan chat"
+
+#: src/ui/settings.rs:424
+msgid "When off, a new message brings an archived chat back to the list."
+msgstr "Jika nonaktif, pesan baru akan mengembalikan chat yang diarsipkan ke daftar."
+
+#: src/ui/settings.rs:445
+msgid "Locked chats code"
+msgstr "Kode obrolan terkunci"
+
+#: src/ui/settings.rs:448
+msgid ""
+"Opens the Locked tab on this computer. It hides chats, it does not encrypt "
+"them."
+msgstr "Buka tab terkunci pada komputer ini. Ini menyembunyikan obrolan, tetapi tidak mengenkripsinya."
+
+#: src/ui/settings.rs:460
+msgid "Secret code"
+msgstr "Kode rahasia"
+
+#: src/ui/settings.rs:469
+msgid "Clear"
+msgstr "Hapus"
+
+#: src/ui/settings.rs:479 src/ui/settings.rs:1866
+msgid "Notifications"
+msgstr "Notifikasi"
+
+#: src/ui/settings.rs:481
+msgid "Desktop notifications"
+msgstr "Notifikasi desktop"
+
+#: src/ui/settings.rs:484
+msgid "For chats you are not looking at. Muted chats stay quiet."
+msgstr "Untuk pesan yang tidak sedang dibuka. Pesan yang dibisukan tetap diam."
+
+#: src/ui/settings.rs:492 src/ui/settings.rs:1873
+msgid "Play sounds for group messages"
+msgstr "Putar suara untuk pesan grup"
+
+#: src/ui/settings.rs:495
+msgid "When off, only mentions and replies to you make a sound."
+msgstr "Saat nonaktif, hanya mention dan balasan kepada Anda yang berdering."
+
+#: src/ui/settings.rs:503
+msgid "Privacy"
+msgstr "Privasi"
+
+#: src/ui/settings.rs:505
+msgid "Off for your account, so only groups get them."
+msgstr "Nonaktif untuk akun Anda, jadi hanya grup yang mendapatkannya."
+
+#: src/ui/settings.rs:507
+msgid "Let people see when you read their messages."
+msgstr "Izinkan orang lain melihat saat Anda membaca pesan mereka."
+
+#: src/ui/settings.rs:510
+msgid "Send read receipts"
+msgstr "Kirim tanda telah dibaca"
+
+#: src/ui/settings.rs:515
+msgid "Show when you are typing"
+msgstr "Tampilkan saat Anda sedang mengetik"
+
+#: src/ui/settings.rs:526
+msgid ""
+"Could not load your account privacy. Trying again when ZapFast reconnects."
+msgstr "Tidak dapat memuat privasi akun Anda. Mencoba lagi saat ZapFast terhubung kembali."
+
+#: src/ui/settings.rs:531
+msgid "Connect to WhatsApp to change your account privacy."
+msgstr "Hubungkan ke WhatsApp untuk mengubah privasi akun Anda."
+
+#: src/ui/settings.rs:536
+msgid "Loading your account privacy…"
+msgstr "Memuat privasi akun Anda…"
+
+#: src/ui/settings.rs:561
+msgid "Change who is excluded on your phone."
+msgstr "Ubah siapa saja yang dikecualikan di telepon Anda."
+
+#: src/ui/settings.rs:579
+msgid "System"
+msgstr "System"
+
+#: src/ui/settings.rs:581
+msgid "Keep running when the window closes"
+msgstr "Tetap berjalan saat jendela ditutup"
+
+#: src/ui/settings.rs:582
+msgid "Quit from the tray or with Ctrl+Q."
+msgstr "Keluar dari baki sistem (tray) atau dengan Ctrl+Q."
+
+#: src/ui/settings.rs:587 src/ui/settings.rs:595
+msgid "Start at login"
+msgstr "Mulai saat login"
+
+#: src/ui/settings.rs:588
+msgid "Starts in the tray, without a window."
+msgstr "Mulai di baki sistem (tray), tanpa membuka jendela."
+
+#: src/ui/settings.rs:611
+msgid "Check for updates"
+msgstr "Periksa pembaruan"
+
+#: src/ui/settings.rs:614
+msgid "Asks GitHub once a day, sending only the ZapFast version."
+msgstr "Memeriksa GitHub sekali sehari, hanya mengirimkan versi ZapFast."
+
+#: src/ui/settings.rs:619
+msgid "Download updates automatically"
+msgstr "Unduh pembaruan secara otomatis"
+
+#: src/ui/settings.rs:622
+msgid ""
+"You still choose when to restart. Package managers and Flatpak update "
+"ZapFast themselves."
+msgstr "Anda tetap memilih kapan harus memulai ulang. Manajer paket dan Flatpak memperbarui ZapFast sendiri."
+
+#: src/ui/settings.rs:635
+#, rust-format
+msgid "Using {proxy} from the environment."
+msgstr "Menggunakan {proxy} dari variabel lingkungan."
+
+#: src/ui/settings.rs:643
+msgid "For WhatsApp, media, and updates. Empty uses ALL_PROXY or HTTPS_PROXY."
+msgstr "Untuk WhatsApp, media, dan pembaruan. Kosongkan untuk menggunakan ALL_PROXY atau HTTPS_PROXY."
+
+#: src/ui/settings.rs:646
+msgid "Proxy"
+msgstr "Proxy"
+
+#: src/ui/settings.rs:666
+msgid "GIPHY API key"
+msgstr "Kunci API GIPHY"
+
+#: src/ui/settings.rs:670
+msgid "For GIF search. Replaces the key this build includes."
+msgstr "Untuk pencarian GIF. Menggantikan kunci bawaan rilis ini."
+
+#: src/ui/settings.rs:675
+msgid "For GIF search. Get a free key at developers.giphy.com."
+msgstr "Untuk pencarian GIF. Dapatkan kunci gratis di developers.giphy.com."
+
+#: src/ui/settings.rs:691 src/ui/settings.rs:1920 src/ui/settings.rs:1926
+msgid "Account"
+msgstr "Akun"
+
+#: src/ui/settings.rs:694 src/ui/settings.rs:1423
+msgid "Your name"
+msgstr "Nama Anda"
+
+#: src/ui/settings.rs:696 src/ui/settings.rs:1431
+msgctxt "profile"
+msgid "About"
+msgstr "Info"
+
+#: src/ui/settings.rs:699 src/ui/settings.rs:1400
+msgid "Change profile picture"
+msgstr "Ubah foto profil"
+
+#: src/ui/settings.rs:700 src/ui/settings.rs:1483 src/ui/settings.rs:1922
+msgid "Unlink this computer"
+msgstr "Putuskan tautan komputer ini"
+
+#: src/ui/settings.rs:701 src/ui/settings.rs:1494 src/ui/accounts.rs:123
+msgid "Add account"
+msgstr "Tambah akun"
+
+#: src/ui/settings.rs:702 src/ui/settings.rs:1470
+msgid "Remove this account"
+msgstr "Hapus akun ini"
+
+#: src/ui/settings.rs:707
+msgid "Files"
+msgstr "File"
+
+#: src/ui/settings.rs:710
+msgid "Open folder"
+msgstr "Buka folder"
+
+#: src/ui/settings.rs:712
+msgid "Message archive"
+msgstr "Arsip pesan"
+
+#: src/ui/settings.rs:730
+msgid "Downloads"
+msgstr "Unduhan"
+
+#: src/ui/settings.rs:743
+msgid "Change…"
+msgstr "Ubah…"
+
+#: src/ui/settings.rs:755
+msgid "Use default"
+msgstr "Gunakan default"
+
+#: src/ui/settings.rs:766
+msgid "Log"
+msgstr "Log"
+
+#: src/ui/settings.rs:773
+msgid "Open"
+msgstr "Buka"
+
+#: src/ui/settings.rs:783 src/ui/settings.rs:1613
+msgid "About"
+msgstr "Info"
+
+#: src/ui/settings.rs:787 src/ui/settings.rs:1602
+msgid "Keyboard shortcuts"
+msgstr "Pintasan keyboard"
+
+#: src/ui/settings.rs:788 src/ui/settings.rs:1624
+msgid "Source code"
+msgstr "Kode sumber"
+
+#: src/ui/settings.rs:813 src/ui/settings.rs:840
+msgid "App lock"
+msgstr "Kunci aplikasi"
+
+#: src/ui/settings.rs:816
+msgid ""
+"Asks for a password at start and after a while unused. It keeps people using "
+"this computer out of your chats and encrypts nothing more. A forgotten "
+"password means unlinking."
+msgstr "Meminta kata sandi saat mulai dan setelah beberapa waktu tidak digunakan. Ini menjaga privasi chat Anda dari pengguna komputer ini dan tidak mengenkripsi hal lainnya. Jika lupa kata sandi, Anda harus memutuskan tautan perangkat."
+
+#: src/ui/settings.rs:823
+msgid "Turn off…"
+msgstr "Nonaktifkan…"
+
+#: src/ui/settings.rs:824
+msgid "Change password…"
+msgstr "Ubah kata sandi…"
+
+#: src/ui/settings.rs:827
+msgid "Set password…"
+msgstr "Atur kata sandi…"
+
+#: src/ui/settings.rs:841 src/ui/settings.rs:848
+msgid "Lock after"
+msgstr "Kunci setelah"
+
+#: src/ui/settings.rs:851
+msgid ""
+"Time without using ZapFast, also counted while it is in the tray. "
+"Ctrl+Shift+L locks it at once."
+msgstr "Waktu tidak menggunakan ZapFast, juga dihitung saat berada di baki sistem. Tekan Ctrl+Shift+L untuk mengunci seketika."
+
+#: src/ui/settings.rs:893
+msgid "Set an app lock password"
+msgstr "Atur kata sandi kunci aplikasi"
+
+#: src/ui/settings.rs:894
+msgid "Change the app lock password"
+msgstr "Ubah kata sandi kunci aplikasi"
+
+#: src/ui/settings.rs:895
+msgid "Turn off the app lock"
+msgstr "Nonaktifkan kunci aplikasi"
+
+#: src/ui/settings.rs:905
+msgid "Current password"
+msgstr "Kata sandi saat ini"
+
+#: src/ui/settings.rs:912
+#, rust-format
+msgid "New password, at least {count} characters"
+msgstr "Kata sandi baru, minimal {count} karakter"
+
+#: src/ui/settings.rs:917
+msgid "Type the new password again"
+msgstr "Ketik ulang kata sandi baru"
+
+#: src/ui/settings.rs:941
+#, rust-format
+msgid "The password needs at least {count} characters."
+msgstr "Kata sandi membutuhkan minimal {count} karakter."
+
+#: src/ui/settings.rs:943
+msgid "The two new passwords are different."
+msgstr "Kedua kata sandi baru tidak cocok."
+
+#: src/ui/settings.rs:944 src/ui/lock.rs:85
+msgid "Wrong password. Try again."
+msgstr "Kata sandi salah. Coba lagi."
+
+#: src/ui/settings.rs:951
+msgid "Turn on"
+msgstr "Aktifkan"
+
+#: src/ui/settings.rs:952
+msgid "Change password"
+msgstr "Ubah kata sandi"
+
+#: src/ui/settings.rs:953
+msgid "Turn off"
+msgstr "Nonaktifkan"
+
+#: src/ui/settings.rs:1056
+msgid "How to make a theme"
+msgstr "Cara membuat tema"
+
+#: src/ui/settings.rs:1097 src/ui/settings.rs:1106
+msgid "Auto"
+msgstr "Otomatis"
+
+#: src/ui/settings.rs:1193
+msgid "Add doodles"
+msgstr "Tambahkan corak (doodles)"
+
+#: src/ui/settings.rs:1197
+msgid "Show the default doodles over the selected colour."
+msgstr "Tampilkan corak default di atas warna yang dipilih."
+
+#: src/ui/settings.rs:1281
+msgid "Choose image…"
+msgstr "Pilih gambar…"
+
+#: src/ui/settings.rs:1282
+msgid "Remove image"
+msgstr "Hapus gambar"
+
+#: src/ui/settings.rs:1310
+msgctxt "wallpaper colour"
+msgid "Theme"
+msgstr "Tema"
+
+#: src/ui/settings.rs:1439
+msgid "Linked device"
+msgstr "Perangkat tertaut"
+
+#: src/ui/settings.rs:1450
+msgid "Edit your name and About"
+msgstr "Edit nama dan Info Anda"
+
+#: src/ui/settings.rs:1514
+msgid "Save"
+msgstr "Simpan"
+
+#: src/ui/settings.rs:1581
+msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
+msgstr "Klien WhatsApp native yang dibuat dengan Rust, egui, dan whatsapp-rust."
+
+#: src/ui/settings.rs:1592
+#, rust-format
+msgid "Update to {version}"
+msgstr "Perbarui ke {version}"
+
+#: src/ui/settings.rs:1694
+msgid "Mention sound"
+msgstr "Suara sebutan"
+
+#: src/ui/settings.rs:1695
+msgid "When a group mentions you or replies to you."
+msgstr "Saat seseorang di grup menyebut Anda atau membalas pesan Anda."
+
+#: src/ui/settings.rs:1698
+msgid "Message sound"
+msgstr "Suara pesan masuk"
+
+#: src/ui/settings.rs:1715
+msgid "Pidgin alert"
+msgstr "Pidgin alert"
+
+#: src/ui/settings.rs:1716
+msgid "System default"
+msgstr "Default sistem"
+
+#. Translators: no notification sound.
+#: src/ui/settings.rs:1718
+msgctxt "sound"
+msgid "None"
+msgstr "Tidak ada"
+
+#: src/ui/settings.rs:1755
+msgid "Choose a file…"
+msgstr "Pilih file…"
+
+#. Translators: {name} is replaced by the author's name, shown as a link.
+#: src/ui/widgets.rs:730
+#, rust-format
+msgid "Built with love by {name}"
+msgstr "Dibuat dengan cinta oleh {name}"
+
+#: src/ui/message_info.rs:44
+msgid "This message is no longer available."
+msgstr "Pesan ini sudah tidak tersedia lagi."
+
+#: src/ui/message_info.rs:87
+msgid "Loading…"
+msgstr "Memuat…"
+
+#: src/ui/message_info.rs:171
+msgid "Played"
+msgstr "Diputar"
+
+#: src/ui/message_info.rs:173
+msgid "Read"
+msgstr "Dibaca"
+
+#: src/ui/message_info.rs:178
+msgid "Delivered"
+msgstr "Tersampaikan"
+
+#: src/ui/message_info.rs:194
+msgid "Time not recorded"
+msgstr "Waktu tidak tercatat"
+
+#: src/ui/message_info.rs:216
+msgid ""
+"No receipts were recorded for this message. Details are available for "
+"messages sent from now on."
+msgstr "Tidak ada tanda terima yang tercatat untuk pesan ini. Detail tersedia untuk pesan yang dikirim mulai sekarang."
+
+#: src/ui/message_info.rs:228
+msgid ""
+"Some receipts for this message were not recorded. Details are complete for "
+"messages sent from now on."
+msgstr "Beberapa tanda terima untuk pesan ini tidak tercatat. Detail akan lengkap untuk pesan yang dikirim mulai sekarang."
+
+#: src/ui/message_info.rs:238
+msgid "Played by"
+msgstr "Diputar oleh"
+
+#: src/ui/message_info.rs:247
+msgid "Read by"
+msgstr "Dibaca oleh"
+
+#: src/ui/message_info.rs:255
+msgid "Delivered to"
+msgstr "Tersampaikan ke"
+
+#: src/ui/message_info.rs:265
+#, rust-format
+msgid "{} remaining"
+msgid_plural "{} remaining"
+msgstr "tersisa {}"
+
+#: src/ui/message_info.rs:292
+msgid "No one yet"
+msgstr "Belum ada siapa pun"
+
+#: src/app.rs:1376
+msgid "Could not delete the removed account's files"
+msgstr "Tidak dapat menghapus file akun yang dihapus"
+
+#: src/app.rs:1847
+#, rust-format
+msgid "A label named “{name}” already exists."
+msgstr "Label bernama “{name}” sudah ada."
+
+#: src/app.rs:1923
+#, rust-format
+msgid "{name} (You)"
+msgstr "{name} (Anda)"
+
+#: src/app.rs:1924 src/app.rs:1943
+msgid "You"
+msgstr "Anda"
+
+#: src/app.rs:2790
+msgid "Could not use this image"
+msgstr "Tidak dapat menggunakan gambar ini"
+
+#: src/app.rs:3287
+msgid "Not sent: ZapFast is not connected to WhatsApp."
+msgstr "Tidak terkirim: ZapFast tidak terhubung ke WhatsApp."
+
+#: src/app.rs:3291
+msgid ""
+"Not sent: the message you’re replying to isn’t available on this computer. "
+"Cancel the reply to send without a quote."
+msgstr "Tidak terkirim: pesan yang Anda balas tidak tersedia di komputer ini. Batalkan balasan untuk mengirim tanpa kutipan."
+
+#: src/app.rs:4821
+msgid "Added to favorites"
+msgstr "Ditambahkan ke favorit"
+
+#: src/app.rs:4896
+msgid "Sending the sticker pack…"
+msgstr "Mengirim paket stiker…"
+
+#: src/app.rs:5189 src/ui/labels.rs:253
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "Anda memiliki {limit} label, batas maksimal yang disimpan ZapFast."
+
+#: src/app.rs:5876
+msgid "App lock password saved"
+msgstr "Kata sandi kunci aplikasi disimpan"
+
+#: src/app.rs:5884
+msgid "App lock turned off"
+msgstr "Kunci aplikasi dinonaktifkan"
+
+#: src/app.rs:5997
+msgid "This video opens in your system player"
+msgstr "Video ini dibuka di pemutar media sistem"
+
+#: src/app.rs:6430
+msgid "Copied image"
+msgstr "Gambar disalin"
+
+#: src/app.rs:6433 src/app.rs:6438
+msgid "Failed to copy image"
+msgstr "Gagal menyalin gambar"
+
+#: src/ui/labels.rs:68
+msgctxt "label colour"
+msgid "Blue"
+msgstr "Biru"
+
+#: src/ui/labels.rs:69
+msgctxt "label colour"
+msgid "Green"
+msgstr "Hijau"
+
+#: src/ui/labels.rs:70
+msgctxt "label colour"
+msgid "Yellow"
+msgstr "Kuning"
+
+#: src/ui/labels.rs:71
+msgctxt "label colour"
+msgid "Orange"
+msgstr "Oranye"
+
+#: src/ui/labels.rs:72
+msgctxt "label colour"
+msgid "Red"
+msgstr "Merah"
+
+#: src/ui/labels.rs:73
+msgctxt "label colour"
+msgid "Pink"
+msgstr "Merah muda"
+
+#: src/ui/labels.rs:74
+msgctxt "label colour"
+msgid "Purple"
+msgstr "Ungu"
+
+#: src/ui/labels.rs:75
+msgctxt "label colour"
+msgid "Teal"
+msgstr "Hijau kebiruan (teal)"
+
+#: src/ui/labels.rs:76
+msgctxt "label colour"
+msgid "Grey"
+msgstr "Abu-abu"
+
+#: src/ui/labels.rs:77
+msgctxt "label colour"
+msgid "Sky blue"
+msgstr "Biru muda"
+
+#: src/ui/labels.rs:78
+msgctxt "label colour"
+msgid "Colour"
+msgstr "Warna"
+
+#: src/ui/labels.rs:157
+msgid "Manage labels"
+msgstr "Kelola label"
+
+#: src/ui/labels.rs:206
+msgid "Manage labels…"
+msgstr "Kelola label…"
+
+#: src/ui/labels.rs:242
+msgid ""
+"Labels stay on this computer. They do not reach your phone or anyone you "
+"chat with."
+msgstr "Label hanya tersimpan di komputer ini. Label tidak dikirim ke ponsel Anda atau siapa pun yang Anda ajak chat."
+
+#: src/ui/labels.rs:263
+msgid "New label"
+msgstr "Label baru"
+
+#: src/ui/labels.rs:277
+msgid "Create"
+msgstr "Buat"
+
+#: src/ui/labels.rs:307
+msgid ""
+"No labels yet. Create one above, then add chats to it from their right-click "
+"menu."
+msgstr "Belum ada label. Buat label baru di atas, lalu tambahkan chat dari menu klik kanan."
+
+#: src/ui/labels.rs:342
+msgid "Next colour"
+msgstr "Warna berikutnya"
+
+#: src/ui/labels.rs:391
+#, rust-format
+msgid "{} chat"
+msgid_plural "{} chats"
+msgstr "{} chat"
+
+#: src/ui/labels.rs:412
+msgid "Rename or recolour"
+msgstr "Ganti nama atau warna"
+
+#: src/ui/labels.rs:437
+msgid "Delete this label. Its chats keep their messages."
+msgstr "Hapus label ini. Pesan dalam chat-nya tetap ada."
+
+#: src/ui/picker.rs:1187
+msgid "Recent"
+msgstr "Terakhir dipakai"
+
+#: src/ui/picker.rs:1189
+msgid "Received"
+msgstr "Diterima"
+
+#: src/ui/picker.rs:1190
+msgid "Add stickers"
+msgstr "Tambah stiker"
+
+#: src/ui/picker.rs:1225
+msgid "Search by emoji, word, or pack"
+msgstr "Cari berdasarkan emoji, kata, atau paket"
+
+#: src/ui/picker.rs:1264
+msgid "No stickers match your search."
+msgstr "Tidak ada stiker yang cocok dengan pencarian Anda."
+
+#: src/ui/picker.rs:1278
+msgid "Loading your stickers…"
+msgstr "Memuat stiker Anda…"
+
+#: src/ui/picker.rs:1280
+msgid "Stickers you send appear here."
+msgstr "Stiker yang Anda kirim akan muncul di sini."
+
+#: src/ui/picker.rs:1289
+msgid ""
+"Right-click any sticker to add it to your favorites. They stay in sync with "
+"your phone."
+msgstr "Klik kanan pada stiker mana pun untuk menambahkannya ke favorit. Stiker akan tetap disinkronkan dengan ponsel Anda."
+
+#: src/ui/picker.rs:1295
+msgid "Stickers people send you appear here."
+msgstr "Stiker yang dikirim orang lain akan muncul di sini."
+
+#: src/ui/picker.rs:1310
+msgid "Remove this pack"
+msgstr "Hapus paket ini"
+
+#: src/ui/picker.rs:1324
+msgid "Send this pack to the chat"
+msgstr "Kirim paket ini ke chat"
+
+#: src/ui/picker.rs:1338
+msgid "Nothing here yet. Right-click any sticker to add it to this pack."
+msgstr "Belum ada apa-apa di sini. Klik kanan pada stiker mana pun untuk menambahkannya ke paket ini."
+
+#: src/ui/picker.rs:1411
+msgid "Import a pack"
+msgstr "Impor paket"
+
+#: src/ui/picker.rs:1419
+msgid ""
+"Paste a signal.art link from signalstickers.org, or open a .wastickers file."
+msgstr "Tempel tautan signal.art dari signalstickers.org, atau buka file .wastickers."
+
+#: src/ui/picker.rs:1429
+msgid "Make your own"
+msgstr "Buat sendiri"
+
+#: src/ui/picker.rs:1437
+msgid ""
+"Start a pack, then right-click any sticker to add it. Or turn a picture into "
+"a sticker."
+msgstr "Buat paket baru, lalu klik kanan stiker apa pun untuk menambahkannya. Atau ubah gambar menjadi stiker."
+
+#: src/ui/picker.rs:1449
+msgid "Make a sticker from a picture…"
+msgstr "Buat stiker dari gambar…"
+
+#: src/ui/picker.rs:1464
+msgid "Create pack"
+msgstr "Buat paket"
+
+#: src/ui/picker.rs:1475
+msgid "New pack…"
+msgstr "Paket baru…"
+
+#: src/ui/picker.rs:1508
+msgid "Find packs"
+msgstr "Cari paket"
+
+#: src/ui/picker.rs:1509
+msgid "Open file"
+msgstr "Buka file"
+
+#: src/ui/picker.rs:1524
+msgid "Paste a signal.art link"
+msgstr "Tempel tautan signal.art"
+
+#: src/ui/picker.rs:1552
+msgid "Browse signalstickers.org"
+msgstr "Jelajahi signalstickers.org"
+
+#: src/ui/picker.rs:1568
+msgid "Importing the pack…"
+msgstr "Mengimpor paket…"
+
+#: src/ui/picker.rs:1617
+msgid "Remove from recents"
+msgstr "Hapus dari yang terbaru"
+
+#: src/ui/pane.rs:123
+msgid "Close search"
+msgstr "Tutup pencarian"
+
+#: src/ui/pane.rs:151 src/ui/pane.rs:329
+msgid "Filter by date"
+msgstr "Filter berdasarkan tanggal"
+
+#: src/ui/pane.rs:204
+#, rust-format
+msgid "Search messages with {}"
+msgstr "Cari pesan bersama {}"
+
+#: src/ui/pane.rs:227
+msgid "No messages found"
+msgstr "Pesan tidak ditemukan"
+
+#: src/ui/pane.rs:228
+msgid "Try another word or pick a different day."
+msgstr "Coba kata lain atau pilih hari yang berbeda."
+
+#: src/ui/pane.rs:255
+#, rust-format
+msgid "Only the newest {} matches are listed. Narrow the search or pick a day."
+msgstr "Hanya {} hasil terbaru yang ditampilkan. Persempit pencarian atau pilih hari."
+
+#: src/ui/pane.rs:344
+msgid "Clear the day filter"
+msgstr "Hapus filter hari"
+
+#: src/ui/pane.rs:411
+msgid "Next month"
+msgstr "Bulan berikutnya"
+
+#: src/ui/pane.rs:423
+msgid "Previous month"
+msgstr "Bulan sebelumnya"
+
+#: src/privacy.rs:42
+msgctxt "privacy"
+msgid "Last seen"
+msgstr "Terakhir dilihat"
+
+#: src/privacy.rs:43
+msgctxt "privacy"
+msgid "Online"
+msgstr "Online"
+
+#: src/privacy.rs:44
+msgctxt "privacy"
+msgid "Profile photo"
+msgstr "Foto profil"
+
+#: src/privacy.rs:45
+msgctxt "privacy"
+msgid "About"
+msgstr "Info"
+
+#: src/privacy.rs:46
+msgctxt "privacy"
+msgid "Groups"
+msgstr "Grup"
+
+#: src/privacy.rs:47
+msgctxt "privacy"
+msgid "Read receipts"
+msgstr "Laporan dibaca"
+
+#: src/privacy.rs:48
+msgctxt "privacy"
+msgid "Calls"
+msgstr "Panggilan"
+
+#: src/privacy.rs:58
+msgid "Who can add you to groups."
+msgstr "Siapa yang dapat menambahkan Anda ke grup."
+
+#: src/privacy.rs:60
+msgid "For your whole account. Groups always send them."
+msgstr "Untuk seluruh akun Anda. Grup selalu mengirimkannya."
+
+#: src/privacy.rs:139
+msgctxt "privacy"
+msgid "Everyone"
+msgstr "Semua orang"
+
+#: src/privacy.rs:140
+msgctxt "privacy"
+msgid "My contacts"
+msgstr "Kontak saya"
+
+#: src/privacy.rs:141
+msgctxt "privacy"
+msgid "My contacts except…"
+msgstr "Kontak saya kecuali…"
+
+#: src/privacy.rs:142
+msgctxt "privacy"
+msgid "Nobody"
+msgstr "Tidak ada"
+
+#: src/privacy.rs:143
+msgctxt "privacy"
+msgid "Same as last seen"
+msgstr "Sama seperti terakhir dilihat"
+
+#: src/privacy.rs:144
+msgctxt "privacy"
+msgid "Silence unknown callers"
+msgstr "Bisukan penelepon tidak dikenal"
+
+#: src/ui/image_preview.rs:174
+msgid "Save as…"
+msgstr "Simpan sebagai…"
+
+#: src/ui/image_preview.rs:176
+msgid "Open in another app"
+msgstr "Buka di aplikasi lain"
+
+#: src/ui/lock.rs:17
+msgid "ZapFast is locked"
+msgstr "ZapFast terkunci"
+
+#: src/ui/lock.rs:23
+msgid "Unlinking this computer…"
+msgstr "Memutuskan tautan komputer ini…"
+
+#: src/ui/lock.rs:52
+msgid "Enter your password to unlock."
+msgstr "Masukkan kata sandi untuk membuka kunci."
+
+#: src/ui/lock.rs:66
+msgid "Password"
+msgstr "Kata sandi"
+
+#: src/ui/lock.rs:76
+#, rust-format
+msgid "Too many wrong passwords. Try again in {seconds} s."
+msgstr "Terlalu banyak kata sandi yang salah. Coba lagi dalam {seconds} dtk."
+
+#: src/ui/lock.rs:97
+msgid "Unlock"
+msgstr "Buka kunci"
+
+#: src/ui/lock.rs:108
+msgid "Forgot password? Unlink this computer"
+msgstr "Lupa kata sandi? Putuskan tautan komputer ini"
+
+#: src/ui/lock.rs:123
+msgid "Unlink this computer?"
+msgstr "Putuskan tautan komputer ini?"
+
+#: src/ui/lock.rs:131
+msgid ""
+"Without the password, the only way back in is to unlink. This removes the "
+"device from WhatsApp, deletes the chats stored here, and turns the app lock "
+"off. You can link again with a new code."
+msgstr "Tanpa kata sandi, satu-satunya cara untuk masuk kembali adalah memutuskan tautan. Ini akan menghapus perangkat dari WhatsApp, menghapus chat yang disimpan di sini, dan menonaktifkan kunci aplikasi. Anda dapat menautkan kembali dengan kode baru."
+
+#: src/ui/lock.rs:139
+msgid "Unlink"
+msgstr "Putuskan tautan"
+
+#: src/notify.rs:280
+msgid "New message"
+msgstr "Pesan baru"
+
+#: src/settings.rs:340
+msgid "After 1 minute"
+msgstr "Setelah 1 menit"
+
+#: src/settings.rs:341
+msgid "After 15 minutes"
+msgstr "Setelah 15 menit"
+
+#: src/settings.rs:342
+msgid "After 1 hour"
+msgstr "Setelah 1 jam"
+
+#: src/account.rs:214
+#, rust-format
+msgid "Account {id}"
+msgstr "Akun {id}"
+
+#: src/ui/accounts.rs:33
+msgid "Switch account"
+msgstr "Beralih akun"
+
+#: src/ui/accounts.rs:84
+msgid "Not linked"
+msgstr "Tidak tertaut"
+
+#: src/ui/accounts.rs:232
+#, rust-format
+msgid "{count} unread chats"
+msgstr "{count} chat belum dibaca"

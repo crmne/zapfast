@@ -96,7 +96,7 @@ name or description, in the interface language or in English.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.
 - **Language**: the interface language, or **Auto** to follow the system.
   Brazilian Portuguese, German, Spanish, Italian, French, Russian, Simplified
-  Chinese, Traditional Chinese, and Turkish are available; otherwise English.
+  Chinese, Traditional Chinese, Turkish, and Indonesian are available; otherwise English.
   Message contents, names, and logs are never translated.
 
 **Chats**
