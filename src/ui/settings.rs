@@ -513,7 +513,7 @@ fn sections(app: &App) -> Vec<Section> {
             translated(locale, "Limit group notifications"),
             translated(
                 locale,
-                "After one notification, a group stays quiet for 10 minutes. Opening the group resets this.",
+                "After one notification, a group stays quiet for 10 minutes. Opening the group resets this. Mentions and replies to you still notify.",
             ),
             |settings| &mut settings.limit_group_notifications,
         );

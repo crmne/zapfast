@@ -67,6 +67,8 @@ const WAITING_LIMIT: usize = 32;
 /// are limited. Opening the chat ends the wait early.
 const THROTTLE_WINDOW: Duration = Duration::from_secs(10 * 60);
 
+type Throttle = Arc<Mutex<std::collections::HashMap<(String, String), Instant>>>;
+
 type PendingByAccountChat =
     std::collections::HashMap<(String, String), Vec<(u64, tokio::sync::oneshot::Sender<Stop>)>>;
 
@@ -98,8 +100,9 @@ pub struct Notifications {
     pending: PendingByAccountChat,
     /// Order of registration, so the oldest waiting notification is released first.
     registered: u64,
-    /// When each limited chat last showed a notification.
-    throttle: std::collections::HashMap<(String, String), Instant>,
+    /// When each limited chat last showed a notification. Shared so a failed
+    /// delivery, which happens on the notification's own thread, can undo it.
+    throttle: Throttle,
     /// What unit tests would have shown, recorded instead of shown on the
     /// desktop. Always empty outside tests.
     pub shown: Vec<Shown>,
@@ -176,9 +179,11 @@ impl Notifications {
     /// Whether a notification for this chat may be shown at `now`. A chat
     /// whose notifications are `limited` is allowed once, then refused for
     /// `THROTTLE_WINDOW` counted from the notification that was shown;
-    /// refused messages do not extend the wait.
+    /// refused messages do not extend the wait. The wait starts here, so a
+    /// burst of messages shows one notification; [`Self::show`] ends it again
+    /// if the desktop then fails to show that notification.
     pub fn allow(
-        &mut self,
+        &self,
         account: &crate::model::AccountId,
         chat: &str,
         now: Instant,
@@ -188,26 +193,53 @@ impl Notifications {
             return true;
         }
         let key = (account.as_str().to_owned(), chat.to_owned());
-        if self
-            .throttle
+        let mut throttle = self.throttle.lock().unwrap_or_else(|p| p.into_inner());
+        if throttle
             .get(&key)
             .is_some_and(|last| now.saturating_duration_since(*last) < THROTTLE_WINDOW)
         {
             return false;
         }
-        self.throttle.insert(key, now);
+        throttle.insert(key, now);
         true
     }
 
     /// Lets the chat's next message notify at once, because the chat was looked at.
-    pub fn reset_throttle(&mut self, account: &crate::model::AccountId, chat: &str) {
+    pub fn reset_throttle(&self, account: &crate::model::AccountId, chat: &str) {
         self.throttle
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
             .remove(&(account.as_str().to_owned(), chat.to_owned()));
+    }
+
+    /// Ends the wait the chat has now, unless a newer one has replaced it by
+    /// the time the returned function runs.
+    fn undo_throttle(
+        &self,
+        account: &crate::model::AccountId,
+        chat: &str,
+    ) -> Box<dyn FnOnce() + Send> {
+        let key = (account.as_str().to_owned(), chat.to_owned());
+        let throttle = Arc::clone(&self.throttle);
+        let started = throttle
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&key)
+            .copied();
+        Box::new(move || {
+            let mut throttle = throttle.lock().unwrap_or_else(|p| p.into_inner());
+            if started.is_some() && throttle.get(&key).copied() == started {
+                throttle.remove(&key);
+            }
+        })
     }
 
     pub fn clear_account(&mut self, account: &crate::model::AccountId) {
         let account = account.as_str();
-        self.throttle.retain(|(id, _), _| id != account);
+        self.throttle
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|(id, _), _| id != account);
         let keys: Vec<_> = self
             .pending
             .keys()
@@ -238,12 +270,19 @@ impl Notifications {
         target: NotificationTarget,
         opened: Arc<Mutex<Vec<NotificationTarget>>>,
         wake: impl Fn() + Send + 'static,
+        limited: bool,
     ) {
         let key = match target.message {
             Some(_) => target.chat.clone(),
             None => call_key(&target.chat),
         };
         let cancelled = self.register(&target.account, &key);
+        // A limited chat's wait ends again if the desktop does not show this.
+        let failed: Box<dyn FnOnce() + Send> = if limited {
+            self.undo_throttle(&target.account, &target.chat)
+        } else {
+            Box::new(|| {})
+        };
         if cfg!(test) {
             self.shown.push(Shown {
                 title,
@@ -253,9 +292,17 @@ impl Notifications {
             });
             return;
         }
+        let undo = Arc::new(Mutex::new(Some(failed)));
+        let undo_spawn = Arc::clone(&undo);
         let spawned = std::thread::Builder::new()
             .name("notification".into())
             .spawn(move || {
+                let failed = move || {
+                    if let Some(undo) = undo_spawn.lock().unwrap_or_else(|p| p.into_inner()).take()
+                    {
+                        undo();
+                    }
+                };
                 if !played_by_notification(&sound) {
                     play_sound(sound.clone());
                 }
@@ -268,10 +315,14 @@ impl Notifications {
                     opened,
                     wake,
                     cancelled,
+                    failed,
                 )
             });
         if let Err(error) = spawned {
             log::debug!("no thread for a notification: {error}");
+            if let Some(undo) = undo.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                undo();
+            }
         }
     }
 }
@@ -381,6 +432,7 @@ fn deliver(
     opened: Arc<Mutex<Vec<NotificationTarget>>>,
     wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<Stop>,
+    failed: impl FnOnce(),
 ) {
     let Some(may_wait) = before_showing(&mut cancelled) else {
         return;
@@ -436,7 +488,10 @@ fn deliver(
                 }
             });
         }
-        Err(error) => log::debug!("no notification: {error}"),
+        Err(error) => {
+            log::debug!("no notification: {error}");
+            failed();
+        }
     }
 }
 
@@ -451,6 +506,7 @@ fn deliver(
     opened: Arc<Mutex<Vec<NotificationTarget>>>,
     wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<Stop>,
+    failed: impl FnOnce(),
 ) {
     if before_showing(&mut cancelled).is_some()
         && let Err(error) = windows::show(
@@ -464,6 +520,7 @@ fn deliver(
         )
     {
         log::debug!("no Windows notification: {error}");
+        failed();
     }
 }
 
@@ -478,10 +535,11 @@ fn deliver(
     opened: Arc<Mutex<Vec<NotificationTarget>>>,
     wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<Stop>,
+    failed: impl FnOnce(),
 ) {
     if let Some(may_wait) = before_showing(&mut cancelled) {
         macos::deliver(
-            title, body, sound, target, opened, wake, cancelled, may_wait,
+            title, body, sound, target, opened, wake, cancelled, may_wait, failed,
         );
     }
 }
@@ -497,6 +555,7 @@ fn deliver(
     _opened: Arc<Mutex<Vec<NotificationTarget>>>,
     _wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<Stop>,
+    failed: impl FnOnce(),
 ) {
     if before_showing(&mut cancelled).is_none() {
         return;
@@ -508,6 +567,7 @@ fn deliver(
     }
     if let Err(error) = notification.show() {
         log::debug!("no notification: {error}");
+        failed();
     }
 }
 
@@ -574,7 +634,7 @@ mod tests {
 
     #[test]
     fn a_limited_chat_notifies_once_then_waits_ten_minutes() {
-        let mut notifications = Notifications::default();
+        let notifications = Notifications::default();
         let one = account("1");
         let start = Instant::now();
         assert!(notifications.allow(&one, "a", start, true));
@@ -586,18 +646,37 @@ mod tests {
     }
 
     #[test]
+    fn a_notification_that_was_not_shown_does_not_start_the_wait() {
+        let notifications = Notifications::default();
+        let one = account("1");
+        let start = Instant::now();
+        assert!(notifications.allow(&one, "a", start, true));
+        let undo = notifications.undo_throttle(&one, "a");
+        undo();
+        assert!(notifications.allow(&one, "a", start, true));
+
+        // A wait that has since been replaced is left alone.
+        let undo = notifications.undo_throttle(&one, "a");
+        notifications.reset_throttle(&one, "a");
+        let later = start + THROTTLE_WINDOW;
+        assert!(notifications.allow(&one, "a", later, true));
+        undo();
+        assert!(!notifications.allow(&one, "a", later, true));
+    }
+
+    #[test]
     fn unlimited_chats_always_notify_and_leave_no_state() {
-        let mut notifications = Notifications::default();
+        let notifications = Notifications::default();
         let one = account("1");
         let start = Instant::now();
         assert!(notifications.allow(&one, "a", start, false));
         assert!(notifications.allow(&one, "a", start, false));
-        assert!(notifications.throttle.is_empty());
+        assert!(notifications.throttle.lock().unwrap().is_empty());
     }
 
     #[test]
     fn opening_a_chat_lets_its_next_message_notify() {
-        let mut notifications = Notifications::default();
+        let notifications = Notifications::default();
         let one = account("1");
         let start = Instant::now();
         assert!(notifications.allow(&one, "a", start, true));
@@ -714,6 +793,7 @@ mod tests {
             },
             Default::default(),
             || {},
+            false,
         );
         std::thread::sleep(std::time::Duration::from_secs(2));
     }

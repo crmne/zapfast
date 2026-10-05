@@ -1774,11 +1774,14 @@ impl App {
             return;
         }
         // A limited chat notifies once, then waits; opening it ends the wait.
-        let limited = if chat.is_group() {
-            self.account().settings.limit_group_notifications
-        } else {
-            self.account().settings.limit_direct_notifications
-        };
+        // A mention of us or a reply to us always notifies and leaves the wait alone.
+        let for_us = chat.is_group() && self.addresses_us(message);
+        let limited = !for_us
+            && if chat.is_group() {
+                self.account().settings.limit_group_notifications
+            } else {
+                self.account().settings.limit_direct_notifications
+            };
         let account = self.account().id.clone();
         if !self
             .notifications
@@ -1790,7 +1793,7 @@ impl App {
             return;
         };
         if self.app_lock.is_locked() || !self.settings.notification_content {
-            self.notify_without_content(chat_id, chat.is_group(), &message.id);
+            self.notify_without_content(chat_id, chat.is_group(), &message.id, limited);
             return;
         }
         let (name, is_group) = (self.chat_title(chat), chat.is_group());
@@ -1807,7 +1810,6 @@ impl App {
             .or_else(|| self.avatar(&sender))
             .or_else(|| self.cached_avatar(&sender));
         let waker = self.waker.clone();
-        let for_us = is_group && self.addresses_us(message);
         let sound = notification_sound(&self.settings, chat_sound, is_group, for_us);
         self.notifications.show(
             title,
@@ -1821,6 +1823,7 @@ impl App {
             },
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
+            limited,
         );
         self.wants_attention = true;
     }
@@ -1832,7 +1835,13 @@ impl App {
     /// wrote, so only the message sound plays, still silent for groups when
     /// group sounds are off. The click target stays inside ZapFast: it opens
     /// the message, once unlocked behind the lock.
-    fn notify_without_content(&mut self, chat_id: &str, is_group: bool, message: &str) {
+    fn notify_without_content(
+        &mut self,
+        chat_id: &str,
+        is_group: bool,
+        message: &str,
+        limited: bool,
+    ) {
         self.wants_attention = true;
         let (title, body) = crate::notify::locked_lines(self.locale);
         let sound = notification_sound(&self.settings, None, is_group, false);
@@ -1849,6 +1858,7 @@ impl App {
             },
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
+            limited,
         );
     }
 
@@ -15957,6 +15967,50 @@ mod app_lock_tests {
         app.maybe_notify(CHAT, &direct);
         app.maybe_notify(CHAT, &direct);
         assert_eq!(app.notifications.shown.len(), 3);
+    }
+
+    #[test]
+    fn mentions_and_replies_to_us_bypass_the_group_limit() {
+        const GROUP: &str = "2@g.us";
+        let mut app = unlocked_app();
+        app.me = Some("15550001111@s.whatsapp.net".into());
+        let direct = incoming(&mut app);
+        let mut group_chat = Chat::new(GROUP.into(), "Engineers".into());
+        group_chat.unread = 1;
+        app.chats.push(group_chat);
+        let plain = Message {
+            id: "m2".into(),
+            chat: GROUP.into(),
+            sender: CHAT.into(),
+            ..direct
+        };
+        let mut mention = plain.clone();
+        mention.mentions = vec![crate::model::MentionRef {
+            user: "15550001111".into(),
+            id: "15550001111@s.whatsapp.net".into(),
+        }];
+        let mut reply = plain.clone();
+        reply.quoted = Some(crate::model::Quoted {
+            id: "earlier".into(),
+            sender: "15550001111@s.whatsapp.net".into(),
+            sender_name: None,
+            summary: "earlier".into(),
+            mentions: Vec::new(),
+        });
+
+        app.account_mut().settings.limit_group_notifications = true;
+        app.maybe_notify(GROUP, &mention);
+        app.maybe_notify(GROUP, &mention);
+        app.maybe_notify(GROUP, &reply);
+        assert_eq!(app.notifications.shown.len(), 3, "addressed to us");
+
+        // They neither start nor use the wait: the first plain message
+        // still notifies, and the second does not.
+        app.maybe_notify(GROUP, &plain);
+        app.maybe_notify(GROUP, &plain);
+        assert_eq!(app.notifications.shown.len(), 4);
+        app.maybe_notify(GROUP, &mention);
+        assert_eq!(app.notifications.shown.len(), 5, "still addressed to us");
     }
 
     #[test]

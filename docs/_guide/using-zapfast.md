@@ -583,6 +583,7 @@ notifications** in Settings: notifications then say only "New message".
 To hear less from busy chats, turn on **Limit direct message notifications** or
 **Limit group notifications** in **Settings > Notifications**: a chat then sends
 one notification, stays quiet for 10 minutes, and notifies again once you open it.
+In a group, a mention of you or a reply to you always notifies.
 
 Press `Ctrl+/` or click the keyboard button under the composer to list all
 shortcuts.
