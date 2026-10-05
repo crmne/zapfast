@@ -207,6 +207,7 @@ fn quote(app: &App, chat: &str, id: String) -> Option<Quoted> {
         sender: row.sender.clone(),
         sender_name: row.sender_name.clone(),
         summary: row.summary(),
+        is_text: row.is_text(),
         mentions: row.mentions.clone(),
         id,
     })
@@ -235,6 +236,7 @@ fn append(app: &mut App, row: Message) {
             sender_name: row.sender_name.clone(),
             summary: row.summary(),
             full: row.content.full_summary(),
+            is_text: row.is_text(),
             status: row.status,
         });
     }

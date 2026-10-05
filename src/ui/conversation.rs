@@ -252,28 +252,40 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         .width(width)
                         .frame(widgets::menu_frame(&palette))
                         .show(|ui| {
-                            if widgets::menu_item(ui, &palette, Some(Icon::Info), "Info") {
+                            let locale = app.locale;
+                            if widgets::menu_item(
+                                ui,
+                                &palette,
+                                Some(Icon::Info),
+                                &crate::i18n::gettext(locale, "Info"),
+                            ) {
                                 app.actions
                                     .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
                             }
+                            let pin_label = if chat.pinned {
+                                crate::i18n::gettext(locale, "Unpin")
+                            } else {
+                                crate::i18n::gettext(locale, "Pin to top")
+                            };
                             if widgets::menu_item(
                                 ui,
                                 &palette,
                                 Some(if chat.pinned { Icon::PinOff } else { Icon::Pin }),
-                                if chat.pinned { "Unpin" } else { "Pin to top" },
+                                pin_label.as_ref(),
                             ) {
                                 app.actions
                                     .push(Action::SetPinned(chat.id.clone(), !chat.pinned));
                             }
+                            let archive_label = if chat.archived {
+                                crate::i18n::gettext(locale, "Unarchive")
+                            } else {
+                                crate::i18n::gettext(locale, "Archive")
+                            };
                             if widgets::menu_item(
                                 ui,
                                 &palette,
                                 Some(Icon::Archive),
-                                if chat.archived {
-                                    "Unarchive"
-                                } else {
-                                    "Archive"
-                                },
+                                archive_label.as_ref(),
                             ) {
                                 app.actions
                                     .push(Action::SetArchived(chat.id.clone(), !chat.archived));
@@ -284,7 +296,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 ui,
                                 &palette,
                                 Some(Icon::Eraser),
-                                "Clear chat",
+                                &crate::i18n::gettext(locale, "Clear chat"),
                                 app.is_connected(),
                             ) {
                                 app.actions
@@ -307,11 +319,21 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                     )));
                             }
                             if let Some(phone) = chat.phone()
-                                && widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy number")
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::Copy),
+                                    &crate::i18n::gettext(locale, "Copy number"),
+                                )
                             {
                                 app.actions.push(Action::CopyText(format!("+{phone}")));
                             }
-                            if widgets::menu_item(ui, &palette, Some(Icon::X), "Close chat") {
+                            if widgets::menu_item(
+                                ui,
+                                &palette,
+                                Some(Icon::X),
+                                &crate::i18n::gettext(locale, "Close chat"),
+                            ) {
                                 app.actions.push(Action::CloseChat);
                             }
                         });
@@ -1579,7 +1601,10 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
     } else {
         app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
     };
-    let summary = markup::plain(&quoted.summary(), &app.mention_list(quoted));
+    let summary = markup::plain(
+        &quoted.localized_summary(app.locale),
+        &app.mention_list(quoted),
+    );
     let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
         ui.set_width(ui.available_width().max(0.0));
         ui.horizontal(|ui| {
@@ -3233,6 +3258,7 @@ fn bubble_frame(
                 super::polls::results_button(
                     ui,
                     &palette,
+                    view.locale,
                     message,
                     settled.unwrap_or(cap),
                     actions,
@@ -3499,7 +3525,8 @@ fn quote_block(
     } else {
         (view.names_or)(&quoted.sender, quoted.sender_name.as_deref())
     };
-    let summary = markup::plain(&quoted.summary, &quote_mentions(view, quoted));
+    let localized_summary = quoted.localized_summary(view.locale);
+    let summary = markup::plain(&localized_summary, &quote_mentions(view, quoted));
     // As in WhatsApp, the bar and name take the quoted sender's colour, the
     // one their name has in groups, kept readable on this bubble.
     let bubble = if message.from_me {
@@ -3981,7 +4008,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                 let response = if chosen {
-                    response.on_hover_text("Remove your reaction")
+                    response
+                        .on_hover_text(crate::i18n::gettext(view.locale, "Remove your reaction"))
                 } else {
                     response
                 };
@@ -4014,7 +4042,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             }
             if response
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text("React with any emoji")
+                .on_hover_text(crate::i18n::gettext(view.locale, "React with any emoji"))
                 .clicked()
             {
                 actions.push(Action::OpenReactionPicker {
@@ -4027,7 +4055,12 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     );
     widgets::menu_separator(ui, &palette);
     if !matches!(message.content, Content::Revoked)
-        && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Reply),
+            &crate::i18n::gettext(view.locale, "Reply"),
+        )
     {
         actions.push(Action::Reply(message.id.clone()));
     }
@@ -4038,14 +4071,23 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             | Content::PhoneOnly { .. }
             | Content::Poll { .. }
             | Content::Interactive { .. }
-    ) && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
-    {
+    ) && widgets::menu_item(
+        ui,
+        &palette,
+        Some(Icon::Forward),
+        &crate::i18n::gettext(view.locale, "Forward"),
+    ) {
         actions.push(Action::ShowDialog(Dialog::Forward {
             chat: chat.clone(),
             messages: vec![message.id.clone()],
         }));
     }
-    if widgets::menu_item(ui, &palette, Some(Icon::Check), "Select") {
+    if widgets::menu_item(
+        ui,
+        &palette,
+        Some(Icon::Check),
+        &crate::i18n::gettext(view.locale, "Select"),
+    ) {
         actions.push(Action::SelectMessage(message.id.clone()));
     }
     let text = match &message.content {
@@ -4067,7 +4109,12 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         _ => None,
     };
     if let Some(text) = text
-        && widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy text")
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Copy),
+            &crate::i18n::gettext(view.locale, "Copy text"),
+        )
     {
         let mentions = mentions_of(view, message);
         actions.push(Action::CopyText(markup::plain(&text, &mentions)));
@@ -4079,17 +4126,36 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     let can_revoke = message.from_me
         && !matches!(message.content, Content::Revoked)
         && age <= crate::app::REVOKE_WINDOW.as_secs() as i64;
-    if can_edit && widgets::menu_item(ui, &palette, Some(Icon::Pencil), "Edit") {
+    if can_edit
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Pencil),
+            &crate::i18n::gettext(view.locale, "Edit"),
+        )
+    {
         actions.push(Action::Edit(message.id.clone()));
     }
-    if can_revoke && widgets::menu_item(ui, &palette, Some(Icon::Trash), "Delete for everyone") {
+    if can_revoke
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Trash),
+            &crate::i18n::gettext(view.locale, "Delete for everyone"),
+        )
+    {
         actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
             chat: view.chat.id.clone(),
             message: message.id.clone(),
             for_everyone: true,
         }));
     }
-    if widgets::menu_item(ui, &palette, Some(Icon::EyeOff), "Delete for me") {
+    if widgets::menu_item(
+        ui,
+        &palette,
+        Some(Icon::EyeOff),
+        &crate::i18n::gettext(view.locale, "Delete for me"),
+    ) {
         actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
             chat: view.chat.id.clone(),
             message: message.id.clone(),
@@ -4113,7 +4179,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 let open = if matches!(message.content, Content::Video { gif: false, .. }) {
                     crate::i18n::gettext(view.locale, "Open in system player")
                 } else {
-                    "Open file".into()
+                    crate::i18n::gettext(view.locale, "Open file")
                 };
                 if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), &open) {
                     actions.push(Action::OpenFile(path.clone()));
@@ -4128,29 +4194,40 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
                 {
                     actions.push(Action::CopyImage(path.clone()));
                 }
-                if widgets::menu_item(ui, &palette, Some(Icon::Download), "Save as…") {
+                if widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::Download),
+                    &crate::i18n::gettext(view.locale, "Save as…"),
+                ) {
                     actions.push(Action::SaveAttachmentAs {
                         path: path.clone(),
                         name: attachment_name(&message.content, path),
                     });
                 }
                 if let Some(folder) = path.parent()
-                    && widgets::menu_item(ui, &palette, Some(Icon::FileText), "Show in folder")
+                    && widgets::menu_item(
+                        ui,
+                        &palette,
+                        Some(Icon::FileText),
+                        &crate::i18n::gettext(view.locale, "Show in folder"),
+                    )
                 {
                     actions.push(Action::OpenFolder(folder.to_path_buf()));
                 }
             }
             None => {
                 let downloading = matches!(media.state, MediaState::Downloading);
+                let download_label = if downloading {
+                    crate::i18n::gettext(view.locale, "Downloading…")
+                } else {
+                    crate::i18n::gettext(view.locale, "Download")
+                };
                 if widgets::menu_item_enabled(
                     ui,
                     &palette,
                     Some(Icon::Download),
-                    if downloading {
-                        "Downloading…"
-                    } else {
-                        "Download"
-                    },
+                    download_label.as_ref(),
                     !downloading,
                 ) {
                     actions.push(Action::Download {
@@ -4201,7 +4278,12 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         });
     }
     // The id helps when looking a message up for a bug report.
-    if widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy message ID") {
+    if widgets::menu_item(
+        ui,
+        &palette,
+        Some(Icon::Copy),
+        &crate::i18n::gettext(view.locale, "Copy message ID"),
+    ) {
         actions.push(Action::CopyText(message.id.clone()));
     }
 }
@@ -4747,6 +4829,7 @@ fn content(
             super::polls::ballot(
                 ui,
                 &palette,
+                view.locale,
                 message,
                 width,
                 view.connected,
@@ -7014,21 +7097,30 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
             18.0,
             palette.secondary,
             palette.text,
-            "Cancel selection",
+            &crate::i18n::gettext(app.locale, "Cancel selection"),
         )
         .clicked()
             || ui.input(|input| input.key_pressed(Key::Escape))
         {
             app.actions.push(Action::CancelSelection);
         }
-        let count = if selected.len() == 1 {
-            "1 selected".to_owned()
-        } else {
-            format!("{} selected", selected.len())
-        };
+        let count = crate::i18n::ngettext(
+            app.locale,
+            "1 selected",
+            "{count} selected",
+            selected.len() as u32,
+        )
+        .replace("{count}", &selected.len().to_string());
         theme::text(ui, &count, theme::medium(14.5), palette.text);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if theme::pill_button(ui, &palette, "Forward…", true).clicked() {
+            if theme::pill_button(
+                ui,
+                &palette,
+                &crate::i18n::gettext(app.locale, "Forward…"),
+                true,
+            )
+            .clicked()
+            {
                 app.actions.push(Action::ShowDialog(Dialog::Forward {
                     chat: chat.to_owned(),
                     messages: selected.to_vec(),

@@ -105,19 +105,27 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 fn tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette, current: PickerTab) {
     ui.horizontal(|ui| {
         let entries = [
-            (PickerTab::Emoji, Icon::Smile, "Emoji"),
-            (PickerTab::Gifs, Icon::Gif, "GIF"),
-            (PickerTab::Stickers, Icon::Sticker, "Stickers"),
+            (
+                PickerTab::Emoji,
+                Icon::Smile,
+                crate::i18n::gettext(app.locale, "Emoji"),
+            ),
+            (PickerTab::Gifs, Icon::Gif, "GIF".into()),
+            (
+                PickerTab::Stickers,
+                Icon::Sticker,
+                crate::i18n::gettext(app.locale, "Stickers"),
+            ),
         ];
         let spacing = ui.spacing().item_spacing.x;
         let total = entries
             .iter()
-            .map(|(_, _, label)| theme::soft_button_width(ui, label, true))
+            .map(|(_, _, label)| theme::soft_button_width(ui, label.as_ref(), true))
             .sum::<f32>()
             + spacing * (entries.len() as f32 - 1.0);
         ui.add_space((ui.available_width() - total).max(0.0) / 2.0);
         for (tab, icon, label) in entries {
-            if theme::soft_button(ui, palette, Some(icon), label, tab == current).clicked()
+            if theme::soft_button(ui, palette, Some(icon), label.as_ref(), tab == current).clicked()
                 && tab != current
             {
                 app.actions.push(Action::TogglePicker(tab));
@@ -409,7 +417,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
         .conversations
         .get(&chat)
         .and_then(|conversation| conversation.message(&message))
-        .map(|message| (app.display_name(&message.sender), message.content.summary()));
+        .map(|message| (app.display_name(&message.sender), message.localized_summary(app.locale)));
     let area = egui::Area::new(egui::Id::new("reaction-picker"))
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
@@ -432,7 +440,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                             ui.horizontal(|ui| {
                                 theme::text(
                                     ui,
-                                    "React to message",
+                                    crate::i18n::gettext(app.locale, "React to message"),
                                     theme::semibold(13.0),
                                     palette.text,
                                 );
@@ -443,7 +451,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                                         14.0,
                                         palette.secondary,
                                         palette.text,
-                                        "Close reactions",
+                                        &crate::i18n::gettext(app.locale, "Close reactions"),
                                     )
                                     .clicked()
                                     {
@@ -622,7 +630,13 @@ fn emoji_grid(
         .flatten();
     let submit = search_active && take_plain_key(ui, Key::Enter);
     let mut search = app.picker_search.clone();
-    let response = search_box(ui, palette, search_id, &mut search, "Search emoji");
+    let response = search_box(
+        ui,
+        palette,
+        search_id,
+        &mut search,
+        &crate::i18n::gettext(app.locale, "Search emoji"),
+    );
     let query_changed = search != app.picker_search;
     if query_changed {
         app.picker_search = search;
@@ -1007,7 +1021,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         palette,
         "gif-search",
         &mut query,
-        "Search GIFs via GIPHY",
+        &crate::i18n::gettext(app.locale, "Search GIFs via GIPHY"),
     );
     if query != app.picker_search {
         app.picker_search = query.clone();

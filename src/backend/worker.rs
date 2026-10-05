@@ -3816,15 +3816,18 @@ impl Worker {
             .as_deref()
             .map(|participant| self.canonical_str(participant))
             .unwrap_or_default();
-        let (summary, listed) = context
+        let (summary, is_text, listed) = context
             .quoted_message
             .as_option()
             .map(|quoted| {
                 let base = quoted.get_base_message();
+                let classified = classify(quoted);
+                let is_text = classified.as_ref().is_some_and(|content| content.is_text());
                 (
-                    classify(quoted)
+                    classified
                         .map(|content| content.summary())
                         .unwrap_or_default(),
+                    is_text,
                     self.mentions_of(&mentioned_of(base)),
                 )
             })
@@ -3836,6 +3839,7 @@ impl Worker {
             id,
             sender,
             summary,
+            is_text,
             mentions,
         })
     }
@@ -6154,6 +6158,7 @@ impl Worker {
             },
             sender: row.sender,
             summary: row.content.summary(),
+            is_text: row.content.is_text(),
         };
         Ok(Some((context, shown)))
     }
@@ -9284,17 +9289,18 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         }
         let quoted = context_of(base).and_then(|context| {
             let id = context.stanza_id.clone().filter(|id| !id.is_empty())?;
+            let classified = context.quoted_message.as_option().and_then(classify);
+            let is_text = classified.as_ref().is_some_and(|content| content.is_text());
+            let summary = classified
+                .map(|content| content.summary())
+                .unwrap_or_default();
             Some(Quoted {
                 mentions: Vec::new(),
                 id,
                 sender: context.participant.clone().unwrap_or_default(),
                 sender_name: None,
-                summary: context
-                    .quoted_message
-                    .as_option()
-                    .and_then(classify)
-                    .map(|content| content.summary())
-                    .unwrap_or_default(),
+                summary,
+                is_text,
             })
         });
         let reactions = info
@@ -9502,6 +9508,7 @@ mod tests {
                 sender: sender.into(),
                 sender_name: sender_name.map(str::to_owned),
                 summary: "quoted message".into(),
+                is_text: true,
                 mentions: Vec::new(),
             }),
             reactions: Vec::new(),
@@ -11224,6 +11231,7 @@ mod tests {
                 sender: "two@s.whatsapp.net".into(),
                 sender_name: Some("Bob".into()),
                 summary: "earlier".into(),
+                is_text: true,
                 mentions: Vec::new(),
             }),
             reactions: vec![Reaction {

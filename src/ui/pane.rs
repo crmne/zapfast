@@ -559,8 +559,9 @@ fn hit_row(
     let stamp = util::chat_stamp(app.locale, hit.timestamp);
     // The preview comes from the line the query matched: the archive searches
     // the whole text, so a hit on a later line would otherwise preview a first
-    // line the query is nowhere in.
-    let line = hit.text_matching(query).unwrap_or_else(|| hit.summary());
+    let line = hit
+        .text_matching(query)
+        .unwrap_or_else(|| hit.localized_summary(app.locale));
     let line = app.preview_line(&line, hit);
     let (snippet, found) = snippet(&line, query);
     let who = if hit.from_me {

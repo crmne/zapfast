@@ -200,12 +200,14 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
             let content: Content = serde_json::from_str(&content).unwrap_or(Content::Unsupported {
                 what: "unreadable".into(),
             });
+            let is_text = content.is_text();
             Some(LastMessage {
                 from_me: row.get(8)?,
                 sender: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
                 sender_name: row.get(9)?,
                 summary: content.summary(),
                 full: content.full_summary(),
+                is_text,
                 status: status_from_rank(row.get(11)?),
             })
         }

@@ -516,6 +516,7 @@ pub fn populate(app: &mut App) {
                 sender_name: last.sender_name.clone(),
                 summary: last.summary(),
                 full: last.content.full_summary(),
+                is_text: last.is_text(),
                 status: last.status,
             });
         app.conversations.insert(sample.id.to_owned(), conversation);
@@ -608,6 +609,7 @@ pub fn populate(app: &mut App) {
                 sender: ada.into(),
                 sender_name: Some("Ada Lovelace".into()),
                 summary: "Voice message (0:42)".into(),
+                is_text: false,
                 mentions: Vec::new(),
             });
             row.edited = true;
@@ -819,6 +821,7 @@ pub fn populate(app: &mut App) {
                 sender: jonas.0.into(),
                 sender_name: Some(jonas.1.into()),
                 summary: "Save me a seat 🙏".into(),
+                is_text: true,
                 mentions: Vec::new(),
             });
             row.mentions = vec![MentionRef {
@@ -873,6 +876,7 @@ pub fn populate(app: &mut App) {
                             sender_name: last.sender_name.clone(),
                             summary: last.summary(),
                             full: last.content.full_summary(),
+                            is_text: last.is_text(),
                             status: last.status,
                         },
                     )
@@ -1044,6 +1048,7 @@ fn quote_sample(app: &mut App) {
             sender,
             sender_name,
             summary,
+            is_text: original.is_text(),
             mentions,
         });
         conversation.messages.insert(index + 1, reply);
@@ -1076,6 +1081,7 @@ fn meta_ai_sample(app: &mut App) {
         sender: ME.into(),
         sender_name: None,
         summary: "How do I reverse a string in Rust?".into(),
+        is_text: true,
         mentions: Vec::new(),
     });
     let mut chat = Chat::new(id.into(), "Meta AI".into());
@@ -1086,6 +1092,7 @@ fn meta_ai_sample(app: &mut App) {
         sender_name: None,
         summary: reply.summary(),
         full: reply.content.full_summary(),
+        is_text: reply.is_text(),
         status: reply.status,
     });
     app.chats.insert(0, chat);
@@ -1184,6 +1191,7 @@ fn interactive_sample(app: &mut App, with_image: bool) {
         sender: id.into(),
         sender_name: Some("Cedar Studio".into()),
         summary: body.lines().next().unwrap().into(),
+        is_text: true,
         mentions: Vec::new(),
     });
     messages.push(reply);
@@ -1215,6 +1223,7 @@ fn interactive_sample(app: &mut App, with_image: bool) {
             sender_name: None,
             summary: last.summary(),
             full: last.content.full_summary(),
+            is_text: last.is_text(),
             status: last.status,
         });
     }
@@ -1934,6 +1943,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         sender: chat.into(),
                         sender_name: Some("Demo contact".into()),
                         summary: "مساء الخير".into(),
+                        is_text: true,
                         mentions: Vec::new(),
                     });
                     messages.push(reply);
@@ -1970,6 +1980,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                             sender: SAMPLES[0].id.into(),
                             sender_name: Some("שלום עולם".into()),
                             summary: "הכלב הגדול קפץ 🐕".into(),
+                            is_text: true,
                             mentions: Vec::new(),
                         });
                         reply
@@ -1986,6 +1997,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                             sender: ME.into(),
                             sender_name: None,
                             summary: "٤٥".into(),
+                            is_text: true,
                             mentions: Vec::new(),
                         });
                         reply
@@ -2023,6 +2035,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     sender_name: None,
                     summary: last.summary(),
                     full: last.content.full_summary(),
+                    is_text: last.is_text(),
                     status: last.status,
                 });
                 app.chats.insert(0, chat);
@@ -2442,6 +2455,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     sender_name: None,
                     summary: last.summary(),
                     full: last.content.full_summary(),
+                    is_text: last.is_text(),
                     status: last.status,
                 });
                 app.chats.insert(0, chat);
@@ -4450,6 +4464,7 @@ mod tests {
                     sender_name: Some("Linus Example".into()),
                     summary: long.into(),
                     full: long.into(),
+                    is_text: true,
                     status: Delivery::Read,
                 });
             } else if chat.id == direct {
@@ -4459,6 +4474,7 @@ mod tests {
                     sender_name: None,
                     summary: "Short one".into(),
                     full: "Short one".into(),
+                    is_text: true,
                     status: Delivery::Read,
                 });
             }

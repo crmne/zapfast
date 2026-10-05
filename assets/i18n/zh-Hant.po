@@ -3,8 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
-"template=translation.yml\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
 "POT-Creation-Date: 2026-10-01 19:28-0300\n"
 "PO-Revision-Date: 2026-10-02 18:51+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
@@ -243,8 +242,8 @@ msgstr "新增圖說"
 
 #: src/ui/conversation.rs:1295
 msgid ""
-"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
-"pastes a picture"
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V"
+" pastes a picture"
 msgstr "Enter 送出 · Shift+Enter 換行 · *粗體* _斜體_ ~刪除線~ · Ctrl+V 貼上圖片"
 
 #: src/ui/conversation.rs:1297
@@ -349,7 +348,8 @@ msgid "View once video. For your privacy, it opens only on your phone."
 msgstr "檢視一次的影片。為了保護您的隱私，只會在您的手機上開啟。"
 
 #: src/ui/conversation.rs:4813
-msgid "View once voice message. For your privacy, it opens only on your phone."
+msgid ""
+"View once voice message. For your privacy, it opens only on your phone."
 msgstr "檢視一次的語音訊息。為了保護您的隱私，只會在您的手機上開啟。"
 
 #: src/ui/conversation.rs:4817
@@ -811,8 +811,8 @@ msgstr "應用程式鎖"
 
 #: src/ui/settings.rs:792
 msgid ""
-"Asks for a password at start and after a while unused. It keeps people using "
-"this computer out of your chats and encrypts nothing more. A forgotten "
+"Asks for a password at start and after a while unused. It keeps people using"
+" this computer out of your chats and encrypts nothing more. A forgotten "
 "password means unlinking."
 msgstr "啟動時及一段時間未使用後會要求輸入密碼。它能防止使用這部電腦的人看到您的對話，此外不會加密任何內容。忘記密碼就只能取消連結。"
 
@@ -1172,8 +1172,8 @@ msgstr "建立"
 
 #: src/ui/labels.rs:307
 msgid ""
-"No labels yet. Create one above, then add chats to it from their right-click "
-"menu."
+"No labels yet. Create one above, then add chats to it from their right-click"
+" menu."
 msgstr "尚無標籤。請先在上方建立一個，再從對話的右鍵選單將對話加入。"
 
 #: src/ui/labels.rs:342
@@ -1259,8 +1259,8 @@ msgstr "自製"
 
 #: src/ui/picker.rs:1437
 msgid ""
-"Start a pack, then right-click any sticker to add it. Or turn a picture into "
-"a sticker."
+"Start a pack, then right-click any sticker to add it. Or turn a picture into"
+" a sticker."
 msgstr "先建立貼圖集，再在任一貼圖上按右鍵加入；也可以把圖片轉成貼圖。"
 
 #: src/ui/picker.rs:1449
@@ -1322,7 +1322,8 @@ msgstr "請換個字詞或選擇其他日期。"
 
 #: src/ui/pane.rs:255
 #, rust-format
-msgid "Only the newest {} matches are listed. Narrow the search or pick a day."
+msgid ""
+"Only the newest {} matches are listed. Narrow the search or pick a day."
 msgstr "僅列出最新的 {} 筆符合結果，請縮小搜尋範圍或選擇某一天。"
 
 #: src/ui/pane.rs:344
@@ -1479,15 +1480,917 @@ msgstr "15 分鐘後"
 msgid "After 1 hour"
 msgstr "1 小時後"
 
-
 #: src/ui/dialogs.rs:1116
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "此對話中的所有人都會看到「此訊息已刪除」。此操作無法復原。"
 
 #: src/ui/dialogs.rs:1124
 msgid ""
 "This removes the message from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
+msgstr "這將從您的手機和已連結的裝置中移除該訊息。其他人將保留其副本。連線至 WhatsApp 即可將其刪除。此操作無法復原。"
+
+#: src/ui/dialogs.rs:1247
+msgid "Remove this account?"
+msgstr "移除此帳號？"
+
+#: src/ui/dialogs.rs:1251
+msgid ""
+"This unlinks the number on this computer and deletes its local chats. Other "
+"accounts stay."
+msgstr "這將取消這部電腦上的號碼連結並刪除其本地對話紀錄。其他帳號將保留。"
+
+#: src/ui/dialogs.rs:1262
+msgid "Remove"
+msgstr "移除"
+
+#: src/ui/settings.rs:672 src/ui/settings.rs:1408
+msgctxt "profile"
+msgid "About"
+msgstr "個人簡介"
+
+#: src/ui/settings.rs:1471 src/ui/settings.rs:677 src/ui/accounts.rs:123
+msgid "Add account"
+msgstr "新增帳號"
+
+#: src/ui/settings.rs:1447 src/ui/settings.rs:678 src/ui/accounts.rs:270
+msgid "Remove this account"
+msgstr "移除此帳號"
+
+#: src/app.rs:1368
+msgid "Could not delete the removed account's files"
+msgstr "無法刪除已移除帳號的檔案"
+
+#: src/account.rs:214
+#, rust-format
+msgid "Account {id}"
+msgstr "帳號 {id}"
+
+#: src/ui/accounts.rs:33
+msgid "Switch account"
+msgstr "切換帳號"
+
+#: src/ui/accounts.rs:84
+msgid "Not linked"
+msgstr "未連結"
+
+#: src/ui/accounts.rs:232
+#, rust-format
+msgid "{count} unread chats"
+msgstr "{count} 個未讀對話"
+
+#: src/model.rs:894 src/model.rs:916
+msgid "Photo"
+msgstr "相片"
+
+#: src/model.rs:895 src/model.rs:917
+msgid "Video"
+msgstr "影片"
+
+#: src/model.rs:897 src/model.rs:919
+msgid "Video message"
+msgstr "影片訊息"
+
+#: src/model.rs:898 src/model.rs:934
+msgid "Voice message"
+msgstr "語音訊息"
+
+#: src/model.rs:899 src/model.rs:939
+msgid "Audio"
+msgstr "音訊"
+
+#: src/model.rs:900
+msgid "Sticker"
+msgstr "貼圖"
+
+#: src/model.rs:904
+msgid "This message was deleted"
+msgstr "此訊息已刪除"
+
+#: src/model.rs:905
+msgid "View once photo"
+msgstr "單次檢視相片"
+
+#: src/model.rs:906
+msgid "View once video"
+msgstr "單次檢視影片"
+
+#: src/model.rs:907
+msgid "View once voice message"
+msgstr "單次檢視語音訊息"
+
+#: src/model.rs:908
+msgid "View once audio"
+msgstr "單次檢視音訊"
+
+#: src/model.rs:909
+msgid "View once message"
+msgstr "單次檢視訊息"
+
+#: src/model.rs:910
+msgid "Message on your phone"
+msgstr "手機上的訊息"
+
+#: src/model.rs:920
+msgid "Document"
+msgstr "文件"
+
+#: src/model.rs:924
+msgid "Poll"
+msgstr "投票"
+
+#: src/model.rs:944
+msgid "Unsupported message"
+msgstr "不支援的訊息"
+
+#: src/ui/chats.rs:1495
+msgid "Mark as read"
+msgstr "標示為已讀"
+
+#: src/ui/chats.rs:1505
+msgid "Mark as unread"
+msgstr "標示為未讀"
+
+#: src/ui/chats.rs:1511 src/ui/conversation.rs:266 src/ui/dialogs.rs:2007
+msgid "Unpin"
+msgstr "取消釘選"
+
+#: src/ui/chats.rs:1513 src/ui/conversation.rs:268
+msgid "Pin to top"
+msgstr "置頂對話"
+
+#: src/ui/chats.rs:1538 src/ui/conversation.rs:280 src/ui/dialogs.rs:2016
+msgid "Unarchive"
+msgstr "取消封存"
+
+#: src/ui/chats.rs:1540 src/ui/conversation.rs:282 src/ui/dialogs.rs:2018
+msgid "Archive"
+msgstr "封存"
+
+#: src/ui/chats.rs:1572
+msgid "Mute for 8 hours"
+msgstr "靜音 8 小時"
+
+#: src/ui/chats.rs:1573
+msgid "Mute for a week"
+msgstr "靜音 1 週"
+
+#: src/ui/chats.rs:1574
+msgid "Mute indefinitely"
+msgstr "永遠靜音"
+
+#: src/ui/chats.rs:1584
+msgid "Unlock chat"
+msgstr "解鎖對話"
+
+#: src/ui/chats.rs:1586 src/ui/dialogs.rs:376
+msgid "Lock chat"
+msgstr "鎖定對話"
+
+#: src/ui/chats.rs:1610 src/ui/conversation.rs:326 src/ui/dialogs.rs:1985
+msgid "Copy number"
+msgstr "複製號碼"
+
+#: src/ui/chats.rs:1619 src/ui/conversation.rs:260
+msgid "Info"
+msgstr "資訊"
+
+#: src/ui/chats.rs:1630
+msgid "Delete chat"
+msgstr "刪除對話"
+
+#: src/ui/chats.rs:1658
+msgid "Notification sound"
+msgstr "通知音效"
+
+#: src/ui/chats.rs:1662
+msgid "Default"
+msgstr "預設"
+
+#: src/ui/chats.rs:1667
+msgid "System sound"
+msgstr "系統音效"
+
+#: src/ui/chats.rs:1671
+msgid "No sound"
+msgstr "無聲音"
+
+#: src/ui/chats.rs:1685
+msgid "Custom"
+msgstr "自訂"
+
+#: src/ui/conversation.rs:299 src/ui/dialogs.rs:830
+msgid "Clear chat"
+msgstr "清除對話"
+
+#: src/ui/conversation.rs:335
+msgid "Close chat"
+msgstr "關閉對話"
+
+#: src/ui/conversation.rs:4010
+msgid "Remove your reaction"
+msgstr "移除您的心情回應"
+
+#: src/ui/conversation.rs:4043
+msgid "React with any emoji"
+msgstr "使用任意表情符號回應"
+
+#: src/ui/conversation.rs:4060
+msgid "Reply"
+msgstr "回覆"
+
+#: src/ui/conversation.rs:4076
+msgid "Forward"
+msgstr "轉發"
+
+#: src/ui/conversation.rs:4087
+msgid "Select"
+msgstr "選取"
+
+#: src/ui/conversation.rs:4114
+msgid "Copy text"
+msgstr "複製文字"
+
+#: src/ui/conversation.rs:4132
+msgid "Edit"
+msgstr "編輯"
+
+#: src/ui/conversation.rs:4142
+msgid "Delete for everyone"
+msgstr "為所有人刪除"
+
+#: src/ui/conversation.rs:4155
+msgid "Delete for me"
+msgstr "為我刪除"
+
+#: src/ui/conversation.rs:4211
+msgid "Show in folder"
+msgstr "在資料夾中顯示"
+
+#: src/ui/conversation.rs:4220
+msgid "Downloading…"
+msgstr "正在下載…"
+
+#: src/ui/conversation.rs:4222
+msgid "Download"
+msgstr "下載"
+
+#: src/ui/conversation.rs:4271
+msgid "Copy message ID"
+msgstr "複製訊息 ID"
+
+#: src/ui/conversation.rs:7085
+msgid "Cancel selection"
+msgstr "取消選取"
+
+#: src/ui/conversation.rs:7104
+msgid "Forward…"
+msgstr "轉發…"
+
+#: src/ui/conversation.rs:7092
+msgid "1 selected"
+msgid_plural "{count} selected"
+msgstr[0] "已選取 {count} 項"
+
+#: src/ui/dialogs.rs:113
+msgid "Choose an option"
+msgstr "選擇一個選項"
+
+#: src/ui/dialogs.rs:143
+msgid "This list is no longer available."
+msgstr "此清單已不再可用。"
+
+#: src/ui/dialogs.rs:157
+msgid "This list can no longer receive replies."
+msgstr "此清單已無法再接收回覆。"
+
+#: src/ui/dialogs.rs:159
+msgid "Sending reply…"
+msgstr "正在傳送回覆…"
+
+#: src/ui/dialogs.rs:161
+msgid "Connect to WhatsApp to reply"
+msgstr "連線至 WhatsApp 以回覆"
+
+#: src/ui/dialogs.rs:284
+msgid "Set up locked chats"
+msgstr "設定已鎖定對話"
+
+#: src/ui/dialogs.rs:286
+msgid "Locked chats"
+msgstr "已鎖定對話"
+
+#: src/ui/dialogs.rs:290
+msgid ""
+"Choose a local code to open the Locked tab. It is separate from your phone's"
+" code. This hides chats in ZapFast, it does not add another encryption "
+"layer."
+msgstr "設定本地代碼以開啟「已鎖定」分頁。此代碼與您手機的代碼各自獨立。這僅在 ZapFast 中隱藏對話，不會新增額外的加密層。"
+
+#: src/ui/dialogs.rs:295
+msgid ""
+"Enter your local ZapFast code. Leaving the Locked tab or closing the window "
+"locks it again."
+msgstr "輸入您的本地 ZapFast 代碼。離開「已鎖定」分頁或關閉視窗將再次鎖定。"
+
+#: src/ui/dialogs.rs:312
+msgid "Local code"
+msgstr "本地代碼"
+
+#: src/ui/dialogs.rs:323
+msgid "Confirm code"
+msgstr "確認代碼"
+
+#: src/ui/dialogs.rs:330
+msgid "That code did not match. Try again."
+msgstr "該代碼不符。請重試。"
+
+#: src/ui/dialogs.rs:339
+msgid "Set code and open"
+msgstr "設定代碼並開啟"
+
+#: src/ui/dialogs.rs:341
+msgid "Open locked chats"
+msgstr "開啟已鎖定對話"
+
+#: src/ui/dialogs.rs:365
+msgid "Lock this chat?"
+msgstr "鎖定此對話？"
+
+#: src/ui/dialogs.rs:368
+msgid ""
+"This moves the chat to the Locked tab, hiding it from the normal chat list, "
+"search, unread badges, and notifications. The lock status also syncs to your"
+" phone. Open Locked with a separate local ZapFast code to read it. Sending "
+"from locked chats is not supported yet."
 msgstr ""
+"這會將對話移至「已鎖定」分頁，從一般對話清單、搜尋、未讀標記和通知中隱藏。鎖定狀態也會同步至您的手機。使用獨立的本地 ZapFast "
+"代碼開啟「已鎖定」分頁即可閱讀。目前尚不支援在已鎖定的對話中傳送訊息。"
+
+#: src/ui/dialogs.rs:391
+msgid "New chat"
+msgstr "新對話"
+
+#: src/ui/dialogs.rs:398
+msgid "Add contact"
+msgstr "新增聯絡人"
+
+#: src/ui/dialogs.rs:412
+msgid "Search contacts"
+msgstr "搜尋聯絡人"
+
+#: src/ui/dialogs.rs:456
+msgid "No matching contacts"
+msgstr "找不到相符的聯絡人"
+
+#: src/ui/dialogs.rs:472
+msgid "Forward message"
+msgstr "轉發訊息"
+
+#: src/ui/dialogs.rs:489
+msgid "Search chats"
+msgstr "搜尋對話"
+
+#: src/ui/dialogs.rs:569
+msgid "No writable chats found"
+msgstr "找不到可傳送訊息的對話"
+
+#: src/ui/dialogs.rs:726
+msgid "Version {version}"
+msgstr "版本 {version}"
+
+#: src/ui/dialogs.rs:736
+msgid ""
+"A native WhatsApp client written in Rust with egui. It connects through "
+"whatsapp-rust. Messages are end-to-end encrypted on this device."
+msgstr "使用 Rust 和 egui 編寫的原生 WhatsApp 客戶端。透過 whatsapp-rust 連線。此裝置上的訊息經過端對端加密。"
+
+#: src/ui/dialogs.rs:745
+msgid ""
+"This is an unofficial client. Using it may be against WhatsApp's terms of "
+"service and could get an account suspended."
+msgstr "這是一個非官方客戶端。使用它可能違反 WhatsApp 的服務條款，並可能導致帳號遭停權。"
+
+#: src/ui/dialogs.rs:781 src/ui/dialogs.rs:812
+msgid "this chat"
+msgstr "此對話"
+
+#: src/ui/dialogs.rs:785
+msgid "Delete chat?"
+msgstr "刪除對話？"
+
+#: src/ui/dialogs.rs:788
+msgid ""
+"This deletes your chat with {name}, including all messages, on this computer"
+" and on your phone. It cannot be undone."
+msgstr "這將在此電腦和您的手機上刪除與 {name} 的對話及所有訊息。此操作無法復原。"
+
+#: src/ui/dialogs.rs:799 src/ui/dialogs.rs:1199
+msgid "Delete"
+msgstr "刪除"
+
+#: src/ui/dialogs.rs:816
+msgid "Clear chat?"
+msgstr "清除對話？"
+
+#: src/ui/dialogs.rs:819
+msgid ""
+"This clears every message in your chat with {name}, including downloaded "
+"media, on this computer and on your phone. The chat itself stays. It cannot "
+"be undone."
+msgstr "這將清除您與 {name} 的對話中的所有訊息（包括在此電腦和手機上下載的媒體）。對話本身將保留。此操作無法復原。"
+
+#: src/ui/dialogs.rs:850 src/ui/dialogs.rs:862
+msgid "Group invite"
+msgstr "群組邀請"
+
+#: src/ui/dialogs.rs:854
+msgid "Looking up the group…"
+msgstr "正在查詢群組…"
+
+#: src/ui/dialogs.rs:892
+msgid "An admin must approve your request before you join."
+msgstr "在您加入之前，群組管理員必須核准您的申請。"
+
+#: src/ui/dialogs.rs:904
+msgid "Open chat"
+msgstr "開啟對話"
+
+#: src/ui/dialogs.rs:905
+msgid "Request to join"
+msgstr "申請加入"
+
+#: src/ui/dialogs.rs:906
+msgid "Join group"
+msgstr "加入群組"
+
+#: src/ui/dialogs.rs:909
+msgid "Joining…"
+msgstr "正在加入…"
+
+#: src/ui/dialogs.rs:1135
+msgid "Start over?"
+msgstr "重新開始？"
+
+#: src/ui/dialogs.rs:1138
+msgid ""
+"ZapFast keeps your unreadable archive as a separate file, creates a new one,"
+" and asks you to link again. Linking again brings back recent history from "
+"your phone. Afterwards, remove the old ZapFast entry under Linked devices on"
+" your phone."
+msgstr ""
+"ZapFast "
+"會將無法讀取的封存另存為獨立檔案，建立新封存並提示您重新連結。重新連結將從您的手機還原近期的歷史紀錄。之後，請在手機的「已連結裝置」中移除舊的 "
+"ZapFast 項目。"
+
+#: src/ui/dialogs.rs:1147
+msgid ""
+"If you can restore the original keyring instead, choose Cancel and Try "
+"again: nothing is lost that way."
+msgstr "如果您可以還原原本的鑰匙圈，請選擇「取消」並「重試」：這樣不會遺失任何資料。"
+
+#: src/ui/dialogs.rs:1157
+msgid "Start over"
+msgstr "重新開始"
+
+#: src/ui/dialogs.rs:1179
+msgid "Delete for everyone?"
+msgstr "為所有人刪除？"
+
+#: src/ui/dialogs.rs:1187
+msgid "Delete for me?"
+msgstr "為我刪除？"
+
+#: src/ui/dialogs.rs:1188
+msgid ""
+"This removes the message from this computer. Other people keep their copy. "
+"Your phone will not send it again, so it cannot be undone."
+msgstr "這將從此電腦中移除該訊息。其他人的複本將保留。您的手機不會重新傳送該訊息，因此此操作無法復原。"
+
+#: src/ui/dialogs.rs:1221
+msgid ""
+"This removes the device from WhatsApp and deletes the chats stored here. You"
+" can link again with a new code."
+msgstr "這將從 WhatsApp 中移除此裝置並刪除儲存在此處的對話紀錄。您可以使用新代碼重新連結。"
+
+#: src/ui/dialogs.rs:1341
+msgid "Link with a phone number"
+msgstr "使用電話號碼連結"
+
+#: src/ui/dialogs.rs:1344
+msgid ""
+"Enter the WhatsApp phone number with its country code. Do not include a plus"
+" sign or leading zero. You will get a code to enter on the phone."
+msgstr "輸入包含國碼的 WhatsApp 電話號碼。不要包含加號或開頭的零。您將收到一組需要在手機上輸入的代碼。"
+
+#: src/ui/dialogs.rs:1393 src/ui/dialogs.rs:1566
+msgid "Enter the whole number, starting with the country code"
+msgstr "輸入完整號碼，以國碼開頭"
+
+#: src/ui/dialogs.rs:1399
+msgid "Get a code"
+msgstr "取得代碼"
+
+#: src/ui/dialogs.rs:1416
+msgid "New contact"
+msgstr "新增聯絡人"
+
+#: src/ui/dialogs.rs:1419
+msgid ""
+"Enter a phone number with its country code, without a plus sign or leading "
+"zero. Add a name to save the contact, or leave it blank to open the chat. "
+"WhatsApp uses the first name as the display name."
+msgstr "輸入包含國碼的電話號碼，不要包含加號或開頭的零。輸入姓名以儲存聯絡人，或保留空白直接開啟對話。WhatsApp 會將名字做為顯示名稱。"
+
+#: src/ui/dialogs.rs:1502 src/ui/dialogs.rs:1759
+msgid "First name"
+msgstr "名字"
+
+#: src/ui/dialogs.rs:1515 src/ui/dialogs.rs:1760
+msgid "Surname"
+msgstr "姓氏"
+
+#: src/ui/dialogs.rs:1557 src/ui/dialogs.rs:1565
+msgid "Checking the number…"
+msgstr "正在檢查號碼…"
+
+#: src/ui/dialogs.rs:1575
+msgid "Save contact"
+msgstr "儲存聯絡人"
+
+#: src/ui/dialogs.rs:1578 src/ui/dialogs.rs:1952
+msgid "Message"
+msgstr "訊息"
+
+#: src/ui/dialogs.rs:1819
+msgid "online"
+msgstr "上線"
+
+#: src/ui/dialogs.rs:1863
+msgid "Members ({count})"
+msgstr "成員 ({count})"
+
+#: src/ui/dialogs.rs:1937
+msgid "Muted"
+msgstr "已靜音"
+
+#: src/ui/dialogs.rs:1939
+msgid "Muted until {time}"
+msgstr "已靜音至 {time}"
+
+#: src/ui/dialogs.rs:1969
+msgid "Rename"
+msgstr "重新命名"
+
+#: src/ui/dialogs.rs:1971
+msgid "Add to contacts"
+msgstr "新增至聯絡人"
+
+#: src/ui/dialogs.rs:2009
+msgid "Pin"
+msgstr "釘選"
+
+#: src/ui/dialogs.rs:474
+msgid "Forward 1 message"
+msgid_plural "Forward {count} messages"
+msgstr[0] "轉發 {count} 則訊息"
+
+#: src/ui/dialogs.rs:871
+msgid "1 member"
+msgid_plural "{count} members"
+msgstr[0] "{count} 位成員"
+
+#: src/ui/settings.rs:1022
+msgid "Open themes folder"
+msgstr "開啟主題資料夾"
+
+#: src/ui/picker.rs:111
+msgid "Emoji"
+msgstr "表情符號"
+
+#: src/ui/picker.rs:117
+msgid "Stickers"
+msgstr "貼圖"
+
+#: src/ui/picker.rs:443
+msgid "React to message"
+msgstr "對訊息新增心情回應"
+
+#: src/ui/picker.rs:454
+msgid "Close reactions"
+msgstr "關閉心情回應"
+
+#: src/ui/picker.rs:637
+msgid "Search emoji"
+msgstr "搜尋表情符號"
+
+#: src/ui/picker.rs:1023
+msgid "Search GIFs via GIPHY"
+msgstr "透過 GIPHY 搜尋 GIF"
+
+#: src/ui/image_preview.rs:42
+msgid "Close preview (Esc)"
+msgstr "關閉預覽 (Esc)"
+
+#: src/ui/image_preview.rs:87
+msgid "Zoom in"
+msgstr "放大"
+
+#: src/ui/image_preview.rs:97
+msgid "Fit"
+msgstr "符合大小"
+
+#: src/ui/image_preview.rs:98
+msgid "Show at original size"
+msgstr "顯示原始大小"
+
+#: src/ui/image_preview.rs:104
+msgid "Fit to the window (0)"
+msgstr "縮放以符合視窗 (0)"
+
+#: src/ui/image_preview.rs:120
+msgid "Zoom out"
+msgstr "縮小"
+
+#: src/ui/image_preview.rs:283
+msgid "This image could not be displayed in ZapFast."
+msgstr "此圖片無法在 ZapFast 中顯示。"
+
+#: src/ui/image_preview.rs:288
+msgid "Open externally"
+msgstr "在外部開啟"
+
+#: src/ui/accounts.rs:268
+msgid "Use another account"
+msgstr "使用其他帳號"
+
+#: src/ui/polls.rs:31
+msgid "Question"
+msgstr "問題"
+
+#: src/ui/polls.rs:44
+msgid "Ask a question"
+msgstr "提出問題"
+
+#: src/ui/polls.rs:52
+msgid "Answers"
+msgstr "選項"
+
+#: src/ui/polls.rs:73
+msgid "Answer {index}"
+msgstr "選項 {index}"
+
+#: src/ui/polls.rs:92
+msgid "Remove answer"
+msgstr "移除選項"
+
+#: src/ui/polls.rs:109
+msgid "Add answer"
+msgstr "新增選項"
+
+#: src/ui/polls.rs:121
+msgid "Allow multiple answers"
+msgstr "允許複選"
+
+#: src/ui/polls.rs:140
+msgid "Sending…"
+msgstr "正在傳送…"
+
+#: src/ui/polls.rs:142
+msgid "Send poll"
+msgstr "發起投票"
+
+#: src/ui/polls.rs:198
+msgid "Select one answer"
+msgstr "選取一個選項"
+
+#: src/ui/polls.rs:200
+msgid "Select answers"
+msgstr "選取選項"
+
+#: src/ui/polls.rs:302
+msgid "Sending vote…"
+msgstr "正在傳送投票…"
+
+#: src/ui/polls.rs:304
+msgid "Waiting for your phone · earlier votes may be missing"
+msgstr "正在等待手機回應 · 較早的投票可能遺失"
+
+#: src/ui/polls.rs:306
+msgid "Loading earlier votes from your phone…"
+msgstr "正在從手機載入較早的投票…"
+
+#: src/ui/polls.rs:308
+msgid "Earlier votes have not been loaded yet"
+msgstr "較早的投票尚未載入"
+
+#: src/ui/polls.rs:328
+msgid "Voting key unavailable · use your phone"
+msgstr "投票金鑰無法使用 · 請使用手機"
+
+#: src/ui/polls.rs:333
+msgid "Reconnect to vote"
+msgstr "重新連線以投票"
+
+#: src/ui/polls.rs:373
+msgid "Show votes"
+msgstr "查看投票"
+
+#: src/ui/polls.rs:425
+msgid "Poll results"
+msgstr "投票結果"
+
+#: src/ui/polls.rs:449
+msgid "This poll is no longer available."
+msgstr "此投票已不再可用。"
+
+#: src/ui/polls.rs:468
+msgid "Earlier votes may still be missing. Results update as they arrive."
+msgstr "可能仍缺少較早的投票。收到投票後將更新結果。"
+
+#: src/ui/polls.rs:543
+msgid "Participant details are not available yet"
+msgstr "參與者詳細資料尚無法使用"
+
+#: src/ui/polls.rs:310
+msgid "1 voter"
+msgid_plural "{count} voters"
+msgstr[0] "{count} 人"
+
+#: src/ui/polls.rs:499
+msgid "1 vote"
+msgid_plural "{count} votes"
+msgstr[0] "{count} 票"
+
+#: src/ui/mod.rs:234
+msgid "Drop to send to {name}"
+msgstr "拖放至此處以傳送給 {name}"
+
+#: src/ui/mod.rs:256
+msgid "Loading chat history… {percent}%"
+msgstr "正在載入對話紀錄… {percent}%"
+
+#: src/ui/mod.rs:271
+msgid "ZapFast {version} is available"
+msgstr "ZapFast {version} 現已發布"
+
+#: src/ui/mod.rs:291
+msgid "Offline ({reason}). Reconnecting…"
+msgstr "離線 ({reason})。正在重新連線…"
+
+#: src/ui/mod.rs:261
+msgid "Loading chat history…"
+msgstr "正在載入對話紀錄…"
+
+#: src/ui/mod.rs:284 src/ui/login.rs:84
+msgid "Connecting to WhatsApp…"
+msgstr "正在連線至 WhatsApp…"
+
+#: src/ui/mod.rs:309
+msgid "Not linked to a phone"
+msgstr "未連結手機"
+
+#: src/ui/mod.rs:335
+msgid "Update"
+msgstr "更新"
+
+#: src/ui/mod.rs:346
+msgid "Retry"
+msgstr "重試"
+
+#: src/ui/mod.rs:461
+msgid "Dismiss"
+msgstr "關閉"
+
+#: src/ui/mod.rs:476
+msgid "Copy this message"
+msgstr "複製此訊息"
+
+#: src/ui/login.rs:133
+msgid "Requesting a code for +{phone}…"
+msgstr "正在為 +{phone} 索取驗證碼…"
+
+#: src/ui/login.rs:230
+msgid "for +{phone}"
+msgstr "用於 +{phone}"
+
+#: src/ui/login.rs:12
+msgid "A native WhatsApp client."
+msgstr "原生 WhatsApp 客戶端。"
+
+#: src/ui/login.rs:87
+msgid "Linked. Waiting for your chats…"
+msgstr "已連結。正在等待對話資料…"
+
+#: src/ui/login.rs:93
+msgid "This computer was unlinked from your phone. Requesting a new code."
+msgstr "此電腦已從您的手機取消連結。正在索取新代碼。"
+
+#: src/ui/login.rs:98
+msgid "Requesting a new code…"
+msgstr "正在索取新代碼…"
+
+#: src/ui/login.rs:113
+msgid "Try again"
+msgstr "重試"
+
+#: src/ui/login.rs:116
+msgid "Start over…"
+msgstr "重新開始…"
+
+#: src/ui/login.rs:142
+msgid "Waiting for a code from WhatsApp…"
+msgstr "正在等待來自 WhatsApp 的驗證碼…"
+
+#: src/ui/login.rs:150
+msgid ""
+"Unofficial client. Using it may be against WhatsApp's terms of service."
+msgstr "非官方客戶端。使用它可能違反 WhatsApp 的服務條款。"
+
+#: src/ui/login.rs:175
+msgid "Link this computer"
+msgstr "連結這部電腦"
+
+#: src/ui/login.rs:189 src/ui/login.rs:249
+msgid "Open WhatsApp on your phone"
+msgstr "在手機上開啟 WhatsApp"
+
+#: src/ui/login.rs:190 src/ui/login.rs:250
+msgid "Tap Menu or Settings, then Linked devices"
+msgstr "點按選單或設定，然後選擇「已連結裝置」"
+
+#: src/ui/login.rs:191
+msgid "Tap Link a device and point the phone at this code"
+msgstr "點按「連結裝置」並將手機對準此條碼"
+
+#: src/ui/login.rs:208
+msgid "Link with phone number instead"
+msgstr "改用電話號碼連結"
+
+#: src/ui/login.rs:223
+msgid "Enter this code on your phone"
+msgstr "在手機上輸入此代碼"
+
+#: src/ui/login.rs:251
+msgid "Tap Link a device, then Link with phone number instead"
+msgstr "點按「連結裝置」，然後選擇「改用電話號碼連結」"
+
+#: src/ui/login.rs:272
+msgid "Copy code"
+msgstr "複製代碼"
+
+#: src/ui/update.rs:82
+msgid "{received} of {total} MB"
+msgstr "{received} / {total} MB"
+
+#: src/ui/update.rs:36
+msgid "Update ZapFast"
+msgstr "更新 ZapFast"
+
+#: src/ui/update.rs:44
+msgid "Close update"
+msgstr "關閉更新"
+
+#: src/ui/update.rs:58
+msgid "Release notes"
+msgstr "發行說明"
+
+#: src/ui/update.rs:65
+msgid "Checking download…"
+msgstr "正在檢查下載…"
+
+#: src/ui/update.rs:67
+msgid "Downloading update…"
+msgstr "正在下載更新…"
+
+#: src/ui/update.rs:96
+msgid "Ready to install"
+msgstr "準備安裝"
+
+#: src/ui/update.rs:101
+msgid ""
+"Finish any unsent messages or recordings before restarting. ZapFast will "
+"briefly disconnect, then reconnect automatically."
+msgstr "請在重新啟動前完成所有未傳送的訊息或錄音。ZapFast 將短暫中斷連線，然後自動重新連線。"
+
+#: src/ui/update.rs:111
+msgid "Restart to update"
+msgstr "重新啟動以更新"
+
+#: src/ui/update.rs:118
+msgid "Preparing to restart…"
+msgstr "正在準備重新啟動…"
+
+#: src/ui/update.rs:135
+msgid "Download from GitHub"
+msgstr "從 GitHub 下載"
+
+#: src/ui/update.rs:139
+msgid "Retry download"
+msgstr "重試下載"
+
+#: src/ui/update.rs:141
+msgid "Download update"
+msgstr "下載更新"

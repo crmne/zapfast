@@ -18,3 +18,7 @@ src/notify.rs
 src/settings.rs
 src/account.rs
 src/ui/accounts.rs
+src/ui/polls.rs
+src/ui/mod.rs
+src/ui/login.rs
+src/ui/update.rs

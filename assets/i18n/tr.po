@@ -3,8 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
-"template=translation.yml\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
 "POT-Creation-Date: 2026-10-03 17:10+0200\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
@@ -243,8 +242,8 @@ msgstr "Açıklama ekleyin"
 
 #: src/ui/conversation.rs:1295
 msgid ""
-"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
-"pastes a picture"
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V"
+" pastes a picture"
 msgstr ""
 "Enter gönderir · Yeni satır için Shift+Enter · *kalın* _italik_ ~üstü "
 "çizili~ · Ctrl+V görsel yapıştırır"
@@ -257,7 +256,8 @@ msgstr ""
 
 #: src/ui/conversation.rs:1308
 msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
-msgstr "Kısayol ipuçlarını gizle (Klavye kısayollarından tekrar açabilirsiniz)"
+msgstr ""
+"Kısayol ipuçlarını gizle (Klavye kısayollarından tekrar açabilirsiniz)"
 
 #: src/ui/conversation.rs:1323
 #, rust-format
@@ -359,7 +359,8 @@ msgstr ""
 "açılır."
 
 #: src/ui/conversation.rs:4813
-msgid "View once voice message. For your privacy, it opens only on your phone."
+msgid ""
+"View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez dinlenebilen sesli mesaj. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
@@ -454,15 +455,16 @@ msgid "Cancel"
 msgstr "İptal"
 
 #: src/ui/dialogs.rs:1178
-#, fuzzy
 msgid "Remove this account?"
-msgstr "Bu paketi kaldır"
+msgstr "Bu hesap kaldırılsın mı?"
 
 #: src/ui/dialogs.rs:1184
 msgid ""
 "This unlinks the number on this computer and deletes its local chats. Other "
 "accounts stay."
 msgstr ""
+"Bu işlem bu bilgisayardaki numaranın bağlantısını keser ve yerel "
+"sohbetlerini siler. Diğer hesaplar kalır."
 
 #: src/ui/dialogs.rs:1193
 #, fuzzy
@@ -671,7 +673,8 @@ msgstr "Masaüstü bildirimleri"
 
 #: src/ui/settings.rs:460
 msgid "For chats you are not looking at. Muted chats stay quiet."
-msgstr "Açık olmayan sohbetler içindir. Sessize alınan sohbetler sessiz kalır."
+msgstr ""
+"Açık olmayan sohbetler içindir. Sessize alınan sohbetler sessiz kalır."
 
 #: src/ui/settings.rs:468 src/ui/settings.rs:1849
 msgid "Play sounds for group messages"
@@ -873,8 +876,8 @@ msgstr "Uygulama kilidi"
 
 #: src/ui/settings.rs:792
 msgid ""
-"Asks for a password at start and after a while unused. It keeps people using "
-"this computer out of your chats and encrypts nothing more. A forgotten "
+"Asks for a password at start and after a while unused. It keeps people using"
+" this computer out of your chats and encrypts nothing more. A forgotten "
 "password means unlinking."
 msgstr ""
 "Başlangıçta ve bir süre kullanılmadığında parola sorar. Bu bilgisayarı "
@@ -1108,7 +1111,7 @@ msgstr "Henüz kimse yok"
 
 #: src/app.rs:1368
 msgid "Could not delete the removed account's files"
-msgstr ""
+msgstr "Kaldırılan hesabın dosyaları silinemedi"
 
 #: src/app.rs:1836
 #, rust-format
@@ -1151,7 +1154,8 @@ msgstr "Çıkartma paketi gönderiliyor…"
 #: src/app.rs:5151 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
-msgstr "ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
+msgstr ""
+"ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
 
 #: src/app.rs:5831
 msgid "App lock password saved"
@@ -1241,8 +1245,8 @@ msgid ""
 "Labels stay on this computer. They do not reach your phone or anyone you "
 "chat with."
 msgstr ""
-"Etiketler bu bilgisayarda kalır. Telefonunuza veya sohbet ettiğiniz kişilere "
-"iletilmez."
+"Etiketler bu bilgisayarda kalır. Telefonunuza veya sohbet ettiğiniz kişilere"
+" iletilmez."
 
 #: src/ui/labels.rs:263
 msgid "New label"
@@ -1254,8 +1258,8 @@ msgstr "Oluştur"
 
 #: src/ui/labels.rs:307
 msgid ""
-"No labels yet. Create one above, then add chats to it from their right-click "
-"menu."
+"No labels yet. Create one above, then add chats to it from their right-click"
+" menu."
 msgstr ""
 "Henüz etiket yok. Yukarıdan bir tane oluşturun, ardından sağ tık menüsünden "
 "sohbetleri ekleyin."
@@ -1330,8 +1334,8 @@ msgstr "Bu paketi sohbete gönder"
 #: src/ui/picker.rs:1338
 msgid "Nothing here yet. Right-click any sticker to add it to this pack."
 msgstr ""
-"Henüz burada bir şey yok. Bu pakete eklemek için herhangi bir çıkartmaya sağ "
-"tıklayın."
+"Henüz burada bir şey yok. Bu pakete eklemek için herhangi bir çıkartmaya sağ"
+" tıklayın."
 
 #: src/ui/picker.rs:1411
 msgid "Import a pack"
@@ -1341,8 +1345,8 @@ msgstr "Paket içe aktar"
 msgid ""
 "Paste a signal.art link from signalstickers.org, or open a .wastickers file."
 msgstr ""
-"signalstickers.org sitesinden bir signal.art bağlantısı yapıştırın veya "
-"bir .wastickers dosyası açın."
+"signalstickers.org sitesinden bir signal.art bağlantısı yapıştırın veya bir "
+".wastickers dosyası açın."
 
 #: src/ui/picker.rs:1429
 msgid "Make your own"
@@ -1350,8 +1354,8 @@ msgstr "Kendinizinkini yapın"
 
 #: src/ui/picker.rs:1437
 msgid ""
-"Start a pack, then right-click any sticker to add it. Or turn a picture into "
-"a sticker."
+"Start a pack, then right-click any sticker to add it. Or turn a picture into"
+" a sticker."
 msgstr ""
 "Bir paket başlatın, ardından eklemek için herhangi bir çıkartmaya sağ "
 "tıklayın. Veya bir fotoğrafı çıkartmaya dönüştürün."
@@ -1415,7 +1419,8 @@ msgstr "Başka bir kelime deneyin veya farklı bir gün seçin."
 
 #: src/ui/pane.rs:255
 #, rust-format
-msgid "Only the newest {} matches are listed. Narrow the search or pick a day."
+msgid ""
+"Only the newest {} matches are listed. Narrow the search or pick a day."
 msgstr ""
 "Yalnızca en yeni {} eşleşme listeleniyor. Aramayı daraltın veya bir gün "
 "seçin."
@@ -1583,27 +1588,926 @@ msgstr "Hesap"
 
 #: src/ui/accounts.rs:33
 msgid "Switch account"
-msgstr ""
+msgstr "Hesap değiştir"
 
 #: src/ui/accounts.rs:84
 msgid "Not linked"
-msgstr ""
+msgstr "Bağlı değil"
 
 #: src/ui/accounts.rs:232
 #, rust-format
 msgid "{count} unread chats"
-msgstr ""
-
+msgstr "{count} okunmamış sohbet"
 
 #: src/ui/dialogs.rs:1116
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
 msgstr ""
+"Bu sohbetteki herkes bunun yerine \"Bu mesaj silindi\" ifadesini görecek. Bu"
+" işlem geri alınamaz."
 
 #: src/ui/dialogs.rs:1124
 msgid ""
 "This removes the message from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
 msgstr ""
+"Bu işlem mesajı telefonunuzdan ve bağlı cihazlarınızdan kaldırır. Diğer "
+"kişiler kendi kopyalarını saklar. Silmek için WhatsApp'a bağlanın. Bu işlem "
+"geri alınamaz."
 
+#: src/model.rs:894 src/model.rs:916
+msgid "Photo"
+msgstr "Fotoğraf"
+
+#: src/model.rs:895 src/model.rs:917
+msgid "Video"
+msgstr "Video"
+
+#: src/model.rs:897 src/model.rs:919
+msgid "Video message"
+msgstr "Video mesajı"
+
+#: src/model.rs:898 src/model.rs:934
+msgid "Voice message"
+msgstr "Sesli mesaj"
+
+#: src/model.rs:899 src/model.rs:939
+msgid "Audio"
+msgstr "Ses"
+
+#: src/model.rs:900
+msgid "Sticker"
+msgstr "Çıkartma"
+
+#: src/model.rs:904
+msgid "This message was deleted"
+msgstr "Bu mesaj silindi"
+
+#: src/model.rs:905
+msgid "View once photo"
+msgstr "Bir kez görüntülenebilir fotoğraf"
+
+#: src/model.rs:906
+msgid "View once video"
+msgstr "Bir kez görüntülenebilir video"
+
+#: src/model.rs:907
+msgid "View once voice message"
+msgstr "Bir kez görüntülenebilir sesli mesaj"
+
+#: src/model.rs:908
+msgid "View once audio"
+msgstr "Bir kez görüntülenebilir ses"
+
+#: src/model.rs:909
+msgid "View once message"
+msgstr "Bir kez görüntülenebilir mesaj"
+
+#: src/model.rs:910
+msgid "Message on your phone"
+msgstr "Telefonunuzdaki mesaj"
+
+#: src/model.rs:920
+msgid "Document"
+msgstr "Belge"
+
+#: src/model.rs:924
+msgid "Poll"
+msgstr "Anket"
+
+#: src/model.rs:944
+msgid "Unsupported message"
+msgstr "Desteklenmeyen mesaj"
+
+#: src/ui/chats.rs:1495
+msgid "Mark as read"
+msgstr "Okundu olarak işaretle"
+
+#: src/ui/chats.rs:1505
+msgid "Mark as unread"
+msgstr "Okunmadı olarak işaretle"
+
+#: src/ui/chats.rs:1511 src/ui/conversation.rs:266 src/ui/dialogs.rs:2007
+msgid "Unpin"
+msgstr "Sabitlemeyi kaldır"
+
+#: src/ui/chats.rs:1513 src/ui/conversation.rs:268
+msgid "Pin to top"
+msgstr "Başa tuttur"
+
+#: src/ui/chats.rs:1538 src/ui/conversation.rs:280 src/ui/dialogs.rs:2016
+msgid "Unarchive"
+msgstr "Arşivden çıkar"
+
+#: src/ui/chats.rs:1540 src/ui/conversation.rs:282 src/ui/dialogs.rs:2018
+msgid "Archive"
+msgstr "Arşivle"
+
+#: src/ui/chats.rs:1572
+msgid "Mute for 8 hours"
+msgstr "8 saatliğine sessize al"
+
+#: src/ui/chats.rs:1573
+msgid "Mute for a week"
+msgstr "1 haftalığına sessize al"
+
+#: src/ui/chats.rs:1574
+msgid "Mute indefinitely"
+msgstr "Süresiz sessize al"
+
+#: src/ui/chats.rs:1584
+msgid "Unlock chat"
+msgstr "Sohbetin kilidini aç"
+
+#: src/ui/chats.rs:1586 src/ui/dialogs.rs:376
+msgid "Lock chat"
+msgstr "Sohbeti kilitle"
+
+#: src/ui/chats.rs:1610 src/ui/conversation.rs:326 src/ui/dialogs.rs:1985
+msgid "Copy number"
+msgstr "Numarayı kopyala"
+
+#: src/ui/chats.rs:1619 src/ui/conversation.rs:260
+msgid "Info"
+msgstr "Bilgi"
+
+#: src/ui/chats.rs:1630
+msgid "Delete chat"
+msgstr "Sohbeti sil"
+
+#: src/ui/chats.rs:1658
+msgid "Notification sound"
+msgstr "Bildirim sesi"
+
+#: src/ui/chats.rs:1662
+msgid "Default"
+msgstr "Varsayılan"
+
+#: src/ui/chats.rs:1667
+msgid "System sound"
+msgstr "Sistem sesi"
+
+#: src/ui/chats.rs:1671
+msgid "No sound"
+msgstr "Ses yok"
+
+#: src/ui/chats.rs:1685
+msgid "Custom"
+msgstr "Özel"
+
+#: src/ui/conversation.rs:299 src/ui/dialogs.rs:830
+msgid "Clear chat"
+msgstr "Sohbeti temizle"
+
+#: src/ui/conversation.rs:335
+msgid "Close chat"
+msgstr "Sohbeti kapat"
+
+#: src/ui/conversation.rs:4010
+msgid "Remove your reaction"
+msgstr "Tepkinizi kaldırın"
+
+#: src/ui/conversation.rs:4043
+msgid "React with any emoji"
+msgstr "Herhangi bir emojiyle tepki ver"
+
+#: src/ui/conversation.rs:4060
+msgid "Reply"
+msgstr "Yanıtla"
+
+#: src/ui/conversation.rs:4076
+msgid "Forward"
+msgstr "İlet"
+
+#: src/ui/conversation.rs:4087
+msgid "Select"
+msgstr "Seç"
+
+#: src/ui/conversation.rs:4114
+msgid "Copy text"
+msgstr "Metni kopyala"
+
+#: src/ui/conversation.rs:4132
+msgid "Edit"
+msgstr "Düzenle"
+
+#: src/ui/conversation.rs:4142
+msgid "Delete for everyone"
+msgstr "Herkesten sil"
+
+#: src/ui/conversation.rs:4155
+msgid "Delete for me"
+msgstr "Benden sil"
+
+#: src/ui/conversation.rs:4211
+msgid "Show in folder"
+msgstr "Klasörde göster"
+
+#: src/ui/conversation.rs:4220
+msgid "Downloading…"
+msgstr "İndiriliyor…"
+
+#: src/ui/conversation.rs:4222
+msgid "Download"
+msgstr "İndir"
+
+#: src/ui/conversation.rs:4271
+msgid "Copy message ID"
+msgstr "Mesaj kimliğini kopyala"
+
+#: src/ui/conversation.rs:7085
+msgid "Cancel selection"
+msgstr "Seçimi iptal et"
+
+#: src/ui/conversation.rs:7104
+msgid "Forward…"
+msgstr "İlet…"
+
+#: src/ui/conversation.rs:7092
+msgid "1 selected"
+msgid_plural "{count} selected"
+msgstr[0] "1 seçildi"
+msgstr[1] "{count} seçildi"
+
+#: src/ui/dialogs.rs:113
+msgid "Choose an option"
+msgstr "Bir seçenek belirleyin"
+
+#: src/ui/dialogs.rs:143
+msgid "This list is no longer available."
+msgstr "Bu liste artık kullanılamıyor."
+
+#: src/ui/dialogs.rs:157
+msgid "This list can no longer receive replies."
+msgstr "Bu liste artık yanıt alamaz."
+
+#: src/ui/dialogs.rs:159
+msgid "Sending reply…"
+msgstr "Yanıt gönderiliyor…"
+
+#: src/ui/dialogs.rs:161
+msgid "Connect to WhatsApp to reply"
+msgstr "Yanıtlamak için WhatsApp'a bağlanın"
+
+#: src/ui/dialogs.rs:284
+msgid "Set up locked chats"
+msgstr "Kilitli sohbetleri ayarla"
+
+#: src/ui/dialogs.rs:286
+msgid "Locked chats"
+msgstr "Kilitli sohbetler"
+
+#: src/ui/dialogs.rs:290
+msgid ""
+"Choose a local code to open the Locked tab. It is separate from your phone's"
+" code. This hides chats in ZapFast, it does not add another encryption "
+"layer."
+msgstr ""
+"Kilitli sekmesini açmak için yerel bir kod belirleyin. Bu kod telefonunuzun "
+"kodundan bağımsızdır. Sohbetleri ZapFast'te gizler, ek bir şifreleme katmanı"
+" eklemez."
+
+#: src/ui/dialogs.rs:295
+msgid ""
+"Enter your local ZapFast code. Leaving the Locked tab or closing the window "
+"locks it again."
+msgstr ""
+"Yerel ZapFast kodunuzu girin. Kilitli sekmesinden ayrılmak veya pencereyi "
+"kapatmak sekmeyi tekrar kilitler."
+
+#: src/ui/dialogs.rs:312
+msgid "Local code"
+msgstr "Yerel kod"
+
+#: src/ui/dialogs.rs:323
+msgid "Confirm code"
+msgstr "Kodu onayla"
+
+#: src/ui/dialogs.rs:330
+msgid "That code did not match. Try again."
+msgstr "Bu kod eşleşmedi. Tekrar deneyin."
+
+#: src/ui/dialogs.rs:339
+msgid "Set code and open"
+msgstr "Kodu ayarla ve aç"
+
+#: src/ui/dialogs.rs:341
+msgid "Open locked chats"
+msgstr "Kilitli sohbetleri aç"
+
+#: src/ui/dialogs.rs:365
+msgid "Lock this chat?"
+msgstr "Bu sohbet kilitlensin mi?"
+
+#: src/ui/dialogs.rs:368
+msgid ""
+"This moves the chat to the Locked tab, hiding it from the normal chat list, "
+"search, unread badges, and notifications. The lock status also syncs to your"
+" phone. Open Locked with a separate local ZapFast code to read it. Sending "
+"from locked chats is not supported yet."
+msgstr ""
+"Bu işlem sohbeti Kilitli sekmesine taşır; normal sohbet listesinden, "
+"aramadan, okunmamış rozetlerinden ve bildirimlerden gizler. Kilit durumu "
+"telefonunuzla da senkronize edilir. Okumak için ayrı bir yerel ZapFast "
+"koduyla Kilitli sekmesini açın. Kilitli sohbetlerden mesaj gönderme henüz "
+"desteklenmemektedir."
+
+#: src/ui/dialogs.rs:391
+msgid "New chat"
+msgstr "Yeni sohbet"
+
+#: src/ui/dialogs.rs:398
+msgid "Add contact"
+msgstr "Kişi ekle"
+
+#: src/ui/dialogs.rs:412
+msgid "Search contacts"
+msgstr "Kişilerde ara"
+
+#: src/ui/dialogs.rs:456
+msgid "No matching contacts"
+msgstr "Eşleşen kişi bulunamadı"
+
+#: src/ui/dialogs.rs:472
+msgid "Forward message"
+msgstr "Mesajı ilet"
+
+#: src/ui/dialogs.rs:489
+msgid "Search chats"
+msgstr "Sohbetlerde ara"
+
+#: src/ui/dialogs.rs:569
+msgid "No writable chats found"
+msgstr "Yazılabilir sohbet bulunamadı"
+
+#: src/ui/dialogs.rs:726
+msgid "Version {version}"
+msgstr "Sürüm {version}"
+
+#: src/ui/dialogs.rs:736
+msgid ""
+"A native WhatsApp client written in Rust with egui. It connects through "
+"whatsapp-rust. Messages are end-to-end encrypted on this device."
+msgstr ""
+"Rust ve egui ile yazılmış yerel bir WhatsApp istemcisi. whatsapp-rust "
+"üzerinden bağlanır. Mesajlar bu cihazda uçtan uca şifrelenir."
+
+#: src/ui/dialogs.rs:745
+msgid ""
+"This is an unofficial client. Using it may be against WhatsApp's terms of "
+"service and could get an account suspended."
+msgstr ""
+"Bu resmi olmayan bir istemcidir. Kullanımı WhatsApp'ın hizmet şartlarına "
+"aykırı olabilir ve hesabın askıya alınmasına neden olabilir."
+
+#: src/ui/dialogs.rs:781 src/ui/dialogs.rs:812
+msgid "this chat"
+msgstr "bu sohbet"
+
+#: src/ui/dialogs.rs:785
+msgid "Delete chat?"
+msgstr "Sohbet silinsin mi?"
+
+#: src/ui/dialogs.rs:788
+msgid ""
+"This deletes your chat with {name}, including all messages, on this computer"
+" and on your phone. It cannot be undone."
+msgstr ""
+"Bu işlem, tüm mesajlar dahil olmak üzere {name} ile olan sohbetinizi bu "
+"bilgisayardan ve telefonunuzdan siler. Geri alınamaz."
+
+#: src/ui/dialogs.rs:799 src/ui/dialogs.rs:1199
+msgid "Delete"
+msgstr "Sil"
+
+#: src/ui/dialogs.rs:816
+msgid "Clear chat?"
+msgstr "Sohbet temizlensin mi?"
+
+#: src/ui/dialogs.rs:819
+msgid ""
+"This clears every message in your chat with {name}, including downloaded "
+"media, on this computer and on your phone. The chat itself stays. It cannot "
+"be undone."
+msgstr ""
+"Bu işlem, indirilen medyalar da dahil olmak üzere {name} ile olan "
+"sohbetinizdeki her mesajı bu bilgisayarda ve telefonunuzda temizler. "
+"Sohbetin kendisi kalır. Geri alınamaz."
+
+#: src/ui/dialogs.rs:850 src/ui/dialogs.rs:862
+msgid "Group invite"
+msgstr "Grup daveti"
+
+#: src/ui/dialogs.rs:854
+msgid "Looking up the group…"
+msgstr "Grup aranıyor…"
+
+#: src/ui/dialogs.rs:892
+msgid "An admin must approve your request before you join."
+msgstr "Katılabilmeniz için bir yöneticinin isteğinizi onaylaması gerekir."
+
+#: src/ui/dialogs.rs:904
+msgid "Open chat"
+msgstr "Sohbeti aç"
+
+#: src/ui/dialogs.rs:905
+msgid "Request to join"
+msgstr "Katılma isteği gönder"
+
+#: src/ui/dialogs.rs:906
+msgid "Join group"
+msgstr "Gruba katıl"
+
+#: src/ui/dialogs.rs:909
+msgid "Joining…"
+msgstr "Katılınıyor…"
+
+#: src/ui/dialogs.rs:1135
+msgid "Start over?"
+msgstr "Baştan başlatılsın mı?"
+
+#: src/ui/dialogs.rs:1138
+msgid ""
+"ZapFast keeps your unreadable archive as a separate file, creates a new one,"
+" and asks you to link again. Linking again brings back recent history from "
+"your phone. Afterwards, remove the old ZapFast entry under Linked devices on"
+" your phone."
+msgstr ""
+"ZapFast okunamayan arşivinizi ayrı bir dosya olarak saklar, yeni bir arşiv "
+"oluşturur ve sizden tekrar bağlanmanızı ister. Tekrar bağlanmak, "
+"telefonunuzdaki son geçmişi geri getirir. Ardından, telefonunuzdaki Bağlı "
+"cihazlar altından eski ZapFast kaydını kaldırın."
+
+#: src/ui/dialogs.rs:1147
+msgid ""
+"If you can restore the original keyring instead, choose Cancel and Try "
+"again: nothing is lost that way."
+msgstr ""
+"Bunun yerine orijinal anahtarlığı geri yükleyebiliyorsanız İptal'i ve "
+"ardından Tekrar dene'yi seçin: bu şekilde hiçbir şey kaybolmaz."
+
+#: src/ui/dialogs.rs:1157
+msgid "Start over"
+msgstr "Baştan başla"
+
+#: src/ui/dialogs.rs:1179
+msgid "Delete for everyone?"
+msgstr "Herkesten silinsin mi?"
+
+#: src/ui/dialogs.rs:1187
+msgid "Delete for me?"
+msgstr "Benden silinsin mi?"
+
+#: src/ui/dialogs.rs:1188
+msgid ""
+"This removes the message from this computer. Other people keep their copy. "
+"Your phone will not send it again, so it cannot be undone."
+msgstr ""
+"Bu işlem mesajı bu bilgisayardan kaldırır. Diğer kişiler kendi kopyalarını "
+"saklar. Telefonunuz mesajı tekrar göndermeyeceğinden bu işlem geri alınamaz."
+
+#: src/ui/dialogs.rs:1221
+msgid ""
+"This removes the device from WhatsApp and deletes the chats stored here. You"
+" can link again with a new code."
+msgstr ""
+"Bu işlem cihazı WhatsApp'tan kaldırır ve burada saklanan sohbetleri siler. "
+"Yeni bir kodla tekrar bağlayabilirsiniz."
+
+#: src/ui/dialogs.rs:1341
+msgid "Link with a phone number"
+msgstr "Telefon numarasıyla bağla"
+
+#: src/ui/dialogs.rs:1344
+msgid ""
+"Enter the WhatsApp phone number with its country code. Do not include a plus"
+" sign or leading zero. You will get a code to enter on the phone."
+msgstr ""
+"WhatsApp telefon numarasını ülke koduyla birlikte girin. Artı işareti veya "
+"baştaki sıfırı eklemeyin. Telefona girmeniz için bir kod alacaksınız."
+
+#: src/ui/dialogs.rs:1393 src/ui/dialogs.rs:1566
+msgid "Enter the whole number, starting with the country code"
+msgstr "Ülke kodundan başlayarak numaranın tamamını girin"
+
+#: src/ui/dialogs.rs:1399
+msgid "Get a code"
+msgstr "Kod al"
+
+#: src/ui/dialogs.rs:1416
+msgid "New contact"
+msgstr "Yeni kişi"
+
+#: src/ui/dialogs.rs:1419
+msgid ""
+"Enter a phone number with its country code, without a plus sign or leading "
+"zero. Add a name to save the contact, or leave it blank to open the chat. "
+"WhatsApp uses the first name as the display name."
+msgstr ""
+"Artı işareti veya baştaki sıfır olmadan, ülke koduyla birlikte bir telefon "
+"numarası girin. Kişiyi kaydetmek için bir ad ekleyin veya doğrudan sohbeti "
+"açmak için boş bırakın. WhatsApp görünen ad olarak ilk adı kullanır."
+
+#: src/ui/dialogs.rs:1502 src/ui/dialogs.rs:1759
+msgid "First name"
+msgstr "Ad"
+
+#: src/ui/dialogs.rs:1515 src/ui/dialogs.rs:1760
+msgid "Surname"
+msgstr "Soyad"
+
+#: src/ui/dialogs.rs:1557 src/ui/dialogs.rs:1565
+msgid "Checking the number…"
+msgstr "Numara kontrol ediliyor…"
+
+#: src/ui/dialogs.rs:1575
+msgid "Save contact"
+msgstr "Kişiyi kaydet"
+
+#: src/ui/dialogs.rs:1578 src/ui/dialogs.rs:1952
+msgid "Message"
+msgstr "Mesaj"
+
+#: src/ui/dialogs.rs:1819
+msgid "online"
+msgstr "çevrimiçi"
+
+#: src/ui/dialogs.rs:1863
+msgid "Members ({count})"
+msgstr "Üyeler ({count})"
+
+#: src/ui/dialogs.rs:1937
+msgid "Muted"
+msgstr "Sessize alındı"
+
+#: src/ui/dialogs.rs:1939
+msgid "Muted until {time}"
+msgstr "{time} tarihine kadar sessize alındı"
+
+#: src/ui/dialogs.rs:1969
+msgid "Rename"
+msgstr "Yeniden adlandır"
+
+#: src/ui/dialogs.rs:1971
+msgid "Add to contacts"
+msgstr "Kişilere ekle"
+
+#: src/ui/dialogs.rs:2009
+msgid "Pin"
+msgstr "Sabitle"
+
+#: src/ui/dialogs.rs:474
+msgid "Forward 1 message"
+msgid_plural "Forward {count} messages"
+msgstr[0] "1 mesajı ilet"
+msgstr[1] "{count} mesajı ilet"
+
+#: src/ui/dialogs.rs:871
+msgid "1 member"
+msgid_plural "{count} members"
+msgstr[0] "1 üye"
+msgstr[1] "{count} üye"
+
+#: src/ui/settings.rs:1022
+msgid "Open themes folder"
+msgstr "Temalar klasörünü aç"
+
+#: src/ui/picker.rs:111
+msgid "Emoji"
+msgstr "Emoji"
+
+#: src/ui/picker.rs:117
+msgid "Stickers"
+msgstr "Çıkartmalar"
+
+#: src/ui/picker.rs:443
+msgid "React to message"
+msgstr "Mesaja tepki ver"
+
+#: src/ui/picker.rs:454
+msgid "Close reactions"
+msgstr "Tepkileri kapat"
+
+#: src/ui/picker.rs:637
+msgid "Search emoji"
+msgstr "Emoji ara"
+
+#: src/ui/picker.rs:1023
+msgid "Search GIFs via GIPHY"
+msgstr "GIPHY ile GIF ara"
+
+#: src/ui/image_preview.rs:42
+msgid "Close preview (Esc)"
+msgstr "Önizlemeyi kapat (Esc)"
+
+#: src/ui/image_preview.rs:87
+msgid "Zoom in"
+msgstr "Yakınlaştır"
+
+#: src/ui/image_preview.rs:97
+msgid "Fit"
+msgstr "Sığdır"
+
+#: src/ui/image_preview.rs:98
+msgid "Show at original size"
+msgstr "Orijinal boyutta göster"
+
+#: src/ui/image_preview.rs:104
+msgid "Fit to the window (0)"
+msgstr "Pencereye sığdır (0)"
+
+#: src/ui/image_preview.rs:120
+msgid "Zoom out"
+msgstr "Uzaklaştır"
+
+#: src/ui/image_preview.rs:283
+msgid "This image could not be displayed in ZapFast."
+msgstr "Bu görsel ZapFast'te görüntülenemedi."
+
+#: src/ui/image_preview.rs:288
+msgid "Open externally"
+msgstr "Harici uygulamada aç"
+
+#: src/ui/accounts.rs:268
+msgid "Use another account"
+msgstr "Başka bir hesap kullan"
+
+#: src/ui/polls.rs:31
+msgid "Question"
+msgstr "Soru"
+
+#: src/ui/polls.rs:44
+msgid "Ask a question"
+msgstr "Bir soru sorun"
+
+#: src/ui/polls.rs:52
+msgid "Answers"
+msgstr "Seçenekler"
+
+#: src/ui/polls.rs:73
+msgid "Answer {index}"
+msgstr "Seçenek {index}"
+
+#: src/ui/polls.rs:92
+msgid "Remove answer"
+msgstr "Seçeneği kaldır"
+
+#: src/ui/polls.rs:109
+msgid "Add answer"
+msgstr "Seçenek ekle"
+
+#: src/ui/polls.rs:121
+msgid "Allow multiple answers"
+msgstr "Birden fazla yanıta izin ver"
+
+#: src/ui/polls.rs:140
+msgid "Sending…"
+msgstr "Gönderiliyor…"
+
+#: src/ui/polls.rs:142
+msgid "Send poll"
+msgstr "Anketi gönder"
+
+#: src/ui/polls.rs:198
+msgid "Select one answer"
+msgstr "Bir yanıt seçin"
+
+#: src/ui/polls.rs:200
+msgid "Select answers"
+msgstr "Yanıtları seçin"
+
+#: src/ui/polls.rs:302
+msgid "Sending vote…"
+msgstr "Oy gönderiliyor…"
+
+#: src/ui/polls.rs:304
+msgid "Waiting for your phone · earlier votes may be missing"
+msgstr "Telefonunuz bekleniyor · önceki oylar eksik olabilir"
+
+#: src/ui/polls.rs:306
+msgid "Loading earlier votes from your phone…"
+msgstr "Önceki oylar telefonunuzdan yükleniyor…"
+
+#: src/ui/polls.rs:308
+msgid "Earlier votes have not been loaded yet"
+msgstr "Önceki oylar henüz yüklenmedi"
+
+#: src/ui/polls.rs:328
+msgid "Voting key unavailable · use your phone"
+msgstr "Oy anahtarı kullanılamıyor · telefonunuzu kullanın"
+
+#: src/ui/polls.rs:333
+msgid "Reconnect to vote"
+msgstr "Oy vermek için yeniden bağlanın"
+
+#: src/ui/polls.rs:373
+msgid "Show votes"
+msgstr "Oyları göster"
+
+#: src/ui/polls.rs:425
+msgid "Poll results"
+msgstr "Anket sonuçları"
+
+#: src/ui/polls.rs:449
+msgid "This poll is no longer available."
+msgstr "Bu anket artık kullanılamıyor."
+
+#: src/ui/polls.rs:468
+msgid "Earlier votes may still be missing. Results update as they arrive."
+msgstr "Önceki oylar henüz eksik olabilir. Sonuçlar geldikçe güncellenir."
+
+#: src/ui/polls.rs:543
+msgid "Participant details are not available yet"
+msgstr "Katılımcı ayrıntıları henüz mevcut değil"
+
+#: src/ui/polls.rs:310
+msgid "1 voter"
+msgid_plural "{count} voters"
+msgstr[0] "{count} kişi"
+msgstr[1] "{count} kişi"
+
+#: src/ui/polls.rs:499
+msgid "1 vote"
+msgid_plural "{count} votes"
+msgstr[0] "1 oy"
+msgstr[1] "{count} oy"
+
+#: src/ui/mod.rs:234
+msgid "Drop to send to {name}"
+msgstr "{name} kişisine göndermek için bırakın"
+
+#: src/ui/mod.rs:256
+msgid "Loading chat history… {percent}%"
+msgstr "Sohbet geçmişi yükleniyor… %{percent}"
+
+#: src/ui/mod.rs:271
+msgid "ZapFast {version} is available"
+msgstr "ZapFast {version} mevcut"
+
+#: src/ui/mod.rs:291
+msgid "Offline ({reason}). Reconnecting…"
+msgstr "Çevrimdışı ({reason}). Yeniden bağlanılıyor…"
+
+#: src/ui/mod.rs:261
+msgid "Loading chat history…"
+msgstr "Sohbet geçmişi yükleniyor…"
+
+#: src/ui/mod.rs:284 src/ui/login.rs:84
+msgid "Connecting to WhatsApp…"
+msgstr "WhatsApp'a bağlanılıyor…"
+
+#: src/ui/mod.rs:309
+msgid "Not linked to a phone"
+msgstr "Bir telefona bağlı değil"
+
+#: src/ui/mod.rs:335
+msgid "Update"
+msgstr "Güncelle"
+
+#: src/ui/mod.rs:346
+msgid "Retry"
+msgstr "Tekrar dene"
+
+#: src/ui/mod.rs:461
+msgid "Dismiss"
+msgstr "Kapat"
+
+#: src/ui/mod.rs:476
+msgid "Copy this message"
+msgstr "Bu mesajı kopyala"
+
+#: src/ui/login.rs:133
+msgid "Requesting a code for +{phone}…"
+msgstr "+{phone} için kod isteniyor…"
+
+#: src/ui/login.rs:230
+msgid "for +{phone}"
+msgstr "+{phone} için"
+
+#: src/ui/login.rs:12
+msgid "A native WhatsApp client."
+msgstr "Yerel bir WhatsApp istemcisi."
+
+#: src/ui/login.rs:87
+msgid "Linked. Waiting for your chats…"
+msgstr "Bağlandı. Sohbetleriniz bekleniyor…"
+
+#: src/ui/login.rs:93
+msgid "This computer was unlinked from your phone. Requesting a new code."
+msgstr ""
+"Bu bilgisayarın telefonunuzla olan bağlantısı kesildi. Yeni bir kod "
+"isteniyor."
+
+#: src/ui/login.rs:98
+msgid "Requesting a new code…"
+msgstr "Yeni bir kod isteniyor…"
+
+#: src/ui/login.rs:113
+msgid "Try again"
+msgstr "Tekrar dene"
+
+#: src/ui/login.rs:116
+msgid "Start over…"
+msgstr "Baştan başla…"
+
+#: src/ui/login.rs:142
+msgid "Waiting for a code from WhatsApp…"
+msgstr "WhatsApp'tan kod bekleniyor…"
+
+#: src/ui/login.rs:150
+msgid ""
+"Unofficial client. Using it may be against WhatsApp's terms of service."
+msgstr ""
+"Resmi olmayan istemci. Kullanımı WhatsApp'ın hizmet şartlarına aykırı "
+"olabilir."
+
+#: src/ui/login.rs:175
+msgid "Link this computer"
+msgstr "Bu bilgisayarı bağla"
+
+#: src/ui/login.rs:189 src/ui/login.rs:249
+msgid "Open WhatsApp on your phone"
+msgstr "Telefonunuzda WhatsApp'ı açın"
+
+#: src/ui/login.rs:190 src/ui/login.rs:250
+msgid "Tap Menu or Settings, then Linked devices"
+msgstr "Menü veya Ayarlar'a, ardından Bağlı cihazlar'a dokunun"
+
+#: src/ui/login.rs:191
+msgid "Tap Link a device and point the phone at this code"
+msgstr "Cihaz bağla'ya dokunun ve telefonu bu koda doğrultun"
+
+#: src/ui/login.rs:208
+msgid "Link with phone number instead"
+msgstr "Bunun yerine telefon numarasıyla bağla"
+
+#: src/ui/login.rs:223
+msgid "Enter this code on your phone"
+msgstr "Bu kodu telefonunuza girin"
+
+#: src/ui/login.rs:251
+msgid "Tap Link a device, then Link with phone number instead"
+msgstr ""
+"Cihaz bağla'ya, ardından Bunun yerine telefon numarasıyla bağla'ya dokunun"
+
+#: src/ui/login.rs:272
+msgid "Copy code"
+msgstr "Kodu kopyala"
+
+#: src/ui/update.rs:82
+msgid "{received} of {total} MB"
+msgstr "{received} / {total} MB"
+
+#: src/ui/update.rs:36
+msgid "Update ZapFast"
+msgstr "ZapFast'i Güncelle"
+
+#: src/ui/update.rs:44
+msgid "Close update"
+msgstr "Güncellemeyi kapat"
+
+#: src/ui/update.rs:58
+msgid "Release notes"
+msgstr "Sürüm notları"
+
+#: src/ui/update.rs:65
+msgid "Checking download…"
+msgstr "İndirme denetleniyor…"
+
+#: src/ui/update.rs:67
+msgid "Downloading update…"
+msgstr "Güncelleme indiriliyor…"
+
+#: src/ui/update.rs:96
+msgid "Ready to install"
+msgstr "Yüklemeye hazır"
+
+#: src/ui/update.rs:101
+msgid ""
+"Finish any unsent messages or recordings before restarting. ZapFast will "
+"briefly disconnect, then reconnect automatically."
+msgstr ""
+"Yeniden başlatmadan önce gönderilmemiş mesajları veya kayıtları tamamlayın. "
+"ZapFast'in bağlantısı kısa süreliğine kesilecek ve ardından otomatik olarak "
+"yeniden bağlanacaktır."
+
+#: src/ui/update.rs:111
+msgid "Restart to update"
+msgstr "Güncellemek için yeniden başlat"
+
+#: src/ui/update.rs:118
+msgid "Preparing to restart…"
+msgstr "Yeniden başlatmaya hazırlanıyor…"
+
+#: src/ui/update.rs:135
+msgid "Download from GitHub"
+msgstr "GitHub'dan indir"
+
+#: src/ui/update.rs:139
+msgid "Retry download"
+msgstr "İndirmeyi tekrar dene"
+
+#: src/ui/update.rs:141
+msgid "Download update"
+msgstr "Güncellemeyi indir"

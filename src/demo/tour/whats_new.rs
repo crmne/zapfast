@@ -136,6 +136,7 @@ fn videos(app: &mut App) {
             sender_name: row.sender_name.clone(),
             summary: row.summary(),
             full: row.content.full_summary(),
+            is_text: row.is_text(),
             status: row.status,
         });
     }

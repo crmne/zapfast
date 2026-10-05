@@ -25,11 +25,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             ui.set_width((viewport.x * 0.9).clamp(viewport.x.min(320.0), 1200.0));
             ui.set_height((viewport.y * 0.88).clamp(viewport.y.min(260.0), 900.0));
             ui.horizontal(|ui| {
+                let fallback = crate::i18n::gettext(app.locale, "Image");
                 let name = preview
                     .path()
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .unwrap_or("Image");
+                    .unwrap_or(fallback.as_ref());
                 crate::ui::widgets::rich_text(ui, name, theme::semibold(14.0), palette.text);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::icon_button(
@@ -38,7 +39,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Close preview (Esc)",
+                        &crate::i18n::gettext(app.locale, "Close preview (Esc)"),
                     )
                     .clicked()
                     {
@@ -50,7 +51,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Open in another app",
+                        &crate::i18n::gettext(app.locale, "Open in another app"),
                     )
                     .clicked()
                     {
@@ -83,7 +84,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Zoom in",
+                        &crate::i18n::gettext(app.locale, "Zoom in"),
                     )
                     .clicked()
                     {
@@ -93,14 +94,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     // the window and the original size.
                     let (label, hint, action) = if preview.is_fit() {
                         (
-                            "Fit".to_owned(),
-                            "Show at original size",
+                            crate::i18n::gettext(app.locale, "Fit").into_owned(),
+                            crate::i18n::gettext(app.locale, "Show at original size"),
                             Action::ImageActualSize,
                         )
                     } else {
                         (
                             format!("{:.0}%", preview.zoom() * 100.0),
-                            "Fit to the window (0)",
+                            crate::i18n::gettext(app.locale, "Fit to the window (0)"),
                             Action::FitImage,
                         )
                     };
@@ -116,7 +117,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Zoom out",
+                        &crate::i18n::gettext(app.locale, "Zoom out"),
                     )
                     .clicked()
                     {
@@ -279,8 +280,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         canvas,
                         Layout::centered_and_justified(egui::Direction::TopDown),
                         |ui| {
-                            ui.label("This image could not be displayed in ZapFast.");
-                            if ui.button("Open externally").clicked() {
+                            ui.label(crate::i18n::gettext(
+                                app.locale,
+                                "This image could not be displayed in ZapFast.",
+                            ));
+                            if ui
+                                .button(crate::i18n::gettext(app.locale, "Open externally"))
+                                .clicked()
+                            {
                                 app.actions
                                     .push(Action::OpenFile(preview.path().to_owned()));
                             }

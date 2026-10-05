@@ -262,6 +262,7 @@ impl Worker {
                 sender_name: source.sender_name.or_else(|| self.name_for(&source.sender)),
                 sender: source.sender,
                 summary: source.content.summary(),
+                is_text: source.content.is_text(),
             }),
             reactions: Vec::new(),
             history_order: None,

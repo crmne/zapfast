@@ -4,8 +4,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: ZapFast\n"
-"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
-"template=translation.yml\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
 "POT-Creation-Date: 2026-10-03 17:10+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
@@ -14,8 +13,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
-"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 
 #: src/model.rs:113
 msgid "All"
@@ -245,8 +243,8 @@ msgstr "Добавить подпись"
 
 #: src/ui/conversation.rs:1295
 msgid ""
-"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
-"pastes a picture"
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V"
+" pastes a picture"
 msgstr ""
 "Enter отправляет · Shift+Enter для новой строки · *жирный* _курсив_ "
 "~зачёркнутый~ · Ctrl+V вставляет изображение"
@@ -334,7 +332,7 @@ msgstr "Чаты"
 
 #: src/ui/conversation.rs:4660
 msgid "Add"
-msgstr ""
+msgstr "Добавить"
 
 #: src/ui/conversation.rs:4708
 #, rust-format
@@ -365,7 +363,8 @@ msgstr ""
 "телефоне."
 
 #: src/ui/conversation.rs:4813
-msgid "View once voice message. For your privacy, it opens only on your phone."
+msgid ""
+"View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое голосовое сообщение. В целях конфиденциальности оно открывается "
 "только на телефоне."
@@ -588,8 +587,8 @@ msgid ""
 "System is your desktop's interface font. Inter looks the same on every "
 "computer."
 msgstr ""
-"«Система» — шрифт интерфейса вашего рабочего стола. Inter выглядит одинаково "
-"на любом компьютере."
+"«Система» — шрифт интерфейса вашего рабочего стола. Inter выглядит одинаково"
+" на любом компьютере."
 
 #: src/ui/settings.rs:344
 msgid "Wallpaper"
@@ -660,8 +659,8 @@ msgid ""
 "Opens the Locked tab on this computer. It hides chats, it does not encrypt "
 "them."
 msgstr ""
-"Открывает вкладку «Заблокированные» на этом компьютере. Он скрывает чаты, но "
-"не шифрует их."
+"Открывает вкладку «Заблокированные» на этом компьютере. Он скрывает чаты, но"
+" не шифрует их."
 
 #: src/ui/settings.rs:436
 msgid "Secret code"
@@ -827,7 +826,7 @@ msgstr "Добавить аккаунт"
 
 #: src/ui/settings.rs:678 src/ui/settings.rs:1446
 msgid "Remove this account"
-msgstr ""
+msgstr "Удалить этот аккаунт"
 
 #: src/ui/settings.rs:683
 msgid "Files"
@@ -875,18 +874,21 @@ msgstr "Исходный код"
 
 #: src/ui/settings.rs:789 src/ui/settings.rs:816
 msgid "App lock"
-msgstr ""
+msgstr "Блокировка приложения"
 
 #: src/ui/settings.rs:792
 msgid ""
-"Asks for a password at start and after a while unused. It keeps people using "
-"this computer out of your chats and encrypts nothing more. A forgotten "
+"Asks for a password at start and after a while unused. It keeps people using"
+" this computer out of your chats and encrypts nothing more. A forgotten "
 "password means unlinking."
 msgstr ""
+"Запрашивает пароль при запуске и после периода неактивности. Защищает ваши "
+"чаты от посторонних на этом компьютере и ничего больше не шифрует. Забытый "
+"пароль потребует отключения аккаунта."
 
 #: src/ui/settings.rs:799
 msgid "Turn off…"
-msgstr ""
+msgstr "Отключить…"
 
 #: src/ui/settings.rs:800
 #, fuzzy
@@ -895,7 +897,7 @@ msgstr "Изменить…"
 
 #: src/ui/settings.rs:803
 msgid "Set password…"
-msgstr ""
+msgstr "Установить пароль…"
 
 #: src/ui/settings.rs:817 src/ui/settings.rs:824
 #, fuzzy
@@ -907,48 +909,50 @@ msgid ""
 "Time without using ZapFast, also counted while it is in the tray. "
 "Ctrl+Shift+L locks it at once."
 msgstr ""
+"Время бездействия в ZapFast (также считается в системном трее). Ctrl+Shift+L"
+" блокирует немедленно."
 
 #: src/ui/settings.rs:869
 msgid "Set an app lock password"
-msgstr ""
+msgstr "Установите пароль блокировки приложения"
 
 #: src/ui/settings.rs:870
 msgid "Change the app lock password"
-msgstr ""
+msgstr "Сменить пароль блокировки приложения"
 
 #: src/ui/settings.rs:871
 msgid "Turn off the app lock"
-msgstr ""
+msgstr "Отключить блокировку приложения"
 
 #: src/ui/settings.rs:881
 msgid "Current password"
-msgstr ""
+msgstr "Текущий пароль"
 
 #: src/ui/settings.rs:888
 #, rust-format
 msgid "New password, at least {count} characters"
-msgstr ""
+msgstr "Новый пароль, не менее {count} символов"
 
 #: src/ui/settings.rs:893
 msgid "Type the new password again"
-msgstr ""
+msgstr "Повторите новый пароль"
 
 #: src/ui/settings.rs:917
 #, rust-format
 msgid "The password needs at least {count} characters."
-msgstr ""
+msgstr "Пароль должен содержать не менее {count} символов."
 
 #: src/ui/settings.rs:919
 msgid "The two new passwords are different."
-msgstr ""
+msgstr "Новые пароли не совпадают."
 
 #: src/ui/settings.rs:920 src/ui/lock.rs:85
 msgid "Wrong password. Try again."
-msgstr ""
+msgstr "Неверный пароль. Попробуйте снова."
 
 #: src/ui/settings.rs:927
 msgid "Turn on"
-msgstr ""
+msgstr "Включить"
 
 #: src/ui/settings.rs:928
 #, fuzzy
@@ -957,7 +961,7 @@ msgstr "Изменить фото"
 
 #: src/ui/settings.rs:929
 msgid "Turn off"
-msgstr ""
+msgstr "Отключить"
 
 #: src/ui/settings.rs:1032
 msgid "How to make a theme"
@@ -1111,7 +1115,7 @@ msgstr "Пока никто"
 
 #: src/app.rs:1368
 msgid "Could not delete the removed account's files"
-msgstr ""
+msgstr "Не удалось удалить файлы удалённого аккаунта"
 
 #: src/app.rs:1836
 #, rust-format
@@ -1158,11 +1162,11 @@ msgstr "У вас {limit} меток — больше ZapFast не хранит.
 
 #: src/app.rs:5831
 msgid "App lock password saved"
-msgstr ""
+msgstr "Пароль блокировки сохранён"
 
 #: src/app.rs:5839
 msgid "App lock turned off"
-msgstr ""
+msgstr "Блокировка приложения отключена"
 
 #: src/app.rs:5952
 msgid "This video opens in your system player"
@@ -1257,8 +1261,8 @@ msgstr "Создать"
 
 #: src/ui/labels.rs:307
 msgid ""
-"No labels yet. Create one above, then add chats to it from their right-click "
-"menu."
+"No labels yet. Create one above, then add chats to it from their right-click"
+" menu."
 msgstr ""
 "Меток пока нет. Создайте метку выше, затем добавляйте чаты через их "
 "контекстное меню."
@@ -1334,8 +1338,8 @@ msgstr "Отправить этот набор в чат"
 #: src/ui/picker.rs:1338
 msgid "Nothing here yet. Right-click any sticker to add it to this pack."
 msgstr ""
-"Здесь пока пусто. Нажмите на любой стикер правой кнопкой, чтобы добавить его "
-"в этот набор."
+"Здесь пока пусто. Нажмите на любой стикер правой кнопкой, чтобы добавить его"
+" в этот набор."
 
 #: src/ui/picker.rs:1411
 msgid "Import a pack"
@@ -1345,8 +1349,8 @@ msgstr "Импортировать набор"
 msgid ""
 "Paste a signal.art link from signalstickers.org, or open a .wastickers file."
 msgstr ""
-"Вставьте ссылку signal.art с signalstickers.org или откройте "
-"файл .wastickers."
+"Вставьте ссылку signal.art с signalstickers.org или откройте файл "
+".wastickers."
 
 #: src/ui/picker.rs:1429
 msgid "Make your own"
@@ -1354,11 +1358,11 @@ msgstr "Создайте свои"
 
 #: src/ui/picker.rs:1437
 msgid ""
-"Start a pack, then right-click any sticker to add it. Or turn a picture into "
-"a sticker."
+"Start a pack, then right-click any sticker to add it. Or turn a picture into"
+" a sticker."
 msgstr ""
-"Создайте набор, затем нажмите на любой стикер правой кнопкой, чтобы добавить "
-"его. Или превратите картинку в стикер."
+"Создайте набор, затем нажмите на любой стикер правой кнопкой, чтобы добавить"
+" его. Или превратите картинку в стикер."
 
 #: src/ui/picker.rs:1449
 msgid "Make a sticker from a picture…"
@@ -1419,9 +1423,11 @@ msgstr "Попробуйте другое слово или выберите д�
 
 #: src/ui/pane.rs:255
 #, rust-format
-msgid "Only the newest {} matches are listed. Narrow the search or pick a day."
+msgid ""
+"Only the newest {} matches are listed. Narrow the search or pick a day."
 msgstr ""
-"Показаны только {} самых новых совпадений. Уточните запрос или выберите день."
+"Показаны только {} самых новых совпадений. Уточните запрос или выберите "
+"день."
 
 #: src/ui/pane.rs:344
 msgid "Clear the day filter"
@@ -1518,7 +1524,7 @@ msgstr "Открыть в другом приложении"
 
 #: src/ui/lock.rs:17
 msgid "ZapFast is locked"
-msgstr ""
+msgstr "ZapFast заблокирован"
 
 #: src/ui/lock.rs:23
 #, fuzzy
@@ -1527,20 +1533,20 @@ msgstr "Отвязать этот компьютер"
 
 #: src/ui/lock.rs:52
 msgid "Enter your password to unlock."
-msgstr ""
+msgstr "Введите пароль для разблокировки."
 
 #: src/ui/lock.rs:66
 msgid "Password"
-msgstr ""
+msgstr "Пароль"
 
 #: src/ui/lock.rs:76
 #, rust-format
 msgid "Too many wrong passwords. Try again in {seconds} s."
-msgstr ""
+msgstr "Слишком много неверных паролей. Попробуйте через {seconds} с."
 
 #: src/ui/lock.rs:97
 msgid "Unlock"
-msgstr ""
+msgstr "Разблокировать"
 
 #: src/ui/lock.rs:108
 #, fuzzy
@@ -1558,6 +1564,9 @@ msgid ""
 "device from WhatsApp, deletes the chats stored here, and turns the app lock "
 "off. You can link again with a new code."
 msgstr ""
+"Без пароля единственный способ вернуться — отвязать компьютер. Это удалит "
+"устройство из WhatsApp, сотрет сохраненные здесь чаты и отключит блокировку."
+" Вы сможете подключиться заново с новым кодом."
 
 #: src/ui/lock.rs:139
 #, fuzzy
@@ -1571,15 +1580,15 @@ msgstr "Введите сообщение"
 
 #: src/settings.rs:340
 msgid "After 1 minute"
-msgstr ""
+msgstr "Через 1 минуту"
 
 #: src/settings.rs:341
 msgid "After 15 minutes"
-msgstr ""
+msgstr "Через 15 минут"
 
 #: src/settings.rs:342
 msgid "After 1 hour"
-msgstr ""
+msgstr "Через 1 час"
 
 #: src/account.rs:214
 #, rust-format
@@ -1588,27 +1597,931 @@ msgstr "Аккаунт {id}"
 
 #: src/ui/accounts.rs:33
 msgid "Switch account"
-msgstr ""
+msgstr "Переключить аккаунт"
 
 #: src/ui/accounts.rs:84
 msgid "Not linked"
-msgstr ""
+msgstr "Не привязано"
 
 #: src/ui/accounts.rs:232
 #, rust-format
 msgid "{count} unread chats"
-msgstr ""
-
+msgstr "{count} непрочитанных чатов"
 
 #: src/ui/dialogs.rs:1116
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
 msgstr ""
+"Все участники этого чата увидят надпись «Данное сообщение удалено». Это "
+"действие нельзя отменить."
 
 #: src/ui/dialogs.rs:1124
 msgid ""
 "This removes the message from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
 msgstr ""
+"Это удалит сообщение с вашего телефона и связанных устройств. У других "
+"останется их копия. Подключитесь к WhatsApp, чтобы удалить его. Это действие"
+" нельзя отменить."
 
+#: src/model.rs:894 src/model.rs:916
+msgid "Photo"
+msgstr "Фото"
+
+#: src/model.rs:895 src/model.rs:917
+msgid "Video"
+msgstr "Видео"
+
+#: src/model.rs:897 src/model.rs:919
+msgid "Video message"
+msgstr "Видеосообщение"
+
+#: src/model.rs:898 src/model.rs:934
+msgid "Voice message"
+msgstr "Голосовое сообщение"
+
+#: src/model.rs:899 src/model.rs:939
+msgid "Audio"
+msgstr "Аудио"
+
+#: src/model.rs:900
+msgid "Sticker"
+msgstr "Стикер"
+
+#: src/model.rs:904
+msgid "This message was deleted"
+msgstr "Данное сообщение удалено"
+
+#: src/model.rs:905
+msgid "View once photo"
+msgstr "Однократное фото"
+
+#: src/model.rs:906
+msgid "View once video"
+msgstr "Однократное видео"
+
+#: src/model.rs:907
+msgid "View once voice message"
+msgstr "Однократное голосовое сообщение"
+
+#: src/model.rs:908
+msgid "View once audio"
+msgstr "Однократное аудио"
+
+#: src/model.rs:909
+msgid "View once message"
+msgstr "Однократное сообщение"
+
+#: src/model.rs:910
+msgid "Message on your phone"
+msgstr "Сообщение на телефоне"
+
+#: src/model.rs:920
+msgid "Document"
+msgstr "Документ"
+
+#: src/model.rs:924
+msgid "Poll"
+msgstr "Опрос"
+
+#: src/model.rs:944
+msgid "Unsupported message"
+msgstr "Неподдерживаемое сообщение"
+
+#: src/ui/chats.rs:1495
+msgid "Mark as read"
+msgstr "Отметить как прочитанное"
+
+#: src/ui/chats.rs:1505
+msgid "Mark as unread"
+msgstr "Отметить как непрочитанное"
+
+#: src/ui/chats.rs:1511 src/ui/conversation.rs:266 src/ui/dialogs.rs:2007
+msgid "Unpin"
+msgstr "Открепить"
+
+#: src/ui/chats.rs:1513 src/ui/conversation.rs:268
+msgid "Pin to top"
+msgstr "Закрепить вверху"
+
+#: src/ui/chats.rs:1538 src/ui/conversation.rs:280 src/ui/dialogs.rs:2016
+msgid "Unarchive"
+msgstr "Разархивировать"
+
+#: src/ui/chats.rs:1540 src/ui/conversation.rs:282 src/ui/dialogs.rs:2018
+msgid "Archive"
+msgstr "Архивировать"
+
+#: src/ui/chats.rs:1572
+msgid "Mute for 8 hours"
+msgstr "Без звука на 8 часов"
+
+#: src/ui/chats.rs:1573
+msgid "Mute for a week"
+msgstr "Без звука на 1 неделю"
+
+#: src/ui/chats.rs:1574
+msgid "Mute indefinitely"
+msgstr "Всегда без звука"
+
+#: src/ui/chats.rs:1584
+msgid "Unlock chat"
+msgstr "Открыть чат"
+
+#: src/ui/chats.rs:1586 src/ui/dialogs.rs:376
+msgid "Lock chat"
+msgstr "Закрыть чат"
+
+#: src/ui/chats.rs:1610 src/ui/conversation.rs:326 src/ui/dialogs.rs:1985
+msgid "Copy number"
+msgstr "Копировать номер"
+
+#: src/ui/chats.rs:1619 src/ui/conversation.rs:260
+msgid "Info"
+msgstr "Информация"
+
+#: src/ui/chats.rs:1630
+msgid "Delete chat"
+msgstr "Удалить чат"
+
+#: src/ui/chats.rs:1658
+msgid "Notification sound"
+msgstr "Звук уведомления"
+
+#: src/ui/chats.rs:1662
+msgid "Default"
+msgstr "По умолчанию"
+
+#: src/ui/chats.rs:1667
+msgid "System sound"
+msgstr "Системный звук"
+
+#: src/ui/chats.rs:1671
+msgid "No sound"
+msgstr "Без звука"
+
+#: src/ui/chats.rs:1685
+msgid "Custom"
+msgstr "Пользовательская"
+
+#: src/ui/conversation.rs:299 src/ui/dialogs.rs:830
+msgid "Clear chat"
+msgstr "Очистить чат"
+
+#: src/ui/conversation.rs:335
+msgid "Close chat"
+msgstr "Закрыть чат"
+
+#: src/ui/conversation.rs:4010
+msgid "Remove your reaction"
+msgstr "Удалить реакцию"
+
+#: src/ui/conversation.rs:4043
+msgid "React with any emoji"
+msgstr "Отреагировать любым эмодзи"
+
+#: src/ui/conversation.rs:4060
+msgid "Reply"
+msgstr "Ответить"
+
+#: src/ui/conversation.rs:4076
+msgid "Forward"
+msgstr "Переслать"
+
+#: src/ui/conversation.rs:4087
+msgid "Select"
+msgstr "Выбрать"
+
+#: src/ui/conversation.rs:4114
+msgid "Copy text"
+msgstr "Копировать текст"
+
+#: src/ui/conversation.rs:4132
+msgid "Edit"
+msgstr "Редактировать"
+
+#: src/ui/conversation.rs:4142
+msgid "Delete for everyone"
+msgstr "Удалить у всех"
+
+#: src/ui/conversation.rs:4155
+msgid "Delete for me"
+msgstr "Удалить у меня"
+
+#: src/ui/conversation.rs:4211
+msgid "Show in folder"
+msgstr "Показать в папке"
+
+#: src/ui/conversation.rs:4220
+msgid "Downloading…"
+msgstr "Загрузка…"
+
+#: src/ui/conversation.rs:4222
+msgid "Download"
+msgstr "Скачать"
+
+#: src/ui/conversation.rs:4271
+msgid "Copy message ID"
+msgstr "Копировать ID сообщения"
+
+#: src/ui/conversation.rs:7085
+msgid "Cancel selection"
+msgstr "Отменить выбор"
+
+#: src/ui/conversation.rs:7104
+msgid "Forward…"
+msgstr "Переслать…"
+
+#: src/ui/conversation.rs:7092
+msgid "1 selected"
+msgid_plural "{count} selected"
+msgstr[0] "1 выбран"
+msgstr[1] "{count} выбрано"
+msgstr[2] "{count} выбрано"
+
+#: src/ui/dialogs.rs:113
+msgid "Choose an option"
+msgstr "Выберите вариант"
+
+#: src/ui/dialogs.rs:143
+msgid "This list is no longer available."
+msgstr "Этот список больше недоступен."
+
+#: src/ui/dialogs.rs:157
+msgid "This list can no longer receive replies."
+msgstr "Этот список больше не может принимать ответы."
+
+#: src/ui/dialogs.rs:159
+msgid "Sending reply…"
+msgstr "Отправка ответа…"
+
+#: src/ui/dialogs.rs:161
+msgid "Connect to WhatsApp to reply"
+msgstr "Подключитесь к WhatsApp для ответа"
+
+#: src/ui/dialogs.rs:284
+msgid "Set up locked chats"
+msgstr "Настроить закрытые чаты"
+
+#: src/ui/dialogs.rs:286
+msgid "Locked chats"
+msgstr "Закрытые чаты"
+
+#: src/ui/dialogs.rs:290
+msgid ""
+"Choose a local code to open the Locked tab. It is separate from your phone's"
+" code. This hides chats in ZapFast, it does not add another encryption "
+"layer."
+msgstr ""
+"Выберите локальный код для открытия вкладки «Закрытые». Он не связан с кодом"
+" на вашем телефоне. Это скрывает чаты в ZapFast, но не добавляет "
+"дополнительного уровня шифрования."
+
+#: src/ui/dialogs.rs:295
+msgid ""
+"Enter your local ZapFast code. Leaving the Locked tab or closing the window "
+"locks it again."
+msgstr ""
+"Введите локальный код ZapFast. Переход из вкладки «Закрытые» или закрытие "
+"окна снова заблокирует её."
+
+#: src/ui/dialogs.rs:312
+msgid "Local code"
+msgstr "Локальный код"
+
+#: src/ui/dialogs.rs:323
+msgid "Confirm code"
+msgstr "Подтвердить код"
+
+#: src/ui/dialogs.rs:330
+msgid "That code did not match. Try again."
+msgstr "Код не совпадает. Попробуйте снова."
+
+#: src/ui/dialogs.rs:339
+msgid "Set code and open"
+msgstr "Установить код и открыть"
+
+#: src/ui/dialogs.rs:341
+msgid "Open locked chats"
+msgstr "Открыть закрытые чаты"
+
+#: src/ui/dialogs.rs:365
+msgid "Lock this chat?"
+msgstr "Закрыть этот чат?"
+
+#: src/ui/dialogs.rs:368
+msgid ""
+"This moves the chat to the Locked tab, hiding it from the normal chat list, "
+"search, unread badges, and notifications. The lock status also syncs to your"
+" phone. Open Locked with a separate local ZapFast code to read it. Sending "
+"from locked chats is not supported yet."
+msgstr ""
+"Это переместит чат во вкладку «Закрытые», скрыв его из общего списка, "
+"поиска, счетчиков непрочитанных и уведомлений. Статус блокировки также "
+"синхронизируется с телефоном. Откройте «Закрытые» с отдельным локальным "
+"кодом ZapFast, чтобы прочитать его. Отправка из закрытых чатов пока не "
+"поддерживается."
+
+#: src/ui/dialogs.rs:391
+msgid "New chat"
+msgstr "Новый чат"
+
+#: src/ui/dialogs.rs:398
+msgid "Add contact"
+msgstr "Добавить контакт"
+
+#: src/ui/dialogs.rs:412
+msgid "Search contacts"
+msgstr "Поиск контактов"
+
+#: src/ui/dialogs.rs:456
+msgid "No matching contacts"
+msgstr "Нет подходящих контактов"
+
+#: src/ui/dialogs.rs:472
+msgid "Forward message"
+msgstr "Переслать сообщение"
+
+#: src/ui/dialogs.rs:489
+msgid "Search chats"
+msgstr "Поиск по чатам"
+
+#: src/ui/dialogs.rs:569
+msgid "No writable chats found"
+msgstr "Доступных для отправки чатов не найдено"
+
+#: src/ui/dialogs.rs:726
+msgid "Version {version}"
+msgstr "Версия {version}"
+
+#: src/ui/dialogs.rs:736
+msgid ""
+"A native WhatsApp client written in Rust with egui. It connects through "
+"whatsapp-rust. Messages are end-to-end encrypted on this device."
+msgstr ""
+"Нативный клиент WhatsApp, написанный на Rust с использованием egui. "
+"Подключается через whatsapp-rust. Сообщения имеют сквозное шифрование на "
+"этом устройстве."
+
+#: src/ui/dialogs.rs:745
+msgid ""
+"This is an unofficial client. Using it may be against WhatsApp's terms of "
+"service and could get an account suspended."
+msgstr ""
+"Это неофициальный клиент. Его использование может нарушать условия "
+"предоставления услуг WhatsApp и привести к блокировке аккаунта."
+
+#: src/ui/dialogs.rs:781 src/ui/dialogs.rs:812
+msgid "this chat"
+msgstr "этот чат"
+
+#: src/ui/dialogs.rs:785
+msgid "Delete chat?"
+msgstr "Удалить чат?"
+
+#: src/ui/dialogs.rs:788
+msgid ""
+"This deletes your chat with {name}, including all messages, on this computer"
+" and on your phone. It cannot be undone."
+msgstr ""
+"Это удалит ваш чат с {name}, включая все сообщения, на этом компьютере и "
+"телефоне. Это действие нельзя отменить."
+
+#: src/ui/dialogs.rs:799 src/ui/dialogs.rs:1199
+msgid "Delete"
+msgstr "Удалить"
+
+#: src/ui/dialogs.rs:816
+msgid "Clear chat?"
+msgstr "Очистить чат?"
+
+#: src/ui/dialogs.rs:819
+msgid ""
+"This clears every message in your chat with {name}, including downloaded "
+"media, on this computer and on your phone. The chat itself stays. It cannot "
+"be undone."
+msgstr ""
+"Это удалит все сообщения в чате с {name}, включая загруженные медиафайлы, на"
+" этом компьютере и телефоне. Сам чат сохранится. Это действие нельзя "
+"отменить."
+
+#: src/ui/dialogs.rs:850 src/ui/dialogs.rs:862
+msgid "Group invite"
+msgstr "Приглашение в группу"
+
+#: src/ui/dialogs.rs:854
+msgid "Looking up the group…"
+msgstr "Поиск группы…"
+
+#: src/ui/dialogs.rs:892
+msgid "An admin must approve your request before you join."
+msgstr "Администратор должен одобрить вашу заявку перед вступлением."
+
+#: src/ui/dialogs.rs:904
+msgid "Open chat"
+msgstr "Открыть чат"
+
+#: src/ui/dialogs.rs:905
+msgid "Request to join"
+msgstr "Запросить вступление"
+
+#: src/ui/dialogs.rs:906
+msgid "Join group"
+msgstr "Вступить в группу"
+
+#: src/ui/dialogs.rs:909
+msgid "Joining…"
+msgstr "Вступление…"
+
+#: src/ui/dialogs.rs:1135
+msgid "Start over?"
+msgstr "Начать сначала?"
+
+#: src/ui/dialogs.rs:1138
+msgid ""
+"ZapFast keeps your unreadable archive as a separate file, creates a new one,"
+" and asks you to link again. Linking again brings back recent history from "
+"your phone. Afterwards, remove the old ZapFast entry under Linked devices on"
+" your phone."
+msgstr ""
+"ZapFast сохраняет нечитаемый архив отдельным файлом, создает новый и "
+"предлагает привязать аккаунт заново. Повторная привязка загрузит недавнюю "
+"историю с вашего телефона. Затем удалите старую запись ZapFast в меню "
+"«Связанные устройства» на телефоне."
+
+#: src/ui/dialogs.rs:1147
+msgid ""
+"If you can restore the original keyring instead, choose Cancel and Try "
+"again: nothing is lost that way."
+msgstr ""
+"Если вы можете восстановить исходную связку ключей, выберите «Отмена» и "
+"«Повторить»: так ничего не будет потеряно."
+
+#: src/ui/dialogs.rs:1157
+msgid "Start over"
+msgstr "Начать сначала"
+
+#: src/ui/dialogs.rs:1179
+msgid "Delete for everyone?"
+msgstr "Удалить у всех?"
+
+#: src/ui/dialogs.rs:1187
+msgid "Delete for me?"
+msgstr "Удалить у меня?"
+
+#: src/ui/dialogs.rs:1188
+msgid ""
+"This removes the message from this computer. Other people keep their copy. "
+"Your phone will not send it again, so it cannot be undone."
+msgstr ""
+"Это удалит сообщение с этого компьютера. У остальных участников копия "
+"останется. Ваш телефон не отправит его повторно, поэтому действие нельзя "
+"отменить."
+
+#: src/ui/dialogs.rs:1221
+msgid ""
+"This removes the device from WhatsApp and deletes the chats stored here. You"
+" can link again with a new code."
+msgstr ""
+"Это удалит устройство из WhatsApp и сотрет сохраненные здесь чаты. Вы "
+"сможете подключиться заново с новым кодом."
+
+#: src/ui/dialogs.rs:1341
+msgid "Link with a phone number"
+msgstr "Связать по номеру телефона"
+
+#: src/ui/dialogs.rs:1344
+msgid ""
+"Enter the WhatsApp phone number with its country code. Do not include a plus"
+" sign or leading zero. You will get a code to enter on the phone."
+msgstr ""
+"Введите номер телефона WhatsApp с кодом страны. Не указывайте знак плюс или "
+"начальный ноль. Вы получите код для ввода на телефоне."
+
+#: src/ui/dialogs.rs:1393 src/ui/dialogs.rs:1566
+msgid "Enter the whole number, starting with the country code"
+msgstr "Введите номер полностью, начиная с кода страны"
+
+#: src/ui/dialogs.rs:1399
+msgid "Get a code"
+msgstr "Получить код"
+
+#: src/ui/dialogs.rs:1416
+msgid "New contact"
+msgstr "Новый контакт"
+
+#: src/ui/dialogs.rs:1419
+msgid ""
+"Enter a phone number with its country code, without a plus sign or leading "
+"zero. Add a name to save the contact, or leave it blank to open the chat. "
+"WhatsApp uses the first name as the display name."
+msgstr ""
+"Введите номер телефона с кодом страны, без знака плюс или начального нуля. "
+"Добавьте имя, чтобы сохранить контакт, или оставьте пустым, чтобы сразу "
+"открыть чат. WhatsApp использует имя в качестве отображаемого."
+
+#: src/ui/dialogs.rs:1502 src/ui/dialogs.rs:1759
+msgid "First name"
+msgstr "Имя"
+
+#: src/ui/dialogs.rs:1515 src/ui/dialogs.rs:1760
+msgid "Surname"
+msgstr "Фамилия"
+
+#: src/ui/dialogs.rs:1557 src/ui/dialogs.rs:1565
+msgid "Checking the number…"
+msgstr "Проверка номера…"
+
+#: src/ui/dialogs.rs:1575
+msgid "Save contact"
+msgstr "Сохранить контакт"
+
+#: src/ui/dialogs.rs:1578 src/ui/dialogs.rs:1952
+msgid "Message"
+msgstr "Сообщение"
+
+#: src/ui/dialogs.rs:1819
+msgid "online"
+msgstr "в сети"
+
+#: src/ui/dialogs.rs:1863
+msgid "Members ({count})"
+msgstr "Участники ({count})"
+
+#: src/ui/dialogs.rs:1937
+msgid "Muted"
+msgstr "Без звука"
+
+#: src/ui/dialogs.rs:1939
+msgid "Muted until {time}"
+msgstr "Без звука до {time}"
+
+#: src/ui/dialogs.rs:1969
+msgid "Rename"
+msgstr "Переименовать"
+
+#: src/ui/dialogs.rs:1971
+msgid "Add to contacts"
+msgstr "Добавить в контакты"
+
+#: src/ui/dialogs.rs:2009
+msgid "Pin"
+msgstr "Закрепить"
+
+#: src/ui/dialogs.rs:474
+msgid "Forward 1 message"
+msgid_plural "Forward {count} messages"
+msgstr[0] "Переслать 1 сообщение"
+msgstr[1] "Переслать {count} сообщения"
+msgstr[2] "Переслать {count} сообщений"
+
+#: src/ui/dialogs.rs:871
+msgid "1 member"
+msgid_plural "{count} members"
+msgstr[0] "1 участник"
+msgstr[1] "{count} участника"
+msgstr[2] "{count} участников"
+
+#: src/ui/settings.rs:1022
+msgid "Open themes folder"
+msgstr "Открыть папку тем"
+
+#: src/ui/picker.rs:111
+msgid "Emoji"
+msgstr "Эмодзи"
+
+#: src/ui/picker.rs:117
+msgid "Stickers"
+msgstr "Стикеры"
+
+#: src/ui/picker.rs:443
+msgid "React to message"
+msgstr "Отреагировать на сообщение"
+
+#: src/ui/picker.rs:454
+msgid "Close reactions"
+msgstr "Закрыть реакции"
+
+#: src/ui/picker.rs:637
+msgid "Search emoji"
+msgstr "Поиск эмодзи"
+
+#: src/ui/picker.rs:1023
+msgid "Search GIFs via GIPHY"
+msgstr "Поиск GIF через GIPHY"
+
+#: src/ui/image_preview.rs:42
+msgid "Close preview (Esc)"
+msgstr "Закрыть просмотр (Esc)"
+
+#: src/ui/image_preview.rs:87
+msgid "Zoom in"
+msgstr "Приблизить"
+
+#: src/ui/image_preview.rs:97
+msgid "Fit"
+msgstr "Вписать"
+
+#: src/ui/image_preview.rs:98
+msgid "Show at original size"
+msgstr "Показать в исходном размере"
+
+#: src/ui/image_preview.rs:104
+msgid "Fit to the window (0)"
+msgstr "Вписать в окно (0)"
+
+#: src/ui/image_preview.rs:120
+msgid "Zoom out"
+msgstr "Отдалить"
+
+#: src/ui/image_preview.rs:283
+msgid "This image could not be displayed in ZapFast."
+msgstr "Не удалось отобразить изображение в ZapFast."
+
+#: src/ui/image_preview.rs:288
+msgid "Open externally"
+msgstr "Открыть во внешней программе"
+
+#: src/ui/accounts.rs:268
+msgid "Use another account"
+msgstr "Использовать другой аккаунт"
+
+#: src/ui/polls.rs:31
+msgid "Question"
+msgstr "Вопрос"
+
+#: src/ui/polls.rs:44
+msgid "Ask a question"
+msgstr "Задайте вопрос"
+
+#: src/ui/polls.rs:52
+msgid "Answers"
+msgstr "Варианты"
+
+#: src/ui/polls.rs:73
+msgid "Answer {index}"
+msgstr "Вариант {index}"
+
+#: src/ui/polls.rs:92
+msgid "Remove answer"
+msgstr "Удалить вариант"
+
+#: src/ui/polls.rs:109
+msgid "Add answer"
+msgstr "Добавить вариант"
+
+#: src/ui/polls.rs:121
+msgid "Allow multiple answers"
+msgstr "Несколько вариантов ответов"
+
+#: src/ui/polls.rs:140
+msgid "Sending…"
+msgstr "Отправка…"
+
+#: src/ui/polls.rs:142
+msgid "Send poll"
+msgstr "Отправить опрос"
+
+#: src/ui/polls.rs:198
+msgid "Select one answer"
+msgstr "Выберите один вариант"
+
+#: src/ui/polls.rs:200
+msgid "Select answers"
+msgstr "Выберите варианты"
+
+#: src/ui/polls.rs:302
+msgid "Sending vote…"
+msgstr "Отправка голоса…"
+
+#: src/ui/polls.rs:304
+msgid "Waiting for your phone · earlier votes may be missing"
+msgstr "Ожидание телефона · предыдущие голоса могут отсутствовать"
+
+#: src/ui/polls.rs:306
+msgid "Loading earlier votes from your phone…"
+msgstr "Загрузка предыдущих голосов с телефона…"
+
+#: src/ui/polls.rs:308
+msgid "Earlier votes have not been loaded yet"
+msgstr "Предыдущие голоса ещё не загружены"
+
+#: src/ui/polls.rs:328
+msgid "Voting key unavailable · use your phone"
+msgstr "Ключ голосования недоступен · используйте телефон"
+
+#: src/ui/polls.rs:333
+msgid "Reconnect to vote"
+msgstr "Переподключитесь для голосования"
+
+#: src/ui/polls.rs:373
+msgid "Show votes"
+msgstr "Показать голоса"
+
+#: src/ui/polls.rs:425
+msgid "Poll results"
+msgstr "Результаты опроса"
+
+#: src/ui/polls.rs:449
+msgid "This poll is no longer available."
+msgstr "Этот опрос больше недоступен."
+
+#: src/ui/polls.rs:468
+msgid "Earlier votes may still be missing. Results update as they arrive."
+msgstr ""
+"Предыдущие голоса могут отсутствовать. Результаты обновляются по мере "
+"поступления."
+
+#: src/ui/polls.rs:543
+msgid "Participant details are not available yet"
+msgstr "Данные участников пока недоступны"
+
+#: src/ui/polls.rs:310
+msgid "1 voter"
+msgid_plural "{count} voters"
+msgstr[0] "1 участник"
+msgstr[1] "{count} участника"
+msgstr[2] "{count} участников"
+
+#: src/ui/polls.rs:499
+msgid "1 vote"
+msgid_plural "{count} votes"
+msgstr[0] "1 голос"
+msgstr[1] "{count} голоса"
+msgstr[2] "{count} голосов"
+
+#: src/ui/mod.rs:234
+msgid "Drop to send to {name}"
+msgstr "Перетащите для отправки {name}"
+
+#: src/ui/mod.rs:256
+msgid "Loading chat history… {percent}%"
+msgstr "Загрузка истории чата… {percent}%"
+
+#: src/ui/mod.rs:271
+msgid "ZapFast {version} is available"
+msgstr "Доступна версия ZapFast {version}"
+
+#: src/ui/mod.rs:291
+msgid "Offline ({reason}). Reconnecting…"
+msgstr "Не в сети ({reason}). Переподключение…"
+
+#: src/ui/mod.rs:261
+msgid "Loading chat history…"
+msgstr "Загрузка истории чата…"
+
+#: src/ui/mod.rs:284 src/ui/login.rs:84
+msgid "Connecting to WhatsApp…"
+msgstr "Подключение к WhatsApp…"
+
+#: src/ui/mod.rs:309
+msgid "Not linked to a phone"
+msgstr "Не привязано к телефону"
+
+#: src/ui/mod.rs:335
+msgid "Update"
+msgstr "Обновить"
+
+#: src/ui/mod.rs:346
+msgid "Retry"
+msgstr "Повторить"
+
+#: src/ui/mod.rs:461
+msgid "Dismiss"
+msgstr "Закрыть"
+
+#: src/ui/mod.rs:476
+msgid "Copy this message"
+msgstr "Копировать это сообщение"
+
+#: src/ui/login.rs:133
+msgid "Requesting a code for +{phone}…"
+msgstr "Запрос кода для +{phone}…"
+
+#: src/ui/login.rs:230
+msgid "for +{phone}"
+msgstr "для +{phone}"
+
+#: src/ui/login.rs:12
+msgid "A native WhatsApp client."
+msgstr "Нативный клиент WhatsApp."
+
+#: src/ui/login.rs:87
+msgid "Linked. Waiting for your chats…"
+msgstr "Подключено. Ожидание ваших чатов…"
+
+#: src/ui/login.rs:93
+msgid "This computer was unlinked from your phone. Requesting a new code."
+msgstr "Этот компьютер был отключен от вашего телефона. Запрос нового кода."
+
+#: src/ui/login.rs:98
+msgid "Requesting a new code…"
+msgstr "Запрос нового кода…"
+
+#: src/ui/login.rs:113
+msgid "Try again"
+msgstr "Повторить"
+
+#: src/ui/login.rs:116
+msgid "Start over…"
+msgstr "Начать сначала…"
+
+#: src/ui/login.rs:142
+msgid "Waiting for a code from WhatsApp…"
+msgstr "Ожидание кода от WhatsApp…"
+
+#: src/ui/login.rs:150
+msgid ""
+"Unofficial client. Using it may be against WhatsApp's terms of service."
+msgstr ""
+"Неофициальный клиент. Использование может нарушать условия использования "
+"WhatsApp."
+
+#: src/ui/login.rs:175
+msgid "Link this computer"
+msgstr "Связать этот компьютер"
+
+#: src/ui/login.rs:189 src/ui/login.rs:249
+msgid "Open WhatsApp on your phone"
+msgstr "Откройте WhatsApp на телефоне"
+
+#: src/ui/login.rs:190 src/ui/login.rs:250
+msgid "Tap Menu or Settings, then Linked devices"
+msgstr "Нажмите «Меню» или «Настройки», затем «Связанные устройства»"
+
+#: src/ui/login.rs:191
+msgid "Tap Link a device and point the phone at this code"
+msgstr "Нажмите «Связать устройство» и наведите телефон на этот код"
+
+#: src/ui/login.rs:208
+msgid "Link with phone number instead"
+msgstr "Связать по номеру телефона"
+
+#: src/ui/login.rs:223
+msgid "Enter this code on your phone"
+msgstr "Введите этот код на телефоне"
+
+#: src/ui/login.rs:251
+msgid "Tap Link a device, then Link with phone number instead"
+msgstr "Нажмите «Связать устройство», затем «Связать по номеру телефона»"
+
+#: src/ui/login.rs:272
+msgid "Copy code"
+msgstr "Копировать код"
+
+#: src/ui/update.rs:82
+msgid "{received} of {total} MB"
+msgstr "{received} из {total} МБ"
+
+#: src/ui/update.rs:36
+msgid "Update ZapFast"
+msgstr "Обновить ZapFast"
+
+#: src/ui/update.rs:44
+msgid "Close update"
+msgstr "Закрыть обновление"
+
+#: src/ui/update.rs:58
+msgid "Release notes"
+msgstr "Примечания к выпуску"
+
+#: src/ui/update.rs:65
+msgid "Checking download…"
+msgstr "Проверка загрузки…"
+
+#: src/ui/update.rs:67
+msgid "Downloading update…"
+msgstr "Загрузка обновления…"
+
+#: src/ui/update.rs:96
+msgid "Ready to install"
+msgstr "Готово к установке"
+
+#: src/ui/update.rs:101
+msgid ""
+"Finish any unsent messages or recordings before restarting. ZapFast will "
+"briefly disconnect, then reconnect automatically."
+msgstr ""
+"Завершите неотправленные сообщения или записи перед перезапуском. ZapFast "
+"кратковременно отключится, а затем переподключится автоматически."
+
+#: src/ui/update.rs:111
+msgid "Restart to update"
+msgstr "Перезапустить для обновления"
+
+#: src/ui/update.rs:118
+msgid "Preparing to restart…"
+msgstr "Подготовка к перезапуску…"
+
+#: src/ui/update.rs:135
+msgid "Download from GitHub"
+msgstr "Скачать с GitHub"
+
+#: src/ui/update.rs:139
+msgid "Retry download"
+msgstr "Повторить загрузку"
+
+#: src/ui/update.rs:141
+msgid "Download update"
+msgstr "Скачать обновление"
