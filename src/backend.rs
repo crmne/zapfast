@@ -17,6 +17,8 @@ pub(crate) mod sticker_import;
 mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
+#[cfg(any(test, feature = "demo"))]
+pub(crate) use worker::SyntheticLink;
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS};
 
 /// Result of a deletion request, without protocol errors crossing the bridge.
@@ -123,6 +125,15 @@ pub struct CreatedPoll {
 
 #[derive(Debug)]
 pub enum Command {
+    CancelQueued {
+        chat: ChatId,
+        id: String,
+    },
+    OutgoingFinished {
+        chat: ChatId,
+        id: String,
+        result: Result<(), SendFailure>,
+    },
     RefreshPoll {
         chat: ChatId,
         message: String,
@@ -744,8 +755,27 @@ pub enum Command {
     },
 }
 
+/// A send failed before transmission with a known cooldown, or failed without
+/// enough certainty to retry. Technical error text never crosses this boundary:
+/// `kind` names the upstream variant and `code` the IQ code, for the log.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SendFailure {
+    RateLimited {
+        retry_after: u32,
+    },
+    Failed {
+        kind: &'static str,
+        code: Option<u16>,
+    },
+}
+
 #[derive(Debug)]
 pub enum Event {
+    /// A message failed to send and shows as not sent; the interface says so.
+    /// `connection` is true when a lost or slow link was the cause.
+    SendFailed {
+        connection: bool,
+    },
     InteractiveReplyState {
         chat: ChatId,
         message: String,
@@ -797,6 +827,9 @@ pub enum Event {
         complete: bool,
     },
     MessageUpdated(Box<Message>),
+    /// A send that waited, went out, and was refused again: it waits once
+    /// more at the time it waited before, first of the waiting rows.
+    MessageRequeued(Box<Message>),
     /// Files selected for the composer.
     Picked {
         chat: ChatId,

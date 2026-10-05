@@ -27,6 +27,9 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 is ZapFast's sibling. Both are built on
 [fastframe](https://github.com/crmne/fastframe).
 
+For development-build rate-limit handling, see the
+[message guide](https://zapfast.rocks/using-zapfast/#sending-through-a-rate-limit).
+
 ## Install
 
 ```sh
@@ -44,6 +47,9 @@ source, see [Getting started](https://zapfast.rocks/getting-started/).
 ```sh
 cargo run --features demo -- --demo   # offline sample chats, no WhatsApp connection
 ```
+
+The `queued-messages` and `queued-messages-stress` demo pages exercise this
+queue over a synthetic offline link, including replies during cooldowns.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers issues, pull requests, and checks;
 [AGENTS.md](AGENTS.md) the architecture; [DEMO.md](DEMO.md) demo pages,

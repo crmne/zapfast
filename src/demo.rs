@@ -1,5 +1,6 @@
 //! Offline sample data for screenshots, recorded tours, and headless UI tests.
 
+pub(crate) mod queued;
 pub mod stock;
 pub mod tour;
 
@@ -1713,6 +1714,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     for part in page.split(',').map(str::trim) {
         match part {
             "chat" | "" => {}
+            "queued-messages" => queued::setup(app, false),
+            "queued-messages-stress" => queued::setup(app, true),
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
             "chat-header-menu" => app.open_header_menu = app.open_chat.clone(),
             "interactive-actions" => interactive_actions_sample(app),
@@ -4343,6 +4346,9 @@ mod tests {
             "react-picker-empty",
             "react-custom",
             "react-other",
+            "queued-messages",
+            "queued-messages,light",
+            "queued-messages-stress",
         ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
@@ -6130,6 +6136,349 @@ mod tests {
             crate::backend::Command::ReloadHistory { chat, message }
             if Some(chat) == app.open_chat.as_ref() && message == "ada-link")));
         assert!(app.conversations[app.open_chat.as_ref().unwrap()].fetching_phone);
+    }
+
+    /// D1: only a message waiting for a rate-limit cooldown shows the
+    /// waiting line and its Cancel control. A normal send keeps the plain
+    /// bubble with its clock tick.
+    #[test]
+    fn waiting_rows_offer_cancel_and_sending_rows_look_like_before() {
+        use crate::model::Delivery;
+        for (status, waiting) in [(Delivery::Queued, true), (Delivery::Pending, false)] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = app();
+            app.attach(&ctx);
+            app.backend.record_demo_commands();
+            let chat = sample_ids()[0].to_owned();
+            let mut row = message(
+                &chat,
+                "local-row",
+                true,
+                crate::util::now(),
+                Content::text("Keep my message"),
+            );
+            row.status = status;
+            app.conversations.get_mut(&chat).unwrap().messages = vec![row];
+            render(&mut app, &ctx);
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            let has = |label: &str| nodes.iter().any(|(found, _, _)| found == label);
+            assert_eq!(has("Waiting to send"), waiting, "{status:?}");
+            assert_eq!(has("Cancel waiting message"), waiting, "{status:?}");
+            assert!(!has("Sending…") && !has("Queued"), "{status:?}");
+            if !waiting {
+                continue;
+            }
+            let pos = nodes
+                .iter()
+                .find(|(label, _, _)| label == "Cancel waiting message")
+                .unwrap()
+                .2;
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            accessible_nodes(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos), press(true)],
+            );
+            accessible_nodes(&mut app, &ctx, vec![press(false)]);
+            assert!(
+                app.backend
+                    .take_demo_commands()
+                    .iter()
+                    .any(|command| matches!(
+                        command,
+                        crate::backend::Command::CancelQueued { id, .. } if id == "local-row"
+                    ))
+            );
+        }
+    }
+
+    /// A message that is not sent yet cannot carry a reaction: the hover
+    /// control is not there, so a reaction is never dropped silently.
+    #[test]
+    fn only_a_sent_message_of_ours_offers_the_react_control() {
+        use crate::model::Delivery;
+        for (status, offered) in [
+            (Delivery::Queued, false),
+            (Delivery::Pending, false),
+            (Delivery::Unconfirmed, false),
+            (Delivery::Sent, true),
+            (Delivery::Failed, false),
+        ] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = app();
+            app.attach(&ctx);
+            let chat = sample_ids()[0].to_owned();
+            let mut row = message(
+                &chat,
+                "react-row",
+                true,
+                crate::util::now(),
+                Content::text("Keep my message"),
+            );
+            row.status = status;
+            app.conversations.get_mut(&chat).unwrap().messages = vec![row];
+            render(&mut app, &ctx);
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            assert_eq!(
+                nodes
+                    .iter()
+                    .any(|(label, _, _)| label == "React to your message"),
+                offered,
+                "{status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_message_menu_keeps_local_actions_but_cannot_send_a_reaction() {
+        use crate::model::Delivery;
+        for (status, reacts) in [(Delivery::Sent, true), (Delivery::Failed, false)] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = app();
+            app.attach(&ctx);
+            app.backend.record_demo_commands();
+            let chat = sample_ids()[0].to_owned();
+            let mut row = message(
+                &chat,
+                "failed-menu",
+                true,
+                crate::util::now(),
+                Content::text("Keep my message"),
+            );
+            row.status = status;
+            app.conversations.get_mut(&chat).unwrap().messages = vec![row];
+            app.open_message_menu = Some("failed-menu".into());
+            render(&mut app, &ctx);
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            for label in ["Copy text", "Delete for me", "Reply", "Forward"] {
+                assert!(
+                    nodes.iter().any(|(found, _, _)| found == label),
+                    "{status:?}: {label}"
+                );
+            }
+            // The sent menu's quick-reaction row is immediately above Reply.
+            // Its positive case proves that this pointer input actually reacts.
+            let reply = nodes
+                .iter()
+                .find(|(label, _, _)| label == "Reply")
+                .unwrap()
+                .2;
+            let pos = reply - egui::vec2(0.0, 44.0);
+            for pressed in [true, false] {
+                accessible_nodes(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(app.backend.take_demo_commands().iter().any(|command| matches!(command, crate::backend::Command::React { message, .. } if message == "failed-menu")), reacts, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn local_message_menu_only_allows_deletion_after_ownership_ends() {
+        use crate::model::{Delivery, Dialog};
+        for status in [Delivery::Queued, Delivery::Pending, Delivery::Unconfirmed] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = app();
+            let (backend, mut commands, events) = crate::backend::Backend::recording_with_events();
+            app.backend = backend;
+            app.attach(&ctx);
+            let chat = sample_ids()[0].to_owned();
+            let mut row = message(
+                &chat,
+                "local-menu",
+                true,
+                crate::util::now(),
+                Content::Text {
+                    text: "Keep my message".into(),
+                    preview: None,
+                },
+            );
+            row.status = status;
+            app.conversations.get_mut(&chat).unwrap().messages = vec![row];
+            app.open_message_menu = Some("local-menu".into());
+            render(&mut app, &ctx);
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            for forbidden in ["Forward", "Edit", "Delete for everyone"] {
+                assert!(
+                    !nodes.iter().any(|(label, _, _)| label == forbidden),
+                    "{status:?}: {forbidden}"
+                );
+            }
+            let delete = nodes.iter().find(|(label, _, _)| label == "Delete for me");
+            assert_eq!(delete.is_some(), status == Delivery::Unconfirmed);
+            if status == Delivery::Unconfirmed {
+                assert!(
+                    nodes
+                        .iter()
+                        .any(|(label, _, _)| label == "Send unconfirmed")
+                );
+                assert!(!nodes.iter().any(|(label, _, _)| label == "Sending…"));
+            }
+            if let Some((_, _, pos)) = delete {
+                let press = |pressed| egui::Event::PointerButton {
+                    pos: *pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                accessible_nodes(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::PointerMoved(*pos), press(true)],
+                );
+                accessible_nodes(&mut app, &ctx, vec![press(false)]);
+                assert!(matches!(&app.dialog,
+                    Some(Dialog::ConfirmDeleteMessage { message, for_everyone: false, .. })
+                    if message == "local-menu"
+                ));
+                render(&mut app, &ctx);
+                let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+                let pos = nodes
+                    .iter()
+                    .find(|(label, _, _)| label == "Delete")
+                    .unwrap()
+                    .2;
+                for pressed in [true, false] {
+                    accessible_nodes(
+                        &mut app,
+                        &ctx,
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                    );
+                }
+                assert!(
+                    app.conversations[&chat].message("local-menu").is_some(),
+                    "wait for backend-confirmed local deletion"
+                );
+                assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+                    crate::backend::Command::DeleteLocal { chat: target, id } if target == chat && id == "local-menu"
+                )));
+                events
+                    .send(crate::backend::Event::MessageDeleted {
+                        chat: chat.clone(),
+                        id: "local-menu".into(),
+                    })
+                    .unwrap();
+                app.background_frame(&ctx);
+                assert!(app.conversations[&chat].message("local-menu").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn local_message_menu_preserves_media_actions_and_plain_text_copy() {
+        use crate::model::Delivery;
+        for status in [Delivery::Queued, Delivery::Pending, Delivery::Unconfirmed] {
+            for image in [false, true] {
+                for action in if image {
+                    vec!["Copy text", "Copy image"]
+                } else {
+                    vec!["Copy text"]
+                } {
+                    let ctx = egui::Context::default();
+                    ctx.enable_accesskit();
+                    let mut app = app();
+                    app.attach(&ctx);
+                    app.backend.record_demo_commands();
+                    let chat = sample_ids()[0].to_owned();
+                    let path = std::path::PathBuf::from("demo/photo.jpg");
+                    let content = if image {
+                        let mut photo = media("image/jpeg", 120_000, Some(800), Some(600));
+                        photo.path = Some(path.clone());
+                        Content::Image {
+                            caption: Some("*Keep* _my_ ~message~".into()),
+                            media: photo,
+                        }
+                    } else {
+                        Content::Text {
+                            text: "*Keep* _my_ ~message~".into(),
+                            preview: None,
+                        }
+                    };
+                    let mut row = message(&chat, "local-copy", true, 100, content);
+                    row.status = status;
+                    app.conversations.get_mut(&chat).unwrap().messages = vec![row];
+                    app.open_message_menu = Some("local-copy".into());
+                    render(&mut app, &ctx);
+                    let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+                    if image {
+                        for local in ["Copy text", "Copy image", "Save as…", "Open file"] {
+                            assert!(
+                                nodes.iter().any(|(label, _, _)| label == local),
+                                "{status:?}: {local}"
+                            );
+                        }
+                    }
+                    let pos = nodes
+                        .iter()
+                        .find(|(label, _, _)| label == action)
+                        .unwrap()
+                        .2;
+                    let press = |pressed| egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    };
+                    accessible_nodes(
+                        &mut app,
+                        &ctx,
+                        vec![egui::Event::PointerMoved(pos), press(true)],
+                    );
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(1180.0, 780.0),
+                            )),
+                            events: vec![press(false)],
+                            ..Default::default()
+                        },
+                        |ui| {
+                            app.background_frame(ui.ctx());
+                            app.frame_ui(ui);
+                        },
+                    );
+                    // Headless tests must apply font-atlas updates themselves.
+                    output.textures_delta.clear();
+                    if action == "Copy text" {
+                        assert!(output.platform_output.commands.iter().any(|command|
+                            matches!(command, egui::OutputCommand::CopyText(text) if text == "Keep my message")
+                        ), "copy strips WhatsApp formatting");
+                    } else {
+                        assert!(app.backend.take_demo_commands().iter().any(|command|
+                            matches!(command, crate::backend::Command::PrepareClipboardImage(copied) if copied == &path)
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     /// Opening the log hands it to the worker, which waits to see it open or
@@ -8852,6 +9201,53 @@ mod tests {
             })
             .count();
         assert_eq!(hints, 1, "exactly the failed message carries the hint");
+    }
+
+    #[test]
+    fn local_delivery_controls_keep_short_bubbles_intrinsic() {
+        for width in [1180.0, 680.0] {
+            for status in [
+                Delivery::Queued,
+                Delivery::Pending,
+                Delivery::Unconfirmed,
+                Delivery::Sent,
+            ] {
+                let mut app = app();
+                let chat = sample_ids()[0].to_owned();
+                let mut row = message(&chat, "short", true, crate::util::now(), Content::text("a"));
+                row.status = status;
+                let id = crate::ui::conversation::bubble_id(&chat, &row.id).with("rect");
+                app.conversations.get_mut(&chat).unwrap().messages.push(row);
+                app.open_chat = Some(chat.clone());
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                for _ in 0..3 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 780.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let ctx = ui.ctx().clone();
+                            app.background_frame(&ctx);
+                            app.frame_ui(ui);
+                        },
+                    );
+                    output.textures_delta.clear();
+                }
+                let rect = ctx
+                    .data(|data| data.get_temp::<egui::Rect>(id))
+                    .expect("message visible");
+                assert!(
+                    rect.width() < 180.0,
+                    "{status:?} at {width}: short message claimed {} pixels",
+                    rect.width()
+                );
+            }
+        }
     }
 
     /// Voice controls keep their width and order in right-aligned bubbles.
