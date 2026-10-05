@@ -9,3 +9,9 @@ Terminal=false
 Categories=Network;InstantMessaging;Chat;
 Keywords=whatsapp;chat;messaging;
 StartupWMClass=zapfast
+SingleMainWindow=true
+Actions=quit;
+
+[Desktop Action quit]
+Name=Quit ZapFast
+Exec=zapfast quit

@@ -48,6 +48,12 @@ check_prefix() {
     echo "expected: $expected" >&2
     exit 1
   }
+  # The Quit action keeps its argument after the quoted path.
+  grep -qxF "$expected quit" "$entry" || {
+    echo "unexpected Quit action Exec for prefix: $prefix" >&2
+    grep '^Exec=' "$entry" >&2
+    exit 1
+  }
 
   # desktop-file-validate rejects the spec-correct doubled backslash in a
   # quoted Exec, so it is only consulted for paths without one. The escaping is
