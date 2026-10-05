@@ -90,6 +90,40 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     let menu_open = egui::Popup::is_any_open(ctx);
     let search_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search")));
     let composer_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text")));
+    if app.page == Page::Chats
+        && app.selection.as_ref().is_some_and(|(chat, selected)| {
+            app.open_chat.as_ref() == Some(chat) && !selected.is_empty()
+        })
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && app.recording.is_none()
+        && !app.chat_search_calendar
+        && !menu_open
+        // The selection bar replaces the composer. Its previous frame's
+        // focus must not swallow Copy before egui drops that hidden field.
+        && (!editing_text || composer_focused)
+    {
+        // Native clipboard commands arrive as Event::Copy, including Copy
+        // from the macOS menu. Consume it before egui's text-selection hook.
+        let copy = ctx.input_mut(|input| {
+            let mut copy = false;
+            input.events.retain(|event| {
+                let takes = matches!(event, egui::Event::Copy)
+                    || matches!(event, egui::Event::Key {
+                        key: Key::C, pressed: true, modifiers, ..
+                    } if (modifiers.command || modifiers.ctrl)
+                        && !modifiers.alt && !modifiers.shift);
+                copy |= takes;
+                !takes
+            });
+            copy
+        });
+        if copy && let Some(text) = super::conversation::selected_text(app) {
+            actions.push(Action::CopyText(text));
+        }
+    }
     // PgUp/PgDn/Home/End scroll the open chat. PgUp/PgDn also work while the
     // composer has focus, since egui's TextEdit does not handle them itself;
     // Home/End keep moving the text cursor in a non-empty field, as ↑ keeps
