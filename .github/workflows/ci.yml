@@ -122,7 +122,8 @@ jobs:
   nix:
     name: Nix package (${{ matrix.system }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # Uncached, aarch64-darwin takes about 53 minutes, Linux about 22.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -131,9 +132,13 @@ jobs:
             system: x86_64-linux
           - os: ubuntu-24.04-arm
             system: aarch64-linux
+          - os: macos-latest
+            system: aarch64-darwin
     steps:
       - uses: actions/checkout@v7
+      # Frees disk space on Ubuntu runners; macOS runners have enough.
       - uses: wimpysworld/nothing-but-nix@v9
+        if: runner.os == 'Linux'
       - uses: cachix/install-nix-action@v31
       - uses: nix-community/cache-nix-action@v7
         with:
