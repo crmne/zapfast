@@ -6208,7 +6208,7 @@ mod tests {
             (Delivery::Pending, false),
             (Delivery::Unconfirmed, false),
             (Delivery::Sent, true),
-            (Delivery::Failed, true),
+            (Delivery::Failed, false),
         ] {
             let ctx = egui::Context::default();
             ctx.enable_accesskit();
@@ -6233,6 +6233,61 @@ mod tests {
                 offered,
                 "{status:?}"
             );
+        }
+    }
+
+    #[test]
+    fn failed_message_menu_keeps_local_actions_but_cannot_send_a_reaction() {
+        use crate::model::Delivery;
+        for (status, reacts) in [(Delivery::Sent, true), (Delivery::Failed, false)] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = app();
+            app.attach(&ctx);
+            app.backend.record_demo_commands();
+            let chat = sample_ids()[0].to_owned();
+            let mut row = message(
+                &chat,
+                "failed-menu",
+                true,
+                crate::util::now(),
+                Content::text("Keep my message"),
+            );
+            row.status = status;
+            app.conversations.get_mut(&chat).unwrap().messages = vec![row];
+            app.open_message_menu = Some("failed-menu".into());
+            render(&mut app, &ctx);
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            for label in ["Copy text", "Delete for me", "Reply", "Forward"] {
+                assert!(
+                    nodes.iter().any(|(found, _, _)| found == label),
+                    "{status:?}: {label}"
+                );
+            }
+            // The sent menu's quick-reaction row is immediately above Reply.
+            // Its positive case proves that this pointer input actually reacts.
+            let reply = nodes
+                .iter()
+                .find(|(label, _, _)| label == "Reply")
+                .unwrap()
+                .2;
+            let pos = reply - egui::vec2(0.0, 44.0);
+            for pressed in [true, false] {
+                accessible_nodes(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(app.backend.take_demo_commands().iter().any(|command| matches!(command, crate::backend::Command::React { message, .. } if message == "failed-menu")), reacts, "{status:?}");
         }
     }
 

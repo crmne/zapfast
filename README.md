@@ -38,6 +38,14 @@ fail immediately, without joining the queue. An interrupted send shows **Send
 unconfirmed**, because it may have reached WhatsApp, and is never resent
 automatically. You can copy or delete it locally.
 
+If local storage prevents a waiting message from starting, it is not sent.
+ZapFast reports the failure and retries only its local status cleanup, not the
+send. Cancelling still prevents transmission if local deletion fails: the error
+explains this, and **Cancel** can retry deletion after storage recovers. Local
+cleanup also retries every 30 seconds, even while disconnected, and does not
+block later sends. If ZapFast exits before cleanup completes, leftover waiting
+rows become **Not sent** on reopening; they are never automatically replayed.
+
 ## Install
 
 ```sh

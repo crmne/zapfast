@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-05 14:03-0500\n"
+"POT-Creation-Date: 2026-10-05 14:33-0500\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -191,7 +191,7 @@ msgstr "草稿："
 msgid "Remove from favorites"
 msgstr "取消收藏"
 
-#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4195
+#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4198
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "添加到收藏"
@@ -284,16 +284,16 @@ msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} 条未读消息"
 
-#: src/ui/conversation.rs:3329 src/ui/conversation.rs:4204
+#: src/ui/conversation.rs:3329 src/ui/conversation.rs:4207
 msgid "Open in system player"
 msgstr "用系统播放器打开"
 
-#: src/ui/conversation.rs:3330 src/ui/conversation.rs:4278
+#: src/ui/conversation.rs:3330 src/ui/conversation.rs:4281
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "消息信息"
 
-#: src/ui/conversation.rs:3331 src/ui/conversation.rs:4290
+#: src/ui/conversation.rs:3331 src/ui/conversation.rs:4293
 msgid "Reload earlier messages"
 msgstr ""
 
@@ -333,99 +333,99 @@ msgstr "取消等待中的消息"
 msgid "Delete this message so it is not sent"
 msgstr "删除此消息，使其不会被发送"
 
-#: src/ui/conversation.rs:4216 src/ui/image_preview.rs:62
+#: src/ui/conversation.rs:4219 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
 msgid "Copy image"
 msgstr "复制图片"
 
-#: src/ui/conversation.rs:4665
+#: src/ui/conversation.rs:4668
 msgid "Location"
 msgstr "位置"
 
-#: src/ui/conversation.rs:4691
+#: src/ui/conversation.rs:4694
 msgid "Live location ended"
 msgstr "实时位置已结束"
 
-#: src/ui/conversation.rs:4693 src/ui/conversation.rs:4887
+#: src/ui/conversation.rs:4696 src/ui/conversation.rs:4890
 msgid "Live location"
 msgstr "实时位置"
 
-#: src/ui/conversation.rs:4703
+#: src/ui/conversation.rs:4706
 #, rust-format
 msgid "Updated {time}"
 msgstr "更新于 {time}"
 
-#: src/ui/conversation.rs:4754
+#: src/ui/conversation.rs:4757
 msgid "Chat"
 msgstr "聊天"
 
-#: src/ui/conversation.rs:4768
+#: src/ui/conversation.rs:4771
 msgid "Add"
 msgstr "添加"
 
-#: src/ui/conversation.rs:4816
+#: src/ui/conversation.rs:4819
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} 个贴图"
 
-#: src/ui/conversation.rs:4829
+#: src/ui/conversation.rs:4832
 msgid "View stickers"
 msgstr "查看贴图"
 
-#: src/ui/conversation.rs:4895
+#: src/ui/conversation.rs:4898
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "在手机上打开 WhatsApp 即可查看。"
 
-#: src/ui/conversation.rs:4913
+#: src/ui/conversation.rs:4916
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr "一次性照片。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4917
+#: src/ui/conversation.rs:4920
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr "一次性视频。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4921
+#: src/ui/conversation.rs:4924
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr "一次性语音消息。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4925
+#: src/ui/conversation.rs:4928
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr "一次性音频。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4929
+#: src/ui/conversation.rs:4932
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr "一次性消息。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:4931
+#: src/ui/conversation.rs:4934
 msgid "This message can only be seen on your phone."
 msgstr "此消息只能在手机上查看。"
 
-#: src/ui/conversation.rs:5773
+#: src/ui/conversation.rs:5776
 msgid "Open in a map"
 msgstr "在地图中打开"
 
-#: src/ui/conversation.rs:6392
+#: src/ui/conversation.rs:6395
 msgid "Pause"
 msgstr "暂停"
 
-#: src/ui/conversation.rs:6394 src/ui/settings.rs:1738
+#: src/ui/conversation.rs:6397 src/ui/settings.rs:1738
 msgid "Play"
 msgstr "播放"
 
-#: src/ui/conversation.rs:6421
+#: src/ui/conversation.rs:6424
 msgid "Back to the message (Esc)"
 msgstr "返回消息 (Esc)"
 
-#: src/ui/conversation.rs:6423
+#: src/ui/conversation.rs:6426
 msgid "Fill the window"
 msgstr "填满窗口"
 
-#: src/ui/conversation.rs:6453
+#: src/ui/conversation.rs:6456
 msgid "Unmute"
 msgstr "取消静音"
 
-#: src/ui/conversation.rs:6455
+#: src/ui/conversation.rs:6458
 msgid "Mute"
 msgstr "静音"
 

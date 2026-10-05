@@ -1551,6 +1551,12 @@ impl Worker {
     }
 
     async fn start_bot(&mut self) {
+        // The scripted offline transport must also stay offline after logout
+        // or reconnect, not just when dispatching messages.
+        #[cfg(any(test, feature = "demo"))]
+        if self.outgoing.synthetic.is_some() {
+            return;
+        }
         let path = self.dirs.session_db();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -2707,6 +2713,8 @@ impl Worker {
         self.stop_bot().await;
         if let Err(error) = self.archive.clear() {
             log::warn!("could not clear the archive: {error}");
+        } else {
+            self.clear_outgoing_cleanup();
         }
         self.lid_to_pn.clear();
         self.contacts.clear();
@@ -6998,8 +7006,7 @@ impl Worker {
                     // whatever arrived meanwhile: the first page carries it.
                     let waiting: Vec<String> = self
                         .outgoing
-                        .waiting
-                        .iter()
+                        .retained_local_rows()
                         .filter(|job| job.waited && &job.chat == chat)
                         .filter(|job| !messages.iter().any(|row| row.id == job.id))
                         .map(|job| job.id.clone())
@@ -7653,11 +7660,14 @@ impl Worker {
     }
 
     fn react(&mut self, chat: ChatId, id: String, emoji: String) {
-        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
-            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
+        let Ok(Some(target)) = self.archive.message(&chat, &id) else {
             return;
         };
-        let Ok(Some(target)) = self.archive.message(&chat, &id) else {
+        if !target.allows_reaction() {
+            return;
+        }
+        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
+            self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
         let me = self.me();

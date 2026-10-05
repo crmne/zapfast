@@ -1764,8 +1764,8 @@ impl Archive {
     /// row moves, and the reply is the time it waited at; anything else keeps
     /// its time and reports `None`.
     pub fn dispatch_outgoing(&self, chat: &str, id: &str, at: i64) -> Result<Option<i64>> {
-        let queued_at: Option<i64> = self
-            .connection
+        let transaction = self.connection.unchecked_transaction()?;
+        let queued_at: Option<i64> = transaction
             .query_row(
                 "SELECT timestamp FROM messages
                  WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND status = ?3",
@@ -1774,15 +1774,16 @@ impl Archive {
             )
             .optional()?;
         if queued_at.is_some() {
-            self.connection.execute(
+            transaction.execute(
                 "UPDATE messages SET status = ?3, timestamp = ?4 WHERE chat = ?1 AND id = ?2",
                 params![chat, id, status_rank(Delivery::Pending), at],
             )?;
-            self.connection.execute(
+            transaction.execute(
                 "UPDATE chats SET last_activity = MAX(last_activity, ?2) WHERE id = ?1",
                 params![chat, at],
             )?;
         }
+        transaction.commit()?;
         Ok(queued_at)
     }
 
@@ -2011,6 +2012,43 @@ pub(crate) mod tests {
         } else {
             "DROP TRIGGER reject_message_deletion"
         }).unwrap();
+    }
+
+    pub(crate) fn set_dispatch_failure(archive: &super::Archive, fail: bool) {
+        archive.connection.execute_batch(if fail {
+            "CREATE TRIGGER reject_dispatch BEFORE UPDATE OF last_activity ON chats BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
+        } else {
+            "DROP TRIGGER reject_dispatch"
+        }).unwrap();
+    }
+
+    pub(crate) fn set_outgoing_state_failure(archive: &super::Archive, fail: bool) {
+        archive.connection.execute_batch(if fail {
+            "CREATE TRIGGER reject_outgoing_state BEFORE UPDATE OF status ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
+        } else {
+            "DROP TRIGGER reject_outgoing_state"
+        }).unwrap();
+    }
+
+    #[test]
+    fn dispatch_failure_keeps_the_waiting_row_and_chat_unchanged() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let mut waiting = message(chat, "waiting", 100, true);
+        waiting.status = Delivery::Queued;
+        archive.insert_message(&waiting, None).unwrap();
+        let activity = archive.chat(chat).unwrap().unwrap().last_activity;
+        set_dispatch_failure(&archive, true);
+        assert!(archive.dispatch_outgoing(chat, "waiting", 500).is_err());
+        let row = archive.message(chat, "waiting").unwrap().unwrap();
+        assert_eq!((row.status, row.timestamp), (Delivery::Queued, 100));
+        assert_eq!(archive.chat(chat).unwrap().unwrap().last_activity, activity);
+        set_dispatch_failure(&archive, false);
+        assert_eq!(
+            archive.dispatch_outgoing(chat, "waiting", 500).unwrap(),
+            Some(100)
+        );
     }
 
     /// Failed unlink cannot apply the previous account's terminal barriers.

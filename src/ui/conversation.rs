@@ -3291,9 +3291,9 @@ fn bubble_frame(
     // and footer. Double-click on the body keeps selecting the word.
     reply_on_double_click(&bubble, message, actions);
 
-    // A message of ours that is not sent yet takes no reaction or reply,
-    // as its menu says: the controls would do nothing.
-    if !(message.from_me && message.status.is_local()) {
+    // Local and failed outgoing rows cannot carry reactions. Failed rows
+    // retain their other actions; reaction eligibility is intentionally narrow.
+    if message.allows_reaction() {
         reaction_affordance(ui, view, message, &bubble, actions);
     }
     // Read right-click from input because inner widgets own their responses.
@@ -4034,7 +4034,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     let local = message.from_me && message.status.is_local();
     if local {
         outgoing_controls(ui, view, message, actions);
-    } else {
+    }
+    if message.allows_reaction() {
         let mine = own_reaction(message);
         ui.allocate_ui_with_layout(
             vec2(ui.available_width(), 34.0),
@@ -4111,6 +4112,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             },
         );
         widgets::menu_separator(ui, &palette);
+    }
+    if !local {
         if !matches!(message.content, Content::Revoked)
             && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
         {

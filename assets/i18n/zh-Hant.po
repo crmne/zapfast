@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-05 14:03-0500\n"
+"POT-Creation-Date: 2026-10-05 14:33-0500\n"
 "PO-Revision-Date: 2026-10-02 18:51+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
 "Language-Team: Chinese (Traditional)\n"
@@ -190,7 +190,7 @@ msgstr "草稿："
 msgid "Remove from favorites"
 msgstr "從最愛中移除"
 
-#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4195
+#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4198
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "加入最愛"
@@ -284,39 +284,40 @@ msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} 則未讀訊息"
 
-#: src/ui/conversation.rs:3329 src/ui/conversation.rs:4204
+#: src/ui/conversation.rs:3329 src/ui/conversation.rs:4207
 msgid "Open in system player"
 msgstr "在系統播放器中開啟"
 
-#: src/ui/conversation.rs:3330 src/ui/conversation.rs:4278
+#: src/ui/conversation.rs:3330 src/ui/conversation.rs:4281
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "訊息資訊"
 
-#: src/ui/conversation.rs:3331 src/ui/conversation.rs:4290
+#: src/ui/conversation.rs:3331 src/ui/conversation.rs:4293
 msgid "Reload earlier messages"
 msgstr ""
 
 #: src/ui/conversation.rs:3874
 msgid "Waiting to send"
-msgstr ""
+msgstr "等待傳送"
 
 #: src/ui/conversation.rs:3877
 msgid ""
 "WhatsApp limits how fast messages can be sent. This message sends "
 "automatically when the limit ends."
-msgstr ""
+msgstr "WhatsApp 限制訊息的傳送速度。限制結束後，此訊息將自動傳送。"
 
 #: src/ui/conversation.rs:3881
-#, fuzzy
 msgid "Send unconfirmed"
-msgstr "傳送檔案"
+msgstr "傳送結果未確認"
 
 #: src/ui/conversation.rs:3884
 msgid ""
 "Sending was interrupted. This message may have been sent. It will not be "
 "resent automatically. You can copy it or delete it locally."
 msgstr ""
+"傳送已中斷。此訊息可能已送出，不會自動重新傳送。您可以複製訊息或在此裝置上刪"
+"除。"
 
 #: src/ui/conversation.rs:3893 src/ui/dialogs.rs:1064 src/ui/dialogs.rs:1197
 #: src/ui/dialogs.rs:1259 src/ui/settings.rs:961 src/ui/settings.rs:1524
@@ -325,107 +326,106 @@ msgid "Cancel"
 msgstr "取消"
 
 #: src/ui/conversation.rs:3898
-#, fuzzy
 msgid "Cancel waiting message"
-msgstr "輸入訊息"
+msgstr "取消等待中的訊息"
 
 #: src/ui/conversation.rs:3907
 msgid "Delete this message so it is not sent"
-msgstr ""
+msgstr "刪除此訊息，讓它不會被傳送"
 
-#: src/ui/conversation.rs:4216 src/ui/image_preview.rs:62
+#: src/ui/conversation.rs:4219 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
 msgid "Copy image"
 msgstr "複製圖片"
 
-#: src/ui/conversation.rs:4665
+#: src/ui/conversation.rs:4668
 msgid "Location"
 msgstr "位置"
 
-#: src/ui/conversation.rs:4691
+#: src/ui/conversation.rs:4694
 msgid "Live location ended"
 msgstr "即時位置已結束"
 
-#: src/ui/conversation.rs:4693 src/ui/conversation.rs:4887
+#: src/ui/conversation.rs:4696 src/ui/conversation.rs:4890
 msgid "Live location"
 msgstr "即時位置"
 
-#: src/ui/conversation.rs:4703
+#: src/ui/conversation.rs:4706
 #, rust-format
 msgid "Updated {time}"
 msgstr "更新於 {time}"
 
-#: src/ui/conversation.rs:4754
+#: src/ui/conversation.rs:4757
 msgid "Chat"
 msgstr "對話"
 
-#: src/ui/conversation.rs:4768
+#: src/ui/conversation.rs:4771
 msgid "Add"
 msgstr "新增"
 
-#: src/ui/conversation.rs:4816
+#: src/ui/conversation.rs:4819
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} 個貼圖"
 
-#: src/ui/conversation.rs:4829
+#: src/ui/conversation.rs:4832
 msgid "View stickers"
 msgstr "檢視貼圖"
 
-#: src/ui/conversation.rs:4895
+#: src/ui/conversation.rs:4898
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "請在手機上開啟 WhatsApp 以追蹤。"
 
-#: src/ui/conversation.rs:4913
+#: src/ui/conversation.rs:4916
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr "檢視一次的相片。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:4917
+#: src/ui/conversation.rs:4920
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr "檢視一次的影片。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:4921
+#: src/ui/conversation.rs:4924
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr "檢視一次的語音訊息。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:4925
+#: src/ui/conversation.rs:4928
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr "檢視一次的音訊。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:4929
+#: src/ui/conversation.rs:4932
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr "檢視一次的訊息。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:4931
+#: src/ui/conversation.rs:4934
 msgid "This message can only be seen on your phone."
 msgstr "此訊息只能在您的手機上查看。"
 
-#: src/ui/conversation.rs:5773
+#: src/ui/conversation.rs:5776
 msgid "Open in a map"
 msgstr "在地圖中開啟"
 
-#: src/ui/conversation.rs:6392
+#: src/ui/conversation.rs:6395
 msgid "Pause"
 msgstr "暫停"
 
-#: src/ui/conversation.rs:6394 src/ui/settings.rs:1738
+#: src/ui/conversation.rs:6397 src/ui/settings.rs:1738
 msgid "Play"
 msgstr "播放"
 
-#: src/ui/conversation.rs:6421
+#: src/ui/conversation.rs:6424
 msgid "Back to the message (Esc)"
 msgstr "回到訊息（Esc）"
 
-#: src/ui/conversation.rs:6423
+#: src/ui/conversation.rs:6426
 msgid "Fill the window"
 msgstr "填滿視窗"
 
-#: src/ui/conversation.rs:6453
+#: src/ui/conversation.rs:6456
 msgid "Unmute"
 msgstr "取消靜音"
 
-#: src/ui/conversation.rs:6455
+#: src/ui/conversation.rs:6458
 msgid "Mute"
 msgstr "靜音"
 
@@ -1138,12 +1138,11 @@ msgstr "無法使用這張圖片"
 msgid ""
 "This message could not be sent. Check your connection before sending it "
 "again."
-msgstr ""
+msgstr "此訊息無法傳送。請在再次傳送前檢查連線。"
 
 #: src/app.rs:2949
-#, fuzzy
 msgid "This message could not be sent. Try again later."
-msgstr "此訊息已無法使用。"
+msgstr "此訊息無法傳送。請稍後再試。"
 
 #: src/app.rs:3352
 msgid "Not sent: ZapFast is not connected to WhatsApp."

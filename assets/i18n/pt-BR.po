@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-05 14:03-0500\n"
+"POT-Creation-Date: 2026-10-05 14:33-0500\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -191,7 +191,7 @@ msgstr "Rascunho:"
 msgid "Remove from favorites"
 msgstr "Remover dos favoritos"
 
-#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4195
+#: src/ui/chats.rs:1147 src/ui/chats.rs:1513 src/ui/conversation.rs:4198
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Adicionar aos favoritos"
@@ -288,16 +288,16 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} mensagem não lida"
 msgstr[1] "{} mensagens não lidas"
 
-#: src/ui/conversation.rs:3329 src/ui/conversation.rs:4204
+#: src/ui/conversation.rs:3329 src/ui/conversation.rs:4207
 msgid "Open in system player"
 msgstr "Abrir no player do sistema"
 
-#: src/ui/conversation.rs:3330 src/ui/conversation.rs:4278
+#: src/ui/conversation.rs:3330 src/ui/conversation.rs:4281
 #: src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Dados da mensagem"
 
-#: src/ui/conversation.rs:3331 src/ui/conversation.rs:4290
+#: src/ui/conversation.rs:3331 src/ui/conversation.rs:4293
 msgid "Reload earlier messages"
 msgstr ""
 
@@ -339,109 +339,109 @@ msgstr "Cancelar mensagem em espera"
 msgid "Delete this message so it is not sent"
 msgstr "Excluir esta mensagem para que ela não seja enviada"
 
-#: src/ui/conversation.rs:4216 src/ui/image_preview.rs:62
+#: src/ui/conversation.rs:4219 src/ui/image_preview.rs:62
 #: src/ui/image_preview.rs:173
 msgid "Copy image"
 msgstr "Copiar imagem"
 
-#: src/ui/conversation.rs:4665
+#: src/ui/conversation.rs:4668
 #, fuzzy
 msgid "Location"
 msgstr "Localização em tempo real"
 
-#: src/ui/conversation.rs:4691
+#: src/ui/conversation.rs:4694
 msgid "Live location ended"
 msgstr "Localização em tempo real encerrada"
 
-#: src/ui/conversation.rs:4693 src/ui/conversation.rs:4887
+#: src/ui/conversation.rs:4696 src/ui/conversation.rs:4890
 msgid "Live location"
 msgstr "Localização em tempo real"
 
-#: src/ui/conversation.rs:4703
+#: src/ui/conversation.rs:4706
 #, rust-format
 msgid "Updated {time}"
 msgstr "Atualizada às {time}"
 
-#: src/ui/conversation.rs:4754
+#: src/ui/conversation.rs:4757
 msgid "Chat"
 msgstr "Conversar"
 
-#: src/ui/conversation.rs:4768
+#: src/ui/conversation.rs:4771
 msgid "Add"
 msgstr "Adicionar"
 
-#: src/ui/conversation.rs:4816
+#: src/ui/conversation.rs:4819
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} figurinha"
 msgstr[1] "{} figurinhas"
 
-#: src/ui/conversation.rs:4829
+#: src/ui/conversation.rs:4832
 msgid "View stickers"
 msgstr "Ver figurinhas"
 
-#: src/ui/conversation.rs:4895
+#: src/ui/conversation.rs:4898
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Abra o WhatsApp no seu celular para acompanhá-la."
 
-#: src/ui/conversation.rs:4913
+#: src/ui/conversation.rs:4916
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Foto de visualização única. Para sua privacidade, ela só abre no seu celular."
 
-#: src/ui/conversation.rs:4917
+#: src/ui/conversation.rs:4920
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Vídeo de visualização única. Para sua privacidade, ele só abre no seu "
 "celular."
 
-#: src/ui/conversation.rs:4921
+#: src/ui/conversation.rs:4924
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Mensagem de voz de reprodução única. Para sua privacidade, ela só abre no "
 "seu celular."
 
-#: src/ui/conversation.rs:4925
+#: src/ui/conversation.rs:4928
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Áudio de reprodução única. Para sua privacidade, ele só abre no seu celular."
 
-#: src/ui/conversation.rs:4929
+#: src/ui/conversation.rs:4932
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Mensagem de visualização única. Para sua privacidade, ela só abre no seu "
 "celular."
 
-#: src/ui/conversation.rs:4931
+#: src/ui/conversation.rs:4934
 msgid "This message can only be seen on your phone."
 msgstr "Esta mensagem só pode ser vista no seu celular."
 
-#: src/ui/conversation.rs:5773
+#: src/ui/conversation.rs:5776
 msgid "Open in a map"
 msgstr "Abrir em um mapa"
 
-#: src/ui/conversation.rs:6392
+#: src/ui/conversation.rs:6395
 msgid "Pause"
 msgstr "Pausar"
 
-#: src/ui/conversation.rs:6394 src/ui/settings.rs:1738
+#: src/ui/conversation.rs:6397 src/ui/settings.rs:1738
 msgid "Play"
 msgstr "Reproduzir"
 
-#: src/ui/conversation.rs:6421
+#: src/ui/conversation.rs:6424
 msgid "Back to the message (Esc)"
 msgstr "Voltar à mensagem (Esc)"
 
-#: src/ui/conversation.rs:6423
+#: src/ui/conversation.rs:6426
 msgid "Fill the window"
 msgstr "Preencher a janela"
 
-#: src/ui/conversation.rs:6453
+#: src/ui/conversation.rs:6456
 msgid "Unmute"
 msgstr "Ativar som"
 
-#: src/ui/conversation.rs:6455
+#: src/ui/conversation.rs:6458
 msgid "Mute"
 msgstr "Silenciar"
 

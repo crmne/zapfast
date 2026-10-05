@@ -24,11 +24,26 @@ pub(super) struct Job {
     pub queued_at: Option<i64>,
 }
 
+// SQL cleanup owns these rows but never owns a transport retry.
+enum CleanupAction {
+    Status(Delivery),
+    Delete,
+}
+
+struct Cleanup {
+    job: Job,
+    action: CleanupAction,
+}
+
+const STORAGE_RETRY: Duration = Duration::from_secs(30);
+
 #[derive(Default)]
 pub(super) struct Outgoing {
     pub waiting: VecDeque<Job>,
     pub running: Option<Job>,
     task: Option<tokio::task::AbortHandle>,
+    cleanup: Vec<Cleanup>,
+    storage_retry_at: Option<Instant>,
     /// The end of the server's cooldown after a rate refusal.
     pub retry_at: Option<Instant>,
     /// Demos and tests: started sends land here instead of going to
@@ -38,6 +53,14 @@ pub(super) struct Outgoing {
 }
 
 impl Outgoing {
+    /// Rows still owned locally, including cancelled deletion-only cleanup.
+    /// The archive may still show those rows as Queued until SQL recovers.
+    pub(super) fn retained_local_rows(&self) -> impl Iterator<Item = &Job> {
+        self.waiting
+            .iter()
+            .chain(self.cleanup.iter().map(|cleanup| &cleanup.job))
+    }
+
     fn cooling_down(&self, now: Instant) -> bool {
         self.retry_at.is_some_and(|due| due > now)
     }
@@ -106,8 +129,9 @@ impl Worker {
             queued_at: None,
         };
         // Without a link it does not wait: the pump fails it at once.
-        if self.link_up() && self.outgoing.must_wait(now) {
-            self.mark_waiting(&mut job);
+        if self.link_up() && self.outgoing.must_wait(now) && !self.mark_waiting(&mut job) {
+            self.finish_interactive(&job.chat, &job.id);
+            return;
         }
         self.outgoing.waiting.push_back(job);
         self.pump_outgoing_at(now);
@@ -141,12 +165,12 @@ impl Worker {
     }
 
     /// Shows the row as waiting. `false` when the row is no longer a
-    /// pending send of ours: deleted, cleared, or confirmed by a receipt.
+    /// pending send of ours, or storage failed and cleanup owns it instead.
     fn mark_waiting(&mut self, job: &mut Job) -> bool {
-        job.waited = self
+        let result = self
             .archive
-            .set_outgoing_state(&job.chat, &job.id, Delivery::Queued)
-            .unwrap_or(false);
+            .set_outgoing_state(&job.chat, &job.id, Delivery::Queued);
+        job.waited = self.waiting_state_written(job, result);
         if job.waited {
             self.emit_message(&job.chat, &job.id);
             self.emit_chat(&job.chat);
@@ -158,10 +182,8 @@ impl Worker {
     /// it waited at, ahead of the rows queued behind it. `false` as in
     /// `mark_waiting`.
     fn requeue(&mut self, job: &mut Job, queued_at: i64) -> bool {
-        job.waited = self
-            .archive
-            .requeue_outgoing(&job.chat, &job.id, queued_at)
-            .unwrap_or(false);
+        let result = self.archive.requeue_outgoing(&job.chat, &job.id, queued_at);
+        job.waited = self.waiting_state_written(job, result);
         if job.waited {
             if let Ok(Some(mut message)) = self.archive.message(&job.chat, &job.id) {
                 self.polish(&mut message);
@@ -172,15 +194,42 @@ impl Worker {
         job.waited
     }
 
-    pub(super) fn outgoing_deadline(&self) -> Option<Instant> {
-        if self.client.is_none()
-            || self.status != super::LinkStatus::Connected
-            || self.outgoing.running.is_some()
-            || self.outgoing.waiting.is_empty()
-        {
-            return None;
+    fn waiting_state_written(&mut self, job: &Job, result: crate::archive::Result<bool>) -> bool {
+        match result {
+            Ok(waiting) => waiting,
+            Err(error) => {
+                log::warn!("could not save the outgoing wait: {error}");
+                self.finish_outgoing(job, Delivery::Failed);
+                self.emit(Event::SendFailed { connection: false });
+                false
+            }
         }
-        Some(self.outgoing.retry_at.unwrap_or_else(Instant::now))
+    }
+
+    pub(super) fn outgoing_deadline(&self) -> Option<Instant> {
+        let send = (self.link_up()
+            && self.outgoing.running.is_none()
+            && !self.outgoing.waiting.is_empty())
+        .then(|| self.outgoing.retry_at.unwrap_or_else(Instant::now));
+        // Local cleanup is independent of the link, including after stop_bot.
+        send.into_iter().chain(self.outgoing.storage_retry_at).min()
+    }
+
+    fn recover_outgoing_storage_at(&mut self, now: Instant) {
+        if self.outgoing.storage_retry_at.is_none_or(|due| due > now) {
+            return;
+        }
+        for cleanup in std::mem::take(&mut self.outgoing.cleanup) {
+            let result = match cleanup.action {
+                CleanupAction::Status(status) => self.store_outgoing_status(&cleanup.job, status),
+                CleanupAction::Delete => self.delete_cancelled_row(&cleanup.job),
+            };
+            if result.is_err() {
+                self.outgoing.cleanup.push(cleanup);
+            }
+        }
+        self.outgoing.storage_retry_at =
+            (!self.outgoing.cleanup.is_empty()).then_some(now + STORAGE_RETRY);
     }
 
     pub(super) fn pump_outgoing(&mut self) {
@@ -188,6 +237,7 @@ impl Worker {
     }
 
     pub(super) fn pump_outgoing_at(&mut self, now: Instant) {
+        self.recover_outgoing_storage_at(now);
         if self.fail_while_offline() {
             self.emit(Event::SendFailed { connection: true });
         }
@@ -221,7 +271,10 @@ impl Worker {
                 }
                 Err(error) => {
                     log::warn!("could not start a waiting message: {error}");
-                    self.finish_interactive(&job.chat, &job.id);
+                    // No transport started. Release this send, but retain SQL
+                    // cleanup ownership if recording failure also fails.
+                    self.finish_outgoing(&job, Delivery::Failed);
+                    self.emit(Event::SendFailed { connection: false });
                     return self.pump_outgoing_at(now);
                 }
             }
@@ -276,25 +329,22 @@ impl Worker {
                     Some(queued_at) => self.requeue(&mut job, queued_at),
                     None => self.mark_waiting(&mut job),
                 };
+                // Everything behind a refusal waits too. A SQL failure
+                // moves its ownership to cleanup, never back to sending.
+                let mut rest: Vec<Job> = self.outgoing.waiting.drain(..).collect();
+                rest.retain_mut(|other| other.waited || self.mark_waiting(other));
+                self.outgoing.waiting.extend(rest);
                 if waiting {
                     if job.jid.is_group()
                         && let Err(error) = self.archive.discard_unsent_group_audience(&chat, &id)
                     {
                         log::warn!("could not discard a refused group audience: {error}");
                     }
-                    // Everything behind it waits too, visibly, in order.
-                    let mut rest: Vec<Job> = self.outgoing.waiting.drain(..).collect();
-                    for other in &mut rest {
-                        if !other.waited {
-                            self.mark_waiting(other);
-                        }
-                    }
-                    self.outgoing.waiting.push_back(job);
-                    self.outgoing.waiting.extend(rest);
+                    self.outgoing.waiting.push_front(job);
                 } else {
-                    // Only a receipt for this very id, or a local delete, takes
-                    // a pending row out of our hands: nothing left to retry.
-                    log::warn!("a rate-limited message is no longer pending; its send is dropped");
+                    // Confirmed/deleted rows need no retry. A storage failure
+                    // instead leaves non-sendable local cleanup ownership.
+                    log::warn!("a rate-limited message cannot wait; transport retry is stopped");
                     self.finish_interactive(&chat, &id);
                 }
             }
@@ -316,17 +366,32 @@ impl Worker {
         self.pump_outgoing();
     }
 
-    fn finish_outgoing(&mut self, job: &Job, status: Delivery) {
+    fn store_outgoing_status(&mut self, job: &Job, status: Delivery) -> crate::archive::Result<()> {
         if status == Delivery::Sent {
-            let _ = self
-                .archive
-                .set_status(&job.chat, &job.id, status, crate::util::now());
+            self.archive
+                .set_status(&job.chat, &job.id, status, crate::util::now())?;
         } else {
-            let _ = self.archive.set_outgoing_state(&job.chat, &job.id, status);
+            self.archive
+                .set_outgoing_state(&job.chat, &job.id, status)?;
         }
-        self.finish_interactive(&job.chat, &job.id);
         self.emit_message(&job.chat, &job.id);
         self.emit_chat(&job.chat);
+        Ok(())
+    }
+
+    fn finish_outgoing(&mut self, job: &Job, status: Delivery) {
+        self.finish_interactive(&job.chat, &job.id);
+        if let Err(error) = self.store_outgoing_status(job, status) {
+            log::warn!("could not save outgoing status: {error}");
+            self.outgoing.cleanup.push(Cleanup {
+                job: job.clone(),
+                action: CleanupAction::Status(status),
+            });
+            self.outgoing
+                .storage_retry_at
+                .get_or_insert_with(|| Instant::now() + STORAGE_RETRY);
+            self.emit(Event::Error("Could not update the local message. Storage cleanup will retry without resending it.".into()));
+        }
     }
 
     pub(super) fn finish_interactive(&mut self, chat: &str, id: &str) {
@@ -351,28 +416,59 @@ impl Worker {
     /// that already started, or one that is not ours to cancel, is left
     /// alone: the reply is `false` and the row goes on as before.
     pub(super) fn cancel_queued(&mut self, chat: &str, id: &str) -> bool {
-        let Some(index) = self
+        let job = if let Some(index) = self
             .outgoing
             .waiting
             .iter()
             .position(|job| job.chat == chat && job.id == id)
-        else {
+        {
+            self.outgoing
+                .waiting
+                .remove(index)
+                .expect("queued job exists")
+        } else if let Some(index) = self.outgoing.cleanup.iter().position(|cleanup| {
+            cleanup.job.chat == chat
+                && cleanup.job.id == id
+                && matches!(cleanup.action, CleanupAction::Delete)
+        }) {
+            // A subsequent Cancel retries SQL cleanup, never transmission.
+            self.outgoing.cleanup.remove(index).job
+        } else {
             return false;
         };
-        let job = self
-            .outgoing
-            .waiting
-            .remove(index)
-            .expect("queued job exists");
+        // Ownership leaves the sendable queue BEFORE touching storage. Even
+        // persistent DELETE errors cannot undo cancellation or replay this job.
         self.finish_interactive(&job.chat, &job.id);
-        if let Ok(true) = self.archive.delete_message(&job.chat, &job.id) {
-            self.emit(Event::MessageDeleted {
-                chat: job.chat.clone(),
-                id: job.id,
+        if let Err(error) = self.delete_cancelled_row(&job) {
+            log::warn!("could not delete a cancelled message: {error}");
+            self.outgoing.cleanup.push(Cleanup {
+                job,
+                action: CleanupAction::Delete,
             });
-            self.emit_chat(&job.chat);
+            self.outgoing
+                .storage_retry_at
+                .get_or_insert_with(|| Instant::now() + STORAGE_RETRY);
+            self.emit(Event::Error("The message will not be sent, but could not be deleted locally. Try Cancel again after storage recovers.".into()));
+        } else if self.outgoing.cleanup.is_empty() {
+            self.outgoing.storage_retry_at = None;
         }
         true
+    }
+
+    fn delete_cancelled_row(&mut self, job: &Job) -> crate::archive::Result<()> {
+        self.archive.delete_message(&job.chat, &job.id)?;
+        self.emit(Event::MessageDeleted {
+            chat: job.chat.clone(),
+            id: job.id.clone(),
+        });
+        self.emit_chat(&job.chat);
+        Ok(())
+    }
+
+    /// A successful archive wipe ends cleanup ownership for that account.
+    pub(super) fn clear_outgoing_cleanup(&mut self) {
+        self.outgoing.cleanup.clear();
+        self.outgoing.storage_retry_at = None;
     }
 
     pub(super) fn abandon_outgoing(&mut self) {
@@ -475,6 +571,418 @@ mod tests {
                 result,
             })
             .await;
+    }
+
+    #[tokio::test]
+    async fn failed_dispatch_retains_cleanup_without_transmitting_or_spinning() {
+        use crate::archive::tests::{set_dispatch_failure, set_outgoing_state_failure};
+        let (mut worker, events, _, _) = worker();
+        let _directory = attach_offline_client(&mut worker).await;
+        worker.outgoing.synthetic = Some(Vec::new());
+        for (id, status) in [("blocked", Delivery::Queued), ("later", Delivery::Pending)] {
+            worker.store_message(
+                crate::model::Message {
+                    status,
+                    ..own_message(id, 100)
+                },
+                None,
+                None,
+            );
+            let mut job = job(PEER, id);
+            job.waited = status == Delivery::Queued;
+            worker.outgoing.waiting.push_back(job);
+        }
+        set_dispatch_failure(&worker.archive, true);
+        set_outgoing_state_failure(&worker.archive, true);
+        events.try_iter().for_each(drop);
+        let now = Instant::now();
+        worker.pump_outgoing_at(now);
+        assert_eq!(
+            worker.outgoing.running.as_ref().map(|job| job.id.as_str()),
+            Some("later")
+        );
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Error(_))),
+            "storage failure must be actionable"
+        );
+        let due = worker
+            .outgoing_deadline()
+            .expect("the unsent row still has cleanup ownership");
+        assert!(
+            due > now + Duration::from_secs(1),
+            "storage retries must not spin"
+        );
+        for _ in 0..5 {
+            worker.pump_outgoing_at(now);
+        }
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::Error(_)))
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "blocked")
+                .unwrap()
+                .unwrap()
+                .status,
+            Delivery::Queued
+        );
+        worker.set_status(disconnected());
+        worker.stop_bot().await;
+        assert!(
+            worker.outgoing_deadline().is_some(),
+            "cleanup survives abandoned transport ownership"
+        );
+        set_dispatch_failure(&worker.archive, false);
+        set_outgoing_state_failure(&worker.archive, false);
+        worker.pump_outgoing_at(due + Duration::from_secs(1));
+        let rows = visible_rows(&mut worker, &events).await;
+        assert_eq!(statuses(&rows), [Delivery::Failed, Delivery::Unconfirmed]);
+        let _reconnected = attach_offline_client(&mut worker).await;
+        worker.set_status(LinkStatus::Connected);
+        worker.pump_outgoing_at(due + Duration::from_secs(60));
+        assert!(worker.outgoing_deadline().is_none());
+        assert_eq!(
+            worker
+                .outgoing
+                .synthetic
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|job| job.id.as_str())
+                .collect::<Vec<_>>(),
+            ["later"]
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_delete_failure_keeps_cleanup_but_never_replays_the_send() {
+        use crate::archive::tests::set_message_deletion_failure;
+        for explicit_retry in [true, false] {
+            let (mut worker, events, _, _) = worker();
+            let _directory = attach_offline_client(&mut worker).await;
+            worker.outgoing.synthetic = Some(Vec::new());
+            worker.store_message(
+                crate::model::Message {
+                    status: Delivery::Queued,
+                    ..own_message("cancelled", 100)
+                },
+                None,
+                None,
+            );
+            let mut waiting = job(PEER, "cancelled");
+            waiting.waited = true;
+            worker.outgoing.waiting.push_back(waiting);
+            set_message_deletion_failure(&worker.archive, true);
+            events.try_iter().for_each(drop);
+            let cancel = || Command::CancelQueued {
+                chat: PEER.into(),
+                id: "cancelled".into(),
+            };
+            worker.handle_command(cancel()).await;
+            let failures: Vec<_> = events.try_iter().collect();
+            assert!(
+                failures
+                    .iter()
+                    .any(|event| matches!(event, Event::Error(_))),
+                "failed cancellation cleanup must be actionable"
+            );
+            assert!(
+                !failures
+                    .iter()
+                    .any(|event| matches!(event, Event::MessageDeleted { .. }))
+            );
+            let due = worker
+                .outgoing_deadline()
+                .expect("cancelled row retains local cleanup ownership");
+            let now = Instant::now();
+            assert!(due > now + Duration::from_secs(1));
+            worker.pump_outgoing_at(now);
+            assert!(worker.outgoing.running.is_none());
+            assert!(
+                !events
+                    .try_iter()
+                    .any(|event| matches!(event, Event::Error(_)))
+            );
+            worker.handle_command(cancel()).await;
+            assert!(
+                events
+                    .try_iter()
+                    .any(|event| matches!(event, Event::Error(_))),
+                "an explicit Cancel retries storage even before its deadline"
+            );
+            send_text(&mut worker, "An unrelated later send").await;
+            let later = worker.outgoing.running.as_ref().unwrap().id.clone();
+            finish(&mut worker, &later, Ok(())).await;
+            worker.set_status(disconnected());
+            worker.stop_bot().await;
+            assert!(worker.outgoing_deadline().is_some());
+            worker.pump_outgoing_at(due + Duration::from_secs(1));
+            assert!(worker.archive.message(PEER, "cancelled").unwrap().is_some());
+            assert!(worker.outgoing_deadline().unwrap() > due + Duration::from_secs(1));
+            set_message_deletion_failure(&worker.archive, false);
+            events.try_iter().for_each(drop);
+            if explicit_retry {
+                worker.handle_command(cancel()).await;
+            } else {
+                worker.pump_outgoing_at(due + Duration::from_secs(32));
+            }
+            assert!(events.try_iter().any(
+                |event| matches!(event, Event::MessageDeleted { id, .. } if id == "cancelled")
+            ));
+            assert!(worker.archive.message(PEER, "cancelled").unwrap().is_none());
+            let _reconnected = attach_offline_client(&mut worker).await;
+            worker.set_status(LinkStatus::Connected);
+            worker.pump_outgoing_at(due + Duration::from_secs(90));
+            assert!(worker.outgoing_deadline().is_none());
+            assert_eq!(
+                worker
+                    .outgoing
+                    .synthetic
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|job| job.id.as_str())
+                    .collect::<Vec<_>>(),
+                [later.as_str()]
+            );
+            assert_eq!(
+                statuses(&visible_rows(&mut worker, &events).await),
+                [Delivery::Sent]
+            );
+            worker.stop_bot().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn logout_discards_cancelled_cleanup_only_after_the_archive_is_cleared() {
+        use crate::archive::tests::set_message_deletion_failure;
+        let (mut worker, _events, _, _) = worker();
+        worker.outgoing.synthetic = Some(Vec::new());
+        worker.store_message(
+            crate::model::Message {
+                status: Delivery::Queued,
+                ..own_message("cancelled", 100)
+            },
+            None,
+            None,
+        );
+        let mut waiting = job(PEER, "cancelled");
+        waiting.waited = true;
+        worker.outgoing.waiting.push_back(waiting);
+        set_message_deletion_failure(&worker.archive, true);
+        worker
+            .handle_command(Command::CancelQueued {
+                chat: PEER.into(),
+                id: "cancelled".into(),
+            })
+            .await;
+        worker.on_logged_out().await;
+        assert!(
+            worker.client.is_none() && worker.handle.is_none(),
+            "the synthetic lifecycle must never start a connection"
+        );
+        assert!(
+            worker.outgoing_deadline().is_some(),
+            "failed archive clear preserves cleanup ownership"
+        );
+        assert!(worker.archive.message(PEER, "cancelled").unwrap().is_some());
+        set_message_deletion_failure(&worker.archive, false);
+        worker.on_logged_out().await;
+        assert!(
+            worker.client.is_none() && worker.handle.is_none(),
+            "the synthetic lifecycle must never start a connection"
+        );
+        assert!(worker.outgoing_deadline().is_none());
+        worker.store_message(own_message("cancelled", 200), None, None);
+        worker.pump_outgoing_at(Instant::now() + Duration::from_secs(90));
+        assert!(
+            worker.archive.message(PEER, "cancelled").unwrap().is_some(),
+            "old cleanup cannot delete a row in the next session"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_reaction_commands_do_not_target_failed_outgoing_rows() {
+        for (status, from_me, attempts_transport) in [
+            (Delivery::Queued, true, false),
+            (Delivery::Pending, true, false),
+            (Delivery::Unconfirmed, true, false),
+            (Delivery::Failed, true, false),
+            (Delivery::Sent, true, true),
+            (Delivery::Failed, false, true),
+        ] {
+            let (mut worker, events, _, _) = worker();
+            worker.store_message(
+                crate::model::Message {
+                    status,
+                    from_me,
+                    ..own_message("react-target", 100)
+                },
+                None,
+                None,
+            );
+            events.try_iter().for_each(drop);
+            worker
+                .handle_command(Command::React {
+                    chat: PEER.into(),
+                    message: "react-target".into(),
+                    emoji: "👍".into(),
+                })
+                .await;
+            // No client is attached: only eligible targets reach the existing
+            // not-connected error. No real transport or network runs.
+            assert_eq!(
+                events
+                    .try_iter()
+                    .any(|event| matches!(event, Event::Error(_))),
+                attempts_transport,
+                "{status:?}, own={from_me}"
+            );
+            let rows = visible_rows(&mut worker, &events).await;
+            assert!(rows[0].reactions.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_waiting_state_writes_never_drop_ownership_or_bypass_a_cooldown() {
+        use crate::archive::tests::set_outgoing_state_failure;
+        for requeued in [false, true] {
+            let (mut worker, events, _, _) = worker();
+            let _directory = attach_offline_client(&mut worker).await;
+            worker.outgoing.synthetic = Some(Vec::new());
+            for id in ["refused", "behind"] {
+                worker.store_message(
+                    crate::model::Message {
+                        status: Delivery::Pending,
+                        ..own_message(id, 100)
+                    },
+                    None,
+                    None,
+                );
+            }
+            let mut refused = job(PEER, "refused");
+            refused.queued_at = requeued.then_some(100);
+            worker.outgoing.running = Some(refused);
+            worker.outgoing.waiting.push_back(job(PEER, "behind"));
+            set_outgoing_state_failure(&worker.archive, true);
+            events.try_iter().for_each(drop);
+            finish(
+                &mut worker,
+                "refused",
+                Err(SendFailure::RateLimited { retry_after: 60 }),
+            )
+            .await;
+            assert!(
+                events
+                    .try_iter()
+                    .any(|event| matches!(event, Event::Error(_))),
+                "storage failure after 429 must retain actionable cleanup"
+            );
+            send_text(&mut worker, "A new send during the cooldown").await;
+            let due = worker
+                .outgoing_deadline()
+                .expect("SQL cleanup still owns the failed rows");
+            assert!(
+                worker.outgoing.waiting.is_empty(),
+                "a failed waiting-state write cannot leave a sendable job"
+            );
+            set_outgoing_state_failure(&worker.archive, false);
+            worker.pump_outgoing_at(due + Duration::from_secs(61));
+            assert_eq!(
+                statuses(&visible_rows(&mut worker, &events).await),
+                [Delivery::Failed; 3]
+            );
+            assert!(worker.outgoing.synthetic.as_ref().unwrap().is_empty());
+            assert!(worker.outgoing_deadline().is_none());
+            worker.stop_bot().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_cleanup_remains_retryable_after_loading_a_busy_chat() {
+        use crate::archive::tests::set_message_deletion_failure;
+        let (mut worker, events, _, _) = worker();
+        worker.store_message(
+            crate::model::Message {
+                status: Delivery::Queued,
+                ..own_message("cancelled", 100)
+            },
+            None,
+            None,
+        );
+        let mut waiting = job(PEER, "cancelled");
+        waiting.waited = true;
+        worker.outgoing.waiting.push_back(waiting);
+        set_message_deletion_failure(&worker.archive, true);
+        worker
+            .handle_command(Command::CancelQueued {
+                chat: PEER.into(),
+                id: "cancelled".into(),
+            })
+            .await;
+        for index in 0..100 {
+            worker.store_message(
+                own_message(&format!("newer-{index}"), 200 + index),
+                None,
+                None,
+            );
+        }
+        assert!(
+            visible_rows(&mut worker, &events)
+                .await
+                .iter()
+                .any(|row| row.id == "cancelled"),
+            "failed local deletion must not lose its retry affordance on a chat reload"
+        );
+        set_message_deletion_failure(&worker.archive, false);
+        worker
+            .handle_command(Command::CancelQueued {
+                chat: PEER.into(),
+                id: "cancelled".into(),
+            })
+            .await;
+        assert!(worker.archive.message(PEER, "cancelled").unwrap().is_none());
+        assert!(worker.outgoing_deadline().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_prepared_row_already_removed_does_not_keep_an_interactive_reply_pending() {
+        use whatsapp_rust::buffa::Message as _;
+        let (mut worker, events, _, _) = worker();
+        let _directory = attach_offline_client(&mut worker).await;
+        worker.outgoing.synthetic = Some(Vec::new());
+        worker.outgoing.retry_at = Some(Instant::now() + Duration::from_secs(60));
+        worker
+            .archive
+            .delete_message(PEER, "removed-reply")
+            .unwrap();
+        worker
+            .interactive_sending
+            .insert((PEER.into(), "source".into()), "removed-reply".into());
+        events.try_iter().for_each(drop);
+        worker
+            .handle_command(Command::Outbound {
+                chat: PEER.into(),
+                row: Box::new(crate::model::Message {
+                    status: Delivery::Pending,
+                    ..own_message("removed-reply", 100)
+                }),
+                raw: wa::Message {
+                    conversation: Some("Synthetic stale reply".into()),
+                    ..Default::default()
+                }
+                .encode_to_vec(),
+            })
+            .await;
+        assert!(events.try_iter().any(|event| matches!(event, Event::InteractiveReplyState { message, pending: false, .. } if message == "source")), "dropping a removed row must also release its reply owner");
+        assert!(worker.outgoing.waiting.is_empty());
+        assert!(worker.outgoing.synthetic.as_ref().unwrap().is_empty());
+        worker.stop_bot().await;
     }
 
     fn rate_error(code: u16, backoff: Option<u32>) -> SendError {

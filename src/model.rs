@@ -376,6 +376,12 @@ pub struct LinkPreview {
 }
 
 impl Message {
+    /// Reactions require an outgoing message that has not failed or lost its
+    /// send ownership. Other failed-message actions remain unchanged.
+    pub fn allows_reaction(&self) -> bool {
+        !(self.from_me && (self.status.is_local() || self.status == Delivery::Failed))
+    }
+
     /// One-line summary used in chat rows and quotes.
     pub fn summary(&self) -> String {
         self.content.summary()
