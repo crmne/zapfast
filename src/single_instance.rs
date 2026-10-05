@@ -51,6 +51,8 @@ pub enum ControlCommand {
     Show,
     /// Reload local theme files without opening the window.
     ReloadThemes,
+    /// Quits, as the tray's Quit does: from the launcher's Quit action.
+    Quit,
     /// Confirms an instance is running and changes nothing.
     Ping,
     /// Opens the chat a link named, showing the window as it does.
@@ -183,6 +185,7 @@ fn parse(verb: &str) -> Option<ControlCommand> {
     match verb {
         "show" => Some(ControlCommand::Show),
         "reload-themes" => Some(ControlCommand::ReloadThemes),
+        "quit" => Some(ControlCommand::Quit),
         "ping" => Some(ControlCommand::Ping),
         _ => None,
     }
@@ -326,6 +329,7 @@ mod tests {
         // A chat this copy would not have opened is declined, not acted on.
         assert_eq!(parse("open 20123456789@lid"), None);
         assert_eq!(parse("open"), None);
+        assert_eq!(parse("quit"), Some(ControlCommand::Quit));
         assert_eq!(parse("GET / HTTP/1.1"), None);
         assert_eq!(parse("frobnicate"), None);
         assert_eq!(parse(""), None);
