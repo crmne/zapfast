@@ -354,11 +354,11 @@ pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
     egui::Id::new(("chat-filter", filter as u8))
 }
 
-/// Filter chips under the search field. Search lists every match, so the
-/// chips hide there.
 /// Width of the fade over the filter chips' right edge.
 pub(super) const CHIP_FADE: f32 = 16.0;
 
+/// Filter chips under the search field. Search lists every match, so the
+/// chips hide there.
 fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     if !app.locked_folder_open() && !app.search.trim().is_empty() {
         return;
