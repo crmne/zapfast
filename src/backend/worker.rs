@@ -7393,26 +7393,19 @@ impl Worker {
         }
     }
 
+    /// Sends an edited body without notifying everyone for an existing mention.
     fn edit_text(&mut self, chat: ChatId, id: String, text: String, mentions: Vec<String>) {
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
-        let mut mentions = mentions;
-        if self.wants_mention_all(&chat, &text) {
-            crate::mentions::push_everyone_id(&mut mentions);
-        }
-        let content = Content::text(text.clone());
-        let mention_rows = self.mentions_of(&mentions);
-        if let Ok(true) = self
-            .archive
-            .set_edited_content(&chat, &id, &content, &mention_rows)
-        {
-            self.emit_message(&chat, &id);
-            self.emit_chat(&chat);
-        }
-        let mut message = outgoing_text(text, None, &mentions);
-        self.apply_ephemeral(&chat, &mut message);
+        let message = match self.prepare_text_edit(&chat, &id, text, mentions) {
+            Ok(message) => message,
+            Err(_) => {
+                self.emit(Event::Error("Could not prepare the message edit".into()));
+                return;
+            }
+        };
         let commands = self.commands.clone();
         tokio::spawn(async move {
             if let Err(error) = client.edit_message(jid, id.clone(), message).await {
@@ -7423,6 +7416,39 @@ impl Worker {
                 });
             }
         });
+    }
+
+    /// Stores the edited mentions, suppressing repeated everyone notifications
+    /// only in the outbound payload. Read the original before replacing its rows.
+    fn prepare_text_edit(
+        &mut self,
+        chat: &ChatId,
+        id: &str,
+        text: String,
+        mut mentions: Vec<String>,
+    ) -> crate::archive::Result<wa::Message> {
+        let already_mentioned_everyone = self
+            .archive
+            .message(chat, id)?
+            .is_some_and(|message| message.mentions.iter().any(crate::mentions::is_everyone));
+        if self.wants_mention_all(chat, &text) {
+            crate::mentions::push_everyone_id(&mut mentions);
+        }
+        let content = Content::text(text.clone());
+        let mention_rows = self.mentions_of(&mentions);
+        if let Ok(true) = self
+            .archive
+            .set_edited_content(chat, id, &content, &mention_rows)
+        {
+            self.emit_message(chat, id);
+            self.emit_chat(chat);
+        }
+        if already_mentioned_everyone {
+            mentions.retain(|id| id != crate::mentions::ALL_ID);
+        }
+        let mut message = outgoing_text(text, None, &mentions);
+        self.apply_ephemeral(chat, &mut message);
+        Ok(message)
     }
 
     /// Sends the account deletion through whatsapp-rust before removing our copy.
@@ -11776,6 +11802,66 @@ mod tests {
                 crate::mentions::everyone_ref(),
             ]
         );
+    }
+
+    #[test]
+    fn text_edits_notify_everyone_only_when_adding_the_mention() {
+        let (mut worker, _events, _inbox, _wa) = receipt_tests::worker();
+        let chat = "123@g.us".to_owned();
+        let member = "12025550123@s.whatsapp.net".to_owned();
+        worker.archive.ensure_chat(&chat, "Group").unwrap();
+        worker
+            .archive
+            .set_group_info(&chat, None, std::slice::from_ref(&member), false)
+            .unwrap();
+        for previously_mentioned in [false, true] {
+            let mut original = receipt_tests::own_message("edit-target", 1);
+            original.chat = chat.clone();
+            // The visible word alone must not suppress a newly added mention.
+            original.content = Content::text("Original @all");
+            if previously_mentioned {
+                original.mentions.push(crate::mentions::everyone_ref());
+            }
+            worker.archive.insert_message(&original, None).unwrap();
+            let message = worker
+                .prepare_text_edit(
+                    &chat,
+                    &original.id,
+                    "Edited @all @12025550123".into(),
+                    vec![member.clone()],
+                )
+                .unwrap();
+            assert_eq!(message.text_content(), Some("Edited @all @12025550123"));
+            let context = context_of(&message).unwrap();
+            assert_eq!(
+                crate::mentions::flagged(context.non_jid_mentions),
+                !previously_mentioned,
+                "only a newly added everyone mention should notify"
+            );
+            assert_eq!(context.mentioned_jid, vec![member.clone()]);
+            let stored = worker
+                .archive
+                .message(&chat, &original.id)
+                .unwrap()
+                .unwrap();
+            assert!(stored.edited);
+            assert_eq!(stored.content, Content::text("Edited @all @12025550123"));
+            assert_eq!(
+                stored.mentions,
+                worker.mentions_of(&[member.clone(), crate::mentions::ALL_ID.into()])
+            );
+
+            let removed = worker
+                .prepare_text_edit(&chat, &original.id, "No mentions".into(), vec![])
+                .unwrap();
+            assert!(recorded_mention_ids(&removed).is_empty());
+            let stored = worker
+                .archive
+                .message(&chat, &original.id)
+                .unwrap()
+                .unwrap();
+            assert!(stored.mentions.is_empty());
+        }
     }
 
     #[test]

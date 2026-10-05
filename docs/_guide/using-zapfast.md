@@ -18,8 +18,10 @@ highlighted like any other mention.
 Portuguese also accepts `@todos`, and each other language accepts its own
 word; the sent message still shows `@all`. In a group of more than 32
 people, only admins can mention everyone. People are notified as they are
-for any mention. Edits update the visible mentions; forwarding or quoting an
-`@all` message does not notify everyone again. The smiley opens emoji
+for any mention. Edits update the visible mentions. Editing an existing `@all`
+mention does not notify everyone again; adding `@all` in an edit requests a new
+notification. Forwarding or quoting an `@all` message does not notify everyone
+again. The smiley opens emoji
 (searchable), GIFs, and stickers,
 including the stickers used on the phone.
 
