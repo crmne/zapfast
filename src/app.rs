@@ -5788,12 +5788,15 @@ impl App {
     /// Highlights the taskbar entry for a message that notified while the
     /// window is open behind others, as KDE Plasma's task manager shows for
     /// chat apps. The desktop clears it once the window is focused. Linux
-    /// only: elsewhere it would bounce the Dock or flash the taskbar.
+    /// only: elsewhere it would bounce the Dock or flash the taskbar. Asks the
+    /// viewport too, since `window_focused` stays false behind the app lock
+    /// even while the lock screen has the focus.
     fn request_attention(&mut self, ctx: &egui::Context) {
         if std::mem::take(&mut self.wants_attention)
             && cfg!(target_os = "linux")
             && !self.window_hidden
             && !self.window_focused
+            && ctx.input(|input| input.viewport().focused) != Some(true)
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Informational,
@@ -11883,6 +11886,31 @@ mod app_lock_tests {
         assert!(!attention_requested(&ctx), "only once per notification");
 
         app.window_hidden = true;
+        app.maybe_notify(CHAT, &message);
+        app.request_attention(&ctx);
+        assert!(!attention_requested(&ctx));
+    }
+
+    /// Behind the app lock `window_focused` stays false, but a lock screen
+    /// that has the focus is no window to point at.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_focused_lock_screen_is_not_highlighted() {
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        input.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo {
+                focused: Some(true),
+                ..Default::default()
+            },
+        );
+        ctx.run_ui(input, |_| {}).textures_delta.clear();
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.window_hidden = false;
+        app.lock_app();
+        assert!(!app.window_focused);
         app.maybe_notify(CHAT, &message);
         app.request_attention(&ctx);
         assert!(!attention_requested(&ctx));
