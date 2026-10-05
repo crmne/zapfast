@@ -3225,6 +3225,7 @@ pub(super) fn selected_text(app: &App) -> Option<String> {
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
+/// Builds shared transcript metadata for drawn text and whole-message exports.
 fn message_copy_row(
     message: &Message,
     body: String,
