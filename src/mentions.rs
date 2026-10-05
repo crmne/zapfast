@@ -26,6 +26,7 @@ pub fn everyone_ref() -> MentionRef {
     }
 }
 
+/// Recognizes a stored everyone mention by its reserved id.
 pub fn is_everyone(mention: &MentionRef) -> bool {
     mention.id == ALL_ID
 }
@@ -44,6 +45,7 @@ pub fn push_everyone_id(ids: &mut Vec<String>) {
     }
 }
 
+/// Whether the context requests an everyone notification.
 pub fn flagged(bits: Option<u32>) -> bool {
     bits.is_some_and(|bits| bits & ALL_FLAG != 0)
 }

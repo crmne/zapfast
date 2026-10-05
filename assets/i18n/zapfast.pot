@@ -20,7 +20,7 @@ msgstr ""
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
 #. Translators: one word, no spaces. The word after @ that mentions everyone.
-#: src/mentions.rs:68
+#: src/mentions.rs:70
 msgctxt "mention"
 msgid "all"
 msgstr ""
