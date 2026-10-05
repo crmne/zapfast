@@ -311,6 +311,9 @@ fn deliver(
         .appname("ZapFast")
         .summary(title)
         .body(body)
+        // The freedesktop category for a received instant message, which
+        // notification servers can sort, filter, or style by.
+        .hint(notify_rust::Hint::Category("im.received".into()))
         .icon("zapfast")
         .action("default", "Open");
     if !system_sound {
