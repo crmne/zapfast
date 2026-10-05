@@ -501,6 +501,22 @@ fn sections(app: &App) -> Vec<Section> {
             |settings| &mut settings.notification_content,
         );
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
+        notifications.account_toggle(
+            translated(locale, "Limit direct message notifications"),
+            translated(
+                locale,
+                "After one notification, a chat stays quiet for 10 minutes. Opening the chat resets this.",
+            ),
+            |settings| &mut settings.limit_direct_notifications,
+        );
+        notifications.account_toggle(
+            translated(locale, "Limit group notifications"),
+            translated(
+                locale,
+                "After one notification, a group stays quiet for 10 minutes. Opening the group resets this.",
+            ),
+            |settings| &mut settings.limit_group_notifications,
+        );
         notifications.toggle(
             translated(locale, "Play sounds for group messages"),
             translated(

@@ -143,6 +143,9 @@ name or description, in the interface language or in English.
   regardless.
 - **Play sounds for group messages**: when off, only mentions and replies to
   you make a sound in groups.
+- **Limit direct message notifications** and **Limit group notifications**: off
+  by default. When on, a chat sends one notification (and its sound), then stays
+  quiet for 10 minutes. Opening the chat starts over. Settings for this account.
 
 **Privacy**
 

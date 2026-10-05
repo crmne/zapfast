@@ -743,6 +743,10 @@ pub struct AccountSettings {
     pub auto_download: bool,
     pub last_chat: Option<String>,
     pub notifications: bool,
+    /// Notify once per direct chat, then stay quiet for ten minutes.
+    pub limit_direct_notifications: bool,
+    /// Notify once per group, then stay quiet for ten minutes.
+    pub limit_group_notifications: bool,
     pub save_contacts_to_phone: bool,
     /// This account's copy of the chosen chat wallpaper image.
     pub wallpaper_image: Option<std::path::PathBuf>,
@@ -763,6 +767,8 @@ impl Default for AccountSettings {
             auto_download: true,
             last_chat: None,
             notifications: true,
+            limit_direct_notifications: false,
+            limit_group_notifications: false,
             save_contacts_to_phone: true,
             wallpaper_image: None,
             history_prefetch: false,
@@ -779,6 +785,8 @@ impl AccountSettings {
             auto_download: settings.auto_download,
             last_chat: settings.last_chat.clone(),
             notifications: settings.notifications,
+            limit_direct_notifications: false,
+            limit_group_notifications: false,
             save_contacts_to_phone: settings.save_contacts_to_phone,
             wallpaper_image: settings.wallpaper_image.clone(),
             history_prefetch: false,
@@ -1277,5 +1285,19 @@ mod giphy_tests {
             .filter(|key| !key.is_empty())
             .map(str::to_owned);
         assert_eq!(settings.effective_giphy_key(), expected);
+    }
+
+    #[test]
+    fn notification_limits_are_off_unless_saved() {
+        let settings: AccountSettings = serde_json::from_str(r#"{"notifications":true}"#).unwrap();
+        assert!(!settings.limit_direct_notifications);
+        assert!(!settings.limit_group_notifications);
+        let saved = AccountSettings {
+            limit_group_notifications: true,
+            ..AccountSettings::default()
+        };
+        let again: AccountSettings =
+            serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+        assert_eq!(again, saved);
     }
 }

@@ -300,6 +300,8 @@ impl App {
             },
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
+            // A ringing call always notifies; the limit is for repeated messages.
+            false,
         );
         self.call_rang = Some(Instant::now());
     }

@@ -7,6 +7,7 @@
 use crate::settings::NotificationSound;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 mod badge;
@@ -62,6 +63,10 @@ fn call_key(chat: &str) -> String {
 /// until the process ran out of descriptors and aborted.
 const WAITING_LIMIT: usize = 32;
 
+/// How long a chat stays quiet after a notification when its notifications
+/// are limited. Opening the chat ends the wait early.
+const THROTTLE_WINDOW: Duration = Duration::from_secs(10 * 60);
+
 type PendingByAccountChat =
     std::collections::HashMap<(String, String), Vec<(u64, tokio::sync::oneshot::Sender<Stop>)>>;
 
@@ -93,6 +98,8 @@ pub struct Notifications {
     pending: PendingByAccountChat,
     /// Order of registration, so the oldest waiting notification is released first.
     registered: u64,
+    /// When each limited chat last showed a notification.
+    throttle: std::collections::HashMap<(String, String), Instant>,
     /// What unit tests would have shown, recorded instead of shown on the
     /// desktop. Always empty outside tests.
     pub shown: Vec<Shown>,
@@ -166,8 +173,41 @@ impl Notifications {
         self.clear(account, &call_key(chat));
     }
 
+    /// Whether a notification for this chat may be shown at `now`. A chat
+    /// whose notifications are `limited` is allowed once, then refused for
+    /// `THROTTLE_WINDOW` counted from the notification that was shown;
+    /// refused messages do not extend the wait.
+    pub fn allow(
+        &mut self,
+        account: &crate::model::AccountId,
+        chat: &str,
+        now: Instant,
+        limited: bool,
+    ) -> bool {
+        if !limited {
+            return true;
+        }
+        let key = (account.as_str().to_owned(), chat.to_owned());
+        if self
+            .throttle
+            .get(&key)
+            .is_some_and(|last| now.saturating_duration_since(*last) < THROTTLE_WINDOW)
+        {
+            return false;
+        }
+        self.throttle.insert(key, now);
+        true
+    }
+
+    /// Lets the chat's next message notify at once, because the chat was looked at.
+    pub fn reset_throttle(&mut self, account: &crate::model::AccountId, chat: &str) {
+        self.throttle
+            .remove(&(account.as_str().to_owned(), chat.to_owned()));
+    }
+
     pub fn clear_account(&mut self, account: &crate::model::AccountId) {
         let account = account.as_str();
+        self.throttle.retain(|(id, _), _| id != account);
         let keys: Vec<_> = self
             .pending
             .keys()
@@ -530,6 +570,57 @@ mod tests {
             next.try_recv(),
             Err(tokio::sync::oneshot::error::TryRecvError::Closed)
         );
+    }
+
+    #[test]
+    fn a_limited_chat_notifies_once_then_waits_ten_minutes() {
+        let mut notifications = Notifications::default();
+        let one = account("1");
+        let start = Instant::now();
+        assert!(notifications.allow(&one, "a", start, true));
+        assert!(!notifications.allow(&one, "a", start + Duration::from_secs(1), true));
+        // Refused messages do not push the end of the wait back.
+        assert!(!notifications.allow(&one, "a", start + Duration::from_secs(599), true));
+        assert!(notifications.allow(&one, "a", start + THROTTLE_WINDOW, true));
+        assert!(!notifications.allow(&one, "a", start + THROTTLE_WINDOW, true));
+    }
+
+    #[test]
+    fn unlimited_chats_always_notify_and_leave_no_state() {
+        let mut notifications = Notifications::default();
+        let one = account("1");
+        let start = Instant::now();
+        assert!(notifications.allow(&one, "a", start, false));
+        assert!(notifications.allow(&one, "a", start, false));
+        assert!(notifications.throttle.is_empty());
+    }
+
+    #[test]
+    fn opening_a_chat_lets_its_next_message_notify() {
+        let mut notifications = Notifications::default();
+        let one = account("1");
+        let start = Instant::now();
+        assert!(notifications.allow(&one, "a", start, true));
+        assert!(notifications.allow(&one, "b", start, true));
+        notifications.reset_throttle(&one, "a");
+        assert!(notifications.allow(&one, "a", start, true));
+        assert!(!notifications.allow(&one, "b", start, true));
+    }
+
+    #[test]
+    fn the_wait_is_kept_per_account_and_chat() {
+        let mut notifications = Notifications::default();
+        let start = Instant::now();
+        assert!(notifications.allow(&account("1"), "a", start, true));
+        assert!(notifications.allow(&account("2"), "a", start, true));
+        assert!(notifications.allow(&account("1"), "b", start, true));
+        assert!(!notifications.allow(&account("1"), "a", start, true));
+        notifications.clear_account(&account("1"));
+        assert!(notifications.allow(&account("1"), "a", start, true));
+        assert!(!notifications.allow(&account("2"), "a", start, true));
+        // Locking the app closes notifications but keeps the waits.
+        notifications.clear_all();
+        assert!(!notifications.allow(&account("2"), "a", start, true));
     }
 
     #[test]

@@ -1747,6 +1747,12 @@ impl App {
         self.notifications.clear(&account, chat);
     }
 
+    /// The chat was looked at, so its next message may notify at once.
+    fn reset_notification_throttle(&mut self, chat: &str) {
+        let account = self.account().id.clone();
+        self.notifications.reset_throttle(&account, chat);
+    }
+
     /// Sends a desktop notification for an unseen incoming message.
     fn maybe_notify(&mut self, chat_id: &str, message: &Message) {
         if !self.account().settings.notifications {
@@ -1767,6 +1773,22 @@ impl App {
         if reading {
             return;
         }
+        // A limited chat notifies once, then waits; opening it ends the wait.
+        let limited = if chat.is_group() {
+            self.account().settings.limit_group_notifications
+        } else {
+            self.account().settings.limit_direct_notifications
+        };
+        let account = self.account().id.clone();
+        if !self
+            .notifications
+            .allow(&account, chat_id, std::time::Instant::now(), limited)
+        {
+            return;
+        }
+        let Some(chat) = self.chat(chat_id) else {
+            return;
+        };
         if self.app_lock.is_locked() || !self.settings.notification_content {
             self.notify_without_content(chat_id, chat.is_group(), &message.id);
             return;
@@ -4071,6 +4093,7 @@ impl App {
 
     fn mark_read(&mut self, chat: &str) {
         self.clear_chat_notifications(chat);
+        self.reset_notification_throttle(chat);
         if let Some(known) = self.chat_mut(chat) {
             known.unread = 0;
             known.marked_unread = false;
@@ -4177,6 +4200,7 @@ impl App {
             self.search.clear();
             self.search_hits.clear();
         }
+        self.reset_notification_throttle(&id);
         if self.open_chat.as_deref() != Some(id.as_str()) {
             self.reaction_target = None;
             self.reaction_anchor = None;
@@ -15875,6 +15899,75 @@ mod app_lock_tests {
         let shown = app.notifications.shown.last().unwrap();
         assert_eq!(shown.title, "Ada Lovelace");
         assert_eq!(shown.body, "the engine is ready");
+    }
+
+    #[test]
+    fn limited_direct_chats_notify_once_until_the_chat_is_opened() {
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.maybe_notify(CHAT, &message);
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 2, "off by default");
+
+        app.account_mut().settings.limit_direct_notifications = true;
+        app.notifications.shown.clear();
+        app.maybe_notify(CHAT, &message);
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 1);
+
+        app.open_chat(CHAT.into());
+        app.chats[0].unread = 1;
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 2, "opening reset the wait");
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 2);
+    }
+
+    #[test]
+    fn the_direct_and_group_limits_are_independent() {
+        const GROUP: &str = "2@g.us";
+        let mut app = unlocked_app();
+        let direct = incoming(&mut app);
+        let mut group_chat = Chat::new(GROUP.into(), "Engineers".into());
+        group_chat.unread = 1;
+        app.chats.push(group_chat);
+        let group = Message {
+            id: "m2".into(),
+            chat: GROUP.into(),
+            sender: CHAT.into(),
+            ..direct.clone()
+        };
+
+        app.account_mut().settings.limit_group_notifications = true;
+        app.maybe_notify(CHAT, &direct);
+        app.maybe_notify(CHAT, &direct);
+        app.maybe_notify(GROUP, &group);
+        app.maybe_notify(GROUP, &group);
+        assert_eq!(
+            app.notifications.shown.len(),
+            3,
+            "direct chats are unlimited, the group notified once"
+        );
+
+        app.account_mut().settings.limit_group_notifications = false;
+        app.account_mut().settings.limit_direct_notifications = true;
+        app.notifications.shown.clear();
+        app.maybe_notify(GROUP, &group);
+        app.maybe_notify(GROUP, &group);
+        app.maybe_notify(CHAT, &direct);
+        app.maybe_notify(CHAT, &direct);
+        assert_eq!(app.notifications.shown.len(), 3);
+    }
+
+    #[test]
+    fn a_limited_chat_is_limited_while_the_app_is_locked_too() {
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.account_mut().settings.limit_direct_notifications = true;
+        app.maybe_notify(CHAT, &message);
+        app.lock_app();
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 1);
     }
 
     #[test]
