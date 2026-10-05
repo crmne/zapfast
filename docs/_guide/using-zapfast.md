@@ -351,7 +351,9 @@ taskbar button while the window is open, using `99+` above 99. Windows must use
 its regular taskbar icon size for overlays to appear. The count
 does not count toasts remaining in Windows notification history. On Linux and
 Windows, notifications show the chat picture and open the chat at the message
-they announced when clicked. Muted chats do not send notifications, and
+they announced when clicked. On Linux, a notification that arrives while the
+window is open behind others also highlights ZapFast in the taskbar until you
+switch to it. Muted chats do not send notifications, and
 archived chats stay quiet while they remain archived. You can change both settings.
 
 Press `Ctrl+/` or click the keyboard button under the composer to list all
