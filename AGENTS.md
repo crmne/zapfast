@@ -236,6 +236,18 @@ protocol. These notes are for coding agents and new contributors.
   dialog. A rename lands only after WhatsApp accepts it, and bumps
   `subject_generation` so a metadata answer asked for earlier cannot restore
   the old subject. A refusal re-asks the metadata to relearn the rights.
+- Mentioning everyone uses the visible body token `@all` and bit 1 of
+  `ContextInfo.non_jid_mentions` (`src/mentions.rs`). Localized words
+  (`@todos` in Portuguese, and the one-word alias of each other language)
+  are composer triggers only; `encode_composer_mentions` rewrites them to
+  `@all` when `Chat::can_mention_everyone` allows it: the sender can post,
+  the member list is known, and the group has at most 32 people or the
+  sender is an admin. The stored mention id is `mention-all`, not a JID.
+  Forwards and quoted copies clear that bit so the destination is not
+  notified again. A plain `@all` without the bit stays ordinary text.
+  Live edit events replace content and mentions together; caption edits keep
+  downloaded media paths. Derived archive backfills skip edited rows because
+  their retained raw protobuf still contains the original body and mentions.
 - A download that answers 403/404/410 goes through
   `client.media_reupload().request(..)` (a server-error receipt; WhatsApp
   has the phone re-upload and answers with a fresh `direct_path`) and is

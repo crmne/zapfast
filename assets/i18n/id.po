@@ -16,6 +16,12 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
+#. Translators: one word, no spaces. The word after @ that mentions everyone.
+#: src/mentions.rs:68
+msgctxt "mention"
+msgid "all"
+msgstr "semua"
+
 #: src/model.rs:113
 msgid "All"
 msgstr "Semua"

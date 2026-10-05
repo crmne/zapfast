@@ -2008,8 +2008,8 @@ impl Archive {
         Ok(changed > 0)
     }
 
-    /// Replaces an edited text body and its mention metadata.
-    pub fn set_edited_text(
+    /// Replaces an edited body and its mention metadata in one write.
+    pub fn set_edited_content(
         &self,
         chat: &str,
         id: &str,

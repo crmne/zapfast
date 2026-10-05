@@ -12,9 +12,16 @@ Enter sends and Shift+Enter adds a line. Turn off **Enter sends** in Settings
 to make Enter add a line and send with Ctrl+Enter (Command+Enter on macOS).
 `*bold*`, `_italic_`, `~strike~`, and ```` ```monospace ```` ```` format
 like WhatsApp, and a message of nothing but emoji shows large.
-Mentions in a group are written with `@`; the smiley opens emoji
-(searchable), GIFs, and stickers, including the stickers used on the
-phone.
+Mentions in a group are written with `@`. Choose **all** to mention
+everyone when the group's member list is available: the message shows `@all`,
+highlighted like any other mention.
+Portuguese also accepts `@todos`, and each other language accepts its own
+word; the sent message still shows `@all`. In a group of more than 32
+people, only admins can mention everyone. People are notified as they are
+for any mention. Edits update the visible mentions; forwarding or quoting an
+`@all` message does not notify everyone again. The smiley opens emoji
+(searchable), GIFs, and stickers,
+including the stickers used on the phone.
 
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
 check when it was sent, delivered, and read. The reaction row has a **+** that

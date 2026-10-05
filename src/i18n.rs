@@ -337,8 +337,8 @@ mod tests {
 
     #[test]
     fn contextual_lookups_stay_separate_from_plain_ones() {
-        // The pilot catalog has no msgctxt entries, so a contextual lookup is
-        // distinct from gettext but still falls back to the source.
+        // An unknown context is distinct from gettext and still falls back to
+        // the source. The mention-everyone word uses its own context.
         assert_eq!(pgettext(Locale::PortugueseBrazil, "verb", "Chats"), "Chats");
         assert_eq!(pgettext(Locale::English, "verb", "Chats"), "Chats");
         assert_eq!(gettext(Locale::PortugueseBrazil, "Chats"), "Conversas");
