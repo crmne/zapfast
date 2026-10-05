@@ -233,7 +233,9 @@ protocol. These notes are for coding agents and new contributors.
   `client.media_reupload().request(..)` (a server-error receipt; WhatsApp
   has the phone re-upload and answers with a fresh `direct_path`) and is
   fetched once more before the bubble reports "No longer on WhatsApp's
-  servers". Download failures never toast; they live in the bubble as
+  servers". A chat sticker only the picker asked for skips the re-upload
+  (#405): the picker fetches through `sticker_pace`, two at a time, and a
+  failed one is not asked again that session. Download failures never toast; they live in the bubble as
   "... · click to retry". Copied text is refined by
   `transcript::refine`: emoji placeholders map back through each row's
   `placements`.

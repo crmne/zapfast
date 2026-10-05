@@ -2,6 +2,7 @@
 //! limit. Fetching every missing favorite at once on connecting (126 for one
 //! reader) answered `429 rate-overlimit` and left the account throttled, so
 //! the next picture or sticker the reader sent failed too (#298, #307).
+//! Opening the picker did the same with the chat stickers it fetches (#405).
 
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
