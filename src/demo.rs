@@ -831,6 +831,17 @@ pub fn populate(app: &mut App) {
             }];
             row
         },
+        {
+            let mut row = message(
+                group,
+                "group-everyone",
+                true,
+                group_base + 165,
+                Content::text("Heading over @all"),
+            );
+            row.mentions = vec![crate::mentions::everyone_ref()];
+            row
+        },
         message(
             group,
             "group-poll",
@@ -2522,6 +2533,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.to_owned());
                 app.composer = "@mi".to_owned();
+                app.mention_start = Some(0);
+                app.mention_selected = 0;
+                app.focus_composer = true;
+            }
+            "mention-everyone" => {
+                let group = SAMPLES[1].id;
+                app.open_chat = Some(group.to_owned());
+                app.composer = "@".to_owned();
                 app.mention_start = Some(0);
                 app.mention_selected = 0;
                 app.focus_composer = true;
@@ -4502,6 +4521,7 @@ mod tests {
             "typing",
             "composer-tools",
             "mention",
+            "mention-everyone",
             "emoji-complete",
             "reply",
             "edit",

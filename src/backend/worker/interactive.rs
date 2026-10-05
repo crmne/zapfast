@@ -1,7 +1,7 @@
 //! Presentation of interactive payloads decoded by whatsapp-rust.
 //! Never expose flow JSON, internal ids, or template substitution parameters.
 
-use super::{Content, MessageExt, Worker, forwarded_of, mentioned_of, wa};
+use super::{Content, MessageExt, Worker, forwarded_of, recorded_mention_ids, wa};
 use crate::model::{InteractiveAction, InteractiveButton, InteractiveCard, InteractiveOption};
 use whatsapp_rust::waproto::buffa::Message as _;
 
@@ -525,7 +525,7 @@ impl Worker {
                     &chat,
                     &id,
                     &content,
-                    &self.mentions_of(&mentioned_of(base)),
+                    &self.mentions_of(&recorded_mention_ids(base)),
                     image(base).and_then(|image| image.jpeg_thumbnail.as_deref()),
                     forwarded_of(base),
                 )?;
@@ -1029,7 +1029,7 @@ mod tests {
             .archive
             .insert_message(&edited_placeholder, Some(&raw))
             .unwrap();
-        worker.archive.set_meta("derived", "3").unwrap();
+        worker.archive.set_meta("derived", "4").unwrap();
         worker.backfill();
         worker.backfill_interactive();
         let recovered = worker

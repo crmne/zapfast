@@ -1462,7 +1462,7 @@ impl Worker {
     }
 
     fn backfill(&mut self) {
-        const VERSION: &str = "3";
+        const VERSION: &str = "4";
         if self.archive.meta("derived").ok().flatten().as_deref() == Some(VERSION) {
             return;
         }
@@ -1489,13 +1489,13 @@ impl Worker {
             if matches!(existing.content, Content::Revoked) {
                 continue;
             }
-            // Edits do not replace the raw protobuf; keep an edited interactive
-            // body, as `backfill_interactive` does.
-            if existing.edited && matches!(content, Content::Interactive { .. }) {
+            // Live edits do not replace the original raw protobuf. Its body and
+            // mention context are stale, regardless of the content kind.
+            if existing.edited {
                 continue;
             }
             content.keep_local_paths(&existing.content);
-            let mentions = self.mentions_of(&mentioned_of(base));
+            let mentions = self.mentions_of(&recorded_mention_ids(base));
             let thumbnail = thumbnail_of(base);
             if self
                 .archive
@@ -3169,6 +3169,9 @@ impl Worker {
     fn mentions_of(&self, raw: &[String]) -> Vec<MentionRef> {
         raw.iter()
             .filter_map(|jid| {
+                if jid == crate::mentions::ALL_ID {
+                    return Some(crate::mentions::everyone_ref());
+                }
                 let user = jid.split('@').next()?.to_owned();
                 if user.is_empty() {
                     return None;
@@ -3179,6 +3182,17 @@ impl Worker {
                 })
             })
             .collect()
+    }
+
+    /// Whether this chat may mention everyone and `text` carries `@all`.
+    fn wants_mention_all(&self, chat: &str, text: &str) -> bool {
+        crate::mentions::has_everyone_token(text)
+            && self
+                .archive
+                .chat(chat)
+                .ok()
+                .flatten()
+                .is_some_and(|chat| chat.can_mention_everyone())
     }
 
     fn ingest(&mut self, message: &Arc<wa::Message>, info: &MessageInfo) {
@@ -3252,11 +3266,16 @@ impl Worker {
                     if let Some(edited) = protocol.edited_message.as_option()
                         && let Some(mut content) = classify(edited)
                     {
+                        let mentions =
+                            self.mentions_of(&recorded_mention_ids(edited.get_base_message()));
                         // Preserve downloaded media when updating a caption.
                         if let Ok(Some(existing)) = self.archive.message(&chat, &target) {
                             content.keep_local_paths(&existing.content);
                         }
-                        if let Ok(true) = self.archive.set_content(&chat, &target, &content, true) {
+                        if let Ok(true) = self
+                            .archive
+                            .set_edited_content(&chat, &target, &content, &mentions)
+                        {
                             self.emit_message(&chat, &target);
                             self.emit_chat(&chat);
                         }
@@ -3316,7 +3335,7 @@ impl Worker {
             }
         }
         let quoted = self.quoted_of(base);
-        let mentions = self.mentions_of(&mentioned_of(base));
+        let mentions = self.mentions_of(&recorded_mention_ids(base));
         let row = Message {
             id: info.id.to_string(),
             chat: chat.clone(),
@@ -3954,7 +3973,7 @@ impl Worker {
                     classify(quoted)
                         .map(|content| content.summary())
                         .unwrap_or_default(),
-                    self.mentions_of(&mentioned_of(base)),
+                    self.mentions_of(&recorded_mention_ids(base)),
                 )
             })
             .unwrap_or_default();
@@ -6299,13 +6318,17 @@ impl Worker {
         let original = wa::Message::decode_from_slice(&raw).map_err(|_| unavailable)?;
         let jid = Self::jid_of(chat).ok_or(unavailable)?;
         let sender = Self::jid_of(&row.sender).ok_or(unavailable)?;
-        let context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
+        let mut context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
             row.id.clone(),
             &sender,
             &jid,
             &jid,
             &original,
         );
+        // The quoted copy can still carry the everyone bit. Clear it so a
+        // reply does not notify the group again. The quote row keeps the
+        // mention for display from the archived message.
+        silence_everyone(&mut context);
         let shown = Quoted {
             mentions: row.mentions.clone(),
             id: row.id,
@@ -6351,6 +6374,10 @@ impl Worker {
             self.refuse(chat, quoting, Unsent::Text(text), Refusal::Offline);
             return;
         };
+        let mut mentions = mentions;
+        if self.wants_mention_all(&chat, &text) {
+            crate::mentions::push_everyone_id(&mut mentions);
+        }
         let mut message = outgoing_text(text.clone(), context, &mentions);
         let expiration = self.apply_ephemeral(&chat, &mut message);
         let mentions = self.mentions_of(&mentions);
@@ -6551,7 +6578,7 @@ impl Worker {
         let (message, expiration) = outgoing_forward(&original, self.ephemeral_expiration(to_chat));
         let client = self.client.clone()?;
         let id = client.generate_message_id();
-        let mentions = self.mentions_of(&mentioned_of(&message));
+        let mentions = self.mentions_of(&recorded_mention_ids(&message));
         let thumbnail = thumbnail_of(&message).or_else(|| source.thumbnail.clone());
         let row = forwarded_row(
             source,
@@ -7371,11 +7398,15 @@ impl Worker {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
+        let mut mentions = mentions;
+        if self.wants_mention_all(&chat, &text) {
+            crate::mentions::push_everyone_id(&mut mentions);
+        }
         let content = Content::text(text.clone());
         let mention_rows = self.mentions_of(&mentions);
         if let Ok(true) = self
             .archive
-            .set_edited_text(&chat, &id, &content, &mention_rows)
+            .set_edited_content(&chat, &id, &content, &mention_rows)
         {
             self.emit_message(&chat, &id);
             self.emit_chat(&chat);
@@ -7625,6 +7656,13 @@ impl Worker {
             );
             return;
         };
+        let mut mentions = mentions;
+        if caption
+            .as_deref()
+            .is_some_and(|text| self.wants_mention_all(&chat, text))
+        {
+            crate::mentions::push_everyone_id(&mut mentions);
+        }
         for (index, path) in paths.into_iter().enumerate() {
             let client = client.clone();
             // Like the caption, the reply belongs to the first file.
@@ -7707,6 +7745,13 @@ impl Worker {
             self.refuse(chat, quoting, unsent(rgba, caption), Refusal::Offline);
             return;
         };
+        let mut mentions = mentions;
+        if caption
+            .as_deref()
+            .is_some_and(|text| self.wants_mention_all(&chat, text))
+        {
+            crate::mentions::push_everyone_id(&mut mentions);
+        }
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
         let me = self.me();
@@ -7985,6 +8030,9 @@ fn outgoing_forward(original: &wa::Message, expiration: Option<u32>) -> (wa::Mes
         context.expiration = None;
         context.ephemeral_setting_timestamp = None;
         context.ephemeral_shared_secret = None;
+        // A forward keeps the visible `@all` and drops the notify bit, so the
+        // destination chat is not mentioned. Other bits stay.
+        silence_everyone(&mut context);
         message.set_context_info(context);
     }
     let expiration = apply_ephemeral_expiration(&mut message, expiration);
@@ -8198,17 +8246,60 @@ fn non_empty(text: &Option<String>) -> Option<String> {
 }
 
 /// Builds a text body with optional quote and mention context.
+///
+/// [`crate::mentions::ALL_ID`] in `mentions` sets the everyone bit and is not
+/// written as a participant JID.
 fn outgoing_text(
     text: String,
     mut context: Option<wa::ContextInfo>,
     mentions: &[String],
 ) -> wa::Message {
-    if !mentions.is_empty() {
-        context.get_or_insert_default().mentioned_jid = mentions.to_vec();
+    let (jids, mention_all) = participant_mentions(mentions);
+    if !jids.is_empty() || mention_all {
+        let ctx = context.get_or_insert_default();
+        if !jids.is_empty() {
+            ctx.mentioned_jid = jids;
+        }
+        if mention_all {
+            ctx.non_jid_mentions = Some(crate::mentions::with_flag(ctx.non_jid_mentions));
+        }
     }
     match context {
         Some(context) => wa::Message::text_with_context(text, context),
         None => wa::Message::text(text),
+    }
+}
+
+/// JIDs to put in `mentioned_jid`, and whether everyone should be notified.
+fn participant_mentions(mentions: &[String]) -> (Vec<String>, bool) {
+    let mention_all = mentions.iter().any(|id| id == crate::mentions::ALL_ID);
+    let jids = mentions
+        .iter()
+        .filter(|id| id.as_str() != crate::mentions::ALL_ID)
+        .cloned()
+        .collect();
+    (jids, mention_all)
+}
+
+/// Drops the everyone notify bit from a context and from the message it quotes.
+fn silence_everyone(context: &mut wa::ContextInfo) {
+    context.non_jid_mentions = crate::mentions::without_flag(context.non_jid_mentions);
+    let Some(quoted) = context.quoted_message.as_option_mut() else {
+        return;
+    };
+    // Quotes may retain protocol wrappers, while set_context_info operates on
+    // the core body. Keep that body when replacing the quoted copy.
+    let mut base = quoted.get_base_message().clone();
+    let Some(mut inner) = context_of(&base).cloned() else {
+        return;
+    };
+    let silenced = crate::mentions::without_flag(inner.non_jid_mentions);
+    if silenced == inner.non_jid_mentions {
+        return;
+    }
+    inner.non_jid_mentions = silenced;
+    if base.set_context_info(inner) {
+        *quoted = base;
     }
 }
 
@@ -8270,6 +8361,15 @@ fn mentioned_of(base: &wa::Message) -> Vec<String> {
     context_of(base)
         .map(|context| context.mentioned_jid.clone())
         .unwrap_or_default()
+}
+
+/// Participant JIDs plus [`crate::mentions::ALL_ID`] when everyone was notified.
+fn recorded_mention_ids(base: &wa::Message) -> Vec<String> {
+    let mut ids = mentioned_of(base);
+    if crate::mentions::flagged(context_of(base).and_then(|context| context.non_jid_mentions)) {
+        crate::mentions::push_everyone_id(&mut ids);
+    }
+    ids
 }
 
 fn forwarded_of(base: &wa::Message) -> bool {
@@ -9268,12 +9368,21 @@ fn attach_quote(
 }
 
 /// Mentions people in an attachment, keeping a reply context it carries.
+///
+/// [`crate::mentions::ALL_ID`] sets the everyone bit and is left out of
+/// `mentioned_jid`.
 fn add_mentions(message: &mut wa::Message, mentions: &[String]) {
-    if mentions.is_empty() {
+    let (jids, mention_all) = participant_mentions(mentions);
+    if jids.is_empty() && !mention_all {
         return;
     }
     let mut context = context_of(message).cloned().unwrap_or_default();
-    context.mentioned_jid = mentions.to_vec();
+    if !jids.is_empty() {
+        context.mentioned_jid = jids;
+    }
+    if mention_all {
+        context.non_jid_mentions = Some(crate::mentions::with_flag(context.non_jid_mentions));
+    }
     message.set_context_info(context);
 }
 
@@ -9340,6 +9449,9 @@ pub(super) async fn file_outbound(
         mentions: mentions
             .into_iter()
             .filter_map(|id| {
+                if id == crate::mentions::ALL_ID {
+                    return Some(crate::mentions::everyone_ref());
+                }
                 let user = id.split('@').next()?.to_owned();
                 (!user.is_empty()).then_some(MentionRef { user, id })
             })
@@ -9639,7 +9751,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
             status,
             quoted,
             reactions,
-            mentions: mentioned_of(base),
+            mentions: recorded_mention_ids(base),
             forwarded: forwarded_of(base),
             thumbnail: thumbnail_of(base),
             raw: if original.is_view_once() {
@@ -11621,6 +11733,139 @@ mod tests {
     }
 
     #[test]
+    fn mentioning_everyone_sets_its_bit_and_keeps_other_mentions() {
+        let member = "491702222222@s.whatsapp.net".to_owned();
+        let mentions = vec![crate::mentions::ALL_ID.to_owned(), member.clone()];
+        let message = outgoing_text(
+            "hello @all @491702222222".to_owned(),
+            Some(wa::ContextInfo {
+                stanza_id: Some("quoted".to_owned()),
+                non_jid_mentions: Some(2),
+                ..Default::default()
+            }),
+            &mentions,
+        );
+        let context = context_of(&message).expect("text context");
+        assert_eq!(context.non_jid_mentions, Some(3));
+        assert_eq!(context.mentioned_jid, vec![member.clone()]);
+        assert_eq!(context.stanza_id.as_deref(), Some("quoted"));
+
+        let plain = outgoing_text(
+            "hello @all".to_owned(),
+            Some(wa::ContextInfo {
+                non_jid_mentions: Some(2),
+                ..Default::default()
+            }),
+            &[],
+        );
+        assert_eq!(
+            context_of(&plain).and_then(|context| context.non_jid_mentions),
+            Some(2),
+            "the word alone does not notify"
+        );
+
+        let (worker, _, _, _) = receipt_tests::worker();
+        let recorded = worker.mentions_of(&recorded_mention_ids(&message));
+        assert_eq!(
+            recorded,
+            vec![
+                MentionRef {
+                    user: "491702222222".into(),
+                    id: member,
+                },
+                crate::mentions::everyone_ref(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mention_everyone_follows_the_group_gate() {
+        let (worker, _, _, _) = receipt_tests::worker();
+        let chat = "123@g.us";
+        worker.archive.ensure_chat(chat, "Group").unwrap();
+        assert!(!worker.wants_mention_all(chat, "hi @all"));
+        worker
+            .archive
+            .set_group_info(chat, None, &["1@s.whatsapp.net".into()], false)
+            .unwrap();
+        assert!(worker.wants_mention_all(chat, "hi @all"));
+        assert!(!worker.wants_mention_all(chat, "hi @alligator"));
+        let many: Vec<String> = (0..33)
+            .map(|index| format!("{index}@s.whatsapp.net"))
+            .collect();
+        worker
+            .archive
+            .set_group_info(chat, None, &many, false)
+            .unwrap();
+        assert!(!worker.wants_mention_all(chat, "hi @all"));
+        worker.archive.set_group_rights(chat, true, true).unwrap();
+        assert!(worker.wants_mention_all(chat, "hi @all"));
+    }
+
+    #[test]
+    fn forwarding_clears_only_the_everyone_bit() {
+        let original = wa::Message::text_with_context(
+            "hello @all",
+            wa::ContextInfo {
+                non_jid_mentions: Some(3),
+                ..Default::default()
+            },
+        );
+        let (forward, _) = outgoing_forward(&original, None);
+        let context = context_of(&forward).expect("forward context");
+        assert_eq!(context.non_jid_mentions, Some(2));
+        assert_eq!(context.is_forwarded, Some(true));
+        assert!(recorded_mention_ids(&forward).is_empty());
+    }
+
+    #[test]
+    fn a_reply_does_not_keep_the_quoted_everyone_bit() {
+        let quoted = wa::Message::text_with_context(
+            "hello @all",
+            wa::ContextInfo {
+                non_jid_mentions: Some(1),
+                ..Default::default()
+            },
+        );
+        let mut context = wa::ContextInfo {
+            non_jid_mentions: Some(3),
+            quoted_message: MessageField::some(quoted),
+            ..Default::default()
+        };
+        silence_everyone(&mut context);
+        assert_eq!(context.non_jid_mentions, Some(2));
+        let quoted = context.quoted_message.as_option().expect("quoted");
+        assert_eq!(
+            context_of(quoted).and_then(|inner| inner.non_jid_mentions),
+            None
+        );
+
+        let wrapped = wa::Message {
+            ephemeral_message: MessageField::some(wa::message::FutureProofMessage {
+                message: MessageField::some(wa::Message::text_with_context(
+                    "wrapped @all",
+                    wa::ContextInfo {
+                        non_jid_mentions: Some(3),
+                        ..Default::default()
+                    },
+                )),
+            }),
+            ..Default::default()
+        };
+        let mut context = wa::ContextInfo {
+            quoted_message: MessageField::some(wrapped),
+            ..Default::default()
+        };
+        silence_everyone(&mut context);
+        let quoted = context.quoted_message.as_option().unwrap();
+        assert_eq!(quoted.text_content(), Some("wrapped @all"));
+        assert_eq!(
+            context_of(quoted.get_base_message()).and_then(|inner| inner.non_jid_mentions),
+            Some(2)
+        );
+    }
+
+    #[test]
     fn sticker_messages_accept_quote_context() {
         let mut message = wa::Message {
             sticker_message: MessageField::some(wa::message::StickerMessage::default()),
@@ -12964,10 +13209,18 @@ mod receipt_tests {
     }
 
     fn file_history_entries(worker: &mut Worker, messages: Vec<wa::HistorySyncMsg>) {
+        file_history_entries_for(worker, PEER, messages);
+    }
+
+    fn file_history_entries_for(
+        worker: &mut Worker,
+        chat: &str,
+        messages: Vec<wa::HistorySyncMsg>,
+    ) {
         worker.apply_history(
             ParsedHistory {
                 chats: vec![parse_conversation(wa::Conversation {
-                    id: PEER.into(),
+                    id: chat.into(),
                     messages,
                     ..Default::default()
                 })],
@@ -13211,6 +13464,286 @@ mod receipt_tests {
             assert_eq!(stored.edited, edited);
             assert_eq!(stored.history_order, Some(42));
             assert_eq!(worker.archive.raw(PEER, id).unwrap(), raw);
+        }
+    }
+
+    #[test]
+    fn mention_backfill_keeps_edited_bodies_mentions_and_media_paths() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        let member = "12025550123@s.whatsapp.net";
+        let original = || {
+            wa::Message::text_with_context(
+                "Original @all",
+                wa::ContextInfo {
+                    non_jid_mentions: Some(1),
+                    ..Default::default()
+                },
+            )
+        };
+        let image = wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage {
+                caption: Some("Original @all".into()),
+                mimetype: Some("image/jpeg".into()),
+                context_info: MessageField::some(wa::ContextInfo {
+                    non_jid_mentions: Some(1),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        file_history_entries_for(
+            &mut worker,
+            group,
+            vec![
+                history_entry(
+                    group,
+                    "plain",
+                    false,
+                    Some(member),
+                    original(),
+                    vec![],
+                    None,
+                ),
+                history_entry(
+                    group,
+                    "edited-text",
+                    false,
+                    Some(member),
+                    original(),
+                    vec![],
+                    None,
+                ),
+                history_entry(
+                    group,
+                    "edited-image",
+                    false,
+                    Some(member),
+                    image,
+                    vec![],
+                    None,
+                ),
+            ],
+        );
+        let plain = worker.archive.message(group, "plain").unwrap().unwrap();
+        worker
+            .archive
+            .set_derived(group, "plain", &plain.content, &[], None, false)
+            .unwrap();
+        let current_mentions = [MentionRef {
+            user: "12025550123".into(),
+            id: member.into(),
+        }];
+        worker
+            .archive
+            .set_edited_content(
+                group,
+                "edited-text",
+                &Content::text("Corrected @12025550123"),
+                &current_mentions,
+            )
+            .unwrap();
+        let path = std::path::Path::new("/synthetic/edited-image.jpg");
+        worker
+            .archive
+            .set_media_path(group, "edited-image", path)
+            .unwrap();
+        let mut edited_image = worker
+            .archive
+            .message(group, "edited-image")
+            .unwrap()
+            .unwrap()
+            .content;
+        if let Content::Image { caption, .. } = &mut edited_image {
+            *caption = Some("Corrected caption".into());
+        } else {
+            panic!("image fixture was not classified");
+        }
+        worker
+            .archive
+            .set_edited_content(group, "edited-image", &edited_image, &current_mentions)
+            .unwrap();
+        worker.archive.set_meta("derived", "3").unwrap();
+
+        worker.backfill();
+
+        let plain = worker.archive.message(group, "plain").unwrap().unwrap();
+        assert_eq!(plain.mentions, vec![crate::mentions::everyone_ref()]);
+        let text = worker
+            .archive
+            .message(group, "edited-text")
+            .unwrap()
+            .unwrap();
+        assert_eq!(text.content, Content::text("Corrected @12025550123"));
+        assert_eq!(text.mentions, current_mentions);
+        assert!(text.edited);
+        let image = worker
+            .archive
+            .message(group, "edited-image")
+            .unwrap()
+            .unwrap();
+        assert_eq!(image.content, edited_image);
+        assert_eq!(image.mentions, current_mentions);
+        assert!(image.edited);
+        assert_eq!(
+            worker.archive.meta("derived").unwrap().as_deref(),
+            Some("4")
+        );
+    }
+
+    #[test]
+    fn live_edits_replace_everyone_and_participant_mentions() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        let sender = "12025550123@s.whatsapp.net";
+        let member = "12025550999@s.whatsapp.net";
+        file_history_entries_for(
+            &mut worker,
+            group,
+            vec![history_entry(
+                group,
+                "target",
+                false,
+                Some(sender),
+                wa::Message::text("Original"),
+                vec![],
+                None,
+            )],
+        );
+        let ingest_edit = |worker: &mut Worker, body: wa::Message| {
+            let edit = Arc::new(wa::Message {
+                protocol_message: MessageField::some(wa::message::ProtocolMessage {
+                    r#type: Some(wa::message::protocol_message::Type::MESSAGE_EDIT),
+                    key: MessageField::some(wa::MessageKey {
+                        id: Some("target".into()),
+                        ..Default::default()
+                    }),
+                    edited_message: MessageField::some(body),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+            let info = MessageInfo {
+                id: "edit-event".into(),
+                source: MessageSource {
+                    chat: group.parse().unwrap(),
+                    sender: sender.parse().unwrap(),
+                    is_group: true,
+                    ..Default::default()
+                },
+                timestamp: whatsapp_rust::wacore::time::from_secs(120).unwrap(),
+                ..Default::default()
+            };
+            worker.ingest(&edit, &info);
+        };
+        ingest_edit(
+            &mut worker,
+            wa::Message {
+                ephemeral_message: MessageField::some(wa::message::FutureProofMessage {
+                    message: MessageField::some(wa::Message::text_with_context(
+                        "Edited @all @12025550999",
+                        wa::ContextInfo {
+                            non_jid_mentions: Some(1),
+                            mentioned_jid: vec![member.into()],
+                            ..Default::default()
+                        },
+                    )),
+                }),
+                ..Default::default()
+            },
+        );
+        let updated = worker.archive.message(group, "target").unwrap().unwrap();
+        assert_eq!(updated.content, Content::text("Edited @all @12025550999"));
+        assert_eq!(
+            updated.mentions,
+            vec![
+                MentionRef {
+                    user: "12025550999".into(),
+                    id: member.into(),
+                },
+                crate::mentions::everyone_ref(),
+            ]
+        );
+        ingest_edit(&mut worker, wa::Message::text("No mentions now"));
+        let updated = worker.archive.message(group, "target").unwrap().unwrap();
+        assert_eq!(updated.content, Content::text("No mentions now"));
+        assert!(updated.mentions.is_empty());
+        assert!(updated.edited);
+
+        let original_image = wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage {
+                caption: Some("Original caption".into()),
+                mimetype: Some("image/jpeg".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        file_history_entries_for(
+            &mut worker,
+            group,
+            vec![history_entry(
+                group,
+                "image-target",
+                false,
+                Some(sender),
+                original_image,
+                vec![],
+                None,
+            )],
+        );
+        let path = std::path::Path::new("/synthetic/live-edit.jpg");
+        worker
+            .archive
+            .set_media_path(group, "image-target", path)
+            .unwrap();
+        let edited_image = Arc::new(wa::Message {
+            protocol_message: MessageField::some(wa::message::ProtocolMessage {
+                r#type: Some(wa::message::protocol_message::Type::MESSAGE_EDIT),
+                key: MessageField::some(wa::MessageKey {
+                    id: Some("image-target".into()),
+                    ..Default::default()
+                }),
+                edited_message: MessageField::some(wa::Message {
+                    image_message: MessageField::some(wa::message::ImageMessage {
+                        caption: Some("Caption @all".into()),
+                        mimetype: Some("image/jpeg".into()),
+                        context_info: MessageField::some(wa::ContextInfo {
+                            non_jid_mentions: Some(1),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let info = MessageInfo {
+            id: "image-edit-event".into(),
+            source: MessageSource {
+                chat: group.parse().unwrap(),
+                sender: sender.parse().unwrap(),
+                is_group: true,
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(121).unwrap(),
+            ..Default::default()
+        };
+        worker.ingest(&edited_image, &info);
+        let updated = worker
+            .archive
+            .message(group, "image-target")
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.mentions, vec![crate::mentions::everyone_ref()]);
+        match updated.content {
+            Content::Image { caption, media, .. } => {
+                assert_eq!(caption.as_deref(), Some("Caption @all"));
+                assert_eq!(media.path.as_deref(), Some(path));
+            }
+            other => panic!("unexpected edited image: {other:?}"),
         }
     }
 

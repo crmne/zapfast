@@ -737,6 +737,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     let submit = take_plain_key(ui, Key::Enter) || take_plain_key(ui, Key::Tab);
     let mut picked = submit.then(|| candidates[app.mention_selected].clone());
     let palette = app.palette;
+    let everyone_alias = crate::mentions::everyone_alias(app.locale);
 
     let list = widgets::raised(ui, &palette, suggestion_frame(&palette), |ui| {
         let row_height = 38.0;
@@ -763,18 +764,40 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
                         pos2(rect.left() + 19.0, rect.center().y),
                         Vec2::splat(28.0),
                     );
-                    let picture = app.avatar(id);
-                    widgets::paint_avatar(
-                        ui,
-                        &palette,
-                        avatar,
-                        label.trim_start_matches('~'),
-                        id,
-                        picture.as_deref(),
-                    );
-                    let detail = crate::model::phone_of(id)
-                        .map(crate::util::phone)
-                        .unwrap_or_default();
+                    let everyone = id == crate::mentions::ALL_ID;
+                    if everyone {
+                        ui.painter().circle_filled(
+                            avatar.center(),
+                            avatar.width() / 2.0,
+                            palette.avatar(crate::util::hue(id)),
+                        );
+                        theme::paint_icon(
+                            ui,
+                            Icon::Users,
+                            avatar,
+                            avatar.width() * 0.5,
+                            Color32::WHITE,
+                        );
+                    } else {
+                        let picture = app.avatar(id);
+                        widgets::paint_avatar(
+                            ui,
+                            &palette,
+                            avatar,
+                            label.trim_start_matches('~'),
+                            id,
+                            picture.as_deref(),
+                        );
+                    }
+                    let detail = if everyone
+                        && !everyone_alias.eq_ignore_ascii_case(crate::mentions::ALL_USER)
+                    {
+                        everyone_alias.clone()
+                    } else {
+                        crate::model::phone_of(id)
+                            .map(crate::util::phone)
+                            .unwrap_or_default()
+                    };
                     let detail = widgets::line(
                         ui,
                         &detail,
