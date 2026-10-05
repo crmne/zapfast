@@ -309,6 +309,9 @@ fn deliver(
     let mut notification = notify_rust::Notification::new();
     notification
         .appname("ZapFast")
+        // Ties the notification to the installed application, so desktops
+        // list ZapFast in their notification settings and group by it.
+        .hint(notify_rust::Hint::DesktopEntry(badge::desktop_file()))
         .summary(title)
         .body(body)
         .icon("zapfast")
