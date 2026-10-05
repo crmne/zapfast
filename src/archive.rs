@@ -48,6 +48,13 @@ pub struct ArchivedSticker {
     pub raw: Option<Vec<u8>>,
 }
 
+/// Original local ordering of a waiting row, restored after a typed refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutgoingPosition {
+    pub(crate) timestamp: i64,
+    pub(crate) rowid: i64,
+}
+
 pub struct Archive {
     connection: Connection,
 }
@@ -1761,21 +1768,38 @@ impl Archive {
 
     /// Starts sending a waiting message: it becomes pending at `at`, the
     /// time it goes out, so it is the chat's newest message. Only a waiting
-    /// row moves, and the reply is the time it waited at; anything else keeps
-    /// its time and reports `None`.
-    pub fn dispatch_outgoing(&self, chat: &str, id: &str, at: i64) -> Result<Option<i64>> {
+    /// row moves; anything else keeps its time and reports `None`.
+    /// The original local position is returned
+    /// so a second refusal can restore queue order as well as time.
+    pub fn dispatch_outgoing(
+        &self,
+        chat: &str,
+        id: &str,
+        at: i64,
+    ) -> Result<Option<OutgoingPosition>> {
         let transaction = self.connection.unchecked_transaction()?;
-        let queued_at: Option<i64> = transaction
+        let position = transaction
             .query_row(
-                "SELECT timestamp FROM messages
+                "SELECT timestamp, rowid FROM messages
                  WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND status = ?3",
                 params![chat, id, status_rank(Delivery::Queued)],
-                |row| row.get(0),
+                |row| {
+                    Ok(OutgoingPosition {
+                        timestamp: row.get(0)?,
+                        rowid: row.get(1)?,
+                    })
+                },
             )
             .optional()?;
-        if queued_at.is_some() {
+        if position.is_some() {
             transaction.execute(
-                "UPDATE messages SET status = ?3, timestamp = ?4 WHERE chat = ?1 AND id = ?2",
+                // rowid is only the local tie-breaker, not message identity. Search
+                // uses LIKE (no FTS rowid index); receipts, polls and removals use
+                // (chat,id), and their cleanup triggers run only on DELETE.
+                // UPDATE preserves them and SQLite maintains its ordinary indexes.
+                "UPDATE messages SET status = ?3, timestamp = ?4,
+                 rowid = (SELECT COALESCE(MAX(rowid), 0) + 1 FROM messages)
+                 WHERE chat = ?1 AND id = ?2",
                 params![chat, id, status_rank(Delivery::Pending), at],
             )?;
             transaction.execute(
@@ -1784,22 +1808,28 @@ impl Archive {
             )?;
         }
         transaction.commit()?;
-        Ok(queued_at)
+        Ok(position)
     }
 
     /// Puts a send that went out and was refused again back to waiting, at
     /// the time it waited at, so it stays ahead of the rows queued behind
-    /// it. Only a pending send of ours moves.
-    pub fn requeue_outgoing(&self, chat: &str, id: &str, queued_at: i64) -> Result<bool> {
+    /// it, including within one second. Only a pending send of ours moves.
+    pub fn requeue_outgoing(
+        &self,
+        chat: &str,
+        id: &str,
+        position: OutgoingPosition,
+    ) -> Result<bool> {
         let changed = self.connection.execute(
-            "UPDATE messages SET status = ?3, timestamp = ?4
+            "UPDATE messages SET status = ?3, timestamp = ?4, rowid = ?6
              WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND status = ?5",
             params![
                 chat,
                 id,
                 status_rank(Delivery::Queued),
-                queued_at,
-                status_rank(Delivery::Pending)
+                position.timestamp,
+                status_rank(Delivery::Pending),
+                position.rowid
             ],
         )?;
         Ok(changed > 0)
@@ -2046,7 +2076,10 @@ pub(crate) mod tests {
         assert_eq!(archive.chat(chat).unwrap().unwrap().last_activity, activity);
         set_dispatch_failure(&archive, false);
         assert_eq!(
-            archive.dispatch_outgoing(chat, "waiting", 500).unwrap(),
+            archive
+                .dispatch_outgoing(chat, "waiting", 500)
+                .unwrap()
+                .map(|position| position.timestamp),
             Some(100)
         );
     }
@@ -3418,12 +3451,11 @@ pub(crate) mod tests {
         archive
             .insert_message(&message(chat, "theirs", 200, false), None)
             .expect("insert");
-        assert_eq!(
-            archive
-                .dispatch_outgoing(chat, "waiting", 500)
-                .expect("dispatch"),
-            Some(100)
-        );
+        let position = archive
+            .dispatch_outgoing(chat, "waiting", 500)
+            .unwrap()
+            .unwrap();
+        assert_eq!(position.timestamp, 100);
         let row = archive
             .message(chat, "waiting")
             .expect("read")
@@ -3462,7 +3494,7 @@ pub(crate) mod tests {
         // activity. Only a pending send of ours goes back.
         assert!(
             archive
-                .requeue_outgoing(chat, "waiting", 100)
+                .requeue_outgoing(chat, "waiting", position)
                 .expect("requeue")
         );
         let row = archive
@@ -3480,14 +3512,155 @@ pub(crate) mod tests {
         );
         assert!(
             !archive
-                .requeue_outgoing(chat, "waiting", 50)
+                .requeue_outgoing(chat, "waiting", position)
                 .expect("requeue")
         );
         assert!(
             !archive
-                .requeue_outgoing(chat, "theirs", 50)
+                .requeue_outgoing(chat, "theirs", position)
                 .expect("requeue")
         );
+    }
+
+    #[test]
+    fn same_second_dispatch_order_survives_archive_reopen_and_paging() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("synthetic.db");
+        let key = [19; 32];
+        let chat = "fixture@s.whatsapp.net";
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat(chat, "Fixture").unwrap();
+            let mut waiting = message(chat, "waiting", 100, true);
+            waiting.status = Delivery::Queued;
+            archive
+                .insert_message(&waiting, Some(b"fixture raw"))
+                .unwrap();
+            let mut history = message(chat, "history", 100, false);
+            history.history_order = Some(7);
+            archive.insert_message(&history, None).unwrap();
+            archive
+                .insert_message(&message(chat, "reply", 100, false), None)
+                .unwrap();
+            archive.dispatch_outgoing(chat, "waiting", 100).unwrap();
+            archive
+                .set_outgoing_state(chat, "waiting", Delivery::Sent)
+                .unwrap();
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        let ids = |rows: Vec<Message>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(archive.messages(chat, None, 10).unwrap()),
+            ["history", "reply", "waiting"]
+        );
+        let newest = archive.messages(chat, None, 1).unwrap();
+        assert_eq!(ids(newest), ["waiting"]);
+        assert_eq!(
+            ids(archive.messages(chat, Some((100, "waiting")), 1).unwrap()),
+            ["reply"]
+        );
+        assert_eq!(
+            ids(archive.messages(chat, Some((100, "reply")), 1).unwrap()),
+            ["history"]
+        );
+        assert_eq!(
+            archive
+                .message(chat, "history")
+                .unwrap()
+                .unwrap()
+                .history_order,
+            Some(7)
+        );
+        assert_eq!(
+            archive.raw(chat, "waiting").unwrap(),
+            Some(b"fixture raw".to_vec())
+        );
+    }
+
+    #[test]
+    fn repeated_refusals_restore_queue_order_before_the_next_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("synthetic.db");
+        let key = [23; 32];
+        let chat = "fixture@g.us";
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat(chat, "Fixture").unwrap();
+            for id in ["first", "cancelled", "last"] {
+                let mut waiting = message(chat, id, 100, true);
+                waiting.status = Delivery::Queued;
+                archive
+                    .insert_message(&waiting, Some(b"fixture raw"))
+                    .unwrap();
+            }
+            archive
+                .snapshot_group_recipients(chat, "first", &["fixture@lid".into()])
+                .unwrap();
+            archive
+                .save_poll(chat, "first", "fixture@lid", b"fixture key")
+                .unwrap();
+            archive.mark_poll_history(chat, "first").unwrap();
+            archive
+                .insert_message(&message(chat, "reply", 100, false), None)
+                .unwrap();
+            for _ in 0..2 {
+                let position = archive
+                    .dispatch_outgoing(chat, "first", 100)
+                    .unwrap()
+                    .unwrap();
+                assert!(archive.requeue_outgoing(chat, "first", position).unwrap());
+                assert_eq!(
+                    archive
+                        .messages(chat, None, 10)
+                        .unwrap()
+                        .into_iter()
+                        .filter(|row| row.status == Delivery::Queued)
+                        .map(|row| row.id)
+                        .collect::<Vec<_>>(),
+                    ["first", "cancelled", "last"]
+                );
+            }
+            archive.delete_message(chat, "cancelled").unwrap();
+            archive.dispatch_outgoing(chat, "first", 100).unwrap();
+            archive
+                .set_outgoing_state(chat, "first", Delivery::Sent)
+                .unwrap();
+            archive.dispatch_outgoing(chat, "last", 100).unwrap();
+            archive
+                .set_outgoing_state(chat, "last", Delivery::Sent)
+                .unwrap();
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert_eq!(
+            archive
+                .messages(chat, None, 10)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.id)
+                .collect::<Vec<_>>(),
+            ["reply", "first", "last"]
+        );
+        assert_eq!(
+            archive
+                .search_chat_messages(chat, "message first", None, None, 10)
+                .unwrap()[0]
+                .id,
+            "first"
+        );
+        assert_eq!(
+            archive.raw(chat, "first").unwrap(),
+            Some(b"fixture raw".to_vec())
+        );
+        assert_eq!(
+            archive.receipts(chat, "first").unwrap()[0].id,
+            "fixture@lid"
+        );
+        assert_eq!(
+            archive.poll_key(chat, "first").unwrap(),
+            Some(("fixture@lid".into(), b"fixture key".to_vec()))
+        );
+        assert!(archive.has_poll_history(chat, "first").unwrap());
+        assert!(archive.message(chat, "cancelled").unwrap().is_none());
     }
 
     #[test]

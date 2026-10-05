@@ -51,6 +51,25 @@ Availability depends on what the phone sends; messages deleted for you stay
 deleted. This action does not require unlinking your account or clearing the
 archive.
 
+### Sending through a rate limit
+
+**Development builds** send messages in order. Only a typed WhatsApp rate-limit
+refusal, or waiting behind its cooldown, shows **Waiting to send**. Waiting messages stay below new
+replies and send automatically when the cooldown ends. **Cancel** deletes a
+waiting message so it is never sent. A brief disconnect preserves that wait;
+quitting or changing the proxy makes it **Not sent**. Ordinary offline sends
+fail immediately, without joining the queue. An interrupted send shows **Send
+unconfirmed**, because it may have reached WhatsApp, and is never resent
+automatically. You can copy or delete it locally.
+
+If local storage prevents a waiting message from starting, it is not sent.
+ZapFast reports the failure and retries only its local status cleanup, not the
+send. Cancelling still prevents transmission if local deletion fails: the error
+explains this, and **Cancel** can retry deletion after storage recovers. Local
+cleanup also retries every 30 seconds, even while disconnected, and does not
+block later sends. If ZapFast exits before cleanup completes, leftover waiting
+rows become **Not sent** on reopening; they are never automatically replayed.
+
 ## Stickers
 
 The sticker tab works like WhatsApp's: a row of tabs holds **Recent**

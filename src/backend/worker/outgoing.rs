@@ -20,8 +20,8 @@ pub(super) struct Job {
     pub expiration: Option<u32>,
     /// Shown as waiting: it met a rate-limit cooldown, or stood behind one.
     pub waited: bool,
-    /// The time it waited at, once it went out from waiting.
-    pub queued_at: Option<i64>,
+    /// Its original local order, once it went out from waiting.
+    pub queued_position: Option<crate::archive::OutgoingPosition>,
 }
 
 // SQL cleanup owns these rows but never owns a transport retry.
@@ -126,7 +126,7 @@ impl Worker {
             message,
             expiration,
             waited: false,
-            queued_at: None,
+            queued_position: None,
         };
         // Without a link it does not wait: the pump fails it at once.
         if self.link_up() && self.outgoing.must_wait(now) && !self.mark_waiting(&mut job) {
@@ -181,8 +181,14 @@ impl Worker {
     /// A send that waited and is refused again waits once more at the time
     /// it waited at, ahead of the rows queued behind it. `false` as in
     /// `mark_waiting`.
-    fn requeue(&mut self, job: &mut Job, queued_at: i64) -> bool {
-        let result = self.archive.requeue_outgoing(&job.chat, &job.id, queued_at);
+    fn requeue(
+        &mut self,
+        job: &mut Job,
+        queued_position: crate::archive::OutgoingPosition,
+    ) -> bool {
+        let result = self
+            .archive
+            .requeue_outgoing(&job.chat, &job.id, queued_position);
         job.waited = self.waiting_state_written(job, result);
         if job.waited {
             if let Ok(Some(mut message)) = self.archive.message(&job.chat, &job.id) {
@@ -259,8 +265,8 @@ impl Worker {
                 .archive
                 .dispatch_outgoing(&job.chat, &job.id, crate::util::now())
             {
-                Ok(Some(queued_at)) => {
-                    job.queued_at = Some(queued_at);
+                Ok(Some(queued_position)) => {
+                    job.queued_position = Some(queued_position);
                     self.emit_message(&job.chat, &job.id);
                     self.emit_chat(&job.chat);
                 }
@@ -325,8 +331,8 @@ impl Worker {
                 );
                 self.outgoing.retry_at =
                     Some(Instant::now() + Duration::from_secs(u64::from(retry_after)));
-                let waiting = match job.queued_at {
-                    Some(queued_at) => self.requeue(&mut job, queued_at),
+                let waiting = match job.queued_position {
+                    Some(queued_position) => self.requeue(&mut job, queued_position),
                     None => self.mark_waiting(&mut job),
                 };
                 // Everything behind a refusal waits too. A SQL failure
@@ -511,7 +517,7 @@ mod tests {
             message: wa::Message::default(),
             expiration: None,
             waited: false,
-            queued_at: None,
+            queued_position: None,
         }
     }
 
@@ -866,7 +872,10 @@ mod tests {
                 );
             }
             let mut refused = job(PEER, "refused");
-            refused.queued_at = requeued.then_some(100);
+            refused.queued_position = requeued.then_some(crate::archive::OutgoingPosition {
+                timestamp: 100,
+                rowid: 1,
+            });
             worker.outgoing.running = Some(refused);
             worker.outgoing.waiting.push_back(job(PEER, "behind"));
             set_outgoing_state_failure(&worker.archive, true);
@@ -1183,6 +1192,7 @@ mod tests {
     async fn a_send_refused_again_keeps_its_place_ahead_of_the_rows_behind_it() {
         let (mut worker, events, _, _) = worker();
         let _directory = attach_offline_client(&mut worker).await;
+        worker.outgoing.synthetic = Some(Vec::new());
         let ids = ["a", "b", "c"];
         for id in ids {
             worker.store_message(
@@ -1228,6 +1238,34 @@ mod tests {
                 .map(|job| job.id.as_str())
                 .collect::<Vec<_>>(),
             ids
+        );
+        worker.pump_outgoing_at(Instant::now() + Duration::from_secs(61));
+        finish(&mut worker, "a", Ok(())).await;
+        assert_eq!(
+            worker.outgoing.running.as_ref().map(|job| job.id.as_str()),
+            Some("b")
+        );
+        assert_eq!(
+            worker
+                .outgoing
+                .synthetic
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|job| job.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "a", "b"]
+        );
+        assert_eq!(
+            worker
+                .archive
+                .messages(PEER, None, 10)
+                .unwrap()
+                .into_iter()
+                .filter(|row| row.id == "a" || row.id == "b")
+                .map(|row| row.id)
+                .collect::<Vec<_>>(),
+            ["a", "b"]
         );
         worker.stop_bot().await;
     }
