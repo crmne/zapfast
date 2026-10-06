@@ -5183,8 +5183,9 @@ mod tests {
                     Content::Video {
                         caption: None,
                         media,
-                        seconds: 1,
+                        seconds: Some(1),
                         gif: false,
+                        note: false,
                     }
                 } else {
                     Content::Image {
