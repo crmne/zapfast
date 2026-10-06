@@ -5177,7 +5177,7 @@ mod tests {
                 };
                 if index == 3 {
                     // A synthetic local path exercises the Open label without real media.
-                    media.path = Some(PathBuf::from("synthetic-album-file"));
+                    media.path = Some(std::path::PathBuf::from("synthetic-album-file"));
                 }
                 row.content = if video {
                     Content::Video {
