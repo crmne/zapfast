@@ -1047,21 +1047,30 @@ impl Archive {
                 name = CASE WHEN name = '' OR name = ?2 THEN (SELECT name FROM chats WHERE id = ?1) ELSE name END,
                 last_activity = MAX(last_activity, (SELECT last_activity FROM chats WHERE id = ?1)),
                 unread = MAX(unread, (SELECT unread FROM chats WHERE id = ?1)),
-                read_through = MAX(COALESCE(read_through, 0), COALESCE((SELECT read_through FROM chats WHERE id = ?1), 0)),
-                pending_read = MAX(COALESCE(pending_read, 0), COALESCE((SELECT pending_read FROM chats WHERE id = ?1), 0)),
+                read_through = CASE WHEN read_through IS NULL THEN (SELECT read_through FROM chats WHERE id = ?1)
+                    WHEN (SELECT read_through FROM chats WHERE id = ?1) IS NULL THEN read_through
+                    ELSE MAX(read_through, (SELECT read_through FROM chats WHERE id = ?1)) END,
+                pending_read = CASE WHEN pending_read IS NULL THEN (SELECT pending_read FROM chats WHERE id = ?1)
+                    WHEN (SELECT pending_read FROM chats WHERE id = ?1) IS NULL THEN pending_read
+                    ELSE MAX(pending_read, (SELECT pending_read FROM chats WHERE id = ?1)) END,
                 marked_unread = MAX(marked_unread, COALESCE((SELECT marked_unread FROM chats WHERE id = ?1), 0)),
-                pending_unread = MAX(COALESCE(pending_unread, 0), COALESCE((SELECT pending_unread FROM chats WHERE id = ?1), 0)),
+                pending_unread = CASE WHEN pending_unread IS NULL THEN (SELECT pending_unread FROM chats WHERE id = ?1)
+                    WHEN (SELECT pending_unread FROM chats WHERE id = ?1) IS NULL THEN pending_unread
+                    ELSE MAX(pending_unread, (SELECT pending_unread FROM chats WHERE id = ?1)) END,
                 ephemeral_expiration = CASE
-                    WHEN COALESCE((SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1), 0) >= COALESCE(ephemeral_setting_timestamp, 0)
+                    WHEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) IS NOT NULL
+                        AND (ephemeral_setting_timestamp IS NULL OR (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) >= ephemeral_setting_timestamp)
                     THEN (SELECT ephemeral_expiration FROM chats WHERE id = ?1)
                     ELSE ephemeral_expiration END,
-                ephemeral_setting_timestamp = MAX(ephemeral_setting_timestamp, COALESCE((SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1), 0)),
+                ephemeral_setting_timestamp = CASE WHEN ephemeral_setting_timestamp IS NULL THEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1)
+                    WHEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) IS NULL THEN ephemeral_setting_timestamp
+                    ELSE MAX(ephemeral_setting_timestamp, (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1)) END,
                 notification_sound = COALESCE(notification_sound, (SELECT notification_sound FROM chats WHERE id = ?1)),
                 history_start = MAX(history_start, COALESCE((SELECT history_start FROM chats WHERE id = ?1), 0))
-             WHERE id = ?4",
+             WHERE id = ?4 AND EXISTS(SELECT 1 FROM chats WHERE id = ?1)",
             params![lid_chat, pn, phone_chat, phone_chat],
         )?;
-        transaction.execute("DELETE FROM messages WHERE chat = ?1", params![lid_chat])?;
+        self.purge_chat_rows(&lid_chat)?;
         transaction.execute("DELETE FROM chats WHERE id = ?1", params![lid_chat])?;
         transaction.execute(
             "DELETE FROM chat_removals WHERE chat = ?1",
@@ -3031,6 +3040,16 @@ pub(crate) mod tests {
         assert!(archive.messages(lid, None, 50).unwrap().is_empty());
         assert_eq!(archive.chat_labels(phone).unwrap(), [label.id]);
         assert_eq!(archive.drafts().unwrap(), [(phone.into(), "unsent".into())]);
+        assert_eq!(archive.read_through(phone).unwrap(), None);
+        let ephemeral_timestamp: Option<i64> = archive
+            .connection
+            .query_row(
+                "SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1",
+                params![phone],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(ephemeral_timestamp, None);
     }
 
     #[test]
