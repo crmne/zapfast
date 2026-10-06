@@ -1608,3 +1608,11 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/conversation.rs:948
+msgid "Original group message unavailable"
+msgstr "El mensaje original del grupo no está disponible"
+
+#: src/ui/conversation.rs:4219
+msgid "Reply privately"
+msgstr "Responder en privado"

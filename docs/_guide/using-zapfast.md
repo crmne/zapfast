@@ -21,6 +21,13 @@ check when it was sent, delivered, and read. The reaction row has a **+** that
 opens the full emoji picker. Hover over a reaction to see who added it.
 Editing uses the composer. Press Escape to cancel.
 
+Right-click a group message and choose **Reply privately** to open a direct
+conversation with its sender while quoting the group message. The quote
+survives closing the recipient chat or switching accounts. Locked or
+inaccessible source groups hide their quote previews and cannot be used for
+sending until authorized again. Deleting the recipient chat discards its
+private-reply recovery, including refusals arriving after deletion.
+
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 

@@ -247,6 +247,56 @@ mod tests {
         assert_eq!(gettext(Locale::German, missing), missing);
     }
 
+    /// Checks that private reply controls use dedicated translated catalog entries.
+    #[test]
+    fn private_reply_labels_use_their_own_catalog_entries() {
+        for (locale, reply, unavailable) in [
+            (
+                Locale::German,
+                "Privat antworten",
+                "Die ursprüngliche Gruppennachricht ist nicht verfügbar",
+            ),
+            (
+                Locale::Spanish,
+                "Responder en privado",
+                "El mensaje original del grupo no está disponible",
+            ),
+            (
+                Locale::French,
+                "Répondre en privé",
+                "Le message original du groupe est indisponible",
+            ),
+            (
+                Locale::Italian,
+                "Rispondi in privato",
+                "Il messaggio originale del gruppo non è disponibile",
+            ),
+            (
+                Locale::PortugueseBrazil,
+                "Responder em particular",
+                "Mensagem original do grupo indisponível",
+            ),
+            (
+                Locale::Russian,
+                "Ответить лично",
+                "Исходное сообщение группы недоступно",
+            ),
+            (Locale::ChineseSimplified, "私下回复", "原始群组消息不可用"),
+            (
+                Locale::Turkish,
+                "Özel olarak yanıtla",
+                "Orijinal grup mesajı kullanılamıyor",
+            ),
+        ] {
+            assert_eq!(gettext(locale, "Reply privately"), reply, "{locale:?}");
+            assert_eq!(
+                gettext(locale, "Original group message unavailable"),
+                unavailable,
+                "{locale:?}"
+            );
+        }
+    }
+
     #[test]
     fn message_selection_labels_use_the_portuguese_catalog() {
         assert_eq!(

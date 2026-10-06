@@ -606,6 +606,14 @@ impl Recorder {
         }
     }
 
+    /// Creates a completed synthetic recording without opening an audio device.
+    #[cfg(test)]
+    pub(crate) fn recorded_fixture(samples: Vec<f32>) -> Self {
+        let recorder = Self::rehearsal();
+        *recorder.outcome.lock().unwrap_or_else(|p| p.into_inner()) = Some(Ok(samples));
+        recorder
+    }
+
     pub fn elapsed(&self) -> Duration {
         self.started.elapsed()
     }

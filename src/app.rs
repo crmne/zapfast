@@ -382,8 +382,11 @@ pub struct App {
     pub mention_start: Option<usize>,
     /// Keyboard-highlighted member in the mention suggestions.
     pub mention_selected: usize,
+    /// Private quotes kept with their direct chat while switching conversations.
+    /// Deletion tombstones prevent refused private sends from reviving a replacement chat.
+    /// Account baseline, advanced on unlink without reusing an old destination lifetime.
     /// Reply target in the open chat.
-    pub reply_to: Option<String>,
+    pub reply_to: Option<crate::model::ReplyTarget>,
     /// Outgoing message being edited.
     pub editing: Option<String>,
     composing: bool,
@@ -485,7 +488,6 @@ pub struct App {
     pub recording: Option<Recorder>,
     /// A voice message the worker refused, kept with its chat so it can be
     /// sent again from that chat or discarded.
-    pub(crate) unsent_voice: Option<(ChatId, Vec<f32>)>,
     /// Keeps other apps' music paused while recording or playing audio.
     media_hold: Option<crate::media_pause::Hold>,
     /// Only the real app pauses other apps' media, never tests or demos.
@@ -935,6 +937,7 @@ impl App {
         }
     }
 
+    /// Constructs application state while keeping the supplied backend as its only protocol boundary.
     #[cfg_attr(not(test), expect(dead_code))]
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
         let (account, _) = {
@@ -1004,7 +1007,6 @@ impl App {
             mention_selected: 0,
             reply_to: None,
             editing: None,
-            unsent_voice: None,
             composing: false,
             last_keystroke: None,
             chat_search_open: false,
@@ -1184,6 +1186,9 @@ impl App {
 
     fn park_composer(&mut self) {
         if let Some(previous) = self.open_chat.clone() {
+            if let Some(target) = self.reply_to.take().filter(|target| target.chat.is_some()) {
+                self.private_reply_drafts.insert(previous.clone(), target);
+            }
             let draft = std::mem::take(&mut self.composer);
             if self.editing.take().is_some() || draft.trim().is_empty() {
                 self.drafts.remove(&previous);
@@ -1209,6 +1214,7 @@ impl App {
         if let Some(id) = self.open_chat.clone() {
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
+            self.reply_to = self.private_reply_drafts.remove(&id);
         } else {
             self.composer.clear();
             self.composer_mentions.clear();
@@ -1709,10 +1715,22 @@ impl App {
     /// locked chat this discards the draft, because there is nothing left to
     /// send it to, and it clears `last_chat` so a restart does not reopen it.
     fn forget_chat(&mut self, id: &str) {
+        let generation = self
+            .private_reply_generations
+            .get(id)
+            .copied()
+            .unwrap_or(self.private_reply_generation);
+        self.private_reply_generations.insert(
+            id.to_owned(),
+            generation
+                .checked_add(1)
+                .expect("private reply destination generation exhausted"),
+        );
         self.leave_chat(id);
         self.chats.retain(|chat| chat.id != id);
         self.conversations.remove(id);
         self.drafts.remove(id);
+        self.private_reply_drafts.remove(id);
         self.draft_mentions.remove(id);
         self.typing.remove(id);
         self.unread_kept.remove(id);
@@ -1763,6 +1781,7 @@ impl App {
             self.composer.clear();
             self.composer_mentions.clear();
             self.pending.clear();
+            self.private_reply_drafts.remove(id);
             self.reply_to = None;
             self.editing = None;
             self.picker = None;
@@ -2979,6 +2998,7 @@ impl App {
         self.selection = Some((chat, ids));
     }
 
+    /// Applies link lifecycle changes for the owning account.
     fn handle_link(&mut self, status: LinkStatus, live: bool) {
         match &status {
             LinkStatus::Connected => {
@@ -3019,6 +3039,15 @@ impl App {
                 self.open_chat = None;
                 // Unsent text belongs to the account that was unlinked.
                 self.drafts.clear();
+                self.private_reply_drafts.clear();
+                self.private_reply_generation = self
+                    .private_reply_generations
+                    .values()
+                    .copied()
+                    .fold(self.private_reply_generation, u64::max)
+                    .checked_add(1)
+                    .expect("private reply account generation exhausted");
+                self.private_reply_generations.clear();
                 self.draft_mentions.clear();
                 if live {
                     self.composer.clear();
@@ -3084,6 +3113,27 @@ impl App {
             .sort_by_key(|chat| std::cmp::Reverse(chat.last_activity));
     }
 
+    /// Rechecks source-chat authorization for every retained private quote.
+    fn reply_source_visible(&self, target: &crate::model::ReplyTarget, destination: &str) -> bool {
+        target.chat.is_none()
+            || self
+                .chat(target.source_chat(destination))
+                .is_some_and(|chat| !chat.locked || self.locked_folder_open())
+    }
+
+    /// Resolves a quote preview only while its source chat is visible to the user.
+    pub(crate) fn reply_preview(
+        &self,
+        target: &crate::model::ReplyTarget,
+        destination: &str,
+    ) -> Option<&Message> {
+        let source = target.source_chat(destination);
+        if !self.reply_source_visible(target, destination) {
+            return None;
+        }
+        self.conversations.get(source)?.message(target)
+    }
+
     fn close_locked_folder(&mut self) {
         self.locked_folder = false;
         self.chat_lock_session = None;
@@ -3128,6 +3178,7 @@ impl App {
         self.clear_chat_notifications(id);
         // Clearing a chat also removes its stored draft.
         self.drafts.remove(id);
+        self.private_reply_drafts.remove(id);
         self.draft_mentions.remove(id);
         self.search_hits
             .retain(|message| message.chat != id || message.timestamp > through);
@@ -3149,9 +3200,9 @@ impl App {
                 editing
                     .as_ref()
                     .is_some_and(|edit| conversation.message(edit).is_none()),
-                reply
-                    .as_ref()
-                    .is_some_and(|reply| conversation.message(reply).is_none()),
+                reply.as_ref().is_some_and(|reply| {
+                    reply.source_chat(id) == id && conversation.message(&reply.id).is_none()
+                }),
                 reaction
                     .as_ref()
                     .is_some_and(|(_, target)| conversation.message(target).is_none()),
@@ -3285,16 +3336,35 @@ impl App {
     fn send_refused(
         &mut self,
         chat: ChatId,
-        quoting: Option<String>,
+        quoting: Option<crate::model::ReplyTarget>,
         unsent: Unsent,
         reason: Refusal,
     ) {
-        let open = self.open_chat.as_deref() == Some(chat.as_str());
+        // Removing the destination also discards recovery of its private replies.
+        if quoting.as_ref().is_some_and(|target| {
+            target.chat.is_some()
+                && (self.chat(&chat).is_none()
+                    || target.destination_generation
+                        != self
+                            .private_reply_generations
+                            .get(&chat)
+                            .copied()
+                            .unwrap_or(self.private_reply_generation))
+        }) {
+            return;
+        }
+        let open = !self.events_hidden && self.open_chat.as_deref() == Some(chat.as_str());
         // Re-arm the reply banner, unless the user has moved on to another
         // reply or an edit since.
-        if open && quoting.is_some() && self.reply_to.is_none() && self.editing.is_none() {
-            self.reply_to = quoting;
-            self.focus_composer = true;
+        if let Some(target) = quoting {
+            if open && self.reply_to.is_none() && self.editing.is_none() {
+                self.reply_to = Some(target);
+                self.focus_composer = true;
+            } else if !open && target.chat.is_some() {
+                self.private_reply_drafts
+                    .entry(chat.clone())
+                    .or_insert(target);
+            }
         }
         match unsent {
             Unsent::Text(text) => self.restore_text(&chat, text),
@@ -3345,7 +3415,7 @@ impl App {
         if text.trim().is_empty() {
             return;
         }
-        if self.open_chat.as_deref() == Some(chat) {
+        if !self.events_hidden && self.open_chat.as_deref() == Some(chat) {
             if self.composer.trim().is_empty() && self.editing.is_none() {
                 self.composer = text;
                 self.composer_mentions.clear();
@@ -3564,6 +3634,7 @@ impl App {
         self.backend.send(Command::MarkUnread(chat.to_owned()));
     }
 
+    /// Saves the previous composer and restores the destination draft, including its private quote source.
     fn open_chat(&mut self, id: ChatId) {
         // Notifications and stale actions must not open a locked chat from
         // outside the authenticated folder.
@@ -3593,6 +3664,11 @@ impl App {
                     let mentions = std::mem::take(&mut self.composer_mentions);
                     self.draft_mentions.insert(previous.clone(), mentions);
                 }
+                if let Some(target) = self.reply_to.take().filter(|target| target.chat.is_some()) {
+                    self.private_reply_drafts.insert(previous.clone(), target);
+                } else {
+                    self.private_reply_drafts.remove(&previous);
+                }
                 self.stop_composing(&previous);
                 let draft = self.drafts.get(&previous).cloned().unwrap_or_default();
                 self.store_draft(&previous, &draft);
@@ -3610,7 +3686,7 @@ impl App {
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
             // A search belongs to the chat it was typed in.
             self.close_chat_search();
-            self.reply_to = None;
+            self.reply_to = self.private_reply_drafts.remove(&id);
             self.editing = None;
             // A run of voice messages belongs to the chat it started in.
             self.voice_chat = None;
@@ -3725,7 +3801,13 @@ impl App {
         }
     }
 
-    fn send_text(&mut self, chat: ChatId, text: String, quoting: Option<String>) {
+    /// Dispatches composed text with its explicit quote target and restores it on refusal.
+    fn send_text(
+        &mut self,
+        chat: ChatId,
+        text: String,
+        quoting: Option<crate::model::ReplyTarget>,
+    ) {
         let text = text.trim().to_owned();
         if text.is_empty() {
             return;
@@ -4103,6 +4185,7 @@ impl App {
         }
     }
 
+    /// Applies deferred view actions, validating private-reply source and destination access before switching chats.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the
@@ -4114,6 +4197,34 @@ impl App {
                     message,
                 });
             }
+            return;
+        }
+        let reply_send = match &action {
+            Action::SendText { chat, quoting, .. } => Some((chat.as_str(), quoting.as_ref())),
+            Action::SendPending { chat, .. } => Some((chat.as_str(), self.reply_to.as_ref())),
+            Action::SendGif(_) | Action::SendSticker(_) | Action::MakeSticker { send: true } => {
+                self.open_chat
+                    .as_deref()
+                    .map(|chat| (chat, self.reply_to.as_ref()))
+            }
+            _ => None,
+        };
+        if let Some((chat, Some(target))) = reply_send
+            && !self.reply_source_visible(target, chat)
+        {
+            let chat = chat.to_owned();
+            let target = target.clone();
+            let text = match &action {
+                Action::SendText { text, .. } => text.clone(),
+                Action::SendPending { caption, .. } => caption.clone(),
+                _ => String::new(),
+            };
+            self.send_refused(
+                chat,
+                Some(target),
+                Unsent::Text(text),
+                Refusal::QuoteUnavailable,
+            );
             return;
         }
         match action {
@@ -4177,6 +4288,10 @@ impl App {
                 }
             }
             Action::OpenMessage { chat, message } => {
+                // A stored cross-chat quote may outlive its locally deleted source.
+                if self.chat(&chat).is_none() {
+                    return;
+                }
                 // A result picked in the search pane keeps the keyboard in
                 // the pane, so the arrows can walk on to the next one.
                 let from_pane =
@@ -4216,6 +4331,13 @@ impl App {
             }
             Action::CloseChat => {
                 if let Some(chat) = self.open_chat.take() {
+                    if let Some(target) =
+                        self.reply_to.take().filter(|target| target.chat.is_some())
+                    {
+                        self.private_reply_drafts.insert(chat.clone(), target);
+                    } else {
+                        self.private_reply_drafts.remove(&chat);
+                    }
                     self.stop_composing(&chat);
                     let draft = std::mem::take(&mut self.composer);
                     if self.editing.take().is_none() && !draft.trim().is_empty() {
@@ -4460,8 +4582,53 @@ impl App {
                     self.emoji_start = None;
                     self.mention_start = None;
                 }
-                self.reply_to = Some(id);
+                self.reply_to = Some(id.into());
                 self.focus_composer = true;
+            }
+            Action::ReplyPrivately { chat, message } => {
+                if self.open_chat.as_deref() != Some(chat.as_str())
+                    || self
+                        .chat(&chat)
+                        .is_some_and(|source| source.locked && !self.locked_folder_open())
+                {
+                    return;
+                }
+                let Some(original) = self
+                    .conversations
+                    .get(&chat)
+                    .and_then(|conversation| conversation.message(&message))
+                    .cloned()
+                else {
+                    return;
+                };
+                let Some(recipient) = original.private_reply_recipient().map(str::to_owned) else {
+                    return;
+                };
+                if self.chat(&recipient).is_some_and(|chat| {
+                    chat.read_only || (chat.locked && !self.locked_folder_open())
+                }) {
+                    return;
+                }
+                let name = self.display_name_or(&recipient, original.sender_name.as_deref());
+                self.apply(
+                    Action::StartChat {
+                        id: recipient.clone(),
+                        name,
+                    },
+                    ctx,
+                );
+                if self.open_chat.as_deref() == Some(recipient.as_str()) {
+                    self.reply_to = Some(crate::model::ReplyTarget {
+                        id: message,
+                        chat: Some(chat),
+                        destination_generation: self
+                            .private_reply_generations
+                            .get(&recipient)
+                            .copied()
+                            .unwrap_or(self.private_reply_generation),
+                    });
+                    self.focus_composer = true;
+                }
             }
             Action::CancelReply => self.reply_to = None,
             Action::Forward {
@@ -4942,12 +5109,14 @@ impl App {
             Action::MakeSticker { send } => {
                 if let Some(draft) = self.sticker_draft.take() {
                     let chat = if send { self.open_chat.clone() } else { None };
+                    let quoting = chat.as_ref().and(self.reply_to.clone());
                     self.backend.send(Command::MakeSticker {
                         source: draft.source,
                         crop: draft.crop,
                         transparent: draft.transparent && draft.keep_transparent,
                         emojis: crate::sticker_meta::clean_emojis(&draft.emojis),
                         chat,
+                        quoting,
                     });
                 }
                 self.dialog = None;
@@ -6212,8 +6381,23 @@ impl App {
                     .unsent_voice
                     .as_ref()
                     .is_some_and(|(unsent, _)| *unsent == chat)
-                && let Some((_, samples)) = self.unsent_voice.take()
             {
+                if self
+                    .reply_to
+                    .as_ref()
+                    .is_some_and(|target| !self.reply_source_visible(target, &chat))
+                {
+                    self.send_refused(
+                        chat,
+                        self.reply_to.clone(),
+                        Unsent::Text(String::new()),
+                        Refusal::QuoteUnavailable,
+                    );
+                    return;
+                }
+                let Some((_, samples)) = self.unsent_voice.take() else {
+                    return;
+                };
                 let quoting = self.reply_to.take();
                 self.backend.send(Command::SendVoice {
                     chat,
@@ -6230,6 +6414,19 @@ impl App {
         match recorder.finish() {
             Ok(samples) if samples.len() < crate::voice::RATE as usize / 2 => {}
             Ok(samples) => {
+                if self
+                    .reply_to
+                    .as_ref()
+                    .is_some_and(|target| !self.reply_source_visible(target, &chat))
+                {
+                    self.send_refused(
+                        chat,
+                        self.reply_to.clone(),
+                        Unsent::Voice(samples),
+                        Refusal::QuoteUnavailable,
+                    );
+                    return;
+                }
                 let quoting = self.reply_to.take();
                 self.backend.send(Command::SendVoice {
                     chat,
@@ -6757,11 +6954,61 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ChatKind, Content, Media, MediaState, ToastKind};
+    use crate::model::{ChatKind, Content, Media, MediaState, ReplyTarget, ToastKind};
 
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    /// Private-reply refusals preserve the owning account's quote, text and voice clip.
+    #[test]
+    fn hidden_account_private_reply_recovery_keeps_the_visible_composer_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = two_accounts(directory.path());
+        let chat = "recipient@s.whatsapp.net";
+        for account in &mut app.accounts {
+            account
+                .chats
+                .push(Chat::new(chat.into(), "Synthetic recipient".into()));
+            account.open_chat = Some(chat.into());
+        }
+        let (backend, events) = Backend::detached();
+        app.accounts[1].backend = backend;
+        let quote = crate::model::ReplyTarget {
+            id: "source-message".into(),
+            chat: Some("source@g.us".into()),
+            destination_generation: 0,
+        };
+        for unsent in [
+            Unsent::Text("Hidden correction".into()),
+            Unsent::Voice(vec![0.25]),
+        ] {
+            events
+                .send(Event::SendRefused {
+                    chat: chat.into(),
+                    quoting: Some(quote.clone()),
+                    unsent,
+                    reason: Refusal::QuoteUnavailable,
+                })
+                .unwrap();
+        }
+        app.handle_events();
+        assert!(app.composer.is_empty());
+        assert!(app.reply_to.is_none());
+        assert!(app.unsent_voice.is_none());
+        assert_eq!(
+            app.accounts[1]
+                .unsent_voice
+                .as_ref()
+                .map(|(id, _)| id.as_str()),
+            Some(chat)
+        );
+        let second = app.accounts[1].id.clone();
+        app.switch_account(&second);
+        assert_eq!(app.composer, "Hidden correction");
+        assert_eq!(app.reply_to, Some(quote));
+        assert_eq!(app.unsent_voice, Some((chat.into(), vec![0.25])));
     }
 
     #[test]
@@ -8819,6 +9066,7 @@ mod tests {
         assert_eq!(app.settings.message_sound, NotificationSound::Receive);
     }
 
+    /// Checks that incoming group mentions and quotes identify us across phone and privacy ids.
     #[test]
     fn a_group_message_addresses_us_by_phone_number_privacy_id_or_reply() {
         let mut app = app();
@@ -8854,6 +9102,7 @@ mod tests {
         assert!(!app.addresses_us(&someone_else));
 
         let quote = |sender: &str| crate::model::Quoted {
+            chat: None,
             id: "earlier".into(),
             sender: sender.into(),
             sender_name: None,
@@ -9876,10 +10125,11 @@ mod tests {
         assert_eq!(images[1].state, MediaState::Idle);
     }
 
+    /// Builds a synthetic send refusal without accessing the user archive.
     fn refused(chat: &str, quoting: Option<&str>, unsent: Unsent, reason: Refusal) -> Event {
         Event::SendRefused {
             chat: chat.into(),
-            quoting: quoting.map(str::to_owned),
+            quoting: quoting.map(crate::model::ReplyTarget::from),
             unsent,
             reason,
         }
@@ -9893,6 +10143,7 @@ mod tests {
             .collect()
     }
 
+    /// Checks that refusing a text send restores both draft text and the original quote target.
     #[test]
     fn sending_a_message_scrolls_the_chat_list_to_the_top() {
         let root = tempfile::tempdir().unwrap();
@@ -9973,7 +10224,7 @@ mod tests {
         assert!(app.reply_to.is_none());
         let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
         assert!(sent.iter().any(|command| matches!(command,
-            Command::SendText { quoting: Some(id), .. } if id == "original")));
+            Command::SendText { quoting: Some(id), .. } if id.id == "original")));
         events
             .send(refused(
                 chat,
@@ -10011,6 +10262,7 @@ mod tests {
         assert!(error_toasts(&app)[1].contains("not connected"));
     }
 
+    /// Checks that sending a quoted reply preserves the loaded transcript rather than dropping older rows.
     #[test]
     fn sending_a_reply_keeps_older_messages_in_view() {
         let mut app = app();
@@ -10035,7 +10287,7 @@ mod tests {
         assert!(
             std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
                 command,
-                Command::SendText { quoting: Some(id), .. } if id == "older-message"
+                Command::SendText { quoting: Some(id), .. } if id.id == "older-message"
             ))
         );
 
@@ -10104,6 +10356,7 @@ mod tests {
         );
     }
 
+    /// Checks that attachment and GIF refusals restore the same quote alongside their unsent media.
     #[test]
     fn attachments_and_gifs_carry_the_reply_and_come_back_when_refused() {
         let root = tempfile::tempdir().unwrap();
@@ -10135,7 +10388,7 @@ mod tests {
             [
                 Command::SendImage { quoting: Some(id), caption: Some(_), .. },
                 Command::SendFiles { quoting: None, caption: None, .. },
-            ] if id == "original"
+            ] if id.id == "original"
         ));
         assert!(app.reply_to.is_none());
         assert!(app.pending.is_empty());
@@ -10153,7 +10406,7 @@ mod tests {
         assert!(app.reply_to.is_none());
         assert!(
             std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
-                Command::SendGif { quoting: Some(id), .. } if id == "original"))
+                Command::SendGif { quoting: Some(id), .. } if id.id == "original"))
         );
         // Refused attachments return to the composer with their caption.
         for unsent in [
@@ -10190,6 +10443,7 @@ mod tests {
         assert_eq!(error_toasts(&app).len(), 1);
     }
 
+    /// Checks that an unsent recording remains scoped to its destination and retains its quote.
     #[test]
     fn a_refused_voice_message_is_sent_again_only_from_its_chat_or_discarded() {
         let root = tempfile::tempdir().unwrap();
@@ -10249,7 +10503,7 @@ mod tests {
         app.apply(Action::SendRecording, &ctx);
         assert!(matches!(
             commands.try_recv(),
-            Ok(Command::SendVoice { quoting: Some(id), .. }) if id == "original"
+            Ok(Command::SendVoice { quoting: Some(id), .. }) if id.id == "original"
         ));
         // Discarding drops it for good.
         events
@@ -10278,6 +10532,470 @@ mod tests {
         assert!(app.focus_composer);
     }
 
+    /// Private quotes keep their source identity through chat switches and send refusals.
+    #[test]
+    fn private_reply_opens_the_sender_and_preserves_both_drafts() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let group = "12345@g.us";
+        let sender = "15550002222@s.whatsapp.net";
+        app.chats
+            .push(Chat::new(group.into(), "Group fixture".into()));
+        let mut original = message(group, "original", 100);
+        original.sender = sender.into();
+        original.sender_name = Some("Sender fixture".into());
+        app.conversations.insert(
+            group.into(),
+            Conversation {
+                messages: vec![original],
+                requested: true,
+                ..Default::default()
+            },
+        );
+        app.open_chat = Some(group.into());
+        app.composer = "Group draft".into();
+        app.drafts.insert(sender.into(), "Private draft".into());
+        app.apply(
+            Action::ReplyPrivately {
+                chat: group.into(),
+                message: "original".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(app.open_chat.as_deref(), Some(sender));
+        assert_eq!(app.composer, "Private draft");
+        assert_eq!(
+            app.drafts.get(group).map(String::as_str),
+            Some("Group draft")
+        );
+        let target = app.reply_to.clone().unwrap();
+        assert_eq!(target.id, "original");
+        assert_eq!(target.chat.as_deref(), Some(group));
+        assert!(app.focus_composer);
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                command,
+                Command::SendText { .. } | Command::SendFiles { .. } | Command::SendVoice { .. }
+            ))
+        );
+        app.apply(
+            Action::SendText {
+                chat: sender.into(),
+                text: "Private reply".into(),
+                quoting: Some(target.clone()),
+            },
+            &ctx,
+        );
+        assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+            Command::SendText { chat, quoting: Some(quote), .. } if chat == sender && quote == target
+        )));
+        app.send_refused(
+            sender.into(),
+            Some(target.clone()),
+            Unsent::Text("Private reply".into()),
+            Refusal::QuoteUnavailable,
+        );
+        assert_eq!(app.reply_to, Some(target.clone()));
+        app.open_chat(group.into());
+        app.send_refused(
+            sender.into(),
+            Some(target.clone()),
+            Unsent::Text("Returned private reply".into()),
+            Refusal::Offline,
+        );
+        assert!(app.reply_to.is_none());
+        app.open_chat(sender.into());
+        assert_eq!(app.reply_to, Some(target));
+    }
+
+    /// Late refusals cannot restore a deleted recipient's private quote, text or voice.
+    #[test]
+    fn private_reply_refusals_do_not_recreate_deleted_destination_drafts() {
+        for (voice, recreate_before_refusal) in
+            [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let mut app = app();
+            let (backend, mut commands) = Backend::recording();
+            app.backend = backend;
+            let ctx = egui::Context::default();
+            let group = "12345@g.us";
+            let recipient = "15550002222@s.whatsapp.net";
+            app.chats
+                .push(Chat::new(group.into(), "Group fixture".into()));
+            let mut original = message(group, "original", 100);
+            original.sender = recipient.into();
+            app.conversations
+                .entry(group.into())
+                .or_default()
+                .merge(vec![original], false);
+            app.open_chat = Some(group.into());
+            app.apply(
+                Action::ReplyPrivately {
+                    chat: group.into(),
+                    message: "original".into(),
+                },
+                &ctx,
+            );
+            let target = app.reply_to.clone().unwrap();
+            let unsent = if voice {
+                let samples = vec![0.0; 10];
+                app.unsent_voice = Some((recipient.into(), samples.clone()));
+                app.apply(Action::SendRecording, &ctx);
+                Unsent::Voice(samples)
+            } else {
+                app.apply(
+                    Action::SendText {
+                        chat: recipient.into(),
+                        text: "Private draft".into(),
+                        quoting: Some(target.clone()),
+                    },
+                    &ctx,
+                );
+                Unsent::Text("Private draft".into())
+            };
+            assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+                Command::SendText { quoting: Some(quote), .. } | Command::SendVoice { quoting: Some(quote), .. } if quote == target
+            )));
+            let target_generation = target.destination_generation;
+            app.forget_chat(recipient);
+            if recreate_before_refusal {
+                app.chats.push(Chat::new(
+                    recipient.into(),
+                    "Replacement recipient fixture".into(),
+                ));
+            }
+            app.send_refused(recipient.into(), Some(target), unsent, Refusal::Offline);
+            assert!(!app.private_reply_drafts.contains_key(recipient));
+            assert!(!app.drafts.contains_key(recipient));
+            assert!(app.reply_to.is_none());
+            assert!(app.unsent_voice.is_none());
+            if !recreate_before_refusal {
+                app.chats.push(Chat::new(
+                    recipient.into(),
+                    "Recreated recipient fixture".into(),
+                ));
+            }
+            app.open_chat(recipient.into());
+            assert!(app.reply_to.is_none());
+            assert!(app.composer.is_empty());
+            // A new private send in the replacement lifetime still recovers normally.
+            app.open_chat(group.into());
+            app.apply(
+                Action::ReplyPrivately {
+                    chat: group.into(),
+                    message: "original".into(),
+                },
+                &ctx,
+            );
+            let replacement = app.reply_to.take().unwrap();
+            assert_ne!(replacement.destination_generation, target_generation);
+            app.send_refused(
+                recipient.into(),
+                Some(replacement.clone()),
+                Unsent::Text("Replacement draft".into()),
+                Refusal::Offline,
+            );
+            assert_eq!(app.reply_to, Some(replacement));
+            assert_eq!(app.composer, "Replacement draft");
+        }
+    }
+
+    /// Closing and reopening a recipient restores its private quote, while cancel removes it.
+    #[test]
+    fn closing_a_private_reply_preserves_the_quote_until_cancelled() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let recipient = "15550001111@s.whatsapp.net";
+        app.chats
+            .push(Chat::new(recipient.into(), "Recipient fixture".into()));
+        app.open_chat(recipient.into());
+        let target = ReplyTarget {
+            id: "original".into(),
+            chat: Some("12345@g.us".into()),
+            destination_generation: 0,
+        };
+        app.reply_to = Some(target.clone());
+        app.composer = "Private draft".into();
+        app.apply(Action::CloseChat, &ctx);
+        assert!(app.open_chat.is_none());
+        assert!(app.reply_to.is_none());
+        assert_eq!(app.private_reply_drafts.get(recipient), Some(&target));
+        app.open_chat(recipient.into());
+        assert_eq!(app.reply_to, Some(target));
+        assert_eq!(app.composer, "Private draft");
+        app.reply_to = None;
+        app.apply(Action::CloseChat, &ctx);
+        assert!(!app.private_reply_drafts.contains_key(recipient));
+        app.open_chat(recipient.into());
+        assert!(app.reply_to.is_none());
+    }
+
+    /// Leaving or deleting one recipient must not erase another recipient's quote draft.
+    #[test]
+    fn leaving_a_chat_preserves_other_private_reply_drafts() {
+        for delete in [false, true] {
+            let mut app = app();
+            let left = "15550001111@s.whatsapp.net";
+            let other = "15550002222@s.whatsapp.net";
+            let quote = ReplyTarget {
+                id: "original".into(),
+                chat: Some("12345@g.us".into()),
+                destination_generation: 0,
+            };
+            app.chats
+                .push(Chat::new(left.into(), "Left fixture".into()));
+            app.chats
+                .push(Chat::new(other.into(), "Other fixture".into()));
+            app.open_chat = Some(left.into());
+            app.reply_to = Some(quote.clone());
+            app.private_reply_drafts.insert(left.into(), quote.clone());
+            app.private_reply_drafts.insert(other.into(), quote.clone());
+            if delete {
+                app.forget_chat(left);
+            } else {
+                app.leave_chat(left);
+            }
+            assert!(app.open_chat.is_none());
+            assert!(app.reply_to.is_none());
+            assert!(!app.private_reply_drafts.contains_key(left));
+            assert_eq!(app.private_reply_drafts.get(other), Some(&quote));
+            app.open_chat(other.into());
+            assert_eq!(app.reply_to, Some(quote));
+        }
+    }
+
+    /// Only a visible incoming group message and an accessible sender can start a reply.
+    #[test]
+    fn private_reply_ignores_own_deleted_invalid_and_locked_targets() {
+        for case in [
+            "own",
+            "deleted",
+            "invalid",
+            "locked",
+            "locked-source",
+            "stale",
+        ] {
+            let mut app = app();
+            let group = "12345@g.us";
+            let sender = "15550002222@s.whatsapp.net";
+            let mut original = message(group, "original", 100);
+            original.sender = sender.into();
+            match case {
+                "own" => original.from_me = true,
+                "deleted" => original.content = Content::Revoked,
+                "invalid" => original.sender = group.into(),
+                "locked" => {
+                    let mut chat = Chat::new(sender.into(), "Locked fixture".into());
+                    chat.locked = true;
+                    app.chats.push(chat);
+                }
+                "locked-source" => {
+                    let mut chat = Chat::new(group.into(), "Locked group fixture".into());
+                    chat.locked = true;
+                    app.chats.push(chat);
+                }
+                _ => {}
+            }
+            app.open_chat = Some(if case == "stale" { sender } else { group }.into());
+            let previous = app.open_chat.clone();
+            app.conversations.insert(
+                group.into(),
+                Conversation {
+                    messages: vec![original],
+                    ..Default::default()
+                },
+            );
+            app.apply(
+                Action::ReplyPrivately {
+                    chat: group.into(),
+                    message: "original".into(),
+                },
+                &egui::Context::default(),
+            );
+            assert_eq!(app.open_chat, previous, "{case}");
+            assert!(app.reply_to.is_none(), "{case}");
+        }
+    }
+
+    /// Cached source content stays hidden after switching out of an authenticated folder.
+    #[test]
+    fn private_quote_previews_follow_source_lock_authorization() {
+        let mut app = app();
+        let group = "12345@g.us";
+        let sender = "15550002222@s.whatsapp.net";
+        let other = "15550003333@s.whatsapp.net";
+        let mut source = Chat::new(group.into(), "Locked group fixture".into());
+        source.locked = true;
+        app.chats.extend([
+            source,
+            Chat::new(sender.into(), "Sender fixture".into()),
+            Chat::new(other.into(), "Other fixture".into()),
+        ]);
+        let mut original = message(group, "original", 100);
+        original.sender = sender.into();
+        app.conversations.insert(
+            group.into(),
+            Conversation {
+                messages: vec![original],
+                requested: true,
+                ..Default::default()
+            },
+        );
+        app.settings.chat_lock_code_hash = Some("synthetic authenticated verifier".into());
+        app.enter_locked_folder();
+        app.open_chat = Some(group.into());
+        app.apply(
+            Action::ReplyPrivately {
+                chat: group.into(),
+                message: "original".into(),
+            },
+            &egui::Context::default(),
+        );
+        assert_eq!(app.open_chat.as_deref(), Some(sender));
+        assert!(!app.locked_folder_open());
+        let target = app.reply_to.clone().unwrap();
+        assert!(app.conversations[group].message(&target).is_some());
+        assert!(app.reply_preview(&target, sender).is_none());
+        app.open_chat(other.into());
+        app.open_chat(sender.into());
+        assert_eq!(app.reply_to, Some(target.clone()));
+        assert!(app.reply_preview(&target, sender).is_none());
+        app.enter_locked_folder();
+        assert!(app.reply_preview(&target, sender).is_some());
+        app.close_locked_folder();
+        assert!(app.reply_preview(&target, sender).is_none());
+        let mut unlocked = app.chat(group).unwrap().clone();
+        unlocked.locked = false;
+        app.handle_chat_updated(unlocked, true);
+        assert!(app.reply_preview(&target, sender).is_some());
+    }
+
+    /// Every send preserves hidden private quotes and drafts until their source is authorized.
+    #[test]
+    fn hidden_private_quotes_cannot_be_sent_by_any_composer_action() {
+        for authorized in [false, true] {
+            for kind in 0..7 {
+                let mut app = app();
+                let (backend, mut commands) = Backend::recording();
+                app.backend = backend;
+                let group = "12345@g.us";
+                let recipient = "15550002222@s.whatsapp.net";
+                let mut source = Chat::new(group.into(), "Locked source fixture".into());
+                source.locked = true;
+                app.chats.extend([
+                    source,
+                    Chat::new(recipient.into(), "Recipient fixture".into()),
+                ]);
+                app.open_chat = Some(recipient.into());
+                let target = ReplyTarget {
+                    id: "original".into(),
+                    chat: Some(group.into()),
+                    destination_generation: 0,
+                };
+                app.reply_to = Some(target.clone());
+                app.settings.chat_lock_code_hash = Some("synthetic authenticated verifier".into());
+                if authorized {
+                    app.enter_locked_folder();
+                }
+                let action = match kind {
+                    0 => Action::SendText {
+                        chat: recipient.into(),
+                        text: "Private draft".into(),
+                        quoting: Some(target.clone()),
+                    },
+                    1 => {
+                        app.pending
+                            .push(Pending::File(PathBuf::from("synthetic-attachment.png")));
+                        Action::SendPending {
+                            chat: recipient.into(),
+                            caption: "Private draft".into(),
+                        }
+                    }
+                    2 => Action::SendSticker(PathBuf::from("synthetic-sticker.webp")),
+                    3 => Action::SendGif(Gif {
+                        id: "fixture".into(),
+                        still: None,
+                        mp4: "https://example.invalid/fixture.mp4".into(),
+                        width: 2,
+                        height: 2,
+                    }),
+                    4 => {
+                        app.unsent_voice = Some((recipient.into(), vec![0.0; 10]));
+                        Action::SendRecording
+                    }
+                    5 => {
+                        app.recording = Some(crate::audio::Recorder::recorded_fixture(vec![
+                                0.0;
+                                crate::voice::RATE
+                                    as usize
+                            ]));
+                        Action::SendRecording
+                    }
+                    _ => {
+                        app.sticker_draft = Some(crate::model::StickerDraft {
+                            source: PathBuf::from("synthetic-sticker.png"),
+                            width: 1,
+                            height: 1,
+                            transparent: false,
+                            crop: crate::model::StickerCrop::centered(1, 1),
+                            keep_transparent: false,
+                            emojis: String::new(),
+                        });
+                        Action::MakeSticker { send: true }
+                    }
+                };
+                app.apply(action, &egui::Context::default());
+                let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+                if authorized {
+                    assert!(
+                        sent.iter().any(|command| matches!(command,
+                            Command::SendText { quoting: Some(quote), .. } |
+                            Command::SendFiles { quoting: Some(quote), .. } |
+                            Command::SendSticker { quoting: Some(quote), .. } |
+                            Command::SendGif { quoting: Some(quote), .. } |
+                            Command::MakeSticker { quoting: Some(quote), .. } |
+                            Command::SendVoice { quoting: Some(quote), .. } if quote == &target
+                        )),
+                        "kind {kind}"
+                    );
+                    if kind == 6 {
+                        assert_eq!(app.reply_to, Some(target));
+                    } else {
+                        assert!(app.reply_to.is_none());
+                    }
+                } else {
+                    assert!(
+                        !sent.iter().any(|command| matches!(
+                            command,
+                            Command::SendText { .. }
+                                | Command::SendFiles { .. }
+                                | Command::SendImage { .. }
+                                | Command::SendSticker { .. }
+                                | Command::SendGif { .. }
+                                | Command::SendVoice { .. }
+                                | Command::MakeSticker { .. }
+                        )),
+                        "kind {kind}"
+                    );
+                    assert_eq!(app.reply_to, Some(target));
+                    if kind <= 1 {
+                        assert_eq!(app.composer, "Private draft");
+                    }
+                    if kind == 1 {
+                        assert_eq!(app.pending.len(), 1);
+                    }
+                    if (4..=5).contains(&kind) {
+                        assert!(app.unsent_voice.is_some());
+                        assert!(app.recording.is_none());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Checks that sticker dispatch consumes and forwards the pending quote exactly once.
     #[test]
     fn sending_a_sticker_consumes_the_pending_reply() {
         let mut app = app();
@@ -10298,7 +11016,7 @@ mod tests {
                 chat,
                 quoting: Some(id),
                 ..
-            }) if chat == "fixture@s.whatsapp.net" && id == "quoted-message"
+            }) if chat == "fixture@s.whatsapp.net" && id.id == "quoted-message"
         ));
     }
 
