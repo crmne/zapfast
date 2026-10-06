@@ -975,7 +975,8 @@ impl Archive {
                 edited = MAX(messages.edited, excluded.edited),
                 raw = COALESCE(messages.raw, excluded.raw),
                 thumbnail = COALESCE(messages.thumbnail, excluded.thumbnail),
-                mentions = CASE WHEN messages.mentions = '[]' THEN excluded.mentions ELSE messages.mentions END,
+                mentions = CASE WHEN excluded.edited > messages.edited OR messages.mentions = '[]'
+                    THEN excluded.mentions ELSE messages.mentions END,
                 forwarded = MAX(messages.forwarded, excluded.forwarded),
                 delivered_at = COALESCE(messages.delivered_at, excluded.delivered_at),
                 read_at = COALESCE(messages.read_at, excluded.read_at),
@@ -3006,6 +3007,20 @@ pub(crate) mod tests {
         archive
             .insert_message(&message(phone, "from-phone", 200, false), None)
             .unwrap();
+        let mut original = message(phone, "edited-on-lid", 150, false);
+        original.mentions = vec![crate::model::MentionRef {
+            user: "@phone".into(),
+            id: phone.into(),
+        }];
+        archive.insert_message(&original, None).unwrap();
+        let mut edited = message(lid, "edited-on-lid", 150, false);
+        edited.content = Content::text("edited under privacy id");
+        edited.edited = true;
+        edited.mentions = vec![crate::model::MentionRef {
+            user: "@lid".into(),
+            id: lid.into(),
+        }];
+        archive.insert_message(&edited, None).unwrap();
         let label = archive
             .create_label("Follow up", "#123456", 1)
             .unwrap()
@@ -3021,6 +3036,15 @@ pub(crate) mod tests {
         assert_eq!(messages.len(), 2);
         assert!(messages.iter().any(|row| row.id == "from-lid"));
         assert!(messages.iter().any(|row| row.id == "from-phone"));
+        let edited = archive.message(phone, "edited-on-lid").unwrap().unwrap();
+        assert_eq!(edited.content, Content::text("edited under privacy id"));
+        assert_eq!(
+            edited.mentions,
+            vec![crate::model::MentionRef {
+                user: "@lid".into(),
+                id: lid.into(),
+            }]
+        );
         assert!(archive.chat(lid).unwrap().is_none());
         assert!(archive.messages(lid, None, 50).unwrap().is_empty());
         assert_eq!(archive.chat_labels(phone).unwrap(), [label.id]);
