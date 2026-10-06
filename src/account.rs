@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::app::{ComposerMention, Conversation};
+use crate::app::{AttachmentDraft, ComposerMention, Conversation};
 use crate::backend::{Backend, LinkStatus, Waker};
 use crate::model::{
     AccountId, Chat, ChatFilter, ChatId, Contact, Label, Message, PollDraft, StickerPack,
@@ -36,6 +36,7 @@ pub struct Account {
     pub open_chat: Option<ChatId>,
     pub scroll_chat_into_view: Option<ChatId>,
     pub drafts: HashMap<ChatId, String>,
+    pub(crate) attachment_drafts: HashMap<ChatId, AttachmentDraft>,
     pub(crate) draft_mentions: HashMap<ChatId, Vec<ComposerMention>>,
     pub search: String,
     pub search_selected: Option<ChatId>,
@@ -76,6 +77,7 @@ pub struct Account {
 }
 
 impl Account {
+    /// Creates isolated chat, draft and backend state for one linked account.
     pub fn new(
         id: AccountId,
         dirs: AccountDirs,
@@ -103,6 +105,7 @@ impl Account {
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
             draft_mentions: HashMap::new(),
+            attachment_drafts: HashMap::new(),
             search: String::new(),
             search_selected: None,
             search_hits: Vec::new(),
