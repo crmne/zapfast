@@ -249,8 +249,13 @@ yet.
 
 ## Voice messages
 
-Voice messages play in the chat with a seekable waveform. The chip beside the
-waveform cycles the playback speed between 1x, 1.5x, and 2x. Right-click the
+Voice notes play in the chat with a seekable waveform. Audio files use a music
+icon and a seek bar instead. Both keep the same download, playback, seeking and
+speed controls. The Forwarded label follows WhatsApp's forwarding metadata
+independently of whether the audio is a voice note or an audio file.
+
+The chip beside the waveform or seek bar cycles the playback speed between
+1x, 1.5x, and 2x. Right-click the
 message for every speed, including 1.25x and 1.75x. The choice is remembered
 for later messages. When a voice message ends, playback carries on through the
 voice messages right after it that you have not heard yet, as on the phone;
