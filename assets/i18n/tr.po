@@ -1614,3 +1614,16 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#
+#: src/file_drag.rs:16
+msgid "Could not drag the attachment"
+msgstr "Ek sürüklenemedi"
+
+#: src/file_drag.rs:25
+msgid "Dragging attachments out is currently available on Windows only."
+msgstr "Ekleri dışarı sürükleme şu anda yalnızca Windows'ta kullanılabilir."
+
+#: src/file_drag.rs:20
+msgid "The attachment is unavailable. Download it before dragging it."
+msgstr "Ek kullanılamıyor. Sürüklemeden önce indirin."

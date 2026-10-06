@@ -1558,3 +1558,16 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#
+#: src/file_drag.rs:16
+msgid "Could not drag the attachment"
+msgstr "无法拖动附件"
+
+#: src/file_drag.rs:25
+msgid "Dragging attachments out is currently available on Windows only."
+msgstr "目前仅 Windows 支持向外拖动附件。"
+
+#: src/file_drag.rs:20
+msgid "The attachment is unavailable. Download it before dragging it."
+msgstr "附件不可用。请先下载再拖动。"

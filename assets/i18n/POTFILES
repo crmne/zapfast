@@ -7,6 +7,7 @@ src/ui/settings.rs
 src/ui/widgets.rs
 src/ui/message_info.rs
 src/app.rs
+src/file_drag.rs
 src/ui/labels.rs
 src/ui/picker.rs
 src/ui/pane.rs

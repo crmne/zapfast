@@ -1432,6 +1432,8 @@ pub enum Action {
     /// Opens ZapFast's log, or shows it in its folder when no application
     /// takes it, and says so when neither works.
     OpenLog(PathBuf),
+    /// Copy a downloaded attachment to a native drag target.
+    DragAttachment(PathBuf),
     OpenFolder(PathBuf),
     /// Saves a copy of a downloaded attachment where the person chooses.
     SaveAttachmentAs {
