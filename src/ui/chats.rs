@@ -1099,7 +1099,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             &chat.id,
             picture.as_deref(),
         );
-        if chat.ephemeral_expiration.is_some() {
+        if chat.disappearing_timer().is_some() {
             widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
         }
 
@@ -1569,7 +1569,7 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
             &chat.id,
             picture.as_deref(),
         );
-        if chat.ephemeral_expiration.is_some() {
+        if chat.disappearing_timer().is_some() {
             widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
         }
         if selected {
