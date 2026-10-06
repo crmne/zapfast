@@ -1625,3 +1625,11 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/conversation.rs:948
+msgid "Original group message unavailable"
+msgstr "Die ursprüngliche Gruppennachricht ist nicht verfügbar"
+
+#: src/ui/conversation.rs:4219
+msgid "Reply privately"
+msgstr "Privat antworten"
