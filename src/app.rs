@@ -666,6 +666,13 @@ impl JumpHighlight {
     }
 }
 
+/// Attachments and their quote belong to one chat in one account.
+#[derive(Default)]
+pub(crate) struct AttachmentDraft {
+    pub(crate) pending: Vec<Pending>,
+    quoting: Option<String>,
+}
+
 /// Attachment pending in the composer.
 pub enum Pending {
     /// Clipboard image as straight-alpha RGBA and optional preview.
@@ -679,7 +686,8 @@ pub enum Pending {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ComposerMention {
+/// A display-name mention selected in the composer and captured with a send.
+pub struct ComposerMention {
     id: String,
     name: String,
 }
@@ -1186,8 +1194,10 @@ impl App {
         }
     }
 
+    /// Parks the current account's text, mentions and attachments before switching accounts.
     fn park_composer(&mut self) {
         if let Some(previous) = self.open_chat.clone() {
+            self.save_attachment_draft(&previous);
             let draft = std::mem::take(&mut self.composer);
             if self.editing.take().is_some() || draft.trim().is_empty() {
                 self.drafts.remove(&previous);
@@ -1199,6 +1209,8 @@ impl App {
                 self.draft_mentions.insert(previous.clone(), mentions);
             }
             self.stop_composing(&previous);
+            let text = self.drafts.get(&previous).map_or("", String::as_str);
+            self.store_draft(&previous, text);
         }
         self.picker = None;
         self.pending.clear();
@@ -1209,10 +1221,14 @@ impl App {
         self.mention_start = None;
     }
 
+    /// Restores the active account's remembered chat draft into the window composer.
     fn restore_composer(&mut self) {
         if let Some(id) = self.open_chat.clone() {
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
+            let attachments = self.attachment_drafts.remove(&id).unwrap_or_default();
+            self.pending = attachments.pending;
+            self.reply_to = attachments.quoting;
         } else {
             self.composer.clear();
             self.composer_mentions.clear();
@@ -1720,6 +1736,7 @@ impl App {
         self.conversations.remove(id);
         self.drafts.remove(id);
         self.draft_mentions.remove(id);
+        self.attachment_drafts.remove(id);
         self.typing.remove(id);
         self.unread_kept.remove(id);
         if self.scroll_chat_into_view.as_deref() == Some(id) {
@@ -2196,7 +2213,7 @@ impl App {
     }
 
     /// Visible chats filtered by search, archive state, and the chat filter,
-    /// with pinned first.
+    /// with pinned chats first.
     /// Locked chats only appear inside the locked folder.
     pub fn visible_chats(&self) -> Vec<&Chat> {
         let needle = crate::util::search_key(self.search.trim());
@@ -2364,15 +2381,54 @@ impl App {
             && crate::util::now() - message.timestamp <= REVOKE_WINDOW.as_secs() as i64
     }
 
-    /// A chat's unsent text on one line, for its row in the chat list. The
-    /// open chat's text is in the composer, where the reader sees it.
-    pub fn draft_preview(&self, chat: &str) -> Option<String> {
+    /// The open composer's current contents take precedence over its saved draft.
+    fn draft_contents(&self, chat: &str) -> (&str, &[Pending]) {
         if self.open_chat.as_deref() == Some(chat) {
+            let text = if self.editing.is_none() {
+                self.composer.as_str()
+            } else {
+                ""
+            };
+            (text, &self.pending)
+        } else {
+            (
+                self.drafts.get(chat).map_or("", String::as_str),
+                self.attachment_drafts
+                    .get(chat)
+                    .map_or(&[], |draft| draft.pending.as_slice()),
+            )
+        }
+    }
+
+    /// Unsent text or attachments make a draft; editing a sent message does not.
+    pub fn has_draft(&self, chat: &str) -> bool {
+        let (text, pending) = self.draft_contents(chat);
+        !text.trim().is_empty() || !pending.is_empty()
+    }
+
+    /// A chat's unsent text or first attachment on one line for its list row.
+    /// Active text stays in the composer; attachment drafts also show in the row.
+    pub fn draft_preview(&self, chat: &str) -> Option<String> {
+        let (text, pending) = self.draft_contents(chat);
+        if self.open_chat.as_deref() == Some(chat) && pending.is_empty() {
             return None;
         }
-        let draft = self.drafts.get(chat)?;
-        let line = draft.split_whitespace().collect::<Vec<_>>().join(" ");
-        (!line.is_empty()).then_some(line)
+        let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !line.is_empty() {
+            return Some(line);
+        }
+        pending.first().map(|attachment| match attachment {
+            Pending::File(path) => path.file_name().map_or_else(
+                || "📎".to_owned(),
+                |name| {
+                    name.to_string_lossy()
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                },
+            ),
+            Pending::Picture { .. } => crate::i18n::gettext(self.locale, "Image").into_owned(),
+        })
     }
 
     /// Active typers in a chat as id and display name.
@@ -2985,6 +3041,7 @@ impl App {
         self.selection = Some((chat, ids));
     }
 
+    /// Updates one account's link state, discarding its drafts when it is unlinked.
     fn handle_link(&mut self, status: LinkStatus, live: bool) {
         match &status {
             LinkStatus::Connected => {
@@ -3026,7 +3083,10 @@ impl App {
                 // Unsent text belongs to the account that was unlinked.
                 self.drafts.clear();
                 self.draft_mentions.clear();
+                self.attachment_drafts.clear();
                 if live {
+                    self.pending.clear();
+                    self.reply_to = None;
                     self.composer.clear();
                     self.composer_mentions.clear();
                 }
@@ -3135,6 +3195,18 @@ impl App {
         // Clearing a chat also removes its stored draft.
         self.drafts.remove(id);
         self.draft_mentions.remove(id);
+        self.attachment_drafts.remove(id);
+        if live && self.open_chat.as_deref() == Some(id) {
+            if !self.pending.is_empty() {
+                self.pending.clear();
+                self.composer.clear();
+                self.composer_mentions.clear();
+                self.reply_to = None;
+            } else if self.editing.is_none() {
+                self.composer.clear();
+                self.composer_mentions.clear();
+            }
+        }
         self.search_hits
             .retain(|message| message.chat != id || message.timestamp > through);
         // Nothing earlier is left here, and the phone no longer has it either.
@@ -3255,6 +3327,7 @@ impl App {
         });
     }
 
+    /// Parks the open locked chat's draft before hiding its conversation and controls.
     fn hide_locked_chat(&mut self, id: &str) {
         // A locked chat still exists, so its unsent text waits as a draft.
         // Text emptied in the composer clears the stored copy too. A hidden
@@ -3262,6 +3335,9 @@ impl App {
         if self.events_hidden {
             self.leave_chat(id);
             return;
+        }
+        if self.open_chat.as_deref() == Some(id) {
+            self.save_attachment_draft(id);
         }
         if self.open_chat.as_deref() == Some(id)
             && self.editing.is_none()
@@ -3295,11 +3371,11 @@ impl App {
         unsent: Unsent,
         reason: Refusal,
     ) {
-        let open = self.open_chat.as_deref() == Some(chat.as_str());
+        let open = !self.events_hidden && self.open_chat.as_deref() == Some(chat.as_str());
         // Re-arm the reply banner, unless the user has moved on to another
         // reply or an edit since.
         if open && quoting.is_some() && self.reply_to.is_none() && self.editing.is_none() {
-            self.reply_to = quoting;
+            self.reply_to = quoting.clone();
             self.focus_composer = true;
         }
         match unsent {
@@ -3309,9 +3385,7 @@ impl App {
                 self.focus_composer = open;
             }
             Unsent::Files { paths, caption } => {
-                if open {
-                    self.pending.extend(paths.into_iter().map(Pending::File));
-                }
+                self.restore_attachments(&chat, paths.into_iter().map(Pending::File), quoting);
                 self.restore_text(&chat, caption.unwrap_or_default());
             }
             Unsent::Image {
@@ -3320,14 +3394,16 @@ impl App {
                 rgba,
                 caption,
             } => {
-                if open {
-                    self.pending.push(Pending::Picture {
+                self.restore_attachments(
+                    &chat,
+                    [Pending::Picture {
                         width: width as usize,
                         height: height as usize,
                         rgba: std::sync::Arc::new(rgba),
                         texture: None,
-                    });
-                }
+                    }],
+                    quoting,
+                );
                 self.restore_text(&chat, caption.unwrap_or_default());
             }
             Unsent::Sticker | Unsent::Gif => {}
@@ -3345,13 +3421,31 @@ impl App {
         self.toast_error(message.into_owned());
     }
 
+    /// Returns refused attachments to the live composer or their owning account's chat draft.
+    fn restore_attachments(
+        &mut self,
+        chat: &str,
+        pending: impl IntoIterator<Item = Pending>,
+        quoting: Option<String>,
+    ) {
+        if !self.events_hidden && self.open_chat.as_deref() == Some(chat) {
+            self.pending.extend(pending);
+        } else if self.chat(chat).is_some() {
+            let draft = self.attachment_drafts.entry(chat.to_owned()).or_default();
+            draft.pending.extend(pending);
+            if draft.quoting.is_none() {
+                draft.quoting = quoting;
+            }
+        }
+    }
+
     /// Returns refused text to its chat's composer, or to its stored draft
     /// when another chat is open. Text typed since the send is kept.
     fn restore_text(&mut self, chat: &str, text: String) {
         if text.trim().is_empty() {
             return;
         }
-        if self.open_chat.as_deref() == Some(chat) {
+        if !self.events_hidden && self.open_chat.as_deref() == Some(chat) {
             if self.composer.trim().is_empty() && self.editing.is_none() {
                 self.composer = text;
                 self.composer_mentions.clear();
@@ -3570,6 +3664,7 @@ impl App {
         self.backend.send(Command::MarkUnread(chat.to_owned()));
     }
 
+    /// Opens an eligible chat, parking the previous draft and restoring this chat's composer.
     fn open_chat(&mut self, id: ChatId) {
         // Notifications and stale actions must not open a locked chat from
         // outside the authenticated folder.
@@ -3588,6 +3683,7 @@ impl App {
             self.emoji_jump = None;
             self.jump_highlight = None;
             if let Some(previous) = self.open_chat.take() {
+                self.save_attachment_draft(&previous);
                 let draft = std::mem::take(&mut self.composer);
                 // Discard an unfinished edit instead of keeping it as a draft.
                 if self.editing.take().is_some() || draft.trim().is_empty() {
@@ -3614,9 +3710,11 @@ impl App {
                     });
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
+            let attachments = self.attachment_drafts.remove(&id).unwrap_or_default();
+            self.pending = attachments.pending;
             // A search belongs to the chat it was typed in.
             self.close_chat_search();
-            self.reply_to = None;
+            self.reply_to = attachments.quoting;
             self.editing = None;
             // A run of voice messages belongs to the chat it started in.
             self.voice_chat = None;
@@ -3769,6 +3867,11 @@ impl App {
         self.follow_outgoing();
     }
 
+    /// Snapshots selected mentions before the view queues an attachment send.
+    pub(crate) fn composer_mentions(&self) -> Vec<ComposerMention> {
+        self.composer_mentions.clone()
+    }
+
     /// Replaces selected display-name mentions with WhatsApp's `@user`
     /// tokens and returns the JIDs for message context.
     fn encode_composer_mentions(&mut self, chat: &str, mut text: String) -> (String, Vec<String>) {
@@ -3806,6 +3909,19 @@ impl App {
         (text, mentions)
     }
 
+    /// Parks attachments and reply quotes before leaving a chat or account.
+    fn save_attachment_draft(&mut self, chat: &str) {
+        if self.pending.is_empty() && self.reply_to.is_none() {
+            self.attachment_drafts.remove(chat);
+        } else {
+            let draft = AttachmentDraft {
+                pending: std::mem::take(&mut self.pending),
+                quoting: self.reply_to.take(),
+            };
+            self.attachment_drafts.insert(chat.to_owned(), draft);
+        }
+    }
+
     /// Adds files to the open chat's composer.
     fn stage_files(&mut self, paths: Vec<PathBuf>) {
         if self.open_chat.is_none() {
@@ -3819,7 +3935,42 @@ impl App {
     }
 
     /// Sends pending files, attaching the caption to the first.
-    fn send_pending(&mut self, chat: ChatId, caption: String) {
+    fn send_pending(
+        &mut self,
+        account: AccountId,
+        chat: ChatId,
+        caption: String,
+        selected: Vec<ComposerMention>,
+    ) {
+        // A queued action cannot consume another chat's or account's draft.
+        let active = self.account().id.clone();
+        let Some(target) = self.accounts.iter_mut().find(|known| known.id == account) else {
+            return;
+        };
+        if account != active || target.open_chat.as_deref() != Some(chat.as_str()) {
+            if target.attachment_drafts.contains_key(&chat)
+                && !caption.trim().is_empty()
+                && target
+                    .drafts
+                    .get(&chat)
+                    .is_none_or(|text| text.trim().is_empty())
+            {
+                target.backend.send(Command::SaveDraft {
+                    chat: chat.clone(),
+                    text: caption.clone(),
+                });
+                target.drafts.insert(chat.clone(), caption);
+                target.draft_mentions.insert(chat, selected);
+            }
+            return;
+        }
+        if self.pending.is_empty() {
+            return;
+        }
+        self.drafts.remove(&chat);
+        self.draft_mentions.remove(&chat);
+        self.store_draft(&chat, "");
+        self.composer_mentions = selected;
         // The reply travels with the first attachment, like the caption.
         let mut quoting = self.reply_to.take();
         let caption = caption.trim().to_owned();
@@ -4109,6 +4260,7 @@ impl App {
         }
     }
 
+    /// Applies one model action after drawing the views, respecting the app lock and account state.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the
@@ -4222,15 +4374,17 @@ impl App {
             }
             Action::CloseChat => {
                 if let Some(chat) = self.open_chat.take() {
+                    self.save_attachment_draft(&chat);
                     self.stop_composing(&chat);
                     let draft = std::mem::take(&mut self.composer);
                     if self.editing.take().is_none() && !draft.trim().is_empty() {
                         self.drafts.insert(chat.clone(), draft);
                         let mentions = std::mem::take(&mut self.composer_mentions);
-                        self.draft_mentions.insert(chat, mentions);
+                        self.draft_mentions.insert(chat.clone(), mentions);
                     } else {
                         self.composer_mentions.clear();
                     }
+                    self.store_draft(&chat, self.drafts.get(&chat).map_or("", String::as_str));
                 }
                 self.reply_to = None;
                 self.emoji_start = None;
@@ -4668,7 +4822,12 @@ impl App {
                 }
             }
             Action::SendFiles(paths) => self.stage_files(paths),
-            Action::SendPending { chat, caption } => self.send_pending(chat, caption),
+            Action::SendPending {
+                account,
+                chat,
+                caption,
+                mentions,
+            } => self.send_pending(account, chat, caption, mentions),
             Action::RemovePending(index) => {
                 if index < self.pending.len() {
                     self.pending.remove(index);
@@ -6788,6 +6947,293 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    /// Identical chat IDs across accounts retain separate files, captions, mentions and reply quotes.
+    #[test]
+    fn attachment_drafts_keep_their_account_caption_mentions_and_quote() {
+        let directory = tempfile::tempdir().unwrap();
+        let dirs = AppDirs::under(directory.path());
+        let mut app = App::headless(dirs.clone(), Settings::default()).0;
+        let second_id = AccountId::parse("2").unwrap();
+        let (second, _) = Account::detached(
+            &dirs,
+            second_id.clone(),
+            crate::settings::AccountSettings::default(),
+        )
+        .unwrap();
+        app.accounts.push(second);
+        let chat = "fixture@g.us";
+        let member = "fixture-member@s.whatsapp.net";
+        for account in &mut app.accounts {
+            let mut group = Chat::new(chat.into(), "Synthetic group".into());
+            group.participants.push(member.into());
+            account.chats.push(group);
+        }
+        app.open_chat(chat.into());
+        app.composer = "Hello @Mira Example".into();
+        app.composer_mentions.push(ComposerMention {
+            id: member.into(),
+            name: "Mira Example".into(),
+        });
+        app.reply_to = Some("synthetic-quote".into());
+        app.stage_files(vec!["First account.pdf".into()]);
+        let first_id = app.account().id.clone();
+        let queued_caption = std::mem::take(&mut app.composer);
+        let queued_mentions = app.composer_mentions.clone();
+        app.switch_account(&second_id);
+        app.open_chat(chat.into());
+        assert!(
+            !app.has_draft(chat),
+            "identical chat IDs in another account must not expose a draft"
+        );
+        assert!(app.pending.is_empty());
+        app.stage_files(vec!["Second account.pdf".into()]);
+        app.send_pending(
+            first_id.clone(),
+            chat.into(),
+            queued_caption,
+            queued_mentions,
+        );
+        assert_eq!(
+            app.pending.len(),
+            1,
+            "a queued send from another account cannot consume these files"
+        );
+        app.switch_account(&first_id);
+        assert_eq!(app.composer, "Hello @Mira Example");
+        assert_eq!(app.composer_mentions.len(), 1);
+        assert_eq!(app.reply_to.as_deref(), Some("synthetic-quote"));
+        assert!(
+            matches!(app.pending.as_slice(), [Pending::File(path)] if path == std::path::Path::new("First account.pdf"))
+        );
+        app.apply(Action::CloseChat, &egui::Context::default());
+        assert!(app.pending.is_empty());
+        assert!(app.has_draft(chat));
+        app.open_chat(chat.into());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let caption = std::mem::take(&mut app.composer);
+        app.send_pending(
+            first_id.clone(),
+            chat.into(),
+            caption,
+            app.composer_mentions.clone(),
+        );
+        assert!(!app.has_draft(chat));
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(sent.iter().any(|command| matches!(command, Command::SaveDraft { chat: id, text } if id == chat && text.is_empty())));
+        assert!(sent.iter().any(|command| matches!(command,
+            Command::SendFiles { chat: id, caption: Some(caption), mentions, quoting: Some(quote), .. }
+            if id == chat && caption == "Hello @fixture-member" && mentions == &[member] && quote == "synthetic-quote")));
+        app.switch_account(&second_id);
+        assert!(
+            matches!(app.pending.as_slice(), [Pending::File(path)] if path == std::path::Path::new("Second account.pdf"))
+        );
+    }
+
+    /// Attachment-only drafts remain recognizable after leaving their conversation.
+    #[test]
+    fn attachment_only_drafts_have_list_previews() {
+        let mut app = app();
+        let chat = "preview-fixture@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+        app.open_chat(chat.into());
+        app.stage_files(vec!["Synthetic document.pdf".into()]);
+        app.apply(Action::CloseChat, &egui::Context::default());
+        assert_eq!(
+            app.draft_preview(chat).as_deref(),
+            Some("Synthetic document.pdf")
+        );
+        app.attachment_drafts.get_mut(chat).unwrap().pending = vec![Pending::Picture {
+            width: 1,
+            height: 1,
+            rgba: std::sync::Arc::new(vec![0; 4]),
+            texture: None,
+        }];
+        assert_eq!(app.draft_preview(chat).as_deref(), Some("Image"));
+        app.open_chat(chat.into());
+        app.pending.clear();
+        app.composer = "Active text stays in the composer".into();
+        assert!(app.draft_preview(chat).is_none());
+    }
+
+    /// A quote without text or attachments remains separate across chats and accounts.
+    #[test]
+    fn quote_only_drafts_survive_navigation_without_entering_another_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let dirs = AppDirs::under(directory.path());
+        let mut app = App::headless(dirs.clone(), Settings::default()).0;
+        let first_id = app.account().id.clone();
+        let second_id = AccountId::parse("2").unwrap();
+        let (second, _) = Account::detached(
+            &dirs,
+            second_id.clone(),
+            crate::settings::AccountSettings::default(),
+        )
+        .unwrap();
+        app.accounts.push(second);
+        app.open_chat("synthetic-chat".into());
+        app.reply_to = Some("first-quote".into());
+        app.open_chat("other-chat".into());
+        assert!(app.reply_to.is_none());
+        app.open_chat("synthetic-chat".into());
+        assert_eq!(app.reply_to.as_deref(), Some("first-quote"));
+        app.switch_account(&second_id);
+        app.open_chat("synthetic-chat".into());
+        assert!(app.reply_to.is_none());
+        app.reply_to = Some("second-quote".into());
+        app.switch_account(&first_id);
+        assert_eq!(app.reply_to.as_deref(), Some("first-quote"));
+        app.apply(Action::CloseChat, &egui::Context::default());
+        assert!(app.reply_to.is_none());
+        app.open_chat("synthetic-chat".into());
+        assert_eq!(app.reply_to.as_deref(), Some("first-quote"));
+        app.reply_to = None;
+        app.open_chat("other-chat".into());
+        app.open_chat("synthetic-chat".into());
+        assert!(
+            app.reply_to.is_none(),
+            "cancelled quotes must stay cancelled"
+        );
+        app.switch_account(&second_id);
+        assert_eq!(app.reply_to.as_deref(), Some("second-quote"));
+    }
+
+    /// Late file and image refusals recover only into their originating account's draft.
+    #[test]
+    fn hidden_account_attachment_refusals_cannot_enter_the_visible_draft() {
+        for image in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _) = two_accounts(directory.path());
+            let chat = "fixture@s.whatsapp.net";
+            for account in &mut app.accounts {
+                account
+                    .chats
+                    .push(Chat::new(chat.into(), "Synthetic chat".into()));
+                account.open_chat = Some(chat.into());
+            }
+            let (backend, events) = Backend::detached();
+            app.accounts[1].backend = backend;
+            let caption = "Recovered hidden caption";
+            let unsent = if image {
+                Unsent::Image {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![1, 2, 3, 4],
+                    caption: Some(caption.into()),
+                }
+            } else {
+                Unsent::Files {
+                    paths: vec!["Hidden account.pdf".into()],
+                    caption: Some(caption.into()),
+                }
+            };
+            events
+                .send(refused(
+                    chat,
+                    Some("hidden-quote"),
+                    unsent,
+                    Refusal::Offline,
+                ))
+                .unwrap();
+            app.handle_events();
+            assert!(
+                app.pending.is_empty(),
+                "inactive account files cannot enter the visible composer"
+            );
+            assert!(app.composer.is_empty());
+            assert!(app.reply_to.is_none());
+            app.open_chat("other@s.whatsapp.net".into());
+            assert!(!app.accounts[0].attachment_drafts.contains_key(chat));
+            let second = app.accounts[1].id.clone();
+            app.switch_account(&second);
+            assert_eq!(app.composer, caption);
+            assert_eq!(app.reply_to.as_deref(), Some("hidden-quote"));
+            assert_eq!(app.pending.len(), 1);
+            if image {
+                assert!(
+                    matches!(&app.pending[0], Pending::Picture { rgba, .. } if rgba.as_slice() == [1, 2, 3, 4])
+                );
+            } else {
+                assert!(
+                    matches!(&app.pending[0], Pending::File(path) if path == std::path::Path::new("Hidden account.pdf"))
+                );
+            }
+        }
+    }
+
+    /// A send queued before switching chats preserves both drafts instead of sending the next chat's files.
+    #[test]
+    fn stale_attachment_sends_preserve_both_chats_and_the_original_caption() {
+        let mut app = app();
+        app.open_chat("first".into());
+        app.stage_files(vec!["First.pdf".into()]);
+        app.reply_to = Some("first-quote".into());
+        app.composer = "First caption".into();
+        let caption = std::mem::take(&mut app.composer);
+        app.open_chat("second".into());
+        app.stage_files(vec!["Second.pdf".into()]);
+        app.reply_to = Some("second-quote".into());
+        app.send_pending(
+            app.account().id.clone(),
+            "first".into(),
+            caption,
+            Vec::new(),
+        );
+        assert!(
+            matches!(app.pending.as_slice(), [Pending::File(path)] if path == std::path::Path::new("Second.pdf"))
+        );
+        assert_eq!(app.reply_to.as_deref(), Some("second-quote"));
+        app.open_chat("first".into());
+        assert_eq!(app.composer, "First caption");
+        assert_eq!(app.reply_to.as_deref(), Some("first-quote"));
+        assert!(
+            matches!(app.pending.as_slice(), [Pending::File(path)] if path == std::path::Path::new("First.pdf"))
+        );
+    }
+
+    /// Clearing, deleting or unlinking removes the affected stored and active attachment drafts.
+    #[test]
+    fn clearing_deleting_and_unlinking_discard_attachment_drafts() {
+        let mut app = app();
+        app.open_chat("cleared".into());
+        app.composer = "Caption".into();
+        app.stage_files(vec!["Cleared.pdf".into()]);
+        app.handle_chat_cleared("cleared", 1, true);
+        assert!(!app.has_draft("cleared"));
+        assert!(app.composer.is_empty());
+        app.stage_files(vec!["Deleted.pdf".into()]);
+        app.open_chat("other".into());
+        app.forget_chat("cleared");
+        assert!(!app.has_draft("cleared"));
+        app.stage_files(vec!["Unlinked.pdf".into()]);
+        app.open_chat("last".into());
+        app.stage_files(vec!["Active.pdf".into()]);
+        app.handle_link(LinkStatus::LoggedOut, true);
+        assert!(app.attachment_drafts.is_empty());
+        assert!(app.pending.is_empty());
+    }
+
+    /// Hiding a locked conversation retains its attachment draft without exposing it in the regular list.
+    #[test]
+    fn hiding_a_locked_chat_keeps_its_attachments_out_of_the_regular_list() {
+        let mut app = app();
+        let mut chat = Chat::new("locked".into(), "Synthetic locked chat".into());
+        chat.locked = true;
+        app.chats.push(chat);
+        app.open_chat = Some("locked".into());
+        app.stage_files(vec!["Private synthetic document.pdf".into()]);
+        app.reply_to = Some("private-quote".into());
+        app.hide_locked_chat("locked");
+        assert!(app.open_chat.is_none());
+        assert!(app.pending.is_empty());
+        assert!(app.has_draft("locked"));
+        assert!(app.visible_chats().iter().all(|chat| chat.id != "locked"));
+        assert_eq!(
+            app.attachment_drafts["locked"].quoting.as_deref(),
+            Some("private-quote")
+        );
     }
 
     #[test]
@@ -9206,6 +9652,49 @@ mod tests {
     }
 
     #[test]
+    fn clearing_a_chat_discards_its_open_text_draft_and_mentions() {
+        let mut app = app();
+        let chat = "peer@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.composer = "Synthetic draft @Mira".into();
+        app.composer_mentions.push(ComposerMention {
+            id: "member@s.whatsapp.net".into(),
+            name: "Mira".into(),
+        });
+        let draft = app.composer.clone();
+        app.drafts.insert(chat.into(), draft);
+        app.handle_chat_cleared(chat, 100, true);
+        assert!(app.composer.is_empty());
+        assert!(app.composer_mentions.is_empty());
+        assert!(!app.drafts.contains_key(chat));
+    }
+
+    #[test]
+    fn clearing_a_chat_preserves_a_surviving_edit_and_other_account_composer() {
+        let chat = "peer@s.whatsapp.net";
+        for live in [true, false] {
+            let mut app = app();
+            app.open_chat = Some(chat.into());
+            app.composer = "Synthetic edited text".into();
+            app.editing = Some("newer".into());
+            app.conversations
+                .entry(chat.into())
+                .or_default()
+                .merge(vec![message(chat, "newer", 200)], false);
+            app.handle_chat_cleared(chat, 100, live);
+            assert_eq!(app.composer, "Synthetic edited text");
+            assert_eq!(app.editing.as_deref(), Some("newer"));
+        }
+        let mut app = app();
+        app.open_chat = Some(chat.into());
+        app.composer = "Other account draft".into();
+        app.handle_chat_cleared(chat, 100, false);
+        assert_eq!(app.composer, "Other account draft");
+        app.handle_chat_cleared("another@s.whatsapp.net", 100, true);
+        assert_eq!(app.composer, "Other account draft");
+    }
+
+    #[test]
     fn a_chat_deleted_on_the_phone_disappears_here_too() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, events) =
@@ -10131,6 +10620,7 @@ mod tests {
     }
 
     #[test]
+    /// Attachment and GIF sends preserve replies and restore their drafts when refused.
     fn attachments_and_gifs_carry_the_reply_and_come_back_when_refused() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
@@ -10149,6 +10639,8 @@ mod tests {
         app.pending.push(Pending::File("/fixture/a.pdf".into()));
         app.apply(
             Action::SendPending {
+                account: app.account().id.clone(),
+                mentions: app.composer_mentions.clone(),
                 chat: chat.into(),
                 caption: "Caption fixture".into(),
             },
@@ -10159,9 +10651,10 @@ mod tests {
         assert!(matches!(
             sent.as_slice(),
             [
+                Command::SaveDraft { text, .. },
                 Command::SendImage { quoting: Some(id), caption: Some(_), .. },
                 Command::SendFiles { quoting: None, caption: None, .. },
-            ] if id == "original"
+            ] if id == "original" && text.is_empty()
         ));
         assert!(app.reply_to.is_none());
         assert!(app.pending.is_empty());

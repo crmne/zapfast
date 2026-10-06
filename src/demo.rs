@@ -1706,6 +1706,7 @@ fn wallpaper_image_sample(app: &mut App) {
     app.account_mut().settings.wallpaper_image = Some(path);
 }
 
+/// Configures synthetic offline demo states and appearance for tests and screenshots.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -2624,6 +2625,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "compose-emoji" => {
                 app.composer = "Andiamo 😊 con due 👍🏽 e poi testo normale".to_owned();
+            }
+            "attachment-draft-away" | "attachment-draft-return" => {
+                apply_flags(app, Some("staged"));
+                app.actions
+                    .push(crate::model::Action::OpenChat(SAMPLES[1].id.into()));
+                if part == "attachment-draft-return" {
+                    app.actions
+                        .push(crate::model::Action::OpenChat(SAMPLES[0].id.into()));
+                }
             }
             "staged" => {
                 let (photo, _) = sample_files(app);
@@ -4331,6 +4341,8 @@ mod tests {
             "rail",
             "search",
             "staged",
+            "attachment-draft-away",
+            "attachment-draft-return",
             "compose-emoji",
             "voice",
             "voice,voice-menu",
@@ -8391,6 +8403,70 @@ mod tests {
     }
 
     #[test]
+    fn switching_chats_cannot_send_another_chats_pasted_images_on_enter() {
+        use crate::model::Action;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        let first = SAMPLES[0].id.to_owned();
+        let second = SAMPLES[1].id.to_owned();
+        for color in [40, 80] {
+            app.actions.push(Action::PasteImage {
+                width: 2,
+                height: 2,
+                rgba: vec![color; 16],
+            });
+        }
+        render(&mut app, &ctx);
+        app.composer = "Pictures for the first chat".into();
+        app.actions.push(Action::OpenChat(second));
+        render(&mut app, &ctx);
+        assert!(app.pending.is_empty());
+        assert!(app.composer.is_empty());
+        app.backend.take_demo_commands();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(
+            !app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    crate::backend::Command::SendImage { .. }
+                        | crate::backend::Command::SendFiles { .. }
+                        | crate::backend::Command::SendText { .. }
+                ))
+        );
+        app.actions.push(Action::OpenChat(first.clone()));
+        render(&mut app, &ctx);
+        assert_eq!(app.pending.len(), 2);
+        assert_eq!(app.composer, "Pictures for the first chat");
+        app.backend.take_demo_commands();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        let commands = app.backend.take_demo_commands();
+        let images: Vec<_> = commands
+            .iter()
+            .filter_map(|command| match command {
+                crate::backend::Command::SendImage { chat, caption, .. } => Some((chat, caption)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(images.len(), 2);
+        assert!(images.iter().all(|(chat, _)| *chat == &first));
+        assert_eq!(images[0].1.as_deref(), Some("Pictures for the first chat"));
+        assert!(images[1].1.is_none());
+        assert!(app.pending.is_empty());
+    }
+
+    #[test]
     fn a_pasted_picture_waits_for_its_caption() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -8407,8 +8483,10 @@ mod tests {
         assert_eq!(app.pending.len(), 1, "staged, not sent");
         assert_eq!(app.conversations[&chat].messages.len(), before);
         app.actions.push(crate::model::Action::SendPending {
+            account: app.account().id.clone(),
             chat: chat.clone(),
             caption: "look".into(),
+            mentions: Vec::new(),
         });
         render(&mut app, &ctx);
         assert!(app.pending.is_empty(), "sent with the caption");
