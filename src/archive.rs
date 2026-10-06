@@ -946,6 +946,10 @@ impl Archive {
                 account = excluded.account",
             params![lid_chat, phone_chat],
         )?;
+        self.connection.execute(
+            "DELETE FROM pending_message_removals WHERE chat = ?1",
+            params![lid_chat],
+        )?;
         let removed = self.connection.execute(
             "DELETE FROM messages WHERE chat IN (?1, ?2) AND id IN
              (SELECT id FROM message_removals WHERE chat = ?1
