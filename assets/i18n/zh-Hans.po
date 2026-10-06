@@ -1558,3 +1558,42 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#
+#: src/app.rs:4538
+msgid "A selected chat is no longer writable"
+msgstr "无法再向某个所选聊天发送消息"
+
+#: src/ui/dialogs.rs:493
+msgid "Back"
+msgstr "返回"
+
+#: src/ui/dialogs.rs:503
+msgid "Forward"
+msgstr "转发"
+
+#
+#: src/ui/dialogs.rs:460
+msgid "Forward message"
+msgstr "转发消息"
+
+#: src/ui/dialogs.rs:474
+msgid "Forward to these chats?"
+msgstr "转发到这些聊天？"
+
+#: src/ui/dialogs.rs:464
+#, rust-format
+msgid "Forward {count} message"
+msgid_plural "Forward {count} messages"
+msgstr[0] "转发 {count} 条消息"
+
+#
+#: src/ui/dialogs.rs:658
+msgid "Review recipients"
+msgstr "查看收件人"
+
+#: src/ui/dialogs.rs:645
+#, rust-format
+msgid "{count} recipient selected"
+msgid_plural "{count} recipients selected"
+msgstr[0] "{count} 位收件人已选择"

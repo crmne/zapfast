@@ -1620,3 +1620,44 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#
+#: src/app.rs:4538
+msgid "A selected chat is no longer writable"
+msgstr "Une discussion sélectionnée ne permet plus d’envoyer des messages"
+
+#: src/ui/dialogs.rs:493
+msgid "Back"
+msgstr "Retour"
+
+#: src/ui/dialogs.rs:503
+msgid "Forward"
+msgstr "Transférer"
+
+#
+#: src/ui/dialogs.rs:460
+msgid "Forward message"
+msgstr "Transférer le message"
+
+#: src/ui/dialogs.rs:474
+msgid "Forward to these chats?"
+msgstr "Transférer à ces discussions ?"
+
+#: src/ui/dialogs.rs:464
+#, rust-format
+msgid "Forward {count} message"
+msgid_plural "Forward {count} messages"
+msgstr[0] "Transférer {count} message"
+msgstr[1] "Transférer {count} messages"
+
+#
+#: src/ui/dialogs.rs:658
+msgid "Review recipients"
+msgstr "Vérifier les destinataires"
+
+#: src/ui/dialogs.rs:645
+#, rust-format
+msgid "{count} recipient selected"
+msgid_plural "{count} recipients selected"
+msgstr[0] "{count} destinataire sélectionné"
+msgstr[1] "{count} destinataires sélectionnés"
