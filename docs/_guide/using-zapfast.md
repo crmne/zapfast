@@ -293,6 +293,14 @@ WhatsApp account, **Chat** opens a private conversation with it and, if the
 person is not already in ZapFast's contacts, **Add** saves them, adding them to
 your phone's contacts if you chose that for the last contact you added. A card with only a local number shows the number.
 
+A chat or group with disappearing messages shows its timer in the contact or
+group details, opened from the header or by right-clicking a row in the chat
+list. The line reads **Off** when the timer is turned off and stays away
+entirely when ZapFast has never heard of a timer for that chat. Read-only for
+now: change the timer on your phone, and messages ZapFast sends carry it,
+while messages received here stay in the archive after they disappear on your
+other devices.
+
 The chips under the search bar narrow the list to **Unread**, **Private**
 (one-to-one chats), **Favorites** (in your phone's order), or **Groups**.
 Followed channels have their own **Channels** chip, and **Archived** opens the

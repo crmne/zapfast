@@ -1915,6 +1915,32 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
+            "disappearing-direct" => {
+                // A one-to-one chat with its own duration, so the timer shows
+                // in the contact details as well as the group's.
+                let chat = app
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == SAMPLES[0].id)
+                    .unwrap();
+                chat.ephemeral_expiration = Some(604_800);
+                app.open_chat = Some(chat.id.clone());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
+            "disappearing-off" => {
+                // A chat whose timer the phone turned off: the details say so
+                // rather than staying quiet about it.
+                let chat = app
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == SAMPLES[2].id)
+                    .unwrap();
+                chat.ephemeral_expiration = Some(0);
+                app.open_chat = Some(chat.id.clone());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "arabic-reply" => {
                 let chat = SAMPLES[0].id;
                 let now = crate::util::now();
@@ -4239,6 +4265,11 @@ mod tests {
             "empty",
             "rtl",
             "disappearing",
+            "disappearing-direct",
+            "disappearing-off",
+            "disappearing,group-info",
+            "disappearing-direct,info",
+            "disappearing-off,info",
             "settings",
             "settings-search=Notifications",
             "settings-search=System",
@@ -4585,6 +4616,86 @@ mod tests {
             assert_eq!(drawn(group_name_button_id()), offered, "{page}: the pencil");
             assert_eq!(drawn(group_photo_id()), offered, "{page}: the photo menu");
         }
+    }
+
+    /// The timer line says what WhatsApp says: a duration for a chat with one,
+    /// "Off" for a chat the phone turned it off for, and nothing at all for a
+    /// chat nobody has mentioned a timer for, which includes a frame where the
+    /// row was drawn a moment ago and the chat changed under it.
+    #[test]
+    fn chat_info_says_the_timer_and_hides_what_it_does_not_know() {
+        use crate::ui::dialogs::disappearing_timer_id;
+        for (page, expected) in [
+            (
+                "disappearing,group-info",
+                Some("Disappearing messages: 24 hours"),
+            ),
+            (
+                "disappearing-direct,info",
+                Some("Disappearing messages: 7 days"),
+            ),
+            ("disappearing-off,info", Some("Disappearing messages: Off")),
+            ("group-info", None),
+            ("info", None),
+        ] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            apply_flags(&mut app, Some(page));
+            render(&mut app, &ctx);
+            let drawn = ctx
+                .data(|data| {
+                    data.get_temp::<Option<crate::ui::dialogs::TimerRow>>(disappearing_timer_id())
+                })
+                .flatten();
+            assert_eq!(
+                drawn.as_ref().map(|row| row.text.as_str()),
+                expected,
+                "{page}: the timer row"
+            );
+            let Some(row) = drawn else { continue };
+            // The row stays inside the dialog, whatever a translation measures.
+            let width = ctx.content_rect().width();
+            assert!(
+                row.rect.width() <= width,
+                "{page}: {} wider than the window",
+                row.rect.width()
+            );
+            assert!(row.rect.height() > 0.0, "{page}: drawn with no height");
+        }
+    }
+
+    /// A chat whose timer is not known draws no row, even in the same context
+    /// that just drew one: the marker records each frame, so the last frame's
+    /// row cannot be read back as this frame's.
+    #[test]
+    fn the_timer_row_does_not_outlive_its_chat() {
+        use crate::ui::dialogs::disappearing_timer_id;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("disappearing-off,info"));
+        render(&mut app, &ctx);
+        let drawn = |ctx: &egui::Context| {
+            ctx.data(|data| {
+                data.get_temp::<Option<crate::ui::dialogs::TimerRow>>(disappearing_timer_id())
+            })
+            .flatten()
+        };
+        assert_eq!(
+            drawn(&ctx).map(|row| row.text),
+            Some("Disappearing messages: Off".to_owned())
+        );
+
+        // The same dialog, now a chat whose timer nobody has mentioned.
+        app.dialog = Some(Dialog::ChatInfo(SAMPLES[3].id.to_owned()));
+        app.open_chat = Some(SAMPLES[3].id.to_owned());
+        render(&mut app, &ctx);
+
+        assert!(
+            drawn(&ctx).is_none(),
+            "the previous chat's row is still marked"
+        );
     }
 
     /// The pencil opens the name editor; Enter renames the group on WhatsApp,

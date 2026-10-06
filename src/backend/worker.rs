@@ -12973,10 +12973,12 @@ mod receipt_tests {
     #[test]
     fn protocol_timer_badge_follows_enable_disable_and_ignores_stale_updates() {
         let (mut worker, events, _inbox, _wa) = worker();
-        for (expiration, setting_time, envelope_time, expected) in [
-            (86_400, None, 200, Some(86_400)),
-            (0, None, 300, None),
-            (604_800, Some(250), 400, None),
+        // What the archive holds, and what the badge shows: a timer the phone
+        // turned off is stored as a zero and read as no timer at all.
+        for (expiration, setting_time, envelope_time, stored, badge) in [
+            (86_400, None, 200, Some(86_400), Some(86_400)),
+            (0, None, 300, Some(0), None),
+            (604_800, Some(250), 400, Some(0), None),
         ] {
             let raw = wa::Message {
                 protocol_message: MessageField::some(wa::message::ProtocolMessage {
@@ -12997,21 +12999,16 @@ mod receipt_tests {
                 ..Default::default()
             };
             worker.ingest(&Arc::new(raw), &info);
-            assert_eq!(
-                worker
-                    .archive
-                    .chat(PEER)
-                    .unwrap()
-                    .unwrap()
-                    .ephemeral_expiration,
-                expected
-            );
-            assert_eq!(worker.ephemeral_expiration(PEER), expected);
+            let chat = worker.archive.chat(PEER).unwrap().unwrap();
+            assert_eq!(chat.ephemeral_expiration, stored);
+            assert_eq!(chat.disappearing_timer(), badge);
+            // What an outgoing message carries: a zero timer adds nothing.
+            assert_eq!(worker.ephemeral_expiration(PEER), badge);
         }
         let badges: Vec<_> = events
             .try_iter()
             .filter_map(|event| match event {
-                Event::ChatUpdated(chat) if chat.id == PEER => Some(chat.ephemeral_expiration),
+                Event::ChatUpdated(chat) if chat.id == PEER => Some(chat.disappearing_timer()),
                 _ => None,
             })
             .collect();
@@ -13023,10 +13020,10 @@ mod receipt_tests {
     async fn group_timer_updates_work_before_history_and_keep_disable_versions() {
         let (mut worker, _events, _inbox, _wa) = worker();
         let group = "123-456@g.us";
-        for (expiration, timestamp, expected) in [
-            (86_400, 200, Some(86_400)),
-            (0, 300, None),
-            (604_800, 250, None),
+        for (expiration, timestamp, stored, badge) in [
+            (86_400, 200, Some(86_400), Some(86_400)),
+            (0, 300, Some(0), None),
+            (604_800, 250, Some(0), None),
         ] {
             let update = wa_events::GroupUpdate::builder()
                 .group_jid(group.parse().unwrap())
@@ -13042,15 +13039,9 @@ mod receipt_tests {
             worker
                 .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
                 .await;
-            assert_eq!(
-                worker
-                    .archive
-                    .chat(group)
-                    .unwrap()
-                    .unwrap()
-                    .ephemeral_expiration,
-                expected
-            );
+            let chat = worker.archive.chat(group).unwrap().unwrap();
+            assert_eq!(chat.ephemeral_expiration, stored, "stored at {timestamp}");
+            assert_eq!(chat.disappearing_timer(), badge, "badge at {timestamp}");
         }
     }
 

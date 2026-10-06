@@ -1,6 +1,6 @@
 //! Shortcuts, account, linking, contact, and chat dialogs.
 
-use egui::{Align, CornerRadius, Frame, Layout, Margin, Sense, Stroke, pos2, vec2};
+use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, pos2, vec2};
 
 use crate::app::App;
 use crate::model::{Action, Dialog};
@@ -1741,6 +1741,26 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
                 theme::text(ui, status, theme::regular(12.5), palette.dim);
             }
         }
+        // The chat's disappearing-message timer, read-only. A timer WhatsApp
+        // turned off reads as "Off", which is a fact; a chat whose timer
+        // nobody has mentioned draws nothing rather than guessing.
+        let timer = crate::util::disappearing_line(app.locale, chat.ephemeral_expiration);
+        // Recorded every frame, drawn or not, so a test reading the marker
+        // after the row went away sees nothing instead of the last frame.
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                disappearing_timer_id(),
+                timer.as_deref().map(|text| TimerRow {
+                    text: text.to_owned(),
+                    rect: Rect::NOTHING,
+                }),
+            )
+        });
+        if let Some(text) = timer {
+            let drawn = disappearing_timer_row(ui, &palette, &text);
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(disappearing_timer_id(), Some(drawn)));
+        }
         if can_leave {
             ui.add_space(8.0);
             let leave_label = if chat.is_channel() {
@@ -1968,6 +1988,58 @@ pub fn group_name_button_id() -> egui::Id {
     egui::Id::new("group-name-edit")
 }
 
+/// The disappearing-message timer line, centred under a chat's photo with the
+/// same timer icon as the chat list badge, and what it drew.
+///
+/// The row is measured and centred by hand: a nested centred container claims
+/// the column's whole height in egui. The text is cut to what is left beside
+/// the icon, so a long translation cannot widen the dialog, and the horizontal
+/// item spacing is cleared because egui adds it on top of `gap`, which would
+/// otherwise make the row wider than the budget it was measured against.
+fn disappearing_timer_row(ui: &mut egui::Ui, palette: &theme::Palette, text: &str) -> TimerRow {
+    const ICON: f32 = 12.0;
+    const GAP: f32 = 5.0;
+    let font = theme::regular(12.5);
+    let line = super::widgets::line(
+        ui,
+        text,
+        font,
+        palette.secondary,
+        (ui.available_width() - ICON - GAP).max(0.0),
+        1,
+    );
+    let height = line.size().y;
+    let mut drawn = TimerRow {
+        text: text.to_owned(),
+        rect: Rect::NOTHING,
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_space(((ui.available_width() - ICON - GAP - line.size().x) / 2.0).max(0.0));
+        let (slot, _) = ui.allocate_exact_size(vec2(ICON, height), Sense::hover());
+        let icon = Rect::from_center_size(slot.center(), vec2(ICON, ICON));
+        theme::paint_icon(ui, Icon::Timer, icon, ICON, palette.secondary);
+        ui.add_space(GAP);
+        let (slot, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+        line.paint(ui, slot.min, palette.secondary);
+        drawn.rect = icon.union(slot);
+    });
+    drawn
+}
+
+/// Where the disappearing-message timer row was drawn, for tests: what it
+/// said and where it landed, and nothing at all when no row was drawn.
+pub fn disappearing_timer_id() -> egui::Id {
+    egui::Id::new("disappearing-timer")
+}
+
+/// The timer row as drawn, for tests.
+#[derive(Clone, Debug)]
+pub struct TimerRow {
+    pub text: String,
+    pub rect: egui::Rect,
+}
+
 /// Where the group photo that opens its menu was drawn, for interaction tests.
 pub fn group_photo_id() -> egui::Id {
     egui::Id::new("group-photo")
@@ -2138,6 +2210,61 @@ pub(super) fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> bo
 #[cfg(test)]
 mod tests {
     use crate::model::{Chat, ChatKind};
+    use crate::theme;
+
+    /// The timer line stays inside the chat info dialog's own width whatever it
+    /// has to say: a label longer than the dialog is cut, not laid out wider,
+    /// and a short one is centred on it.
+    #[test]
+    fn the_timer_row_fits_the_dialog_however_long_its_label() {
+        let width = 360.0_f32;
+        for label in [
+            "Disappearing messages: 24 hours",
+            "Disappearing messages: 90 days",
+            &"Disappearing messages: a translation far longer than any chat info dialog can be "
+                .repeat(4),
+        ] {
+            let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 400.0));
+            let ctx = egui::Context::default();
+            let slot = std::cell::RefCell::new(None);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(bounds),
+                    ..Default::default()
+                },
+                |ui| {
+                    let mut row_ui = egui::Ui::new(
+                        ui.ctx().clone(),
+                        egui::Id::new("timer-row-test"),
+                        egui::UiBuilder::new().max_rect(bounds),
+                    );
+                    *slot.borrow_mut() = Some(super::disappearing_timer_row(
+                        &mut row_ui,
+                        &theme::Palette::dark(),
+                        label,
+                    ));
+                },
+            );
+            // Headless tests must apply font-atlas updates themselves.
+            output.textures_delta.clear();
+            let drawn = slot.into_inner().expect("a drawn row");
+            assert!(
+                drawn.rect.left() >= bounds.left() - 0.5,
+                "{label:?}: {} starts left of the dialog",
+                drawn.rect.left()
+            );
+            assert!(
+                drawn.rect.right() <= bounds.right() + 0.5,
+                "{label:?}: {} runs past the dialog",
+                drawn.rect.right()
+            );
+            assert!(
+                (drawn.rect.center().x - bounds.center().x).abs() < 1.0,
+                "{label:?}: off centre by {}",
+                drawn.rect.center().x - bounds.center().x
+            );
+        }
+    }
 
     #[test]
     fn locked_chats_are_not_forward_destinations() {
