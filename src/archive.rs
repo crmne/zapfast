@@ -951,12 +951,17 @@ impl Archive {
         )?;
         // Mapping can arrive after messages were synced under the LID. Keep
         // those messages and chat-scoped state reachable through the PN chat.
-        let had_lid_chat = transaction.execute(
+        let had_lid_chat: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM chats WHERE id = ?1)",
+            params![lid_chat],
+            |row| row.get(0),
+        )?;
+        transaction.execute(
             "INSERT OR IGNORE INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at, group_subject_known)
              SELECT ?2, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at, group_subject_known
              FROM chats WHERE id = ?1",
             params![lid_chat, phone_chat],
-        )? > 0;
+        )?;
         transaction.execute(
             "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order)
              SELECT ?2, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order
@@ -1005,14 +1010,6 @@ impl Archive {
             "INSERT INTO drafts (chat, text, updated_at) SELECT ?2, text, updated_at FROM drafts WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at
              WHERE excluded.updated_at > drafts.updated_at",
-            params![lid_chat, phone_chat],
-        )?;
-        transaction.execute(
-            "INSERT INTO pending_message_removals (account, chat, id, confirmed)
-             SELECT account, ?2, id, confirmed FROM pending_message_removals WHERE chat = ?1
-             ON CONFLICT(chat, id) DO UPDATE SET
-                confirmed = MAX(pending_message_removals.confirmed, excluded.confirmed),
-                account = CASE WHEN excluded.confirmed >= pending_message_removals.confirmed THEN excluded.account ELSE pending_message_removals.account END",
             params![lid_chat, phone_chat],
         )?;
         let changed = self.connection.execute(
@@ -1072,18 +1069,6 @@ impl Archive {
         )?;
         self.purge_chat_rows(&lid_chat)?;
         transaction.execute("DELETE FROM chats WHERE id = ?1", params![lid_chat])?;
-        transaction.execute(
-            "DELETE FROM chat_removals WHERE chat = ?1",
-            params![lid_chat],
-        )?;
-        transaction.execute(
-            "DELETE FROM message_removals WHERE chat = ?1",
-            params![lid_chat],
-        )?;
-        transaction.execute(
-            "DELETE FROM pending_message_removals WHERE chat = ?1",
-            params![lid_chat],
-        )?;
         transaction.commit()?;
         Ok(changed > 0 || favorite || removed > 0 || had_lid_chat)
     }
