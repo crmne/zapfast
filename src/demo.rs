@@ -4930,6 +4930,76 @@ mod tests {
         assert!(ctx.memory(|memory| memory.has_focus(composer)));
     }
 
+    #[test]
+    fn the_send_shortcut_submits_newly_staged_images_and_files_before_message_controls() {
+        for image in [false, true] {
+            for enter_sends in [false, true] {
+                let mut app = app();
+                app.settings.enter_sends = enter_sends;
+                app.backend.record_demo_commands();
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                render(&mut app, &ctx);
+                app.backend.take_demo_commands();
+                ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("fixture-message")));
+                if image {
+                    ctx.data_mut(|data| {
+                        data.insert_temp(
+                            egui::Id::new("fixture-clipboard-image"),
+                            (2_usize, 2_usize, vec![200_u8; 16]),
+                        )
+                    });
+                } else {
+                    let (photo, _) = sample_files(&app);
+                    ctx.data_mut(|data| {
+                        data.insert_temp(egui::Id::new("fixture-clipboard-files"), vec![photo])
+                    });
+                }
+                let modifiers = if enter_sends {
+                    egui::Modifiers::NONE
+                } else {
+                    egui::Modifiers::COMMAND
+                };
+                app.actions
+                    .push(crate::model::Action::Open(crate::model::Page::Settings));
+                // Bypass background_frame and stage through the real clipboard path.
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1180.0, 780.0),
+                        )),
+                        events: vec![
+                            egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+                            egui::Event::Key {
+                                key: egui::Key::V,
+                                physical_key: None,
+                                pressed: false,
+                                repeat: false,
+                                modifiers: egui::Modifiers::COMMAND,
+                            },
+                            key(egui::Key::Enter, modifiers),
+                        ],
+                        ..Default::default()
+                    },
+                    |ui| app.frame_ui(ui),
+                );
+                output.textures_delta.clear();
+                let commands = app.backend.take_demo_commands();
+                assert!(
+                    commands.iter().any(|command| matches!(
+                        command,
+                        crate::backend::Command::SendImage { .. }
+                            | crate::backend::Command::SendFiles { .. }
+                    )),
+                    "image={image}, enter_sends={enter_sends}"
+                );
+                assert!(app.pending.is_empty());
+                assert!(app.image_preview.is_none());
+            }
+        }
+    }
+
     /// The composer keeps its draft while the preview is open: Enter does not
     /// send it, and Tab and Enter reach the preview's own controls instead.
     #[test]

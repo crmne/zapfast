@@ -125,6 +125,10 @@ The sticker is a 512 × 512 WebP under WhatsApp's 100 KB limit.
 
 Paste a picture or copied files, drop files on the window, or select them with
 the paperclip.
+Pasted or dropped attachments are staged before the composer is drawn, so the
+configured send shortcut can send them immediately. Paste handling leaves
+other text fields, popups, recording controls and video controls in charge
+of their own keyboard input.
 They stay above the composer until you send them, with the typed text as a
 caption. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
