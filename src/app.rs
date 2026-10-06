@@ -2518,6 +2518,18 @@ impl App {
                     }
                 }
                 self.chats = chats;
+                if !self.events_hidden
+                    && self
+                        .image_preview
+                        .as_ref()
+                        .and_then(PreviewState::chat)
+                        .is_some_and(|id| {
+                            self.chat(id)
+                                .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                        })
+                {
+                    self.image_preview = None;
+                }
                 if let Some(open) = self.open_chat.clone() {
                     if self.chat(&open).is_none_or(|chat| chat.locked) {
                         self.open_chat = None;
@@ -4663,9 +4675,10 @@ impl App {
                     .image_preview
                     .as_ref()
                     .and_then(PreviewState::chat)
-                    .and_then(|id| self.chat(id))
-                    .is_some_and(|chat| chat.locked)
-                    && !self.locked_folder_open()
+                    .is_some_and(|id| {
+                        self.chat(id)
+                            .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                    })
                 {
                     self.image_preview = None;
                     return;
@@ -8671,6 +8684,7 @@ mod tests {
             },
         );
         app.open_chat = Some("chat".into());
+        app.chats.push(Chat::new("chat".into(), "Fixture".into()));
         app.apply(Action::PreviewImage(paths[1].clone()), &ctx);
         assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[1]);
         app.apply(Action::ZoomImageIn, &ctx);
@@ -8756,6 +8770,45 @@ mod tests {
                 app.image_preview = retained_preview.clone();
                 app.apply(action, &ctx);
                 assert!(app.image_preview.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn chat_snapshots_reconcile_image_preview_access_only_for_the_visible_account() {
+        let ctx = egui::Context::default();
+        for present in [false, true] {
+            for locked in [false, true] {
+                for authorized in [false, true] {
+                    for hidden in [false, true] {
+                        let mut app = app();
+                        if authorized {
+                            app.settings.set_chat_lock_code(Some("fixture-code"));
+                            app.enter_locked_folder();
+                        }
+                        let preview = PreviewState::in_conversation(
+                            "fixture.png".into(),
+                            Some("fixture".into()),
+                        );
+                        app.image_preview = Some(preview.clone());
+                        // Preview access depends on its captured chat, even if no chat is open.
+                        app.open_chat = None;
+                        let mut chat = Chat::new("fixture".into(), "Fixture".into());
+                        chat.locked = locked;
+                        let chats = if present { vec![chat] } else { Vec::new() };
+                        app.events_hidden = hidden;
+                        app.apply_backend_event(Event::Chats(chats), true);
+                        let accessible = present && (!locked || authorized);
+                        assert_eq!(app.image_preview.is_some(), hidden || accessible);
+                        if !hidden {
+                            for action in [Action::PreviousImage, Action::NextImage] {
+                                app.image_preview = Some(preview.clone());
+                                app.apply(action, &ctx);
+                                assert_eq!(app.image_preview.is_some(), accessible);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

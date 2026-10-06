@@ -245,8 +245,8 @@ pinch) and **Copy image**. Use the previous and next buttons or Left/Right
 arrow keys to browse downloaded photos and interactive-card images in the
 loaded conversation. Navigation skips unavailable files and stops at either
 end; it does not download attachments or fetch older history.
-The preview closes when its chat becomes locked outside the unlocked folder,
-or when you close the locked folder.
+The preview closes when its chat is removed, becomes locked outside the unlocked
+folder, or when you close the locked folder.
 **Save as…** in a downloaded attachment's
 right-click menu keeps a copy wherever you choose.
 
