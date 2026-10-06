@@ -4656,9 +4656,10 @@ impl App {
                 }
             }
             Action::PreviousImage | Action::NextImage => {
+                let conversations = &self.accounts[self.active].conversations;
                 if let Some(preview) = &mut self.image_preview
                     && let Some(conversation) =
-                        preview.chat().and_then(|chat| self.conversations.get(chat))
+                        preview.chat().and_then(|chat| conversations.get(chat))
                 {
                     preview.navigate(&conversation.messages, matches!(action, Action::NextImage));
                 }
