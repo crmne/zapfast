@@ -5160,6 +5160,64 @@ mod tests {
         }
     }
 
+    /// Album buttons expose their media kind and download state, including failures.
+    #[test]
+    fn album_tiles_name_each_download_state_for_screen_readers() {
+        for video in [false, true] {
+            let mut app = app();
+            media_album_sample(&mut app, true);
+            let chat = app.open_chat.clone().unwrap();
+            let rows = &mut app.conversations.get_mut(&chat).unwrap().messages;
+            for (index, row) in rows.iter_mut().enumerate() {
+                let mut media = row.content.media().unwrap().clone();
+                media.state = match index {
+                    1 => MediaState::Downloading,
+                    2 => MediaState::Failed("Synthetic download error".into()),
+                    _ => MediaState::Idle,
+                };
+                if index == 3 {
+                    // A synthetic local path exercises the Open label without real media.
+                    media.path = Some(PathBuf::from("synthetic-album-file"));
+                }
+                row.content = if video {
+                    Content::Video {
+                        caption: None,
+                        media,
+                        seconds: 1,
+                        gif: false,
+                    }
+                } else {
+                    Content::Image {
+                        caption: None,
+                        media,
+                    }
+                };
+                row.thumbnail = None;
+            }
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            let kind = if video { "Video" } else { "Photo" };
+            for state in [
+                "Download",
+                "Downloading",
+                "Failed: Synthetic download error",
+                "Open",
+            ] {
+                let label = format!("{kind}, {state}");
+                assert!(
+                    nodes
+                        .iter()
+                        .any(|(name, role, _)| name == &label
+                            && *role == egui::accesskit::Role::Button),
+                    "{label}"
+                );
+            }
+        }
+    }
+
     /// Earlier outgoing failures stay visible even when the album's final member was sent.
     #[test]
     fn albums_show_each_members_delivery_failure() {

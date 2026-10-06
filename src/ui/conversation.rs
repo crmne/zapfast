@@ -5439,6 +5439,21 @@ fn album_tile(
         return;
     };
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let kind = if matches!(message.content, Content::Image { .. }) {
+        "Photo"
+    } else {
+        "Video"
+    };
+    let state = match (&media.path, &media.state) {
+        (Some(_), _) => "Open".to_owned(),
+        (None, MediaState::Downloading) => "Downloading".to_owned(),
+        (None, MediaState::Failed(error)) => format!("Failed: {error}"),
+        (None, MediaState::Idle) => "Download".to_owned(),
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{kind}, {state}"))
+    });
+    theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
         ui.painter().rect_filled(rect, 5.0, view.palette.surface);
         let uri = media
@@ -5506,6 +5521,7 @@ fn album_tile(
             footer_over_picture(ui, &view.palette, message, rect);
         }
     }
+    theme::focus_outline(ui, response.id, rect, 5.0);
     let response = if let MediaState::Failed(error) = &media.state {
         response.on_hover_text(error)
     } else {
