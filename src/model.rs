@@ -1775,8 +1775,11 @@ pub enum Action {
     SetLocked(ChatId, bool),
     /// Sends pending attachments with the composer text as caption.
     SendPending {
+        /// Account and mentions captured when the composer queues the send.
+        account: AccountId,
         chat: ChatId,
         caption: String,
+        mentions: Vec<crate::app::ComposerMention>,
     },
     /// Removes one pending attachment.
     RemovePending(usize),

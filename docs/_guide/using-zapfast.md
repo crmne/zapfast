@@ -21,6 +21,22 @@ check when it was sent, delivered, and read. The reaction row has a **+** that
 opens the full emoji picker. Hover over a reaction to see who added it.
 Editing uses the composer. Press Escape to cancel.
 
+Chats with unsent text or attachments appear at the top of the chat list,
+above pinned chats. Saved text shows after **Draft:** in the chat row; a file
+without a caption shows its filename, and a pasted image shows **Image**.
+The open chat's text stays in the composer. Sending or removing the draft
+restores the chat's usual position. Drafts still respect search, filters,
+the archive, and locked-chat privacy.
+
+Attachments, captions, selected mentions, and reply quotes stay with their
+chat when you switch chats, close a conversation, or switch accounts.
+Return to that chat in that account to resume. Text is saved in the encrypted
+archive and survives restarting ZapFast. Attachment drafts stay in memory
+while ZapFast runs and are discarded when you quit. Clearing or deleting
+a chat, or unlinking its account, discards its attachment drafts. A refused
+attachment send returns its files, caption and reply quote to the originating
+account's chat draft, even if another account is on screen.
+
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 
