@@ -451,17 +451,19 @@ msgstr "发送"
 msgid "Cancel"
 msgstr "取消"
 
-#: src/ui/dialogs.rs:1116
+#: src/ui/dialogs.rs:1126
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
-msgstr ""
+msgstr "此聊天中的所有人将看到\"此消息已删除\"。此操作无法撤销。"
 
-#: src/ui/dialogs.rs:1124
+#: src/ui/dialogs.rs:1125
 msgid ""
 "This removes the message from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
 msgstr ""
+"这会从你的手机和关联设备中删除此消息。其他人仍保留自己的副本。连接 WhatsApp "
+"后才能删除。此操作无法撤销。"
 
 #: src/ui/dialogs.rs:1178
 msgid "Remove this account?"
@@ -1558,3 +1560,40 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/dialogs.rs:1174
+msgid "Delete"
+msgstr "删除"
+
+#: src/ui/dialogs.rs:1155
+msgid "Delete for everyone?"
+msgstr "为所有人删除？"
+
+#: src/ui/dialogs.rs:1157
+msgid "Delete for me?"
+msgstr "为我删除？"
+
+#: src/ui/dialogs.rs:1128
+#, rust-format
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected message. This cannot be undone."
+msgid_plural ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected messages. This cannot be undone."
+msgstr[0] ""
+"此聊天中的所有人将看到“此消息已删除”，替代所选消息。此操作无法撤销。"
+
+#: src/ui/dialogs.rs:1127
+msgid ""
+"This removes these messages from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete them. This cannot be undone."
+msgstr ""
+"这会从你的手机和关联设备中删除所选消息。其他人仍保留自己的副本。连接 "
+"WhatsApp 后才能删除。此操作无法撤销。"
+
+#: src/ui/dialogs.rs:752
+#, rust-format
+msgid "{count} selected message"
+msgid_plural "{count} selected messages"
+msgstr[0] "{count} 条消息已选择"

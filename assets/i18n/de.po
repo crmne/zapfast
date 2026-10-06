@@ -1625,3 +1625,46 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/dialogs.rs:1174
+msgid "Delete"
+msgstr "Löschen"
+
+#: src/ui/dialogs.rs:1155
+msgid "Delete for everyone?"
+msgstr "Für alle löschen?"
+
+#: src/ui/dialogs.rs:1157
+msgid "Delete for me?"
+msgstr "Für mich löschen?"
+
+#: src/ui/dialogs.rs:1128
+#, rust-format
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected message. This cannot be undone."
+msgid_plural ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected messages. This cannot be undone."
+msgstr[0] ""
+"Alle in diesem Chat sehen „Diese Nachricht wurde gelöscht“ anstelle der "
+"ausgewählten Nachricht. Dies kann nicht rückgängig gemacht werden."
+msgstr[1] ""
+"Alle in diesem Chat sehen „Diese Nachricht wurde gelöscht“ anstelle der "
+"ausgewählten Nachrichten. Dies kann nicht rückgängig gemacht werden."
+
+#: src/ui/dialogs.rs:1127
+msgid ""
+"This removes these messages from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete them. This cannot be undone."
+msgstr ""
+"Diese Nachrichten werden von deinem Telefon und den verknüpften Geräten "
+"entfernt. Andere Personen behalten ihre Kopie. Verbinde dich mit WhatsApp, "
+"um sie zu löschen. Dies kann nicht rückgängig gemacht werden."
+
+#: src/ui/dialogs.rs:752
+#, rust-format
+msgid "{count} selected message"
+msgid_plural "{count} selected messages"
+msgstr[0] "{count} Nachricht ausgewählt"
+msgstr[1] "{count} Nachrichten ausgewählt"

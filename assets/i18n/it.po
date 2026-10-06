@@ -469,17 +469,22 @@ msgstr "Invia"
 msgid "Cancel"
 msgstr "Annulla"
 
-#: src/ui/dialogs.rs:1116
+#: src/ui/dialogs.rs:1126
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
 msgstr ""
+"Tutti in questa chat vedranno invece \"Questo messaggio è stato eliminato\". "
+"Non è possibile annullare questa operazione."
 
-#: src/ui/dialogs.rs:1124
+#: src/ui/dialogs.rs:1125
 msgid ""
 "This removes the message from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
 msgstr ""
+"Questa azione rimuove il messaggio dal telefono e dai dispositivi collegati. "
+"Gli altri mantengono la propria copia. Connettiti a WhatsApp per eliminarlo. "
+"Questa operazione non può essere annullata."
 
 #: src/ui/dialogs.rs:1178
 msgid "Remove this account?"
@@ -1610,3 +1615,46 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/dialogs.rs:1174
+msgid "Delete"
+msgstr "Elimina"
+
+#: src/ui/dialogs.rs:1155
+msgid "Delete for everyone?"
+msgstr "Eliminare per tutti?"
+
+#: src/ui/dialogs.rs:1157
+msgid "Delete for me?"
+msgstr "Eliminare per me?"
+
+#: src/ui/dialogs.rs:1128
+#, rust-format
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected message. This cannot be undone."
+msgid_plural ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected messages. This cannot be undone."
+msgstr[0] ""
+"Tutti in questa chat vedranno \"Questo messaggio è stato eliminato\" al "
+"posto del messaggio selezionato. Questa operazione non può essere annullata."
+msgstr[1] ""
+"Tutti in questa chat vedranno \"Questo messaggio è stato eliminato\" al "
+"posto dei messaggi selezionati. Questa operazione non può essere annullata."
+
+#: src/ui/dialogs.rs:1127
+msgid ""
+"This removes these messages from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete them. This cannot be undone."
+msgstr ""
+"Questi messaggi vengono rimossi dal telefono e dai dispositivi collegati. Le "
+"altre persone mantengono la propria copia. Connettiti a WhatsApp per "
+"eliminarli. Questa operazione non può essere annullata."
+
+#: src/ui/dialogs.rs:752
+#, rust-format
+msgid "{count} selected message"
+msgid_plural "{count} selected messages"
+msgstr[0] "{count} messaggio selezionato"
+msgstr[1] "{count} messaggi selezionati"
