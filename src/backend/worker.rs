@@ -1625,8 +1625,12 @@ impl Worker {
                     continue;
                 }
             }
-            if self.archive.delete_message(&chat, &id).is_ok() {
-                removed += 1;
+            match self.archive.delete_message(&chat, &id) {
+                Ok(_) => removed += 1,
+                Err(error) => {
+                    log::warn!("could not remove an archived motion clip: {error}");
+                    failed = true;
+                }
             }
         }
         if !failed {
