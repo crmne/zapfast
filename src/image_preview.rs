@@ -48,6 +48,7 @@ fn image_slots(message: &crate::model::Message) -> usize {
     }
 }
 
+/// Downloaded path for a photo or an interactive-card image slot.
 fn image_path(message: &crate::model::Message, slot: usize) -> Option<&Path> {
     use crate::model::Content;
     let media = match &message.content {
@@ -161,6 +162,7 @@ impl PreviewState {
     const MAX_ZOOM: f32 = 4.0;
     pub const ZOOM_STEP: f32 = 1.25;
 
+    /// Opens a fitted preview without conversation navigation.
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
@@ -172,6 +174,7 @@ impl PreviewState {
         }
     }
 
+    /// Local file currently displayed by the preview.
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -184,14 +187,17 @@ impl PreviewState {
         }
     }
 
+    /// Conversation whose loaded messages supply navigation candidates.
     pub fn chat(&self) -> Option<&str> {
         self.chat.as_deref()
     }
 
+    /// Whether the preview has a conversation to browse.
     pub fn can_navigate(&self) -> bool {
         self.chat.is_some()
     }
 
+    /// Moves to the next available photo in either direction, stopping at the ends.
     pub fn navigate(&mut self, messages: &[crate::model::Message], forward: bool) {
         self.navigate_with(messages, forward, |path| path.is_file());
     }
@@ -210,22 +216,25 @@ impl PreviewState {
                     && image_path(message, cursor.slot) == Some(self.path())
             })
         });
-        let anchor = cached
-            .map(|cursor| (cursor.index, cursor.slot))
-            .or_else(|| {
-                messages.iter().enumerate().find_map(|(index, message)| {
-                    if self
+        let find = |same_message: bool| {
+            messages.iter().enumerate().find_map(|(index, message)| {
+                if same_message
+                    && self
                         .cursor
                         .as_ref()
                         .is_some_and(|cursor| cursor.message != message.id)
-                    {
-                        return None;
-                    }
-                    (0..image_slots(message))
-                        .find(|&slot| image_path(message, slot) == Some(self.path()))
-                        .map(|slot| (index, slot))
-                })
-            });
+                {
+                    return None;
+                }
+                (0..image_slots(message))
+                    .find(|&slot| image_path(message, slot) == Some(self.path()))
+                    .map(|slot| (index, slot))
+            })
+        };
+        let anchor = cached
+            .map(|cursor| (cursor.index, cursor.slot))
+            .or_else(|| find(true))
+            .or_else(|| find(false));
         let Some((index, slot)) = anchor else { return };
         self.cursor = Some(Cursor {
             message: messages[index].id.clone(),
@@ -415,6 +424,27 @@ mod tests {
         messages.push(photo("new", "new.png"));
         preview.navigate_with(&messages, true, |_| true);
         assert_eq!(preview.path(), Path::new("new.png"));
+    }
+
+    #[test]
+    fn navigation_recovers_after_the_cursor_message_is_deleted() {
+        for forward in [false, true] {
+            let mut messages = vec![
+                photo("before", "before.png"),
+                photo("remaining", "same.png"),
+                photo("after", "after.png"),
+                photo("deleted", "same.png"),
+            ];
+            let mut preview =
+                PreviewState::in_conversation("after.png".into(), Some("fixture".into()));
+            preview.navigate_with(&messages, true, |_| true);
+            assert_eq!(preview.cursor.as_ref().unwrap().message, "deleted");
+            messages.pop();
+            preview.navigate_with(&messages, forward, |_| true);
+            let expected = if forward { "after" } else { "before" };
+            assert_eq!(preview.path(), Path::new(&format!("{expected}.png")));
+            assert_eq!(preview.cursor.as_ref().unwrap().message, expected);
+        }
     }
 
     #[test]
