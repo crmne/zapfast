@@ -37,6 +37,11 @@ when an acknowledgement was lost. Unlinking clears those requests. Confirmed
 deletions whose local cleanup failed are repaired on restart or reconnect
 without another network request. Neither deletion can be undone.
 
+With several messages selected, right-click any selected message to delete
+the complete selection. The confirmation shows its count and offers the
+available deletion scopes. Messages stay visible until WhatsApp accepts each
+request; a failed deletion reports an error and preserves the message.
+
 **Delete chat** and **Clear chat** already sync in 0.19.0, as described under
 [Chats](#chats).
 

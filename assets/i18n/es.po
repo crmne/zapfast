@@ -465,17 +465,22 @@ msgstr "Enviar"
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/ui/dialogs.rs:1116
+#: src/ui/dialogs.rs:1126
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
 msgstr ""
+"Todos en este chat verán \"Este mensaje fue eliminado\" en su lugar. No se "
+"puede deshacer."
 
-#: src/ui/dialogs.rs:1124
+#: src/ui/dialogs.rs:1125
 msgid ""
 "This removes the message from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
 msgstr ""
+"Esto elimina el mensaje de tu teléfono y de los dispositivos vinculados. Las "
+"demás personas conservan su copia. Conéctate a WhatsApp para eliminarlo. "
+"Esta acción no se puede deshacer."
 
 #: src/ui/dialogs.rs:1178
 msgid "Remove this account?"
@@ -1608,3 +1613,46 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/dialogs.rs:1174
+msgid "Delete"
+msgstr "Eliminar"
+
+#: src/ui/dialogs.rs:1155
+msgid "Delete for everyone?"
+msgstr "¿Eliminar para todos?"
+
+#: src/ui/dialogs.rs:1157
+msgid "Delete for me?"
+msgstr "¿Eliminar para mí?"
+
+#: src/ui/dialogs.rs:1128
+#, rust-format
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected message. This cannot be undone."
+msgid_plural ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected messages. This cannot be undone."
+msgstr[0] ""
+"Todos en este chat verán \"Este mensaje fue eliminado\" en lugar del mensaje "
+"seleccionado. No se puede deshacer."
+msgstr[1] ""
+"Todos en este chat verán \"Este mensaje fue eliminado\" en lugar de los "
+"mensajes seleccionados. No se puede deshacer."
+
+#: src/ui/dialogs.rs:1127
+msgid ""
+"This removes these messages from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete them. This cannot be undone."
+msgstr ""
+"Esto elimina estos mensajes de tu teléfono y dispositivos vinculados. Las "
+"demás personas conservan su copia. Conéctate a WhatsApp para eliminarlos. "
+"Esta acción no se puede deshacer."
+
+#: src/ui/dialogs.rs:752
+#, rust-format
+msgid "{count} selected message"
+msgid_plural "{count} selected messages"
+msgstr[0] "{count} mensaje seleccionado"
+msgstr[1] "{count} mensajes seleccionados"

@@ -1757,7 +1757,7 @@ impl App {
             ) if chat == id
         ) || matches!(
             &self.dialog,
-            Some(Dialog::Forward { chat, .. } | Dialog::ConfirmDeleteMessage { chat, .. })
+            Some(Dialog::Forward { chat, .. } | Dialog::ConfirmDeleteMessage { chat, .. } | Dialog::ConfirmDeleteSelection { chat, .. })
                 if chat == id
         ) {
             self.dialog = None;
@@ -4639,14 +4639,6 @@ impl App {
                 }
             }
             Action::DeleteForEveryone { chat, id } => {
-                if let Some(message) = self
-                    .conversations
-                    .get_mut(&chat)
-                    .and_then(|conversation| conversation.message_mut(&id))
-                {
-                    message.content = Content::Revoked;
-                }
-                self.prune_selection();
                 self.backend.send(Command::Revoke { chat, id });
             }
             Action::DeleteForMe { chat, id } => {
@@ -8622,6 +8614,7 @@ mod tests {
         assert_eq!(app.selection, Some((chat.into(), vec!["fifth".into()])));
     }
 
+    /// Selection follows confirmed message updates and deletions, retaining pending revokes.
     #[test]
     fn selection_drops_messages_that_become_ineligible() {
         let mut app = app();
@@ -8667,6 +8660,21 @@ mod tests {
             },
             &ctx,
         );
+        assert_eq!(
+            app.selection,
+            Some((chat.into(), vec!["second".into()])),
+            "a revoke request retains the original until WhatsApp accepts it"
+        );
+        assert!(!matches!(
+            app.conversations[chat].message("second").unwrap().content,
+            Content::Revoked
+        ));
+        let mut accepted = message(chat, "second", 2);
+        accepted.content = Content::Revoked;
+        events
+            .send(Event::MessageUpdated(Box::new(accepted)))
+            .unwrap();
+        app.handle_events();
         assert_eq!(app.selection, Some((chat.into(), Vec::new())));
 
         // Delete for me keeps the row until the deletion is accepted, then
