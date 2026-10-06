@@ -1558,3 +1558,22 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#
+#: src/app.rs:12654
+msgid "Could not send the edit"
+msgstr "无法发送编辑内容"
+
+#
+#: src/app.rs:12650
+msgid "Not connected to WhatsApp"
+msgstr "未连接到 WhatsApp"
+
+#: src/app.rs:12657
+msgid "The edit was sent but could not be saved locally"
+msgstr "编辑已发送，但无法保存在此计算机上"
+
+#
+#: src/app.rs:3807 src/app.rs:12647
+msgid "This message can no longer be edited"
+msgstr "此消息已无法编辑"

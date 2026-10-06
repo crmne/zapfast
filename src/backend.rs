@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::model::{Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack};
+use crate::model::{
+    Chat, ChatId, Contact, Content, Gif, GifError, Message, PollDraft, StickerPack,
+};
 use crate::paths::AccountDirs;
 
 // Re-exported so the picker can detect pasted Signal pack links.
@@ -108,6 +110,28 @@ mod tests {
         assert!(!current.contains(code));
         assert!(!current.contains(phone));
     }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct EditDraft {
+    pub text: String,
+    pub mentions: Vec<crate::model::ComposerMention>,
+}
+
+#[derive(Clone, Debug)]
+pub enum EditFailure {
+    Expired,
+    Offline,
+    Send(String),
+    Save,
+}
+
+/// Archive version and request identity captured before an edit is sent.
+#[derive(Debug)]
+pub struct EditVersion {
+    pub generation: u64,
+    pub content: Content,
+    pub edited: bool,
 }
 
 /// Oldest loaded message timestamp and id used as a page boundary.
@@ -275,6 +299,17 @@ pub enum Command {
         id: String,
         text: String,
         mentions: Vec<String>,
+        draft: EditDraft,
+    },
+    /// Internal edit completion. A failed send never rewrites the archive.
+    EditedText {
+        chat: ChatId,
+        id: String,
+        text: String,
+        mentions: Vec<String>,
+        draft: EditDraft,
+        error: Option<String>,
+        version: EditVersion,
     },
     Revoke {
         chat: ChatId,
@@ -746,6 +781,14 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    /// A rejected edit retains its correction and target for the composer.
+    EditRefused {
+        chat: ChatId,
+        id: String,
+        draft: EditDraft,
+        error: EditFailure,
+    },
+
     InteractiveReplyState {
         chat: ChatId,
         message: String,
