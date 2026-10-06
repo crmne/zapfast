@@ -373,6 +373,7 @@ pub struct App {
     /// A sent message moves its chat up, so the chat list goes to the top.
     pub scroll_chats_to_top: bool,
     pub composer: String,
+    pub(crate) emoticon_undo: Option<EmoticonUndo>,
     composer_mentions: Vec<ComposerMention>,
     /// Byte offset of the `:` starting the active emoji query.
     pub emoji_start: Option<usize>,
@@ -682,6 +683,14 @@ pub enum Pending {
 pub(crate) struct ComposerMention {
     id: String,
     name: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct EmoticonUndo {
+    pub(crate) start_byte: usize,
+    pub(crate) source: String,
+    pub(crate) emoji: String,
+    pub(crate) cursor_after: usize,
 }
 
 impl Pending {
@@ -1000,6 +1009,7 @@ impl App {
             wallpaper_image: crate::wallpaper::CustomImage::default(),
             scroll_chats_to_top: false,
             composer: String::new(),
+            emoticon_undo: None,
             composer_mentions: Vec::new(),
             emoji_start: None,
             emoji_selected: 0,
@@ -4860,6 +4870,46 @@ impl App {
                     self.focus_composer = true;
                 }
                 self.emoji_start = None;
+            }
+            Action::ReplaceTypedEmoticon {
+                source,
+                emoji,
+                start,
+                end,
+            } => {
+                if self.settings.convert_typed_emoticons
+                    && start < end
+                    && self.composer.is_char_boundary(start)
+                    && self.composer.is_char_boundary(end)
+                    && self.composer.get(start..end) == Some(source.as_str())
+                {
+                    self.composer.replace_range(start..end, &emoji);
+                    let cursor_after =
+                        self.composer[..start].chars().count() + emoji.chars().count();
+                    self.set_composer_cursor(ctx, cursor_after);
+                    self.emoticon_undo = Some(EmoticonUndo {
+                        start_byte: start,
+                        source,
+                        emoji: emoji.clone(),
+                        cursor_after,
+                    });
+                    self.remember_emoji(&emoji);
+                    self.focus_composer = true;
+                }
+                self.emoji_start = None;
+                self.mention_start = None;
+            }
+            Action::UndoTypedEmoticon => {
+                if let Some(undo) = self.emoticon_undo.take() {
+                    let end = undo.start_byte + undo.emoji.len();
+                    if self.composer.get(undo.start_byte..end) == Some(undo.emoji.as_str()) {
+                        self.composer
+                            .replace_range(undo.start_byte..end, &undo.source);
+                        let cursor = self.composer[..undo.start_byte].chars().count()
+                            + undo.source.chars().count();
+                        self.set_composer_cursor(ctx, cursor);
+                    }
+                }
             }
             Action::CloseEmojiSuggestions => {
                 self.emoji_start = None;

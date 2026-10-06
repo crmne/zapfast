@@ -942,15 +942,69 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             let id = egui::Id::new("composer-text");
             let has_focus = ui.memory(|memory| memory.has_focus(id));
             let enter_sends = app.settings.enter_sends;
-            let (typed_colon, typed_at) = ui.input(|input| {
+            let conversion_enabled = app.settings.convert_typed_emoticons;
+            let cursor_before = egui::TextEdit::load_state(ui.ctx(), id)
+                .and_then(|state| state.cursor.char_range())
+                .map(|range| range.primary.index.0)
+                .unwrap_or_else(|| app.composer.chars().count());
+            let undo_still_matches = app.emoticon_undo.as_ref().is_some_and(|undo| {
+                cursor_before == undo.cursor_after
+                    && app
+                        .composer
+                        .get(undo.start_byte..undo.start_byte + undo.emoji.len())
+                        == Some(undo.emoji.as_str())
+            });
+            if !conversion_enabled || (!undo_still_matches && app.emoticon_undo.is_some()) {
+                app.emoticon_undo = None;
+            }
+            let (typed_colon, typed_at, typed_text, pasted) = ui.input(|input| {
                 let typed = |needle: &str| {
                     input
                         .events
                         .iter()
                         .any(|event| matches!(event, egui::Event::Text(text) if text == needle))
                 };
-                (has_focus && typed(":"), has_focus && typed("@"))
+                (
+                    has_focus && typed(":"),
+                    has_focus && typed("@"),
+                    has_focus && input.events.iter().any(|event| matches!(event, egui::Event::Text(_))),
+                    has_focus && input.events.iter().any(|event| matches!(event, egui::Event::Paste(_))),
+                )
             });
+            if pasted {
+                app.emoticon_undo = None;
+            }
+            let undo_backspace = has_focus
+                && conversion_enabled
+                && undo_still_matches
+                && !typed_text
+                && !pasted
+                && ui.input_mut(|input| {
+                    let mut consumed = false;
+                    input.events.retain(|event| {
+                        if consumed {
+                            return true;
+                        }
+                        let backspace = matches!(
+                            event,
+                            egui::Event::Key {
+                                key: Key::Backspace,
+                                pressed: true,
+                                modifiers,
+                                ..
+                            } if !modifiers.shift && !modifiers.alt && !modifiers.ctrl && !modifiers.command
+                        );
+                        consumed |= backspace;
+                        !backspace
+                    });
+                    consumed
+                });
+            if undo_backspace {
+                app.actions.push(Action::UndoTypedEmoticon);
+            }
+            if typed_text {
+                app.emoticon_undo = None;
+            }
             if !app.pending.is_empty() {
                 pending_strip(app, ui);
             }
@@ -1217,7 +1271,21 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                         .cursor_range
                                         .map(|range| range.primary.index.0)
                                         .unwrap_or_else(|| app.composer.chars().count());
-                                    if typed_colon
+                                    if typed_text
+                                        && conversion_enabled
+                                        && let Some((start, end, emoji)) =
+                                            crate::emoticons::match_before(&app.composer, cursor)
+                                    {
+                                        let source = app.composer[start..end].to_owned();
+                                        app.emoji_start = None;
+                                        app.mention_start = None;
+                                        app.actions.push(Action::ReplaceTypedEmoticon {
+                                            source,
+                                            emoji: emoji.to_owned(),
+                                            start,
+                                            end,
+                                        });
+                                    } else if typed_colon
                                         && let Some(at) = standalone_trigger(
                                             &app.composer,
                                             cursor,
