@@ -47,6 +47,8 @@ pub enum ControlCommand {
     Show,
     /// Reload local theme files without opening the window.
     ReloadThemes,
+    /// Quits, as the tray's Quit does: from the launcher's Quit action.
+    Quit,
     /// Confirms an instance is running and changes nothing.
     Ping,
 }
@@ -126,6 +128,7 @@ fn parse(verb: &str) -> Option<ControlCommand> {
     match verb {
         "show" => Some(ControlCommand::Show),
         "reload-themes" => Some(ControlCommand::ReloadThemes),
+        "quit" => Some(ControlCommand::Quit),
         "ping" => Some(ControlCommand::Ping),
         _ => None,
     }
@@ -246,6 +249,7 @@ mod tests {
         assert_eq!(parse("show"), Some(ControlCommand::Show));
         assert_eq!(parse("ping"), Some(ControlCommand::Ping));
         assert_eq!(parse("reload-themes"), Some(ControlCommand::ReloadThemes));
+        assert_eq!(parse("quit"), Some(ControlCommand::Quit));
         assert_eq!(parse("GET / HTTP/1.1"), None);
         assert_eq!(parse("frobnicate"), None);
         assert_eq!(parse(""), None);

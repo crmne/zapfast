@@ -104,6 +104,8 @@ struct Cli {
 enum Control {
     /// Reload palettes in an already-running ZapFast without showing its window.
     ReloadThemes,
+    /// Quit an already-running ZapFast, which closing its window leaves in the tray.
+    Quit,
 }
 
 /// Default log filter, used when `RUST_LOG` is unset.
@@ -143,14 +145,25 @@ fn run() -> eframe::Result<()> {
     let launch = fastframe_update::intercept(&zapfast::updates::CONFIG);
     let cli = Cli::parse_from(&launch.arguments);
     let discovered = paths::AppDirs::discover();
-    if matches!(cli.command, Some(Control::ReloadThemes)) {
-        if let Err(error) = single_instance::send(&discovered.runtime, "reload-themes") {
+    if let Some(command) = &cli.command {
+        let (verb, not_running) = match command {
+            Control::ReloadThemes => (
+                "reload-themes",
+                "ZapFast is not running, so there are no themes to reload.",
+            ),
+            Control::Quit => ("quit", "ZapFast is not running."),
+        };
+        if let Err(error) = single_instance::send(&discovered.runtime, verb) {
             use std::io::ErrorKind;
             if matches!(
                 error.kind(),
                 ErrorKind::NotFound | ErrorKind::ConnectionRefused
             ) {
-                eprintln!("ZapFast is not running, so there are no themes to reload.");
+                eprintln!("{not_running}");
+                // Nothing left to quit is what was asked for.
+                if matches!(command, Control::Quit) {
+                    return Ok(());
+                }
             } else {
                 eprintln!("Could not reach the running ZapFast: {error}");
             }
