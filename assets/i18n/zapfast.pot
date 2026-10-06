@@ -19,6 +19,14 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
+#: src/ui/conversation.rs:5525
+msgid "Message"
+msgstr ""
+
+#: src/ui/conversation.rs:5526
+msgid "Copy number"
+msgstr ""
+
 #: src/model.rs:113
 msgid "All"
 msgstr ""
@@ -370,16 +378,7 @@ msgstr ""
 msgid "This message can only be seen on your phone."
 msgstr ""
 
-
-#: src/ui/conversation.rs:5525
-msgid "Message"
-msgstr ""
-
-#: src/ui/conversation.rs:5526
-msgid "Copy number"
-msgstr ""
-
-#: src/ui/conversation.rs:5753
+#: src/ui/conversation.rs:5786
 msgid "Open in a map"
 msgstr ""
 
@@ -450,18 +449,6 @@ msgstr ""
 #: src/ui/dialogs.rs:1064 src/ui/dialogs.rs:1197 src/ui/dialogs.rs:1259
 #: src/ui/settings.rs:961 src/ui/settings.rs:1524 src/ui/lock.rs:142
 msgid "Cancel"
-msgstr ""
-
-#: src/ui/dialogs.rs:1116
-msgid ""
-"Everyone in this chat will see \"This message was deleted\" instead. It "
-"cannot be undone."
-msgstr ""
-
-#: src/ui/dialogs.rs:1124
-msgid ""
-"This removes the message from your phone and linked devices. Other people "
-"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
 msgstr ""
 
 #: src/ui/dialogs.rs:1178

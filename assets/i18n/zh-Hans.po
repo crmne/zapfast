@@ -16,6 +16,14 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
+#: src/ui/conversation.rs:5525
+msgid "Message"
+msgstr "发送消息"
+
+#: src/ui/conversation.rs:5526
+msgid "Copy number"
+msgstr "复制号码"
+
 #: src/model.rs:113
 msgid "All"
 msgstr "全部"
@@ -365,16 +373,7 @@ msgstr "一次性消息。为保护你的隐私，它只能在手机上打开。
 msgid "This message can only be seen on your phone."
 msgstr "此消息只能在手机上查看。"
 
-
-#: src/ui/conversation.rs:5525
-msgid "Message"
-msgstr "发送消息"
-
-#: src/ui/conversation.rs:5526
-msgid "Copy number"
-msgstr "复制号码"
-
-#: src/ui/conversation.rs:5753
+#: src/ui/conversation.rs:5786
 msgid "Open in a map"
 msgstr "在地图中打开"
 
@@ -1546,17 +1545,3 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
-
-
-#: src/ui/dialogs.rs:1116
-msgid ""
-"Everyone in this chat will see \"This message was deleted\" instead. It "
-"cannot be undone."
-msgstr ""
-
-#: src/ui/dialogs.rs:1124
-msgid ""
-"This removes the message from your phone and linked devices. Other people "
-"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
-msgstr ""
-

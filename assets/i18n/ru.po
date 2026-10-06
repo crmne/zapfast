@@ -17,6 +17,14 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
 "n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 
+#: src/ui/conversation.rs:5525
+msgid "Message"
+msgstr "Написать сообщение"
+
+#: src/ui/conversation.rs:5526
+msgid "Copy number"
+msgstr "Скопировать номер"
+
 #: src/model.rs:113
 msgid "All"
 msgstr "Все"
@@ -386,16 +394,7 @@ msgstr ""
 msgid "This message can only be seen on your phone."
 msgstr "Это сообщение можно посмотреть только на телефоне."
 
-
-#: src/ui/conversation.rs:5525
-msgid "Message"
-msgstr "Написать сообщение"
-
-#: src/ui/conversation.rs:5526
-msgid "Copy number"
-msgstr "Скопировать номер"
-
-#: src/ui/conversation.rs:5753
+#: src/ui/conversation.rs:5786
 msgid "Open in a map"
 msgstr "Открыть на карте"
 
@@ -1607,17 +1606,3 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
-
-
-#: src/ui/dialogs.rs:1116
-msgid ""
-"Everyone in this chat will see \"This message was deleted\" instead. It "
-"cannot be undone."
-msgstr ""
-
-#: src/ui/dialogs.rs:1124
-msgid ""
-"This removes the message from your phone and linked devices. Other people "
-"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
-msgstr ""
-

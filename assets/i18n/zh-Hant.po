@@ -15,6 +15,14 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
+#: src/ui/conversation.rs:5525
+msgid "Message"
+msgstr "傳訊息"
+
+#: src/ui/conversation.rs:5526
+msgid "Copy number"
+msgstr "複製號碼"
+
 #: src/model.rs:113
 msgid "All"
 msgstr "全部"
@@ -364,15 +372,7 @@ msgstr "檢視一次的訊息。為了保護您的隱私，只會在您的手機
 msgid "This message can only be seen on your phone."
 msgstr "此訊息只能在您的手機上查看。"
 
-#: src/ui/conversation.rs:5525
-msgid "Message"
-msgstr "傳訊息"
-
-#: src/ui/conversation.rs:5526
-msgid "Copy number"
-msgstr "複製號碼"
-
-#: src/ui/conversation.rs:5753
+#: src/ui/conversation.rs:5786
 msgid "Open in a map"
 msgstr "在地圖中開啟"
 
@@ -1487,15 +1487,20 @@ msgstr "15 分鐘後"
 msgid "After 1 hour"
 msgstr "1 小時後"
 
-
-#: src/ui/dialogs.rs:1116
-msgid ""
-"Everyone in this chat will see \"This message was deleted\" instead. It "
-"cannot be undone."
+#: src/account.rs:214
+#, rust-format
+msgid "Account {id}"
 msgstr ""
 
-#: src/ui/dialogs.rs:1124
-msgid ""
-"This removes the message from your phone and linked devices. Other people "
-"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
+#: src/ui/accounts.rs:33
+msgid "Switch account"
+msgstr ""
+
+#: src/ui/accounts.rs:84
+msgid "Not linked"
+msgstr ""
+
+#: src/ui/accounts.rs:232
+#, rust-format
+msgid "{count} unread chats"
 msgstr ""
