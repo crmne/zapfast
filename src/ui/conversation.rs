@@ -1682,6 +1682,8 @@ struct View<'a> {
     connected: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
     interactive_pending: &'a HashSet<(ChatId, String)>,
+    /// Whether this chat is selecting whole messages.
+    selecting: bool,
     anchor: Option<&'a str>,
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
@@ -1785,6 +1787,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         interactive_pending: &app.interactive_sending,
+        selecting: app
+            .selection
+            .as_ref()
+            .is_some_and(|(selected_chat, _)| *selected_chat == chat.id),
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
         } else {
@@ -5637,14 +5643,86 @@ fn rich_body(
     // the selection when one is missed. A positional auto id shifts whenever
     // a sibling allocates differently (virtualized rows), killing the
     // selection mid-drag; an explicit id keeps the anchor alive.
+    let id = bubble_id(&view.chat.id, &message.id);
+    // Starting a browser-style sweep on a plain text message should work from
+    // anywhere in its bubble, including the footer and generous side padding.
+    // Captioned media keeps the narrower expansion so this response cannot
+    // cover the picture or another control inside the same bubble.
+    let selection_rect = ui
+        .ctx()
+        .data(|data| data.get_temp::<Rect>(id.with("rect")))
+        .map(|bubble| {
+            // Virtualized rows can move between frames. Align the cached bubble
+            // to this frame's body before expanding its input target, so it
+            // cannot cover a neighboring message after a layout change.
+            let bubble = ui
+                .ctx()
+                .data(|data| data.get_temp::<Rect>(id.with("body")))
+                .map(|previous| {
+                    let mut bubble = bubble.translate(rect.min - previous.min);
+                    bubble.max += rect.size() - previous.size();
+                    bubble
+                })
+                .unwrap_or(bubble);
+            if matches!(message.content, Content::Text { .. }) {
+                let mut target = bubble.union(rect);
+                // Quote and preview cards have their own click actions and
+                // were registered before the text. Keep their current-frame
+                // rectangles outside this later, enlarged input target.
+                for kind in ["quote", "preview"] {
+                    let present = if kind == "quote" {
+                        message.quoted.is_some()
+                    } else {
+                        matches!(
+                            message.content,
+                            Content::Text {
+                                preview: Some(_),
+                                ..
+                            }
+                        )
+                    };
+                    if !present {
+                        continue;
+                    }
+                    if let Some(card) = ui.ctx().data(|data| data.get_temp::<Rect>(id.with(kind))) {
+                        target.min.y = target.min.y.max(card.bottom());
+                    }
+                }
+                target
+            } else {
+                rect.expand2(vec2(10.0, 6.0)).intersect(bubble).union(rect)
+            }
+        })
+        .unwrap_or(rect);
     let response = ui.interact(
-        rect,
-        bubble_id(&view.chat.id, &message.id).with("body-text"),
+        selection_rect,
+        id.with("body-text"),
         Sense::CLICK | Sense::DRAG,
     );
+    // The expanded target owns pointer input in the padding. Preserve the
+    // bubble gestures that lived there before, while double-clicks on actual
+    // text still select a word.
+    let padding = response
+        .interact_pointer_pos()
+        .is_some_and(|pointer| !rect.contains(pointer));
+    if padding {
+        reply_on_double_click(&response, message, actions);
+        if response.clicked() && !response.double_clicked() {
+            let modifiers = ui.input(|input| input.modifiers);
+            if view.selecting {
+                actions.push(if modifiers.shift {
+                    Action::SelectRange(message.id.clone())
+                } else {
+                    Action::ToggleSelected(message.id.clone())
+                });
+            } else if modifiers.command {
+                actions.push(Action::SelectMessage(message.id.clone()));
+            }
+        }
+    }
     // Store the body rect for selection tests.
     ui.ctx().data_mut(|data| {
-        data.insert_temp(bubble_id(&view.chat.id, &message.id).with("body"), rect);
+        data.insert_temp(id.with("body"), rect);
     });
     // Keep off-screen selected bodies registered so scrolling does not lose
     // the selection anchor or omit copied text.
@@ -5664,6 +5742,11 @@ fn rich_body(
     }
     if !laid.links.is_empty()
         && let Some(pos) = response.hover_pos()
+        && laid
+            .galley
+            .rows
+            .iter()
+            .any(|row| Rect::from_min_size(origin + row.pos.to_vec2(), row.row.size).contains(pos))
     {
         let cursor = laid.galley.cursor_from_pos(pos - origin);
         if let Some(url) = laid.link_at(cursor.index.0) {

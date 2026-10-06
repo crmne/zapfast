@@ -263,8 +263,9 @@ Starting a reply before recording includes the quoted message.
 
 ## Copying
 
-Select and copy any message text. A selection across messages uses WhatsApp's
-sharing format:
+Select and copy any message text. You can begin dragging in the padding around
+the text instead of landing precisely on a letter. A selection across messages
+uses WhatsApp's sharing format:
 
 ```
 [18:21, 8/30/2026] Ada Lovelace: Hello from France!
