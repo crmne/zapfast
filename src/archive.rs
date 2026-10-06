@@ -2839,6 +2839,10 @@ pub(crate) mod tests {
         archive
             .set_media_path(chat, "m2", media)
             .expect("media path");
+        // No photo: the trigger on messages cannot remove this clip.
+        archive
+            .put_motion_clip(chat, "absent", chat, b"clip")
+            .expect("motion clip");
         archive.set_unread(chat, 3).expect("unread");
         archive
             .connection
@@ -2862,8 +2866,9 @@ pub(crate) mod tests {
     }
 
     /// Every table keyed by chat besides `chats` itself.
-    const CHAT_TABLES: [&str; 7] = [
+    const CHAT_TABLES: [&str; 8] = [
         "messages",
+        "motion_clips",
         "group_receipts",
         "polls",
         "poll_history",

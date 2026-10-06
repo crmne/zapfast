@@ -1270,6 +1270,7 @@ impl App {
         self.video.stop();
         self.video_chat = None;
         self.video_wanted = None;
+        self.motion_playing = None;
         self.voice_chat = None;
         self.voice_wanted = None;
         self.recording = None;
@@ -2586,6 +2587,13 @@ impl App {
                     && let Some(existing) = conversation.message_mut(&message.id)
                 {
                     let state = existing.content.media().map(|media| media.state.clone());
+                    let motion_state = match &existing.content {
+                        Content::Image {
+                            motion: Some(motion),
+                            ..
+                        } => Some(motion.state.clone()),
+                        _ => None,
+                    };
                     let carousel_states = match &existing.content {
                         Content::Interactive {
                             card: Some(card), ..
@@ -2606,6 +2614,16 @@ impl App {
                     }
                     if let (Some(state), Some(media)) = (state, existing.content.media_mut()) {
                         media.state = state;
+                    }
+                    if let (
+                        Some(state),
+                        Content::Image {
+                            motion: Some(motion),
+                            ..
+                        },
+                    ) = (motion_state, &mut existing.content)
+                    {
+                        motion.state = state;
                     }
                 }
             }
@@ -2736,7 +2754,16 @@ impl App {
                                 self.actions.push(Action::ExpandVideo { message, path });
                             }
                         }
-                        Err(error) => motion.state = MediaState::Failed(error),
+                        Err(error) => {
+                            motion.state = MediaState::Failed(error);
+                            if self
+                                .motion_playing
+                                .as_ref()
+                                .is_some_and(|(c, m)| *c == chat && *m == message)
+                            {
+                                self.motion_playing = None;
+                            }
+                        }
                     }
                 }
             }

@@ -6046,7 +6046,7 @@ fn motion_clip(
         }
         (Some((_, animation::Frame::Pending)), _) => None,
         (None, MediaState::Downloading) if playing => None,
-        (None, MediaState::Failed(_)) if playing => Some(Icon::CircleAlert),
+        (None, MediaState::Failed(_)) => Some(Icon::CircleAlert),
         (None, _) => Some(Icon::Play),
     };
     ui.painter()

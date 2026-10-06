@@ -1602,6 +1602,7 @@ impl Worker {
             }
         };
         let mut removed = 0;
+        let mut failed = false;
         for (chat, id, raw) in rows {
             let Ok(message) = wa::Message::decode_from_slice(&raw) else {
                 continue;
@@ -1610,18 +1611,27 @@ impl Worker {
             if !motion_photo_child(base) {
                 continue;
             }
-            if let Some((parent, clip)) = motion_clip(base)
-                && let Ok(Some(row)) = self.archive.message(&chat, &id)
-            {
-                let _ = self
-                    .archive
-                    .put_motion_clip(&chat, &parent, &row.sender, &clip);
+            if let Some((parent, clip)) = motion_clip(base) {
+                let filed = self.archive.message(&chat, &id).and_then(|row| match row {
+                    Some(row) => self
+                        .archive
+                        .put_motion_clip(&chat, &parent, &row.sender, &clip)
+                        .map(drop),
+                    None => Ok(()),
+                });
+                if let Err(error) = filed {
+                    log::warn!("could not move an archived motion clip: {error}");
+                    failed = true;
+                    continue;
+                }
             }
             if self.archive.delete_message(&chat, &id).is_ok() {
                 removed += 1;
             }
         }
-        let _ = self.archive.set_meta(KEY, "1");
+        if !failed {
+            let _ = self.archive.set_meta(KEY, "1");
+        }
         if removed > 0 {
             log::info!("removed {removed} archived motion photo clips");
             self.emit_chats();
