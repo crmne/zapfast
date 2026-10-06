@@ -14,9 +14,54 @@ pub fn protocol_summary(message: &str) -> Cow<'static, str> {
         "WhatsApp rate limit reached".into()
     } else if let Some(summary) = connect_summary(&message.to_ascii_lowercase()) {
         summary
+    } else if let Some(summary) = app_state_summary(message) {
+        summary
     } else {
         "protocol diagnostic (private details omitted)".into()
     }
+}
+
+/// Preserve only an allowlisted collection name and a fixed recovery stage.
+/// The upstream lines may also carry account data or key-derived MACs.
+fn app_state_summary(message: &str) -> Option<Cow<'static, str>> {
+    for (wire, kind) in [
+        ("regular_low", "RegularLow"),
+        ("regular_high", "RegularHigh"),
+        ("regular", "Regular"),
+        ("critical_block", "CriticalBlock"),
+        ("critical_unblock_low", "CriticalUnblockLow"),
+    ] {
+        let snapshot = message.starts_with(&format!("Snapshot {wire} v"));
+        let stage = if snapshot && message.contains(" MAC mismatch over ") {
+            "snapshot MAC mismatch"
+        } else if snapshot && message.contains(" carries no MAC; refusing it rather than accepting unverified records") {
+            "snapshot MAC missing"
+        } else if snapshot && message.contains(" carries no key id; refusing it rather than accepting unverified records") {
+            "snapshot key id missing"
+        } else if message.starts_with(&format!("Asking the primary device to send back {kind}:")) {
+            "recovery request attempted"
+        } else if message.starts_with(&format!("Could not ask the primary to rebuild {kind}:")) {
+            "recovery request failed"
+        } else if message.starts_with(&format!("Recovered the {wire} collection from the primary device:")) {
+            "recovery reply applied by library"
+        } else if message.starts_with(&format!("Failed to apply the snapshot recovery for {wire}:")) {
+            "recovery apply failed"
+        } else if message.starts_with(&format!("Discarding the primary's {kind} at v"))
+            && message.contains(": this side already holds v")
+        {
+            "recovery reply stale"
+        } else if wire == "critical_block"
+            && message.starts_with("Not asking the primary to rebuild CriticalBlock: the block list is not recovered this way")
+        {
+            "peer recovery unsupported"
+        } else if message.starts_with(&format!("Not asking the primary to rebuild {kind}: the account has peer snapshot recovery turned off")) {
+            "peer recovery disabled"
+        } else {
+            continue;
+        };
+        return Some(format!("app-state {wire} {stage}").into());
+    }
+    None
 }
 
 /// Names why a connection attempt failed, from the phrases whatsapp-rust and
@@ -280,6 +325,59 @@ mod tests {
                 "Transient connect failure, will retry: Timed out waiting for handshake response"
             ),
             "timed out waiting for the WhatsApp handshake"
+        );
+    }
+
+    #[test]
+    fn snapshot_recovery_logs_name_collection_and_stage_without_private_values() {
+        let cases = [
+            (
+                "Snapshot regular_low v253 MAC mismatch over 31 records",
+                "app-state regular_low snapshot MAC mismatch",
+            ),
+            (
+                "Asking the primary device to send back RegularLow: its snapshot did not validate here",
+                "app-state regular_low recovery request attempted",
+            ),
+            (
+                "Could not ask the primary to rebuild RegularLow: request failed for 12345@s.whatsapp.net",
+                "app-state regular_low recovery request failed",
+            ),
+            (
+                "Recovered the regular_low collection from the primary device: 31 record(s)",
+                "app-state regular_low recovery reply applied by library",
+            ),
+            (
+                "Failed to apply the snapshot recovery for regular_low: secret 12345@s.whatsapp.net",
+                "app-state regular_low recovery apply failed",
+            ),
+            (
+                "Not asking the primary to rebuild RegularLow: the account has peer snapshot recovery turned off",
+                "app-state regular_low peer recovery disabled",
+            ),
+            (
+                "Snapshot regular_high v254 carries no MAC; refusing it rather than accepting unverified records",
+                "app-state regular_high snapshot MAC missing",
+            ),
+            (
+                "Snapshot regular v255 carries no key id; refusing it rather than accepting unverified records",
+                "app-state regular snapshot key id missing",
+            ),
+            (
+                "Discarding the primary's RegularLow at v255: this side already holds v257",
+                "app-state regular_low recovery reply stale",
+            ),
+            (
+                "Not asking the primary to rebuild CriticalBlock: the block list is not recovered this way",
+                "app-state critical_block peer recovery unsupported",
+            ),
+        ];
+        for (message, expected) in cases {
+            assert_eq!(protocol_summary(message), expected);
+        }
+        assert_eq!(
+            protocol_summary("Snapshot 12345@s.whatsapp.net v253 MAC mismatch over 31 records"),
+            "protocol diagnostic (private details omitted)",
         );
     }
 
