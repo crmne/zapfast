@@ -27,6 +27,9 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 is ZapFast's sibling. Both are built on
 [fastframe](https://github.com/crmne/fastframe).
 
+Chats with unsent text or attachments appear first, with a draft label. See
+[Writing](https://zapfast.rocks/using-zapfast/#writing) for draft retention and privacy.
+
 ## Install
 
 ```sh

@@ -988,6 +988,7 @@ fn person_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Draws one chat's title, draft or message preview, badges and queued selection actions.
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -1103,7 +1104,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         } else {
             palette.dim
         };
-        let preview = if !typing.is_empty() {
+        let preview = if !typing.is_empty() && app.draft_preview(&chat.id).is_none() {
             let who = if chat.is_group() {
                 format!("{} is typing…", typing[0].1.trim_start_matches('~'))
             } else {
@@ -1118,7 +1119,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 1,
             )
         } else if let Some(draft) = app.draft_preview(&chat.id) {
-            // Unsent text waits here as in WhatsApp, marked in the accent.
+            // Unsent text and attachments are marked in the accent.
             let label = format!("{} ", crate::i18n::gettext(app.locale, "Draft:"));
             let label = widgets::line(
                 ui,

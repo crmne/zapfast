@@ -1742,6 +1742,22 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 );
                 app.composer = "Still typing this one".into();
             }
+            "draft-priority" | "document-draft-priority" => {
+                let old = SAMPLES[3].id;
+                if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == old) {
+                    chat.pinned = false;
+                    chat.last_activity = crate::util::now() - 90 * 24 * 60 * 60;
+                }
+                if part == "draft-priority" {
+                    app.drafts
+                        .insert(old.into(), "Bring the spare HDMI adapter".into());
+                } else {
+                    app.actions.push(crate::model::Action::OpenChat(old.into()));
+                    app.actions.push(crate::model::Action::SendFiles(vec![
+                        "Synthetic itinerary.pdf".into(),
+                    ]));
+                }
+            }
             "video" => video_sample(app, None),
             "video-playing" => video_sample(app, Some("demo-video")),
             "video-expanded" => {
@@ -4190,6 +4206,7 @@ mod tests {
         assert!(!leaks(&labels).is_empty());
     }
 
+    /// Renders every synthetic demo state to catch view and layout regressions.
     #[test]
     fn every_surface_lays_out() {
         let mut app = app();
@@ -4201,6 +4218,10 @@ mod tests {
             render(&mut app, &ctx);
         }
         for page in [
+            "draft-priority",
+            "draft-priority,light",
+            "document-draft-priority",
+            "document-draft-priority,light",
             "chat-menu",
             "chat-header-menu",
             "channel",
@@ -8391,6 +8412,7 @@ mod tests {
     }
 
     #[test]
+    /// A pasted picture stays pending until its caption is sent with it.
     fn a_pasted_picture_waits_for_its_caption() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -8407,6 +8429,8 @@ mod tests {
         assert_eq!(app.pending.len(), 1, "staged, not sent");
         assert_eq!(app.conversations[&chat].messages.len(), before);
         app.actions.push(crate::model::Action::SendPending {
+            account: app.account().id.clone(),
+            mentions: app.composer_mentions(),
             chat: chat.clone(),
             caption: "look".into(),
         });
@@ -12040,6 +12064,50 @@ mod bubble_detail_tests {
             None,
             "blank text is no draft"
         );
+    }
+
+    /// Both themes show old text and document drafts above pinned chats, including after switching away.
+    #[test]
+    fn text_and_document_drafts_rise_above_pins_in_both_themes() {
+        for page in [
+            "draft-priority",
+            "draft-priority,light",
+            "document-draft-priority",
+            "document-draft-priority,light",
+        ] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            apply_flags(&mut app, Some(page));
+            let shapes = frames(&mut app, &ctx, egui::vec2(1180.0, 780.0));
+            assert_eq!(app.visible_chats()[0].id, SAMPLES[3].id, "{page}");
+            let texts: Vec<_> = shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                texts.iter().any(|text| text.trim() == "Draft:"),
+                "{page}: {texts:?}"
+            );
+            if page.starts_with("document") {
+                assert!(
+                    texts.iter().any(|text| text == "Synthetic itinerary.pdf"),
+                    "{page}: {texts:?}"
+                );
+                app.actions
+                    .push(crate::model::Action::OpenChat(SAMPLES[0].id.into()));
+                frames(&mut app, &ctx, egui::vec2(1180.0, 780.0));
+                assert!(app.pending.is_empty());
+                assert_eq!(
+                    app.draft_preview(SAMPLES[3].id).as_deref(),
+                    Some("Synthetic itinerary.pdf")
+                );
+                assert_eq!(app.visible_chats()[0].id, SAMPLES[3].id);
+            }
+        }
     }
 
     /// In a wide window the settings keep their width and sit in the
