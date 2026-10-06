@@ -5171,9 +5171,9 @@ mod tests {
             for (index, row) in rows.iter_mut().enumerate() {
                 let mut media = row.content.media().unwrap().clone();
                 media.state = match index {
-                    1 => MediaState::Downloading,
-                    2 => MediaState::Failed("Synthetic download error".into()),
-                    _ => MediaState::Idle,
+                    1 => crate::model::MediaState::Downloading,
+                    2 => crate::model::MediaState::Failed("Synthetic download error".into()),
+                    _ => crate::model::MediaState::Idle,
                 };
                 if index == 3 {
                     // A synthetic local path exercises the Open label without real media.
