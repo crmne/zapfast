@@ -1801,6 +1801,9 @@ impl App {
             }
             return;
         }
+        if self.image_preview.as_ref().and_then(PreviewState::chat) == Some(id) {
+            self.image_preview = None;
+        }
         if matches!(
             &self.dialog,
             Some(
@@ -4656,6 +4659,17 @@ impl App {
                 }
             }
             Action::PreviousImage | Action::NextImage => {
+                if self
+                    .image_preview
+                    .as_ref()
+                    .and_then(PreviewState::chat)
+                    .and_then(|id| self.chat(id))
+                    .is_some_and(|chat| chat.locked)
+                    && !self.locked_folder_open()
+                {
+                    self.image_preview = None;
+                    return;
+                }
                 let conversations = &self.accounts[self.active].conversations;
                 if let Some(preview) = &mut self.image_preview
                     && let Some(conversation) =
@@ -8677,6 +8691,73 @@ mod tests {
         assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[0]);
         app.apply(Action::PreviewImage(paths[4].clone()), &ctx);
         assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[4]);
+    }
+
+    #[test]
+    fn image_navigation_revokes_access_when_a_conversation_is_locked() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let paths = [dir.path().join("first.png"), dir.path().join("second.png")];
+        for path in &paths {
+            std::fs::write(path, b"fixture").unwrap();
+        }
+        for remote_lock in [false, true] {
+            let mut app = app();
+            let mut chat = Chat::new("fixture".into(), "Fixture".into());
+            chat.locked = !remote_lock;
+            app.chats.push(chat.clone());
+            if !remote_lock {
+                app.settings.set_chat_lock_code(Some("fixture-code"));
+                app.enter_locked_folder();
+            }
+            app.open_chat = Some(chat.id.clone());
+            let rows = paths
+                .iter()
+                .enumerate()
+                .map(|(index, path)| {
+                    let mut row = message(&chat.id, &format!("photo-{index}"), index as i64);
+                    row.content = Content::Image {
+                        caption: None,
+                        media: Media {
+                            mime: "image/png".into(),
+                            size: 7,
+                            width: None,
+                            height: None,
+                            path: Some(path.clone()),
+                            state: MediaState::Idle,
+                        },
+                    };
+                    row
+                })
+                .collect();
+            app.conversations.insert(
+                chat.id.clone(),
+                Conversation {
+                    messages: rows,
+                    ..Default::default()
+                },
+            );
+            app.apply(Action::PreviewImage(paths[0].clone()), &ctx);
+            app.apply(Action::NextImage, &ctx);
+            assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[1]);
+            app.apply(Action::PreviousImage, &ctx);
+            assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[0]);
+            let retained_preview = app.image_preview.clone();
+            if remote_lock {
+                chat.locked = true;
+                app.apply_backend_event(Event::ChatUpdated(Box::new(chat)), true);
+            } else {
+                app.apply(Action::CloseLockedFolder, &ctx);
+            }
+            assert!(app.image_preview.is_none());
+            assert!(app.open_chat.is_none());
+            // Even a retained preview cannot traverse the still-loaded messages.
+            for action in [Action::PreviousImage, Action::NextImage] {
+                app.image_preview = retained_preview.clone();
+                app.apply(action, &ctx);
+                assert!(app.image_preview.is_none());
+            }
+        }
     }
 
     #[test]
