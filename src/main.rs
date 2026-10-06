@@ -349,6 +349,7 @@ fn run() -> eframe::Result<()> {
         app.actions.push(zapfast::model::Action::StartChat {
             name: request.display_name(),
             id: request.chat.clone(),
+            dismiss_dialog: true,
         });
         if let Some(text) = &request.text {
             app.actions.push(zapfast::model::Action::PrefillComposer {

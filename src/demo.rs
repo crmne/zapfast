@@ -2626,6 +2626,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // One pinned message: its line under the chat header and its mark
             // on the bubble.
             "pinned" => pin_sample(app),
+            "message-number" => app.dialog = Some(Dialog::MessageNumber),
+
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
             }
@@ -5363,6 +5365,7 @@ mod tests {
             "app-lock-settings",
             "app-lock-setup",
             "new-chat",
+            "message-number",
             "unnamed-group",
             "keyring",
             "interactive",
@@ -6994,6 +6997,47 @@ mod tests {
                 assert!(app.image_preview.is_none());
             }
         }
+    }
+
+    /// Number-entry submission looks up the recipient without adding a contact name.
+    #[test]
+    fn messaging_an_unsaved_number_checks_it_without_saving_a_name() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.actions
+            .push(crate::model::Action::ShowDialog(Dialog::MessageNumber));
+        render(&mut app, &ctx);
+        app.backend.take_demo_commands();
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("message-number-phone")));
+        app.new_contact_phone = "123".into();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(
+            !app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::NewContact { .. }))
+        );
+        app.new_contact_phone = "+1 (555) 123-4567".into();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command,
+            crate::backend::Command::NewContact { phone, full_name, first_name, .. }
+                if phone == "15551234567" && full_name.is_none() && first_name.is_none()))
+        );
+        assert!(app.new_contact_pending);
     }
 
     /// The composer keeps its draft while the preview is open: Enter does not

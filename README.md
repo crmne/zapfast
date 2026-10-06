@@ -58,6 +58,9 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 | **Themes** | Choose light, dark, system appearance, or custom colours. On Omarchy, follow your desktop theme. |
 | **Privacy** | Hide locked chats behind a code, or the whole window behind an app lock. Nothing goes to a server of ours. |
 
+New chat can check an international phone number with WhatsApp and open a
+conversation without saving a contact. See [Chats](docs/_guide/using-zapfast.md#chats).
+
 ## Install
 
 | Platform | Installation |

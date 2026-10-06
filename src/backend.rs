@@ -650,6 +650,7 @@ pub enum Command {
     },
     /// Internal contact-save result.
     ContactSaved {
+        generation: u64,
         id: String,
         name: String,
         first_name: Option<String>,
@@ -657,6 +658,7 @@ pub enum Command {
     },
     /// Checks a number, optionally saves it, and opens its chat.
     NewContact {
+        request: u64,
         phone: String,
         full_name: Option<String>,
         first_name: Option<String>,
@@ -664,11 +666,13 @@ pub enum Command {
     },
     /// Internal number-lookup result.
     ContactChecked {
+        generation: u64,
+        request: u64,
         phone: String,
         full_name: Option<String>,
         first_name: Option<String>,
         to_phone: bool,
-        registered: bool,
+        registered: Result<bool, String>,
     },
     /// Downloads and sends a GIF as a short looping video.
     SendGif {
@@ -1138,8 +1142,14 @@ pub enum Event {
         code: String,
         result: Result<(ChatId, bool), String>,
     },
+    /// Number lookup failed without opening a chat.
+    ContactFailed {
+        request: u64,
+        error: String,
+    },
     /// Number lookup succeeded and its chat can open.
     ContactReady {
+        request: u64,
         id: String,
         name: Option<String>,
     },

@@ -1551,6 +1551,8 @@ pub enum Dialog {
     PairWithPhone,
     /// Contacts and the self-chat shortcut.
     NewChat,
+    /// Start a conversation without saving the number as a contact.
+    MessageNumber,
     /// Manually entered number for messaging or saving a contact.
     NewContact,
     UnlockLockedChats,
@@ -1797,6 +1799,7 @@ pub enum Action {
     StartChat {
         id: ChatId,
         name: String,
+        dismiss_dialog: bool,
     },
     /// Puts a template in the named chat's composer without sending it, the
     /// way a share link's `text=` asks. Carries the chat it belongs to, since
