@@ -235,16 +235,25 @@ impl PreviewState {
             .map(|cursor| (cursor.index, cursor.slot))
             .or_else(|| find(true))
             .or_else(|| find(false));
-        let Some((index, slot)) = anchor else { return };
-        self.cursor = Some(Cursor {
-            message: messages[index].id.clone(),
-            index,
-            slot,
-        });
-        let mut index = index;
-        let mut slot = slot;
+        let (mut index, mut slot) = if let Some((index, slot)) = anchor {
+            self.cursor = Some(Cursor {
+                message: messages[index].id.clone(),
+                index,
+                slot,
+            });
+            (index, slot)
+        } else if let Some(cursor) = &self.cursor {
+            // Treat the old position as a gap: the next message now occupies
+            // its index, while the previous message is immediately before it.
+            (cursor.index.min(messages.len()), 0)
+        } else {
+            return;
+        };
+        let mut advance = anchor.is_some() || !forward;
         loop {
-            if forward {
+            if !advance {
+                advance = true;
+            } else if forward {
                 slot += 1;
                 if slot >= image_slots(&messages[index]) {
                     index += 1;
@@ -261,6 +270,9 @@ impl PreviewState {
                 }
                 index -= 1;
                 slot = image_slots(&messages[index]).saturating_sub(1);
+            }
+            if index >= messages.len() {
+                return;
             }
             if let Some(path) = image_path(&messages[index], slot)
                 && crate::safety::can_preview_image(path)
@@ -444,6 +456,41 @@ mod tests {
             let expected = if forward { "after" } else { "before" };
             assert_eq!(preview.path(), Path::new(&format!("{expected}.png")));
             assert_eq!(preview.cursor.as_ref().unwrap().message, expected);
+        }
+    }
+
+    #[test]
+    fn navigation_recovers_after_deletion_of_a_unique_image_path() {
+        for deleted_index in 0..3 {
+            for forward in [false, true] {
+                let mut messages = vec![
+                    photo("a", "a.png"),
+                    photo("b", "b.png"),
+                    photo("c", "c.png"),
+                ];
+                let path = image_path(&messages[deleted_index], 0).unwrap().to_owned();
+                let mut preview =
+                    PreviewState::in_conversation(path.clone(), Some("fixture".into()));
+                // Resolve the cursor without leaving the chosen image.
+                preview.navigate_with(&messages, forward, |_| false);
+                messages.remove(deleted_index);
+                let expected = if forward {
+                    messages.get(deleted_index)
+                } else {
+                    deleted_index
+                        .checked_sub(1)
+                        .and_then(|index| messages.get(index))
+                };
+                preview.navigate_with(&messages, forward, |_| true);
+                let expected_path = expected
+                    .and_then(|message| image_path(message, 0))
+                    .unwrap_or(&path)
+                    .to_owned();
+                assert_eq!(preview.path(), expected_path);
+                messages.clear();
+                preview.navigate_with(&messages, forward, |_| true);
+                assert_eq!(preview.path(), expected_path);
+            }
         }
     }
 
