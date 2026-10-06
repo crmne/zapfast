@@ -1620,3 +1620,19 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#
+#: src/file_drag.rs:16
+msgid "Could not drag the attachment"
+msgstr "Impossible de faire glisser la pièce jointe"
+
+#: src/file_drag.rs:25
+msgid "Dragging attachments out is currently available on Windows only."
+msgstr ""
+"Le glisser-déposer des pièces jointes vers l’extérieur est disponible "
+"uniquement sous Windows."
+
+#: src/file_drag.rs:20
+msgid "The attachment is unavailable. Download it before dragging it."
+msgstr ""
+"La pièce jointe est indisponible. Téléchargez-la avant de la faire glisser."

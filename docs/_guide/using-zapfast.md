@@ -263,6 +263,11 @@ Starting a reply before recording includes the quoted message.
 
 ## Copying
 
+On Windows, drag a downloaded attachment from its message to another
+application or a folder to copy its file. Download it first if it is not yet
+available locally. Dragging a video or round video note exports its file
+without starting playback.
+
 Select and copy any message text. A selection across messages uses WhatsApp's
 sharing format:
 

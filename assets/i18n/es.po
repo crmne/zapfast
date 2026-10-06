@@ -1608,3 +1608,17 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#
+#: src/file_drag.rs:16
+msgid "Could not drag the attachment"
+msgstr "No se pudo arrastrar el archivo adjunto"
+
+#: src/file_drag.rs:25
+msgid "Dragging attachments out is currently available on Windows only."
+msgstr "Arrastrar archivos adjuntos fuera solo está disponible en Windows."
+
+#: src/file_drag.rs:20
+msgid "The attachment is unavailable. Download it before dragging it."
+msgstr ""
+"El archivo adjunto no está disponible. Descárgalo antes de arrastrarlo."
