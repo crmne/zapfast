@@ -1110,46 +1110,46 @@ msgstr ""
 msgid "Could not use this image"
 msgstr ""
 
-#: src/app.rs:3406
+#: src/app.rs:3411
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr ""
 
-#: src/app.rs:3410
+#: src/app.rs:3415
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:5051
+#: src/app.rs:5056
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:5126
+#: src/app.rs:5131
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:5419 src/ui/labels.rs:253
+#: src/app.rs:5424 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
-#: src/app.rs:6106
+#: src/app.rs:6111
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:6114
+#: src/app.rs:6119
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:6227
+#: src/app.rs:6232
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/app.rs:6660
+#: src/app.rs:6665
 msgid "Copied image"
 msgstr ""
 
-#: src/app.rs:6663 src/app.rs:6668
+#: src/app.rs:6668 src/app.rs:6673
 msgid "Failed to copy image"
 msgstr ""
 
