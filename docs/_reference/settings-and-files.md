@@ -91,6 +91,8 @@ name or description, in the interface language or in English.
 
 - **Theme**: dark, light, follow the system, or a local JSON palette from the
   themes folder. See [Making a theme]({{ '/themes/' | relative_url }}).
+- **Interface font**: the system typeface or Inter.
+- **Emoji style**: use the platform emoji font (with bundled Noto fallback), or bundled Noto Color Emoji only. Restart ZapFast after changing this setting. The choice affects rendering on this computer and does not change the emoji sent in messages.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.

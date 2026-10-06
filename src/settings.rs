@@ -58,6 +58,17 @@ pub enum FontChoice {
     Inter,
 }
 
+/// Colour emoji renderer selected for the next application start.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmojiRenderer {
+    /// Platform colour emoji, falling back to bundled Noto Color Emoji.
+    #[default]
+    System,
+    /// Bundled Noto Color Emoji only.
+    Noto,
+}
+
 impl FontChoice {
     pub const ALL: [FontChoice; 2] = [Self::System, Self::Inter];
 
@@ -372,6 +383,8 @@ pub struct Settings {
     pub theme: ThemeChoice,
     /// The interface's typeface.
     pub font: FontChoice,
+    /// Renderer applied before any emoji are used at startup.
+    pub emoji_renderer: EmojiRenderer,
     /// Interface language. `None` follows the operating system's locale.
     pub interface_language: Option<crate::i18n::Locale>,
     /// Filename of the selected local JSON palette.
@@ -496,6 +509,7 @@ impl Default for Settings {
             version: SETTINGS_VERSION,
             theme: ThemeChoice::Dark,
             font: FontChoice::System,
+            emoji_renderer: EmojiRenderer::System,
             interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,
@@ -874,6 +888,18 @@ mod tests {
         assert_eq!(settings.message_sound, NotificationSound::System);
         assert_eq!(settings.mention_sound, NotificationSound::Alert);
         assert!(settings.group_sounds);
+    }
+
+    #[test]
+    fn emoji_renderer_defaults_to_system_and_persists_noto() {
+        let older: Settings = serde_json::from_str(r#"{}"#).expect("old settings load");
+        assert_eq!(older.emoji_renderer, EmojiRenderer::System);
+
+        let chosen: Settings =
+            serde_json::from_str(r#"{"emoji_renderer":"noto"}"#).expect("choice loads");
+        assert_eq!(chosen.emoji_renderer, EmojiRenderer::Noto);
+        let saved = serde_json::to_value(&chosen).expect("choice serializes");
+        assert_eq!(saved["emoji_renderer"], "noto");
     }
 
     /// Settings written before the font could be chosen draw with the
