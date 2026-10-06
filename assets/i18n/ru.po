@@ -1619,3 +1619,90 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/util.rs:348
+#, rust-format
+msgid "{date}, {year}"
+msgstr "{date} {year} г."
+
+#: src/util.rs:341
+#, rust-format
+msgid "{day} {month}"
+msgstr "{day} {month}"
+
+#: src/util.rs:352
+#, rust-format
+msgid "{label} ({date})"
+msgstr "{label} ({date})"
+
+#
+#: src/util.rs:423
+msgctxt "date month"
+msgid "April"
+msgstr "апреля"
+
+#
+#: src/util.rs:427
+msgctxt "date month"
+msgid "August"
+msgstr "августа"
+
+#
+#: src/util.rs:431
+msgctxt "date month"
+msgid "December"
+msgstr "декабря"
+
+#
+#: src/util.rs:421
+msgctxt "date month"
+msgid "February"
+msgstr "февраля"
+
+#
+#: src/util.rs:420
+msgctxt "date month"
+msgid "January"
+msgstr "января"
+
+#
+#: src/util.rs:426
+msgctxt "date month"
+msgid "July"
+msgstr "июля"
+
+#
+#: src/util.rs:425
+msgctxt "date month"
+msgid "June"
+msgstr "июня"
+
+#
+#: src/util.rs:422
+msgctxt "date month"
+msgid "March"
+msgstr "марта"
+
+#
+#: src/util.rs:424
+msgctxt "date month"
+msgid "May"
+msgstr "мая"
+
+#
+#: src/util.rs:430
+msgctxt "date month"
+msgid "November"
+msgstr "ноября"
+
+#
+#: src/util.rs:429
+msgctxt "date month"
+msgid "October"
+msgstr "октября"
+
+#
+#: src/util.rs:428
+msgctxt "date month"
+msgid "September"
+msgstr "сентября"

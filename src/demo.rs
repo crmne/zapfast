@@ -1706,12 +1706,14 @@ fn wallpaper_image_sample(app: &mut App) {
     app.account_mut().settings.wallpaper_image = Some(path);
 }
 
+/// Configures synthetic offline demo states and appearance for tests and screenshots.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
     };
     for part in page.split(',').map(str::trim) {
         match part {
+            "history-date" => history_date_sample(app),
             "chat" | "" => {}
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
             "chat-header-menu" => app.open_header_menu = app.open_chat.clone(),
@@ -2814,6 +2816,31 @@ fn unlink(app: &mut App) {
     app.conversations.clear();
     app.open_chat = None;
     app.me = None;
+}
+
+/// Builds synthetic history rows spanning multiple dates for the scrolling-date demo.
+fn history_date_sample(app: &mut App) {
+    let chat = SAMPLES[0].id;
+    let base = crate::util::now() - 3 * 86_400;
+    let conversation = app.conversations.entry(chat.into()).or_default();
+    conversation.messages = (0..90)
+        .map(|index| {
+            message(
+                chat,
+                &format!("history-date-{index}"),
+                index % 2 == 0,
+                base + (index / 30) * 86_400 + (index % 30) * 60,
+                Content::text(format!(
+                    "Reference note {} for the design review",
+                    index + 1
+                )),
+            )
+        })
+        .collect();
+    conversation.complete = true;
+    app.open_chat = Some(chat.into());
+    app.scroll_to_bottom = false;
+    app.scroll_anchor = Some("history-date-45".into());
 }
 
 fn sample_qr() -> String {
@@ -4357,9 +4384,11 @@ mod tests {
     }
 
     #[test]
+    /// Checks header layout at different zoom levels with the sidebar shown or hidden.
     fn macos_headers_fit_when_zoomed_with_and_without_the_sidebar() {
         for zoom in [0.6, 1.0, 2.0] {
             for page in [
+                "history-date",
                 "chat",
                 "nosidebar",
                 "settings",
@@ -4928,6 +4957,45 @@ mod tests {
         );
         render(&mut app, &ctx);
         assert!(ctx.memory(|memory| memory.has_focus(composer)));
+    }
+
+    #[test]
+    /// Checks that scrolling within a day retains the visible transcript date label.
+    fn scrolling_inside_a_day_keeps_its_date_visible() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = app.open_chat.clone().unwrap();
+        let conversation = app.conversations.get_mut(&chat).unwrap();
+        let template = conversation.messages.last().unwrap().clone();
+        conversation.messages = (0..120)
+            .map(|index| {
+                let mut row = template.clone();
+                row.id = format!("date-fixture-{index}");
+                row.timestamp = 1_700_000_000 + (index / 60) * 86_400 + (index % 60) * 60;
+                row.content = Content::text(format!("History row {index}"));
+                row
+            })
+            .collect();
+        conversation.complete = true;
+        for index in [90, 30] {
+            app.actions.push(crate::model::Action::OpenMessage {
+                chat: chat.clone(),
+                message: format!("date-fixture-{index}"),
+            });
+            render(&mut app, &ctx);
+            render(&mut app, &ctx);
+            let timestamp = app.conversations[&chat].messages[index].timestamp;
+            let label = crate::util::day_label(app.locale, timestamp);
+            let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+            assert!(
+                shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::Shape::Text(text) if text.galley.text() == label
+                    && text.pos.y >= shape.clip_rect.top()
+                    && text.pos.y < shape.clip_rect.top() + 40.0)),
+                "the date remains at the top when its separator is off screen: {label}"
+            );
+        }
     }
 
     /// The composer keeps its draft while the preview is open: Enter does not
