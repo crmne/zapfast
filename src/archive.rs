@@ -937,6 +937,15 @@ impl Archive {
              ON CONFLICT(chat, id) DO UPDATE SET account = excluded.account",
             params![lid_chat, phone_chat],
         )?;
+        self.connection.execute(
+            "INSERT INTO pending_message_removals (account, chat, id, confirmed)
+             SELECT account, ?2, id, confirmed FROM pending_message_removals WHERE chat = ?1
+             ON CONFLICT(chat, id) DO UPDATE SET
+                confirmed = CASE WHEN pending_message_removals.account = excluded.account
+                    THEN MAX(pending_message_removals.confirmed, excluded.confirmed) ELSE 0 END,
+                account = excluded.account",
+            params![lid_chat, phone_chat],
+        )?;
         let removed = self.connection.execute(
             "DELETE FROM messages WHERE chat IN (?1, ?2) AND id IN
              (SELECT id FROM message_removals WHERE chat = ?1
@@ -965,7 +974,8 @@ impl Archive {
         transaction.execute(
             "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order)
              SELECT ?2, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order
-             FROM messages WHERE chat = ?1
+             FROM messages WHERE chat = ?1 AND timestamp > COALESCE(
+                (SELECT through FROM chat_removals WHERE chat = ?2), -1)
              ON CONFLICT(chat, id) DO UPDATE SET
                 content = CASE WHEN excluded.edited > messages.edited THEN excluded.content ELSE messages.content END,
                 sender_name = COALESCE(messages.sender_name, excluded.sender_name),
@@ -3033,7 +3043,7 @@ pub(crate) mod tests {
         assert!(archive.put_lid("9", "1").unwrap());
 
         let messages = archive.messages(phone, None, 50).unwrap();
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 3);
         assert!(messages.iter().any(|row| row.id == "from-lid"));
         assert!(messages.iter().any(|row| row.id == "from-phone"));
         let edited = archive.message(phone, "edited-on-lid").unwrap().unwrap();
@@ -3059,6 +3069,44 @@ pub(crate) mod tests {
             )
             .unwrap();
         assert_eq!(ephemeral_timestamp, None);
+    }
+
+    #[test]
+    fn late_privacy_mapping_respects_phone_chat_removal_and_moves_pending_deletions() {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "9@lid";
+        let phone = "1@s.whatsapp.net";
+        archive.ensure_chat(lid, "Ada").unwrap();
+        archive.ensure_chat(phone, "1").unwrap();
+        archive
+            .insert_message(&message(phone, "cleared", 100, false), None)
+            .unwrap();
+        archive.remove_chat_through(phone, 100, false).unwrap();
+        archive
+            .insert_message(&message(lid, "old-lid-copy", 100, false), None)
+            .unwrap();
+        archive
+            .insert_message(&message(lid, "new-lid-copy", 200, false), None)
+            .unwrap();
+        archive
+            .queue_message_removal("account", lid, "new-lid-copy")
+            .unwrap();
+
+        archive.put_lid("9", "1").unwrap();
+
+        assert_eq!(
+            archive
+                .messages(phone, None, 50)
+                .unwrap()
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            ["new-lid-copy"]
+        );
+        assert_eq!(
+            archive.pending_message_removals("account").unwrap(),
+            [(phone.into(), "new-lid-copy".into())]
+        );
     }
 
     #[test]
