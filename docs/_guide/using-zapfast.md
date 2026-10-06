@@ -386,6 +386,10 @@ menu, or other overlay is open; close it first, with Escape or its own button.
 Sending while reading older messages keeps your place. Use the
 newest-message button or `End` to return to the latest message when you are
 ready. The chat list scrolls to the top after you send, where the chat now is.
+
+While scrolling through a conversation, the date of the first visible message
+stays at the top of the transcript. Date labels use your selected language and
+local calendar date.
 Under the **Favorites** chip, the list keeps the phone's order and stays in place.
 
 A shared contact message shows the name from its vCard. When the card names a
