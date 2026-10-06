@@ -1706,6 +1706,7 @@ fn wallpaper_image_sample(app: &mut App) {
     app.account_mut().settings.wallpaper_image = Some(path);
 }
 
+/// Configures synthetic offline demo states and appearance for tests and screenshots.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -2335,6 +2336,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 }
                 app.account_menu = part == "accounts";
             }
+            "message-number" => app.dialog = Some(Dialog::MessageNumber),
+
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
             }
@@ -4190,6 +4193,7 @@ mod tests {
         assert!(!leaks(&labels).is_empty());
     }
 
+    /// Synthetic demo surfaces remain usable at the tested window sizes and themes.
     #[test]
     fn every_surface_lays_out() {
         let mut app = app();
@@ -4215,6 +4219,7 @@ mod tests {
             "app-lock-settings",
             "app-lock-setup",
             "new-chat",
+            "message-number",
             "unnamed-group",
             "keyring",
             "interactive",
@@ -4928,6 +4933,47 @@ mod tests {
         );
         render(&mut app, &ctx);
         assert!(ctx.memory(|memory| memory.has_focus(composer)));
+    }
+
+    /// Number-entry submission looks up the recipient without adding a contact name.
+    #[test]
+    fn messaging_an_unsaved_number_checks_it_without_saving_a_name() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.actions
+            .push(crate::model::Action::ShowDialog(Dialog::MessageNumber));
+        render(&mut app, &ctx);
+        app.backend.take_demo_commands();
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("message-number-phone")));
+        app.new_contact_phone = "123".into();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(
+            !app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::NewContact { .. }))
+        );
+        app.new_contact_phone = "+1 (555) 123-4567".into();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command,
+            crate::backend::Command::NewContact { phone, full_name, first_name, .. }
+                if phone == "15551234567" && full_name.is_none() && first_name.is_none()))
+        );
+        assert!(app.new_contact_pending);
     }
 
     /// The composer keeps its draft while the preview is open: Enter does not

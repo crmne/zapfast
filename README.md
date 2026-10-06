@@ -27,6 +27,9 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 is ZapFast's sibling. Both are built on
 [fastframe](https://github.com/crmne/fastframe).
 
+New chat can check an international phone number with WhatsApp and open a
+conversation without saving a contact. See [Chats](docs/_guide/using-zapfast.md#chats).
+
 ## Install
 
 ```sh

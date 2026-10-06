@@ -1558,3 +1558,40 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/dialogs.rs:505
+msgid "Checking the number…"
+msgstr "正在检查号码…"
+
+#: src/app.rs:671
+msgid "Could not check the number. Please try again."
+msgstr "无法验证号码。请重试。"
+
+#: src/ui/dialogs.rs:481
+msgid ""
+"Enter a phone number with its country code. You do not need to save it as a "
+"contact."
+msgstr "请输入带国家代码的电话号码，无需将其保存为联系人。"
+
+#: src/app.rs:681 src/app.rs:5264
+msgid "Enter a valid international phone number"
+msgstr "请输入有效的国际电话号码"
+
+#
+#: src/ui/dialogs.rs:516
+msgid "Message"
+msgstr "发送消息"
+
+#
+#: src/ui/dialogs.rs:395 src/ui/dialogs.rs:475
+msgid "Message a number"
+msgstr "向号码发送消息"
+
+#
+#: src/app.rs:678
+msgid "Not connected to WhatsApp"
+msgstr "未连接到 WhatsApp"
+
+#: src/app.rs:675
+msgid "This number is not on WhatsApp"
+msgstr "此号码未注册 WhatsApp"

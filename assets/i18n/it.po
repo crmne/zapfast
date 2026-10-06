@@ -1610,3 +1610,42 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/dialogs.rs:505
+msgid "Checking the number…"
+msgstr "Verifica del numero…"
+
+#: src/app.rs:671
+msgid "Could not check the number. Please try again."
+msgstr "Impossibile verificare il numero. Riprova."
+
+#: src/ui/dialogs.rs:481
+msgid ""
+"Enter a phone number with its country code. You do not need to save it as a "
+"contact."
+msgstr ""
+"Inserisci un numero con il prefisso internazionale. Non è necessario "
+"salvarlo come contatto."
+
+#: src/app.rs:681 src/app.rs:5264
+msgid "Enter a valid international phone number"
+msgstr "Inserisci un numero di telefono internazionale valido"
+
+#
+#: src/ui/dialogs.rs:516
+msgid "Message"
+msgstr "Invia messaggio"
+
+#
+#: src/ui/dialogs.rs:395 src/ui/dialogs.rs:475
+msgid "Message a number"
+msgstr "Invia un messaggio a un numero"
+
+#
+#: src/app.rs:678
+msgid "Not connected to WhatsApp"
+msgstr "Non connesso a WhatsApp"
+
+#: src/app.rs:675
+msgid "This number is not on WhatsApp"
+msgstr "Questo numero non è su WhatsApp"

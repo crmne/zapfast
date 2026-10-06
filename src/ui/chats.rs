@@ -926,6 +926,7 @@ pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
         app.actions.push(Action::StartChat {
             id: contact.id.clone(),
             name,
+            dismiss_dialog: true,
         });
     }
 }
