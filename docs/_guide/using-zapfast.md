@@ -21,6 +21,12 @@ check when it was sent, delivered, and read. The reaction row has a **+** that
 opens the full emoji picker. Hover over a reaction to see who added it.
 Editing uses the composer. Press Escape to cancel.
 
+Forwarding opens a recipient picker. Select one or more writable chats, then
+review the selected recipients before confirming. **Back** returns to the
+picker without losing the selection. If a destination becomes locked or
+read-only, ZapFast returns to selection instead of sending a partial batch.
+Switching accounts discards the open forwarding selection.
+
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 

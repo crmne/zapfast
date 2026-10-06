@@ -1619,3 +1619,46 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#
+#: src/app.rs:4538
+msgid "A selected chat is no longer writable"
+msgstr "В один из выбранных чатов больше нельзя отправлять сообщения"
+
+#: src/ui/dialogs.rs:493
+msgid "Back"
+msgstr "Назад"
+
+#: src/ui/dialogs.rs:503
+msgid "Forward"
+msgstr "Переслать"
+
+#
+#: src/ui/dialogs.rs:460
+msgid "Forward message"
+msgstr "Переслать сообщение"
+
+#: src/ui/dialogs.rs:474
+msgid "Forward to these chats?"
+msgstr "Переслать в эти чаты?"
+
+#: src/ui/dialogs.rs:464
+#, rust-format
+msgid "Forward {count} message"
+msgid_plural "Forward {count} messages"
+msgstr[0] "Переслать {count} сообщение"
+msgstr[1] "Переслать {count} сообщения"
+msgstr[2] "Переслать {count} сообщений"
+
+#
+#: src/ui/dialogs.rs:658
+msgid "Review recipients"
+msgstr "Проверить получателей"
+
+#: src/ui/dialogs.rs:645
+#, rust-format
+msgid "{count} recipient selected"
+msgid_plural "{count} recipients selected"
+msgstr[0] "{count} получатель выбран"
+msgstr[1] "{count} получателя выбрано"
+msgstr[2] "{count} получателей выбрано"

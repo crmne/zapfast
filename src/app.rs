@@ -529,6 +529,10 @@ pub struct App {
     pub dialog: Option<Dialog>,
     /// Chat filter in the forwarding destination dialog.
     pub forward_search: String,
+    /// Selected destinations in the active account forwarding dialog.
+    pub forward_recipients: Vec<ChatId>,
+    pub forward_reviewing: bool,
+
     /// The group name being typed in the group info dialog.
     pub group_name_edit: Option<String>,
     /// The new-contact dialog's "Save to phone" box.
@@ -938,6 +942,7 @@ impl App {
         }
     }
 
+    /// Constructs application state around the supplied backend and persisted settings.
     #[cfg_attr(not(test), expect(dead_code))]
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
         let (account, _) = {
@@ -960,7 +965,7 @@ impl App {
         };
         Self::with_accounts(dirs, settings, roster, vec![account], 0, waker)
     }
-
+    /// Builds the window state with the supplied accounts and selected account.
     fn with_accounts(
         dirs: AppDirs,
         settings: Settings,
@@ -1082,6 +1087,9 @@ impl App {
             page: Page::Chats,
             dialog: None,
             forward_search: String::new(),
+            forward_recipients: Vec::new(),
+            forward_reviewing: false,
+
             group_name_edit: None,
             new_contact_to_phone: true,
             sidebar_visible: true,
@@ -1246,6 +1254,8 @@ impl App {
 
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
+        self.forward_recipients.clear();
+        self.forward_reviewing = false;
         // The locked folder and the picker show the previous account's chats
         // and stickers.
         if self.locked_folder {
@@ -4109,6 +4119,7 @@ impl App {
         }
     }
 
+    /// Applies queued view actions after drawing, routing state changes and backend commands.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked; the
@@ -4483,6 +4494,71 @@ impl App {
                 self.follow_sent_chat();
                 self.dialog = None;
                 self.forward_search.clear();
+                self.forward_recipients.clear();
+                self.forward_reviewing = false;
+                self.selection = None;
+            }
+            Action::ToggleForwardRecipient(id) => {
+                if matches!(self.dialog, Some(Dialog::Forward { .. }))
+                    && !self.forward_reviewing
+                    && self.chat(&id).is_some_and(|chat| chat.can_send())
+                {
+                    if self.forward_recipients.contains(&id) {
+                        self.forward_recipients.retain(|recipient| recipient != &id);
+                    } else {
+                        self.forward_recipients.push(id);
+                    }
+                }
+            }
+            Action::ReviewForward => {
+                if matches!(self.dialog, Some(Dialog::Forward { .. }))
+                    && !self.forward_recipients.is_empty()
+                {
+                    self.forward_reviewing = true;
+                }
+            }
+            Action::BackToForwardSelection => self.forward_reviewing = false,
+            Action::ConfirmForward => {
+                let Some(Dialog::Forward { chat, messages }) = self.dialog.clone() else {
+                    return;
+                };
+                if !self.forward_reviewing
+                    || messages.is_empty()
+                    || self.forward_recipients.is_empty()
+                {
+                    return;
+                }
+                // Recheck the complete selection before dispatch. A destination may
+                // have become locked or read-only while the review was open.
+                let writable: std::collections::HashSet<_> = self
+                    .chats
+                    .iter()
+                    .filter(|chat| chat.can_send())
+                    .map(|chat| chat.id.clone())
+                    .collect();
+                let count = self.forward_recipients.len();
+                self.forward_recipients.retain(|id| writable.contains(id));
+                if self.forward_recipients.len() != count {
+                    self.forward_reviewing = false;
+                    self.toast_error(
+                        crate::i18n::gettext(self.locale, "A selected chat is no longer writable")
+                            .into_owned(),
+                    );
+                    return;
+                }
+                for to_chat in std::mem::take(&mut self.forward_recipients) {
+                    self.backend.send(Command::Forward {
+                        from_chat: chat.clone(),
+                        messages: messages.clone(),
+                        to_chat,
+                    });
+                }
+                self.follow_sent_chat();
+
+                self.dialog = None;
+                self.forward_search.clear();
+                self.forward_recipients.clear();
+                self.forward_reviewing = false;
                 self.selection = None;
             }
             Action::StartSelection => {
@@ -5137,6 +5213,8 @@ impl App {
                 }
                 if matches!(&dialog, Dialog::Forward { .. }) {
                     self.forward_search.clear();
+                    self.forward_recipients.clear();
+                    self.forward_reviewing = false;
                 }
                 if dialog == Dialog::PairWithPhone {
                     self.pair_phone.clear();
@@ -5157,6 +5235,8 @@ impl App {
                 self.dialog = None;
                 self.invite = None;
                 self.forward_search.clear();
+                self.forward_recipients.clear();
+                self.forward_reviewing = false;
                 self.contact_edit = None;
                 self.group_name_edit = None;
                 self.refocus_composer(ctx);
@@ -6788,6 +6868,124 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    /// Checks forwarding requires review and confirmation while back navigation preserves recipients.
+    fn forwarding_requires_review_and_confirmation_and_preserves_selection() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        for id in ["first", "second"] {
+            app.chats.push(Chat::new(id.into(), id.into()));
+        }
+        let dialog = Dialog::Forward {
+            chat: "source".into(),
+            messages: vec!["m1".into(), "m2".into()],
+        };
+        app.apply(Action::ShowDialog(dialog.clone()), &ctx);
+        app.apply(Action::ConfirmForward, &ctx);
+        app.apply(Action::ToggleForwardRecipient("first".into()), &ctx);
+        app.forward_search = "second".into();
+        app.apply(Action::ToggleForwardRecipient("second".into()), &ctx);
+        app.apply(Action::ReviewForward, &ctx);
+        app.apply(Action::BackToForwardSelection, &ctx);
+        assert_eq!(app.forward_recipients, ["first", "second"]);
+        assert!(
+            commands.try_recv().is_err(),
+            "selection and review never send"
+        );
+        app.apply(Action::ReviewForward, &ctx);
+        app.apply(Action::ConfirmForward, &ctx);
+        for target in ["first", "second"] {
+            let Command::Forward {
+                from_chat,
+                messages,
+                to_chat,
+            } = commands.try_recv().unwrap()
+            else {
+                panic!("forward command");
+            };
+            assert_eq!(from_chat, "source");
+            assert_eq!(messages, ["m1", "m2"]);
+            assert_eq!(to_chat, target);
+        }
+        app.apply(Action::ConfirmForward, &ctx);
+        assert!(
+            commands.try_recv().is_err(),
+            "double confirmation never duplicates"
+        );
+        assert!(app.dialog.is_none());
+        app.apply(Action::ShowDialog(dialog), &ctx);
+        app.apply(Action::ToggleForwardRecipient("first".into()), &ctx);
+        app.apply(Action::CloseDialog, &ctx);
+        assert!(app.forward_recipients.is_empty());
+        assert!(!app.forward_reviewing);
+        assert!(commands.try_recv().is_err(), "cancel never sends");
+    }
+
+    #[test]
+    /// Checks confirmation rejects destinations that became locked or left after selection.
+    fn forwarding_rechecks_destinations_before_sending() {
+        for left in [false, true] {
+            let mut app = app();
+            app.locale = crate::i18n::Locale::PortugueseBrazil;
+            let (backend, mut commands) = Backend::recording();
+            app.backend = backend;
+            let ctx = egui::Context::default();
+            app.chats.push(Chat::new("target".into(), "Target".into()));
+            app.chats.push(Chat::new("valid".into(), "Valid".into()));
+            app.apply(
+                Action::ShowDialog(Dialog::Forward {
+                    chat: "source".into(),
+                    messages: vec!["m".into()],
+                }),
+                &ctx,
+            );
+            app.apply(Action::ToggleForwardRecipient("target".into()), &ctx);
+            app.apply(Action::ToggleForwardRecipient("valid".into()), &ctx);
+            app.apply(Action::ReviewForward, &ctx);
+            let target = app
+                .chats
+                .iter_mut()
+                .find(|chat| chat.id == "target")
+                .unwrap();
+            target.left = left;
+            target.locked = !left;
+            app.apply(Action::ConfirmForward, &ctx);
+            assert!(commands.try_recv().is_err());
+            assert!(app.dialog.is_some());
+            assert!(!app.forward_reviewing);
+            assert_eq!(app.forward_recipients, ["valid"]);
+            app.apply(Action::ReviewForward, &ctx);
+            app.apply(Action::ConfirmForward, &ctx);
+            assert!(
+                matches!(commands.try_recv().unwrap(), Command::Forward { to_chat, .. } if to_chat == "valid")
+            );
+            assert!(commands.try_recv().is_err());
+            assert!(app.toasts.iter().any(|toast| toast.message
+                == "Não é mais possível enviar mensagens para uma das conversas selecionadas"));
+        }
+    }
+
+    #[test]
+    /// Checks a chat the user has left cannot be selected as a forwarding destination.
+    fn forwarding_cannot_select_a_left_chat() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let mut target = Chat::new("left".into(), "Left".into());
+        target.left = true;
+        app.chats.push(target);
+        app.apply(
+            Action::ShowDialog(Dialog::Forward {
+                chat: "source".into(),
+                messages: vec!["m".into()],
+            }),
+            &ctx,
+        );
+        app.apply(Action::ToggleForwardRecipient("left".into()), &ctx);
+        assert!(app.forward_recipients.is_empty());
     }
 
     #[test]
@@ -8552,6 +8750,7 @@ mod tests {
     }
 
     #[test]
+    /// Checks a selected message batch is forwarded in its original conversation order.
     fn selected_messages_forward_together_in_chat_order() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
@@ -8574,14 +8773,21 @@ mod tests {
             app.selection,
             Some((chat.into(), vec!["first".into(), "third".into()]))
         );
+        app.chats
+            .push(Chat::new("2@s.whatsapp.net".into(), "Grace".into()));
         app.apply(
-            Action::Forward {
-                from_chat: chat.into(),
+            Action::ShowDialog(Dialog::Forward {
+                chat: chat.into(),
                 messages: vec!["first".into(), "third".into()],
-                to_chat: "2@s.whatsapp.net".into(),
-            },
+            }),
             &ctx,
         );
+        app.apply(
+            Action::ToggleForwardRecipient("2@s.whatsapp.net".into()),
+            &ctx,
+        );
+        app.apply(Action::ReviewForward, &ctx);
+        app.apply(Action::ConfirmForward, &ctx);
         let forwarded: Vec<String> = std::iter::from_fn(|| commands.try_recv().ok())
             .flat_map(|command| match command {
                 Command::Forward { messages, .. } => messages,
