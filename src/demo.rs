@@ -2666,8 +2666,47 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "recording" => app.recording = Some(crate::audio::Recorder::rehearsal()),
             // Shows the native image preview over the demo chat.
             "preview" => {
-                let (photo, _) = sample_files(app);
-                app.image_preview = Some(crate::image_preview::PreviewState::new(photo));
+                let chat = app.open_chat.clone().expect("demo chat");
+                let photos = [stock::ENGINE, stock::LAUNCH, stock::SPACEWALK];
+                let now = crate::util::now();
+                let mut rows = photos
+                    .iter()
+                    .enumerate()
+                    .map(|(index, photo)| {
+                        let mut attachment = media(
+                            "image/jpeg",
+                            photo.bytes.len() as u64,
+                            Some(photo.width),
+                            Some(photo.height),
+                        );
+                        attachment.path =
+                            Some(stock::save_photo(&app.dirs.media_cache_dir(), *photo));
+                        message(
+                            &chat,
+                            &format!("preview-{index}"),
+                            false,
+                            now + index as i64 * 2,
+                            Content::Image {
+                                caption: None,
+                                media: attachment,
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                rows.insert(
+                    2,
+                    message(
+                        &chat,
+                        "preview-text",
+                        false,
+                        now + 3,
+                        Content::text("One more photo below."),
+                    ),
+                );
+                let selected = rows[1].content.media().unwrap().path.clone().unwrap();
+                app.conversations.get_mut(&chat).unwrap().messages = rows;
+                app.actions
+                    .push(crate::model::Action::PreviewImage(selected));
             }
             "compose-emoji" => {
                 app.composer = "Andiamo 😊 con due 👍🏽 e poi testo normale".to_owned();
@@ -5224,6 +5263,36 @@ mod tests {
         render(&mut app, &ctx);
         assert!(app.image_preview.is_none(), "Enter activates Close");
         assert_eq!(app.composer, "draft");
+    }
+
+    #[test]
+    fn preview_arrows_browse_photos_without_touching_the_draft() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("preview"));
+        app.composer = "unsent draft".into();
+        render(&mut app, &ctx);
+        let initial = app.image_preview.as_ref().unwrap().path().to_owned();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowRight, egui::Modifiers::NONE)],
+        );
+        assert_ne!(app.image_preview.as_ref().unwrap().path(), initial);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowLeft, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), initial);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(app.image_preview.is_none());
+        assert_eq!(app.composer, "unsent draft");
     }
 
     /// Ctrl++ zooms the picture, not the whole interface, including when the

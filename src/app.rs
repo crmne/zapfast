@@ -4639,7 +4639,8 @@ impl App {
             }
             Action::PreviewImage(path) => {
                 if crate::safety::can_preview_image(&path) && path.is_file() {
-                    self.image_preview = Some(PreviewState::new(path));
+                    self.image_preview =
+                        Some(PreviewState::in_conversation(path, self.open_chat.clone()));
                     self.dialog = None;
                     self.picker = None;
                     // egui drops the focus of widgets behind a modal only from
@@ -4652,6 +4653,14 @@ impl App {
                     });
                 } else {
                     self.actions.push(Action::OpenFile(path));
+                }
+            }
+            Action::PreviousImage | Action::NextImage => {
+                if let Some(preview) = &mut self.image_preview
+                    && let Some(conversation) =
+                        preview.chat().and_then(|chat| self.conversations.get(chat))
+                {
+                    preview.navigate(&conversation.messages, matches!(action, Action::NextImage));
                 }
             }
             Action::ZoomImageBy(factor) => {
@@ -8554,6 +8563,119 @@ mod tests {
         app.apply(Action::CloseImagePreview, &ctx);
         assert!(app.image_preview.is_none());
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn image_navigation_stays_in_chat_order_and_skips_unavailable_media() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let dir = tempfile::tempdir().unwrap();
+        let paths: Vec<_> = [
+            "first.png",
+            "middle.jpg",
+            "last.webp",
+            "sticker.png",
+            "other.png",
+        ]
+        .iter()
+        .map(|name| dir.path().join(name))
+        .collect();
+        for path in &paths {
+            std::fs::write(path, b"fixture").unwrap();
+        }
+        let media = |path: Option<PathBuf>| Media {
+            mime: "image/png".into(),
+            size: 7,
+            width: None,
+            height: None,
+            path,
+            state: MediaState::Idle,
+        };
+        let mut rows = Vec::new();
+        for (index, path) in paths[..3].iter().enumerate() {
+            if index == 2 {
+                rows.push(message("chat", "text-between-photos", 3));
+            }
+            let mut row = message("chat", &format!("photo-{index}"), index as i64 * 2);
+            row.content = Content::Image {
+                caption: None,
+                media: media(Some(path.clone())),
+            };
+            rows.push(row);
+        }
+        let mut sticker = message("chat", "sticker", 6);
+        sticker.content = Content::Sticker {
+            media: media(Some(paths[3].clone())),
+            animated: false,
+        };
+        rows.push(sticker);
+        let mut pending = message("chat", "pending", 7);
+        pending.content = Content::Image {
+            caption: None,
+            media: media(None),
+        };
+        rows.push(pending);
+        let mut video = message("chat", "video", 8);
+        video.content = Content::Video {
+            caption: None,
+            media: media(Some(paths[3].clone())),
+            seconds: Some(1),
+            gif: false,
+            note: false,
+        };
+        rows.push(video);
+        let mut card = message("chat", "card", 9);
+        card.content = Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                carousel: vec![crate::model::InteractiveCard {
+                    image: Some(media(Some(paths[0].clone()))),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })),
+        };
+        rows.push(card);
+        app.conversations.insert(
+            "chat".into(),
+            Conversation {
+                messages: rows,
+                ..Default::default()
+            },
+        );
+        let mut other = message("other", "photo", 0);
+        other.content = Content::Image {
+            caption: None,
+            media: media(Some(paths[4].clone())),
+        };
+        app.conversations.insert(
+            "other".into(),
+            Conversation {
+                messages: vec![other],
+                ..Default::default()
+            },
+        );
+        app.open_chat = Some("chat".into());
+        app.apply(Action::PreviewImage(paths[1].clone()), &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[1]);
+        app.apply(Action::ZoomImageIn, &ctx);
+        app.apply(Action::NextImage, &ctx);
+        let preview = app.image_preview.as_ref().unwrap();
+        assert_eq!(preview.path(), paths[2]);
+        assert!(preview.is_fit());
+        assert_eq!(preview.zoom(), 1.0);
+        app.apply(Action::NextImage, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[0]);
+        app.apply(Action::NextImage, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[0]);
+        std::fs::remove_file(&paths[2]).unwrap();
+        app.apply(Action::PreviousImage, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[1]);
+        app.apply(Action::PreviousImage, &ctx);
+        app.apply(Action::PreviousImage, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[0]);
+        app.apply(Action::PreviewImage(paths[4].clone()), &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[4]);
     }
 
     #[test]

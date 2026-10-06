@@ -29,6 +29,12 @@ Phone numbers in message text open actions to start a chat or copy the displayed
 is ZapFast's sibling. Both are built on
 [fastframe](https://github.com/crmne/fastframe).
 
+The image viewer supports Left/Right arrows and previous/next buttons to browse
+already downloaded photos in the loaded conversation, including interactive-card
+images. It finds photos on demand when navigating, without building or counting
+a gallery when opened. Each photo fits the window, navigation stops at either
+end, and Esc closes the viewer.
+
 ## Install
 
 ```sh

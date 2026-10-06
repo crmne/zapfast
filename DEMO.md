@@ -85,6 +85,8 @@ For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.
 
+Use `--demo-page preview` for a photo viewer with three pictures, text between
+the second and third picture, and previous/next controls.
 Use `--demo-page shared-contact` for an offline shared-contact card with synthetic
 vCard data, or `--demo-page interactive` for text and button messages, or
 `--demo-page interactive-media` for messages with an image, and

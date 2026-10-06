@@ -184,6 +184,36 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     });
                 });
             });
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(preview.can_navigate(), |ui| {
+                    if theme::icon_button(
+                        ui,
+                        Icon::ChevronLeft,
+                        20.0,
+                        palette.secondary,
+                        palette.text,
+                        "Previous image (Left arrow)",
+                    )
+                    .clicked()
+                    {
+                        app.actions.push(Action::PreviousImage);
+                    }
+                });
+                ui.add_enabled_ui(preview.can_navigate(), |ui| {
+                    if theme::icon_button(
+                        ui,
+                        Icon::ChevronRight,
+                        20.0,
+                        palette.secondary,
+                        palette.text,
+                        "Next image (Right arrow)",
+                    )
+                    .clicked()
+                    {
+                        app.actions.push(Action::NextImage);
+                    }
+                });
+            });
             ui.separator();
 
             // The scroll area below takes this rect as its viewport.
@@ -201,8 +231,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     {
                         state.set_fit_scale(size.x / texture.size.x);
                     }
-                    let scroll_id =
-                        ui.make_persistent_id(egui::IdSalt::new("image-preview-scroll"));
+                    let scroll_id = ui.make_persistent_id(egui::IdSalt::new((
+                        "image-preview-scroll",
+                        preview.path(),
+                    )));
                     let trackpad = app.scrolling.from_trackpad();
                     // Read before the scroll area, which would otherwise take the
                     // wheel. The zoom itself is applied by `App` after the frame.
@@ -213,7 +245,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         Some((factor, pointer, zoomed))
                     });
                     let output = egui::ScrollArea::both()
-                        .id_salt("image-preview-scroll")
+                        .id_salt(("image-preview-scroll", preview.path()))
                         .auto_shrink([false, false])
                         // egui drags only on touch screens by default.
                         .scroll_source(egui::scroll_area::ScrollSource {
