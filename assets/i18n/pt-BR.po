@@ -1614,3 +1614,15 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/settings.rs:405
+msgid "Keep chat list position after sending"
+msgstr "Manter a posição da lista de conversas após enviar"
+
+#: src/ui/settings.rs:408
+msgid ""
+"Stay among older conversations while replying. When off, the chat list "
+"scrolls to the top."
+msgstr ""
+"Continue entre as conversas antigas enquanto responde. Quando desativado, a "
+"lista de conversas volta ao topo."

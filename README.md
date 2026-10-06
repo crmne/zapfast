@@ -27,6 +27,9 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 is ZapFast's sibling. Both are built on
 [fastframe](https://github.com/crmne/fastframe).
 
+Settings offers **Keep chat list position after sending**. See
+[Settings & files](docs/_guide/settings-and-files.md) for how it affects the chat list.
+
 ## Install
 
 ```sh

@@ -3724,9 +3724,10 @@ impl App {
         }
     }
 
-    /// Scrolls the chat list to the top, where a sent message moves its chat.
+    /// Scrolls the chat list to the top after sending unless the reader opted
+    /// to keep their position or the favorites order keeps the chat in place.
     fn follow_sent_chat(&mut self) {
-        if !self.favorites_order() {
+        if !self.settings.keep_chat_list_position && !self.favorites_order() {
             self.scroll_chats_to_top = true;
         }
     }
@@ -9950,11 +9951,18 @@ mod tests {
                 },
             },
         ];
-        for send in sends {
-            let name = format!("{send:?}");
-            app.scroll_chats_to_top = false;
-            app.apply(send, &ctx);
-            assert!(app.scroll_chats_to_top, "{name} scrolls the list up");
+        for keep_position in [false, true] {
+            app.settings.keep_chat_list_position = keep_position;
+            for send in &sends {
+                let name = format!("{send:?}");
+                app.poll_creating = false;
+                app.scroll_chats_to_top = false;
+                app.apply(send.clone(), &ctx);
+                assert_eq!(
+                    app.scroll_chats_to_top, !keep_position,
+                    "{name} respects the chat list preference"
+                );
+            }
         }
     }
 
