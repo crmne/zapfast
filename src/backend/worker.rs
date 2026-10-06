@@ -12970,6 +12970,42 @@ mod tests {
         );
     }
 
+    /// Audio attachments must not acquire a forwarding label from their type,
+    /// and forwarding metadata must not change whether a clip is a voice note.
+    #[test]
+    fn audio_type_and_forwarding_metadata_are_independent() {
+        for ptt in [None, Some(false), Some(true)] {
+            let voice_note = ptt.unwrap_or(false);
+            let forwarded_flag = {
+                let mut proto = wa::ContextInfo::default();
+                proto.is_forwarded = Some(true);
+                proto
+            };
+            let forwarding_score = {
+                let mut proto = wa::ContextInfo::default();
+                proto.forwarding_score = Some(1);
+                proto
+            };
+            for (context, forwarded) in [
+                (None, false),
+                (Some(wa::ContextInfo::default()), false),
+                (Some(forwarded_flag), true),
+                (Some(forwarding_score), true),
+            ] {
+                let mut audio = wa::message::AudioMessage::default();
+                audio.ptt = ptt;
+                audio.seconds = Some(52);
+                audio.context_info = context.map(MessageField::some).unwrap_or_default();
+                let mut message = wa::Message::default();
+                message.audio_message = MessageField::some(audio);
+                assert!(
+                    matches!(classify(&message), Some(Content::Audio { voice_note: note, .. }) if note == voice_note)
+                );
+                assert_eq!(forwarded_of(message.get_base_message()), forwarded);
+            }
+        }
+    }
+
     #[test]
     fn forwards_use_only_the_destination_timer() {
         let context = {
