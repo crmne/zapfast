@@ -58,6 +58,9 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 | **Themes** | Choose light, dark, system appearance, or custom colours. On Omarchy, follow your desktop theme. |
 | **Privacy** | Hide locked chats behind a code, or the whole window behind an app lock. Nothing goes to a server of ours. |
 
+Settings offers **Keep chat list position after sending**. See
+[Settings & files](docs/_guide/settings-and-files.md) for how it affects the chat list.
+
 ## Install
 
 | Platform | Installation |

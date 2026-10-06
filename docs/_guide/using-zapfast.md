@@ -386,6 +386,9 @@ menu, or other overlay is open; close it first, with Escape or its own button.
 Sending while reading older messages keeps your place. Use the
 newest-message button or `End` to return to the latest message when you are
 ready. The chat list scrolls to the top after you send, where the chat now is.
+To work through older conversations without jumping back to the top, enable
+**Keep chat list position after sending** in **Settings > Chats**. This option
+starts off and does not change the order of chats or scrolling inside a conversation.
 Under the **Favorites** chip, the list keeps the phone's order and stays in place.
 
 While you scroll through a conversation, the day of the first message on screen

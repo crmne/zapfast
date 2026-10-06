@@ -401,6 +401,14 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
     );
+    chats.toggle(
+        translated(locale, "Keep chat list position after sending"),
+        translated(
+            locale,
+            "Stay among older conversations while replying. When off, the chat list scrolls to the top.",
+        ),
+        |settings| &mut settings.keep_chat_list_position,
+    );
     chats.account_toggle(
         translated(locale, "Download files automatically"),
         translated(
