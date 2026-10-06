@@ -9713,7 +9713,8 @@ mod tests {
             id: "member@s.whatsapp.net".into(),
             name: "Mira".into(),
         });
-        app.drafts.insert(chat.into(), app.composer.clone());
+        let draft = app.composer.clone();
+        app.drafts.insert(chat.into(), draft);
         app.handle_chat_cleared(chat, 100, true);
         assert!(app.composer.is_empty());
         assert!(app.composer_mentions.is_empty());
