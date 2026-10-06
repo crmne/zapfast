@@ -2036,6 +2036,14 @@ impl Archive {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    pub(crate) fn set_derived_update_failure(archive: &super::Archive, fail: bool) {
+        archive.connection.execute_batch(if fail {
+            "CREATE TRIGGER reject_derived_update BEFORE UPDATE OF content ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
+        } else {
+            "DROP TRIGGER reject_derived_update"
+        }).unwrap();
+    }
+
     pub(crate) fn set_message_deletion_failure(archive: &super::Archive, fail: bool) {
         archive.connection.execute_batch(if fail {
             "CREATE TRIGGER reject_message_deletion BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
@@ -2350,6 +2358,7 @@ pub(crate) mod tests {
         );
     }
 
+    /// Checks that archive search indexes fixture text, attachment captions and file names.
     #[test]
     fn search_finds_text_captions_and_file_names() {
         let archive = Archive::in_memory().expect("opens");
@@ -2361,6 +2370,7 @@ pub(crate) mod tests {
             size: 1,
             width: None,
             height: None,
+            album: None,
             path: None,
             state: crate::model::MediaState::Idle,
         };
@@ -2764,6 +2774,7 @@ pub(crate) mod tests {
                 size: 1,
                 width: None,
                 height: None,
+                album: None,
                 path: None,
                 state: crate::model::MediaState::Idle,
             },
@@ -2921,6 +2932,7 @@ pub(crate) mod tests {
         assert_eq!(archive.removal_point(chat).unwrap(), None);
     }
 
+    /// Checks that chat removal includes downloaded interactive-card paths in its media cleanup list.
     #[test]
     fn removing_a_chat_reports_interactive_card_images() {
         let image = |name: &str| crate::model::Media {
@@ -2928,6 +2940,7 @@ pub(crate) mod tests {
             size: 1,
             width: None,
             height: None,
+            album: None,
             path: Some(PathBuf::from(format!("/cache/zapfast/media/{name}.jpg"))),
             state: Default::default(),
         };
@@ -3971,6 +3984,7 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Checks that persisting a downloaded path updates the attachment content stored in the archive.
     #[test]
     fn media_paths_are_written_into_the_content() {
         let archive = Archive::in_memory().expect("opens");
@@ -3984,6 +3998,7 @@ pub(crate) mod tests {
                 size: 10,
                 width: None,
                 height: None,
+                album: None,
                 path: None,
                 state: Default::default(),
             },
@@ -4021,6 +4036,7 @@ mod sticker_tests {
     use super::*;
     use crate::model::{Content, Delivery, Media, MediaState};
 
+    /// Builds a synthetic archived sticker fixture for local-path preservation tests.
     fn sticker(chat: &str, id: &str, timestamp: i64, path: Option<&str>) -> Message {
         Message {
             id: id.into(),
@@ -4035,6 +4051,7 @@ mod sticker_tests {
                     size: 10,
                     width: Some(512),
                     height: Some(512),
+                    album: None,
                     path: path.map(std::path::PathBuf::from),
                     state: MediaState::Idle,
                 },
@@ -4198,6 +4215,7 @@ mod media_path_tests {
     use super::*;
     use crate::model::{Content, Delivery, Media, MediaState};
 
+    /// Builds a synthetic archived picture fixture for local-path preservation tests.
     fn picture(id: &str) -> Message {
         Message {
             id: id.into(),
@@ -4212,6 +4230,7 @@ mod media_path_tests {
                     size: 10,
                     width: None,
                     height: None,
+                    album: None,
                     path: None,
                     state: MediaState::Idle,
                 },

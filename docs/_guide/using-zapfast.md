@@ -130,6 +130,12 @@ caption. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
 one. Press Escape or click a file's close button to remove it.
 
+Pictures and videos sent as a WhatsApp album appear together in a grid. Only
+items with the same protocol album identity, sender and local calendar date
+are grouped. **Download all** uses the normal per-file download limit and
+shows individual failures; **Save all…** copies downloaded files to a folder
+without replacing existing files. Open an item to view it individually.
+
 Incoming attachments up to 64 MiB download when they enter view if automatic
 downloads are on, or on click. Visible stickers download automatically even
 when that setting is off. The 64 MiB limit applies to both automatic and manual

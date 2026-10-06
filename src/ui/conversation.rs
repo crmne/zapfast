@@ -1704,6 +1704,36 @@ struct View<'a> {
     copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
 }
 
+/// Protocol album parent carried by pictures and ordinary videos.
+fn album_id(message: &Message) -> Option<&str> {
+    match &message.content {
+        Content::Image { media, .. }
+        | Content::Video {
+            media, note: false, ..
+        } => media.album.as_deref(),
+        _ => None,
+    }
+}
+
+/// The consecutive messages belonging to the album beginning at `start`.
+/// A single marked item is rendered normally because there is nothing to group.
+fn album_run(messages: &[Message], start: usize) -> Option<&[Message]> {
+    let first = messages.get(start)?;
+    let album = album_id(first)?;
+    let mut end = start + 1;
+    while let Some(message) = messages.get(end) {
+        if album_id(message) != Some(album)
+            || message.from_me != first.from_me
+            || message.sender != first.sender
+            || crate::util::day_key(message.timestamp) != crate::util::day_key(first.timestamp)
+        {
+            break;
+        }
+        end += 1;
+    }
+    (end > start + 1).then_some(&messages[start..end])
+}
+
 /// A row height to assume for a message that has not been laid out yet. Rows
 /// near the viewport are always measured, and a change in the height of a row
 /// above the viewport moves the scroll offset with it, so this only shapes the
@@ -1744,6 +1774,7 @@ fn shows_sender_pictures(chat: &Chat) -> bool {
     chat.is_group()
 }
 
+/// Lays out transcript rows, grouping only eligible consecutive protocol album members.
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
     // Taken up front: `names_or` below borrows the rest of `app` for the
@@ -1997,7 +2028,40 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
                     let margin = (viewport.height() * 3.0).max(600.0);
-                    for message in &conversation.messages {
+                    for (message_index, message) in conversation.messages.iter().enumerate() {
+                        // WhatsApp marks every item in a media album with the
+                        // same parent id. Only its first item owns a row; the
+                        // remaining consecutive items are painted in that row.
+                        if selection.is_none()
+                            && message_index > 0
+                            && album_id(message).is_some()
+                            && album_id(&conversation.messages[message_index - 1])
+                                == album_id(message)
+                            && conversation.messages[message_index - 1].from_me == message.from_me
+                            && conversation.messages[message_index - 1].sender == message.sender
+                            && crate::util::day_key(
+                                conversation.messages[message_index - 1].timestamp,
+                            ) == crate::util::day_key(message.timestamp)
+                        {
+                            rows.insert(
+                                message.id.clone(),
+                                RowHeight {
+                                    height: 0.0,
+                                    pass: Some(pass),
+                                },
+                            );
+                            previous = Some(message);
+                            continue;
+                        }
+                        let album = selection
+                            .is_none()
+                            .then(|| album_run(&conversation.messages, message_index))
+                            .flatten();
+                        let row_contains = |id: &str| {
+                            message.id == id
+                                || album.is_some_and(|items| items.iter().any(|item| item.id == id))
+                        };
+                        let row_is_anchor = view.anchor.is_some_and(row_contains);
                         let before = ui.cursor().top();
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
@@ -2065,7 +2129,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             ui.add_space(4.0);
                         }
                         if let Some((id, count, placed)) = &divider
-                            && *id == message.id
+                            && row_contains(id)
                         {
                             ui.add_space(6.0);
                             let label = crate::i18n::ngettext(
@@ -2102,7 +2166,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         }
                         let flash = jump
                             .as_ref()
-                            .filter(|jump| jump.message == message.id)
+                            .filter(|jump| row_contains(&jump.message))
                             .map(|_| (ui.painter().add(egui::Shape::Noop), ui.cursor().top()));
                         // While selecting, every row gains a check box in a
                         // column on the left and a band behind it, as in
@@ -2119,6 +2183,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                         ui,
                                         &view,
                                         message,
+                                        album,
                                         show_sender,
                                         first_in_run,
                                         &mut actions,
@@ -2128,10 +2193,18 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             })
                             .inner
                         } else {
-                            bubble(ui, &view, message, show_sender, first_in_run, &mut actions)
+                            bubble(
+                                ui,
+                                &view,
+                                message,
+                                album,
+                                show_sender,
+                                first_in_run,
+                                &mut actions,
+                            )
                         };
                         if let Some((slot, top)) = flash {
-                            if view.anchor == Some(message.id.as_str()) && response.is_some() {
+                            if row_is_anchor && response.is_some() {
                                 jump_since.set(Some(time));
                             }
                             let strength = jump_since
@@ -2279,7 +2352,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             actions.push(Action::SelectMessage(message.id.clone()));
                         }
                         if let Some(response) = response
-                            && view.anchor == Some(message.id.as_str())
+                            && row_is_anchor
                         {
                             response.scroll_to_me(Some(Align::Center));
                             anchored = true;
@@ -2868,6 +2941,7 @@ fn bubble(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
+    album: Option<&[Message]>,
     show_sender: bool,
     first_in_run: bool,
     actions: &mut Vec<Action>,
@@ -2949,6 +3023,7 @@ fn bubble(
                             ui,
                             view,
                             message,
+                            album,
                             show_sender,
                             first_in_run,
                             max_width,
@@ -2961,6 +3036,7 @@ fn bubble(
                     ui,
                     view,
                     message,
+                    album,
                     show_sender,
                     first_in_run,
                     max_width,
@@ -3278,10 +3354,12 @@ fn speed_menu_row(
 }
 
 /// Draws a message bubble and its menu.
+#[allow(clippy::too_many_arguments)]
 fn bubble_frame(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
+    album: Option<&[Message]>,
     show_sender: bool,
     first_in_run: bool,
     max_width: f32,
@@ -3319,7 +3397,7 @@ fn bubble_frame(
     });
     // A picture without a caption carries its time over its corner, so
     // the bubble closes under it as evenly as it opens above it.
-    let over_picture = time_over_picture(message);
+    let over_picture = album.is_none() && time_over_picture(message);
     let inner = Frame::new()
         .inner_margin(Margin {
             left: 10,
@@ -3357,21 +3435,36 @@ fn bubble_frame(
             // no more than the cap. Text spans that width and stays left-aligned.
             // Bubbles without cards use the natural text width.
             let cap = ((max_width - 20.0).min(ui.available_width())).max(0.0);
-            let reserve = footer_width(ui, message);
-            let settled = settled_width(ui, view, message, cap);
-            let slot = match settled {
-                Some(width) => {
-                    if let Some(quoted) = &message.quoted {
-                        quote_block(ui, view, message, quoted, width, actions);
+            let last = album
+                .and_then(|messages| messages.last())
+                .unwrap_or(message);
+            let reserve = footer_width(ui, last);
+            let settled = album
+                .map(|_| CARD_WIDTH.min(cap))
+                .or_else(|| settled_width(ui, view, message, cap));
+            let slot = if let Some(messages) = album {
+                for member in messages {
+                    if let Some(quoted) = &member.quoted {
+                        quote_block(ui, view, member, quoted, settled.unwrap_or(cap), actions);
                     }
-                    content(ui, view, message, width, reserve, actions)
                 }
-                None => content(ui, view, message, cap, reserve, actions),
+                album_content(ui, view, messages, settled.unwrap_or(cap), actions);
+                None
+            } else {
+                match settled {
+                    Some(width) => {
+                        if let Some(quoted) = &message.quoted {
+                            quote_block(ui, view, message, quoted, width, actions);
+                        }
+                        content(ui, view, message, width, reserve, actions)
+                    }
+                    None => content(ui, view, message, cap, reserve, actions),
+                }
             };
             if over_picture && let Some(picture) = slot {
                 footer_over_picture(ui, &palette, message, picture);
             } else {
-                footer(ui, &palette, message, slot);
+                footer(ui, &palette, last, slot);
             }
             if matches!(message.content, Content::Poll { .. }) {
                 super::polls::results_button(
@@ -5233,6 +5326,225 @@ fn carousel_arrow(
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(label)
+}
+
+/// Draws WhatsApp's media-album items as one compact grid with one batch action.
+fn album_content(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    messages: &[Message],
+    width: f32,
+    actions: &mut Vec<Action>,
+) {
+    let gap = 3.0;
+    let columns = 2;
+    let tile = ((width - gap * (columns - 1) as f32) / columns as f32).max(80.0);
+    for (row, chunk) in messages.chunks(columns).enumerate() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (column, message) in chunk.iter().enumerate() {
+                album_tile(ui, view, message, vec2(tile, tile), row, column, actions);
+            }
+        });
+    }
+
+    for message in messages {
+        let caption = match &message.content {
+            Content::Image { caption, .. } | Content::Video { caption, .. } => caption.as_deref(),
+            _ => None,
+        };
+        if let Some(caption) = caption.filter(|caption| !caption.is_empty()) {
+            let _ = rich_body(
+                ui,
+                view,
+                message,
+                caption,
+                width,
+                None,
+                Some(width),
+                actions,
+            );
+        } else {
+            view.copy_rows
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(transcript_row(view, message, String::new(), Vec::new()));
+        }
+    }
+
+    let missing: Vec<&Message> = messages
+        .iter()
+        .filter(|message| {
+            message
+                .content
+                .media()
+                .is_some_and(|media| media.path.is_none())
+        })
+        .collect();
+    let files: Vec<(PathBuf, String)> = messages
+        .iter()
+        .filter_map(|message| {
+            let path = message.content.media()?.path.as_ref()?;
+            Some((path.clone(), attachment_name(&message.content, path)))
+        })
+        .collect();
+    if !files.is_empty() && theme::pill_button(ui, &view.palette, "Save all…", true).clicked() {
+        actions.push(Action::SaveAttachments { files });
+    }
+    if !missing.is_empty() {
+        let downloading = missing.iter().all(|message| {
+            message
+                .content
+                .media()
+                .is_some_and(|media| matches!(media.state, MediaState::Downloading))
+        });
+        if theme::pill_button(
+            ui,
+            &view.palette,
+            if downloading {
+                "Downloading…"
+            } else {
+                "Download all"
+            },
+            !downloading,
+        )
+        .clicked()
+        {
+            for message in missing {
+                if let Some(media) = message.content.media()
+                    && !matches!(media.state, MediaState::Downloading)
+                {
+                    actions.push(Action::Download {
+                        card: None,
+                        chat: message.chat.clone(),
+                        message: message.id.clone(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Draws one album member with its own download, selection and activation targets.
+fn album_tile(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    size: Vec2,
+    row: usize,
+    column: usize,
+    actions: &mut Vec<Action>,
+) {
+    let Some(media) = message.content.media() else {
+        return;
+    };
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let kind = if matches!(message.content, Content::Image { .. }) {
+        "Photo"
+    } else {
+        "Video"
+    };
+    let state = match (&media.path, &media.state) {
+        (Some(_), _) => "Open".to_owned(),
+        (None, MediaState::Downloading) => "Downloading".to_owned(),
+        (None, MediaState::Failed(error)) => format!("Failed: {error}"),
+        (None, MediaState::Idle) => "Download".to_owned(),
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{kind}, {state}"))
+    });
+    theme::reveal_focus(&response);
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(rect, 5.0, view.palette.surface);
+        let uri = media
+            .path
+            .as_ref()
+            .filter(|_| matches!(message.content, Content::Image { .. }))
+            .map(|path| {
+                let uri = crate::util::image_uri(path);
+                crate::image_cache::touch(ui.ctx(), &uri);
+                uri
+            })
+            .or_else(|| {
+                message.thumbnail.as_deref().map(|bytes| {
+                    thumbnail_uri(
+                        ui.ctx(),
+                        &message.chat,
+                        &format!("{}-album-{row}-{column}", message.id),
+                        bytes,
+                    )
+                })
+            });
+        if let Some(uri) = uri {
+            let image = egui::Image::new(uri);
+            let dimensions = match image.load_for_size(ui.ctx(), size) {
+                Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture.size),
+                Ok(egui::load::TexturePoll::Pending { .. }) => Some(vec2(
+                    media.width.unwrap_or(1) as f32,
+                    media.height.unwrap_or(1) as f32,
+                )),
+                Err(_) => None,
+            };
+            if let Some(dimensions) = dimensions {
+                let ratio = dimensions.x / dimensions.y.max(1.0);
+                let target = size.x / size.y.max(1.0);
+                let uv = if ratio > target {
+                    vec2(target / ratio, 1.0)
+                } else {
+                    vec2(1.0, ratio / target)
+                };
+                image
+                    .uv(Rect::from_center_size(pos2(0.5, 0.5), uv))
+                    .fit_to_exact_size(size)
+                    .corner_radius(5.0)
+                    .paint_at(ui, rect);
+            }
+        }
+        if matches!(message.content, Content::Video { .. }) {
+            theme::paint_icon(ui, Icon::Play, rect, 30.0, Color32::WHITE);
+        }
+        if media.path.is_none() {
+            let disc = Rect::from_center_size(rect.center(), Vec2::splat(42.0));
+            ui.painter()
+                .circle_filled(disc.center(), 21.0, Color32::from_black_alpha(130));
+            match media.state {
+                MediaState::Downloading => theme::paint_spinner(ui, disc, 20.0, Color32::WHITE),
+                MediaState::Failed(_) => {
+                    theme::paint_icon(ui, Icon::CircleAlert, disc, 20.0, Color32::WHITE)
+                }
+                MediaState::Idle => {
+                    theme::paint_icon(ui, Icon::Download, disc, 20.0, Color32::WHITE)
+                }
+            }
+        }
+        if not_sent(message) {
+            footer_over_picture(ui, &view.palette, message, rect);
+        }
+    }
+    theme::focus_outline(ui, response.id, rect, 5.0);
+    let response = if let MediaState::Failed(error) = &media.state {
+        response.on_hover_text(error)
+    } else {
+        response
+    };
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        if let Some(path) = &media.path {
+            actions.push(if matches!(message.content, Content::Image { .. }) {
+                Action::PreviewImage(path.clone())
+            } else {
+                Action::OpenFile(path.clone())
+            });
+        } else if !matches!(media.state, MediaState::Downloading) {
+            actions.push(Action::Download {
+                card: None,
+                chat: message.chat.clone(),
+                message: message.id.clone(),
+            });
+        }
+    }
 }
 
 /// A carousel uses a short image preview; opening it shows the full picture.
@@ -7392,15 +7704,88 @@ mod tests {
         assert_eq!(attachment_name(&document("  "), cached), "abc123.pdf");
     }
 
+    /// Builds synthetic attachment metadata for media-state and album regression tests.
     fn media(w: Option<u32>, h: Option<u32>) -> Media {
         Media {
             mime: "image/jpeg".into(),
             size: 1,
             width: w,
             height: h,
+            album: None,
             path: None,
             state: MediaState::Idle,
         }
+    }
+
+    /// Builds a synthetic picture belonging to a specified protocol album.
+    fn album_picture(id: &str, album: Option<&str>, sender: &str) -> Message {
+        let mut attachment = media(Some(640), Some(480));
+        attachment.album = album.map(str::to_owned);
+        Message {
+            id: id.into(),
+            chat: "chat@example".into(),
+            sender: sender.into(),
+            sender_name: None,
+            from_me: false,
+            timestamp: 1,
+            history_order: None,
+            content: Content::Image {
+                caption: None,
+                media: attachment,
+            },
+            status: Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        }
+    }
+
+    /// Checks that consecutive compatible media sharing an album parent are displayed together.
+    #[test]
+    fn consecutive_items_with_the_same_protocol_album_are_grouped() {
+        let messages = vec![
+            album_picture("one", Some("album-1"), "alice"),
+            album_picture("two", Some("album-1"), "alice"),
+            album_picture("three", Some("album-2"), "alice"),
+        ];
+        assert_eq!(album_run(&messages, 0).map(<[Message]>::len), Some(2));
+        assert!(album_run(&messages, 2).is_none());
+    }
+
+    /// A protocol album splits at the local day boundary even when its identity stays the same.
+    #[test]
+    fn album_runs_stop_at_the_local_calendar_day_boundary() {
+        let (_, midnight) = crate::util::day_bounds(jiff::civil::date(2026, 9, 20)).unwrap();
+        let mut messages: Vec<_> = ["one", "two", "three", "four"]
+            .iter()
+            .map(|id| album_picture(id, Some("album-1"), "alice"))
+            .collect();
+        for (message, offset) in messages.iter_mut().zip([-2, -1, 1, 2]) {
+            message.timestamp = midnight + offset;
+        }
+        assert_eq!(album_run(&messages, 0).map(<[Message]>::len), Some(2));
+        assert_eq!(album_run(&messages, 2).map(<[Message]>::len), Some(2));
+        assert!(album_run(&messages[1..3], 0).is_none());
+    }
+
+    /// Checks that grouping never combines unrelated pictures or messages from different senders.
+    #[test]
+    fn unrelated_or_different_sender_pictures_are_not_grouped() {
+        let unrelated = vec![
+            album_picture("one", None, "alice"),
+            album_picture("two", None, "alice"),
+        ];
+        assert!(album_run(&unrelated, 0).is_none());
+        let senders = vec![
+            album_picture("one", Some("album-1"), "alice"),
+            album_picture("two", Some("album-1"), "bob"),
+        ];
+        assert!(album_run(&senders, 0).is_none());
     }
 
     #[test]
