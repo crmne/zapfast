@@ -37,7 +37,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     380.0
                 }
                 Dialog::ConfirmClearChat(_) => 380.0,
-                Dialog::ConfirmDeleteMessage { .. } => 380.0,
+                Dialog::ConfirmDeleteMessage { .. } | Dialog::ConfirmDeleteSelection { .. } => {
+                    380.0
+                }
                 Dialog::ConfirmRemoveStickerPack { .. } => 380.0,
                 Dialog::StickerPack => 420.0,
                 Dialog::StickerMaker => 400.0,
@@ -84,6 +86,13 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 } => confirm_delete_message(app, ui, &chat, &message, for_everyone),
                 Dialog::ConfirmRemoveStickerPack { name, dir } => {
                     confirm_remove_sticker_pack(app, ui, &name, dir)
+                }
+                Dialog::ConfirmDeleteSelection {
+                    chat,
+                    messages,
+                    for_everyone,
+                } => {
+                    confirm_delete_messages(app, ui, &chat, &messages, for_everyone, true);
                 }
                 Dialog::Forward { messages, .. } => forward(app, ui, &messages),
                 Dialog::JoinGroup => join_group(app, ui),
@@ -899,6 +908,17 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// Formats the localized singular or plural selected-message count.
+fn selected_message_count(locale: crate::i18n::Locale, count: usize) -> String {
+    crate::i18n::ngettext(
+        locale,
+        "{count} selected message",
+        "{count} selected messages",
+        count as u32,
+    )
+    .replace("{count}", &count.to_string())
+}
+
 fn confirm_delete_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
     let locale = app.locale;
     let name = app.chat(id).map_or_else(
@@ -916,7 +936,7 @@ fn confirm_delete_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
         &crate::i18n::gettext(locale, "Delete chat?"),
         &[&body],
         &crate::i18n::gettext(locale, "Delete"),
-        Action::DeleteChat(id.to_owned()),
+        [Action::DeleteChat(id.to_owned())],
     );
 }
 
@@ -937,7 +957,7 @@ fn confirm_clear_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
         &crate::i18n::gettext(locale, "Clear chat?"),
         &[&body],
         &crate::i18n::gettext(locale, "Clear chat"),
-        Action::ClearChat(id.to_owned()),
+        [Action::ClearChat(id.to_owned())],
     );
 }
 
@@ -1237,8 +1257,18 @@ fn confirm_start_over(app: &mut App, ui: &mut egui::Ui) {
             ),
         ],
         &crate::i18n::gettext(locale, "Start over"),
-        Action::StartOverArchive,
+        [Action::StartOverArchive],
     );
+}
+
+/// Formats localized deletion guidance for direct or selected messages and the chosen scope.
+fn deletion_body(locale: crate::i18n::Locale, for_everyone: bool, count: Option<usize>) -> String {
+    match (for_everyone, count) {
+        (false, None) => crate::i18n::gettext(locale, "This removes the message from your phone and linked devices. Other people keep their copy. Connect to WhatsApp to delete it. This cannot be undone.").into_owned(),
+        (true, None) => crate::i18n::gettext(locale, "Everyone in this chat will see \"This message was deleted\" instead. It cannot be undone.").into_owned(),
+        (false, Some(_)) => crate::i18n::gettext(locale, "This removes these messages from your phone and linked devices. Other people keep their copy. Connect to WhatsApp to delete them. This cannot be undone.").into_owned(),
+        (true, Some(count)) => crate::i18n::ngettext(locale, "Everyone in this chat will see \"This message was deleted\" in place of the selected message. This cannot be undone.", "Everyone in this chat will see \"This message was deleted\" in place of the selected messages. This cannot be undone.", count as u32).into_owned(),
+    }
 }
 
 /// Confirms deleting one message. Enter is deliberately not bound here: a
@@ -1250,34 +1280,53 @@ fn confirm_delete_message(
     id: &str,
     for_everyone: bool,
 ) {
+    confirm_delete_messages(app, ui, chat, &[id.to_owned()], for_everyone, false);
+}
+
+/// Confirms deleting messages, one or the whole selection, and queues one
+/// deletion per message in the chosen scope. A confirmed selection ends.
+fn confirm_delete_messages(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    chat: &str,
+    ids: &[String],
+    for_everyone: bool,
+    selection: bool,
+) {
     let locale = app.locale;
-    let (chat, id) = (chat.to_owned(), id.to_owned());
-    let (heading, body, action) = if for_everyone {
-        (
-            crate::i18n::gettext(locale, "Delete for everyone?"),
-            crate::i18n::gettext(
-                locale,
-                "Everyone in this chat will see \"This message was deleted\" instead. It cannot be undone.",
-            ),
-            Action::DeleteForEveryone { chat, id },
-        )
+    let heading = if for_everyone {
+        crate::i18n::gettext(locale, "Delete for everyone?")
     } else {
-        (
-            crate::i18n::gettext(locale, "Delete for me?"),
-            crate::i18n::gettext(
-                locale,
-                "This removes the message from your phone and linked devices. Other people keep their copy. Connect to WhatsApp to delete it. This cannot be undone.",
-            ),
-            Action::DeleteForMe { chat, id },
-        )
+        crate::i18n::gettext(locale, "Delete for me?")
     };
+    let body = deletion_body(locale, for_everyone, selection.then_some(ids.len()));
+    let count = selected_message_count(locale, ids.len());
+    let paragraphs: Vec<&str> = if selection && !ids.is_empty() {
+        vec![&count, &body]
+    } else {
+        vec![&body]
+    };
+    let mut actions: Vec<Action> = ids
+        .iter()
+        .map(|id| {
+            let (chat, id) = (chat.to_owned(), id.clone());
+            if for_everyone {
+                Action::DeleteForEveryone { chat, id }
+            } else {
+                Action::DeleteForMe { chat, id }
+            }
+        })
+        .collect();
+    if selection {
+        actions.push(Action::CancelSelection);
+    }
     confirm_destructive(
         app,
         ui,
         &heading,
-        &[&body],
+        &paragraphs,
         &crate::i18n::gettext(locale, "Delete"),
-        action,
+        actions,
     );
 }
 
@@ -1299,7 +1348,7 @@ fn confirm_remove_sticker_pack(
         &crate::i18n::gettext(locale, "Remove sticker pack?"),
         &[&body],
         &crate::i18n::gettext(locale, "Remove"),
-        Action::DeleteStickerPack(dir),
+        [Action::DeleteStickerPack(dir)],
     );
 }
 
@@ -1314,7 +1363,7 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
             "This removes the device from WhatsApp and deletes the chats stored here. You can link again with a new code.",
         )],
         &crate::i18n::gettext(locale, "Unlink"),
-        Action::Unlink,
+        [Action::Unlink],
     );
 }
 
@@ -1329,7 +1378,7 @@ fn confirm_remove(app: &mut App, ui: &mut egui::Ui, id: crate::model::AccountId)
             "This unlinks the number on this computer and deletes its local chats. Other accounts stay.",
         )],
         &crate::i18n::gettext(locale, "Remove"),
-        Action::RemoveAccount(id),
+        [Action::RemoveAccount(id)],
     );
 }
 
@@ -1344,7 +1393,7 @@ fn confirm_destructive(
     heading: &str,
     body: &[&str],
     button: &str,
-    action: Action,
+    actions: impl IntoIterator<Item = Action>,
 ) {
     let palette = app.palette;
     title(ui, app, heading);
@@ -1361,7 +1410,7 @@ fn confirm_destructive(
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if danger_button(ui, app, button) {
-                app.actions.push(action);
+                app.actions.extend(actions);
                 app.actions.push(Action::CloseDialog);
             }
             if theme::pill_button(ui, &palette, &cancel, false).clicked() {
@@ -2411,6 +2460,16 @@ pub(super) fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> bo
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chinese_delete_body_is_neutral_for_one_or_multiple_selected_messages() {
+        for count in [1, 2] {
+            let body =
+                super::deletion_body(crate::i18n::Locale::ChineseSimplified, false, Some(count));
+            assert!(body.contains("手机和关联设备"), "{body}");
+            assert!(body.contains("所选消息"), "{body}");
+            assert!(!body.contains("这些消息"), "{body}");
+        }
+    }
     use crate::model::{Chat, ChatKind};
     use crate::theme;
 
@@ -2480,5 +2539,30 @@ mod tests {
 
         chat.kind = ChatKind::Broadcast;
         assert!(!super::forwardable(&chat));
+    }
+}
+
+#[cfg(test)]
+mod deletion_count_tests {
+    #[test]
+    fn confirmation_counts_include_a_single_selected_message() {
+        assert_eq!(
+            super::selected_message_count(crate::i18n::Locale::English, 1),
+            "1 selected message"
+        );
+        assert_eq!(
+            super::selected_message_count(crate::i18n::Locale::English, 2),
+            "2 selected messages"
+        );
+        for (count, expected) in [
+            (1, "1 сообщение выбрано"),
+            (2, "2 сообщения выбрано"),
+            (5, "5 сообщений выбрано"),
+        ] {
+            assert_eq!(
+                super::selected_message_count(crate::i18n::Locale::Russian, count),
+                expected
+            );
+        }
     }
 }

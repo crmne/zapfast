@@ -1577,6 +1577,12 @@ pub enum Dialog {
         name: String,
         dir: PathBuf,
     },
+    /// Confirms deleting the complete selection, captured when the menu opens.
+    ConfirmDeleteSelection {
+        chat: ChatId,
+        messages: Vec<String>,
+        for_everyone: bool,
+    },
     /// Chooses a destination for an archived message.
     Forward {
         chat: ChatId,
