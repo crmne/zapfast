@@ -273,6 +273,13 @@ sharing format:
 
 ## Chats
 
+To contact someone without saving their number, open **New chat** and choose
+**Message a number**. Enter an international number, including its country
+code. Spaces, hyphens and balanced parentheses are allowed. ZapFast checks
+whether the number is on WhatsApp before opening the conversation. Failed
+checks show an error and can be retried. Closing or replacing the dialog
+cancels its pending lookup; results remain with the originating account.
+
 The search bar finds chats by name, number, or latest message; searches all
 messages stored on this computer; and finds contacts without an existing chat.
 Use `↑`/`↓` to select a matching chat and Enter to open it ready for typing.
