@@ -3190,11 +3190,16 @@ impl App {
         self.drafts.remove(id);
         self.draft_mentions.remove(id);
         self.attachment_drafts.remove(id);
-        if live && self.open_chat.as_deref() == Some(id) && !self.pending.is_empty() {
-            self.pending.clear();
-            self.composer.clear();
-            self.composer_mentions.clear();
-            self.reply_to = None;
+        if live && self.open_chat.as_deref() == Some(id) {
+            if !self.pending.is_empty() {
+                self.pending.clear();
+                self.composer.clear();
+                self.composer_mentions.clear();
+                self.reply_to = None;
+            } else if self.editing.is_none() {
+                self.composer.clear();
+                self.composer_mentions.clear();
+            }
         }
         self.search_hits
             .retain(|message| message.chat != id || message.timestamp > through);
@@ -9618,6 +9623,49 @@ mod tests {
         // Only the cleared chat loses its search hits.
         assert!(app.search_hits.iter().all(|hit| hit.chat != chat));
         assert_eq!(app.search_hits.len(), 1);
+    }
+
+    #[test]
+    fn clearing_a_chat_discards_its_open_text_draft_and_mentions() {
+        let mut app = app();
+        let chat = "peer@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.composer = "Synthetic draft @Mira".into();
+        app.composer_mentions.push(ComposerMention {
+            id: "member@s.whatsapp.net".into(),
+            name: "Mira".into(),
+        });
+        let draft = app.composer.clone();
+        app.drafts.insert(chat.into(), draft);
+        app.handle_chat_cleared(chat, 100, true);
+        assert!(app.composer.is_empty());
+        assert!(app.composer_mentions.is_empty());
+        assert!(!app.drafts.contains_key(chat));
+    }
+
+    #[test]
+    fn clearing_a_chat_preserves_a_surviving_edit_and_other_account_composer() {
+        let chat = "peer@s.whatsapp.net";
+        for live in [true, false] {
+            let mut app = app();
+            app.open_chat = Some(chat.into());
+            app.composer = "Synthetic edited text".into();
+            app.editing = Some("newer".into());
+            app.conversations
+                .entry(chat.into())
+                .or_default()
+                .merge(vec![message(chat, "newer", 200)], false);
+            app.handle_chat_cleared(chat, 100, live);
+            assert_eq!(app.composer, "Synthetic edited text");
+            assert_eq!(app.editing.as_deref(), Some("newer"));
+        }
+        let mut app = app();
+        app.open_chat = Some(chat.into());
+        app.composer = "Other account draft".into();
+        app.handle_chat_cleared(chat, 100, false);
+        assert_eq!(app.composer, "Other account draft");
+        app.handle_chat_cleared("another@s.whatsapp.net", 100, true);
+        assert_eq!(app.composer, "Other account draft");
     }
 
     #[test]
