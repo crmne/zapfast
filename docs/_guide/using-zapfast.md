@@ -44,6 +44,13 @@ returns to the picker without losing the selection. If a destination becomes
 locked or read-only, ZapFast returns to selection instead of sending a partial
 batch. Switching accounts discards the open forwarding selection.
 
+Right-click a group message and choose **Reply privately** to open a direct
+conversation with its sender while quoting the group message. The quote
+survives closing the recipient chat or switching accounts. Locked or
+inaccessible source groups hide their quote previews and cannot be used for
+sending until authorized again. Deleting the recipient chat discards its
+private-reply recovery, including refusals arriving after deletion.
+
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 

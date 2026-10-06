@@ -4529,6 +4529,7 @@ impl Worker {
         }
     }
 
+    /// Parses a protocol quote, preserving its source chat separately from the containing conversation.
     fn quoted_of(&self, base: &wa::Message) -> Option<Quoted> {
         let context = context_of(base)?;
         let id = context.stanza_id.clone().filter(|id| !id.is_empty())?;
@@ -4553,6 +4554,10 @@ impl Worker {
         let summary = self.pn_tokens(&summary);
         let mentions = self.quote_mentions(&summary, listed);
         Some(Quoted {
+            chat: context
+                .remote_jid
+                .as_deref()
+                .map(|chat| self.canonical_str(chat)),
             sender_name: self.name_for(&sender),
             id,
             sender,
@@ -4884,6 +4889,7 @@ impl Worker {
                 let quoted = message.quoted.map(|quoted| {
                     let sender = self.canonical_str(&quoted.sender);
                     Quoted {
+                        chat: quoted.chat.as_deref().map(|chat| self.canonical_str(chat)),
                         sender_name: self.name_for(&sender),
                         sender,
                         ..quoted
@@ -6177,6 +6183,7 @@ impl Worker {
                 transparent,
                 emojis,
                 chat,
+                quoting,
             } => {
                 let commands = self.commands.clone();
                 let dir = self.dirs.sticker_cache_dir().join("made");
@@ -6193,11 +6200,19 @@ impl Worker {
                             std::fs::write(&path, sticker).map_err(|error| error.to_string())?;
                             Ok(path)
                         });
-                    let _ = commands.send(Command::StickerMade { result, chat });
+                    let _ = commands.send(Command::StickerMade {
+                        result,
+                        chat,
+                        quoting,
+                    });
                 });
             }
-            Command::StickerMade { result, chat } => match (result, chat) {
-                (Ok(path), Some(chat)) => self.send_sticker(chat, path, None),
+            Command::StickerMade {
+                result,
+                chat,
+                quoting,
+            } => match (result, chat) {
+                (Ok(path), Some(chat)) => self.send_sticker(chat, path, quoting),
                 (Ok(path), None) => {
                     self.favorite_sticker(&path);
                     self.emit(Event::Info("Added to favorites".to_owned()));
@@ -7372,19 +7387,23 @@ impl Worker {
     /// Resolves the message a send replies to. A reply whose original cannot
     /// be quoted is refused rather than sent as an unrelated message: the
     /// quote needs the original's archived row and its raw protobuf.
-    fn quote(
+    fn quote_target(
         &self,
         chat: &str,
-        id: Option<&str>,
+        target: Option<&crate::model::ReplyTarget>,
     ) -> Result<Option<(wa::ContextInfo, Quoted)>, Refusal> {
-        let Some(id) = id else { return Ok(None) };
+        let Some(target) = target else {
+            return Ok(None);
+        };
+        let id = target.id.as_str();
+        let source = target.source_chat(chat);
         let unavailable = Refusal::QuoteUnavailable;
         if id.is_empty() {
             return Err(unavailable);
         }
         let row = self
             .archive
-            .message(chat, id)
+            .message(source, id)
             .map_err(|_| unavailable)?
             .ok_or(unavailable)?;
         if matches!(row.content, Content::Revoked) {
@@ -7392,16 +7411,23 @@ impl Worker {
         }
         let raw = self
             .archive
-            .raw(chat, id)
+            .raw(source, id)
             .map_err(|_| unavailable)?
             .ok_or(unavailable)?;
         let original = wa::Message::decode_from_slice(&raw).map_err(|_| unavailable)?;
         let jid = Self::jid_of(chat).ok_or(unavailable)?;
+        let source_jid = Self::jid_of(source).ok_or(unavailable)?;
         let sender = Self::jid_of(&row.sender).ok_or(unavailable)?;
+        if source != chat
+            && (row.private_reply_recipient().is_none()
+                || self.canonical_str(&row.sender) != self.canonical_str(chat))
+        {
+            return Err(unavailable);
+        }
         let mut context = whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info(
             row.id.clone(),
             &sender,
-            &jid,
+            &source_jid,
             &jid,
             &original,
         );
@@ -7410,6 +7436,7 @@ impl Worker {
         // mention for display from the archived message.
         silence_everyone(&mut context);
         let shown = Quoted {
+            chat: (source != chat).then(|| source.to_owned()),
             mentions: row.mentions.clone(),
             id: row.id,
             sender_name: if row.from_me {
@@ -7435,8 +7462,24 @@ impl Worker {
             .filter(|client| client.is_socket_connected())
     }
 
+    /// Resolves an explicit quote source rather than assuming it belongs to the destination chat.
+    #[cfg(test)]
+    fn quote(
+        &self,
+        chat: &str,
+        id: Option<&str>,
+    ) -> Result<Option<(wa::ContextInfo, Quoted)>, Refusal> {
+        self.quote_target(chat, id.map(crate::model::ReplyTarget::from).as_ref())
+    }
+
     /// Hands a send that cannot go out back to the app.
-    fn refuse(&self, chat: ChatId, quoting: Option<String>, unsent: Unsent, reason: Refusal) {
+    fn refuse(
+        &self,
+        chat: ChatId,
+        quoting: Option<crate::model::ReplyTarget>,
+        unsent: Unsent,
+        reason: Refusal,
+    ) {
         self.emit(Event::SendRefused {
             chat,
             quoting,
@@ -7445,14 +7488,15 @@ impl Worker {
         });
     }
 
+    /// Dispatches composed text with its explicit quote target and restores it on refusal.
     fn send_text(
         &mut self,
         chat: ChatId,
         text: String,
-        quoting: Option<String>,
+        quoting: Option<crate::model::ReplyTarget>,
         mentions: Vec<String>,
     ) {
-        let (context, shown) = match self.quote(&chat, quoting.as_deref()) {
+        let (context, shown) = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(Some((context, shown))) => (Some(context), Some(shown)),
             Ok(None) => (None, None),
             Err(reason) => {
@@ -7510,13 +7554,13 @@ impl Worker {
         chat: ChatId,
         latitude: f64,
         longitude: f64,
-        quoting: Option<String>,
+        quoting: Option<crate::model::ReplyTarget>,
     ) {
         let unsent = || Unsent::Location {
             latitude,
             longitude,
         };
-        let (context, shown) = match self.quote(&chat, quoting.as_deref()) {
+        let (context, shown) = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(Some((context, shown))) => (Some(context), Some(shown)),
             Ok(None) => (None, None),
             Err(reason) => {
@@ -7947,6 +7991,9 @@ impl Worker {
     fn polish(&self, message: &mut Message) {
         self.polish_poll(message);
         if let Some(quoted) = message.quoted.as_mut() {
+            if let Some(chat) = quoted.chat.as_mut() {
+                *chat = self.canonical_str(chat);
+            }
             let sender = self.canonical_str(&quoted.sender);
             // A currently known name replaces a stale label even when the
             // canonical id did not change; an unresolvable one keeps what
@@ -8961,6 +9008,7 @@ impl Worker {
         });
     }
 
+    /// Dispatches selected files with the first attachment carrying the caption and quote.
     fn send_files(
         &mut self,
         chat: ChatId,
@@ -8968,14 +9016,14 @@ impl Worker {
         documents: bool,
         caption: Option<String>,
         mentions: Vec<String>,
-        quoting: Option<String>,
+        quoting: Option<crate::model::ReplyTarget>,
     ) {
         let unsent = |paths, caption| Unsent::Files {
             paths,
             documents,
             caption,
         };
-        let mut quote = match self.quote(&chat, quoting.as_deref()) {
+        let mut quote = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(quote) => quote,
             Err(reason) => {
                 self.refuse(chat, quoting, unsent(paths, caption), reason);
@@ -9050,6 +9098,7 @@ impl Worker {
         }
     }
 
+    /// Encodes and dispatches pasted image pixels while preserving the quote for a refused send.
     #[allow(clippy::too_many_arguments)]
     fn send_pasted_image(
         &mut self,
@@ -9059,7 +9108,7 @@ impl Worker {
         rgba: Vec<u8>,
         caption: Option<String>,
         mentions: Vec<String>,
-        quoting: Option<String>,
+        quoting: Option<crate::model::ReplyTarget>,
     ) {
         let unsent = |rgba, caption| Unsent::Image {
             width,
@@ -9067,7 +9116,7 @@ impl Worker {
             rgba,
             caption,
         };
-        let quote = match self.quote(&chat, quoting.as_deref()) {
+        let quote = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(quote) => quote,
             Err(reason) => {
                 self.refuse(chat, quoting, unsent(rgba, caption), reason);
@@ -9124,8 +9173,13 @@ impl Worker {
     }
 
     /// Encodes and sends an OGG/Opus voice message with optional quote.
-    fn send_voice(&mut self, chat: ChatId, samples: Vec<f32>, quoting: Option<String>) {
-        let (context, shown) = match self.quote(&chat, quoting.as_deref()) {
+    fn send_voice(
+        &mut self,
+        chat: ChatId,
+        samples: Vec<f32>,
+        quoting: Option<crate::model::ReplyTarget>,
+    ) {
+        let (context, shown) = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(Some((context, shown))) => (Some(Box::new(context)), Some(shown)),
             Ok(None) => (None, None),
             Err(reason) => {
@@ -9201,8 +9255,14 @@ impl Worker {
         });
     }
 
-    fn send_sticker(&mut self, chat: ChatId, path: PathBuf, quoting: Option<String>) {
-        let quote = match self.quote(&chat, quoting.as_deref()) {
+    /// Dispatches a sticker with its explicit quote and returns both on refusal.
+    fn send_sticker(
+        &mut self,
+        chat: ChatId,
+        path: PathBuf,
+        quoting: Option<crate::model::ReplyTarget>,
+    ) {
+        let quote = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(quote) => quote,
             Err(reason) => {
                 self.refuse(chat, quoting, Unsent::Sticker, reason);
@@ -9244,8 +9304,9 @@ impl Worker {
         });
     }
 
-    fn send_gif(&mut self, chat: ChatId, gif: Gif, quoting: Option<String>) {
-        let quote = match self.quote(&chat, quoting.as_deref()) {
+    /// Dispatches a selected GIF with its explicit quote and returns both on refusal.
+    fn send_gif(&mut self, chat: ChatId, gif: Gif, quoting: Option<crate::model::ReplyTarget>) {
+        let quote = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(quote) => quote,
             Err(reason) => {
                 self.refuse(chat, quoting, Unsent::Gif, reason);
@@ -11045,6 +11106,7 @@ fn parse_history(compressed: &[u8]) -> Result<ParsedHistory, String> {
     })
 }
 
+/// Converts supported protocol message content into local display types, retaining quoted source metadata.
 fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
     let mut diagnostics = HistoryDiagnostics {
         entries: conversation.messages.len(),
@@ -11315,6 +11377,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         let quoted = context_of(base).and_then(|context| {
             let id = context.stanza_id.clone().filter(|id| !id.is_empty())?;
             Some(Quoted {
+                chat: context.remote_jid.clone(),
                 mentions: Vec::new(),
                 id,
                 sender: context.participant.clone().unwrap_or_default(),
@@ -11627,6 +11690,7 @@ mod tests {
         );
     }
 
+    /// Builds a synthetic message carrying protocol quote context for parser regression tests.
     fn message_quoting(sender: &str, sender_name: Option<&str>) -> Message {
         Message {
             id: "message".into(),
@@ -11640,6 +11704,7 @@ mod tests {
             delivered_at: None,
             read_at: None,
             quoted: Some(Quoted {
+                chat: None,
                 id: "quoted".into(),
                 sender: sender.into(),
                 sender_name: sender_name.map(str::to_owned),
@@ -14135,6 +14200,7 @@ mod tests {
         }
     }
 
+    /// Checks that forwarding retains content while removing source conversation delivery and quote state.
     #[test]
     fn forwarded_rows_keep_content_but_reset_conversation_state() {
         let source = Message {
@@ -14149,6 +14215,7 @@ mod tests {
             delivered_at: Some(11),
             read_at: Some(12),
             quoted: Some(Quoted {
+                chat: None,
                 id: "quoted".into(),
                 sender: "two@s.whatsapp.net".into(),
                 sender_name: Some("Bob".into()),
@@ -18222,8 +18289,121 @@ mod receipt_tests {
     }
 
     /// Every command that can send a reply, quoting `quoting` in `PEER`.
-    fn reply_sends(quoting: Option<&str>) -> Vec<(Command, Unsent)> {
-        let quoting = quoting.map(str::to_owned);
+    #[test]
+    fn private_reply_quotes_the_group_even_with_a_matching_dm_message_id() {
+        let (worker, _, _, _) = worker();
+        let group = "12345@g.us";
+        worker.archive.ensure_chat(group, "Group fixture").unwrap();
+        worker.archive.ensure_chat(PEER, "Sender fixture").unwrap();
+        let mut original = own_message("original", 100);
+        original.chat = group.into();
+        original.sender = PEER.into();
+        original.from_me = false;
+        original.content = Content::text("Group original");
+        worker
+            .archive
+            .insert_message(
+                &original,
+                Some(&wa::Message::text("Group original").encode_to_vec()),
+            )
+            .unwrap();
+        worker
+            .archive
+            .insert_message(
+                &own_message("original", 100),
+                Some(&wa::Message::text("Unrelated DM").encode_to_vec()),
+            )
+            .unwrap();
+        let target = crate::model::ReplyTarget {
+            id: "original".into(),
+            chat: Some(group.into()),
+            destination_generation: 0,
+        };
+        let (context, shown) = worker.quote_target(PEER, Some(&target)).unwrap().unwrap();
+        assert_eq!(context.remote_jid.as_deref(), Some(group));
+        assert_eq!(context.participant.as_deref(), Some(PEER));
+        assert_eq!(context.stanza_id.as_deref(), Some("original"));
+        assert_eq!(
+            context.quoted_message.as_option().unwrap().text_content(),
+            Some("Group original")
+        );
+        assert_eq!(shown.chat.as_deref(), Some(group));
+        let mut reply = wa::Message::text("Private reply");
+        attach_quote(&mut reply, Some((context, shown.clone()))).unwrap();
+        assert_eq!(
+            worker.quoted_of(&reply).unwrap().chat.as_deref(),
+            Some(group)
+        );
+        let mut sent = own_message("private-reply", 101);
+        sent.quoted = Some(shown.clone());
+        worker
+            .archive
+            .insert_message(&sent, Some(&reply.encode_to_vec()))
+            .unwrap();
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "private-reply")
+                .unwrap()
+                .unwrap()
+                .quoted,
+            Some(shown)
+        );
+        assert_eq!(
+            worker
+                .quote_target("someone-else@s.whatsapp.net", Some(&target))
+                .map(|_| ()),
+            Err(Refusal::QuoteUnavailable)
+        );
+        original.content = Content::Revoked;
+        worker.archive.insert_message(&original, None).unwrap();
+        assert_eq!(
+            worker.quote_target(PEER, Some(&target)).map(|_| ()),
+            Err(Refusal::QuoteUnavailable)
+        );
+    }
+
+    /// Checks that each send command returns the original group source with its refused private reply.
+    #[tokio::test]
+    async fn every_send_path_preserves_the_private_reply_source_when_refused() {
+        let (mut worker, events, _commands, _wa) = worker();
+        let group = "12345@g.us";
+        worker.archive.ensure_chat(group, "Group fixture").unwrap();
+        let mut original = own_message("original", 100);
+        original.chat = group.into();
+        original.sender = PEER.into();
+        original.from_me = false;
+        worker
+            .archive
+            .insert_message(
+                &original,
+                Some(&wa::Message::text("Original").encode_to_vec()),
+            )
+            .unwrap();
+        for (id, reason) in [
+            ("original", Refusal::Offline),
+            ("missing", Refusal::QuoteUnavailable),
+        ] {
+            let target = crate::model::ReplyTarget {
+                id: id.into(),
+                chat: Some(group.into()),
+                destination_generation: 0,
+            };
+            for (command, unsent) in reply_sends(Some(target.clone())) {
+                worker.handle_command(command).await;
+                let refused: Vec<_> = events
+                    .try_iter()
+                    .filter(|event| matches!(event, Event::SendRefused { .. }))
+                    .collect();
+                assert!(
+                    matches!(refused.as_slice(), [Event::SendRefused { chat, quoting: Some(quote), unsent: returned, reason: refusal }] if chat == PEER && quote == &target && returned == &unsent && refusal == &reason)
+                );
+            }
+        }
+    }
+
+    /// Enumerates synthetic send commands and matching unsent payloads with a shared quote target.
+    fn reply_sends(quoting: Option<crate::model::ReplyTarget>) -> Vec<(Command, Unsent)> {
         let gif = Gif {
             id: "fixture-gif".into(),
             still: None,
@@ -18305,6 +18485,14 @@ mod receipt_tests {
                 Unsent::Sticker,
             ),
             (
+                Command::StickerMade {
+                    result: Ok("/fixture/made-sticker.webp".into()),
+                    chat: Some(PEER.into()),
+                    quoting: quoting.clone(),
+                },
+                Unsent::Sticker,
+            ),
+            (
                 Command::SendGif {
                     chat: PEER.into(),
                     gif,
@@ -18315,6 +18503,7 @@ mod receipt_tests {
         ]
     }
 
+    /// Checks that every send path refuses missing originals instead of sending an unquoted reply.
     #[tokio::test]
     async fn every_send_path_refuses_a_reply_it_cannot_quote() {
         let (mut worker, events, _commands, _wa) = worker();
@@ -18338,7 +18527,7 @@ mod receipt_tests {
             (Some("original"), Refusal::Offline),
             (None, Refusal::Offline),
         ] {
-            for (command, unsent) in reply_sends(quoting) {
+            for (command, unsent) in reply_sends(quoting.map(crate::model::ReplyTarget::from)) {
                 let label = format!("{command:?}");
                 worker.handle_command(command).await;
                 let refused: Vec<_> = events
@@ -18384,7 +18573,7 @@ mod receipt_tests {
             .unwrap();
         let before = worker.archive.messages(PEER, None, 100).unwrap().len();
         for quoting in [None, Some("original")] {
-            for (command, unsent) in reply_sends(quoting) {
+            for (command, unsent) in reply_sends(quoting.map(Into::into)) {
                 let label = format!("{command:?}");
                 worker.handle_command(command).await;
                 let refused: Vec<_> = events
