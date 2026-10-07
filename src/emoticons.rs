@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::convert_typed_emoticons;
+    use super::{convert_typed_emoticons, match_before};
 
     #[test]
     fn cursor_match_requires_whitespace_boundaries_and_skips_code() {
