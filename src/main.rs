@@ -227,7 +227,7 @@ fn run() -> eframe::Result<()> {
     }
     let settings = settings::Settings::load(&dirs.settings_file());
     // Configure fastframe-emoji before any renderer wrapper can initialize it.
-    emoji::setup(settings.emoji_renderer);
+    zapfast::emoji::setup(settings.emoji_renderer);
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
 
     #[allow(unused_mut)]
