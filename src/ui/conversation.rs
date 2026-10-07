@@ -1706,6 +1706,7 @@ struct View<'a> {
     me: Option<&'a str>,
     auto_download: bool,
     connected: bool,
+    account_receipts_off: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
     interactive_pending: &'a HashSet<(ChatId, String)>,
     /// Whether this chat is selecting whole messages.
@@ -1813,6 +1814,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         me: app.me.as_deref(),
         auto_download: app.account().settings.auto_download,
         connected: app.link.is_connected(),
+        account_receipts_off: app.account_receipts_off,
         poll_voting: &app.poll_voting,
         interactive_pending: &app.interactive_sending,
         selecting: app
@@ -3877,6 +3879,35 @@ fn time_over_picture(message: &Message) -> bool {
     matches!(message.content, Content::Image { caption: None, .. })
 }
 
+/// The ticks a message in this view shows (see [`display_delivery`]).
+fn shown_delivery(view: &View<'_>, message: &Message) -> Delivery {
+    display_delivery(
+        message.status,
+        message.from_me,
+        view.chat.kind,
+        view.account_receipts_off,
+    )
+}
+
+/// A DM read receipt is not visible in WhatsApp when our account has read
+/// receipts off. Keep the archived status intact, but match that display here.
+pub(super) fn display_delivery(
+    status: Delivery,
+    from_me: bool,
+    chat_kind: crate::model::ChatKind,
+    account_receipts_off: bool,
+) -> Delivery {
+    if account_receipts_off
+        && chat_kind == crate::model::ChatKind::Direct
+        && from_me
+        && status == Delivery::Read
+    {
+        Delivery::Delivered
+    } else {
+        status
+    }
+}
+
 /// Space between a picture's edges and the time drawn over it: the scrim
 /// around the time keeps a few points clear of the rounded corner.
 const OVER_PICTURE_INSET: Vec2 = vec2(10.0, 6.0);
@@ -3917,7 +3948,13 @@ fn footer_over_picture(
     let mut x = row.right();
     if message.from_me {
         let ticks = Rect::from_center_size(pos2(x - 7.5, row.center().y), Vec2::splat(15.0));
-        widgets::ticks_in(ui, palette, ticks, message.status, Color32::WHITE);
+        widgets::ticks_in(
+            ui,
+            palette,
+            ticks,
+            shown_delivery(view, message),
+            Color32::WHITE,
+        );
         x -= tick_width;
     }
     x -= time.size().x;
@@ -4048,7 +4085,7 @@ fn footer(
     let mut x = rect.right();
     if message.from_me {
         let ticks = Rect::from_center_size(pos2(x - 7.5, rect.center().y), Vec2::splat(15.0));
-        widgets::ticks(ui, palette, ticks, message.status);
+        widgets::ticks(ui, palette, ticks, shown_delivery(view, message));
         x -= tick_width;
     }
     x -= time.size().x;
@@ -7596,6 +7633,54 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_read_receipt_privacy_hides_read_ticks_only_in_outgoing_dms() {
+        use crate::model::ChatKind;
+
+        assert_eq!(
+            display_delivery(Delivery::Read, true, ChatKind::Direct, true),
+            Delivery::Delivered
+        );
+        assert_eq!(
+            display_delivery(Delivery::Played, true, ChatKind::Direct, true),
+            Delivery::Played
+        );
+        assert_eq!(
+            display_delivery(Delivery::Read, true, ChatKind::Group, true),
+            Delivery::Read
+        );
+        assert_eq!(
+            display_delivery(Delivery::Read, false, ChatKind::Direct, true),
+            Delivery::Read
+        );
+        assert_eq!(
+            display_delivery(Delivery::Read, true, ChatKind::Direct, false),
+            Delivery::Read
+        );
+    }
+
+    #[test]
+    fn account_privacy_preserves_non_read_states_and_broadcasts() {
+        use crate::model::ChatKind;
+        for status in [
+            Delivery::None,
+            Delivery::Pending,
+            Delivery::Sent,
+            Delivery::Delivered,
+            Delivery::Played,
+            Delivery::Failed,
+        ] {
+            assert_eq!(
+                display_delivery(status, true, ChatKind::Direct, true),
+                status
+            );
+        }
+        assert_eq!(
+            display_delivery(Delivery::Read, true, ChatKind::Broadcast, true),
+            Delivery::Read
+        );
+    }
 
     #[test]
     fn sender_pictures_show_in_groups_only() {
