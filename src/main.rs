@@ -20,6 +20,10 @@ struct Cli {
     #[arg(long)]
     start_hidden: bool,
 
+    /// Open a WhatsApp chat link, preparing its text without sending it.
+    #[arg(value_name = "WHATSAPP_URL", conflicts_with = "start_hidden")]
+    whatsapp_url: Option<String>,
+
     /// Start with offline sample chats.
     #[cfg(feature = "demo")]
     #[arg(long)]
@@ -142,6 +146,16 @@ fn run() -> eframe::Result<()> {
     // `--update-receipt` and `--update-error` off the command line.
     let launch = fastframe_update::intercept(&zapfast::updates::CONFIG);
     let cli = Cli::parse_from(&launch.arguments);
+    let chat_link = cli
+        .whatsapp_url
+        .as_deref()
+        .map(zapfast::chat_link::ChatLink::parse)
+        .transpose()
+        .map_err(|error| {
+            eframe::Error::AppCreation(
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, error).into(),
+            )
+        })?;
     let discovered = paths::AppDirs::discover();
     if matches!(cli.command, Some(Control::ReloadThemes)) {
         if let Err(error) = single_instance::send(&discovered.runtime, "reload-themes") {
@@ -168,7 +182,12 @@ fn run() -> eframe::Result<()> {
         None
     } else {
         // A hidden start must not surface a copy that is already running.
-        let verb = if cli.start_hidden { "ping" } else { "show" };
+        let request = chat_link
+            .as_ref()
+            .map(zapfast::chat_link::ChatLink::request);
+        let verb = request
+            .as_deref()
+            .unwrap_or(if cli.start_hidden { "ping" } else { "show" });
         match single_instance::acquire(&discovered.runtime, &waker, verb) {
             single_instance::Outcome::Only(guard) => Some(guard),
             single_instance::Outcome::Surfaced if cli.start_hidden => {
@@ -180,7 +199,13 @@ fn run() -> eframe::Result<()> {
                 return Ok(());
             }
             single_instance::Outcome::Unanswered => {
-                eprintln!("ZapFast is already running but did not answer");
+                if chat_link.is_some() {
+                    eprintln!(
+                        "The running ZapFast cannot open this link. Quit it and open the link again."
+                    );
+                } else {
+                    eprintln!("ZapFast is already running but did not answer");
+                }
                 return Ok(());
             }
         }
@@ -243,6 +268,9 @@ fn run() -> eframe::Result<()> {
     }
     if let Some(guard) = &instance {
         app.set_remote_control(guard);
+    }
+    if let Some(link) = chat_link {
+        app.open_chat_link(link);
     }
     #[cfg(feature = "demo")]
     if demo {
@@ -635,6 +663,23 @@ fn app_icon() -> egui::IconData {
             width: SIZE as u32,
             height: SIZE as u32,
         }
+    }
+}
+
+#[cfg(test)]
+mod chat_link_cli_tests {
+    use super::*;
+
+    #[test]
+    fn browser_urls_are_positional_and_control_commands_still_work() {
+        let uri = "whatsapp://send?phone=15550100123&text=Hello";
+        let cli = Cli::try_parse_from(["zapfast", uri]).unwrap();
+        assert_eq!(cli.whatsapp_url.as_deref(), Some(uri));
+        assert!(cli.command.is_none());
+        let cli = Cli::try_parse_from(["zapfast", "reload-themes"]).unwrap();
+        assert!(matches!(cli.command, Some(Control::ReloadThemes)));
+        assert!(cli.whatsapp_url.is_none());
+        assert!(Cli::try_parse_from(["zapfast", "--start-hidden", uri]).is_err());
     }
 }
 

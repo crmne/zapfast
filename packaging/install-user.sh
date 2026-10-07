@@ -7,7 +7,7 @@
 #   prefix  the install prefix   (default: $PREFIX, else ~/.local with data
 #           in $XDG_DATA_HOME when it is set)
 #
-# The desktop file in packaging/ names its binary as `Exec=zapfast`, which is
+# The desktop file in packaging/ names its binary as `Exec=zapfast %u`, which is
 # right for a package: a package manager installs the binary to /usr/bin,
 # where every session finds it on PATH. A user install lands in ~/.local/bin,
 # which a graphical session often does not put on PATH, so `Exec=zapfast`
@@ -45,10 +45,12 @@ installed="$bin_dir/zapfast"
 install -Dm755 "$binary" "$installed"
 install -Dm644 "$here/icons/zapfast.svg" "$icons_dir/zapfast.svg"
 mkdir -p "$apps_dir"
-# The one line that changes: `Exec=zapfast` becomes the path just installed,
+# The one line that changes: `Exec=zapfast %u` uses the path just installed,
 # so the entry works whether or not ~/.local/bin is on the session's PATH.
 #
-# The path is quoted and escaped the way a Desktop Entry's Exec key wants, the
+# A simple absolute path stays unquoted: xdg-open's generic desktop handler
+# treats quotes as part of the command name. Paths with reserved characters
+# are quoted and escaped the way a Desktop Entry's Exec key wants, the
 # same rules src/autostart.rs applies to the tray entry, because a home
 # directory like `/home/alice/Zap Fast` is valid: unquoted, the launcher would
 # read that as an executable plus an argument and the entry would do nothing.
@@ -69,7 +71,12 @@ EXEC_PATH="$installed" awk '
     }
     return out "\""
   }
-  /^Exec=/ { print "Exec=" quote(ENVIRON["EXEC_PATH"]); next }
+  /^Exec=/ {
+    path = ENVIRON["EXEC_PATH"]
+    if (path !~ /^\/[A-Za-z0-9_.\/-]+$/) path = quote(path)
+    print "Exec=" path " %u"
+    next
+  }
   { print }
 ' "$here/applications/zapfast.desktop" > "$apps_dir/zapfast.desktop"
 
@@ -84,5 +91,5 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 echo "Installed $installed"
-echo "Installed $apps_dir/zapfast.desktop (Exec=\"$installed\")"
+echo "Installed $apps_dir/zapfast.desktop"
 echo "ZapFast now opens from the application launcher."

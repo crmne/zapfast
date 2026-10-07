@@ -323,6 +323,29 @@ WhatsApp lets you edit a group's info, rename it with the pencil beside its
 name and click its photo to change it. Clicking a `chat.whatsapp.com` invite
 link shows the group and joins it without leaving ZapFast.
 
+## Browser chat links
+
+**Development builds** can open `whatsapp://send` links from a browser or
+another application. The link opens its recipient on the active WhatsApp
+account and puts any `text=` message in the composer as an unsent draft.
+An existing draft is kept, with the link's text appended on a new line.
+
+On Linux, choose ZapFast as the handler after installing it:
+
+```sh
+xdg-mime default zapfast.desktop x-scheme-handler/whatsapp
+xdg-open 'whatsapp://send?phone=15550100123&text=Hello%20from%20a%20link'
+```
+
+Use the full international phone number, including the country code. Text
+is URL-decoded, including accents, emoji, and line breaks. You can also pass
+the same link directly to `zapfast` on the command line.
+
+If ZapFast is already running, the link goes to that copy and brings its
+window forward. It waits for the account's archive to load and for the app
+to be unlocked. A link cannot open a locked chat outside its locked folder.
+Very long links are refused before opening a chat.
+
 ## Locked chats
 
 **Lock chat** in a chat's right-click menu moves it into a locked folder: it

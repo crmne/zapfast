@@ -31,6 +31,8 @@ pub struct Account {
     pub me_name: Option<String>,
     pub me_about: Option<String>,
     pub chats: Vec<Chat>,
+    /// The archive's initial chat list has arrived, including offline.
+    pub(crate) chats_loaded: bool,
     pub contacts: HashMap<String, Contact>,
     pub conversations: HashMap<ChatId, Conversation>,
     pub open_chat: Option<ChatId>,
@@ -97,6 +99,7 @@ impl Account {
             me_name: None,
             me_about: None,
             chats: Vec::new(),
+            chats_loaded: false,
             contacts: HashMap::new(),
             conversations: HashMap::new(),
             open_chat,

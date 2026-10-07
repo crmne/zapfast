@@ -615,6 +615,8 @@ pub struct App {
     reopen: bool,
     /// Requests received from later launches.
     control_commands: Option<std::sync::Arc<std::sync::Mutex<Vec<ControlCommand>>>>,
+    /// Browser links wait for this account's archive and the app's unlock.
+    pending_chat_links: Vec<(AccountId, crate::chat_link::ChatLink)>,
     /// Chats and messages from clicked notifications.
     notification_opens: std::sync::Arc<std::sync::Mutex<Vec<crate::notify::NotificationTarget>>>,
     notifications: crate::notify::Notifications,
@@ -1126,6 +1128,7 @@ impl App {
             wayland: wayland_session(),
             reopen: false,
             control_commands: None,
+            pending_chat_links: Vec::new(),
             notification_opens: Default::default(),
             notifications: Default::default(),
             badge: None,
@@ -1480,7 +1483,66 @@ impl App {
                 ControlCommand::Show => self.actions.push(Action::ShowWindow),
                 ControlCommand::ReloadThemes => self.actions.push(Action::ReloadThemes),
                 ControlCommand::Ping => {}
+                ControlCommand::OpenChatLink(link) => self.open_chat_link(link),
             }
+        }
+    }
+
+    /// A launch or browser click opens on the account that was active then.
+    pub fn open_chat_link(&mut self, link: crate::chat_link::ChatLink) {
+        self.pending_chat_links
+            .push((self.account().id.clone(), link));
+        self.actions.push(Action::ShowWindow);
+    }
+
+    fn handle_chat_links(&mut self, ctx: &egui::Context) {
+        if self.app_lock.is_locked() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending_chat_links);
+        for (account, link) in pending {
+            let Some(target) = self
+                .accounts
+                .iter()
+                .find(|candidate| candidate.id == account)
+            else {
+                continue;
+            };
+            if !target.chats_loaded {
+                self.pending_chat_links.push((account, link));
+                continue;
+            }
+            self.switch_account(&account);
+            let id = link.chat_id();
+            if self.chat(&id).is_some_and(|chat| chat.locked) && !self.locked_folder_open() {
+                continue;
+            }
+            let name = self.display_name(&id);
+            self.apply(
+                Action::StartChat {
+                    id: id.clone(),
+                    name,
+                },
+                ctx,
+            );
+            // A browser link cannot bypass the phone's locked-chat folder.
+            if self.open_chat.as_deref() != Some(id.as_str()) {
+                continue;
+            }
+            self.page = Page::Chats;
+            if let Some(text) = link.text.filter(|text| !text.is_empty()) {
+                self.apply(Action::CancelEdit, ctx);
+                self.reply_to = None;
+                // Keep text already drafted for this recipient.
+                if !self.composer.is_empty() {
+                    self.composer.push('\n');
+                }
+                self.composer.push_str(&text);
+                self.emoji_start = None;
+                self.mention_start = None;
+                self.store_draft(&id, &self.composer);
+            }
+            self.refocus_composer(ctx);
         }
     }
 
@@ -2455,6 +2517,7 @@ impl App {
                 }
             }
             Event::Chats(chats) => {
+                self.chats_loaded = true;
                 for chat in &chats {
                     if chat.unread == 0 {
                         self.clear_chat_notifications(&chat.id);
@@ -3017,6 +3080,7 @@ impl App {
                 self.poll_draft = Default::default();
                 self.notifications.clear_account(&account);
                 self.chats.clear();
+                self.chats_loaded = false;
                 self.conversations.clear();
                 self.contacts.clear();
                 self.avatars.clear();
@@ -5848,6 +5912,7 @@ impl App {
         self.wallpaper_image.sync(wallpaper.as_deref(), &self.waker);
         self.handle_notification_opens();
         self.handle_events();
+        self.handle_chat_links(ctx);
         self.tick(ctx);
         self.tick_audio();
         self.tick_video(ctx);
@@ -6788,6 +6853,137 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    fn browser_link(text: &str) -> crate::chat_link::ChatLink {
+        crate::chat_link::ChatLink::parse(&format!("whatsapp://send?phone=15550100123&text={text}"))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_browser_link_waits_for_the_archive_and_never_sends_the_draft() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.open_chat = Some("15550100124@s.whatsapp.net".into());
+        app.composer = "Existing draft in another chat".into();
+        app.open_chat_link(browser_link(
+            "Hola%2C+informaci%C3%B3n+%26+precio+%F0%9F%98%8A",
+        ));
+        app.handle_chat_links(&ctx);
+        assert_eq!(app.composer, "Existing draft in another chat");
+        assert_eq!(app.pending_chat_links.len(), 1);
+
+        events
+            .send(Event::Chats(vec![Chat::new(
+                "15550100124@s.whatsapp.net".into(),
+                "Previous chat".into(),
+            )]))
+            .unwrap();
+        app.handle_events();
+        app.handle_chat_links(&ctx);
+        app.apply_actions(&ctx);
+        assert_eq!(app.open_chat.as_deref(), Some("15550100123@s.whatsapp.net"));
+        assert_eq!(app.composer, "Hola, información & precio 😊");
+        assert_eq!(
+            app.drafts["15550100124@s.whatsapp.net"],
+            "Existing draft in another chat"
+        );
+        assert!(app.pending_chat_links.is_empty());
+        let mut saved = false;
+        while let Ok(command) = commands.try_recv() {
+            assert!(!matches!(
+                command,
+                Command::SendText { .. } | Command::EditText { .. }
+            ));
+            if let Command::SaveDraft { chat, text } = command
+                && chat == "15550100123@s.whatsapp.net"
+            {
+                assert_eq!(text, app.composer);
+                saved = true;
+            }
+        }
+        assert!(saved, "the prepared text is persisted only as a draft");
+    }
+
+    #[test]
+    fn browser_links_preserve_existing_drafts_for_the_same_recipient() {
+        let mut app = app();
+        app.chats_loaded = true;
+        app.chats.push(Chat::new(
+            "15550100123@s.whatsapp.net".into(),
+            "Peer".into(),
+        ));
+        app.open_chat = Some("15550100123@s.whatsapp.net".into());
+        app.composer = "Already typed".into();
+        let ctx = egui::Context::default();
+        app.open_chat_link(browser_link("Link+draft"));
+        app.handle_chat_links(&ctx);
+        assert_eq!(app.composer, "Already typed\nLink draft");
+        assert_eq!(app.chats.len(), 1);
+        app.open_chat_link(browser_link(""));
+        app.handle_chat_links(&ctx);
+        assert_eq!(app.composer, "Already typed\nLink draft");
+    }
+
+    #[test]
+    fn browser_drafts_do_not_edit_or_quote_an_existing_message() {
+        let mut app = app();
+        app.chats_loaded = true;
+        app.chats.push(Chat::new(
+            "15550100123@s.whatsapp.net".into(),
+            "Peer".into(),
+        ));
+        app.open_chat = Some("15550100123@s.whatsapp.net".into());
+        app.editing = Some("message-id".into());
+        app.reply_to = Some("quoted-id".into());
+        app.composer = "Message being edited".into();
+        app.open_chat_link(browser_link("Fresh+draft"));
+        app.handle_chat_links(&egui::Context::default());
+        assert_eq!(app.composer, "Fresh draft");
+        assert!(app.editing.is_none());
+        assert!(app.reply_to.is_none());
+    }
+
+    #[test]
+    fn browser_links_wait_for_the_app_unlock_and_cannot_open_locked_chats() {
+        let mut app = app();
+        app.chats_loaded = true;
+        app.app_lock.lock();
+        let ctx = egui::Context::default();
+        app.open_chat_link(browser_link("Waiting+draft"));
+        app.handle_chat_links(&ctx);
+        assert!(app.open_chat.is_none());
+        assert!(app.composer.is_empty());
+        assert_eq!(app.pending_chat_links.len(), 1);
+        app.app_lock.release();
+        app.handle_chat_links(&ctx);
+        assert_eq!(app.composer, "Waiting draft");
+
+        app.chats[0].locked = true;
+        app.open_chat = None;
+        app.composer.clear();
+        app.open_chat_link(browser_link("Hidden+draft"));
+        app.handle_chat_links(&ctx);
+        assert!(app.open_chat.is_none());
+        assert!(app.composer.is_empty());
+    }
+
+    #[test]
+    fn a_waiting_browser_link_keeps_the_account_it_was_opened_on() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        let second = app.accounts[1].id.clone();
+        app.switch_account(&second);
+        app.open_chat_link(browser_link("Second+account"));
+        app.switch_account(&AccountId::first());
+        app.accounts[1].chats_loaded = true;
+        app.handle_chat_links(&ctx);
+        assert_eq!(app.account().id, second);
+        assert_eq!(app.composer, "Second account");
+        assert!(app.accounts[0].chats.is_empty());
     }
 
     #[test]

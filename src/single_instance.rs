@@ -41,7 +41,7 @@ pub enum Outcome {
 }
 
 /// Request from another launch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ControlCommand {
     /// Shows or creates the window.
     Show,
@@ -49,6 +49,8 @@ pub enum ControlCommand {
     ReloadThemes,
     /// Confirms an instance is running and changes nothing.
     Ping,
+    /// Opens a recipient with an optional unsent draft on the active account.
+    OpenChatLink(crate::chat_link::ChatLink),
 }
 
 type Queue = Arc<Mutex<Vec<ControlCommand>>>;
@@ -85,8 +87,16 @@ pub fn acquire(dir: &Path, waker: &crate::backend::Waker, verb: &str) -> Outcome
             return Outcome::Unanswered;
         }
     };
-    if legacy_instance_answers(verb) {
-        return Outcome::Surfaced;
+    let probe = legacy_probe(verb);
+    if legacy_instance_answers(probe) {
+        // Older copies cannot receive a chat link. Never start beside one on
+        // its archive, and never send the recipient or draft to the legacy
+        // loopback port, whose peer is not authenticated.
+        return if probe == verb {
+            Outcome::Surfaced
+        } else {
+            Outcome::Unanswered
+        };
     }
     listen_legacy(Arc::clone(&commands), waker.clone());
     Outcome::Only(Guard {
@@ -127,7 +137,18 @@ fn parse(verb: &str) -> Option<ControlCommand> {
         "show" => Some(ControlCommand::Show),
         "reload-themes" => Some(ControlCommand::ReloadThemes),
         "ping" => Some(ControlCommand::Ping),
-        _ => None,
+        _ => verb
+            .strip_prefix("open-link ")
+            .and_then(|link| crate::chat_link::ChatLink::parse(link).ok())
+            .map(ControlCommand::OpenChatLink),
+    }
+}
+
+fn legacy_probe(verb: &str) -> &str {
+    if verb.starts_with("open-link ") {
+        "show"
+    } else {
+        verb
     }
 }
 
@@ -267,9 +288,19 @@ mod tests {
         legacy_request(connect(port), "show").expect("an older launch surfaces this one");
         legacy_request(connect(port), "ping").expect("a background start sees this one");
         assert!(legacy_request(connect(port), "reload-themes").is_err());
+        let link =
+            crate::chat_link::ChatLink::parse("whatsapp://send?phone=15550100123&text=Hello")
+                .unwrap();
+        let request = link.request();
+        legacy_request(connect(port), legacy_probe(&request))
+            .expect("an older copy is shown without receiving the recipient or draft");
         assert_eq!(
             *commands.lock().unwrap(),
-            vec![ControlCommand::Show, ControlCommand::Ping]
+            vec![
+                ControlCommand::Show,
+                ControlCommand::Ping,
+                ControlCommand::Show
+            ]
         );
     }
 
@@ -347,5 +378,29 @@ mod tests {
             ]
         );
         drop(first);
+    }
+
+    #[test]
+    fn browser_links_reach_the_running_copy_with_long_multiline_drafts() {
+        let directory = tempfile::tempdir().unwrap();
+        let dir = directory.path().join("runtime");
+        let commands = Queue::default();
+        let waker = crate::backend::Waker::default();
+        let fastframe_instance::Claim::First(guard) = claim(&dir, "show", &commands, &waker) else {
+            panic!("the first launch takes the slot");
+        };
+        let mut url = reqwest::Url::parse("whatsapp://send").unwrap();
+        url.query_pairs_mut().append_pair("phone", "15550100123");
+        url.query_pairs_mut()
+            .append_pair("text", &"Hello 😊\n".repeat(100));
+        let link = crate::chat_link::ChatLink::parse(url.as_str()).unwrap();
+        assert!(link.request().len() > LEGACY_REQUEST_LIMIT);
+        send(&dir, &link.request()).unwrap();
+        assert_eq!(
+            *commands.lock().unwrap(),
+            vec![ControlCommand::OpenChatLink(link)]
+        );
+        assert!(send(&dir, "open-link whatsapp://send?phone=invalid").is_err());
+        drop(guard);
     }
 }

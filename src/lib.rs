@@ -9,6 +9,7 @@ pub mod audio;
 pub mod autostart;
 pub mod backend;
 pub mod bidi;
+pub mod chat_link;
 #[cfg(any(test, feature = "demo"))]
 pub mod demo;
 pub mod diagnostics;
