@@ -488,6 +488,35 @@ fn sections(app: &App) -> Vec<Section> {
     if app.account().settings.notifications {
         let (title, description) = sound_text(locale, false);
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
+        notifications.row(
+            translated(locale, "Limit repeat notifications"),
+            translated(
+                locale,
+                "After one notification, a chat stays quiet for 10 minutes. Opening the chat resets this. In groups, mentions and replies to you still notify.",
+            ),
+            |ui, app| {
+                let palette = app.palette;
+                let locale = app.locale;
+                let selected = app.account().settings.limit_notifications;
+                let response = egui::ComboBox::from_id_salt("limit_notifications")
+                    .selected_text(selected.label(locale))
+                    .width(200.0_f32.min(ui.available_width()))
+                    .show_ui(ui, |ui| {
+                        for limit in crate::settings::NotificationLimit::ALL {
+                            if theme_option(
+                                ui,
+                                &palette,
+                                limit.label(locale).as_ref(),
+                                limit == selected,
+                            ) {
+                                app.account_mut().settings.limit_notifications = limit;
+                                app.account_mut().mark_settings_dirty();
+                            }
+                        }
+                    });
+                theme::reveal_focus(&response.response);
+            },
+        );
         notifications.toggle(
             translated(locale, "Play sounds for group messages"),
             translated(
