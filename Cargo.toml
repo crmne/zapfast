@@ -96,6 +96,8 @@ arboard = { version = "3", default-features = false, features = ["image-data", "
 mime_guess2 = "2"
 # Emoji names, groups, and shortcodes for picker search.
 emojis = "0.9"
+# Appends the hostname to the device name shown in WhatsApp's Linked Devices.
+gethostname = "1"
 
 # Rasterizes the SVG logo for windows, the tray, and notifications. Already
 # included through egui_extras.

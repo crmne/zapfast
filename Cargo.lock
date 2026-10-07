@@ -7607,6 +7607,7 @@ dependencies = [
  "fastframe-theme",
  "fastframe-tray",
  "fastframe-update",
+ "gethostname",
  "getrandom 0.4.3",
  "hkdf",
  "hmac",

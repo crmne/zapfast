@@ -568,6 +568,11 @@ fn brazilian_phone(digits: &str) -> Option<String> {
     ))
 }
 
+/// The machine's hostname, or an empty string if it cannot be read.
+pub fn hostname() -> String {
+    gethostname::gethostname().to_string_lossy().into_owned()
+}
+
 /// Stable id-derived avatar hue.
 pub fn hue(seed: &str) -> f32 {
     let mut hash: u32 = 2_166_136_261;

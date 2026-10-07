@@ -373,6 +373,17 @@ impl Downloadable for PhoneSticker {
     }
 }
 
+/// The device name shown in WhatsApp's Linked Devices list, with the
+/// hostname appended so multiple machines can be told apart (#210).
+fn device_name() -> String {
+    let host = crate::util::hostname();
+    if host.is_empty() {
+        "ZapFast".to_owned()
+    } else {
+        format!("ZapFast ({host})")
+    }
+}
+
 /// App version in WhatsApp device-property format.
 fn app_version() -> wa::device_props::AppVersion {
     let mut parts = env!("CARGO_PKG_VERSION")
@@ -1630,7 +1641,7 @@ impl Worker {
             // WhatsApp reads the linked-device name, version, and icon at pairing.
             .with_device_props(
                 DevicePropsOverride::new()
-                    .with_os("ZapFast")
+                    .with_os(device_name())
                     .with_version(app_version())
                     .with_platform_type(wa::device_props::PlatformType::DESKTOP),
             )
