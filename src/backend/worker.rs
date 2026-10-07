@@ -4274,6 +4274,7 @@ impl Worker {
                 if let Ok(Some(existing)) = self.archive.message(&id, &row.id) {
                     existed = true;
                     row.content.keep_local_paths(&existing.content);
+                    keep_live_location_notice(&mut row.content, &existing);
                     // A repeated original must not undo a later edit or revoke.
                     if (existing.edited && !row.edited)
                         || matches!(existing.content, Content::Revoked)
@@ -4285,7 +4286,6 @@ impl Worker {
                         row.thumbnail = existing.thumbnail.clone();
                         keep_raw = true;
                     }
-                    keep_live_location_notice(&mut row.content, &existing);
                 }
                 if let Err(error) = self
                     .archive
