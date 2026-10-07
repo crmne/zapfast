@@ -1736,6 +1736,26 @@ impl Archive {
             .optional()
     }
 
+    /// The id of `sender`'s only live location in `chat` since `since`.
+    /// Returns `None` when more than one share could match an unreferenced update.
+    pub fn unique_live_location(
+        &self,
+        chat: &str,
+        sender: &str,
+        since: i64,
+    ) -> Result<Option<String>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id FROM messages
+             WHERE chat = ?1 AND timestamp >= ?3 AND sender = ?2
+               AND json_extract(content, '$.kind') = 'livelocation'
+             ORDER BY timestamp DESC LIMIT 2",
+        )?;
+        let mut ids = statement
+            .query_map(params![chat, sender, since], |row| row.get(0))?
+            .collect::<Result<Vec<String>>>()?;
+        Ok((ids.len() == 1).then(|| ids.remove(0)))
+    }
+
     /// The id of `sender`'s newest message in `chat`.
     pub fn latest_id_from(&self, chat: &str, sender: &str) -> Result<Option<String>> {
         self.connection

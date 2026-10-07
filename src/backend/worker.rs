@@ -3375,7 +3375,7 @@ impl Worker {
     /// row, so it owns the fact instead of the chat growing a second bubble.
     fn mark_share_on_the_phone(&mut self, chat: &str, sender: &str, id: &str, now: i64) -> bool {
         let since = now - LIVE_LOCATION_LIMIT;
-        let Ok(Some(latest)) = self.archive.latest_live_location(chat, sender, since) else {
+        let Ok(Some(latest)) = self.archive.unique_live_location(chat, sender, since) else {
             return false;
         };
         if latest == id {

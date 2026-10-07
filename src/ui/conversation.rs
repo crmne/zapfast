@@ -4734,6 +4734,12 @@ fn content(
             let over = message
                 .content
                 .live_location_over(message.timestamp, view.now);
+            if !over {
+                let until_expiry =
+                    (message.timestamp + crate::model::LIVE_LOCATION_LIMIT - view.now).max(1);
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(until_expiry as u64));
+            }
             let title = if over {
                 crate::i18n::gettext(view.locale, "Live location ended")
             } else {
