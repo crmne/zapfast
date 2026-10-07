@@ -493,7 +493,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         let picture = app.avatar(&voter.id);
-                        widgets::avatar(
+                        let avatar_response = widgets::avatar(
                             ui,
                             &palette,
                             &voter.name,
@@ -501,8 +501,35 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                             34.0,
                             picture.as_deref(),
                         );
+                        if app.settings.screen_privacy.hides(
+                            crate::settings::ScreenPrivacyWhat::Avatar,
+                            avatar_response.hovered(),
+                        ) {
+                            widgets::privacy_cover(
+                                ui,
+                                avatar_response.rect,
+                                palette.surface_hover,
+                                17.0,
+                            );
+                        }
                         ui.vertical(|ui| {
-                            widgets::rich_text(ui, &voter.name, theme::regular(14.0), palette.text);
+                            let name_response = widgets::rich_text(
+                                ui,
+                                &voter.name,
+                                theme::regular(14.0),
+                                palette.text,
+                            );
+                            if app.settings.screen_privacy.hides(
+                                crate::settings::ScreenPrivacyWhat::Name,
+                                name_response.hovered(),
+                            ) {
+                                widgets::privacy_cover(
+                                    ui,
+                                    name_response.rect,
+                                    palette.surface_hover,
+                                    6.0,
+                                );
+                            }
                             theme::text(
                                 ui,
                                 crate::util::moment_stamp(app.locale, voter.timestamp),

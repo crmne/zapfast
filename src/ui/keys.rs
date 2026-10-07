@@ -77,6 +77,11 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         key(Modifiers::COMMAND, Key::Minus, Action::ZoomBy(-0.1));
         key(Modifiers::COMMAND, Key::Num0, Action::ResetZoom);
         key(Modifiers::COMMAND, Key::End, Action::ScrollToBottom);
+        key(
+            Modifiers::COMMAND | Modifiers::SHIFT,
+            Key::H,
+            Action::ToggleScreenPrivacy,
+        );
     });
     // Escape cancels the topmost state. Menus handle Escape themselves.
     let menu_open = egui::Popup::is_any_open(ctx);
@@ -435,6 +440,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "Paste text, or stage a picture from the clipboard",
     ),
     ("Ctrl+B", "Collapse or expand the chat list"),
+    ("Ctrl+Shift+H", "Toggle screen privacy"),
     ("Ctrl+End", "Jump to the newest message"),
     ("PgUp / PgDn", "Scroll the open chat by a page"),
     (

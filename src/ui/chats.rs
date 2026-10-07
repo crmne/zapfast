@@ -840,6 +840,18 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         Sense::click(),
     );
     theme::reveal_focus(&response);
+    let hidden_avatar = app.settings.screen_privacy.hides(
+        crate::settings::ScreenPrivacyWhat::Avatar,
+        response.hovered(),
+    );
+    let hidden_name = app
+        .settings
+        .screen_privacy
+        .hides(crate::settings::ScreenPrivacyWhat::Name, response.hovered());
+    let hidden_preview = app.settings.screen_privacy.hides(
+        crate::settings::ScreenPrivacyWhat::Preview,
+        response.hovered(),
+    );
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
@@ -855,6 +867,9 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             &hit.chat,
             picture.as_deref(),
         );
+        if hidden_avatar {
+            widgets::privacy_cover(ui, avatar_rect, palette.surface_hover, 24.0);
+        }
         let left = rect.left() + 76.0;
         let right = rect.right() - 14.0;
         let stamp_galley = ui.painter().layout_no_wrap(
@@ -871,6 +886,14 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
         let name = widgets::line(ui, &title, theme::medium(14.5), palette.text, name_width, 1);
         name.paint(ui, pos2(left, name_top), palette.text);
+        if hidden_name {
+            widgets::privacy_cover(
+                ui,
+                Rect::from_min_size(pos2(left, name_top), name.size()),
+                palette.surface_hover,
+                6.0,
+            );
+        }
         // Show the sender for group messages.
         let line_y = rect.top() + 38.0;
         let mut x = left;
@@ -908,6 +931,14 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             1,
         );
         words.paint(ui, pos2(x, line_y), palette.dim);
+        if hidden_preview {
+            widgets::privacy_cover(
+                ui,
+                Rect::from_min_size(pos2(x, line_y), words.size()),
+                palette.surface_hover,
+                6.0,
+            );
+        }
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() {
@@ -955,6 +986,14 @@ fn person_row(
         Sense::click(),
     );
     theme::reveal_focus(&response);
+    let hidden_avatar = app.settings.screen_privacy.hides(
+        crate::settings::ScreenPrivacyWhat::Avatar,
+        response.hovered(),
+    );
+    let hidden_name = app
+        .settings
+        .screen_privacy
+        .hides(crate::settings::ScreenPrivacyWhat::Name, response.hovered());
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
@@ -963,6 +1002,9 @@ fn person_row(
             Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
         let picture = app.avatar(id);
         widgets::paint_avatar(ui, &palette, avatar_rect, name, id, picture.as_deref());
+        if hidden_avatar {
+            widgets::privacy_cover(ui, avatar_rect, palette.surface_hover, 24.0);
+        }
         let left = rect.left() + 76.0;
         let name_line = widgets::line(
             ui,
@@ -973,6 +1015,14 @@ fn person_row(
             1,
         );
         name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
+        if hidden_name {
+            widgets::privacy_cover(
+                ui,
+                Rect::from_min_size(pos2(left, rect.top() + 14.0), name_line.size()),
+                palette.surface_hover,
+                6.0,
+            );
+        }
         if let Some(detail) = detail {
             let phone_line = widgets::line(
                 ui,
@@ -983,6 +1033,14 @@ fn person_row(
                 1,
             );
             phone_line.paint(ui, pos2(left, rect.top() + 38.0), palette.dim);
+            if hidden_name {
+                widgets::privacy_cover(
+                    ui,
+                    Rect::from_min_size(pos2(left, rect.top() + 38.0), phone_line.size()),
+                    palette.surface_hover,
+                    6.0,
+                );
+            }
         }
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1006,6 +1064,19 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         Sense::click(),
     );
     theme::reveal_focus(&response);
+    // Screen privacy hides rows until hovered.
+    let hidden_name = app
+        .settings
+        .screen_privacy
+        .hides(crate::settings::ScreenPrivacyWhat::Name, response.hovered());
+    let hidden_preview = app.settings.screen_privacy.hides(
+        crate::settings::ScreenPrivacyWhat::Preview,
+        response.hovered(),
+    );
+    let hidden_avatar = app.settings.screen_privacy.hides(
+        crate::settings::ScreenPrivacyWhat::Avatar,
+        response.hovered(),
+    );
     // The preview area and the whole last message, when the row cuts it short.
     let mut full_preview: Option<(Rect, String, String)> = None;
     response.widget_info(|| {
@@ -1033,6 +1104,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             &chat.id,
             picture.as_deref(),
         );
+        if hidden_avatar {
+            widgets::privacy_cover(ui, avatar_rect, palette.surface_hover, 24.0);
+        }
         if chat.ephemeral_expiration.is_some() {
             widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
         }
@@ -1067,6 +1141,14 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         };
         let name = widgets::line(ui, &title, name_font, palette.text, name_width, 1);
         name.paint(ui, pos2(left, name_top), palette.text);
+        if hidden_name {
+            widgets::privacy_cover(
+                ui,
+                Rect::from_min_size(pos2(left, name_top), name.size()),
+                palette.surface_hover,
+                6.0,
+            );
+        }
 
         // Leave room for badges beside the latest-message preview.
         let mut badge_right = right;
@@ -1184,6 +1266,14 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::line(ui, "", theme::regular(13.0), preview_color, 1.0, 1)
         };
         preview.paint(ui, pos2(x, line_y), preview_color);
+        if hidden_preview {
+            widgets::privacy_cover(
+                ui,
+                Rect::from_min_size(pos2(x, line_y), preview.size()),
+                palette.surface_hover,
+                6.0,
+            );
+        }
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if let Some((area, prefix, full)) = full_preview {
@@ -1467,6 +1557,14 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), COMPACT_CELL), Sense::click());
     theme::reveal_focus(&response);
+    let hidden_avatar = app.settings.screen_privacy.hides(
+        crate::settings::ScreenPrivacyWhat::Avatar,
+        response.hovered(),
+    );
+    let hidden_name = app
+        .settings
+        .screen_privacy
+        .hides(crate::settings::ScreenPrivacyWhat::Name, response.hovered());
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::SelectableLabel,
@@ -1493,6 +1591,9 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
             &chat.id,
             picture.as_deref(),
         );
+        if hidden_avatar {
+            widgets::privacy_cover(ui, avatar_rect, palette.surface_hover, 24.0);
+        }
         if chat.ephemeral_expiration.is_some() {
             widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
         }
@@ -1523,9 +1624,10 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(compact_chat_id(&chat.id), response.rect));
-    let response = response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(title);
+    let mut response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if !hidden_name {
+        response = response.on_hover_text(title);
+    }
     if response.clicked() {
         app.actions.push(Action::OpenChat(chat.id.clone()));
     }

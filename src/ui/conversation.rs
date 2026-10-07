@@ -16,6 +16,7 @@ use crate::model::{
     Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
     PickerTab, Scroll,
 };
+use crate::settings::{ScreenPrivacy, ScreenPrivacyWhat};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
@@ -144,6 +145,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 // More and Search, and Back in a narrow window.
                 let right_controls = if narrow { 108.0 } else { 72.0 };
                 // Treat the avatar, name, and subtitle as one info button.
+                let mut avatar_cover: Option<(Rect, bool)> = None;
                 let block = ui
                     .scope(|ui| {
                         // Fix the child height before centering its contents.
@@ -169,6 +171,8 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                         avatar_response.rect,
                                     );
                                 }
+                                avatar_cover =
+                                    Some((avatar_response.rect, avatar_response.hovered()));
                                 ui.add_space(4.0);
                                 ui.vertical(|ui| {
                                     let width = (ui.available_width() - right_controls).max(80.0);
@@ -224,6 +228,21 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 if block.clicked() {
                     app.actions
                         .push(Action::ShowDialog(Dialog::ChatInfo(chat.id.clone())));
+                }
+                if let Some((rect, hovered)) = avatar_cover
+                    && app
+                        .settings
+                        .screen_privacy
+                        .hides(crate::settings::ScreenPrivacyWhat::Avatar, hovered)
+                {
+                    widgets::privacy_cover(ui, rect, palette.surface_hover, 20.0);
+                }
+                if app
+                    .settings
+                    .screen_privacy
+                    .hides(crate::settings::ScreenPrivacyWhat::Name, block.hovered())
+                {
+                    widgets::privacy_cover(ui, block.rect, palette.surface_hover, 6.0);
                 }
                 // The item and the width that has to hold it are measured from
                 // the same localized label: a translation wider than the
@@ -1659,6 +1678,15 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
     });
     ui.ctx()
         .data_mut(|data| data.insert_temp(reply_strip_id(), strip.response.rect));
+    if app.settings.screen_privacy.hides(
+        crate::settings::ScreenPrivacyWhat::Name,
+        strip.response.hovered(),
+    ) || app.settings.screen_privacy.hides(
+        crate::settings::ScreenPrivacyWhat::Message,
+        strip.response.hovered(),
+    ) {
+        widgets::privacy_cover(ui, strip.response.rect, palette.surface_hover, 6.0);
+    }
     strip_gap(ui);
 }
 
@@ -1697,6 +1725,7 @@ struct View<'a> {
     avatars: &'a HashMap<String, Option<PathBuf>>,
     contacts: &'a HashMap<String, crate::model::Contact>,
     now: i64,
+    screen_privacy: ScreenPrivacy,
     /// Animate media only while this window is active.
     animate: bool,
     player: &'a crate::audio::Player,
@@ -1804,6 +1833,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         avatars: &avatars,
         contacts: &app.contacts,
         now: crate::util::now(),
+        screen_privacy: app.settings.screen_privacy,
         animate: app.window_focused,
         player: &app.player,
         video: &app.video,
@@ -2923,6 +2953,10 @@ fn bubble(
                         },
                     );
                     theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR / 2.0);
+                    let avatar_hidden = show_sender
+                        && view
+                            .screen_privacy
+                            .hides(ScreenPrivacyWhat::Avatar, avatar.hovered());
                     if show_sender
                         && avatar
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -2942,6 +2976,14 @@ fn bubble(
                                 .get(&message.sender)
                                 .and_then(|picture| picture.as_deref()),
                         );
+                        if avatar_hidden {
+                            widgets::privacy_cover(
+                                ui,
+                                rect,
+                                view.palette.surface_hover,
+                                SENDER_AVATAR / 2.0,
+                            );
+                        }
                     }
                     // Keep bubble content vertically laid out inside the row.
                     ui.vertical(|ui| {
@@ -2979,7 +3021,23 @@ fn bubble(
             }
         },
     );
+    if let Some(response) = &response {
+        let what = privacy_what(&message.content);
+        if view.screen_privacy.hides(what, response.hovered()) {
+            widgets::privacy_cover(ui, response.rect, view.palette.surface_hover, 10.0);
+        }
+    }
     response
+}
+
+/// Which screen-privacy switch covers a message.
+fn privacy_what(content: &Content) -> ScreenPrivacyWhat {
+    match content {
+        Content::Text { .. } | Content::Interactive { .. } | Content::Poll { .. } => {
+            ScreenPrivacyWhat::Message
+        }
+        _ => ScreenPrivacyWhat::Media,
+    }
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -3345,6 +3403,12 @@ fn bubble_frame(
                         Sense::CLICK,
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if view
+                    .screen_privacy
+                    .hides(ScreenPrivacyWhat::Name, response.hovered())
+                {
+                    widgets::privacy_cover(ui, response.rect, view.palette.surface_hover, 6.0);
+                }
                 if response.clicked() {
                     actions.push(Action::ShowDialog(Dialog::ChatInfo(message.sender.clone())));
                 }
@@ -3680,7 +3744,19 @@ fn quote_block(
                 |ui| {
                     ui.set_width(inner_width);
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    widgets::rich_text(ui, &who, theme::semibold(12.5), tint);
+                    let who_response = widgets::rich_text(ui, &who, theme::semibold(12.5), tint);
+                    if !mine
+                        && view
+                            .screen_privacy
+                            .hides(ScreenPrivacyWhat::Name, who_response.hovered())
+                    {
+                        widgets::privacy_cover(
+                            ui,
+                            who_response.rect,
+                            view.palette.surface_hover,
+                            6.0,
+                        );
+                    }
                     widgets::rich_text(ui, &summary, theme::regular(12.5), palette.secondary);
                 },
             );
@@ -7241,6 +7317,33 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_and_polls_take_the_message_switch_the_rest_take_media() {
+        let text = Content::Text {
+            text: "hi".into(),
+            preview: None,
+        };
+        let poll = Content::Poll {
+            question: "q?".into(),
+            options: vec!["a".into()],
+            state: crate::model::PollState::default(),
+        };
+        let image = Content::Image {
+            caption: None,
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 0,
+                width: None,
+                height: None,
+                path: None,
+                state: MediaState::default(),
+            },
+        };
+        assert_eq!(privacy_what(&text), ScreenPrivacyWhat::Message);
+        assert_eq!(privacy_what(&poll), ScreenPrivacyWhat::Message);
+        assert_eq!(privacy_what(&image), ScreenPrivacyWhat::Media);
+    }
 
     #[test]
     fn sender_pictures_show_in_groups_only() {
