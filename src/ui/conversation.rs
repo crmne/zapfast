@@ -1680,6 +1680,7 @@ struct View<'a> {
     me: Option<&'a str>,
     auto_download: bool,
     connected: bool,
+    account_receipts_off: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
     interactive_pending: &'a HashSet<(ChatId, String)>,
     anchor: Option<&'a str>,
@@ -1783,6 +1784,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         me: app.me.as_deref(),
         auto_download: app.account().settings.auto_download,
         connected: app.link.is_connected(),
+        account_receipts_off: app.account_receipts_off,
         poll_voting: &app.poll_voting,
         interactive_pending: &app.interactive_sending,
         anchor: if conversation.loading_older || conversation.fetching_phone {
@@ -3369,9 +3371,31 @@ fn bubble_frame(
                 None => content(ui, view, message, cap, reserve, actions),
             };
             if over_picture && let Some(picture) = slot {
-                footer_over_picture(ui, &palette, message, picture);
+                footer_over_picture(
+                    ui,
+                    &palette,
+                    message,
+                    picture,
+                    display_delivery(
+                        message.status,
+                        message.from_me,
+                        view.chat.kind,
+                        view.account_receipts_off,
+                    ),
+                );
             } else {
-                footer(ui, &palette, message, slot);
+                footer(
+                    ui,
+                    &palette,
+                    message,
+                    slot,
+                    display_delivery(
+                        message.status,
+                        message.from_me,
+                        view.chat.kind,
+                        view.account_receipts_off,
+                    ),
+                );
             }
             if matches!(message.content, Content::Poll { .. }) {
                 super::polls::results_button(
@@ -3837,13 +3861,38 @@ fn time_over_picture(message: &Message) -> bool {
     matches!(message.content, Content::Image { caption: None, .. })
 }
 
+/// A DM read receipt is not visible in WhatsApp when our account has read
+/// receipts off. Keep the archived status intact, but match that display here.
+pub(super) fn display_delivery(
+    status: Delivery,
+    from_me: bool,
+    chat_kind: crate::model::ChatKind,
+    account_receipts_off: bool,
+) -> Delivery {
+    if account_receipts_off
+        && chat_kind == crate::model::ChatKind::Direct
+        && from_me
+        && status == Delivery::Read
+    {
+        Delivery::Delivered
+    } else {
+        status
+    }
+}
+
 /// Space between a picture's edges and the time drawn over it: the scrim
 /// around the time keeps a few points clear of the rounded corner.
 const OVER_PICTURE_INSET: Vec2 = vec2(10.0, 6.0);
 
 /// Paints the time and ticks over the bottom corner of a picture without a
 /// caption, in white on a soft dark scrim so they read on any picture.
-fn footer_over_picture(ui: &mut egui::Ui, palette: &Palette, message: &Message, picture: Rect) {
+fn footer_over_picture(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    message: &Message,
+    picture: Rect,
+    delivery: Delivery,
+) {
     let font = theme::regular(11.0);
     let time =
         ui.painter()
@@ -3870,7 +3919,7 @@ fn footer_over_picture(ui: &mut egui::Ui, palette: &Palette, message: &Message, 
     let mut x = row.right();
     if message.from_me {
         let ticks = Rect::from_center_size(pos2(x - 7.5, row.center().y), Vec2::splat(15.0));
-        widgets::ticks_in(ui, palette, ticks, message.status, Color32::WHITE);
+        widgets::ticks_in(ui, palette, ticks, delivery, Color32::WHITE);
         x -= tick_width;
     }
     x -= time.size().x;
@@ -3912,7 +3961,13 @@ fn not_sent(message: &Message) -> bool {
 }
 
 /// Paints the time and ticks at the bubble's right edge without widening it.
-fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<Rect>) {
+fn footer(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    message: &Message,
+    slot: Option<Rect>,
+    delivery: Delivery,
+) {
     let font = theme::regular(11.0);
     let time = ui.painter().layout_no_wrap(
         crate::util::clock(message.timestamp),
@@ -3952,7 +4007,7 @@ fn footer(ui: &mut egui::Ui, palette: &Palette, message: &Message, slot: Option<
     let mut x = rect.right();
     if message.from_me {
         let ticks = Rect::from_center_size(pos2(x - 7.5, rect.center().y), Vec2::splat(15.0));
-        widgets::ticks(ui, palette, ticks, message.status);
+        widgets::ticks(ui, palette, ticks, delivery);
         x -= tick_width;
     }
     x -= time.size().x;
@@ -7241,6 +7296,54 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_read_receipt_privacy_hides_read_ticks_only_in_outgoing_dms() {
+        use crate::model::ChatKind;
+
+        assert_eq!(
+            display_delivery(Delivery::Read, true, ChatKind::Direct, true),
+            Delivery::Delivered
+        );
+        assert_eq!(
+            display_delivery(Delivery::Played, true, ChatKind::Direct, true),
+            Delivery::Played
+        );
+        assert_eq!(
+            display_delivery(Delivery::Read, true, ChatKind::Group, true),
+            Delivery::Read
+        );
+        assert_eq!(
+            display_delivery(Delivery::Read, false, ChatKind::Direct, true),
+            Delivery::Read
+        );
+        assert_eq!(
+            display_delivery(Delivery::Read, true, ChatKind::Direct, false),
+            Delivery::Read
+        );
+    }
+
+    #[test]
+    fn account_privacy_preserves_non_read_states_and_broadcasts() {
+        use crate::model::ChatKind;
+        for status in [
+            Delivery::None,
+            Delivery::Pending,
+            Delivery::Sent,
+            Delivery::Delivered,
+            Delivery::Played,
+            Delivery::Failed,
+        ] {
+            assert_eq!(
+                display_delivery(status, true, ChatKind::Direct, true),
+                status
+            );
+        }
+        assert_eq!(
+            display_delivery(Delivery::Read, true, ChatKind::Broadcast, true),
+            Delivery::Read
+        );
+    }
 
     #[test]
     fn sender_pictures_show_in_groups_only() {
