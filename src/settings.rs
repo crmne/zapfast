@@ -363,6 +363,57 @@ pub enum NotificationSound {
     Custom(std::path::PathBuf),
 }
 
+/// Local screen privacy: hide content until hovered. Off by default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScreenPrivacy {
+    pub enabled: bool,
+    pub blur_messages: bool,
+    pub blur_previews: bool,
+    pub blur_media: bool,
+    pub blur_names: bool,
+    pub blur_avatars: bool,
+}
+
+impl Default for ScreenPrivacy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            blur_messages: true,
+            blur_previews: true,
+            blur_media: true,
+            blur_names: false,
+            blur_avatars: true,
+        }
+    }
+}
+
+impl ScreenPrivacy {
+    /// True when `what` stays hidden (`hovered` reveals it).
+    pub fn hides(self, what: ScreenPrivacyWhat, hovered: bool) -> bool {
+        if !self.enabled || hovered {
+            return false;
+        }
+        match what {
+            ScreenPrivacyWhat::Message => self.blur_messages,
+            ScreenPrivacyWhat::Preview => self.blur_previews,
+            ScreenPrivacyWhat::Media => self.blur_media,
+            ScreenPrivacyWhat::Name => self.blur_names,
+            ScreenPrivacyWhat::Avatar => self.blur_avatars,
+        }
+    }
+}
+
+/// Content a view can hide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScreenPrivacyWhat {
+    Message,
+    Preview,
+    Media,
+    Name,
+    Avatar,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -488,6 +539,8 @@ pub struct Settings {
     pub window_y: Option<f32>,
     /// Whether the window was maximized when it last closed.
     pub window_maximized: bool,
+    /// Local screen privacy. Off by default.
+    pub screen_privacy: ScreenPrivacy,
 }
 
 impl Default for Settings {
@@ -541,6 +594,7 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
+            screen_privacy: ScreenPrivacy::default(),
         }
     }
 }
@@ -975,6 +1029,27 @@ mod tests {
         assert!(merged(r#"{"pause_media_while_recording":true}"#));
         assert!(merged("{}"), "on by default");
         assert!(!merged(r#"{"pause_other_media":false}"#));
+    }
+
+    #[test]
+    fn screen_privacy_defaults_to_off_and_old_files_load() {
+        let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
+        assert!(!older.screen_privacy.enabled);
+        assert!(older.screen_privacy.blur_messages);
+        assert!(older.screen_privacy.blur_previews);
+        assert!(older.screen_privacy.blur_media);
+        assert!(!older.screen_privacy.blur_names);
+        assert!(older.screen_privacy.blur_avatars);
+        // Hover reveals, master off hides nothing.
+        assert!(!ScreenPrivacy::default().hides(ScreenPrivacyWhat::Message, true));
+        assert!(!ScreenPrivacy::default().hides(ScreenPrivacyWhat::Message, false));
+        let on = ScreenPrivacy {
+            enabled: true,
+            ..ScreenPrivacy::default()
+        };
+        assert!(on.hides(ScreenPrivacyWhat::Message, false));
+        assert!(!on.hides(ScreenPrivacyWhat::Message, true));
+        assert!(!on.hides(ScreenPrivacyWhat::Name, false));
     }
 
     #[test]

@@ -576,6 +576,11 @@ fn sections(app: &App) -> Vec<Section> {
         });
     }
 
+    // Local screen privacy lives apart from account privacy: one hides the
+    // window from onlookers, the other tells the phone what to share.
+    let mut screen_privacy = Section::new(translated(locale, "Screen privacy"));
+    screen_privacy_rows(locale, &mut screen_privacy);
+
     let mut system = Section::new(translated(locale, "System"));
     system.toggle(
         translated(locale, "Keep running when the window closes"),
@@ -795,11 +800,52 @@ fn sections(app: &App) -> Vec<Section> {
         chats,
         notifications,
         privacy,
+        screen_privacy,
         system,
         account_section,
         files,
         about_section,
     ]
+}
+
+/// Local screen privacy switches. Hover reveals hidden rows.
+fn screen_privacy_rows(locale: Locale, privacy: &mut Section) {
+    use crate::settings::Settings;
+    fn enabled(settings: &mut Settings) -> &mut bool {
+        &mut settings.screen_privacy.enabled
+    }
+    fn previews(settings: &mut Settings) -> &mut bool {
+        &mut settings.screen_privacy.blur_previews
+    }
+    fn messages(settings: &mut Settings) -> &mut bool {
+        &mut settings.screen_privacy.blur_messages
+    }
+    fn media(settings: &mut Settings) -> &mut bool {
+        &mut settings.screen_privacy.blur_media
+    }
+    fn names(settings: &mut Settings) -> &mut bool {
+        &mut settings.screen_privacy.blur_names
+    }
+    fn avatars(settings: &mut Settings) -> &mut bool {
+        &mut settings.screen_privacy.blur_avatars
+    }
+    privacy.toggle(
+        translated(locale, "Screen privacy"),
+        translated(
+            locale,
+            "Hides chat content until hovered. Toggle quickly with Ctrl+Shift+H.",
+        ),
+        enabled,
+    );
+    privacy.toggle(
+        translated(locale, "Chat previews"),
+        Text::default(),
+        previews,
+    );
+    privacy.toggle(translated(locale, "Messages"), Text::default(), messages);
+    privacy.toggle(translated(locale, "Media"), Text::default(), media);
+    privacy.toggle(translated(locale, "Names"), Text::default(), names);
+    privacy.toggle(translated(locale, "Avatars"), Text::default(), avatars);
 }
 
 /// The app lock: a password, how long ZapFast may go unused, and the form

@@ -5202,6 +5202,10 @@ impl App {
                 });
             }
             Action::ToggleSidebar => self.sidebar_visible = !self.sidebar_visible,
+            Action::ToggleScreenPrivacy => {
+                self.settings.screen_privacy.enabled = !self.settings.screen_privacy.enabled;
+                self.mark_settings_dirty();
+            }
             Action::SetChatFilter(filter) => {
                 if self.locked_folder {
                     self.close_locked_folder();

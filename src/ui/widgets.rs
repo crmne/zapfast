@@ -42,6 +42,12 @@ impl Line {
     }
 }
 
+/// Frosted cover for screen privacy: hides content until hovered.
+pub fn privacy_cover(ui: &Ui, rect: Rect, fill: Color32, rounding: f32) {
+    ui.painter()
+        .rect_filled(rect.expand(2.0), rounding, fill.gamma_multiply(0.92));
+}
+
 /// Lays out text within `width` and `max_rows`, with an ellipsis and color emoji.
 pub fn line(
     ui: &Ui,
