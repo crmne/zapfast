@@ -501,21 +501,34 @@ fn sections(app: &App) -> Vec<Section> {
             |settings| &mut settings.notification_content,
         );
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
-        notifications.account_toggle(
-            translated(locale, "Limit direct message notifications"),
+        notifications.row(
+            translated(locale, "Limit repeat notifications"),
             translated(
                 locale,
-                "After one notification, a chat stays quiet for 10 minutes. Opening the chat resets this.",
+                "After one notification, a chat stays quiet for 10 minutes. Opening the chat resets this. In groups, mentions and replies to you still notify.",
             ),
-            |settings| &mut settings.limit_direct_notifications,
-        );
-        notifications.account_toggle(
-            translated(locale, "Limit group notifications"),
-            translated(
-                locale,
-                "After one notification, a group stays quiet for 10 minutes. Opening the group resets this. Mentions and replies to you still notify.",
-            ),
-            |settings| &mut settings.limit_group_notifications,
+            |ui, app| {
+                let palette = app.palette;
+                let locale = app.locale;
+                let selected = app.account().settings.limit_notifications;
+                let response = egui::ComboBox::from_id_salt("limit_notifications")
+                    .selected_text(selected.label(locale))
+                    .width(200.0_f32.min(ui.available_width()))
+                    .show_ui(ui, |ui| {
+                        for limit in crate::settings::NotificationLimit::ALL {
+                            if theme_option(
+                                ui,
+                                &palette,
+                                limit.label(locale).as_ref(),
+                                limit == selected,
+                            ) {
+                                app.account_mut().settings.limit_notifications = limit;
+                                app.account_mut().mark_settings_dirty();
+                            }
+                        }
+                    });
+                theme::reveal_focus(&response.response);
+            },
         );
         notifications.toggle(
             translated(locale, "Play sounds for group messages"),

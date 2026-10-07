@@ -1777,11 +1777,11 @@ impl App {
         // A mention of us or a reply to us always notifies and leaves the wait alone.
         let for_us = chat.is_group() && self.addresses_us(message);
         let limited = !for_us
-            && if chat.is_group() {
-                self.account().settings.limit_group_notifications
-            } else {
-                self.account().settings.limit_direct_notifications
-            };
+            && self
+                .account()
+                .settings
+                .limit_notifications
+                .applies(chat.is_group());
         let account = self.account().id.clone();
         if !self
             .notifications
@@ -15919,7 +15919,7 @@ mod app_lock_tests {
         app.maybe_notify(CHAT, &message);
         assert_eq!(app.notifications.shown.len(), 2, "off by default");
 
-        app.account_mut().settings.limit_direct_notifications = true;
+        app.account_mut().settings.limit_notifications = crate::settings::NotificationLimit::Direct;
         app.notifications.shown.clear();
         app.maybe_notify(CHAT, &message);
         app.maybe_notify(CHAT, &message);
@@ -15948,7 +15948,7 @@ mod app_lock_tests {
             ..direct.clone()
         };
 
-        app.account_mut().settings.limit_group_notifications = true;
+        app.account_mut().settings.limit_notifications = crate::settings::NotificationLimit::Group;
         app.maybe_notify(CHAT, &direct);
         app.maybe_notify(CHAT, &direct);
         app.maybe_notify(GROUP, &group);
@@ -15959,8 +15959,7 @@ mod app_lock_tests {
             "direct chats are unlimited, the group notified once"
         );
 
-        app.account_mut().settings.limit_group_notifications = false;
-        app.account_mut().settings.limit_direct_notifications = true;
+        app.account_mut().settings.limit_notifications = crate::settings::NotificationLimit::Direct;
         app.notifications.shown.clear();
         app.maybe_notify(GROUP, &group);
         app.maybe_notify(GROUP, &group);
@@ -15998,7 +15997,7 @@ mod app_lock_tests {
             mentions: Vec::new(),
         });
 
-        app.account_mut().settings.limit_group_notifications = true;
+        app.account_mut().settings.limit_notifications = crate::settings::NotificationLimit::Group;
         app.maybe_notify(GROUP, &mention);
         app.maybe_notify(GROUP, &mention);
         app.maybe_notify(GROUP, &reply);
@@ -16017,7 +16016,7 @@ mod app_lock_tests {
     fn a_limited_chat_is_limited_while_the_app_is_locked_too() {
         let mut app = unlocked_app();
         let message = incoming(&mut app);
-        app.account_mut().settings.limit_direct_notifications = true;
+        app.account_mut().settings.limit_notifications = crate::settings::NotificationLimit::Direct;
         app.maybe_notify(CHAT, &message);
         app.lock_app();
         app.maybe_notify(CHAT, &message);

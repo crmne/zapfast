@@ -344,6 +344,40 @@ impl AutoLock {
     }
 }
 
+/// Which chats show one notification, then stay quiet for ten minutes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationLimit {
+    #[default]
+    Off,
+    Direct,
+    Group,
+    Both,
+}
+
+impl NotificationLimit {
+    pub const ALL: [NotificationLimit; 4] = [Self::Off, Self::Direct, Self::Group, Self::Both];
+
+    /// Whether a chat of this kind is limited.
+    pub fn applies(self, is_group: bool) -> bool {
+        match self {
+            Self::Off => false,
+            Self::Direct => !is_group,
+            Self::Group => is_group,
+            Self::Both => true,
+        }
+    }
+
+    pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+        match self {
+            Self::Off => crate::i18n::gettext(locale, "Off"),
+            Self::Direct => crate::i18n::gettext(locale, "Direct messages"),
+            Self::Group => crate::i18n::gettext(locale, "Groups"),
+            Self::Both => crate::i18n::gettext(locale, "Direct messages and groups"),
+        }
+    }
+}
+
 /// The sound a new-message notification makes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -743,10 +777,8 @@ pub struct AccountSettings {
     pub auto_download: bool,
     pub last_chat: Option<String>,
     pub notifications: bool,
-    /// Notify once per direct chat, then stay quiet for ten minutes.
-    pub limit_direct_notifications: bool,
-    /// Notify once per group, then stay quiet for ten minutes.
-    pub limit_group_notifications: bool,
+    /// Which chats notify once, then stay quiet for ten minutes.
+    pub limit_notifications: NotificationLimit,
     pub save_contacts_to_phone: bool,
     /// This account's copy of the chosen chat wallpaper image.
     pub wallpaper_image: Option<std::path::PathBuf>,
@@ -767,8 +799,7 @@ impl Default for AccountSettings {
             auto_download: true,
             last_chat: None,
             notifications: true,
-            limit_direct_notifications: false,
-            limit_group_notifications: false,
+            limit_notifications: NotificationLimit::Off,
             save_contacts_to_phone: true,
             wallpaper_image: None,
             history_prefetch: false,
@@ -785,8 +816,7 @@ impl AccountSettings {
             auto_download: settings.auto_download,
             last_chat: settings.last_chat.clone(),
             notifications: settings.notifications,
-            limit_direct_notifications: false,
-            limit_group_notifications: false,
+            limit_notifications: NotificationLimit::Off,
             save_contacts_to_phone: settings.save_contacts_to_phone,
             wallpaper_image: settings.wallpaper_image.clone(),
             history_prefetch: false,
@@ -1290,14 +1320,26 @@ mod giphy_tests {
     #[test]
     fn notification_limits_are_off_unless_saved() {
         let settings: AccountSettings = serde_json::from_str(r#"{"notifications":true}"#).unwrap();
-        assert!(!settings.limit_direct_notifications);
-        assert!(!settings.limit_group_notifications);
+        assert_eq!(settings.limit_notifications, NotificationLimit::Off);
         let saved = AccountSettings {
-            limit_group_notifications: true,
+            limit_notifications: NotificationLimit::Group,
             ..AccountSettings::default()
         };
         let again: AccountSettings =
             serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
         assert_eq!(again, saved);
+    }
+
+    #[test]
+    fn a_notification_limit_names_the_chats_it_applies_to() {
+        for (limit, direct, group) in [
+            (NotificationLimit::Off, false, false),
+            (NotificationLimit::Direct, true, false),
+            (NotificationLimit::Group, false, true),
+            (NotificationLimit::Both, true, true),
+        ] {
+            assert_eq!(limit.applies(false), direct, "{limit:?} for direct chats");
+            assert_eq!(limit.applies(true), group, "{limit:?} for groups");
+        }
     }
 }

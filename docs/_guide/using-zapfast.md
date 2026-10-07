@@ -580,10 +580,10 @@ switch to it. Muted chats do not send notifications, and
 archived chats stay quiet while they remain archived. You can change both settings.
 To keep messages off the screen, turn off **Show message content in
 notifications** in Settings: notifications then say only "New message".
-To hear less from busy chats, turn on **Limit direct message notifications** or
-**Limit group notifications** in **Settings > Notifications**: a chat then sends
-one notification, stays quiet for 10 minutes, and notifies again once you open it.
-In a group, a mention of you or a reply to you always notifies.
+To hear less from busy chats, set **Limit repeat notifications** in
+**Settings > Notifications** to direct messages, groups, or both: a chat then
+sends one notification, stays quiet for 10 minutes, and notifies again once you
+open it. In a group, a mention of you or a reply to you always notifies.
 
 Press `Ctrl+/` or click the keyboard button under the composer to list all
 shortcuts.
