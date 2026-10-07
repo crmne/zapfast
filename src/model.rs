@@ -173,7 +173,9 @@ pub struct Chat {
     pub admin: bool,
     /// Hidden while WhatsApp chat lock is enabled on the phone.
     pub locked: bool,
-    /// Disappearing-message duration in seconds, if enabled.
+    /// Disappearing-message duration in seconds. `Some(0)` is the timer
+    /// WhatsApp turned off, which is not the same as never having heard about
+    /// it: `None` means nobody has said.
     pub ephemeral_expiration: Option<u32>,
     /// Labels worn by this chat, in creation order. Local to this computer.
     pub labels: Vec<String>,
@@ -280,6 +282,13 @@ impl Chat {
 
     pub fn muted(&self, now: i64) -> bool {
         matches!(self.muted_until, Some(0)) || self.muted_until.is_some_and(|until| until > now)
+    }
+
+    /// The chat's disappearing-message duration, and only while the timer is
+    /// on. A timer WhatsApp turned off is a fact about the chat, not a timer,
+    /// so it reads as none here.
+    pub fn disappearing_timer(&self) -> Option<u32> {
+        self.ephemeral_expiration.filter(|seconds| *seconds > 0)
     }
 
     /// Direct-chat phone number as digits.

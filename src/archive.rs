@@ -230,9 +230,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         participants: serde_json::from_str(&participants).unwrap_or_default(),
         read_only: row.get(14)?,
         labels: Vec::new(),
-        ephemeral_expiration: row
-            .get::<_, Option<u32>>(16)?
-            .filter(|expiration| *expiration != 0),
+        ephemeral_expiration: row.get::<_, Option<u32>>(16)?,
         notification_sound: row
             .get::<_, Option<String>>(19)?
             .and_then(|sound| serde_json::from_str(&sound).ok()),
@@ -2582,6 +2580,27 @@ pub(crate) mod tests {
             archive.ephemeral_expiration(chat).expect("expiration"),
             Some(0)
         );
+    }
+
+    /// A timer WhatsApp turned off reaches the model as a zero rather than as
+    /// nothing, so the chat details can say "Off" instead of staying silent
+    /// about a timer the phone told us about.
+    #[test]
+    fn a_disabled_timer_reaches_the_chat() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+
+        archive.set_ephemeral(chat, 0, 20).expect("setting");
+
+        let loaded = archive.chat(chat).expect("chat row").expect("a chat");
+        assert_eq!(loaded.ephemeral_expiration, Some(0));
+        assert_eq!(loaded.disappearing_timer(), None);
+
+        archive.set_ephemeral(chat, 86_400, 30).expect("setting");
+
+        let loaded = archive.chat(chat).expect("chat row").expect("a chat");
+        assert_eq!(loaded.disappearing_timer(), Some(86_400));
     }
 
     /// An archive from before group editing learns who may edit a group's
