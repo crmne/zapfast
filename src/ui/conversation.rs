@@ -242,7 +242,11 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     .screen_privacy
                     .hides(crate::settings::ScreenPrivacyWhat::Name, block.hovered())
                 {
-                    widgets::privacy_cover(ui, block.rect, palette.surface_hover, 6.0);
+                    // The title and subtitle only; the avatar keeps its own cover.
+                    let left =
+                        avatar_cover.map_or(block.rect.left(), |(rect, _)| rect.right() + 4.0);
+                    let text = Rect::from_min_max(pos2(left, block.rect.top()), block.rect.max);
+                    widgets::privacy_cover(ui, text, palette.surface_hover, 6.0);
                 }
                 // The item and the width that has to hold it are measured from
                 // the same localized label: a translation wider than the
@@ -1685,7 +1689,15 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
         crate::settings::ScreenPrivacyWhat::Message,
         strip.response.hovered(),
     ) {
-        widgets::privacy_cover(ui, strip.response.rect, palette.surface_hover, 6.0);
+        // The text only; the cancel button stays visible.
+        let text = Rect::from_min_max(
+            strip.response.rect.min,
+            pos2(
+                (strip.response.rect.right() - 44.0).max(strip.response.rect.left()),
+                strip.response.rect.bottom(),
+            ),
+        );
+        widgets::privacy_cover(ui, text, palette.surface_hover, 6.0);
     }
     strip_gap(ui);
 }
@@ -2658,7 +2670,12 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String)]
             let count = typers.len().min(3);
             let step = SENDER_AVATAR * 0.6;
             let width = SENDER_AVATAR + step * (count.saturating_sub(1)) as f32;
-            let (rect, _) = ui.allocate_exact_size(vec2(width, SENDER_AVATAR), Sense::hover());
+            let (rect, response) =
+                ui.allocate_exact_size(vec2(width, SENDER_AVATAR), Sense::hover());
+            let typing_hidden = view.screen_privacy.hides(
+                crate::settings::ScreenPrivacyWhat::Avatar,
+                response.hovered(),
+            );
             if ui.is_rect_visible(rect) {
                 for (index, (id, name)) in typers.iter().take(count).enumerate() {
                     let avatar = Rect::from_min_size(
@@ -2681,6 +2698,14 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String)]
                         id,
                         view.avatars.get(id).and_then(|picture| picture.as_deref()),
                     );
+                    if typing_hidden {
+                        widgets::privacy_cover(
+                            ui,
+                            avatar,
+                            palette.surface_hover,
+                            SENDER_AVATAR / 2.0,
+                        );
+                    }
                 }
             }
             ui.add_space(2.0);

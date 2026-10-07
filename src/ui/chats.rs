@@ -897,6 +897,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         // Show the sender for group messages.
         let line_y = rect.top() + 38.0;
         let mut x = left;
+        let mut cover_left = x;
         if hit.from_me {
             let who = widgets::line(
                 ui,
@@ -908,6 +909,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             );
             who.paint(ui, pos2(x, line_y), palette.dim);
             x += who.size().x;
+            cover_left = x;
         } else if crate::model::ChatKind::from_id(&hit.chat) == crate::model::ChatKind::Group {
             let sender = app.display_name_or(&hit.sender, hit.sender_name.as_deref());
             let first = app.short_name(&hit.sender, &sender);
@@ -921,6 +923,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             );
             who.paint(ui, pos2(x, line_y), palette.dim);
             x += who.size().x;
+            cover_left = x;
         }
         let words = widgets::line(
             ui,
@@ -932,12 +935,11 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         );
         words.paint(ui, pos2(x, line_y), palette.dim);
         if hidden_preview {
-            widgets::privacy_cover(
-                ui,
-                Rect::from_min_size(pos2(x, line_y), words.size()),
-                palette.surface_hover,
-                6.0,
+            let cover = Rect::from_min_size(
+                pos2(cover_left, line_y),
+                vec2((x - cover_left + words.size().x).max(0.0), words.size().y),
             );
+            widgets::privacy_cover(ui, cover, palette.surface_hover, 6.0);
         }
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -1179,6 +1181,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             badge_right -= 20.0;
         }
         let mut x = left;
+        let mut cover_left = x;
         let typing = app.typing_in(&chat.id);
         let preview_color = if unread && !muted {
             palette.secondary
@@ -1213,6 +1216,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             let width = label.size().x;
             label.paint(ui, pos2(x, line_y), palette.accent);
             x += width;
+            cover_left = x;
             widgets::line(
                 ui,
                 &draft,
@@ -1228,6 +1232,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                     Rect::from_center_size(pos2(x + 8.0, line_y + 8.0), Vec2::splat(16.0));
                 widgets::ticks(ui, &palette, tick_rect, last.status);
                 x += 20.0;
+                cover_left = x;
             } else if chat.is_group() {
                 let sender = app.display_name_or(&last.sender, last.sender_name.as_deref());
                 let first = app.short_name(&last.sender, &sender);
@@ -1243,6 +1248,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 let width = sender.size().x;
                 sender.paint(ui, pos2(x, line_y), preview_color);
                 x += width;
+                cover_left = x;
             }
             let words = widgets::line(
                 ui,
@@ -1267,12 +1273,14 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         };
         preview.paint(ui, pos2(x, line_y), preview_color);
         if hidden_preview {
-            widgets::privacy_cover(
-                ui,
-                Rect::from_min_size(pos2(x, line_y), preview.size()),
-                palette.surface_hover,
-                6.0,
+            let cover = Rect::from_min_size(
+                pos2(cover_left, line_y),
+                vec2(
+                    (x - cover_left + preview.size().x).max(0.0),
+                    preview.size().y,
+                ),
             );
+            widgets::privacy_cover(ui, cover, palette.surface_hover, 6.0);
         }
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
