@@ -4282,7 +4282,7 @@ impl Worker {
                         row.edited = existing.edited;
                         row.quoted = existing.quoted;
                         row.mentions = existing.mentions;
-                        row.thumbnail = existing.thumbnail;
+                        row.thumbnail = existing.thumbnail.clone();
                         keep_raw = true;
                     }
                     keep_live_location_notice(&mut row.content, &existing);
