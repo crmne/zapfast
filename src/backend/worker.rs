@@ -4268,6 +4268,7 @@ impl Worker {
                 // archive already holds; keep the files it already downloaded.
                 let mut keep_raw = false;
                 let mut existed = false;
+                let mut live_location_changed = false;
                 if let Ok(Some(existing)) = self.archive.message(&id, &row.id) {
                     existed = true;
                     row.content.keep_local_paths(&existing.content);
@@ -4283,6 +4284,10 @@ impl Worker {
                         row.thumbnail = existing.thumbnail.clone();
                         keep_raw = true;
                     }
+                    live_location_changed = matches!(
+                        (&existing.content, &row.content),
+                        (Content::LiveLocation { .. }, Content::LiveLocation { .. })
+                    ) && existing.content != row.content;
                 }
                 if let Err(error) = self
                     .archive
@@ -4290,10 +4295,15 @@ impl Worker {
                 {
                     failed += 1;
                     log::warn!("could not store a history message: {error}");
-                } else if existed {
-                    repeated += 1;
                 } else {
-                    added += 1;
+                    if live_location_changed {
+                        self.emit_message(&id, &row.id);
+                    }
+                    if existed {
+                        repeated += 1;
+                    } else {
+                        added += 1;
+                    }
                 }
                 self.settle_early_events(&id, &row.id);
                 if group {
