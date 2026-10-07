@@ -3378,9 +3378,6 @@ impl Worker {
         let Ok(Some(latest)) = self.archive.unique_live_location(chat, sender, since) else {
             return false;
         };
-        if latest == id {
-            return false;
-        }
         let Ok(Some(mut share)) = self.archive.message(chat, &latest) else {
             return false;
         };
