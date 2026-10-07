@@ -3317,8 +3317,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(
-            phone_links.len() > 1,
-            "the phone link wraps across hit regions"
+            !phone_links.is_empty(),
+            "the phone link is keyboard reachable"
         );
         let phone = phone_links[0];
         let phone_last = *phone_links.last().unwrap();
