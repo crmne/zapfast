@@ -531,6 +531,7 @@ pub async fn run(
         leave_generation: HashMap::new(),
         subject_generation: HashMap::new(),
         description_generation: HashMap::new(),
+        group_info_generation: HashMap::new(),
         group_info_queue: std::collections::VecDeque::new(),
         group_info_tries: HashMap::new(),
         group_info_retry: Vec::new(),
@@ -900,6 +901,8 @@ struct Worker {
     subject_generation: HashMap<String, u64>,
     /// Description notices must outlive metadata requested before they arrived.
     description_generation: HashMap<String, u64>,
+    /// Superseded metadata operations cannot update the archive or retry queue.
+    group_info_generation: HashMap<String, u64>,
     group_info_tries: HashMap<String, u32>,
     /// Next retry time for failed group metadata requests.
     group_info_retry: Vec<(Instant, String)>,
@@ -2398,6 +2401,8 @@ impl Worker {
     /// Queues a group metadata request, at the front when `force` is true.
     fn request_group_info(&mut self, id: &str, force: bool) {
         if force {
+            // Invalidate in-flight replies as soon as a replacement is queued.
+            *self.group_info_generation.entry(id.to_owned()).or_default() += 1;
             self.group_info_requested.remove(id);
             self.group_info_retry.retain(|(_, chat)| chat != id);
             self.group_info_queue.retain(|chat| chat != id);
@@ -2501,6 +2506,10 @@ impl Worker {
         };
         let commands = self.commands.clone();
         let chat = id.to_owned();
+        // Retries and forced refreshes each own their completion.
+        let request_generation = self.group_info_generation.entry(chat.clone()).or_default();
+        *request_generation += 1;
+        let request_generation = *request_generation;
         // The answer can land after a leave confirmed while it was in flight.
         let leave_generation = self.leave_generation.get(id).copied().unwrap_or(0);
         // Likewise after a rename made here, which the answer may predate.
@@ -2551,6 +2560,7 @@ impl Worker {
                             .filter(|text| !text.trim().is_empty())
                             .unwrap_or_default(),
                         description_generation,
+                        request_generation,
                         participants,
                         read_only: metadata.is_announcement && !admin,
                         // GroupEphemeralSettings carries a trigger mode, not a
@@ -2574,7 +2584,11 @@ impl Worker {
                         .iter()
                         .any(|word| text.contains(word));
                     log::warn!("could not fetch group metadata");
-                    let _ = commands.send(Command::GroupInfoFailed { chat, permanent });
+                    let _ = commands.send(Command::GroupInfoFailed {
+                        chat,
+                        permanent,
+                        request_generation,
+                    });
                 }
             }
         });
@@ -6471,8 +6485,15 @@ impl Worker {
                 serial,
                 error,
             } => self.older_failed(chat, serial, error),
-            Command::GroupInfoFailed { chat, permanent } => {
-                self.handle_failed_group(chat, permanent);
+            Command::GroupInfoFailed {
+                chat,
+                permanent,
+                request_generation,
+            } => {
+                if request_generation == self.group_info_generation.get(&chat).copied().unwrap_or(0)
+                {
+                    self.handle_failed_group(chat, permanent);
+                }
             }
             Command::Sent { chat, id, error } => {
                 let completed = self.interactive_sending.iter().find_map(
@@ -6553,6 +6574,7 @@ impl Worker {
                 name,
                 description,
                 description_generation,
+                request_generation,
                 participants,
                 read_only,
                 ephemeral_expiration,
@@ -6562,6 +6584,10 @@ impl Worker {
                 admin,
                 subject_generation,
             } => {
+                if request_generation != self.group_info_generation.get(&chat).copied().unwrap_or(0)
+                {
+                    return;
+                }
                 // A snapshot asked for before a rename made here was confirmed
                 // may still carry the old subject: keep ours.
                 let name = name.filter(|_| {
@@ -13189,6 +13215,7 @@ mod receipt_tests {
                 name: Some(String::new()),
                 description: String::new(),
                 description_generation: 0,
+                request_generation: 0,
                 participants: vec![PEER.into()],
                 read_only: false,
                 ephemeral_expiration: None,
@@ -13215,6 +13242,7 @@ mod receipt_tests {
                 name: Some("Current title".into()),
                 description: String::new(),
                 description_generation: 0,
+                request_generation: 0,
                 participants: vec![PEER.into()],
                 read_only: false,
                 ephemeral_expiration: None,
@@ -13248,6 +13276,7 @@ mod receipt_tests {
                 name: Some("Weekend plans".into()),
                 description: String::new(),
                 description_generation: 0,
+                request_generation: 0,
                 participants: vec![PEER.into(), ME.into()],
                 read_only: false,
                 ephemeral_expiration: None,
@@ -13270,6 +13299,7 @@ mod receipt_tests {
                 name: Some("Weekend plans".into()),
                 description: String::new(),
                 description_generation: 0,
+                request_generation: 0,
                 participants: vec![PEER.into(), ME.into()],
                 read_only: false,
                 ephemeral_expiration: None,
@@ -13328,6 +13358,7 @@ mod receipt_tests {
                 name: Some("Weekend plans".into()),
                 description: String::new(),
                 description_generation: 0,
+                request_generation: 0,
                 participants: vec![PEER.into(), ME.into()],
                 read_only: false,
                 ephemeral_expiration: None,
@@ -13491,6 +13522,7 @@ mod receipt_tests {
                     name: Some("Fixture".into()),
                     description: description.into(),
                     description_generation: 0,
+                    request_generation: 0,
                     participants: vec![PEER.into()],
                     read_only: false,
                     ephemeral_expiration: None,
@@ -13579,6 +13611,11 @@ mod receipt_tests {
                 name: Some("Fixture".into()),
                 description: "Old description".into(),
                 description_generation: 0,
+                request_generation: worker
+                    .group_info_generation
+                    .get(group)
+                    .copied()
+                    .unwrap_or(0),
                 participants: vec![PEER.into()],
                 read_only: false,
                 ephemeral_expiration: None,
@@ -13614,6 +13651,7 @@ mod receipt_tests {
             .handle_command(Command::GroupInfoFailed {
                 chat: group.into(),
                 permanent: false,
+                request_generation: 0,
             })
             .await;
         assert_eq!(
@@ -13627,6 +13665,135 @@ mod receipt_tests {
             Some("Cached description")
         );
         assert_eq!(worker.group_info_retry.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn superseded_group_metadata_replies_cannot_overwrite_description() {
+        for newer_first in [true, false] {
+            let (mut worker, events, _inbox, _wa) = worker();
+            let group = "fixture@g.us";
+            worker.archive.ensure_chat(group, "Fixture").unwrap();
+            worker
+                .archive
+                .set_group_description(group, "Cached description")
+                .unwrap();
+            let snapshot = |request_generation, description: &str| Command::GroupInfo {
+                chat: group.into(),
+                request_generation,
+                name: Some("Fixture".into()),
+                description: description.into(),
+                description_generation: 0,
+                participants: vec![PEER.into()],
+                read_only: false,
+                ephemeral_expiration: None,
+                ephemeral_setting_timestamp: None,
+                leave_generation: 0,
+                info_locked: false,
+                admin: false,
+                subject_generation: 0,
+            };
+            worker.request_group_info(group, true);
+            let older = snapshot(
+                worker
+                    .group_info_generation
+                    .get(group)
+                    .copied()
+                    .unwrap_or(0),
+                "Old description",
+            );
+            worker.request_group_info(group, true);
+            let newer = snapshot(
+                worker
+                    .group_info_generation
+                    .get(group)
+                    .copied()
+                    .unwrap_or(0),
+                "New description",
+            );
+            if newer_first {
+                worker.handle_command(newer).await;
+                events.try_iter().for_each(drop);
+                worker.handle_command(older).await;
+            } else {
+                worker.handle_command(older).await;
+                assert_eq!(
+                    worker
+                        .archive
+                        .chat(group)
+                        .unwrap()
+                        .unwrap()
+                        .group_description
+                        .as_deref(),
+                    Some("Cached description")
+                );
+                assert!(
+                    events.try_iter().next().is_none(),
+                    "a superseded reply must not reach the UI"
+                );
+                worker.handle_command(newer).await;
+            }
+            assert_eq!(
+                worker
+                    .archive
+                    .chat(group)
+                    .unwrap()
+                    .unwrap()
+                    .group_description
+                    .as_deref(),
+                Some("New description")
+            );
+            if newer_first {
+                assert!(
+                    events.try_iter().next().is_none(),
+                    "a superseded reply must not reach the UI"
+                );
+            } else {
+                assert!(events.try_iter().any(|event| matches!(event,
+                    Event::ChatUpdated(row) if row.group_description.as_deref() == Some("New description")
+                )));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn superseded_group_metadata_failures_cannot_reset_the_new_request() {
+        for permanent in [false, true] {
+            let (mut worker, _events, _inbox, _wa) = worker();
+            let group = "fixture@g.us";
+            worker.request_group_info(group, true);
+            let older = worker
+                .group_info_generation
+                .get(group)
+                .copied()
+                .unwrap_or(0);
+            worker.request_group_info(group, true);
+            let newer = worker
+                .group_info_generation
+                .get(group)
+                .copied()
+                .unwrap_or(0);
+            worker
+                .handle_command(Command::GroupInfoFailed {
+                    chat: group.into(),
+                    request_generation: older,
+                    permanent,
+                })
+                .await;
+            assert!(worker.group_info_requested.contains(group));
+            assert!(
+                worker.group_info_retry.is_empty(),
+                "only the current operation may schedule a retry"
+            );
+            assert!(!worker.group_info_tries.contains_key(group));
+            worker
+                .handle_command(Command::GroupInfoFailed {
+                    chat: group.into(),
+                    request_generation: newer,
+                    permanent: false,
+                })
+                .await;
+            assert_eq!(worker.group_info_retry.len(), 1);
+        }
     }
 
     fn errors(events: &std::sync::mpsc::Receiver<Event>) -> Vec<String> {
@@ -13707,6 +13874,7 @@ mod receipt_tests {
             name: Some(name.into()),
             description: String::new(),
             description_generation: 0,
+            request_generation: 0,
             participants: vec![PEER.into(), ME.into()],
             read_only: false,
             ephemeral_expiration: None,
@@ -14053,6 +14221,7 @@ mod receipt_tests {
             leave_generation: HashMap::new(),
             subject_generation: HashMap::new(),
             description_generation: HashMap::new(),
+            group_info_generation: HashMap::new(),
             group_info_queue: std::collections::VecDeque::new(),
             group_info_tries: HashMap::new(),
             group_info_retry: Vec::new(),
