@@ -7,7 +7,7 @@ mod tests {
     #[test]
     fn cursor_match_requires_whitespace_boundaries_and_skips_code() {
         let matched = match_before("hi :)", 5).expect("standalone face");
-        assert_eq!((&"hi :)"[matched.0..matched.1], matched.2), (&":)", "😊"));
+        assert_eq!((&"hi :)"[matched.0..matched.1], matched.2), (":)", "😊"));
         assert!(match_before("x:)", 3).is_none());
         assert!(
             match_before(
