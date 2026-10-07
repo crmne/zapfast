@@ -557,7 +557,7 @@ msgstr[1] "{} miembros"
 
 #: src/ui/dialogs.rs:1787
 msgid "Description"
-msgstr ""
+msgstr "Descripción"
 
 #: src/ui/dialogs.rs:2020
 msgid "Change group photo"

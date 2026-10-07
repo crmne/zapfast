@@ -215,9 +215,8 @@ msgid "Ctrl+K to search · ? for keyboard shortcuts"
 msgstr "Ctrl+K untuk mencari · ? untuk pintasan"
 
 #: src/ui/conversation.rs:236
-#, fuzzy
 msgid "Select messages"
-msgstr "Cari pesan"
+msgstr "Pilih pesan"
 
 #: src/ui/conversation.rs:343 src/ui/pane.rs:133
 msgid "Search messages"
@@ -301,7 +300,7 @@ msgstr "Anda"
 #: src/ui/conversation.rs:2249
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
-msgstr ""
+msgstr "Pilih pesan dari {sender}, {time}: {summary}"
 
 #: src/ui/conversation.rs:3478 src/ui/conversation.rs:4328
 msgid "Open in system player"
@@ -566,7 +565,7 @@ msgstr[1] "{} anggota"
 
 #: src/ui/dialogs.rs:1787
 msgid "Description"
-msgstr ""
+msgstr "Deskripsi"
 
 #: src/ui/dialogs.rs:2020
 msgid "Change group photo"
