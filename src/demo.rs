@@ -1877,6 +1877,20 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 unlink(app);
                 app.link = LinkStatus::Failed("The archive is encrypted but its OS keyring key is missing. Restore the original keyring; the archive has not been changed".into());
             }
+            "receipts-off" => {
+                app.account_receipts_off = true;
+            }
+            "receipts-played" => {
+                let conversation = app.conversations.get_mut(SAMPLES[0].id).unwrap();
+                let message = conversation
+                    .messages
+                    .iter_mut()
+                    .find(|message| {
+                        message.from_me && matches!(message.content, Content::Audio { .. })
+                    })
+                    .unwrap();
+                message.status = crate::model::Delivery::Played;
+            }
             "message-info" => message_info_sample(app, true),
             "message-info-unknown" => message_info_sample(app, false),
             "message-info-partial" => {
@@ -3471,6 +3485,22 @@ mod tests {
                 "option {index}: {row:?}, viewport: {viewport:?}"
             );
         }
+    }
+
+    #[test]
+    fn receipt_privacy_demo_keeps_played_voice_visible() {
+        let mut app = app();
+        apply_flags(&mut app, Some("chat,receipts-off,receipts-played"));
+        assert!(app.account_receipts_off);
+        let conversation = &app.conversations[SAMPLES[0].id];
+        assert!(conversation.messages.iter().any(|message| {
+            message.from_me
+                && matches!(message.content, Content::Audio { .. })
+                && message.status == crate::model::Delivery::Played
+        }));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
     }
 
     /// Message info grows with its content like poll results, so a short

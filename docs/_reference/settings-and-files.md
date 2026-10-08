@@ -127,7 +127,10 @@ name or description, in the interface language or in English.
 **Privacy**
 
 - **Send read receipts**: the blue ticks others see, subject to the account
-  setting below.
+  setting below. When account read receipts are off, read ticks are also hidden
+  on outgoing direct messages in the conversation, chat list, and Message info,
+  as on the phone. Group receipts and voice-message played receipts are
+  unaffected.
 - **Show when you are typing**: send typing and recording state.
 - **Last seen**, **Online**, **Profile photo**, **About**, **Groups**, **Read
   receipts**, **Calls**: your WhatsApp account privacy, stored on WhatsApp's
