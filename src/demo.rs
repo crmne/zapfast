@@ -4973,11 +4973,24 @@ mod tests {
     /// to its end, rests, and scrolls back.
     #[test]
     fn a_long_image_name_scrolls_beside_the_preview_buttons() {
+        long_image_name_scrolls(
+            "holiday_photo_from_the_beach_with_everyone_at_sunset.jpg",
+            false,
+        );
+    }
+
+    /// A right-to-left name begins at its right edge, so it rests there first
+    /// and scrolls towards its end on the left.
+    #[test]
+    fn a_long_right_to_left_image_name_starts_at_its_right_edge() {
+        long_image_name_scrolls("תמונה_מהחופשה_בים_עם_כל_המשפחה_בשקיעה_הארוכה.jpg", true);
+    }
+
+    fn long_image_name_scrolls(name: &str, rtl: bool) {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let (photo, _) = sample_files(&app);
-        let name = "holiday_photo_from_the_beach_with_everyone_at_sunset.jpg";
         let long = photo.with_file_name(name);
         std::fs::copy(&photo, &long).unwrap();
         app.actions.push(crate::model::Action::PreviewImage(long));
@@ -5021,14 +5034,21 @@ mod tests {
             width > clip.width(),
             "the name should not fit in 360 points"
         );
-        assert_eq!(x, clip.left(), "the name starts at its start");
+        // Where the name's start and end show when the line rests at either.
+        let (start, finish) = (clip.left(), clip.right() - width);
+        let (start, finish) = if rtl {
+            (finish, start)
+        } else {
+            (start, finish)
+        };
+        assert!((x - start).abs() < 0.5, "the name starts at its start");
 
         let travel = f64::from(width - clip.width()) / 40.0;
         assert_eq!(find(&narrow(2.9), name).0, x, "it rests three seconds");
         let (end, _, end_clip) = find(&narrow(3.0 + travel + 1.0), name);
         assert!(
-            (end + width - end_clip.right()).abs() < 0.5,
-            "the name's end shows at the right edge"
+            (end - finish).abs() < 0.5,
+            "the name's end shows at the far edge"
         );
         assert_eq!(end_clip, clip, "the name stays inside its room");
         assert_eq!(find(&narrow(3.0 + travel + 2.9), name).0, end);

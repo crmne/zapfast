@@ -174,7 +174,7 @@ fn scroll_offset(elapsed: f64, overflow: f32) -> (f32, Option<std::time::Duratio
 /// One line of text with color emoji that never leaves the room it is
 /// given. Text too wide for it scrolls from end to end, resting at each,
 /// and fades into `background` wherever it is cut instead of ending in an
-/// ellipsis.
+/// ellipsis. Right-to-left text starts at its right edge, where it begins.
 pub fn scrolling_text(
     ui: &mut Ui,
     text: &str,
@@ -204,7 +204,13 @@ pub fn scrolling_text(
         *seen = pass;
         *since
     });
-    let (offset, repaint) = scroll_offset(now - since, overflow);
+    let (travelled, repaint) = scroll_offset(now - since, overflow);
+    // How much of the line is hidden past the left edge.
+    let offset = if bidi::base_rtl(text.lines().next().unwrap_or_default()) {
+        overflow.max(0.0) - travelled
+    } else {
+        travelled
+    };
     if let Some(after) = repaint {
         ui.ctx().request_repaint_after(after);
     }
