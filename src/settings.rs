@@ -396,6 +396,8 @@ pub struct Settings {
     /// Whether Enter sends. Off, Enter adds a line and Ctrl+Enter (Cmd+Enter
     /// on macOS) sends.
     pub enter_sends: bool,
+    /// Convert typed, isolated ASCII emoticons in the composer.
+    pub convert_typed_emoticons: bool,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
     /// Send typing state while composing.
@@ -504,6 +506,7 @@ impl Default for Settings {
             sidebar_width: 320.0,
             search_pane_width: 380.0,
             enter_sends: true,
+            convert_typed_emoticons: false,
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,

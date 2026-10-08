@@ -401,6 +401,11 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
     );
+    chats.toggle(
+        translated(locale, "Convert typed emoticons"),
+        translated(locale, "Turn typed emoticons into emoji while composing."),
+        |settings| &mut settings.convert_typed_emoticons,
+    );
     chats.account_toggle(
         translated(locale, "Download files automatically"),
         translated(

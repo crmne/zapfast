@@ -1514,6 +1514,15 @@ pub enum Action {
         start: usize,
         end: usize,
     },
+    /// Replaces a typed, standalone ASCII emoticon in the composer.
+    ReplaceTypedEmoticon {
+        source: String,
+        emoji: String,
+        start: usize,
+        end: usize,
+    },
+    /// Restores the last converted emoticon when Backspace is pressed.
+    UndoTypedEmoticon,
     CloseEmojiSuggestions,
     /// Replaces the active `@` query with a selected group member.
     InsertMention {
