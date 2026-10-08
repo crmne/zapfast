@@ -289,9 +289,17 @@ impl AacTrack {
             .es_desc
             .dec_config
             .dec_specific;
+        // HE-AAC (SBR, 5) and HE-AACv2 (PS, 29) carry an AAC-LC core at
+        // the frequency index given, which is all symphonia decodes. `mp4`
+        // reads only the first two bytes, so a config naming SBR or PS would
+        // lack the extension symphonia expects after them: name the core.
+        let profile = match config.profile {
+            5 | 29 => 2,
+            profile => profile,
+        };
         // The AudioSpecificConfig: five bits of object type, four of
         // sampling frequency index, four of channel configuration.
-        let specific = (u16::from(config.profile) << 11)
+        let specific = (u16::from(profile) << 11)
             | (u16::from(config.freq_index) << 7)
             | (u16::from(config.chan_conf) << 3);
         let rate = track
@@ -1688,6 +1696,31 @@ mod tests {
         bytes[at + sl_config.len() - 1] = 0x00;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("whatsapp.mp4");
+        std::fs::write(&path, bytes).unwrap();
+
+        let mut decoder = sound_decoder(&path, Duration::ZERO).expect("the sound opens");
+        let rate = rodio::Source::sample_rate(&decoder).get();
+        let channels = usize::from(rodio::Source::channels(&decoder).get());
+        let frames = decoder.by_ref().count() / channels;
+        let sound = Duration::from_secs_f64(frames as f64 / f64::from(rate));
+        assert!(sound > Duration::from_millis(2900), "got {sound:?}");
+    }
+
+    /// A video whose sound declares HE-AAC (object type 5) plays its AAC-LC
+    /// core, as rodio's own reader would, instead of staying silent.
+    #[test]
+    fn an_he_aac_sound_track_plays_its_core() {
+        let mut bytes = std::fs::read(SAMPLE).unwrap();
+        // The sample's AudioSpecificConfig opens with 0x13 0x88: AAC-LC,
+        // 22.05 kHz, mono. 0x2B keeps the frequency bits and names SBR.
+        let config = [0x05, 0x80, 0x80, 0x80, 0x05, 0x13, 0x88];
+        let at = bytes
+            .windows(config.len())
+            .position(|window| window == config)
+            .expect("the sample's AudioSpecificConfig");
+        bytes[at + 5] = 0x2B;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("he-aac.mp4");
         std::fs::write(&path, bytes).unwrap();
 
         let mut decoder = sound_decoder(&path, Duration::ZERO).expect("the sound opens");
