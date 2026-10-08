@@ -3345,7 +3345,7 @@ impl Worker {
         info: &MessageInfo,
     ) -> bool {
         let now = info.timestamp.timestamp();
-        if self.mark_share_on_the_phone(chat, sender, id, now) {
+        if self.mark_share_on_the_phone(chat, sender, now) {
             return true;
         }
         let Ok(Some(latest)) = self.archive.latest_id_from(chat, sender) else {
@@ -3373,7 +3373,7 @@ impl Worker {
     /// one that cannot follow the phone's newer positions, and whether the
     /// position that arrived belongs to it. That card is the share's whole
     /// row, so it owns the fact instead of the chat growing a second bubble.
-    fn mark_share_on_the_phone(&mut self, chat: &str, sender: &str, id: &str, now: i64) -> bool {
+    fn mark_share_on_the_phone(&mut self, chat: &str, sender: &str, now: i64) -> bool {
         let since = now - LIVE_LOCATION_LIMIT;
         let Ok(Some(latest)) = self.archive.unique_live_location(chat, sender, since) else {
             return false;
@@ -4277,7 +4277,7 @@ impl Worker {
                     if (existing.edited && !row.edited)
                         || matches!(existing.content, Content::Revoked)
                     {
-                        row.content = existing.content;
+                        row.content = existing.content.clone();
                         row.edited = existing.edited;
                         row.quoted = existing.quoted;
                         row.mentions = existing.mentions;
