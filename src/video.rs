@@ -4,8 +4,8 @@
 //! its H.264 track with `openh264` (as `animation` does for GIFs), and hands
 //! over scaled RGBA frames tagged with their presentation time. The interface
 //! thread shows the newest frame that is due and uploads it into a single
-//! texture. Sound plays through rodio, whose symphonia backend decodes the
-//! AAC track, and its position steers the clock while it lasts. Other codecs
+//! texture. `mp4` also reads the AAC track, symphonia's AAC decoder decodes
+//! it, and rodio plays it; its position steers the clock while it lasts. Other codecs
 //! are reported so the video can open in the system player instead.
 
 use std::cell::Cell;
@@ -16,7 +16,6 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
-use rodio::Source;
 
 use crate::backend::Waker;
 
@@ -225,31 +224,211 @@ impl Sound {
     }
 }
 
-fn sound_decoder(
-    path: &Path,
-    from: Duration,
-) -> Option<rodio::Decoder<std::io::BufReader<std::fs::File>>> {
-    let file = std::fs::File::open(path).ok()?;
-    // Fails for a video without a sound track: the MP4's H.264 track has no
-    // codec symphonia knows, so there is nothing to pick. It also fails for a
-    // sound track symphonia cannot decode, such as HE-AAC, which is worth
-    // naming when a video plays silently.
-    let mut decoder = match rodio::Decoder::try_from(file) {
-        Ok(decoder) => decoder,
+fn sound_decoder(path: &Path, from: Duration) -> Option<AacTrack> {
+    // A video without a sound track stays quiet without a word. A sound
+    // track that does not open, such as HE-AAC, is worth naming when a
+    // video plays silently.
+    let codec = sound_codec(path)?;
+    match AacTrack::open(path, from) {
+        Ok(track) => Some(track),
         Err(error) => {
-            if let Some(codec) = sound_codec(path) {
-                log::debug!("video plays without sound: its {codec} track did not open: {error}");
-            }
-            return None;
+            log::debug!("video plays without sound: its {codec} track did not open: {error}");
+            None
         }
-    };
-    if !from.is_zero()
-        && let Err(error) = decoder.try_seek(from)
-    {
-        log::debug!("video plays without sound: its sound track did not seek: {error}");
-        return None;
     }
-    Some(decoder)
+}
+
+/// The MP4's AAC sound track, read with `mp4` and decoded with symphonia's
+/// AAC decoder. rodio's own MP4 reader (symphonia 0.5's isomp4) refuses the
+/// sound of the videos WhatsApp sends, whose `esds` carries a custom
+/// SLConfigDescriptor (#265), so the track is read the way the picture is.
+struct AacTrack {
+    mp4: mp4::Mp4Reader<std::io::BufReader<std::fs::File>>,
+    track: u32,
+    /// The next sample to decode, numbered from 1.
+    next: u32,
+    count: u32,
+    decoder: symphonia::default::codecs::AacDecoder,
+    buffer: Option<symphonia::core::audio::SampleBuffer<f32>>,
+    /// The decoded packet being played, interleaved, and how far it got.
+    pending: Vec<f32>,
+    at: usize,
+    /// Interleaved samples still to drop to land on the seek target.
+    skip: usize,
+    channels: rodio::ChannelCount,
+    rate: rodio::SampleRate,
+    total: Duration,
+}
+
+impl AacTrack {
+    fn open(path: &Path, from: Duration) -> Result<Self, String> {
+        use symphonia::core::codecs::{CODEC_TYPE_AAC, CodecParameters, Decoder, DecoderOptions};
+
+        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let size = file.metadata().map_err(|error| error.to_string())?.len();
+        let mp4 = mp4::Mp4Reader::read_header(std::io::BufReader::new(file), size)
+            .map_err(|error| error.to_string())?;
+        let track = mp4
+            .tracks()
+            .values()
+            .find(|track| track.track_type().ok() == Some(mp4::TrackType::Audio))
+            .ok_or("no sound track")?;
+        if track.media_type().ok() != Some(mp4::MediaType::AAC) {
+            return Err("not AAC".to_owned());
+        }
+        let config = &track
+            .trak
+            .mdia
+            .minf
+            .stbl
+            .stsd
+            .mp4a
+            .as_ref()
+            .and_then(|mp4a| mp4a.esds.as_ref())
+            .ok_or("no AAC configuration")?
+            .es_desc
+            .dec_config
+            .dec_specific;
+        // The AudioSpecificConfig: five bits of object type, four of
+        // sampling frequency index, four of channel configuration.
+        let specific = (u16::from(config.profile) << 11)
+            | (u16::from(config.freq_index) << 7)
+            | (u16::from(config.chan_conf) << 3);
+        let rate = track
+            .sample_freq_index()
+            .map_err(|error| error.to_string())?
+            .freq();
+        let mut params = CodecParameters::new();
+        params
+            .for_codec(CODEC_TYPE_AAC)
+            .with_sample_rate(rate)
+            .with_extra_data(specific.to_be_bytes().into());
+        let decoder =
+            symphonia::default::codecs::AacDecoder::try_new(&params, &DecoderOptions::default())
+                .map_err(|error| error.to_string())?;
+        let timeline = Timeline::of(track);
+        // A packet's sound overlaps the one before it, so decoding starts a
+        // packet early and drops what comes before `from`.
+        let first = timeline.first_sample(from).saturating_sub(1).max(1);
+        let start = timeline
+            .starts
+            .get(first as usize - 1)
+            .copied()
+            .unwrap_or(0);
+        let early = timeline.ticks(from).saturating_sub(start);
+        let early_frames = early * u64::from(rate) / timeline.timescale;
+        let mut sound = Self {
+            track: track.track_id(),
+            count: track.sample_count(),
+            total: track.duration(),
+            mp4,
+            next: first,
+            decoder,
+            buffer: None,
+            pending: Vec::new(),
+            at: 0,
+            skip: 0,
+            channels: rodio::ChannelCount::MIN,
+            rate: rodio::SampleRate::new(rate).ok_or("no sampling rate")?,
+        };
+        // The first packet names the channel count rodio is told about.
+        if !sound.refill() {
+            return Err("no sound in the track".to_owned());
+        }
+        let channels = sound.channels.get();
+        sound.skip = early_frames as usize * usize::from(channels);
+        Ok(sound)
+    }
+
+    /// Decodes the next packet into `pending`, skipping packets that do not
+    /// decode. False once the track is over.
+    fn refill(&mut self) -> bool {
+        use symphonia::core::codecs::Decoder;
+
+        while self.next <= self.count {
+            let sample = match self.mp4.read_sample(self.track, self.next) {
+                Ok(Some(sample)) => sample,
+                Ok(None) => return false,
+                Err(error) => {
+                    log::debug!("video sound stopped: a sample did not read: {error}");
+                    return false;
+                }
+            };
+            self.next += 1;
+            let packet = symphonia::core::formats::Packet::new_from_slice(
+                self.track,
+                sample.start_time,
+                u64::from(sample.duration),
+                &sample.bytes,
+            );
+            let decoded = match self.decoder.decode(&packet) {
+                Ok(decoded) => decoded,
+                Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
+                Err(error) => {
+                    log::debug!("video sound stopped: {error}");
+                    return false;
+                }
+            };
+            let channels = u16::try_from(decoded.spec().channels.count()).unwrap_or(0);
+            self.channels = rodio::ChannelCount::new(channels).unwrap_or(rodio::ChannelCount::MIN);
+            let buffer = self.buffer.get_or_insert_with(|| {
+                symphonia::core::audio::SampleBuffer::new(
+                    decoded.capacity() as u64,
+                    *decoded.spec(),
+                )
+            });
+            buffer.copy_interleaved_ref(decoded);
+            self.pending.clear();
+            self.pending.extend_from_slice(buffer.samples());
+            self.at = 0;
+            if !self.pending.is_empty() {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl Iterator for AacTrack {
+    type Item = rodio::Sample;
+
+    fn next(&mut self) -> Option<rodio::Sample> {
+        loop {
+            let left = self.pending.len() - self.at;
+            if self.skip >= left && self.skip > 0 {
+                self.skip -= left;
+                self.at = self.pending.len();
+            } else if self.skip > 0 {
+                self.at += self.skip;
+                self.skip = 0;
+            }
+            if let Some(&sample) = self.pending.get(self.at) {
+                self.at += 1;
+                return Some(rodio::Sample::from(sample));
+            }
+            if !self.refill() {
+                return None;
+            }
+        }
+    }
+}
+
+impl rodio::Source for AacTrack {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.rate
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        Some(self.total)
+    }
 }
 
 /// The codec and profile of the MP4's sound track, such as "aac (SBR)", or
@@ -1491,6 +1670,49 @@ mod tests {
         assert!(
             sound > Duration::from_millis(2900),
             "the sound of a three second clip should last about three seconds, not {sound:?}"
+        );
+    }
+
+    /// WhatsApp's videos carry a custom SLConfigDescriptor (`predefined`
+    /// 0x00) in their `esds`, which symphonia 0.5's MP4 reader refuses, so
+    /// every one played silently (#265). The sample with that byte changed
+    /// stands in for them.
+    #[test]
+    fn a_video_with_a_custom_sl_config_plays_its_sound() {
+        let mut bytes = std::fs::read(SAMPLE).unwrap();
+        let sl_config = [0x06, 0x80, 0x80, 0x80, 0x01, 0x02];
+        let at = bytes
+            .windows(sl_config.len())
+            .position(|window| window == sl_config)
+            .expect("the sample's SLConfigDescriptor");
+        bytes[at + sl_config.len() - 1] = 0x00;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("whatsapp.mp4");
+        std::fs::write(&path, bytes).unwrap();
+
+        let mut decoder = sound_decoder(&path, Duration::ZERO).expect("the sound opens");
+        let rate = rodio::Source::sample_rate(&decoder).get();
+        let channels = usize::from(rodio::Source::channels(&decoder).get());
+        let frames = decoder.by_ref().count() / channels;
+        let sound = Duration::from_secs_f64(frames as f64 / f64::from(rate));
+        assert!(sound > Duration::from_millis(2900), "got {sound:?}");
+    }
+
+    #[test]
+    fn the_sound_seeks_to_where_the_video_starts() {
+        let whole = sound_decoder(Path::new(SAMPLE), Duration::ZERO).unwrap();
+        let rate = f64::from(rodio::Source::sample_rate(&whole).get());
+        let channels = usize::from(rodio::Source::channels(&whole).get());
+        let whole = whole.count() / channels;
+        let rest = sound_decoder(Path::new(SAMPLE), Duration::from_secs(1))
+            .unwrap()
+            .count()
+            / channels;
+        // Starting a second in leaves a second less, to within a packet.
+        let missing = (whole - rest) as f64 / rate;
+        assert!(
+            (missing - 1.0).abs() < 0.05,
+            "a second in left {missing} s less"
         );
     }
 }
