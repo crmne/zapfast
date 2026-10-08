@@ -1383,7 +1383,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             if (send_key || send_click)
                 && (!app.composer.trim().is_empty() || !app.pending.is_empty())
             {
-                let text = std::mem::take(&mut app.composer);
+                let text = app.take_composer_text();
                 if app.pending.is_empty() {
                     app.actions.push(Action::SendText {
                         chat: chat.id.clone(),
