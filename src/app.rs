@@ -1207,7 +1207,7 @@ impl App {
     }
 
     fn clear_composer_text(&mut self) {
-        self.composer.truncate(0);
+        self.composer.clear();
         self.emoticon_undo = None;
     }
 
