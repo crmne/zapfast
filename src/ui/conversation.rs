@@ -6507,6 +6507,34 @@ pub(crate) fn video_controls(
     {
         actions.push(Action::ToggleVideoSound);
     }
+    // The playback speed, cycled by a click as the voice message chip is.
+    let speed_label = crate::audio::speed_label(controls.player.speed());
+    let speed_galley = ui.painter().layout_no_wrap(
+        speed_label,
+        theme::tabular(fastframe_fonts::Weight::Medium, 11.5),
+        Color32::WHITE,
+    );
+    let speed = Rect::from_center_size(
+        pos2(
+            sound.left() - 4.0 - (speed_galley.size().x + 10.0) / 2.0,
+            bar.center().y,
+        ),
+        vec2(speed_galley.size().x + 10.0, 18.0),
+    );
+    ui.painter()
+        .rect_filled(speed, 9.0, Color32::from_white_alpha(40));
+    ui.painter().galley(
+        speed.center() - speed_galley.size() / 2.0,
+        speed_galley,
+        Color32::WHITE,
+    );
+    if ui
+        .interact(speed, id.with("speed"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        actions.push(Action::CycleVideoSpeed);
+    }
     let time = format!(
         "{} / {}",
         crate::util::duration(status.position.as_secs() as u32),
@@ -6520,7 +6548,7 @@ pub(crate) fn video_controls(
     let text = pos2(toggle.right() + 4.0, bar.center().y - galley.size().y / 2.0);
     let track = Rect::from_min_max(
         pos2(text.x + galley.size().x + 10.0, bar.center().y - 8.0),
-        pos2(sound.left() - 6.0, bar.center().y + 8.0),
+        pos2(speed.left() - 6.0, bar.center().y + 8.0),
     );
     ui.painter().galley(text, galley, Color32::WHITE);
     if track.width() < 12.0 {

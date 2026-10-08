@@ -351,8 +351,9 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Handles keys while a video covers the window: Escape puts it back, Space
-/// plays or pauses, M mutes, and the arrows jump five seconds. No chat
-/// shortcut runs and nothing is typed into the composer under it.
+/// plays or pauses, M mutes, S changes the speed, and the arrows jump five
+/// seconds. No chat shortcut runs and nothing is typed into the composer
+/// under it.
 fn video_keys(app: &mut App, ctx: &egui::Context) {
     let Some((message, path)) = app
         .video
@@ -384,6 +385,9 @@ fn video_keys(app: &mut App, ctx: &egui::Context) {
         }
         if input.consume_key(Modifiers::NONE, Key::M) {
             actions.push(Action::ToggleVideoSound);
+        }
+        if input.consume_key(Modifiers::NONE, Key::S) {
+            actions.push(Action::CycleVideoSpeed);
         }
         if input.consume_key(Modifiers::NONE, Key::ArrowLeft) {
             actions.extend(jump(-5.0));
