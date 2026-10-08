@@ -73,7 +73,7 @@ impl Worker {
         let connected = self
             .client
             .as_ref()
-            .is_some_and(|client| client.is_connected());
+            .is_some_and(|client| client.is_socket_connected());
         let client = self.client.clone().filter(|_| connected);
         let Some(client) = client.filter(|_| known.is_some() || self.channel_pictures.listed)
         else {
