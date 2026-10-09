@@ -616,6 +616,10 @@ pub struct App {
     /// open it, and by demo pages; the menu then stays open until it is
     /// closed. A chat or page change drops a request not yet drawn.
     pub open_message_menu: Option<(ChatId, String)>,
+    /// One-shot, as `open_message_menu`: open the menu of a phone number in
+    /// a message, by chat, message id and the number's `tel:` address. Set
+    /// by Space on the number in the message list.
+    pub open_phone_menu: Option<(ChatId, String, String)>,
     /// The reaction picker came from the message list's E: closing it
     /// returns focus to the list.
     pub reaction_from_list: bool,
@@ -1646,6 +1650,7 @@ impl App {
             reaction_anchor: None,
             reaction_beside_menu: false,
             open_message_menu: None,
+            open_phone_menu: None,
             reaction_from_list: false,
             #[cfg(any(test, feature = "demo"))]
             open_chat_menu: None,
@@ -2065,6 +2070,7 @@ impl App {
         self.cursor_followed = None;
         // So was a message menu asked for and not drawn yet.
         self.open_message_menu = None;
+        self.open_phone_menu = None;
         // A reaction picker the message list opened belongs to the chat
         // left behind.
         self.reaction_from_list = false;
@@ -6383,6 +6389,7 @@ impl App {
             self.reaction_from_list = false;
             // A menu asked for in the chat being left is not opened later.
             self.open_message_menu = None;
+            self.open_phone_menu = None;
             self.composer_tools_open = false;
             self.emoji_jump = None;
             self.jump_highlight = None;
@@ -7442,6 +7449,18 @@ impl App {
 
     /// Applies one model action after drawing the views, respecting the app lock and account state.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
+        let selecting = self.selection.as_ref().map(|(chat, _)| chat.clone());
+        self.apply_one(action, ctx);
+        // A selection draws no message menus: one asked for and not drawn
+        // yet is dropped as a selection starts or ends, rather than opened
+        // over the selection's check boxes or after it.
+        if self.selection.as_ref().map(|(chat, _)| chat) != selecting.as_ref() {
+            self.open_message_menu = None;
+            self.open_phone_menu = None;
+        }
+    }
+
+    fn apply_one(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked, and a
             // link opens the chat it named; the rest would show or change
@@ -7588,6 +7607,7 @@ impl App {
                     // A menu asked for on the page being left is not opened
                     // later.
                     self.open_message_menu = None;
+                    self.open_phone_menu = None;
                 }
                 self.page = page;
                 self.dialog = None;
@@ -7769,6 +7789,7 @@ impl App {
                 // call history.
                 self.picked_call = None;
                 self.open_message_menu = None;
+                self.open_phone_menu = None;
                 if let Some(chat) = self.open_chat.take() {
                     self.invalidate_composer_undo();
                     self.save_attachment_draft(&chat);
@@ -9602,6 +9623,15 @@ impl App {
                 }
             }
             Action::MessageMenuOpened => self.open_message_menu = None,
+            Action::OpenPhoneMenu { message, url } => {
+                // As `OpenMessageMenu`: the number's message opens the menu
+                // when it is next drawn, brought into view so that it is.
+                if let Some(chat) = self.open_chat.clone() {
+                    self.open_phone_menu = Some((chat, message, url));
+                    self.reveal_cursor = true;
+                }
+            }
+            Action::PhoneMenuOpened => self.open_phone_menu = None,
             Action::FocusMessages => {
                 if self.current_chat().is_some() {
                     // The Calls tab keeps its history beside the chat, as
@@ -14947,8 +14977,49 @@ mod tests {
         let (mut app, _commands) = two_accounts(directory.path());
         let ctx = egui::Context::default();
         app.open_message_menu = Some(("15550007777@s.whatsapp.net".into(), "m".into()));
+        app.open_phone_menu = Some((
+            "15550007777@s.whatsapp.net".into(),
+            "m".into(),
+            "tel:0501234567".into(),
+        ));
         app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
         assert!(app.open_message_menu.is_none());
+        assert!(app.open_phone_menu.is_none(), "nor a phone number's menu");
+    }
+
+    /// A selection draws no message menus: a menu asked for and not drawn
+    /// yet, the message's or a phone number's, is dropped as a selection
+    /// starts and as it ends, rather than opened after it.
+    #[test]
+    fn starting_or_ending_a_selection_drops_a_pending_menu() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.chats = vec![Chat::new(chat.into(), "Ada".into())];
+        app.open_chat = Some(chat.into());
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![message(chat, "first", 1)], false);
+        let ask = |app: &mut App| {
+            app.open_message_menu = Some((chat.into(), "first".into()));
+            app.open_phone_menu = Some((chat.into(), "first".into(), "tel:0501234567".into()));
+        };
+        let dropped = |app: &App| app.open_message_menu.is_none() && app.open_phone_menu.is_none();
+        ask(&mut app);
+        app.apply(Action::StartSelection, &ctx);
+        assert!(dropped(&app), "started");
+        ask(&mut app);
+        app.apply(Action::CancelSelection, &ctx);
+        assert!(dropped(&app), "cancelled");
+        ask(&mut app);
+        app.apply(Action::SelectMessage("first".into()), &ctx);
+        assert!(dropped(&app), "started on a message");
+        ask(&mut app);
+        app.apply(Action::ToggleSelected("first".into()), &ctx);
+        assert!(!dropped(&app), "a change within the selection is neither");
+        app.apply(Action::CancelSelection, &ctx);
+        assert!(dropped(&app), "ended");
     }
 
     /// The keys' item cursor, a download waiting to be spoken and a replied

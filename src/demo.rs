@@ -5100,8 +5100,422 @@ mod tests {
         );
     }
 
+    /// A message with two phone numbers and a link between them.
+    const PHONE_FIXTURE: &str = "Call +1 (555) 010-2040, see https://a.org, or 0501234567";
+
+    /// One piece of a phone number drawn in `message`, by the number's
+    /// address and the piece's place in a wrapped number, as last drawn.
+    fn phone_link(
+        ctx: &egui::Context,
+        chat: &str,
+        message: &str,
+        url: &str,
+        piece: usize,
+    ) -> Option<egui::Id> {
+        let key =
+            crate::ui::conversation::bubble_id(chat, message).with(("test-phone-link", url, piece));
+        ctx.data(|data| data.get_temp::<egui::Id>(key))
+    }
+
+    /// One frame with `events`, then `render`'s frames, and the texts they
+    /// copied to the clipboard.
+    fn frames_copying(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<String> {
+        let mut copied = Vec::new();
+        for events in std::iter::once(events).chain(std::iter::repeat_with(Vec::new).take(3)) {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            copied.extend(
+                output
+                    .platform_output
+                    .commands
+                    .into_iter()
+                    .filter_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text),
+                        _ => None,
+                    }),
+            );
+        }
+        copied
+    }
+
+    /// Whether the last announcement is `text`, less the invisible mark a
+    /// repeated one carries.
+    fn said_last(app: &App, text: &str) -> bool {
+        app.announcer
+            .spoken()
+            .iter()
+            .any(|spoken| spoken.trim_end_matches('\u{200B}') == text)
+    }
+
+    /// Phone numbers are items of the focused message, as links are: the
+    /// arrows reach them in the order the text has them and say each one,
+    /// and the label's count names them.
     #[test]
-    fn phone_number_link_opens_its_actions_from_the_keyboard() {
+    fn the_item_cursor_reaches_phone_numbers_in_order_with_links() {
+        let mut on = app_on_attachment(Content::text(PHONE_FIXTURE));
+        let labels = accessible_labels(&mut on.app, &on.ctx);
+        assert!(
+            labels.iter().any(|label| label.contains("0501234567")
+                && label.ends_with(", 1 link and 2 phone numbers")),
+            "{labels:?}"
+        );
+        for (key, said) in [
+            (egui::Key::ArrowRight, "Link 2 of 3, https://a.org"),
+            (egui::Key::ArrowRight, "Phone number 3 of 3, 0501234567"),
+            (egui::Key::ArrowRight, "Phone number 3 of 3, 0501234567"),
+            (egui::Key::ArrowLeft, "Link 2 of 3, https://a.org"),
+            (
+                egui::Key::ArrowLeft,
+                "Phone number 1 of 3, +1 (555) 010-2040",
+            ),
+        ] {
+            on.app.announcer = Default::default();
+            press_key(&mut on.app, &on.ctx, key, egui::Modifiers::NONE);
+            assert!(
+                said_last(&on.app, said),
+                "{key:?}, {said}: {:?}",
+                on.app.announcer.spoken()
+            );
+        }
+    }
+
+    /// Space on a phone number opens that number's menu, as clicking it
+    /// does, with focus on its first item; Tab, Shift+Tab, Up and Down stay
+    /// in it.
+    #[test]
+    fn space_opens_a_phone_numbers_menu_on_its_first_item() {
+        let mut on = app_on_attachment(Content::text(PHONE_FIXTURE));
+        for _ in 0..2 {
+            press_key(
+                &mut on.app,
+                &on.ctx,
+                egui::Key::ArrowRight,
+                egui::Modifiers::NONE,
+            );
+        }
+        on.space();
+        let link = phone_link(&on.ctx, &on.chat, "key-fixture", "tel:0501234567", 0)
+            .expect("the number is drawn");
+        let popup = link.with("popup");
+        assert!(egui::Popup::is_id_open(&on.ctx, popup), "its menu opened");
+        let other = phone_link(&on.ctx, &on.chat, "key-fixture", "tel:+15550102040", 0)
+            .expect("the other number is drawn");
+        assert!(
+            !egui::Popup::is_id_open(&on.ctx, other.with("popup")),
+            "only the selected number's menu"
+        );
+        assert!(
+            on.app.open_phone_menu.is_none(),
+            "opened once, not pinned open"
+        );
+        assert_eq!(focused_layer(&on.ctx).map(|layer| layer.id), Some(popup));
+        let first = on
+            .ctx
+            .data(|data| data.get_temp::<egui::Rect>(link.with("test-message-action")))
+            .expect("the menu drew Message");
+        let focused = on
+            .ctx
+            .memory(|memory| memory.focused())
+            .and_then(|id| on.ctx.read_response(id))
+            .expect("an item has focus");
+        assert_eq!(focused.rect.min, first.min, "Message, the first item");
+        for (key, modifiers) in [
+            (egui::Key::Tab, egui::Modifiers::NONE),
+            (egui::Key::Tab, egui::Modifiers::SHIFT),
+            (egui::Key::ArrowDown, egui::Modifiers::NONE),
+            (egui::Key::ArrowUp, egui::Modifiers::NONE),
+        ] {
+            let mut seen = std::collections::HashSet::new();
+            for _ in 0..4 {
+                press_key(&mut on.app, &on.ctx, key, modifiers);
+                assert!(egui::Popup::is_id_open(&on.ctx, popup), "{key:?} closed it");
+                assert_eq!(
+                    focused_layer(&on.ctx).map(|layer| layer.id),
+                    Some(popup),
+                    "{key:?} with {modifiers:?} left the menu"
+                );
+                seen.insert(on.ctx.memory(|memory| memory.focused()));
+            }
+            assert_eq!(
+                seen.len(),
+                2,
+                "{key:?} with {modifiers:?} walked both items"
+            );
+        }
+    }
+
+    /// Message and Copy number, chosen from the keyboard, do what clicking
+    /// them does, and focus goes back to the message list.
+    #[test]
+    fn choosing_from_a_phone_menu_by_keys_does_what_clicking_does() {
+        let mut on = app_on_attachment(Content::text(PHONE_FIXTURE));
+        let list = crate::ui::conversation::messages_list_id(&on.chat);
+        // The first item, unmoved: the first number.
+        on.space();
+        let link = phone_link(&on.ctx, &on.chat, "key-fixture", "tel:+15550102040", 0)
+            .expect("the number is drawn");
+        assert!(egui::Popup::is_id_open(&on.ctx, link.with("popup")));
+        press_key(
+            &mut on.app,
+            &on.ctx,
+            egui::Key::Enter,
+            egui::Modifiers::NONE,
+        );
+        assert!(
+            on.app
+                .backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    crate::backend::Command::NewContact {
+                        phone,
+                        full_name: None,
+                        ..
+                    } if phone == "15550102040"
+                )),
+            "Message starts a chat with the number"
+        );
+        assert!(!egui::Popup::is_any_open(&on.ctx));
+        assert_eq!(on.ctx.memory(|memory| memory.focused()), Some(list));
+
+        // Enter opens the number's menu as Space does.
+        press_key(
+            &mut on.app,
+            &on.ctx,
+            egui::Key::Enter,
+            egui::Modifiers::NONE,
+        );
+        assert!(egui::Popup::is_id_open(&on.ctx, link.with("popup")));
+        press_key(
+            &mut on.app,
+            &on.ctx,
+            egui::Key::ArrowDown,
+            egui::Modifiers::NONE,
+        );
+        let copied = frames_copying(
+            &mut on.app,
+            &on.ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert_eq!(copied, ["+1 (555) 010-2040"], "the number as written");
+        assert!(
+            on.app.toasts.iter().any(|toast| toast.message == "Copied"),
+            "{:?}",
+            on.app.toasts
+        );
+        assert!(!egui::Popup::is_any_open(&on.ctx));
+        assert_eq!(on.ctx.memory(|memory| memory.focused()), Some(list));
+
+        // The second number's menu acts on that number: written without a
+        // country code, Message on it is refused as a click's is, and Copy
+        // number copies it as written.
+        for _ in 0..2 {
+            press_key(
+                &mut on.app,
+                &on.ctx,
+                egui::Key::ArrowRight,
+                egui::Modifiers::NONE,
+            );
+        }
+        on.app.toasts.clear();
+        on.space();
+        let second = phone_link(&on.ctx, &on.chat, "key-fixture", "tel:0501234567", 0)
+            .expect("the second number is drawn");
+        assert!(egui::Popup::is_id_open(&on.ctx, second.with("popup")));
+        press_key(
+            &mut on.app,
+            &on.ctx,
+            egui::Key::Enter,
+            egui::Modifiers::NONE,
+        );
+        let commands = on.app.backend.take_demo_commands();
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::NewContact { .. })),
+            "no chat started with either number: {commands:?}"
+        );
+        assert!(
+            on.app
+                .toasts
+                .iter()
+                .any(|toast| toast.message == "Enter a valid international phone number"),
+            "{:?}",
+            on.app.toasts
+        );
+        assert!(!egui::Popup::is_any_open(&on.ctx));
+        assert_eq!(on.ctx.memory(|memory| memory.focused()), Some(list));
+        on.space();
+        assert!(egui::Popup::is_id_open(&on.ctx, second.with("popup")));
+        press_key(
+            &mut on.app,
+            &on.ctx,
+            egui::Key::ArrowDown,
+            egui::Modifiers::NONE,
+        );
+        let copied = frames_copying(
+            &mut on.app,
+            &on.ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert_eq!(copied, ["0501234567"], "the second number as written");
+        assert!(!egui::Popup::is_any_open(&on.ctx));
+        assert_eq!(on.ctx.memory(|memory| memory.focused()), Some(list));
+    }
+
+    #[test]
+    fn escape_closes_a_phone_menu_and_returns_to_the_list() {
+        let mut on = app_on_attachment(Content::text(PHONE_FIXTURE));
+        on.space();
+        assert!(egui::Popup::is_any_open(&on.ctx));
+        press_key(
+            &mut on.app,
+            &on.ctx,
+            egui::Key::Escape,
+            egui::Modifiers::NONE,
+        );
+        assert!(!egui::Popup::is_any_open(&on.ctx));
+        assert_eq!(
+            on.ctx.memory(|memory| memory.focused()),
+            Some(crate::ui::conversation::messages_list_id(&on.chat))
+        );
+        assert!(on.app.open_chat.is_some(), "Escape closed the menu only");
+        assert!(
+            on.app.backend.take_demo_commands().is_empty(),
+            "and chose nothing"
+        );
+    }
+
+    /// A number's menu asked for while another menu is open is dropped, not
+    /// kept for later: closing that menu never opens one the reader no
+    /// longer expects.
+    #[test]
+    fn a_phone_menu_asked_for_under_another_menu_never_opens_later() {
+        let mut on = app_on_attachment(Content::text(PHONE_FIXTURE));
+        press_key(&mut on.app, &on.ctx, egui::Key::F10, egui::Modifiers::SHIFT);
+        assert!(egui::Popup::is_any_open(&on.ctx), "the message menu");
+        on.app.open_phone_menu = Some((
+            on.chat.clone(),
+            "key-fixture".into(),
+            "tel:0501234567".into(),
+        ));
+        render(&mut on.app, &on.ctx);
+        assert!(on.app.open_phone_menu.is_none(), "dropped");
+        let link = phone_link(&on.ctx, &on.chat, "key-fixture", "tel:0501234567", 0)
+            .expect("the number is drawn");
+        press_key(
+            &mut on.app,
+            &on.ctx,
+            egui::Key::Escape,
+            egui::Modifiers::NONE,
+        );
+        render(&mut on.app, &on.ctx);
+        assert!(
+            !egui::Popup::is_id_open(&on.ctx, link.with("popup")),
+            "no number's menu once the message menu closed"
+        );
+    }
+
+    /// Phone numbers are not Tab stops: Tab from the message list goes round
+    /// the main view, through the message input, back to the list without
+    /// landing on one, and the message input's side goes from Emoji straight
+    /// to the chat search. Like the links of a text, a number has no node
+    /// of its own in the accessibility tree and takes no focus.
+    #[test]
+    fn phone_numbers_are_neither_tab_stops_nor_nodes() {
+        let mut on = app_on_attachment(Content::text(PHONE_FIXTURE));
+        // Every piece of each number, as a wrapped one is drawn in several.
+        let phones: Vec<egui::Id> = ["tel:+15550102040", "tel:0501234567"]
+            .into_iter()
+            .flat_map(|url| {
+                let pieces: Vec<_> = (0..8)
+                    .map_while(|piece| phone_link(&on.ctx, &on.chat, "key-fixture", url, piece))
+                    .collect();
+                assert!(!pieces.is_empty(), "the number is drawn");
+                pieces
+            })
+            .collect();
+        let list = crate::ui::conversation::messages_list_id(&on.chat);
+        let composer =
+            crate::ui::focus::control(&on.ctx, crate::ui::focus::Stop::Composer).unwrap();
+        let mut visited = Vec::new();
+        for _ in 0..40 {
+            press_key(&mut on.app, &on.ctx, egui::Key::Tab, egui::Modifiers::NONE);
+            let focused = on.ctx.memory(|memory| memory.focused());
+            if focused == Some(list) {
+                break;
+            }
+            visited.push(focused);
+        }
+        assert_eq!(
+            on.ctx.memory(|memory| memory.focused()),
+            Some(list),
+            "Tab went round to the list: {visited:?}"
+        );
+        assert!(visited.contains(&Some(composer)), "{visited:?}");
+        assert!(
+            !visited
+                .iter()
+                .flatten()
+                .any(|focused| phones.contains(focused)),
+            "Tab stopped on a phone number: {visited:?}"
+        );
+        let emoji = crate::ui::focus::control(&on.ctx, crate::ui::focus::Stop::Emoji).unwrap();
+        let search =
+            crate::ui::focus::control(&on.ctx, crate::ui::focus::Stop::ChatSearch).unwrap();
+        on.ctx.memory_mut(|memory| memory.request_focus(emoji));
+        press_key(&mut on.app, &on.ctx, egui::Key::Tab, egui::Modifiers::NONE);
+        assert_eq!(on.ctx.memory(|memory| memory.focused()), Some(search));
+        press_key(&mut on.app, &on.ctx, egui::Key::Tab, egui::Modifiers::SHIFT);
+        assert_eq!(on.ctx.memory(|memory| memory.focused()), Some(emoji));
+
+        on.ctx.enable_accesskit();
+        let mut output = on.ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| on.app.frame_ui(ui),
+        );
+        output.textures_delta.clear();
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility tree");
+        for phone in phones {
+            assert!(
+                !tree.nodes.iter().any(|(id, _)| id.0 == phone.value()),
+                "node exposed for a phone number {phone:?}"
+            );
+            on.ctx.memory_mut(|memory| memory.request_focus(phone));
+            render(&mut on.app, &on.ctx);
+            assert_ne!(on.ctx.memory(|memory| memory.focused()), Some(phone));
+        }
+    }
+
+    /// The pointer is unchanged: clicking any piece of a wrapped number
+    /// opens its menu, whose items copy the number as written or start a
+    /// chat with it.
+    #[test]
+    fn clicking_a_phone_number_opens_its_menu_as_before() {
         let mut app = app();
         app.backend.record_demo_commands();
         let chat = SAMPLES[0].id;
@@ -5137,41 +5551,30 @@ mod tests {
             output.textures_delta.clear();
             output.platform_output.commands
         };
-        // Register controls at the same width used by synthetic keyboard
-        // input so a wrapped link has the same hit-region id in both passes.
-        run(&mut app, vec![]);
-        let phone_links = crate::ui::focus::stops(&ctx)
-            .into_iter()
-            .filter_map(|(stop, id)| {
-                matches!(stop, crate::ui::focus::Stop::PhoneLink(_)).then_some(id)
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            !phone_links.is_empty(),
-            "the phone link is keyboard reachable"
-        );
-        let phone = phone_links[0];
-        let phone_last = *phone_links.last().unwrap();
-        // The stops on either side, not named ones: how many header buttons
-        // fit this width differs by platform.
-        let order = crate::ui::focus::stops(&ctx)
-            .into_iter()
-            .map(|(_, id)| id)
-            .collect::<Vec<_>>();
-        let beside = |id: egui::Id, step: usize| {
-            let at = order.iter().position(|stop| *stop == id).unwrap();
-            order[(at + step) % order.len()]
-        };
-        let previous = beside(phone, order.len() - 1);
-        let next = beside(phone_last, 1);
-        let open_menu = |app: &mut App, from: egui::Id, target: egui::Id, tab: egui::Modifiers| {
-            ctx.memory_mut(|memory| memory.request_focus(from));
-            run(app, vec![key(egui::Key::Tab, tab)]);
-            assert_eq!(ctx.memory(|memory| memory.focused()), Some(target));
-            run(app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
-            run(app, vec![]);
-            assert!(egui::Popup::is_id_open(&ctx, target.with("popup")));
-        };
+        // Lay out at the width the clicks use, so a wrapped number has the
+        // same pieces in both, with the whole message in view at the bottom
+        // of the list, until the list stops moving.
+        app.scroll_to_bottom = true;
+        let url = "tel:+99999999999999";
+        let mut pieces: Vec<egui::Id> = Vec::new();
+        let mut last = None;
+        for _ in 0..60 {
+            run(&mut app, vec![]);
+            pieces = (0..8)
+                .map_while(|piece| phone_link(&ctx, chat, "ada-link", url, piece))
+                .collect();
+            let rects: Vec<egui::Rect> = pieces
+                .iter()
+                .filter_map(|piece| ctx.read_response(*piece).map(|response| response.rect))
+                .collect();
+            if last.as_ref() == Some(&rects) {
+                break;
+            }
+            last = Some(rects);
+        }
+        assert!(!pieces.is_empty(), "the number is drawn");
+        let phone = pieces[0];
+        let phone_last = *pieces.last().unwrap();
         let click = |app: &mut App, rect: egui::Rect| {
             let pos = rect.center();
             let button = |pressed| egui::Event::PointerButton {
@@ -5183,8 +5586,22 @@ mod tests {
             run(app, vec![egui::Event::PointerMoved(pos), button(true)]);
             run(app, vec![button(false)])
         };
+        let open_menu = |app: &mut App, link: egui::Id| {
+            // A frame between two clicks, as a hand gives: the menu closed by
+            // the last one leaves the screen.
+            run(app, vec![]);
+            let rect = ctx.read_response(link).expect("the number is drawn").rect;
+            click(app, rect);
+            run(app, vec![]);
+            assert!(egui::Popup::is_id_open(&ctx, link.with("popup")));
+            assert_ne!(
+                ctx.memory(|memory| memory.focused()),
+                Some(link),
+                "the click gives the number no focus"
+            );
+        };
 
-        open_menu(&mut app, previous, phone, egui::Modifiers::NONE);
+        open_menu(&mut app, phone);
         let copy_rect = ctx
             .data(|data| data.get_temp::<egui::Rect>(phone.with("test-copy-action")))
             .unwrap();
@@ -5197,7 +5614,7 @@ mod tests {
             .unwrap();
         assert_eq!(copied, "+99 (999) 99999-9999");
 
-        open_menu(&mut app, next, phone_last, egui::Modifiers::SHIFT);
+        open_menu(&mut app, phone_last);
         let message_rect = ctx
             .data(|data| data.get_temp::<egui::Rect>(phone_last.with("test-message-action")))
             .unwrap();

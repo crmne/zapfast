@@ -20,7 +20,7 @@ use crate::model::{
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
-use super::focus::{self, Stop, TabStop};
+use super::focus::{Stop, TabStop};
 use super::widgets;
 
 /// Group-message avatar size.
@@ -2653,6 +2653,9 @@ struct View<'a> {
     pins: Option<&'a HashSet<String>>,
     /// Active pins of this chat, for the notices in the transcript.
     pin_notices: &'a [crate::archive::Pinned],
+    /// Open the menu of this message's phone number, by its `tel:` address
+    /// (`App::open_phone_menu`).
+    open_phone_menu: Option<(&'a str, &'a str)>,
     reaction: Option<&'a str>,
     /// The reaction picker was opened from the message's context menu.
     reaction_menu: bool,
@@ -3113,6 +3116,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
             .chat_pins
             .get(&chat.id)
             .map_or(&[][..], |rows| rows.as_slice()),
+        open_phone_menu: app
+            .open_phone_menu
+            .as_ref()
+            .filter(|(menu_chat, ..)| *menu_chat == chat.id)
+            .map(|(_, message, url)| (message.as_str(), url.as_str())),
         reaction: app
             .reaction_target
             .as_ref()
@@ -5858,51 +5866,16 @@ fn bubble_frame(
                 .data(|data| data.get_temp::<bool>(at_message_id))
                 .unwrap_or(false));
     // Opened by the message list's keys: focus goes into the menu, stays in
-    // it, and returns to the list when it closes. True while the first item
-    // is still to be focused.
-    let from_keys_id = bubble_id.with("menu-from-keys");
+    // it, and returns to the list when it closes.
     if force_menu {
         // Opened once: from here on the menu closes as any menu does.
         actions.push(Action::MessageMenuOpened);
-        let keyboard = ui.ctx().data(|data| {
-            data.get_temp::<bool>(theme::keyboard_focus_id())
-                .unwrap_or(false)
-        });
-        if keyboard {
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(from_keys_id, true));
-        }
     }
-    let from_keys = ui.ctx().data(|data| data.get_temp::<bool>(from_keys_id));
-    // Whether keyboard focus is on one of the menu's items (true), on a
-    // widget elsewhere (false), or on nothing drawn (None, as between two
-    // items while Tab moves on).
-    let focus_in_menu = |ctx: &egui::Context| {
-        ctx.memory(|memory| memory.focused())
-            .and_then(|id| ctx.read_response(id))
-            .map(|response| response.layer_id.id == popup_id)
-    };
-    if from_keys == Some(false) && was_open && !reacting && focus_in_menu(ui.ctx()) == Some(true) {
-        // Up and Down walk the items in order and wrap, as Tab does, as in
-        // any desktop menu. egui's own arrow moves go to the nearest widget
-        // on screen, which can be one under the menu.
-        let step = ui.ctx().input_mut(|input| {
-            if super::keys::take_plain(input, egui::Key::ArrowDown) {
-                Some(egui::FocusDirection::Next)
-            } else if super::keys::take_plain(input, egui::Key::ArrowUp) {
-                Some(egui::FocusDirection::Previous)
-            } else {
-                None
-            }
-        });
-        if let Some(step) = step {
-            ui.memory_mut(|memory| memory.move_focus(step));
-        }
-    }
+    let key_menu = KeyMenu::begin(ui.ctx(), popup_id, force_menu, reacting);
     // Opened from the keys, the menu also lists what only a click reaches
     // in the bubble (`inner_entries`), and is wide enough for it. A menu
     // opened with the pointer is as it was.
-    let keys_menu = from_keys.is_some();
+    let keys_menu = key_menu.state.is_some();
     ui.ctx()
         .data_mut(|data| data.insert_temp(keys_menu_id(popup_id), keys_menu));
     let width = if keys_menu {
@@ -5959,53 +5932,19 @@ fn bubble_frame(
         ui.ctx()
             .data_mut(|data| data.insert_temp(bubble_id.with("menu-rect"), menu.response.rect));
     }
-    let mut open_now = egui::Popup::is_id_open(ui.ctx(), popup_id);
-    if let Some(focus_pending) = from_keys {
-        if open_now && !focus_pending && !reacting && focus_in_menu(ui.ctx()) == Some(false) {
-            // A shortcut (Ctrl+L, Ctrl+K, Alt+2) took focus out of the menu:
-            // it closes, as a desktop menu does when focus leaves, rather
-            // than staying open unseen and holding on to the arrows, Tab and
-            // the next Escape. Focus stays where the shortcut put it.
-            egui::Popup::close_id(ui.ctx(), popup_id);
-            open_now = false;
-            ui.ctx().data_mut(|data| data.remove::<bool>(from_keys_id));
-        } else if !open_now {
-            ui.ctx().data_mut(|data| data.remove::<bool>(from_keys_id));
-            // Closed in this pass by Escape or a chosen item: back to the
-            // message list, drawn earlier in this pass. A click elsewhere
-            // keeps the focus it gave. A menu that went away unseen, its
-            // message not drawn (another chat, Settings), returns nothing:
-            // focus has moved on since.
-            if was_open
-                && !ui.input(|input| input.pointer.any_pressed() || input.pointer.any_click())
-            {
-                let item = ui.memory(|memory| memory.focused());
-                super::overlay::hand_back(ui.ctx(), messages_list_id(&view.chat.id), item);
-            }
-        } else if let Some(menu) = &menu
-            && !reacting
-        {
-            // Tab stays among the menu's items. Not beside the reaction
-            // picker, whose own layer must keep its focus.
-            ui.memory_mut(|memory| memory.set_modal_layer(menu.response.layer_id));
-            // The first item, drawn in this pass, takes focus once.
-            if focus_pending
-                && let Some(first) = ui
-                    .ctx()
-                    .data(|data| {
-                        data.get_temp::<Option<egui::Id>>(menu_first_item_id(
-                            &view.chat.id,
-                            &menu_target.id,
-                        ))
-                    })
-                    .flatten()
-            {
-                ui.memory_mut(|memory| memory.request_focus(first));
-                ui.ctx()
-                    .data_mut(|data| data.insert_temp(from_keys_id, false));
-            }
-        }
-    }
+    let first = ui
+        .ctx()
+        .data(|data| {
+            data.get_temp::<Option<egui::Id>>(menu_first_item_id(&view.chat.id, &menu_target.id))
+        })
+        .flatten();
+    let open_now = key_menu.finish(
+        ui.ctx(),
+        menu.as_ref().map(|menu| menu.response.layer_id),
+        reacting,
+        first,
+        messages_list_id(&view.chat.id),
+    );
     if was_open && !open_now {
         // A card's buttons were for that one opening only.
         ui.ctx()
@@ -7120,6 +7059,7 @@ pub(crate) fn list_menu(
         // Nothing scrolls, highlights, or selects in a list row.
         anchor: None,
         open_menu: None,
+        open_phone_menu: None,
         reaction: None,
         reaction_menu: false,
         reaction_emoji: &app.settings.reaction_emoji,
@@ -7843,6 +7783,127 @@ fn menu_first_item_id(chat: &str, message: &str) -> egui::Id {
     bubble_id(chat, message).with("menu-first-item")
 }
 
+/// A popup menu the message list's keys can open: the message menu, or a
+/// phone number's menu. Opened from the keys, focus goes to its first item,
+/// Tab, Up and Down stay among its items, focus leaving closes it, and
+/// Escape or a chosen item returns focus to the list. A menu opened with the
+/// pointer is left as it was.
+///
+/// [`KeyMenu::begin`] runs before the popup is shown, [`KeyMenu::finish`]
+/// after it.
+struct KeyMenu {
+    popup: egui::Id,
+    pending: egui::Id,
+    /// Some(true) while the first item is still to be focused, Some(false)
+    /// once it was; None for a menu the keys did not open.
+    state: Option<bool>,
+    was_open: bool,
+}
+
+impl KeyMenu {
+    /// `requested` is true in the pass the list asks for the menu: it then
+    /// opens once, and from there on closes as any menu does. `hold` keeps
+    /// focus on a layer beside the menu, such as the reaction picker.
+    fn begin(ctx: &egui::Context, popup: egui::Id, requested: bool, hold: bool) -> Self {
+        let pending = popup.with("from-keys");
+        let was_open = egui::Popup::is_id_open(ctx, popup);
+        // Only after keyboard navigation: a demo page that opens the menu
+        // moves no focus.
+        let keyboard = ctx.data(|data| {
+            data.get_temp::<bool>(theme::keyboard_focus_id())
+                .unwrap_or(false)
+        });
+        if requested && keyboard {
+            ctx.data_mut(|data| data.insert_temp(pending, true));
+        }
+        let state = ctx.data(|data| data.get_temp::<bool>(pending));
+        if state == Some(false) && was_open && !hold && Self::focus_in(ctx, popup) == Some(true) {
+            // Up and Down walk the items in order and wrap, as Tab does, as
+            // in any desktop menu. egui's own arrow moves go to the nearest
+            // widget on screen, which can be one under the menu.
+            let step = ctx.input_mut(|input| {
+                if super::keys::take_plain(input, egui::Key::ArrowDown) {
+                    Some(egui::FocusDirection::Next)
+                } else if super::keys::take_plain(input, egui::Key::ArrowUp) {
+                    Some(egui::FocusDirection::Previous)
+                } else {
+                    None
+                }
+            });
+            if let Some(step) = step {
+                ctx.memory_mut(|memory| memory.move_focus(step));
+            }
+        }
+        Self {
+            popup,
+            pending,
+            state,
+            was_open,
+        }
+    }
+
+    /// Whether keyboard focus is on one of the popup's items (true), on a
+    /// widget elsewhere (false), or on nothing drawn (None, as between two
+    /// items while Tab moves on).
+    fn focus_in(ctx: &egui::Context, popup: egui::Id) -> Option<bool> {
+        ctx.memory(|memory| memory.focused())
+            .and_then(|id| ctx.read_response(id))
+            .map(|response| response.layer_id.id == popup)
+    }
+
+    /// After the popup was shown on `layer` (None when it was not drawn),
+    /// with `first` its first item drawn in this pass. Focus returns to
+    /// `list` when the menu closes. Returns whether the menu is open now.
+    fn finish(
+        self,
+        ctx: &egui::Context,
+        layer: Option<egui::LayerId>,
+        hold: bool,
+        first: Option<egui::Id>,
+        list: egui::Id,
+    ) -> bool {
+        let open = egui::Popup::is_id_open(ctx, self.popup);
+        let Some(focus_pending) = self.state else {
+            return open;
+        };
+        if open && !focus_pending && !hold && Self::focus_in(ctx, self.popup) == Some(false) {
+            // A shortcut (Ctrl+L, Ctrl+K, Alt+2) took focus out of the menu:
+            // it closes, as a desktop menu does when focus leaves, rather
+            // than staying open unseen and holding on to the arrows, Tab and
+            // the next Escape. Focus stays where the shortcut put it.
+            egui::Popup::close_id(ctx, self.popup);
+            ctx.data_mut(|data| data.remove::<bool>(self.pending));
+            return false;
+        }
+        if !open {
+            ctx.data_mut(|data| data.remove::<bool>(self.pending));
+            // Closed in this pass by Escape or a chosen item: back to the
+            // message list, drawn earlier in this pass. A click elsewhere
+            // keeps the focus it gave. A menu that went away unseen, its
+            // message not drawn (another chat, Settings), returns nothing:
+            // focus has moved on since.
+            if self.was_open
+                && !ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_click())
+            {
+                let item = ctx.memory(|memory| memory.focused());
+                super::overlay::hand_back(ctx, list, item);
+            }
+        } else if let Some(layer) = layer
+            && !hold
+        {
+            // Tab stays among the menu's items. Not beside the reaction
+            // picker, whose own layer must keep its focus.
+            ctx.memory_mut(|memory| memory.set_modal_layer(layer));
+            // The first item, drawn in this pass, takes focus once.
+            if focus_pending && let Some(first) = first {
+                ctx.memory_mut(|memory| memory.request_focus(first));
+                ctx.data_mut(|data| data.insert_temp(self.pending, false));
+            }
+        }
+        open
+    }
+}
+
 /// Whether the message menu offers Reply. A call in the chat is a record,
 /// with its own menu and no replies.
 pub(crate) fn can_reply(content: &Content) -> bool {
@@ -8093,6 +8154,9 @@ pub(crate) fn target_actions(
             },
         ) => preview_clicked(preview, &mut actions),
         (Some(KeyTarget::Link { url, .. }), _) => link_clicked(url, &mut actions),
+        // Clicking a phone number opens its menu, which Space opens too
+        // (`Action::OpenPhoneMenu`): nothing to do on the spot.
+        (Some(KeyTarget::Phone { .. }), _) => {}
         (
             Some(KeyTarget::Card(index)),
             Content::Interactive {
@@ -8327,8 +8391,9 @@ fn carousel_picture_clicked(
 }
 
 /// How the item cursor names one target of a message as it moves onto it:
-/// "Link 2 of 3, example.com/path", "Card 2 of 4, Summer sale, not
-/// downloaded", "Document 1 of 3, report.pdf".
+/// "Link 2 of 3, example.com/path", "Phone number 3 of 3, +1 (555)
+/// 010-2040", "Card 2 of 4, Summer sale, not downloaded", "Document 1 of 3,
+/// report.pdf".
 pub(crate) fn target_label(
     locale: crate::i18n::Locale,
     message: &Message,
@@ -8357,6 +8422,10 @@ pub(crate) fn target_label(
         KeyTarget::Link { written, .. } => fill(
             &gettext(locale, "Link {position} of {total}, {link}"),
             &[("position", &at), ("total", &of), ("link", written)],
+        ),
+        KeyTarget::Phone { written, .. } => fill(
+            &gettext(locale, "Phone number {position} of {total}, {number}"),
+            &[("position", &at), ("total", &of), ("number", written)],
         ),
         KeyTarget::Preview => {
             let name = match &message.content {
@@ -9494,6 +9563,15 @@ fn carousel(
         .data_mut(|data| data.insert_temp(id.with("carousel-viewport"), output.inner));
 }
 
+/// Whether text drawn for the message `drawn` belongs to the message
+/// `message`: the message itself, or one of its carousel cards
+/// ([`carousel_row`]).
+fn drawn_for(drawn: &str, message: &str) -> bool {
+    drawn
+        .strip_prefix(message)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with("-card-"))
+}
+
 /// Stands in for one carousel card when drawing its text and actions. Only the
 /// parent's identity is kept: cloning the whole message would copy every
 /// card's thumbnail per card each frame, and the parent's quote and reactions
@@ -10344,7 +10422,8 @@ fn rich_body(
             ));
     }
     // Click links and drag to select text.
-    // Text selection and web links do not need a sequential Tab stop.
+    // Text selection, links and phone numbers do not need a sequential Tab
+    // stop: the message list's item cursor reaches the links and numbers.
     // The surrounding transcript remains available to accessibility readers.
     let (_, rect) = ui.allocate_space(allocation);
     // egui matches selection endpoints to widgets by id every frame and drops
@@ -10471,7 +10550,12 @@ fn rich_body(
             .skip(range.start)
             .take(range.len())
             .collect();
-        for (row, bounds) in crate::bidi::char_bounds_by_row(&laid.galley, range.start, range.end) {
+        let pieces = crate::bidi::char_bounds_by_row(&laid.galley, range.start, range.end);
+        for (piece, (row, bounds)) in pieces.into_iter().enumerate() {
+            // For the pointer only, as a web link in the text is: not
+            // focusable and no node of its own in the accessibility tree.
+            // The message list's item cursor reaches the number, and Space
+            // opens this menu (`KeyTarget::Phone`).
             let link = ui
                 .interact(
                     bounds.translate(origin.to_vec2()).expand(2.0),
@@ -10481,16 +10565,49 @@ fn rich_body(
                         range.end,
                         row,
                     )),
-                    Sense::click(),
+                    Sense::CLICK,
                 )
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
-            link.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), number)
+            // Where tests find each piece of a number, by its address and its
+            // place among the pieces of a wrapped number.
+            #[cfg(test)]
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    bubble_id(&view.chat.id, &message.id).with((
+                        "test-phone-link",
+                        url.as_str(),
+                        piece,
+                    )),
+                    link.id,
+                );
             });
-            theme::reveal_focus(&link);
-            let link = focus::phone_link(link);
-            egui::Popup::menu(&link)
-                .id(link.id.with("popup"))
+            let popup_id = link.id.with("popup");
+            // Space on the number in the message list asks for its menu: the
+            // first piece of the number's first appearance opens it, once.
+            let asked = piece == 0
+                && view.open_phone_menu.is_some_and(|(requested, wanted)| {
+                    wanted == url.as_str() && drawn_for(&message.id, requested)
+                });
+            let requested = asked && !egui::Popup::is_any_open(ui.ctx());
+            if asked {
+                // Opened once: from here on the menu closes as any menu does.
+                // Asked for under another menu, it is dropped rather than
+                // opening once that one closes.
+                actions.push(Action::PhoneMenuOpened);
+            }
+            let key_menu = KeyMenu::begin(ui.ctx(), popup_id, requested, false);
+            let popup = egui::Popup::menu(&link);
+            let popup = if requested {
+                popup.open_memory(egui::SetOpenCommand::Bool(true))
+            } else {
+                popup
+            };
+            let mut first = None;
+            let menu = popup
+                .id(popup_id)
+                // The menu's background takes clicks without being a Tab stop
+                // of its own: Tab walks Message and Copy number only.
+                .sense(Sense::CLICK)
                 .width(widgets::menu_width(ui, &menu_labels, true))
                 .frame(widgets::menu_frame(&view.palette))
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
@@ -10498,8 +10615,15 @@ fn rich_body(
                     #[cfg(test)]
                     let message_rect =
                         Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 28.0));
-                    let message_clicked =
-                        widgets::menu_item(ui, &view.palette, None, message_number.as_ref());
+                    let message_item = widgets::menu_item_response(
+                        ui,
+                        &view.palette,
+                        None,
+                        message_number.as_ref(),
+                        true,
+                    );
+                    first = Some(message_item.id);
+                    let message_clicked = message_item.clicked();
                     #[cfg(test)]
                     ui.ctx().data_mut(|data| {
                         data.insert_temp(link.id.with("test-message-action"), message_rect);
@@ -10529,6 +10653,13 @@ fn rich_body(
                         actions.push(Action::CopyText(copy_text.clone()));
                     }
                 });
+            key_menu.finish(
+                ui.ctx(),
+                menu.as_ref().map(|menu| menu.response.layer_id),
+                false,
+                first,
+                messages_list_id(&view.chat.id),
+            );
         }
     }
     if !laid.links.is_empty()
@@ -13475,6 +13606,7 @@ mod tests {
             interactive_pending: &app.interactive_sending,
             anchor: None,
             open_menu: None,
+            open_phone_menu: None,
             reaction: None,
             reaction_menu: false,
             reaction_emoji: &app.settings.reaction_emoji,

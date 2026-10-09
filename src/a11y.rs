@@ -198,6 +198,9 @@ pub enum KeyTarget {
     Preview,
     /// A link in the text: as the text writes it, and the address it opens.
     Link { written: String, url: String },
+    /// A phone number in the text: as the text writes it, and its `tel:`
+    /// address. Space opens its menu, as clicking it does.
+    Phone { written: String, url: String },
     /// The message's own file: its photo, video, voice message, document or
     /// sticker, or an interactive card's header image.
     Attachment,
@@ -221,8 +224,19 @@ pub enum KeyTarget {
     PollResults,
 }
 
+impl KeyTarget {
+    /// The address of a link or a phone number.
+    fn address(&self) -> Option<&str> {
+        match self {
+            KeyTarget::Link { url, .. } | KeyTarget::Phone { url, .. } => Some(url),
+            _ => None,
+        }
+    }
+}
+
 /// The targets of a message, in the order the keys walk them: its file
-/// first, then the links of its text or caption. `mentions` are the
+/// first, then the links and phone numbers of its text or caption, in the
+/// order the text has them. `mentions` are the
 /// message's: a mention's id is digits, which the bubble draws as the name
 /// it mentions, never as a phone number to call.
 pub fn key_targets(content: &Content, mentions: &[MentionRef]) -> Vec<KeyTarget> {
@@ -242,7 +256,13 @@ pub fn key_targets(content: &Content, mentions: &[MentionRef]) -> Vec<KeyTarget>
         crate::markup::written_links(text, &mentions)
             .into_iter()
             .filter(|(_, url)| skip.is_none_or(|skip| normalise(url) != normalise(skip)))
-            .map(|(written, url)| KeyTarget::Link { written, url })
+            .map(|(written, url)| {
+                if url.starts_with("tel:") {
+                    KeyTarget::Phone { written, url }
+                } else {
+                    KeyTarget::Link { written, url }
+                }
+            })
             .collect::<Vec<_>>()
     };
     match content {
@@ -270,12 +290,11 @@ pub fn key_targets(content: &Content, mentions: &[MentionRef]) -> Vec<KeyTarget>
             // in order, each followed by the links in its own text.
             let add_links = |targets: &mut Vec<KeyTarget>, text: &str| {
                 for link in links(text, None) {
-                    let KeyTarget::Link { url, .. } = &link else {
-                        continue;
-                    };
-                    let seen = targets.iter().any(
-                        |target| matches!(target, KeyTarget::Link { url: seen, .. } if seen == url),
-                    );
+                    let seen = targets.iter().any(|target| {
+                        target
+                            .address()
+                            .is_some_and(|seen| Some(seen) == link.address())
+                    });
                     if !seen {
                         targets.push(link);
                     }
@@ -308,8 +327,8 @@ pub fn key_targets(content: &Content, mentions: &[MentionRef]) -> Vec<KeyTarget>
 }
 
 /// What the end of a message's label says about its targets when there are
-/// two or more: "3 links", "4 cards", "attachment and 2 links", or "video
-/// and 2 links" for a video.
+/// two or more: "3 links", "4 cards", "attachment and 2 links", "1 link and
+/// 1 phone number", or "video and 2 links" for a video.
 pub fn targets_count(locale: Locale, content: &Content, mentions: &[MentionRef]) -> Option<String> {
     let targets = key_targets(content, mentions);
     if targets.len() < 2 {
@@ -344,6 +363,18 @@ pub fn targets_count(locale: Locale, content: &Content, mentions: &[MentionRef])
         parts.push(fill(
             &ngettext(locale, "{count} link", "{count} links", links),
             &[("count", &links.to_string())],
+        ));
+    }
+    let phones = count(|target| matches!(target, KeyTarget::Phone { .. }));
+    if phones > 0 {
+        parts.push(fill(
+            &ngettext(
+                locale,
+                "{count} phone number",
+                "{count} phone numbers",
+                phones,
+            ),
+            &[("count", &phones.to_string())],
         ));
     }
     // Only buttons, such as a contact's Chat and Add, leave no count to say.
@@ -774,6 +805,69 @@ mod tests {
         assert_eq!(targets_count(en, &content, &mentions), None, "one target");
     }
 
+    /// Phone numbers are items as links are, in the order the text has
+    /// them, each once.
+    #[test]
+    fn phone_numbers_are_items_in_text_order_with_links() {
+        let link = |written: &str, url: &str| KeyTarget::Link {
+            written: written.to_owned(),
+            url: url.to_owned(),
+        };
+        let phone = |written: &str, url: &str| KeyTarget::Phone {
+            written: written.to_owned(),
+            url: url.to_owned(),
+        };
+        assert_eq!(
+            key_targets(
+                &text(
+                    "Call +1 (555) 010-2040, see https://a.org, or 0501234567; again +1 (555) 010-2040",
+                    None
+                ),
+                &[]
+            ),
+            [
+                phone("+1 (555) 010-2040", "tel:+15550102040"),
+                link("https://a.org", "https://a.org"),
+                phone("0501234567", "tel:0501234567"),
+            ]
+        );
+        // A caption's numbers follow the file.
+        let photo = Content::Image {
+            caption: Some("ring 0501234567".into()),
+            media: media(),
+            motion: None,
+        };
+        assert_eq!(
+            key_targets(&photo, &[]),
+            [KeyTarget::Attachment, phone("0501234567", "tel:0501234567")]
+        );
+        // A card's number and the same number in the carousel's text are
+        // one item, where the carousel's text has it, above the cards.
+        let card = |body: &str| crate::model::InteractiveCard {
+            body: body.into(),
+            buttons: Vec::new(),
+            image: None,
+            needs_phone: false,
+            carousel: Vec::new(),
+            thumbnail: None,
+        };
+        let carousel = Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                carousel: vec![card("Book on 0501234567")],
+                ..card("Or call 0501234567 or 0507654321")
+            })),
+        };
+        assert_eq!(
+            key_targets(&carousel, &[]),
+            [
+                phone("0501234567", "tel:0501234567"),
+                phone("0507654321", "tel:0507654321"),
+                KeyTarget::Card(0),
+            ]
+        );
+    }
+
     /// Four parts or more join as the three-part list does, through
     /// templates only: no comma of the code's own is said in a language
     /// whose list reads otherwise.
@@ -810,6 +904,31 @@ mod tests {
         assert_eq!(
             spoken_list(en, &braced).as_deref(),
             Some("{list}, {next}, b and c")
+        );
+    }
+
+    /// The label's count names phone numbers apart from links.
+    #[test]
+    fn the_label_counts_phone_numbers() {
+        let en = Locale::default();
+        let count = |content: &Content| targets_count(en, content, &[]);
+        assert_eq!(count(&text("call 0501234567", None)), None, "one target");
+        assert_eq!(
+            count(&text("call 0501234567 or 0507654321", None)).as_deref(),
+            Some("2 phone numbers")
+        );
+        assert_eq!(
+            count(&text("call 0501234567 or see https://a.org", None)).as_deref(),
+            Some("1 link and 1 phone number")
+        );
+        let photo = Content::Image {
+            caption: Some("https://a.org, 0501234567 or 0507654321".into()),
+            media: media(),
+            motion: None,
+        };
+        assert_eq!(
+            count(&photo).as_deref(),
+            Some("attachment, 1 link and 2 phone numbers")
         );
     }
 
