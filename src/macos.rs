@@ -328,12 +328,13 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-/// Puts AppKit's sidebar material behind the window's content, light or
-/// dark as `palette` is, or takes it away when the palette is not vibrant. The window is transparent; whatever egui leaves translucent, the
-/// sidebar in the Messages theme, shows the blurred desktop as Messages does.
-/// Cheap to call every frame: it changes the view only when the palette
-/// does or the window was made anew.
-pub fn vibrancy(frame: &eframe::Frame, palette: &crate::theme::Palette) {
+/// Puts AppKit's sidebar material behind the window's content while `on`,
+/// light or dark as `palette` is, or takes it away. The window is
+/// transparent; whatever egui leaves translucent, the sidebar in the
+/// Messages theme, shows the blurred desktop as Messages does. Cheap to call
+/// every frame: it changes the view only when the palette does or the
+/// window was made anew.
+pub fn vibrancy(frame: &eframe::Frame, palette: &crate::theme::Palette, on: bool) {
     use objc2_app_kit::{
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSAutoresizingMaskOptions, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
@@ -341,7 +342,6 @@ pub fn vibrancy(frame: &eframe::Frame, palette: &crate::theme::Palette) {
     };
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    let on = palette.vibrant();
     let Some(mtm) = objc2::MainThreadMarker::new() else {
         return;
     };

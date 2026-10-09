@@ -38,7 +38,7 @@ msgstr "Privati"
 msgid "Favorites"
 msgstr "Preferiti"
 
-#: src/model.rs:200 src/settings.rs:385
+#: src/model.rs:200 src/settings.rs:382
 msgid "Groups"
 msgstr "Gruppi"
 
@@ -65,7 +65,7 @@ msgstr "{weekday} alle {time}"
 msgid "{date} at {time}"
 msgstr "{date} alle {time}"
 
-#: src/util.rs:305 src/settings.rs:383
+#: src/util.rs:305 src/settings.rs:380
 msgid "Off"
 msgstr ""
 
@@ -2221,24 +2221,24 @@ msgctxt "notification"
 msgid "New message"
 msgstr "Nuovo messaggio"
 
-#: src/settings.rs:350
+#: src/settings.rs:347
 msgid "After 1 minute"
 msgstr ""
 
-#: src/settings.rs:351
+#: src/settings.rs:348
 msgid "After 15 minutes"
 msgstr ""
 
-#: src/settings.rs:352
+#: src/settings.rs:349
 msgid "After 1 hour"
 msgstr ""
 
-#: src/settings.rs:384
+#: src/settings.rs:381
 #, fuzzy
 msgid "Direct messages"
 msgstr "Seleziona messaggi"
 
-#: src/settings.rs:386
+#: src/settings.rs:383
 msgid "Direct messages and groups"
 msgstr ""
 

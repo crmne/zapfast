@@ -37,7 +37,7 @@ msgstr "私聊"
 msgid "Favorites"
 msgstr "最愛"
 
-#: src/model.rs:200 src/settings.rs:385
+#: src/model.rs:200 src/settings.rs:382
 msgid "Groups"
 msgstr "群組"
 
@@ -64,7 +64,7 @@ msgstr "{weekday} {time}"
 msgid "{date} at {time}"
 msgstr "{date} {time}"
 
-#: src/util.rs:305 src/settings.rs:383
+#: src/util.rs:305 src/settings.rs:380
 msgid "Off"
 msgstr ""
 
@@ -2156,24 +2156,24 @@ msgctxt "notification"
 msgid "New message"
 msgstr "新訊息"
 
-#: src/settings.rs:350
+#: src/settings.rs:347
 msgid "After 1 minute"
 msgstr "1 分鐘後"
 
-#: src/settings.rs:351
+#: src/settings.rs:348
 msgid "After 15 minutes"
 msgstr "15 分鐘後"
 
-#: src/settings.rs:352
+#: src/settings.rs:349
 msgid "After 1 hour"
 msgstr "1 小時後"
 
-#: src/settings.rs:384
+#: src/settings.rs:381
 #, fuzzy
 msgid "Direct messages"
 msgstr "選取訊息"
 
-#: src/settings.rs:386
+#: src/settings.rs:383
 msgid "Direct messages and groups"
 msgstr ""
 

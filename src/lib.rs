@@ -10,6 +10,7 @@ pub mod appearance;
 pub mod archive;
 pub mod audio;
 pub mod autostart;
+pub mod backdrop;
 pub mod backend;
 pub mod bidi;
 pub mod call_audio;
