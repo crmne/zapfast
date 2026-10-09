@@ -506,6 +506,11 @@ pub fn populate(app: &mut App) {
             // but we are an admin, and Section 8 Berlin is locked for us.
             chat.info_locked = Some(sample.name != "Rust Berlin");
             chat.admin = sample.name == "Family";
+            chat.group_description = Some(if sample.name == "Rust Berlin" {
+                "Rust meetups in Berlin 🦀\nShare projects, ask questions, and help each other learn.\nNext meetup: Thursday at 19:00.".to_owned()
+            } else {
+                String::new()
+            });
         }
         chat.last = conversation
             .messages
@@ -4768,6 +4773,244 @@ mod tests {
             assert_eq!(drawn(group_name_button_id()), offered, "{page}: the pencil");
             assert_eq!(drawn(group_photo_id()), offered, "{page}: the photo menu");
         }
+    }
+
+    #[test]
+    fn group_description_is_shown_in_group_info() {
+        let mut app = app();
+        apply_flags(&mut app, Some("group-info"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame_sized(&mut app, &ctx, 800.0, Vec::new());
+        }
+        fn has_heading(shape: &egui::Shape) -> bool {
+            match shape {
+                egui::Shape::Text(text) => text.galley.text() == "Description",
+                egui::Shape::Vec(shapes) => shapes.iter().any(has_heading),
+                _ => false,
+            }
+        }
+        assert!(shapes.iter().any(|shape| has_heading(&shape.shape)));
+    }
+
+    #[test]
+    fn group_description_layout_handles_absent_and_long_text_in_both_themes() {
+        fn description_shape(shape: &egui::Shape) -> Option<&egui::epaint::TextShape> {
+            match shape {
+                egui::Shape::Text(text)
+                    if text.galley.text().starts_with("Description fixture") =>
+                {
+                    Some(text)
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(description_shape),
+                _ => None,
+            }
+        }
+        fn has_heading(shape: &egui::Shape) -> bool {
+            match shape {
+                egui::Shape::Text(text) => text.galley.text() == "Description",
+                egui::Shape::Vec(shapes) => shapes.iter().any(has_heading),
+                _ => false,
+            }
+        }
+        let long = (0..40)
+            .map(|line| format!("Description fixture line {line} 🦀"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for page in ["group-info", "group-info,light"] {
+            for (width, height) in [(1280.0, 800.0), (900.0, 600.0)] {
+                for description in [
+                    None,
+                    Some(""),
+                    Some("Description fixture first 🦀\nSecond line\nThird line"),
+                    Some(long.as_str()),
+                ] {
+                    let mut app = app();
+                    apply_flags(&mut app, Some(page));
+                    app.chats
+                        .iter_mut()
+                        .find(|chat| chat.id == SAMPLES[1].id)
+                        .unwrap()
+                        .group_description = description.map(str::to_owned);
+                    let ctx = egui::Context::default();
+                    app.attach(&ctx);
+                    let mut shapes = Vec::new();
+                    for _ in 0..3 {
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    egui::vec2(width, height),
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                app.background_frame(ui.ctx());
+                                app.frame_ui(ui);
+                            },
+                        );
+                        shapes = std::mem::take(&mut output.shapes);
+                        output.textures_delta.clear();
+                    }
+                    assert_eq!(
+                        shapes.iter().any(|shape| has_heading(&shape.shape)),
+                        description.is_some_and(|text| !text.is_empty()),
+                        "{page}, {width}x{height}"
+                    );
+                    if description.is_some_and(|text| !text.is_empty()) {
+                        fn dialog_frame(shape: &egui::Shape) -> Option<egui::Rect> {
+                            match shape {
+                                egui::Shape::Rect(rect)
+                                    if rect.rect.width() > 360.0
+                                        && rect.rect.width() < 430.0
+                                        && rect.rect.height() > 300.0 =>
+                                {
+                                    Some(rect.rect)
+                                }
+                                egui::Shape::Vec(shapes) => shapes.iter().find_map(dialog_frame),
+                                _ => None,
+                            }
+                        }
+                        let frame = shapes
+                            .iter()
+                            .find_map(|shape| dialog_frame(&shape.shape))
+                            .expect("the group dialog frame is drawn");
+                        assert!(
+                            frame.top() >= 16.0 && frame.bottom() <= height - 16.0,
+                            "the dialog leaves space at both window edges: {page}, {width}x{height}: {frame:?}"
+                        );
+                        fn footer(shape: &egui::Shape) -> Option<&egui::epaint::TextShape> {
+                            match shape {
+                                egui::Shape::Text(text) if text.galley.text() == "Archive" => {
+                                    Some(text)
+                                }
+                                egui::Shape::Vec(shapes) => shapes.iter().find_map(footer),
+                                _ => None,
+                            }
+                        }
+                        let footer = shapes
+                            .iter()
+                            .find_map(|shape| footer(&shape.shape))
+                            .expect("the dialog actions are drawn");
+                        assert!(
+                            footer.pos.y >= 0.0
+                                && footer.pos.y + footer.galley.rect.max.y <= height,
+                            "the dialog actions stay on screen: {page}, {width}x{height}"
+                        );
+                        let (clipped, text) = shapes
+                            .iter()
+                            .find_map(|clipped| {
+                                description_shape(&clipped.shape).map(|text| (clipped, text))
+                            })
+                            .expect("the description is drawn");
+                        if description == Some(long.as_str()) {
+                            assert!(
+                                text.galley.text().contains("line 39"),
+                                "all lines remain available to scroll"
+                            );
+                            assert!(text.galley.rows.len() >= 40);
+                        }
+                        assert!(
+                            clipped.clip_rect.height() <= 121.0,
+                            "description scroll area stays bounded"
+                        );
+                        assert!(
+                            clipped.clip_rect.min.y >= 0.0 && clipped.clip_rect.max.y <= height
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn group_description_can_be_selected_and_copied_with_line_breaks_and_emoji() {
+        let mut app = app();
+        apply_flags(&mut app, Some("group-info"));
+        let description = "Description fixture 🦀\nSecond line";
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == SAMPLES[1].id)
+            .unwrap()
+            .group_description = Some(description.into());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let draw = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.background_frame(ui.ctx());
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let mut output = draw(&mut app, Vec::new());
+        for _ in 0..2 {
+            output = draw(&mut app, Vec::new());
+        }
+        fn find(shape: &egui::Shape) -> Option<&egui::epaint::TextShape> {
+            match shape {
+                egui::Shape::Text(text)
+                    if text.galley.text().starts_with("Description fixture") =>
+                {
+                    Some(text)
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(find),
+                _ => None,
+            }
+        }
+        let text = output
+            .shapes
+            .iter()
+            .find_map(|shape| find(&shape.shape))
+            .expect("description label");
+        let start = text.pos
+            + text
+                .galley
+                .rows
+                .first()
+                .unwrap()
+                .rect()
+                .left_center()
+                .to_vec2()
+            + egui::vec2(1.0, 0.0);
+        let end = text.pos
+            + text
+                .galley
+                .rows
+                .last()
+                .unwrap()
+                .rect()
+                .right_center()
+                .to_vec2()
+            + egui::vec2(4.0, 0.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(
+            &mut app,
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+        );
+        draw(&mut app, vec![egui::Event::PointerMoved(end)]);
+        draw(&mut app, vec![button(end, false)]);
+        let copied = draw(&mut app, vec![egui::Event::Copy]);
+        assert!(copied.platform_output.commands.iter().any(
+            |command| matches!(command, egui::OutputCommand::CopyText(text) if text == description)
+        ));
     }
 
     /// The pencil opens the name editor; Enter renames the group on WhatsApp,

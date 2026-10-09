@@ -162,7 +162,7 @@ const CHAT_COLUMNS: &str =
                     c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known,
                     c.notification_sound, c.marked_unread,
                     (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left,
-                    c.info_locked, c.group_admin";
+                    c.info_locked, c.group_admin, c.group_description";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -203,6 +203,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // NULL until the group's metadata says whether only admins edit its info.
     ("chats", "info_locked", "INTEGER"),
     ("chats", "group_admin", "INTEGER NOT NULL DEFAULT 0"),
+    ("chats", "group_description", "TEXT"),
     // Set once the phone says it holds nothing older than what it sent.
     ("chats", "history_start", "INTEGER NOT NULL DEFAULT 0"),
     ("contacts", "first_name", "TEXT"),
@@ -262,6 +263,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         left: row.get(22)?,
         info_locked: row.get(23)?,
         admin: row.get(24)?,
+        group_description: row.get(25)?,
     })
 }
 
@@ -473,6 +475,21 @@ impl Archive {
                 serde_json::to_string(participants).unwrap_or_else(|_| "[]".into()),
                 read_only
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Stores a fetched description, keeping an empty value distinct from
+    /// metadata that has not been fetched. Preserve nonblank text verbatim.
+    pub fn set_group_description(&self, id: &str, description: &str) -> Result<()> {
+        let description = if description.trim().is_empty() {
+            ""
+        } else {
+            description
+        };
+        self.connection.execute(
+            "UPDATE chats SET group_description = ?2 WHERE id = ?1",
+            params![id, description],
         )?;
         Ok(())
     }
@@ -2276,6 +2293,152 @@ pub(crate) mod tests {
     }
     use super::*;
     use crate::model::Content;
+
+    #[test]
+    fn group_description_migrates_existing_chats() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO chats (id, name, kind) VALUES ('fixture@g.us', 'Fixture', 'group');",
+            )
+            .unwrap();
+        let archive = Archive::prepare(connection).unwrap();
+        let columns: Vec<String> = archive
+            .connection
+            .prepare("PRAGMA table_info(chats)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert!(columns.iter().any(|name| name == "group_description"));
+        let description: Option<String> = archive
+            .connection
+            .query_row(
+                "SELECT group_description FROM chats WHERE id = 'fixture@g.us'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(description, None);
+    }
+
+    #[test]
+    fn group_description_states_survive_partial_updates_and_reopening() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fixture.db");
+        let key = [32; 32];
+        let group = "fixture@g.us";
+        {
+            let archive = Archive::open_with_key(&path, &key).unwrap();
+            archive.ensure_chat(group, "Fixture").unwrap();
+            assert_eq!(
+                archive.chat(group).unwrap().unwrap().group_description,
+                None
+            );
+            archive.set_group_description(group, " \n\t").unwrap();
+            assert_eq!(
+                archive
+                    .chat(group)
+                    .unwrap()
+                    .unwrap()
+                    .group_description
+                    .as_deref(),
+                Some("")
+            );
+            archive
+                .set_group_description(group, " First line 🦀\nSecond line ")
+                .unwrap();
+            archive
+                .upsert_chat(&Chat::new(group.into(), "From history".into()))
+                .unwrap();
+            archive
+                .set_group_info(group, None, &["peer@s.whatsapp.net".into()], false)
+                .unwrap();
+            assert_eq!(
+                archive.chats().unwrap()[0].group_description.as_deref(),
+                Some(" First line 🦀\nSecond line ")
+            );
+        }
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert_eq!(
+            archive
+                .chat(group)
+                .unwrap()
+                .unwrap()
+                .group_description
+                .as_deref(),
+            Some(" First line 🦀\nSecond line ")
+        );
+        archive.set_group_description(group, "").unwrap();
+        drop(archive);
+        let archive = Archive::open_with_key(&path, &key).unwrap();
+        assert_eq!(
+            archive
+                .chat(group)
+                .unwrap()
+                .unwrap()
+                .group_description
+                .as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn group_descriptions_stay_in_their_account_archives() {
+        let root = tempfile::tempdir().unwrap();
+        let dirs = crate::paths::AppDirs::under(root.path());
+        let first = dirs.account(&crate::model::AccountId("1".into()));
+        let second = dirs.account(&crate::model::AccountId("2".into()));
+        first.ensure().unwrap();
+        second.ensure().unwrap();
+        let first_archive = Archive::open_with_key(&first.archive_db(), &[11; 32]).unwrap();
+        let second_archive = Archive::open_with_key(&second.archive_db(), &[12; 32]).unwrap();
+        let group = "fixture@g.us";
+        first_archive.ensure_chat(group, "Fixture").unwrap();
+        second_archive.ensure_chat(group, "Fixture").unwrap();
+        first_archive
+            .set_group_description(group, "First account")
+            .unwrap();
+        assert_eq!(
+            second_archive
+                .chat(group)
+                .unwrap()
+                .unwrap()
+                .group_description,
+            None
+        );
+        second_archive
+            .set_group_description(group, "Second account")
+            .unwrap();
+        assert_eq!(
+            first_archive
+                .chat(group)
+                .unwrap()
+                .unwrap()
+                .group_description
+                .as_deref(),
+            Some("First account")
+        );
+        drop(first_archive);
+        drop(second_archive);
+        for (account, key, expected) in [
+            (first, [11; 32], "First account"),
+            (second, [12; 32], "Second account"),
+        ] {
+            let archive = Archive::open_with_key(&account.archive_db(), &key).unwrap();
+            assert_eq!(
+                archive
+                    .chat(group)
+                    .unwrap()
+                    .unwrap()
+                    .group_description
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+    }
 
     pub(crate) fn message(chat: &str, id: &str, timestamp: i64, from_me: bool) -> Message {
         Message {

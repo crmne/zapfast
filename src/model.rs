@@ -160,6 +160,9 @@ pub struct Chat {
     pub favorite_position: u32,
     /// Canonical group-member ids, empty until loaded.
     pub participants: Vec<String>,
+    /// Group description: `None` until metadata is fetched, `Some("")`
+    /// when fetched without a description, otherwise the original text.
+    pub group_description: Option<String>,
     /// Whether this is an announcement group where we cannot post.
     pub read_only: bool,
     /// Whether we confirmed leaving this group or channel. Kept apart from
@@ -213,6 +216,7 @@ impl Chat {
             favorite: false,
             favorite_position: 0,
             participants: Vec::new(),
+            group_description: None,
             read_only: false,
             left: false,
             info_locked: None,

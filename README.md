@@ -25,6 +25,9 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 
 Phone numbers in message text open actions to start a chat or copy the displayed number.
 
+Development builds also show group descriptions in group info, with selectable
+text and scrolling for longer descriptions. See [Using ZapFast](docs/_guide/using-zapfast.md#chats).
+
 **Want Spotify just as fast and native?** [Spotifast](https://spotifast.rocks)
 is ZapFast's sibling. Both are built on
 [fastframe](https://github.com/crmne/fastframe).

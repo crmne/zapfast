@@ -272,6 +272,7 @@ pub enum Command {
     /// Internal group-metadata failure.
     GroupInfoFailed {
         chat: ChatId,
+        request_generation: u64,
         /// Whether the server refusal is permanent.
         permanent: bool,
     },
@@ -684,7 +685,12 @@ pub enum Command {
     /// Internal group metadata result.
     GroupInfo {
         chat: ChatId,
+        /// Metadata request operation that produced this reply.
+        request_generation: u64,
         name: Option<String>,
+        description: String,
+        /// Description notice generation when this metadata was requested.
+        description_generation: u64,
         participants: Vec<String>,
         read_only: bool,
         ephemeral_expiration: Option<u32>,

@@ -1538,9 +1538,17 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
         crate::i18n::gettext(app.locale, "Contact")
     };
     title(ui, app, heading.as_ref());
-    // Scale the photo and member list to fit the window.
-    let window = ui.ctx().content_rect().height();
-    let photo = (window * 0.34).clamp(120.0, 240.0);
+    let description = chat
+        .group_description
+        .as_deref()
+        .filter(|text| chat.is_group() && !text.trim().is_empty());
+    // Described groups also leave room around the dialog. In short windows,
+    // shrink the photo so the description and actions retain their space.
+    let window = ui.ctx().content_rect().height() - if description.is_some() { 112.0 } else { 0.0 };
+    let mut photo = (window * 0.34).clamp(120.0, 240.0);
+    if description.is_some() {
+        photo = photo.min((window - 400.0).max(96.0));
+    }
     let picture = app.avatar_full(id).or_else(|| app.avatar(id));
     let mine = app.me.as_deref() == Some(id);
     let editable = chat.phone().is_some() && !mine;
@@ -1771,6 +1779,27 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
             .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(id.to_owned())));
     }
     ui.add_space(8.0);
+    let mut description_height = 0.0;
+    if let Some(description) = description {
+        let top = ui.cursor().top();
+        theme::text(
+            ui,
+            crate::i18n::gettext(app.locale, "Description"),
+            theme::medium(12.5),
+            palette.secondary,
+        );
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .id_salt("group-description")
+            .max_height((window - photo - 360.0).clamp(32.0, 120.0))
+            .min_scrolled_height(32.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                theme::selectable_text(ui, description, theme::regular(13.5), palette.text);
+            });
+        ui.add_space(8.0);
+        description_height = ui.cursor().top() - top;
+    }
     if chat.is_group() && !chat.participants.is_empty() {
         let members = app.participant_list(&chat);
         theme::text(
@@ -1782,13 +1811,18 @@ fn chat_info(app: &mut App, ui: &mut egui::Ui, id: &str) {
         ui.add_space(4.0);
         // Limit the visible rows because groups can have thousands of members.
         let row_height = 30.0;
-        let rows = ((window - photo - 300.0) / row_height)
+        let rows = ((window - photo - 300.0 - description_height) / row_height)
             .floor()
-            .clamp(2.0, 8.0);
+            .clamp(if description_height > 0.0 { 1.0 } else { 2.0 }, 8.0);
         let mut open = None;
         egui::ScrollArea::vertical()
             .id_salt("members")
             .max_height(row_height * rows)
+            .min_scrolled_height(if description_height > 0.0 {
+                row_height
+            } else {
+                64.0
+            })
             .auto_shrink([false, true])
             .show_rows(ui, row_height, members.len(), |ui, range| {
                 ui.spacing_mut().item_spacing.y = 0.0;
