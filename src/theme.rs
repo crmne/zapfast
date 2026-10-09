@@ -702,6 +702,11 @@ pub fn paint_icon(ui: &egui::Ui, icon: Icon, rect: egui::Rect, size: f32, color:
     icon.image(color, size).paint_at(ui, icon_rect);
 }
 
+/// The room an icon button keeps around its icon, and how wide one with
+/// the usual 18-point icon is.
+pub const ICON_BUTTON_PAD: f32 = 12.0;
+pub const ICON_BUTTON: f32 = 18.0 + ICON_BUTTON_PAD;
+
 /// Frameless icon button with hover color.
 pub fn icon_button(
     ui: &mut egui::Ui,
@@ -711,7 +716,7 @@ pub fn icon_button(
     hover: Color32,
     tooltip: &str,
 ) -> Response {
-    let edge = size + 12.0;
+    let edge = size + ICON_BUTTON_PAD;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(edge), Sense::click());
     reveal_focus(&response);
     response.widget_info(|| {
