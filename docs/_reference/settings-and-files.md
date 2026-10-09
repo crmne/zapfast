@@ -95,11 +95,12 @@ name or description, in the interface language or in English.
   greys, with bubbles shaped as Messages draws them, a frosted header that
   messages scroll under, and photos without a bubble. Its sidebar and
   conversation show the desktop through the window where the platform
-  offers a material: AppKit's on macOS, Mica on Windows 11 22H2 and later, and on Wayland
-  whatever blur the compositor applies (KDE and Hyprland can). Elsewhere,
-  and in a window opened before choosing it on Windows or Linux, the window
-  is opaque in the theme's colours; it turns translucent from the next
-  window.
+  offers a material: AppKit's on macOS, Mica on Windows 11 22H2 and later,
+  and Hyprland's blur on Linux. Elsewhere, including other Linux desktops,
+  where an unblurred desktop behind the sidebar would cost its text
+  contrast, and in a window opened before choosing it on Windows or Linux,
+  the window is opaque in the theme's colours; it turns translucent from
+  the next window.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.

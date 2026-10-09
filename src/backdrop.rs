@@ -1,8 +1,8 @@
 //! The translucent window behind the Messages theme, with what each platform
 //! offers: AppKit's sidebar material on macOS, Mica through DWM on Windows,
-//! and on Wayland a transparent window the compositor can blur (KDE,
-//! Hyprland and others do). Elsewhere, or where the platform refuses, the
-//! window stays opaque in the theme's colours, which still looks right.
+//! and on Hyprland a transparent window its compositor blurs. Elsewhere, or
+//! where the platform refuses, the window stays opaque in the theme's
+//! colours, which still looks right.
 //!
 //! The theme draws its frosted header, glass and tints itself, everywhere;
 //! only whether the desktop shows through the window is decided here, once
@@ -20,11 +20,12 @@ pub fn active() -> bool {
 
 /// Whether to make the window transparent when it is created. macOS always
 /// does, since every theme there paints over it; elsewhere only when the
-/// Messages theme is on, so other themes keep the opaque window they had.
-/// Transparency cannot be added to a window later, so a theme chosen while a
-/// window is open turns translucent from the next one.
+/// Messages theme is on and the platform can show the desktop through it,
+/// so other themes keep the opaque window they had. Transparency cannot be
+/// added to a window later, so a theme chosen while a window is open turns
+/// translucent from the next one.
 pub fn transparent_window(messages: bool) -> bool {
-    cfg!(target_os = "macos") || (messages && cfg!(any(windows, target_os = "linux")))
+    cfg!(target_os = "macos") || (messages && platform::may_show_through())
 }
 
 /// Gives the window its material while `palette` wants one, takes it away
@@ -36,6 +37,10 @@ pub fn apply(frame: &eframe::Frame, palette: &crate::theme::Palette, transparent
 
 #[cfg(target_os = "macos")]
 mod platform {
+    pub fn may_show_through() -> bool {
+        true
+    }
+
     pub fn apply(frame: &eframe::Frame, palette: &crate::theme::Palette, wanted: bool) -> bool {
         crate::macos::vibrancy(frame, palette, wanted);
         wanted
@@ -54,6 +59,12 @@ mod platform {
     };
     use windows::Win32::UI::Controls::MARGINS;
     use windows::core::BOOL;
+
+    /// Windows 11 22H2 and later; earlier versions refuse Mica in `apply`,
+    /// and the window stays opaque.
+    pub fn may_show_through() -> bool {
+        true
+    }
 
     /// The window last given a backdrop, whether it was dark, and whether
     /// Windows accepted it, so DWM is asked only when something changes.
@@ -121,20 +132,46 @@ mod platform {
 mod platform {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    /// On Wayland every window is composited, and compositors that blur
-    /// (KDE, Hyprland) blur what shows through. Under X11 a compositor may
-    /// be missing, and the window would show black behind it, so it stays
-    /// opaque there.
+    /// Translucent only where the compositor is known to blur what shows
+    /// through: Hyprland blurs translucent windows unless told not to. Other
+    /// Wayland compositors blur only windows that ask (KDE's blur protocol,
+    /// which ZapFast does not speak yet) or not at all (GNOME), and an
+    /// unblurred desktop behind the sidebar would cost its text contrast; X11
+    /// may lack a compositor entirely. All of them keep the opaque window.
     pub fn apply(frame: &eframe::Frame, _palette: &crate::theme::Palette, wanted: bool) -> bool {
         wanted
+            && may_show_through()
             && frame
                 .window_handle()
                 .is_ok_and(|handle| matches!(handle.as_raw(), RawWindowHandle::Wayland(_)))
+    }
+
+    pub fn may_show_through() -> bool {
+        blurs(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some())
+    }
+
+    /// Whether the session's compositor blurs translucent windows by itself.
+    pub fn blurs(hyprland: bool) -> bool {
+        hyprland
+    }
+
+    #[cfg(test)]
+    mod tests {
+        /// Only a compositor known to blur gets the translucent window.
+        #[test]
+        fn only_a_blurring_compositor_gets_translucency() {
+            assert!(super::blurs(true));
+            assert!(!super::blurs(false));
+        }
     }
 }
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 mod platform {
+    pub fn may_show_through() -> bool {
+        false
+    }
+
     pub fn apply(_frame: &eframe::Frame, _palette: &crate::theme::Palette, _wanted: bool) -> bool {
         false
     }
@@ -144,10 +181,14 @@ mod platform {
 mod tests {
     use super::*;
 
-    /// Other themes keep an opaque window wherever they always had one.
+    /// Other themes keep an opaque window wherever they always had one, and
+    /// Messages asks for a transparent one only where it can show through.
     #[test]
     fn only_messages_makes_a_window_transparent_off_macos() {
-        assert!(transparent_window(true) || !cfg!(any(windows, target_os = "linux")));
         assert_eq!(transparent_window(false), cfg!(target_os = "macos"));
+        assert_eq!(
+            transparent_window(true),
+            cfg!(target_os = "macos") || platform::may_show_through()
+        );
     }
 }
