@@ -6,6 +6,7 @@ mod session;
 mod whats_new;
 
 pub use capture::Capture;
+pub use session::respond;
 
 use crate::{
     app::App,

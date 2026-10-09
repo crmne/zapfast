@@ -412,6 +412,9 @@ fn sample_files(app: &App) -> (std::path::PathBuf, std::path::PathBuf) {
 /// Loads the sample account and opens its first chat.
 pub fn populate(app: &mut App) {
     app.backend.set_offline(true);
+    // With no backend to answer them, the interface's commands are answered
+    // here instead.
+    app.backend.record_demo_commands();
     // Demo mode has no backend to handle downloads.
     app.account_mut().settings.auto_download = false;
     app.link = LinkStatus::Connected;
@@ -2682,16 +2685,30 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         [x * 5, 120, 255 - y * 5, 255]
                     })
                     .collect();
-                app.pending.push(crate::app::Pending::Picture {
+                app.stage(crate::app::Pending::Picture {
                     width: side,
                     height: side,
                     rgba: std::sync::Arc::new(rgba),
                     texture: None,
                 });
-                app.pending.push(crate::app::Pending::File(photo));
-                app.pending
-                    .push(crate::app::Pending::File("/tmp/notes.pdf".into()));
+                app.stage(crate::app::Pending::File(photo));
+                app.stage(crate::app::Pending::File("/tmp/notes.pdf".into()));
                 app.composer = "Look at these".into();
+            }
+            // Opens the cropper on a sample picture. The demo has no worker
+            // to read a picture's size, so it is read here instead.
+            "crop" => {
+                let (photo, _) = sample_files(app);
+                let (width, height) = image::image_dimensions(&photo).unwrap_or((4, 3));
+                // The photo is named by the strip, so another page having
+                // staged pictures already cannot point this at the wrong one.
+                let target = app.stage(crate::app::Pending::File(photo.clone()));
+                app.picture_edit = Some(crate::model::PictureEdit::new(
+                    target,
+                    crate::model::PictureSource::File(photo),
+                    width,
+                    height,
+                ));
             }
             "archived" => app.show_archived = true,
             "labels" | "label-chips" => labels_sample(app),
@@ -4371,6 +4388,110 @@ mod tests {
     }
 
     #[test]
+    fn keeping_a_crop_stages_the_cropped_picture_and_remembers_its_original() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("crop"));
+        render(&mut app, &ctx);
+        let edit = app.picture_edit.clone().expect("the cropper is open");
+        // A region well inside the picture, so the size proves the crop ran.
+        app.picture_edit = Some(crate::model::PictureEdit {
+            crop: crate::model::PictureCrop {
+                x: 10,
+                y: 20,
+                width: 40,
+                height: 30,
+            },
+            ..edit
+        });
+        app.actions.push(crate::model::Action::ApplyPictureEdit);
+        render(&mut app, &ctx);
+        crate::demo::tour::respond(&mut app);
+        let staged = app.pending.first().expect("a picture is staged");
+        let path = match &staged.item {
+            crate::app::Pending::File(path) => path.clone(),
+            _ => panic!("the crop should leave a file staged"),
+        };
+        assert_eq!(image::image_dimensions(&path).expect("reads"), (40, 30));
+        assert!(
+            app.picture_origins.contains_key(&staged.id),
+            "the original is remembered against that attachment, so cropping again starts over from it"
+        );
+        assert!(app.picture_edit.is_none(), "keeping the crop closes it");
+    }
+
+    #[test]
+    fn reopening_a_cropped_pasted_picture_finds_its_pixels_again() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("staged"));
+        render(&mut app, &ctx);
+        let at = app
+            .pending
+            .iter()
+            .position(|staged| matches!(staged.item, crate::app::Pending::Picture { .. }))
+            .expect("the demo stages a pasted picture");
+        let target = app.pending[at].id;
+        let (rgba, width, height) = match &app.pending[at].item {
+            crate::app::Pending::Picture {
+                width,
+                height,
+                rgba,
+                ..
+            } => (rgba.clone(), *width as u32, *height as u32),
+            _ => unreachable!(),
+        };
+        // What keeping a crop leaves behind: a file in the strip, and the
+        // pixels it came from remembered against that attachment.
+        app.pending[at].item = crate::app::Pending::File("/fixture/edited.jpg".into());
+        app.picture_origins.insert(
+            target,
+            crate::model::PictureOrigin {
+                source: crate::model::PictureSource::Pasted(rgba),
+                width,
+                height,
+                crop: crate::model::PictureCrop::full(width, height),
+                turns: 0,
+            },
+        );
+        app.actions.push(crate::model::Action::EditPicture(target));
+        render(&mut app, &ctx);
+        assert!(
+            matches!(
+                app.picture_edit.as_ref().map(|edit| &edit.source),
+                Some(crate::model::PictureSource::Pasted(_))
+            ),
+            "the cropper opened on the pixels it came from"
+        );
+        assert!(
+            app.picture_texture.is_some(),
+            "and found something to draw them with, rather than an empty frame"
+        );
+    }
+
+    #[test]
+    fn the_crop_page_opens_on_the_photo_it_stages() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        // Both pages at once: staged fills the strip before crop adds its own.
+        apply_flags(&mut app, Some("staged,crop"));
+        render(&mut app, &ctx);
+        let edit = app.picture_edit.as_ref().expect("the cropper is open");
+        let at = app.staged_at(edit.target).expect("the target is staged");
+        let staged = match &app.pending[at].item {
+            crate::app::Pending::File(path) => path.clone(),
+            _ => panic!("the cropper points at the file it staged"),
+        };
+        assert!(
+            matches!(&edit.source, crate::model::PictureSource::File(path) if *path == staged),
+            "the editor and the staged attachment are the same picture"
+        );
+    }
+
+    #[test]
     fn every_surface_lays_out() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -4514,6 +4635,7 @@ mod tests {
             "rail",
             "search",
             "staged",
+            "crop",
             "compose-emoji",
             "voice",
             "voice,voice-menu",

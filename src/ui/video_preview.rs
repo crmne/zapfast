@@ -100,7 +100,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 }
 
 /// The largest rectangle of `shape`'s proportions centred in `room`.
-fn fitted(shape: egui::Vec2, room: Rect) -> Rect {
+pub(super) fn fitted(shape: egui::Vec2, room: Rect) -> Rect {
     let scale = (room.width() / shape.x.max(1.0)).min(room.height() / shape.y.max(1.0));
     Rect::from_center_size(room.center(), shape * scale)
 }

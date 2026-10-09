@@ -672,8 +672,11 @@ impl eframe::App for Shell {
             }
         }
         #[cfg(feature = "demo")]
-        if let Some(tour) = self.tour.as_mut() {
-            tour.observe(app, ui.ctx());
+        match self.tour.as_mut() {
+            Some(tour) => tour.observe(app, ui.ctx()),
+            // A demo without a tour still answers the interface's commands
+            // itself, since there is no backend to answer them.
+            None => zapfast::demo::tour::respond(app),
         }
     }
 

@@ -5206,6 +5206,37 @@ impl Worker {
                     self.emit(Event::Error(format!("Could not make the sticker: {error}")))
                 }
             },
+            Command::InspectPicture { target, path } => {
+                let commands = self.commands.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = std::fs::read(&path)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| super::picture_edit::inspect(&bytes));
+                    let _ = commands.send(Command::PictureInspected { target, result });
+                });
+            }
+            Command::PictureInspected { target, result } => {
+                self.emit(Event::PictureInspected { target, result });
+            }
+            Command::ApplyPictureEdit {
+                target,
+                source,
+                width,
+                height,
+                crop,
+                turns,
+            } => {
+                let commands = self.commands.clone();
+                let dir = self.dirs.media_cache_dir().join("edited");
+                tokio::task::spawn_blocking(move || {
+                    let result =
+                        super::picture_edit::write(&source, width, height, crop, turns, &dir);
+                    let _ = commands.send(Command::PictureEdited { target, result });
+                });
+            }
+            Command::PictureEdited { target, result } => {
+                self.emit(Event::PictureEdited { target, result });
+            }
             Command::PickStickerArchive => {
                 let commands = self.commands.clone();
                 let packs = self.packs_dir();

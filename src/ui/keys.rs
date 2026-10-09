@@ -6,6 +6,10 @@ use crate::app::App;
 use crate::model::{Action, Chat, Dialog, Page, Scroll};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
+    if app.picture_edit.is_some() {
+        editor_keys(app, ctx);
+        return;
+    }
     if app.image_preview.is_some() {
         preview_keys(app, ctx);
         return;
@@ -354,6 +358,21 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) {
     app.actions.extend(actions);
 }
 
+/// Handles keys while the cropper covers the window: Escape leaves the
+/// staged picture alone, Enter keeps the crop.
+fn editor_keys(app: &mut App, ctx: &egui::Context) {
+    let mut actions = Vec::new();
+    ctx.input_mut(|input| {
+        if input.consume_key(Modifiers::NONE, Key::Escape) {
+            actions.push(Action::CancelPictureEdit);
+        }
+        if input.consume_key(Modifiers::NONE, Key::Enter) {
+            actions.push(Action::ApplyPictureEdit);
+        }
+    });
+    app.actions.extend(actions);
+}
+
 /// Handles keys while a video covers the window: Escape puts it back, Space
 /// plays or pauses, M mutes, and the arrows jump five seconds. No chat
 /// shortcut runs and nothing is typed into the composer under it.
@@ -651,8 +670,7 @@ mod tests {
         app.show_update = true;
         app.page = Page::Settings;
         app.reply_to = Some("reply-fixture".into());
-        app.pending
-            .push(crate::app::Pending::File("unsent.png".into()));
+        app.stage(crate::app::Pending::File("unsent.png".into()));
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(
             egui::RawInput {

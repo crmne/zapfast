@@ -668,6 +668,8 @@ fastframe_icons::icons! {
         Plus => lucide "plus",
         QrCode => "qr-code",
         Refresh => lucide "refresh-cw",
+        RotateLeft => "rotate-ccw",
+        RotateRight => "rotate-cw",
         Reply => "reply",
         Search => lucide "search",
         Send => "send",

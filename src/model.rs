@@ -4,6 +4,7 @@
 //! out of views and giving the archive a stable shape.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -1094,6 +1095,253 @@ impl StickerCrop {
     }
 }
 
+/// Which part of a crop is being dragged. The edges move one side, a corner
+/// moves two, and `Inside` moves the whole region.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CropEdge {
+    Inside,
+    Left,
+    Right,
+    Top,
+    Bottom,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl CropEdge {
+    /// Whether this part drags the region's left side.
+    fn moves_left(self) -> bool {
+        matches!(self, Self::Left | Self::TopLeft | Self::BottomLeft)
+    }
+
+    /// Whether this part drags the region's right side.
+    fn moves_right(self) -> bool {
+        matches!(self, Self::Right | Self::TopRight | Self::BottomRight)
+    }
+
+    /// Whether this part drags the region's top side.
+    fn moves_top(self) -> bool {
+        matches!(self, Self::Top | Self::TopLeft | Self::TopRight)
+    }
+
+    /// Whether this part drags the region's bottom side.
+    fn moves_bottom(self) -> bool {
+        matches!(self, Self::Bottom | Self::BottomLeft | Self::BottomRight)
+    }
+}
+
+/// The smallest crop side, so a drag cannot close the region to nothing.
+pub const CROP_MIN_SIDE: u32 = 16;
+
+/// A region of a picture to keep, in its pixels, as the picture is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PictureCrop {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl PictureCrop {
+    /// The whole picture.
+    pub fn full(width: u32, height: u32) -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            width: width.max(1),
+            height: height.max(1),
+        }
+    }
+
+    /// The same region kept inside a picture of this size.
+    pub fn clamped(self, width: u32, height: u32) -> Self {
+        let (width, height) = (width.max(1), height.max(1));
+        let crop_width = self.width.clamp(1, width);
+        let crop_height = self.height.clamp(1, height);
+        Self {
+            x: self.x.min(width - crop_width),
+            y: self.y.min(height - crop_height),
+            width: crop_width,
+            height: crop_height,
+        }
+    }
+
+    /// The region after one edge or corner is dragged by whole pixels.
+    pub fn drag(self, edge: CropEdge, dx: i64, dy: i64, width: u32, height: u32) -> Self {
+        let (width, height) = (i64::from(width.max(1)), i64::from(height.max(1)));
+        let (mut left, mut top) = (i64::from(self.x), i64::from(self.y));
+        let (mut right, mut bottom) = (left + i64::from(self.width), top + i64::from(self.height));
+        if edge == CropEdge::Inside {
+            return self.moved(dx, dy, width as u32, height as u32);
+        }
+        if edge.moves_left() {
+            left += dx;
+        }
+        if edge.moves_right() {
+            right += dx;
+        }
+        if edge.moves_top() {
+            top += dy;
+        }
+        if edge.moves_bottom() {
+            bottom += dy;
+        }
+        left = left.clamp(0, width);
+        right = right.clamp(0, width);
+        top = top.clamp(0, height);
+        bottom = bottom.clamp(0, height);
+        // A moving edge gives way to the fixed one, so the region keeps a
+        // usable size without the picture's own edge being pushed out.
+        let least = i64::from(CROP_MIN_SIDE).min(width).min(height);
+        if edge.moves_left() {
+            left = left.min(right - least).max(0);
+        }
+        if edge.moves_right() {
+            right = right.max(left + least).min(width);
+        }
+        if edge.moves_top() {
+            top = top.min(bottom - least).max(0);
+        }
+        if edge.moves_bottom() {
+            bottom = bottom.max(top + least).min(height);
+        }
+        Self {
+            x: left as u32,
+            y: top as u32,
+            width: (right - left).max(1) as u32,
+            height: (bottom - top).max(1) as u32,
+        }
+    }
+
+    /// The region moved by whole pixels, staying inside the picture.
+    pub fn moved(self, dx: i64, dy: i64, width: u32, height: u32) -> Self {
+        let shift = |at: u32, by: i64| (i64::from(at) + by).max(0) as u32;
+        Self {
+            x: shift(self.x, dx),
+            y: shift(self.y, dy),
+            ..self
+        }
+        .clamped(width, height)
+    }
+
+    /// The same content after the picture is turned a quarter clockwise. The
+    /// picture's former height becomes its width.
+    pub fn turned_clockwise(self, old_height: u32) -> Self {
+        Self {
+            x: old_height.saturating_sub(self.y + self.height),
+            y: self.x,
+            width: self.height,
+            height: self.width,
+        }
+    }
+
+    /// The same content after the picture is turned a quarter anticlockwise.
+    pub fn turned_counter_clockwise(self, old_width: u32) -> Self {
+        Self {
+            x: self.y,
+            y: old_width.saturating_sub(self.x + self.width),
+            width: self.height,
+            height: self.width,
+        }
+    }
+}
+
+/// Where a picture being edited comes from: a staged file, or a picture that
+/// was pasted and only lives in memory.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PictureSource {
+    File(PathBuf),
+    /// Straight RGBA rows, as the clipboard gives them.
+    Pasted(Arc<Vec<u8>>),
+}
+
+/// A staged picture on its way to being cropped and sent.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PictureEdit {
+    /// The staged attachment it replaces, named rather than numbered, so that
+    /// removing another attachment cannot point it at a different picture.
+    pub target: crate::app::AttachmentId,
+    pub source: PictureSource,
+    /// The source picture's own size, before any turn.
+    pub width: u32,
+    pub height: u32,
+    pub crop: PictureCrop,
+    /// Quarter turns clockwise already applied to the source.
+    pub turns: u8,
+}
+
+impl PictureEdit {
+    /// A whole, unturned picture from a staged attachment.
+    pub fn new(
+        target: crate::app::AttachmentId,
+        source: PictureSource,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            target,
+            source,
+            width: width.max(1),
+            height: height.max(1),
+            crop: PictureCrop::full(width, height),
+            turns: 0,
+        }
+    }
+
+    /// The source turned to the side the crop is measured in.
+    pub fn displayed_size(&self) -> (u32, u32) {
+        if self.turns.is_multiple_of(2) {
+            (self.width, self.height)
+        } else {
+            (self.height, self.width)
+        }
+    }
+
+    /// Turns the picture, carrying the selection round with it.
+    pub fn turned(self, clockwise: bool) -> Self {
+        let (width, height) = self.displayed_size();
+        let crop = if clockwise {
+            self.crop.turned_clockwise(height)
+        } else {
+            self.crop.turned_counter_clockwise(width)
+        };
+        Self {
+            turns: if clockwise {
+                (self.turns + 1) % 4
+            } else {
+                (self.turns + 3) % 4
+            },
+            crop,
+            ..self
+        }
+    }
+
+    /// The whole picture again, the way it started: no turn and nothing
+    /// cropped away. This is what the editor's Reset does, so it has to undo
+    /// the turn as well as the region.
+    pub fn reset(self) -> Self {
+        Self {
+            crop: PictureCrop::full(self.width, self.height),
+            turns: 0,
+            ..self
+        }
+    }
+}
+
+/// Where a staged picture came from before it was cropped. Keeping it means
+/// cropping the same picture again opens on the original with its crop, so a
+/// second pass does not stack another lossy generation on the first.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PictureOrigin {
+    pub source: PictureSource,
+    pub width: u32,
+    pub height: u32,
+    pub crop: PictureCrop,
+    pub turns: u8,
+}
+
 /// A picture on its way to becoming a sticker.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StickerDraft {
@@ -1827,6 +2075,12 @@ pub enum Action {
     },
     /// Removes one pending attachment.
     RemovePending(usize),
+    /// Opens the cropper on a staged picture.
+    EditPicture(crate::app::AttachmentId),
+    /// Keeps the crop and the turn, replacing the staged picture.
+    ApplyPictureEdit,
+    /// Closes the cropper, leaving the staged picture as it was.
+    CancelPictureEdit,
     /// Removes all pending attachments.
     ClearPending,
 }
@@ -1966,6 +2220,182 @@ mod tests {
         );
         assert_eq!(small.resized(5000, 800, 600).side, 600);
         assert_eq!(StickerCrop::centered(0, 0).side, 1);
+    }
+
+    use super::{CropEdge, PictureCrop, PictureEdit, PictureSource};
+
+    #[test]
+    fn a_crop_keeps_its_size_and_stays_inside_the_picture() {
+        let full = PictureCrop::full(800, 600);
+        assert_eq!((full.x, full.y, full.width, full.height), (0, 0, 800, 600));
+        // A region larger than the picture shrinks to it and starts at the corner.
+        let huge = PictureCrop {
+            x: 900,
+            y: 900,
+            width: 4000,
+            height: 4000,
+        };
+        assert_eq!(huge.clamped(800, 600), PictureCrop::full(800, 600));
+        // A region hanging off an edge slides back, keeping its size.
+        let off = PictureCrop {
+            x: 700,
+            y: 500,
+            width: 400,
+            height: 300,
+        };
+        assert_eq!(
+            off.clamped(800, 600),
+            PictureCrop {
+                x: 400,
+                y: 300,
+                width: 400,
+                height: 300
+            }
+        );
+    }
+
+    #[test]
+    fn dragging_an_edge_moves_that_side_only() {
+        let full = PictureCrop::full(800, 600);
+        assert_eq!(
+            full.drag(CropEdge::Left, 100, 0, 800, 600),
+            PictureCrop {
+                x: 100,
+                y: 0,
+                width: 700,
+                height: 600
+            }
+        );
+        assert_eq!(
+            full.drag(CropEdge::TopLeft, 100, 50, 800, 600),
+            PictureCrop {
+                x: 100,
+                y: 50,
+                width: 700,
+                height: 550
+            }
+        );
+        // Dragging a side past the picture's edge stops at it.
+        assert_eq!(full.drag(CropEdge::Left, -100, 0, 800, 600), full);
+        // Dragging it past the far side leaves the smallest region.
+        assert_eq!(
+            full.drag(CropEdge::Left, 1000, 0, 800, 600),
+            PictureCrop {
+                x: 800 - CROP_MIN_SIDE,
+                y: 0,
+                width: CROP_MIN_SIDE,
+                height: 600
+            }
+        );
+        assert_eq!(
+            full.drag(CropEdge::BottomRight, -1000, -1000, 800, 600),
+            PictureCrop {
+                x: 0,
+                y: 0,
+                width: CROP_MIN_SIDE,
+                height: CROP_MIN_SIDE
+            }
+        );
+    }
+
+    #[test]
+    fn dragging_inside_moves_the_region_without_resizing_it() {
+        let crop = PictureCrop {
+            x: 100,
+            y: 100,
+            width: 200,
+            height: 200,
+        };
+        assert_eq!(
+            crop.drag(CropEdge::Inside, 50, 25, 800, 600),
+            PictureCrop {
+                x: 150,
+                y: 125,
+                width: 200,
+                height: 200
+            }
+        );
+        assert_eq!(
+            crop.drag(CropEdge::Inside, 1000, 1000, 800, 600),
+            PictureCrop {
+                x: 600,
+                y: 400,
+                width: 200,
+                height: 200
+            }
+        );
+        // A region filling the picture cannot go anywhere.
+        assert_eq!(
+            PictureCrop::full(800, 600).drag(CropEdge::Inside, 40, 40, 800, 600),
+            PictureCrop::full(800, 600)
+        );
+    }
+
+    #[test]
+    fn turning_carries_the_selection_round_with_the_picture() {
+        let crop = PictureCrop {
+            x: 10,
+            y: 5,
+            width: 20,
+            height: 10,
+        };
+        // Clockwise, the picture's former height becomes its width.
+        let clockwise = crop.turned_clockwise(50);
+        assert_eq!(
+            clockwise,
+            PictureCrop {
+                x: 35,
+                y: 10,
+                width: 10,
+                height: 20
+            }
+        );
+        assert!(clockwise.x + clockwise.width <= 50);
+        assert!(clockwise.y + clockwise.height <= 100);
+        let counter = crop.turned_counter_clockwise(100);
+        assert_eq!(
+            counter,
+            PictureCrop {
+                x: 5,
+                y: 70,
+                width: 10,
+                height: 20
+            }
+        );
+        assert!(counter.x + counter.width <= 50);
+        assert!(counter.y + counter.height <= 100);
+        // Turning back the other way restores the region. The picture is
+        // 50 across once it has been turned clockwise.
+        assert_eq!(clockwise.turned_counter_clockwise(50), crop);
+    }
+
+    #[test]
+    fn an_edit_turns_the_picture_underneath_the_crop() {
+        let edit = PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        assert_eq!(edit.displayed_size(), (800, 600));
+        let turned = edit.clone().turned(true);
+        assert_eq!(turned.turns, 1);
+        assert_eq!(turned.displayed_size(), (600, 800));
+        assert_eq!(turned.crop, PictureCrop::full(600, 800));
+        // Four quarter turns come back to where it started.
+        let round = turned.clone().turned(true).turned(true).turned(true);
+        assert_eq!(round.turns, 0);
+        assert_eq!(round.displayed_size(), (800, 600));
+        assert_eq!(round.crop, PictureCrop::full(800, 600));
+        // Turning anticlockwise is the same as turning clockwise three times.
+        let left = edit.clone().turned(false);
+        assert_eq!(left.turns, 3);
+        assert_eq!(left.displayed_size(), (600, 800));
+    }
+
+    #[test]
+    fn resetting_puts_the_picture_back_the_way_it_started() {
+        let edit = PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600)
+            .turned(true)
+            .reset();
+        assert_eq!(edit.turns, 0, "the turn goes back too");
+        assert_eq!(edit.displayed_size(), (800, 600));
+        assert_eq!(edit.crop, PictureCrop::full(800, 600));
     }
 
     use super::*;

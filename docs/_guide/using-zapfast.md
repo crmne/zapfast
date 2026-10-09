@@ -133,6 +133,18 @@ caption. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
 one. Press Escape or click a file's close button to remove it.
 
+Click a picture above the composer to crop it before you send it. The picture
+opens over the window with the region to keep marked, and you can drag that
+region by its edges and corners or move it whole. **Turn left** and **Turn
+right** turn the picture a quarter at a time, and **Reset** puts it back the way
+it started. Press Enter or click the check to keep the crop, or Escape or the
+close button to leave the picture as it was.
+
+Keeping a crop does not change the file you picked. ZapFast writes the cropped
+picture beside its other media and sends that one. Opening the cropper again
+starts from your original with the crop you chose, so you can widen it back out
+without a second pass over the picture.
+
 Incoming attachments up to 64 MiB download when they enter view if automatic
 downloads are on, or on click. Visible stickers download automatically even
 when that setting is off. The 64 MiB limit applies to both automatic and manual

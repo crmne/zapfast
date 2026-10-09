@@ -8011,10 +8011,22 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let tile = 72.0;
     let mut remove = None;
+    let mut open = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         for (index, item) in app.pending.iter_mut().enumerate() {
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(tile), Sense::hover());
+            // A picture can be cropped before it goes out. Anything else
+            // cannot, and does not pretend to be clickable.
+            let editable = match &item.item {
+                crate::app::Pending::Picture { .. } => true,
+                crate::app::Pending::File(path) => crate::app::Pending::is_picture_file(path),
+            };
+            let sense = if editable {
+                Sense::click()
+            } else {
+                Sense::hover()
+            };
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(tile), sense);
             if ui.is_rect_visible(rect) {
                 // Lifted off the chat like a bubble, with a bubble's corners.
                 let radius = CornerRadius::same(widgets::BUBBLE_RADIUS);
@@ -8026,7 +8038,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     palette.raised_edge(palette.surface),
                 );
                 ui.painter().rect_filled(rect, radius, palette.surface);
-                match item {
+                match &mut item.item {
                     crate::app::Pending::Picture {
                         width,
                         height,
@@ -8114,11 +8126,24 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 }
+                if editable && response.hovered() {
+                    // A picture that can be cropped says so, rather than
+                    // looking like every other tile.
+                    let dim = palette.shadow.gamma_multiply(1.4);
+                    ui.painter().rect_filled(rect, radius, dim);
+                    theme::paint_icon(
+                        ui,
+                        Icon::Pencil,
+                        Rect::from_center_size(rect.center(), Vec2::splat(22.0)),
+                        20.0,
+                        palette.text,
+                    );
+                }
                 // Remove button in the corner.
                 let close =
                     Rect::from_center_size(rect.right_top() + vec2(-10.0, 10.0), Vec2::splat(18.0));
                 let close_response =
-                    ui.interact(close, ui.id().with(("unstage", index)), Sense::click());
+                    ui.interact(close, ui.id().with(("unstage", item.id)), Sense::click());
                 ui.painter()
                     .circle_filled(close.center(), 9.0, palette.overlay);
                 theme::paint_icon(ui, Icon::X, close, 12.0, palette.text);
@@ -8127,13 +8152,17 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     .clicked()
                 {
                     remove = Some(index);
+                } else if response.clicked() {
+                    open = Some(item.id);
                 }
             }
-            let _ = response;
         }
     });
     if let Some(index) = remove {
         app.actions.push(Action::RemovePending(index));
+    }
+    if let Some(target) = open {
+        app.actions.push(Action::EditPicture(target));
     }
     ui.add_space(4.0);
 }
