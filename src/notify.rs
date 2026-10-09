@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex};
 mod badge;
 #[cfg(target_os = "windows")]
 mod badge_windows;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "linux")]
@@ -38,25 +40,6 @@ pub struct NotificationTarget {
     pub account: crate::model::AccountId,
     pub chat: String,
     pub message: String,
-}
-
-#[cfg(any(target_os = "macos", test))]
-const MACOS_APPLICATION_ID: &str = "me.paolino.fastsapp";
-
-#[cfg(target_os = "macos")]
-fn macos_application_ready() -> bool {
-    static READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *READY.get_or_init(|| {
-        // The library's implicit default looks up an app named "use_default"
-        // through AppleScript, which opens macOS's application chooser.
-        match notify_rust::set_application(MACOS_APPLICATION_ID) {
-            Ok(()) => true,
-            Err(error) => {
-                log::debug!("could not initialize notification application: {error}");
-                false
-            }
-        }
-    })
 }
 
 /// Notifications that may still wait for a click. Each one waiting holds a
@@ -393,37 +376,49 @@ fn deliver(
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(target_os = "macos")]
+#[expect(clippy::too_many_arguments)]
+fn deliver(
+    title: &str,
+    body: &str,
+    _picture: Option<&std::path::Path>,
+    system_sound: bool,
+    target: NotificationTarget,
+    opened: Arc<Mutex<Vec<NotificationTarget>>>,
+    wake: impl Fn() + Send + 'static,
+    mut cancelled: tokio::sync::oneshot::Receiver<Stop>,
+) {
+    if let Some(may_wait) = before_showing(&mut cancelled) {
+        macos::deliver(
+            title,
+            body,
+            system_sound,
+            target,
+            opened,
+            wake,
+            cancelled,
+            may_wait,
+        );
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 #[expect(clippy::too_many_arguments)]
 fn deliver(
     title: &str,
     body: &str,
     picture: Option<&std::path::Path>,
-    system_sound: bool,
+    _system_sound: bool,
     _target: NotificationTarget,
     _opened: Arc<Mutex<Vec<NotificationTarget>>>,
     _wake: impl Fn() + Send + 'static,
     mut cancelled: tokio::sync::oneshot::Receiver<Stop>,
 ) {
-    // Never fall back to application discovery, including for unbundled builds.
-    #[cfg(target_os = "macos")]
-    if !macos_application_ready() {
-        return;
-    }
     if before_showing(&mut cancelled).is_none() {
         return;
     }
     let mut notification = notify_rust::Notification::new();
     notification.appname("ZapFast").summary(title).body(body);
-    #[cfg(target_os = "macos")]
-    if system_sound {
-        // The notification system's default sound; custom sounds are played
-        // by ZapFast, and None stays silent.
-        notification.sound_name("NSUserNotificationDefaultSoundName");
-    }
-    #[cfg(not(target_os = "macos"))]
-    let _ = system_sound;
-    // Windows uses the image; macOS always uses the app icon.
     if let Some(picture) = picture {
         notification.image_path(&picture.to_string_lossy());
     }
@@ -440,15 +435,6 @@ mod tests {
     fn account(id: &str) -> AccountId {
         AccountId(id.into())
     }
-
-    #[test]
-    fn macos_notification_identity_matches_the_packaged_application() {
-        let plist = include_str!("../packaging/macos/Info.plist");
-        assert!(plist.contains(&format!(
-            "<key>CFBundleIdentifier</key><string>{MACOS_APPLICATION_ID}</string>"
-        )));
-    }
-
     #[cfg(target_os = "linux")]
     #[test]
     fn the_system_sound_names_the_theme_message_sound() {
