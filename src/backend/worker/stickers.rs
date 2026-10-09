@@ -1474,6 +1474,76 @@ mod tests {
         );
     }
 
+    /// Recent and chat stickers share one limit: the picker never has more
+    /// than `IN_FLIGHT` downloads going between the two.
+    #[tokio::test]
+    async fn recent_and_chat_stickers_share_one_limit() {
+        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        for (index, hash) in ["r1", "r2", "r3"].iter().enumerate() {
+            let raw = wa::StickerMetadata {
+                direct_path: Some(format!("/v/t62.15575-24/{hash}.enc")),
+                media_key: Some(vec![1; 32]),
+                file_enc_sha256: Some(vec![2; 32]),
+                file_sha256: Some(vec![3; 32]),
+                file_length: Some(100),
+                mimetype: Some("image/webp".into()),
+                ..Default::default()
+            }
+            .encode_to_vec();
+            worker
+                .archive
+                .upsert_phone_sticker(hash, &raw, index as i64, 0.5)
+                .expect("stored");
+        }
+        for (index, id) in ["s1", "s2", "s3"].iter().enumerate() {
+            sent_sticker_without_file(&worker, "a@s.whatsapp.net", id, index as i64);
+        }
+        worker.fetch_missing_stickers();
+        assert_eq!(
+            worker.sticker_fetches.len() + worker.sticker_downloads.len(),
+            super::super::sticker_pace::IN_FLIGHT
+        );
+    }
+
+    /// A click on a sticker the picker is already fetching is not lost: if
+    /// the picker's download fails, the sticker downloads again as the
+    /// click, which may ask the phone to re-upload it.
+    #[tokio::test]
+    async fn a_click_during_a_picker_download_retries_it_with_a_re_upload() {
+        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let chat = "a@s.whatsapp.net".to_owned();
+        sent_sticker_without_file(&worker, &chat, "s1", 1);
+        worker.fetch_missing_stickers();
+        let key = (chat.clone(), "s1".to_owned());
+        assert!(worker.sticker_downloads.contains(&key));
+        worker
+            .handle_command(Command::Download {
+                card: None,
+                chat: chat.clone(),
+                message: "s1".into(),
+            })
+            .await;
+        worker
+            .handle_command(Command::Downloaded {
+                card: None,
+                chat: chat.clone(),
+                id: "s1".into(),
+                result: Err("Download failed with status: 403".into()),
+            })
+            .await;
+        assert!(
+            worker
+                .downloads
+                .contains(&(chat.clone(), "s1".to_owned(), None)),
+            "it downloads again"
+        );
+        assert!(
+            !worker.sticker_downloads.contains(&key),
+            "as the click, so it may ask for a re-upload"
+        );
+        assert!(!worker.sticker_download_failed.contains(&key));
+    }
+
     #[tokio::test]
     async fn logging_out_forgets_the_chat_stickers_that_failed() {
         let (mut worker, _root, _events, _commands) = sticker_worker();
