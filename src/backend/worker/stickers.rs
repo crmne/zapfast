@@ -1322,8 +1322,9 @@ mod tests {
         tempfile::TempDir,
         Bot,
         mpsc::UnboundedReceiver<Command>,
+        std::sync::mpsc::Receiver<Event>,
     ) {
-        let (mut worker, root, _events, commands) = sticker_worker();
+        let (mut worker, root, events, commands) = sticker_worker();
         let store = whatsapp_rust::store::SqliteStore::new(
             &root.path().join("session.db").to_string_lossy(),
         )
@@ -1337,14 +1338,14 @@ mod tests {
         worker.client = Some(bot.client());
         let chat = "a@s.whatsapp.net";
         worker.archive.ensure_chat(chat, "A").expect("chat");
-        (worker, root, bot, commands)
+        (worker, root, bot, commands, events)
     }
 
     /// Opening the picker once started every missing chat sticker at once,
     /// and the burst tripped the server's rate limit (#405).
     #[tokio::test]
     async fn the_picker_downloads_chat_stickers_a_few_at_a_time() {
-        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let (mut worker, _root, _bot, _commands, _events) = picker_worker().await;
         for (index, id) in ["s1", "s2", "s3", "s4", "s5"].iter().enumerate() {
             sent_sticker_without_file(&worker, "a@s.whatsapp.net", id, index as i64);
         }
@@ -1357,7 +1358,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_rate_limited_chat_sticker_pauses_every_sticker_download() {
-        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let (mut worker, _root, _bot, _commands, _events) = picker_worker().await;
         let chat = "a@s.whatsapp.net".to_owned();
         for (index, id) in ["s1", "s2", "s3"].iter().enumerate() {
             sent_sticker_without_file(&worker, &chat, id, index as i64);
@@ -1386,7 +1387,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_chat_sticker_is_not_asked_again_and_the_next_takes_its_place() {
-        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let (mut worker, _root, _bot, _commands, _events) = picker_worker().await;
         let chat = "a@s.whatsapp.net".to_owned();
         // The newest comes first, so a retry would pick it again.
         for (at, id) in [(30, "s1"), (20, "s2"), (10, "s3")] {
@@ -1416,7 +1417,7 @@ mod tests {
 
     #[tokio::test]
     async fn picker_downloads_resume_once_the_rate_limit_pause_is_over() {
-        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let (mut worker, _root, _bot, _commands, _events) = picker_worker().await;
         let chat = "a@s.whatsapp.net".to_owned();
         for (at, id) in [(30, "s1"), (20, "s2"), (10, "s3")] {
             sent_sticker_without_file(&worker, &chat, id, at);
@@ -1450,7 +1451,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_chat_stickers_do_not_hide_the_ones_after_them() {
-        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let (mut worker, _root, _bot, _commands, _events) = picker_worker().await;
         let chat = "a@s.whatsapp.net".to_owned();
         let failed = super::super::STICKER_FETCH_LIMIT;
         // The newest ones all failed earlier this session.
@@ -1478,7 +1479,7 @@ mod tests {
     /// than `IN_FLIGHT` downloads going between the two.
     #[tokio::test]
     async fn recent_and_chat_stickers_share_one_limit() {
-        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let (mut worker, _root, _bot, _commands, _events) = picker_worker().await;
         for (index, hash) in ["r1", "r2", "r3"].iter().enumerate() {
             let raw = wa::StickerMetadata {
                 direct_path: Some(format!("/v/t62.15575-24/{hash}.enc")),
@@ -1510,7 +1511,7 @@ mod tests {
     /// click, which may ask the phone to re-upload it.
     #[tokio::test]
     async fn a_click_during_a_picker_download_retries_it_with_a_re_upload() {
-        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let (mut worker, _root, _bot, _commands, _events) = picker_worker().await;
         let chat = "a@s.whatsapp.net".to_owned();
         sent_sticker_without_file(&worker, &chat, "s1", 1);
         worker.fetch_missing_stickers();
@@ -1542,6 +1543,49 @@ mod tests {
             "as the click, so it may ask for a re-upload"
         );
         assert!(!worker.sticker_download_failed.contains(&key));
+    }
+
+    /// A clicked sticker that arrives on its second try refreshes the
+    /// picker's shelves, as a picker download would.
+    #[tokio::test]
+    async fn a_clicked_retry_that_arrives_refreshes_the_shelves() {
+        let (mut worker, root, _bot, _commands, events) = picker_worker().await;
+        let chat = "a@s.whatsapp.net".to_owned();
+        sent_sticker_without_file(&worker, &chat, "s1", 1);
+        worker.fetch_missing_stickers();
+        worker
+            .handle_command(Command::Download {
+                card: None,
+                chat: chat.clone(),
+                message: "s1".into(),
+            })
+            .await;
+        worker
+            .handle_command(Command::Downloaded {
+                card: None,
+                chat: chat.clone(),
+                id: "s1".into(),
+                result: Err("Download failed with status: 403".into()),
+            })
+            .await;
+        let listed = |events: &std::sync::mpsc::Receiver<Event>| {
+            events
+                .try_iter()
+                .filter(|event| matches!(event, Event::Stickers { .. }))
+                .count()
+        };
+        listed(&events);
+        let file = root.path().join("s1.webp");
+        std::fs::write(&file, b"webp").unwrap();
+        worker
+            .handle_command(Command::Downloaded {
+                card: None,
+                chat: chat.clone(),
+                id: "s1".into(),
+                result: Ok(file),
+            })
+            .await;
+        assert_eq!(listed(&events), 1);
     }
 
     #[tokio::test]
