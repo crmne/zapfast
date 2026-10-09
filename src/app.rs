@@ -5892,6 +5892,9 @@ impl App {
                 if self.window_hidden {
                     // The headless loop in `main` will create the window.
                     self.wants_show = true;
+                } else if self.wayland && crate::window::focus_with_niri() {
+                    // niri focused the existing window and switched to its
+                    // workspace, so nothing is reopened.
                 } else if self.wayland {
                     // Wayland drops a programmatic focus or unminimize
                     // request, so a minimized or covered window cannot come
