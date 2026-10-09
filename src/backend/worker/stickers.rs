@@ -1414,6 +1414,76 @@ mod tests {
         assert_eq!(started, ["s2", "s3"].into());
     }
 
+    #[tokio::test]
+    async fn picker_downloads_resume_once_the_rate_limit_pause_is_over() {
+        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let chat = "a@s.whatsapp.net".to_owned();
+        for (at, id) in [(30, "s1"), (20, "s2"), (10, "s3")] {
+            sent_sticker_without_file(&worker, &chat, id, at);
+        }
+        worker.sticker_downloads = [(chat.clone(), "s1".to_owned())].into();
+        worker
+            .handle_command(Command::Downloaded {
+                card: None,
+                chat: chat.clone(),
+                id: "s1".into(),
+                result: Err(
+                    "received a server error response: code=429, text='rate-overlimit'".into(),
+                ),
+            })
+            .await;
+        assert!(worker.sticker_resume, "the rest waits for the pause");
+        worker.resume_sticker_fetches();
+        assert!(
+            worker.sticker_downloads.is_empty(),
+            "nothing starts while paused"
+        );
+        // The pause is over.
+        worker.sticker_pace = Default::default();
+        worker.resume_sticker_fetches();
+        assert!(!worker.sticker_resume);
+        assert_eq!(
+            worker.sticker_downloads.len(),
+            super::super::sticker_pace::IN_FLIGHT
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_chat_stickers_do_not_hide_the_ones_after_them() {
+        let (mut worker, _root, _bot, _commands) = picker_worker().await;
+        let chat = "a@s.whatsapp.net".to_owned();
+        let failed = super::super::STICKER_FETCH_LIMIT;
+        // The newest ones all failed earlier this session.
+        for index in 0..failed + 3 {
+            let id = format!("s{index}");
+            sent_sticker_without_file(&worker, &chat, &id, 1000 - index as i64);
+            if index < failed {
+                worker.sticker_download_failed.insert((chat.clone(), id));
+            }
+        }
+        worker.fetch_missing_stickers();
+        assert_eq!(
+            worker.sticker_downloads.len(),
+            super::super::sticker_pace::IN_FLIGHT
+        );
+        assert!(
+            worker
+                .sticker_downloads
+                .iter()
+                .all(|key| !worker.sticker_download_failed.contains(key))
+        );
+    }
+
+    #[tokio::test]
+    async fn logging_out_forgets_the_chat_stickers_that_failed() {
+        let (mut worker, _root, _events, _commands) = sticker_worker();
+        worker
+            .sticker_download_failed
+            .insert(("a@s.whatsapp.net".to_owned(), "s1".to_owned()));
+        worker.on_logged_out().await;
+        assert!(worker.sticker_download_failed.is_empty());
+    }
+
     /// Archives a sticker someone sent in `chat`, with its file on disk.
     fn receive_sticker(
         worker: &Worker,
