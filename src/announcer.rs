@@ -27,7 +27,7 @@ pub enum Category {
     /// Errors: read before anything else waiting.
     Error,
     /// What the message list's keys reach inside a message: a link, a
-    /// card's text, a file's name or a poll option.
+    /// phone number, a card's text, a file's name or a poll option.
     Item,
 }
 
