@@ -241,7 +241,10 @@ it back. The built-in player supports H.264 video in MP4 files; other formats
 open in your system player.
 
 Click a downloaded photo to preview it, with zoom (wheel, Ctrl+wheel, or a
-pinch) and **Copy image**. Use the previous and next buttons or Left/Right
+pinch) and **Copy image**. Hover between the top and bottom of the photo,
+including the side gutters, to show the previous and next arrows. They stay in
+fixed positions at the sides of the modal, outside the photo. The space above
+and below the photo does not show the arrows. Click these arrows or use Left/Right
 arrow keys to browse downloaded photos and interactive-card images in the
 loaded conversation. Navigation skips unavailable files and stops at either
 end; it does not download attachments or fetch older history.

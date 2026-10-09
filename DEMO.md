@@ -86,7 +86,10 @@ For deterministic theme screenshots, `--demo-page settings,omarchy` and
 palettes without changing the desktop theme.
 
 Use `--demo-page preview` for a photo viewer with three pictures, text between
-the second and third picture, and previous/next controls.
+the second and third picture. Hover within the photo's vertical bounds,
+including the side gutters, to show the previous/next arrows at fixed positions
+outside the photo, or use Left/Right arrow keys. Use `--demo-hover 700,450`
+to include the arrows in a screenshot.
 Use `--demo-page shared-contact` for an offline shared-contact card with synthetic
 vCard data, or `--demo-page interactive` for text and button messages, or
 `--demo-page interactive-media` for messages with an image, and
