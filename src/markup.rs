@@ -527,6 +527,13 @@ fn push_plain(out: &mut Vec<Span>, template: &Span, text: &str) {
 }
 
 fn mention_at<'m>(text: &str, at: usize, mentions: &'m [Mention]) -> Option<(usize, &'m Mention)> {
+    if let Some(end) = crate::mentions::everyone_token_end(text, at)
+        && let Some(mention) = mentions
+            .iter()
+            .find(|mention| mention.user == crate::mentions::ALL_USER)
+    {
+        return Some((end, mention));
+    }
     let rest = &text[at + 1..];
     let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
     if digits.len() < 5 {
@@ -923,6 +930,28 @@ mod tests {
             "hi @+49 176 31141665"
         );
         assert_eq!(plain("hi @123", &mentions), "hi @123");
+    }
+
+    #[test]
+    fn everyone_is_highlighted_only_with_its_mention() {
+        let everyone = [Mention {
+            user: "all".into(),
+            name: "all".into(),
+        }];
+        let spans = parse("heading over @all tonight", &everyone);
+        let mention = spans.iter().find(|span| span.mention).expect("mention");
+        assert_eq!(mention.text, "@all");
+        assert!(
+            parse("heading over @all tonight", &[])
+                .iter()
+                .all(|span| !span.mention)
+        );
+        assert!(
+            parse("mail@all.com and @alligator", &everyone)
+                .iter()
+                .all(|span| !span.mention)
+        );
+        assert_eq!(plain("ping @all", &everyone), "ping @all");
     }
 }
 

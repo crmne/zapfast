@@ -271,6 +271,17 @@ impl Chat {
         self.is_group() && !self.left && (self.admin || self.info_locked == Some(false))
     }
 
+    /// Whether we may mention everyone. A group of at most
+    /// [`crate::mentions::OPEN_LIMIT`] people allows any member who can post.
+    /// A larger group allows only admins. An empty member list means the
+    /// phone has not said who is in, so nothing is offered yet.
+    pub fn can_mention_everyone(&self) -> bool {
+        self.is_group()
+            && self.can_send()
+            && !self.participants.is_empty()
+            && (self.participants.len() <= crate::mentions::OPEN_LIMIT || self.admin)
+    }
+
     /// Whether the member list names any of `ours`.
     pub fn lists_any(&self, ours: &[&str]) -> bool {
         self.participants
@@ -1913,6 +1924,36 @@ mod tests {
         direct.info_locked = Some(false);
         direct.admin = true;
         assert!(!direct.can_edit_info(), "only groups have group info");
+    }
+
+    #[test]
+    fn mentioning_everyone_is_open_to_small_groups_and_admins() {
+        let mut chat = super::Chat::new("1-2@g.us".into(), "Rust".into());
+        assert!(
+            !chat.can_mention_everyone(),
+            "an unknown member list offers nothing"
+        );
+        chat.participants = vec!["1@s.whatsapp.net".into()];
+        assert!(chat.can_mention_everyone());
+        chat.participants = (0..32).map(|n| format!("{n}@s.whatsapp.net")).collect();
+        assert!(
+            chat.can_mention_everyone(),
+            "32 people still count as small"
+        );
+        chat.participants.push("32@s.whatsapp.net".into());
+        assert!(!chat.can_mention_everyone(), "a larger group is for admins");
+        chat.admin = true;
+        assert!(chat.can_mention_everyone());
+        chat.read_only = true;
+        assert!(!chat.can_mention_everyone(), "a chat we cannot post in");
+        chat.read_only = false;
+        chat.left = true;
+        assert!(!chat.can_mention_everyone());
+
+        let mut direct = super::Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        direct.participants = vec!["1@s.whatsapp.net".into()];
+        direct.admin = true;
+        assert!(!direct.can_mention_everyone());
     }
 
     #[test]

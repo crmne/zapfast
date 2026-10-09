@@ -19,6 +19,12 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
+#. Translators: one word, no spaces. The word after @ that mentions everyone.
+#: src/mentions.rs:70
+msgctxt "mention"
+msgid "all"
+msgstr ""
+
 #: src/ui/conversation.rs:5525
 msgid "Message"
 msgstr ""
@@ -1088,64 +1094,64 @@ msgstr[1] ""
 msgid "No one yet"
 msgstr ""
 
-#: src/app.rs:1384
+#: src/app.rs:1388
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:1855
+#: src/app.rs:1862
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr ""
 
-#: src/app.rs:1931
+#: src/app.rs:1941
 #, rust-format
 msgid "{name} (You)"
 msgstr ""
 
-#: src/app.rs:2798
+#: src/app.rs:2823
 msgid "Could not use this image"
 msgstr ""
 
-#: src/app.rs:3332
+#: src/app.rs:3357
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr ""
 
-#: src/app.rs:3336
+#: src/app.rs:3361
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:4894
+#: src/app.rs:4940
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:4969
+#: src/app.rs:5015
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:5262 src/ui/labels.rs:253
+#: src/app.rs:5308 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
-#: src/app.rs:5949
+#: src/app.rs:6015
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:5957
+#: src/app.rs:6023
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:6070
+#: src/app.rs:6136
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/app.rs:6503
+#: src/app.rs:6569
 msgid "Copied image"
 msgstr ""
 
-#: src/app.rs:6506 src/app.rs:6511
+#: src/app.rs:6572 src/app.rs:6577
 msgid "Failed to copy image"
 msgstr ""
 

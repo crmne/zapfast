@@ -1,3 +1,4 @@
+src/mentions.rs
 src/model.rs
 src/util.rs
 src/ui/chats.rs

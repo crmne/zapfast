@@ -1657,7 +1657,8 @@ impl App {
             .collect();
         let is_us = |id: &str| ours.contains(&id);
         let mentioned = message.mentions.iter().any(|mention| {
-            is_us(&mention.id)
+            crate::mentions::is_everyone(mention)
+                || is_us(&mention.id)
                 || ours
                     .iter()
                     .any(|id| id.split('@').next() == Some(mention.user.as_str()))
@@ -1934,6 +1935,9 @@ impl App {
 
     /// Resolves a mention name without replacing our own name with "You".
     pub fn mention_name(&self, id: &str) -> String {
+        if id == crate::mentions::ALL_ID {
+            return crate::mentions::ALL_USER.to_owned();
+        }
         if self.me.as_deref() == Some(id) {
             return self
                 .me_name
@@ -2124,13 +2128,17 @@ impl App {
     }
 
     /// Group members matching the active composer mention query.
+    ///
+    /// Everyone is offered first when this group allows it and the query is a
+    /// prefix of `@all` or of the language's own word.
     pub fn mention_candidates(&self, chat: &Chat, query: &str) -> Vec<(String, String)> {
         if !chat.is_group() {
             return Vec::new();
         }
         let needle = query.trim().to_lowercase();
         let digits: String = query.chars().filter(char::is_ascii_digit).collect();
-        self.participant_list(chat)
+        let mut found: Vec<(String, String)> = self
+            .participant_list(chat)
             .into_iter()
             .filter(|(id, name)| {
                 if self.me.as_deref() == Some(id) {
@@ -2148,7 +2156,18 @@ impl App {
                             .next()
                             .is_some_and(|user| user.contains(&digits)))
             })
-            .collect()
+            .collect();
+        let alias = crate::mentions::everyone_alias(self.locale);
+        if chat.can_mention_everyone() && crate::mentions::everyone_query_matches(query, &alias) {
+            found.insert(
+                0,
+                (
+                    crate::mentions::ALL_ID.to_owned(),
+                    crate::mentions::ALL_USER.to_owned(),
+                ),
+            );
+        }
+        found
     }
 
     pub fn participant_names(&self, chat: &Chat) -> String {
@@ -3847,6 +3866,8 @@ impl App {
             return;
         }
         let (text, mentions) = self.encode_composer_mentions(&chat, text);
+        let mention_everyone = self.chat(&chat).is_some_and(Chat::can_mention_everyone)
+            && crate::mentions::has_everyone_token(&text);
         self.emoji_start = None;
         self.mention_start = None;
         self.stop_composing(&chat);
@@ -3859,6 +3880,9 @@ impl App {
                 message.content = Content::text(text.clone());
                 message.edited = true;
                 message.mentions = mention_refs(&mentions);
+                if mention_everyone {
+                    crate::mentions::push_everyone(&mut message.mentions);
+                }
             }
             self.backend.send(Command::EditText {
                 chat,
@@ -3912,6 +3936,13 @@ impl App {
             if contains_mention_token(&text, user) && !mentions.iter().any(|known| known == &id) {
                 mentions.push(id);
             }
+        }
+        // A localized word is only a way to type the mention. The body that
+        // goes out, and the bubble, keep the visible `@all` token. When this
+        // chat cannot mention everyone, the typed word stays ordinary text.
+        if self.chat(chat).is_some_and(Chat::can_mention_everyone) {
+            let alias = crate::mentions::everyone_alias(self.locale);
+            crate::mentions::rewrite_alias(&mut text, &alias);
         }
         (text, mentions)
     }
@@ -5054,22 +5085,31 @@ impl App {
                 start,
                 end,
             } => {
-                let member = self.current_chat().is_some_and(|chat| {
+                let chat = self.current_chat();
+                let everyone =
+                    id == crate::mentions::ALL_ID && chat.is_some_and(Chat::can_mention_everyone);
+                let member = chat.is_some_and(|chat| {
                     chat.is_group() && chat.participants.iter().any(|known| known == &id)
                 });
                 let mention_at = start
                     .checked_add(1)
                     .is_some_and(|after| self.composer.get(start..after) == Some("@"));
-                if member
+                if (member || everyone)
                     && start <= end
                     && self.composer.is_char_boundary(start)
                     && self.composer.is_char_boundary(end)
                     && mention_at
                 {
-                    let mention = format!("@{name}");
+                    let mention = if everyone {
+                        format!("@{}", crate::mentions::ALL_USER)
+                    } else {
+                        format!("@{name}")
+                    };
                     let inserted = format!("{mention} ");
                     self.composer.replace_range(start..end, &inserted);
-                    self.composer_mentions.push(ComposerMention { id, name });
+                    if !everyone {
+                        self.composer_mentions.push(ComposerMention { id, name });
+                    }
                     let cursor = self.composer[..start + inserted.len()].chars().count();
                     self.set_composer_cursor(ctx, cursor);
                     self.focus_composer = true;
@@ -9342,6 +9382,13 @@ mod tests {
         assert!(app.addresses_us(&reply));
         reply.quoted = Some(quote("15550002222@s.whatsapp.net"));
         assert!(!app.addresses_us(&reply));
+
+        let mut everyone = plain.clone();
+        everyone.mentions = vec![crate::mentions::everyone_ref()];
+        assert!(
+            app.addresses_us(&everyone),
+            "mentioning everyone includes us"
+        );
     }
 
     #[test]
@@ -11895,6 +11942,119 @@ mod tests {
 
         assert_eq!(text, "hello @Miranda");
         assert!(mentions.is_empty());
+    }
+
+    fn group_chat(members: usize) -> Chat {
+        let mut chat = Chat::new("123@g.us".into(), "Group".into());
+        chat.participants = (0..members)
+            .map(|index| format!("{index}@s.whatsapp.net"))
+            .collect();
+        chat
+    }
+
+    #[test]
+    fn a_localized_everyone_word_becomes_the_visible_token() {
+        let mut app = app();
+        app.locale = Locale::PortugueseBrazil;
+        app.chats.push(group_chat(3));
+
+        let (text, mentions) =
+            app.encode_composer_mentions("123@g.us", "oi @todos, mail@todos.com @todosX".into());
+
+        assert_eq!(text, "oi @all, mail@todos.com @todosX");
+        assert!(mentions.is_empty());
+    }
+
+    #[test]
+    fn english_leaves_a_portuguese_everyone_word_alone() {
+        let mut app = app();
+        app.chats.push(group_chat(3));
+
+        let (text, _) = app.encode_composer_mentions("123@g.us", "hi @todos and @all".into());
+
+        assert_eq!(text, "hi @todos and @all");
+    }
+
+    #[test]
+    fn everyone_is_not_rewritten_when_the_group_disallows_it() {
+        let mut app = app();
+        app.locale = Locale::PortugueseBrazil;
+        let chat = group_chat(33);
+        assert!(!chat.can_mention_everyone());
+        app.chats.push(chat);
+
+        let (text, _) = app.encode_composer_mentions("123@g.us", "oi @todos @all".into());
+
+        assert_eq!(text, "oi @todos @all");
+    }
+
+    #[test]
+    fn everyone_is_offered_only_when_the_group_allows_it() {
+        let mut app = app();
+        app.locale = Locale::PortugueseBrazil;
+        let small = group_chat(3);
+        let offered = app.mention_candidates(&small, "to");
+        assert_eq!(offered[0].0, crate::mentions::ALL_ID);
+        assert!(
+            app.mention_candidates(&small, "mira")
+                .iter()
+                .all(|(id, _)| id != crate::mentions::ALL_ID)
+        );
+
+        let mut large = group_chat(33);
+        assert!(
+            app.mention_candidates(&large, "")
+                .iter()
+                .all(|(id, _)| id != crate::mentions::ALL_ID)
+        );
+        large.admin = true;
+        assert_eq!(
+            app.mention_candidates(&large, "all")[0].0,
+            crate::mentions::ALL_ID
+        );
+
+        let direct = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        assert!(app.mention_candidates(&direct, "").is_empty());
+    }
+
+    #[test]
+    fn choosing_everyone_inserts_the_visible_token() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.chats.push(group_chat(3));
+        app.open_chat("123@g.us".into());
+        app.composer = "@tod".into();
+
+        app.apply(
+            Action::InsertMention {
+                id: crate::mentions::ALL_ID.into(),
+                name: "all".into(),
+                start: 0,
+                end: app.composer.len(),
+            },
+            &ctx,
+        );
+
+        assert_eq!(app.composer, "@all ");
+        assert!(app.composer_mentions.is_empty());
+
+        app.composer = "@all".into();
+        app.chats[0].participants = (0..33)
+            .map(|index| format!("{index}@s.whatsapp.net"))
+            .collect();
+        app.apply(
+            Action::InsertMention {
+                id: crate::mentions::ALL_ID.into(),
+                name: "all".into(),
+                start: 0,
+                end: app.composer.len(),
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.composer, "@all",
+            "a large group hides it from non-admins"
+        );
     }
 
     #[test]
