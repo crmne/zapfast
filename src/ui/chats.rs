@@ -148,7 +148,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                                 app.actions.push(Action::CloseLockedFolder);
                             }
                         }
-                        theme::text(
+                        header_title(
                             ui,
                             if app.locked_folder {
                                 "Locked chats"
@@ -157,17 +157,19 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             },
                             theme::bold(20.0),
                             palette.text,
+                            header_buttons(ui.ctx(), true),
                         );
                     } else {
                         // Our avatar opens the account switcher, with the
                         // profile and settings below the accounts.
                         super::accounts::avatar_button(app, ui, 34.0).tab_stop(Stop::Profile);
                         ui.add_space(2.0);
-                        theme::text(
+                        header_title(
                             ui,
-                            crate::i18n::gettext(app.locale, "Chats"),
+                            &crate::i18n::gettext(app.locale, "Chats"),
                             theme::bold(20.0),
                             palette.text,
+                            header_buttons(ui.ctx(), true),
                         );
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -252,6 +254,40 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
+/// How many buttons follow the chat list header's title on the right: New
+/// chat, Settings (but on macOS, where the menu has it), and Hide the chat
+/// list unless the window is narrow.
+fn header_buttons(ctx: &egui::Context, settings: bool) -> usize {
+    1 + usize::from(settings) + usize::from(!super::narrow(ctx))
+}
+
+/// Draws the chat list header's title when it fits before the `buttons`
+/// that follow it on the right, and leaves it out otherwise: in a narrow
+/// list it ran under them. The avatar or Back before it says where you are.
+fn header_title(
+    ui: &mut egui::Ui,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    buttons: usize,
+) {
+    let width = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), color)
+        .size()
+        .x;
+    let spacing = ui.spacing().item_spacing.x;
+    if title_fits(width, ui.available_width(), buttons, spacing) {
+        theme::text(ui, text, font, color);
+    }
+}
+
+/// Whether a title `width` points wide fits in `available` beside `buttons`
+/// icon buttons and the `spacing` between each of them.
+fn title_fits(width: f32, available: f32, buttons: usize, spacing: f32) -> bool {
+    width + buttons as f32 * (theme::ICON_BUTTON + spacing) + spacing <= available
+}
+
 /// Where the chat list header's first row was laid out, for layout tests.
 pub(crate) fn header_row_id() -> egui::Id {
     egui::Id::new("chat-list-header-row")
@@ -287,7 +323,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                             app.actions.push(Action::CloseLockedFolder);
                         }
                     }
-                    theme::text(
+                    header_title(
                         ui,
                         if app.locked_folder {
                             "Locked chats"
@@ -296,17 +332,19 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         },
                         theme::bold(16.0),
                         palette.text,
+                        header_buttons(ui.ctx(), false),
                     );
                 } else {
                     // Our avatar opens the account switcher here as on the
                     // other platforms, after the traffic lights' inset.
                     super::accounts::avatar_button(app, ui, 30.0).tab_stop(Stop::Profile);
                     ui.add_space(2.0);
-                    theme::text(
+                    header_title(
                         ui,
-                        crate::i18n::gettext(app.locale, "Chats"),
+                        &crate::i18n::gettext(app.locale, "Chats"),
                         theme::bold(20.0),
                         palette.text,
+                        header_buttons(ui.ctx(), false),
                     );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1704,6 +1742,19 @@ fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A header title shows only when it fits before its buttons, whatever
+    /// the language makes of it.
+    #[test]
+    fn header_titles_make_way_for_their_buttons() {
+        let spacing = 8.0;
+        // Two buttons take 2 * (30 + 8) + 8 = 84 points.
+        assert!(title_fits(100.0, 184.0, 2, spacing));
+        assert!(!title_fits(100.0, 183.0, 2, spacing));
+        // A third button, the Settings one off macOS, needs 38 more.
+        assert!(!title_fits(100.0, 184.0, 3, spacing));
+        assert!(title_fits(100.0, 222.0, 3, spacing));
+    }
     use crate::paths::AppDirs;
     use crate::settings::Settings;
 
