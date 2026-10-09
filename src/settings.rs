@@ -33,16 +33,26 @@ pub enum ThemeChoice {
     Dark,
     Light,
     System,
+    /// macOS's greys, light or dark as the system is, with bubbles shaped as
+    /// Messages draws them.
+    Messages,
 }
 
 impl ThemeChoice {
-    pub const ALL: [ThemeChoice; 3] = [Self::System, Self::Light, Self::Dark];
+    /// The choices Settings offers. Messages is macOS's look, and only
+    /// macOS can draw its translucent sidebar.
+    pub const ALL: &[ThemeChoice] = if cfg!(target_os = "macos") {
+        &[Self::System, Self::Light, Self::Dark, Self::Messages]
+    } else {
+        &[Self::System, Self::Light, Self::Dark]
+    };
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Dark => "Dark",
             Self::Light => "Light",
             Self::System => "Follow system",
+            Self::Messages => "Messages",
         }
     }
 }
@@ -370,6 +380,11 @@ pub struct Settings {
     #[serde(default)]
     pub version: u32,
     pub theme: ThemeChoice,
+    /// Whether a `"system"` theme is really Messages. The file says
+    /// `"system"` for Messages, which releases before it read as Follow
+    /// system instead of rejecting the whole file; this marks the rest.
+    #[serde(skip_serializing)]
+    pub(crate) messages_theme: bool,
     /// The interface's typeface.
     pub font: FontChoice,
     /// Interface language. `None` follows the operating system's locale.
@@ -495,6 +510,7 @@ impl Default for Settings {
         Self {
             version: SETTINGS_VERSION,
             theme: ThemeChoice::Dark,
+            messages_theme: false,
             font: FontChoice::System,
             interface_language: None,
             custom_theme: None,
@@ -639,16 +655,33 @@ impl Settings {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let contents = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        let contents =
+            serde_json::to_string_pretty(&self.to_file()?).map_err(std::io::Error::other)?;
         let temp = path.with_extension("json.tmp");
         std::fs::write(&temp, contents)?;
         std::fs::rename(&temp, path)
+    }
+
+    /// The settings as the file stores them: Messages is written as Follow
+    /// system plus a mark, so older releases still read the file.
+    fn to_file(&self) -> std::io::Result<serde_json::Value> {
+        let mut value = serde_json::to_value(self).map_err(std::io::Error::other)?;
+        if self.theme == ThemeChoice::Messages
+            && let Some(fields) = value.as_object_mut()
+        {
+            fields.insert("theme".into(), serde_json::to_value(ThemeChoice::System)?);
+            fields.insert("messages_theme".into(), true.into());
+        }
+        Ok(value)
     }
 
     /// Brings a file written before [`SETTINGS_VERSION`] up to date. Each
     /// step runs once: the next save records the version, so a colour chosen
     /// again afterwards is kept.
     fn migrate(&mut self) {
+        if std::mem::take(&mut self.messages_theme) && self.theme == ThemeChoice::System {
+            self.theme = ThemeChoice::Messages;
+        }
         if self.version < 1 {
             // Old files store every field, so a default colour cannot be told
             // from a chosen one; the old defaults move to the new one.
@@ -886,6 +919,44 @@ mod tests {
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();
         assert_eq!(saved["font"], "inter");
+    }
+
+    /// The Messages theme is saved by name, and palettes cached before
+    /// bubble styles existed keep WhatsApp's bubbles.
+    #[test]
+    fn messages_theme_round_trips_and_old_palettes_keep_whatsapp_bubbles() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let settings = Settings {
+            theme: ThemeChoice::Messages,
+            ..Settings::default()
+        };
+        settings.save(&path).unwrap();
+        // Releases before Messages read the file, and see Follow system.
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(written["theme"], "system");
+        assert_eq!(written["messages_theme"], true);
+        assert_eq!(Settings::load(&path).theme, ThemeChoice::Messages);
+        // Follow system stays Follow system, without the mark.
+        let system = Settings {
+            theme: ThemeChoice::System,
+            ..Settings::default()
+        };
+        system.save(&path).unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("messages_theme")
+        );
+        assert_eq!(Settings::load(&path).theme, ThemeChoice::System);
+        // Files written by development builds before this still load.
+        let parsed: Settings = serde_json::from_str(r#"{"theme":"messages"}"#).expect("parses");
+        assert_eq!(parsed.theme, ThemeChoice::Messages);
+        let mut cached = serde_json::to_value(crate::theme::Palette::dark()).unwrap();
+        cached.as_object_mut().unwrap().remove("bubbles");
+        let cached: crate::theme::Palette = serde_json::from_value(cached).unwrap();
+        assert_eq!(cached.bubbles, crate::theme::BubbleStyle::WhatsApp);
     }
 
     #[test]

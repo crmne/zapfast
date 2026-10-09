@@ -597,10 +597,12 @@ pub fn search_field(
     let height = 34.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let has_focus = ui.memory(|memory| memory.has_focus(id));
-    let fill = if has_focus {
-        palette.surface_hover
-    } else {
-        palette.surface
+    // Over a vibrant window's material, a tint that lets it show through.
+    let fill = match (palette.vibrant(), has_focus) {
+        (true, false) => palette.tint(theme::TINT_FIELD),
+        (true, true) => palette.tint(theme::TINT_FIELD + theme::TINT_HOVER),
+        (false, true) => palette.surface_hover,
+        (false, false) => palette.surface,
     };
     ui.painter().rect_filled(rect, height / 2.0, fill);
     let icon_rect =
@@ -792,6 +794,18 @@ pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color3
 pub fn row_highlight(ui: &Ui, palette: &Palette, rect: Rect, color: Color32) {
     let card = rect.shrink2(vec2(8.0, 2.0));
     let radius = CornerRadius::same(theme::RADIUS + 2);
+    // Over a vibrant window's material, a flat tint: the selected row
+    // stronger than the one under the pointer.
+    if palette.vibrant() {
+        let strength = if color == palette.surface_active {
+            theme::TINT_SELECTED
+        } else {
+            theme::TINT_HOVER
+        };
+        ui.painter()
+            .rect_filled(card, radius, palette.tint(strength));
+        return;
+    }
     // Raised like a message bubble, only more gently: the list sits on a
     // flat panel, and a hovered row should not jump out.
     let mut shadow = palette.bubble_shadow();
@@ -918,13 +932,18 @@ pub fn bubble_corners(tail: Option<Side>) -> CornerRadius {
 /// A message bubble's backdrop: its soft shadow, its fill, and on the first
 /// message of a run a small tail at the top corner toward the sender, as the
 /// phone draws it. A handful of vertices; bubbles off screen are culled
-/// before tessellation.
+/// before tessellation. `pixels_per_point` sets the soft edge the Messages
+/// style draws for itself.
 pub fn bubble_shape(
     palette: &Palette,
     rect: Rect,
     fill: Color32,
     tail: Option<Side>,
+    pixels_per_point: f32,
 ) -> egui::Shape {
+    if palette.bubbles == theme::BubbleStyle::Messages {
+        return messages_bubble_shape(rect, fill, tail, 1.0 / pixels_per_point);
+    }
     let corners = bubble_corners(tail);
     let shadow = palette.bubble_shadow();
     let mut shapes = vec![egui::Shape::Rect(shadow.as_shape(rect, corners))];
@@ -976,6 +995,201 @@ pub fn bubble_shape(
     egui::Shape::Vec(shapes)
 }
 
+/// How round a Messages bubble is: a single line reads as a pill.
+pub const MESSAGES_BUBBLE_RADIUS: u8 = 17;
+
+/// A bubble as macOS Messages draws it: flat, round, and on the last message
+/// of a run a tail that curls out of its bottom corner toward the sender.
+/// The tail is part of the bubble's outline, so the side runs straight down
+/// into it; that outline is concave under the tail, so it is filled as a
+/// mesh of its own, with a feathered edge `feather` points wide.
+fn messages_bubble_shape(
+    rect: Rect,
+    fill: Color32,
+    tail: Option<Side>,
+    feather: f32,
+) -> egui::Shape {
+    let Some(side) = tail else {
+        let radius = f32::from(MESSAGES_BUBBLE_RADIUS).min(rect.height() / 2.0);
+        return egui::Shape::rect_filled(rect, CornerRadius::from(radius), fill);
+    };
+    egui::Shape::mesh(fill_outline(&messages_outline(rect, side), fill, feather))
+}
+
+/// How far a Messages tail's tip reaches out past the bubble's side.
+pub const MESSAGES_TAIL_REACH: f32 = 8.0;
+/// How high above the bottom edge the notch under a Messages tail rises,
+/// and how far inside the side its top is.
+const MESSAGES_TAIL_NOTCH: f32 = 4.0;
+const MESSAGES_TAIL_NOTCH_IN: f32 = 2.0;
+/// How far in from the side the bubble's corner under the notch meets the
+/// bottom edge.
+const MESSAGES_TAIL_FOOT: f32 = 11.0;
+/// How far up the side a Messages tail starts to curl out.
+const MESSAGES_TAIL_RISE: f32 = 16.0;
+/// Points per rounded corner, and per curve of the tail.
+const OUTLINE_STEPS: usize = 8;
+
+/// The outline of a Messages bubble with its tail on `side`, clockwise on
+/// screen: three rounded corners, the side straight down into the tail's
+/// curl, its tip level with the bottom edge, and under it a notch where the
+/// tail's underside meets the bubble's rounded bottom corner. Nothing goes
+/// below the bottom edge.
+pub fn messages_outline(rect: Rect, side: Side) -> Vec<egui::Pos2> {
+    let radius = f32::from(MESSAGES_BUBBLE_RADIUS).min(rect.height() / 2.0);
+    let (left, top, right, bottom) = (rect.left(), rect.top(), rect.right(), rect.bottom());
+    let arc = |centre: egui::Pos2, from: f32, to: f32| {
+        (0..=OUTLINE_STEPS).map(move |step| {
+            let angle = (from + (to - from) * step as f32 / OUTLINE_STEPS as f32).to_radians();
+            centre + radius * vec2(angle.cos(), angle.sin())
+        })
+    };
+    // Control points never below `bottom`, so neither are the curves.
+    let cubic = |a: egui::Pos2, b: egui::Pos2, c: egui::Pos2, d: egui::Pos2| {
+        (1..=OUTLINE_STEPS).map(move |step| {
+            let t = step as f32 / OUTLINE_STEPS as f32;
+            let u = 1.0 - t;
+            (a.to_vec2() * (u * u * u)
+                + b.to_vec2() * (3.0 * u * u * t)
+                + c.to_vec2() * (3.0 * u * t * t)
+                + d.to_vec2() * (t * t * t))
+                .to_pos2()
+        })
+    };
+    // Drawn with the tail on the right, then mirrored for the left.
+    let start = pos2(right, (bottom - MESSAGES_TAIL_RISE).max(top + radius));
+    let tip = pos2(right + MESSAGES_TAIL_REACH, bottom);
+    // The top of the notch under the tail, just inside the side, and where
+    // the bubble's bottom corner comes back down to the bottom edge.
+    let notch = pos2(right - MESSAGES_TAIL_NOTCH_IN, bottom - MESSAGES_TAIL_NOTCH);
+    let foot = pos2(right - MESSAGES_TAIL_FOOT, bottom);
+    let mut points: Vec<egui::Pos2> = arc(pos2(left + radius, top + radius), 180.0, 270.0)
+        .chain(arc(pos2(right - radius, top + radius), 270.0, 360.0))
+        .collect();
+    points.push(start);
+    // Out of the side with its tangent, then bending out and down into the
+    // tip, high enough above the notch for the tail to taper to it.
+    points.extend(cubic(
+        start,
+        pos2(right, bottom - (bottom - start.y) * 0.35),
+        pos2(right + MESSAGES_TAIL_REACH * 0.55, bottom - 3.0),
+        tip,
+    ));
+    // Under it, the notch WhatsApp's tail has on iOS: the tail's underside
+    // rises from the tip to a point just inside the side, and the bubble's
+    // bottom corner comes back down from it, rounded, to the bottom edge.
+    points.extend(cubic(
+        tip,
+        pos2(right + MESSAGES_TAIL_REACH * 0.55, bottom - 0.3),
+        pos2(notch.x + 2.5, notch.y + 1.8),
+        notch,
+    ));
+    points.extend(cubic(
+        notch,
+        pos2(notch.x - 0.5, bottom - 1.5),
+        pos2(foot.x + 3.0, bottom),
+        foot,
+    ));
+    points.extend(arc(pos2(left + radius, bottom - radius), 90.0, 180.0));
+    // On a single line the last arc ends where the first began.
+    if points
+        .last()
+        .is_some_and(|last| last.distance(points[0]) < 1e-3)
+    {
+        points.pop();
+    }
+    if side == Side::Left {
+        for point in &mut points {
+            point.x = left + right - point.x;
+        }
+        // Clockwise either way.
+        points.reverse();
+    }
+    points
+}
+
+/// Fills a simple polygon, convex or not, in `color`: triangulated by ear
+/// clipping, with a strip `feather` points wide around it that fades to
+/// clear, as egui anti-aliases its own shapes.
+fn fill_outline(points: &[egui::Pos2], color: Color32, feather: f32) -> egui::Mesh {
+    let count = points.len();
+    let mut mesh = egui::Mesh::default();
+    if count < 3 {
+        return mesh;
+    }
+    let area: f32 = (0..count)
+        .map(|i| {
+            let (a, b) = (points[i], points[(i + 1) % count]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum();
+    // Positive on screen, where y grows down, for a clockwise outline.
+    let winding = area.signum();
+    for i in 0..count {
+        let (previous, point, next) = (
+            points[(i + count - 1) % count],
+            points[i],
+            points[(i + 1) % count],
+        );
+        let outward = |from: egui::Pos2, to: egui::Pos2| {
+            let along = (to - from).normalized();
+            vec2(along.y, -along.x) * winding
+        };
+        let (before, after) = (outward(previous, point), outward(point, next));
+        let normal = (before + after).normalized();
+        // Keep the strip's width along both edges at a corner.
+        let scale = 1.0 / normal.dot(before).max(0.5);
+        let offset = normal * (feather / 2.0) * scale;
+        mesh.colored_vertex(point - offset, color);
+        mesh.colored_vertex(point + offset, Color32::TRANSPARENT);
+    }
+    // The edge strip: inner vertices are even, their faded partners odd.
+    for i in 0..count as u32 {
+        let next = (i + 1) % count as u32;
+        mesh.add_triangle(2 * i, 2 * next, 2 * next + 1);
+        mesh.add_triangle(2 * i, 2 * next + 1, 2 * i + 1);
+    }
+    for [a, b, c] in ear_clip(points, winding) {
+        mesh.add_triangle(2 * a, 2 * b, 2 * c);
+    }
+    mesh
+}
+
+/// Triangles covering a simple polygon whose vertices wind as `winding`
+/// says, by clipping its ears one at a time.
+fn ear_clip(points: &[egui::Pos2], winding: f32) -> Vec<[u32; 3]> {
+    let cross =
+        |a: egui::Pos2, b: egui::Pos2, c: egui::Pos2| (b - a).x * (c - b).y - (b - a).y * (c - b).x;
+    let inside = |p: egui::Pos2, a: egui::Pos2, b: egui::Pos2, c: egui::Pos2| {
+        let (d1, d2, d3) = (cross(a, b, p), cross(b, c, p), cross(c, a, p));
+        d1 * winding > 0.0 && d2 * winding > 0.0 && d3 * winding > 0.0
+    };
+    let mut left: Vec<usize> = (0..points.len()).collect();
+    let mut triangles = Vec::with_capacity(points.len().saturating_sub(2));
+    while left.len() > 3 {
+        let n = left.len();
+        let ear = (0..n).find(|&i| {
+            let (a, b, c) = (left[(i + n - 1) % n], left[i], left[(i + 1) % n]);
+            cross(points[a], points[b], points[c]) * winding >= 0.0
+                && !left
+                    .iter()
+                    .filter(|&&j| j != a && j != b && j != c)
+                    .any(|&j| inside(points[j], points[a], points[b], points[c]))
+        });
+        // A polygon always has an ear; rounding could hide it, and a fan
+        // then covers what is left rather than looping.
+        let Some(i) = ear else {
+            triangles.extend((1..n - 1).map(|k| [left[0], left[k], left[k + 1]].map(|v| v as u32)));
+            return triangles;
+        };
+        let (a, b, c) = (left[(i + n - 1) % n], left[i], left[(i + 1) % n]);
+        triangles.push([a, b, c].map(|v| v as u32));
+        left.remove(i);
+    }
+    triangles.push([left[0], left[1], left[2]].map(|v| v as u32));
+    triangles
+}
+
 /// A triangle in `color` that fades out over `blur` points around its
 /// edges, like the blurred shadow of the bubble it belongs to: a sharp one
 /// showed as a grey wedge beneath the tail's tip. Six vertices.
@@ -1011,6 +1225,18 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     if ui.is_rect_visible(rect) {
         let radius = CornerRadius::from(rect.height() / 2.0);
+        if palette.vibrant() {
+            // Glass over a vibrant conversation, as the header's.
+            ui.painter().rect_filled(rect, radius, palette.glass());
+            ui.painter()
+                .rect_stroke(rect, radius, palette.glass_edge(), egui::StrokeKind::Inside);
+            ui.painter().galley(
+                rect.center() - galley.size() / 2.0,
+                galley,
+                palette.secondary,
+            );
+            return response;
+        }
         // A dark panel all but vanished on a dark chat; halfway to the
         // incoming bubble's colour it reads as a chip without shouting.
         let fill = if palette.dark {
@@ -1078,13 +1304,21 @@ pub fn dotted_chip(
             ui.painter()
                 .rect_filled(rect, radius, palette.accent.gamma_multiply(0.18));
         } else {
+            let (hover, edge) = if palette.vibrant() {
+                (
+                    palette.tint(theme::TINT_HOVER),
+                    palette.tint(theme::TINT_SELECTED + theme::TINT_HOVER),
+                )
+            } else {
+                (palette.surface, palette.surface_active)
+            };
             if response.hovered() {
-                ui.painter().rect_filled(rect, radius, palette.surface);
+                ui.painter().rect_filled(rect, radius, hover);
             }
             ui.painter().rect_stroke(
                 rect,
                 radius,
-                Stroke::new(1.0, palette.surface_active),
+                Stroke::new(1.0, edge),
                 egui::StrokeKind::Inside,
             );
         }
@@ -1304,7 +1538,7 @@ mod tests {
         let palette = Palette::light();
         for (side, outside) in [(Side::Left, 92.0), (Side::Right, 308.0)] {
             let egui::Shape::Vec(shapes) =
-                bubble_shape(&palette, rect, palette.bubble_out, Some(side))
+                bubble_shape(&palette, rect, palette.bubble_out, Some(side), 2.0)
             else {
                 panic!("a bubble is a list of shapes");
             };
@@ -1323,7 +1557,8 @@ mod tests {
             assert_eq!(tip.copied(), Some(pos2(outside, rect.top())));
         }
         // Later messages of a run draw no tail.
-        let egui::Shape::Vec(shapes) = bubble_shape(&palette, rect, palette.bubble_in, None) else {
+        let egui::Shape::Vec(shapes) = bubble_shape(&palette, rect, palette.bubble_in, None, 2.0)
+        else {
             panic!("a bubble is a list of shapes");
         };
         assert!(
@@ -1331,6 +1566,152 @@ mod tests {
                 .iter()
                 .any(|shape| matches!(shape, egui::Shape::Path(_)))
         );
+    }
+
+    /// A Messages bubble and its tail are one outline: the side runs
+    /// straight down and curls, its tangent unbroken, out to a tip level
+    /// with the bottom edge; under it a notch rises and comes back down onto
+    /// that edge, and nothing juts below it. Checked for both sides and a
+    /// single line.
+    #[test]
+    fn messages_tails_flow_out_of_the_side() {
+        for height in [34.0, 80.0] {
+            let rect = Rect::from_min_size(pos2(100.0, 100.0), vec2(200.0, height));
+            for side in [Side::Right, Side::Left] {
+                // Mirrored back, in the same order, the left tail is checked
+                // as a right one.
+                let mut outline = messages_outline(rect, side);
+                if side == Side::Left {
+                    for point in &mut outline {
+                        point.x = rect.left() + rect.right() - point.x;
+                    }
+                    outline.reverse();
+                }
+                let (right, bottom) = (rect.right(), rect.bottom());
+                assert!(
+                    outline.iter().all(|point| point.y <= bottom + 1e-3),
+                    "{side:?} {height}: something juts below the bottom edge"
+                );
+                let tip = outline
+                    .iter()
+                    .position(|point| (point.x - (right + MESSAGES_TAIL_REACH)).abs() < 1e-3)
+                    .expect("the tip reaches past the side");
+                assert!(
+                    (outline[tip].y - bottom).abs() < 1e-3,
+                    "the tip is level with the bottom"
+                );
+                // Up from the tip: the curl, then the straight side, with
+                // no corner of the bubble's own between them.
+                let side_start = outline
+                    .iter()
+                    .position(|point| (point.x - right).abs() < 1e-3)
+                    .expect("the side");
+                let curl = &outline[side_start..=tip];
+                assert!(
+                    curl.windows(2)
+                        .all(|pair| pair[1].x >= pair[0].x - 1e-3 && pair[1].y >= pair[0].y - 1e-3),
+                    "{side:?} {height}: the side turns back on itself into the tail"
+                );
+                // The side's last stretch and the curl's first step point
+                // the same way: straight down.
+                let first = curl[2] - curl[1];
+                assert!(
+                    first.x.abs() < first.y * 0.25,
+                    "{side:?} {height}: a kink where the side meets the tail"
+                );
+                // From the tip, the notch underneath: in toward the bubble
+                // all the way, up to its top just inside the side, then
+                // back down onto the bottom edge.
+                let foot = outline[tip + 1..]
+                    .iter()
+                    .position(|point| (point.y - bottom).abs() < 1e-3)
+                    .map(|at| tip + 1 + at)
+                    .expect("the corner comes back down onto the bottom edge");
+                let notch = (tip..=foot)
+                    .min_by(|&a, &b| outline[a].y.total_cmp(&outline[b].y))
+                    .unwrap();
+                assert!(
+                    (outline[notch]
+                        - pos2(right - MESSAGES_TAIL_NOTCH_IN, bottom - MESSAGES_TAIL_NOTCH))
+                    .length()
+                        < 1e-3,
+                    "{side:?} {height}: the notch's top"
+                );
+                let (up, down) = (&outline[tip..=notch], &outline[notch..=foot]);
+                assert!(
+                    up.windows(2)
+                        .chain(down.windows(2))
+                        .all(|pair| pair[1].x <= pair[0].x + 1e-3),
+                    "{side:?} {height}: the notch turns back on itself"
+                );
+                assert!(
+                    up.windows(2).all(|pair| pair[1].y <= pair[0].y + 1e-3)
+                        && down.windows(2).all(|pair| pair[1].y >= pair[0].y - 1e-3),
+                    "{side:?} {height}: the notch is not one rise and one fall"
+                );
+                assert!(
+                    (outline[foot].x - (right - MESSAGES_TAIL_FOOT)).abs() < 1e-3,
+                    "{side:?} {height}: the corner meets the bottom edge inside the side"
+                );
+            }
+        }
+    }
+
+    /// The tailed outline is filled exactly, concave curl and all: its
+    /// triangles cover the outline's area and no more, and an edge strip
+    /// fades it out. A tailless bubble stays one rounded rectangle.
+    #[test]
+    fn messages_tails_are_filled_as_their_outline() {
+        let palette = Palette::messages();
+        let rect = Rect::from_min_size(pos2(100.0, 100.0), vec2(200.0, 40.0));
+        for side in [Side::Right, Side::Left] {
+            let outline = messages_outline(rect, side);
+            let area = |a: egui::Pos2, b: egui::Pos2, c: egui::Pos2| {
+                ((b - a).x * (c - a).y - (b - a).y * (c - a).x).abs() / 2.0
+            };
+            let polygon: f32 = (0..outline.len())
+                .map(|i| {
+                    let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+                    a.x * b.y - b.x * a.y
+                })
+                .sum::<f32>()
+                .abs()
+                / 2.0;
+            let triangles = ear_clip(&outline, 1.0);
+            assert_eq!(triangles.len(), outline.len() - 2);
+            let covered: f32 = triangles
+                .iter()
+                .map(|t| {
+                    area(
+                        outline[t[0] as usize],
+                        outline[t[1] as usize],
+                        outline[t[2] as usize],
+                    )
+                })
+                .sum();
+            assert!(
+                (covered - polygon).abs() < 0.5,
+                "{side:?}: {covered} for {polygon}"
+            );
+            let egui::Shape::Mesh(mesh) =
+                bubble_shape(&palette, rect, palette.bubble_out, Some(side), 2.0)
+            else {
+                panic!("a tailed bubble is one mesh");
+            };
+            // Each point has a filled vertex and a clear one outside it.
+            assert_eq!(mesh.vertices.len(), outline.len() * 2);
+            assert!(
+                mesh.vertices
+                    .iter()
+                    .skip(1)
+                    .step_by(2)
+                    .all(|v| v.color == Color32::TRANSPARENT)
+            );
+        }
+        assert!(matches!(
+            bubble_shape(&palette, rect, palette.bubble_in, None, 2.0),
+            egui::Shape::Rect(_)
+        ));
     }
 
     /// The knob radius and the track outline a switch paints in one state.

@@ -979,6 +979,7 @@ impl App {
             .cached_palette()
             .unwrap_or_else(|| match settings.theme {
                 ThemeChoice::Light => Palette::light(),
+                ThemeChoice::Messages => Palette::messages(),
                 _ => Palette::dark(),
             });
         let locale = crate::i18n::resolve(settings.interface_language);
@@ -1435,9 +1436,15 @@ impl App {
     /// What the conversation shows behind its bubbles, for the chat and the
     /// wallpaper preview alike.
     pub fn wallpaper(&self) -> crate::wallpaper::Look {
+        let mut color = self.settings.wallpaper_background(&self.palette);
+        if self.palette.vibrant() {
+            color = self.palette.vibrant_chat(color);
+        }
         crate::wallpaper::Look {
-            color: self.settings.wallpaper_background(&self.palette),
-            doodles: self.settings.show_wallpaper,
+            color,
+            // Messages draws its conversations on a plain background.
+            doodles: self.settings.show_wallpaper
+                && self.palette.bubbles != crate::theme::BubbleStyle::Messages,
             image: self
                 .account()
                 .settings
@@ -4146,7 +4153,8 @@ impl App {
             || match self.settings.theme {
                 ThemeChoice::Dark => egui::ThemePreference::Dark,
                 ThemeChoice::Light => egui::ThemePreference::Light,
-                ThemeChoice::System => egui::ThemePreference::System,
+                // Messages follows the system's appearance, as Messages does.
+                ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
             },
             |palette| {
                 if palette.dark {
@@ -4172,7 +4180,13 @@ impl App {
             }
         };
         let palette = self.settings.cached_palette().unwrap_or_else(|| {
-            if dark {
+            if self.settings.theme == ThemeChoice::Messages {
+                if dark {
+                    Palette::messages()
+                } else {
+                    Palette::messages_light()
+                }
+            } else if dark {
                 Palette::dark()
             } else {
                 Palette::light()
@@ -4184,7 +4198,14 @@ impl App {
         // A change of colours after the window's first is revealed from the
         // middle outwards, as Omarchy does; the old palette stays until the
         // window's picture of it arrives.
-        if self.applied_dark.is_some() && self.palette != palette && self.reveal_theme_changes {
+        // A vibrant window's picture misses the desktop behind it, so changes
+        // to or from one switch at once.
+        if self.applied_dark.is_some()
+            && self.palette != palette
+            && self.reveal_theme_changes
+            && !self.palette.vibrant()
+            && !palette.vibrant()
+        {
             self.theme_transition.begin(ctx);
             if self.theme_transition.holding(ctx) {
                 return;
