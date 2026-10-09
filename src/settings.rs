@@ -39,13 +39,10 @@ pub enum ThemeChoice {
 }
 
 impl ThemeChoice {
-    /// The choices Settings offers. Messages is macOS's look, and only
-    /// macOS can draw its translucent sidebar.
-    pub const ALL: &[ThemeChoice] = if cfg!(target_os = "macos") {
-        &[Self::System, Self::Light, Self::Dark, Self::Messages]
-    } else {
-        &[Self::System, Self::Light, Self::Dark]
-    };
+    /// The choices Settings offers, on every platform. Messages shows the
+    /// desktop through its window where the platform can, and is opaque in
+    /// its own colours elsewhere (see [`crate::backdrop`]).
+    pub const ALL: &[ThemeChoice] = &[Self::System, Self::Light, Self::Dark, Self::Messages];
 
     pub fn label(self) -> &'static str {
         match self {

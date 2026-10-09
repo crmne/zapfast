@@ -329,6 +329,12 @@ fn run() -> eframe::Result<()> {
             // a reopened window (tray, notification, Wayland reopen) uses
             // what the last one remembered, not what the process started
             // with. Demo runs keep their fixed screenshot size.
+            // Decided as each window is made: it cannot become transparent
+            // later.
+            let transparent =
+                zapfast::backdrop::transparent_window(lease.peek(|app: &app::App| {
+                    app.settings.theme == zapfast::settings::ThemeChoice::Messages
+                }));
             let geometry = if demo_persistence.is_some() {
                 zapfast::window::Geometry::default()
             } else {
@@ -352,7 +358,7 @@ fn run() -> eframe::Result<()> {
             });
             eframe::run_native(
                 "ZapFast",
-                native_options(demo_persistence.clone(), geometry),
+                native_options(demo_persistence.clone(), geometry, transparent),
                 Box::new(move |cc| {
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
@@ -363,6 +369,7 @@ fn run() -> eframe::Result<()> {
                     Ok(Box::new(Shell {
                         app,
                         window_recovery_checked: false,
+                        transparent,
                         update_receipt: receipt,
                         #[cfg(target_os = "windows")]
                         taskbar: Default::default(),
@@ -479,6 +486,7 @@ fn tour_script(name: &str) -> zapfast::demo::tour::Script {
 fn native_options(
     demo_persistence: Option<std::path::PathBuf>,
     geometry: zapfast::window::Geometry,
+    transparent: bool,
 ) -> eframe::NativeOptions {
     let default_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
     let demo = demo_persistence.is_some();
@@ -505,9 +513,9 @@ fn native_options(
         .with_icon(app_icon())
         // macOS uses a full-size content view under the traffic lights.
         .with_fullsize_content_view(true)
-        // Transparent on macOS, so the Messages theme can show the desktop
-        // through its sidebar; every other theme paints the window opaque.
-        .with_transparent(cfg!(target_os = "macos"))
+        // Transparent where the Messages theme can show the desktop through
+        // its sidebar; every other theme paints the window opaque.
+        .with_transparent(transparent)
         .with_titlebar_shown(false)
         .with_title_shown(false);
     eframe::NativeOptions {
@@ -524,6 +532,8 @@ fn native_options(
 struct Shell {
     /// Whether this window's first frame checked that a monitor shows it.
     window_recovery_checked: bool,
+    /// Whether this window was made transparent, for the Messages theme.
+    transparent: bool,
     update_receipt: Option<fastframe_update::Receipt>,
     app: fastframe_shell::Held<app::App>,
     /// This window's unread overlay on its taskbar button.
@@ -588,9 +598,9 @@ impl Shell {
 
 impl eframe::App for Shell {
     /// What shows where the interface paints nothing: the window colour, or
-    /// on a vibrant theme nothing, so the material behind the window shows.
+    /// nothing while the window has a material, so it shows.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if self.app.palette.vibrant() {
+        if zapfast::backdrop::active() {
             [0.0; 4]
         } else {
             self.app.palette.window.to_normalized_gamma_f32()
@@ -642,8 +652,7 @@ impl eframe::App for Shell {
             28.0 / ctx.zoom_factor()
         };
         fastframe_macos::align_traffic_lights(frame, ctx, title_bar);
-        #[cfg(target_os = "macos")]
-        zapfast::macos::vibrancy(frame, &app.palette);
+        zapfast::backdrop::apply(frame, &app.palette, self.transparent);
         #[cfg(feature = "demo")]
         {
             // Keep requesting the configured screenshot size until it is applied.

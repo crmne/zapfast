@@ -230,16 +230,17 @@ impl Palette {
         }
     }
 
-    /// Whether the window shows the desktop, blurred, through the sidebar:
-    /// the Messages theme on macOS, where AppKit provides the material.
+    /// Whether this is the Messages theme's glass: a frosted header, glass
+    /// pills and tints, on every platform. Whether the desktop also shows
+    /// through the window is [`crate::backdrop::active`].
     pub fn vibrant(&self) -> bool {
-        cfg!(target_os = "macos") && self.bubbles == BubbleStyle::Messages
+        self.bubbles == BubbleStyle::Messages
     }
 
-    /// The chat list's background. On a vibrant theme it only darkens the
-    /// material behind it a little.
+    /// The chat list's background. Over a window's material it only darkens
+    /// it a little; without one, it is the panel's own colour.
     pub fn sidebar(&self) -> Color32 {
-        if self.vibrant() {
+        if self.vibrant() && crate::backdrop::active() {
             self.panel.gamma_multiply(SIDEBAR_TINT)
         } else {
             self.panel
