@@ -143,8 +143,10 @@ pub(super) fn overlay(
     let palette = app.palette;
     let width = width.max(MIN_WIDTH).min(region.width());
     let rect = Rect::from_min_max(pos2(region.right() - width, region.top()), region.max);
+    // Above the conversation's header too, which a vibrant window draws on
+    // a layer of its own over the messages, so the header keeps its glass.
     egui::Area::new(egui::Id::new(id))
-        .order(egui::Order::Middle)
+        .order(egui::Order::Foreground)
         .fixed_pos(rect.min)
         .constrain(false)
         .show(ctx, |ui| {
