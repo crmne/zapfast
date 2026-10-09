@@ -392,12 +392,15 @@ pub fn menu_width(ui: &Ui, labels: &[&str], icons: bool) -> f32 {
 }
 
 /// A context-menu entry that opens a submenu, drawn like the plain entries
-/// beside it, with a chevron.
+/// beside it, with a chevron. The submenu is as wide as the widest of
+/// `items`, its rows' labels: otherwise its rows take egui's whole
+/// `menu_width` and leave a wide blank strip after their text.
 pub fn submenu<R>(
     ui: &mut Ui,
     palette: &Palette,
     icon: Icon,
     label: &str,
+    items: &[&str],
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> Option<egui::InnerResponse<R>> {
     let width = ui.available_width();
@@ -444,7 +447,13 @@ pub fn submenu<R>(
             palette.text,
         );
     }
-    egui::containers::menu::SubMenu::new().show(ui, &response, add_contents)
+    // `menu_width` counts `menu_frame`'s margin and stroke, and the submenu
+    // brings its own frame around the rows.
+    let width = menu_width(ui, items, true) - 14.0;
+    egui::containers::menu::SubMenu::new().show(ui, &response, |ui| {
+        ui.set_width(width);
+        add_contents(ui)
+    })
 }
 
 pub fn menu_item(ui: &mut Ui, palette: &Palette, icon: Option<Icon>, label: &str) -> bool {
@@ -1123,6 +1132,58 @@ pub fn dotted_chip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A submenu is as wide as its labels, not egui's whole `menu_width`,
+    /// which left a wide blank strip after "Notification sound" and
+    /// "Labels" rows.
+    #[test]
+    fn a_submenu_is_as_wide_as_its_labels() {
+        let palette = Palette::dark();
+        let ctx = egui::Context::default();
+        let items = ["Default", "Choose a file…"];
+        let row = pos2(60.0, 60.0);
+        let frame = |events| {
+            let mut shown = None;
+            let mut expected = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1600.0, 800.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    expected = menu_width(ui, &items, true);
+                    let button = ui.button("Menu");
+                    egui::Popup::menu(&button)
+                        .open_memory(Some(egui::SetOpenCommand::Bool(true)))
+                        .at_position(row - vec2(40.0, 20.0))
+                        .width(200.0)
+                        .frame(menu_frame(&palette))
+                        .show(|ui| {
+                            shown = submenu(ui, &palette, Icon::Volume2, "Sound", &items, |ui| {
+                                for item in items {
+                                    menu_item(ui, &palette, None, item);
+                                }
+                            })
+                            .map(|inner| inner.response.rect);
+                        });
+                },
+            );
+            output.textures_delta.clear();
+            shown.map(|rect| (rect, expected))
+        };
+        frame(vec![]);
+        let mut shown = None;
+        for _ in 0..4 {
+            shown = frame(vec![egui::Event::PointerMoved(row)]);
+        }
+        let (rect, expected) = shown.expect("the submenu opens on hover");
+        assert!(
+            (rect.width() - expected).abs() <= 4.0,
+            "a submenu for {items:?} is {} points wide, not about {expected}",
+            rect.width()
+        );
+    }
 
     /// The header's shadow and the chat list's are one shadow turned a
     /// quarter: as dark at the edge casting it, clear as far into the content.
