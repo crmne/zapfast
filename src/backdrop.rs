@@ -147,12 +147,22 @@ mod platform {
     }
 
     pub fn may_show_through() -> bool {
-        blurs(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some())
+        blurs(
+            std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
+            std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+        )
     }
 
-    /// Whether the session's compositor blurs translucent windows by itself.
-    pub fn blurs(hyprland: bool) -> bool {
-        hyprland
+    /// Whether the session's compositor blurs translucent windows by itself:
+    /// Hyprland, when both its instance signature and the desktop name say
+    /// so, since either alone can be left over from another session.
+    pub fn blurs(signature: bool, desktop: Option<&str>) -> bool {
+        signature
+            && desktop.is_some_and(|desktop| {
+                desktop
+                    .split(':')
+                    .any(|name| name.eq_ignore_ascii_case("Hyprland"))
+            })
     }
 
     #[cfg(test)]
@@ -160,8 +170,14 @@ mod platform {
         /// Only a compositor known to blur gets the translucent window.
         #[test]
         fn only_a_blurring_compositor_gets_translucency() {
-            assert!(super::blurs(true));
-            assert!(!super::blurs(false));
+            use super::blurs;
+            assert!(blurs(true, Some("Hyprland")));
+            assert!(blurs(true, Some("Hyprland:wlroots")));
+            // A signature left over, or a desktop name alone, is not enough.
+            assert!(!blurs(true, Some("GNOME")));
+            assert!(!blurs(true, None));
+            assert!(!blurs(false, Some("Hyprland")));
+            assert!(!blurs(false, Some("KDE")));
         }
     }
 }
