@@ -2682,16 +2682,41 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         [x * 5, 120, 255 - y * 5, 255]
                     })
                     .collect();
-                app.pending.push(crate::app::Pending::Picture {
-                    width: side,
-                    height: side,
-                    rgba: std::sync::Arc::new(rgba),
-                    texture: None,
-                });
-                app.pending.push(crate::app::Pending::File(photo));
                 app.pending
-                    .push(crate::app::Pending::File("/tmp/notes.pdf".into()));
+                    .push(crate::app::Pending::picture(side, side, rgba));
+                app.pending.push(crate::app::Pending::file(photo));
+                app.pending
+                    .push(crate::app::Pending::file("/tmp/notes.pdf".into()));
                 app.composer = "Look at these".into();
+            }
+            "staged-doc" => {
+                let (photo, _) = sample_files(app);
+                let side = 48usize;
+                let rgba: Vec<u8> = (0..side * side)
+                    .flat_map(|index| {
+                        let x = (index % side) as u8;
+                        let y = (index / side) as u8;
+                        let alpha = if !(10..=38).contains(&x) && !(10..=38).contains(&y) {
+                            0
+                        } else {
+                            255
+                        };
+                        [x * 5, 120, 255 - y * 5, alpha]
+                    })
+                    .collect();
+                app.pending.push(crate::app::Pending::picture_with_mode(
+                    side,
+                    side,
+                    rgba,
+                    crate::model::SendMode::Document,
+                ));
+                app.pending.push(crate::app::Pending::file_with_mode(
+                    photo,
+                    crate::model::SendMode::Document,
+                ));
+                app.pending
+                    .push(crate::app::Pending::file("/tmp/notes.pdf".into()));
+                app.composer = "Sending image as document".into();
             }
             "archived" => app.show_archived = true,
             "labels" | "label-chips" => labels_sample(app),
@@ -4514,6 +4539,8 @@ mod tests {
             "rail",
             "search",
             "staged",
+            "staged-doc",
+            "staged-doc,light",
             "compose-emoji",
             "voice",
             "voice,voice-menu",

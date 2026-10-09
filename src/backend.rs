@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::model::{Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack};
+use crate::model::{
+    Chat, ChatId, Contact, Gif, GifError, Message, OutboundFile, PollDraft, SendMode, StickerPack,
+};
 use crate::paths::AccountDirs;
 
 // Re-exported so the picker can detect pasted Signal pack links.
@@ -301,7 +303,7 @@ pub enum Command {
     /// Sends files with the caption on the first.
     SendFiles {
         chat: ChatId,
-        paths: Vec<PathBuf>,
+        files: Vec<OutboundFile>,
         caption: Option<String>,
         mentions: Vec<String>,
         /// The message the first file replies to.
@@ -316,6 +318,7 @@ pub enum Command {
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<String>,
+        mode: SendMode,
     },
     /// Syncs chat mute state. `Some(0)` is indefinite and `None` unmutes.
     SetMuted(ChatId, Option<i64>),
@@ -1023,7 +1026,7 @@ pub enum Unsent {
     Text(String),
     Voice(Vec<f32>),
     Files {
-        paths: Vec<PathBuf>,
+        files: Vec<OutboundFile>,
         caption: Option<String>,
     },
     Image {
@@ -1031,6 +1034,7 @@ pub enum Unsent {
         height: u32,
         rgba: Vec<u8>,
         caption: Option<String>,
+        mode: SendMode,
     },
     Sticker,
     Gif,
