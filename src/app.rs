@@ -5865,9 +5865,15 @@ impl App {
     /// viewport too, since `window_focused` stays false behind the app lock
     /// even while the lock screen has the focus.
     fn request_attention(&mut self, ctx: &egui::Context) {
+        self.request_attention_on(ctx, gnome_desktop());
+    }
+
+    /// [`Self::request_attention`] on a desktop that is GNOME or not, which
+    /// shows its own "is ready" notice instead of marking the taskbar (#466).
+    fn request_attention_on(&mut self, ctx: &egui::Context, gnome: bool) {
         if std::mem::take(&mut self.wants_attention)
             && cfg!(target_os = "linux")
-            && !gnome_desktop()
+            && !gnome
             && !self.window_hidden
             && !self.window_focused
             && ctx.input(|input| input.viewport().focused) != Some(true)
@@ -12131,16 +12137,35 @@ mod app_lock_tests {
         app.window_hidden = false;
         app.window_focused = false;
         app.maybe_notify(CHAT, &message);
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
         assert!(attention_requested(&ctx));
 
         let ctx = egui::Context::default();
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
         assert!(!attention_requested(&ctx), "only once per notification");
 
         app.window_hidden = true;
         app.maybe_notify(CHAT, &message);
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
+        assert!(!attention_requested(&ctx));
+    }
+
+    /// GNOME shows its own "is ready" notice for a window that asks for
+    /// attention, on top of the message's notification (#466).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gnome_gets_no_attention_request() {
+        let ctx = egui::Context::default();
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.window_hidden = false;
+        app.window_focused = false;
+        app.maybe_notify(CHAT, &message);
+        app.request_attention_on(&ctx, true);
+        assert!(!attention_requested(&ctx));
+        // The request is spent, not kept for another desktop later.
+        let ctx = egui::Context::default();
+        app.request_attention_on(&ctx, false);
         assert!(!attention_requested(&ctx));
     }
 
@@ -12165,7 +12190,7 @@ mod app_lock_tests {
         app.lock_app();
         assert!(!app.window_focused);
         app.maybe_notify(CHAT, &message);
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
         assert!(!attention_requested(&ctx));
     }
 
@@ -12179,7 +12204,7 @@ mod app_lock_tests {
         app.page = Page::Chats;
         app.open_chat = Some(CHAT.into());
         app.maybe_notify(CHAT, &message);
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
         assert!(!attention_requested(&ctx));
     }
 
