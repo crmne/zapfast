@@ -160,6 +160,58 @@ pub fn viewport(
     }
 }
 
+/// Asks the niri compositor to focus this process's window, switching to its
+/// workspace. A Wayland client cannot focus its own window, but niri's IPC can,
+/// so a notification click lands on the window where it already is instead of
+/// opening a fresh one on the current workspace. `false` when not running
+/// under niri or when the request fails, so the caller can fall back.
+#[cfg(target_os = "linux")]
+pub fn focus_with_niri() -> bool {
+    use std::process::{Command, Stdio};
+    if std::env::var_os("NIRI_SOCKET").is_none_or(|value| value.is_empty()) {
+        return false;
+    }
+    let Ok(windows) = Command::new("niri")
+        .args(["msg", "--json", "windows"])
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    let Some(id) = windows
+        .status
+        .success()
+        .then(|| niri_window_id(&windows.stdout, std::process::id()))
+        .flatten()
+    else {
+        return false;
+    };
+    Command::new("niri")
+        .args(["msg", "action", "focus-window", "--id", &id.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Not available off Linux, where a window focuses normally or has its own
+/// compositor.
+#[cfg(not(target_os = "linux"))]
+pub fn focus_with_niri() -> bool {
+    false
+}
+
+/// The id of the window owned by process `pid` in `niri msg --json windows`.
+#[cfg(any(target_os = "linux", test))]
+fn niri_window_id(json: &[u8], pid: u32) -> Option<u64> {
+    let windows: serde_json::Value = serde_json::from_slice(json).ok()?;
+    windows
+        .as_array()?
+        .iter()
+        .find(|window| window["pid"].as_u64() == Some(u64::from(pid)))?["id"]
+        .as_u64()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,6 +423,14 @@ mod tests {
             (settings.window_x, settings.window_y),
             (Some(100.0), Some(50.0))
         );
+    }
+
+    #[test]
+    fn niri_window_id_finds_the_window_of_this_process() {
+        let json = br#"[{"id":7,"pid":100},{"id":226,"pid":16363},{"id":9,"pid":null}]"#;
+        assert_eq!(niri_window_id(json, 16363), Some(226));
+        assert_eq!(niri_window_id(json, 1), None);
+        assert_eq!(niri_window_id(b"not json", 1), None);
     }
 
     #[test]
