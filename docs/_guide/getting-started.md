@@ -59,7 +59,8 @@ The packaged desktop entry is `packaging/applications/zapfast.desktop`;
 ZapFast links as a companion device, like WhatsApp Web. Start it and either:
 
 - scan the QR code with your phone (WhatsApp, **Settings**, **Linked
-  devices**, **Link a device**), or
+  devices**, **Link a device**). The phone's camera app also reads the code
+  and opens **Linked devices** in WhatsApp, or
 - click **Link with phone number** and enter the eight-character code on your
   phone.
 
