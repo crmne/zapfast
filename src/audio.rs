@@ -532,9 +532,9 @@ fn decode_file(path: &Path) -> Result<Vec<f32>, String> {
 
 type Outcome = Arc<Mutex<Option<Result<Vec<f32>, String>>>>;
 
-/// Records until told to stop, pushing a level per 50 ms, and returns the
-/// mono 48 kHz samples.
-type Take = fn(&AtomicBool, &Mutex<Vec<f32>>, &Waker) -> Result<Vec<f32>, String>;
+/// Records until told to stop, pushing a level per 50 ms and calling the
+/// wake function after each, and returns the mono 48 kHz samples.
+type Take = fn(&AtomicBool, &Mutex<Vec<f32>>, &dyn Fn()) -> Result<Vec<f32>, String>;
 
 /// Records from the default microphone until told to stop.
 pub struct Recorder {
@@ -542,6 +542,9 @@ pub struct Recorder {
     stop: Arc<AtomicBool>,
     /// Loudness for each recorded 50 ms segment.
     levels: Arc<Mutex<Vec<f32>>>,
+    /// While set, a new level waits for the window's next frame instead of
+    /// asking for one, so the waveform steps with a screen reader attached.
+    stepped: Arc<AtomicBool>,
     outcome: Outcome,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -562,15 +565,22 @@ impl Recorder {
     fn spawn(waker: Waker, body: Take) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let levels: Arc<Mutex<Vec<f32>>> = Default::default();
+        let stepped = Arc::new(AtomicBool::new(false));
         let outcome: Outcome = Default::default();
         let spawned = {
             let stop = Arc::clone(&stop);
             let levels = Arc::clone(&levels);
+            let stepped = Arc::clone(&stepped);
             let outcome = Arc::clone(&outcome);
             std::thread::Builder::new()
                 .name("voice-record".to_owned())
                 .spawn(move || {
-                    let result = body(&stop, &levels, &waker);
+                    let wake = || {
+                        if !stepped.load(Ordering::Relaxed) {
+                            waker.wake();
+                        }
+                    };
+                    let result = body(&stop, &levels, &wake);
                     *outcome.lock().unwrap_or_else(|p| p.into_inner()) = Some(result);
                     waker.wake();
                 })
@@ -586,6 +596,7 @@ impl Recorder {
             started: Instant::now(),
             stop,
             levels,
+            stepped,
             outcome,
             thread,
         }
@@ -601,6 +612,7 @@ impl Recorder {
             started: Instant::now() - Duration::from_millis(4_500),
             stop: Arc::new(AtomicBool::new(true)),
             levels: Arc::new(Mutex::new(levels)),
+            stepped: Default::default(),
             outcome: Default::default(),
             thread: None,
         }
@@ -608,6 +620,17 @@ impl Recorder {
 
     pub fn elapsed(&self) -> Duration {
         self.started.elapsed()
+    }
+
+    /// Stops new levels from asking for a frame of their own while
+    /// `stepped`: the window then draws them on its stepped schedule.
+    pub fn set_stepped(&self, stepped: bool) {
+        self.stepped.store(stepped, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_stepped(&self) -> bool {
+        self.stepped.load(Ordering::Relaxed)
     }
 
     pub fn levels(&self) -> Vec<f32> {
@@ -655,7 +678,7 @@ impl Drop for Recorder {
 fn rehearse(
     stop: &AtomicBool,
     levels: &Mutex<Vec<f32>>,
-    waker: &Waker,
+    wake: &dyn Fn(),
 ) -> Result<Vec<f32>, String> {
     let segment = voice::RATE as usize / 20;
     let mut samples = Vec::new();
@@ -674,13 +697,17 @@ fn rehearse(
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .push(peak * 0.7);
-        waker.wake();
+        wake();
         std::thread::sleep(Duration::from_millis(50));
     }
     Ok(samples)
 }
 
-fn record(stop: &AtomicBool, levels: &Mutex<Vec<f32>>, waker: &Waker) -> Result<Vec<f32>, String> {
+fn record(
+    stop: &AtomicBool,
+    levels: &Mutex<Vec<f32>>,
+    wake: &dyn Fn(),
+) -> Result<Vec<f32>, String> {
     let mut microphone = rodio::microphone::MicrophoneBuilder::new()
         .default_device()
         .map_err(|error| format!("No microphone available: {error}"))?
@@ -705,7 +732,7 @@ fn record(stop: &AtomicBool, levels: &Mutex<Vec<f32>>, waker: &Waker) -> Result<
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .push(loudness);
-        waker.wake();
+        wake();
         if taken.len() < chunk {
             // The device disappeared before recording stopped.
             break;
@@ -726,6 +753,45 @@ pub fn recording_path(dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stepped recorder keeps recording, but its levels stop asking the
+    /// window for frames of their own; unstepped, they ask again.
+    #[test]
+    fn a_stepped_recorder_records_without_asking_for_frames() {
+        let ctx = egui::Context::default();
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&asked);
+        ctx.set_request_repaint_callback(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+        // Once egui asks for no frame, the next request calls back.
+        let settle = || crate::motion::tests::settle(&ctx);
+        let waker = Waker::default();
+        waker.attach(&ctx);
+        let recorder = Recorder::simulated(waker);
+        recorder.set_stepped(true);
+        // Let a level already under way land first.
+        std::thread::sleep(Duration::from_millis(80));
+        settle();
+        asked.store(0, Ordering::SeqCst);
+        let before = recorder.levels().len();
+        // Busy machines oversleep, so wait for progress instead of a fixed time.
+        let waited = |done: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !done() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            done()
+        };
+        assert!(
+            waited(&|| recorder.levels().len() >= before + 4),
+            "still recording"
+        );
+        assert_eq!(asked.load(Ordering::SeqCst), 0);
+        recorder.set_stepped(false);
+        assert!(waited(&|| asked.load(Ordering::SeqCst) >= 1));
+        recorder.finish().expect("recorded");
+    }
 
     #[test]
     fn a_clip_that_finished_is_handed_back_once() {

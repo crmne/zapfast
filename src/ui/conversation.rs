@@ -2167,7 +2167,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 );
                             }
                             if jump_since.get().is_some() {
-                                ui.ctx().request_repaint();
+                                crate::motion::request_frame(ui.ctx());
                             }
                         }
                         if let (Some(selected), Some(response), Some((slot, top))) =
@@ -2693,8 +2693,9 @@ fn typing_dots(ui: &mut egui::Ui, palette: &Palette) {
         return;
     }
     // Every frame, paced by vsync like egui's own animations; drawn only
-    // while visible, and a hidden window gets no frames at all.
-    ui.ctx().request_repaint();
+    // while visible, and a hidden window gets no frames at all. Stepped
+    // while a screen reader is attached: see `motion`.
+    crate::motion::request_frame(ui.ctx());
     let time = ui.input(|input| input.time);
     for index in 0..3 {
         let wave = ((time * std::f64::consts::TAU / 1.2) - f64::from(index) * 0.9).sin() as f32;
@@ -7868,6 +7869,55 @@ mod tests {
         output.textures_delta.clear();
         let delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
         assert_eq!(delay, std::time::Duration::ZERO);
+    }
+
+    /// With a screen reader attached the dots ask for a frame a step later,
+    /// and each stepped frame draws exactly what an every-frame one would at
+    /// that moment, so the wave keeps its speed and only skips frames.
+    #[test]
+    fn typing_dots_step_with_a_screen_reader_and_keep_their_phase() {
+        let palette = crate::theme::Palette::dark();
+        let draw = |reader: bool, time: f64| {
+            let ctx = crate::motion::tests::reading(reader);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| typing_dots(ui, &palette),
+            );
+            output.textures_delta.clear();
+            let delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            let dots: Vec<_> = output
+                .shapes
+                .into_iter()
+                .filter_map(|clipped| match clipped.shape {
+                    egui::Shape::Circle(circle) => Some((circle.center, circle.fill)),
+                    _ => None,
+                })
+                .collect();
+            (delay, dots)
+        };
+        let mut seen = Vec::new();
+        for step in 0..12 {
+            let time = 5.0 + f64::from(step) * 0.1;
+            let (plain_delay, plain) = draw(false, time);
+            let (stepped_delay, stepped) = draw(true, time);
+            assert_eq!(plain_delay, std::time::Duration::ZERO);
+            assert!(
+                stepped_delay > std::time::Duration::from_millis(75)
+                    && stepped_delay <= crate::motion::STEP,
+                "{stepped_delay:?}"
+            );
+            assert_eq!(stepped.len(), 3);
+            assert_eq!(plain, stepped, "at {time}");
+            seen.push(format!("{stepped:?}"));
+        }
+        // Over one 1.2 s wave the steps show it moving: only while all three
+        // dots rest at the bottom do two steps look alike.
+        seen.sort();
+        seen.dedup();
+        assert!(seen.len() >= 9, "{} different steps", seen.len());
     }
 
     #[test]

@@ -802,7 +802,7 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
         InviteState::Loading => {
             title(ui, app, "Group invite");
             ui.horizontal(|ui| {
-                ui.spinner();
+                crate::motion::egui_spinner(ui);
                 ui.label(egui::RichText::new("Looking up the group…").color(palette.secondary));
             });
             cancel_row(app, ui);

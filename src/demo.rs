@@ -2944,6 +2944,69 @@ mod tests {
         }
     }
 
+    /// Two contacts typing in the open group keep the window drawing every
+    /// refresh, but only about ten times a second while a screen reader is
+    /// attached: at the display's rate its thread could not answer the
+    /// reader's window messages in time.
+    #[test]
+    fn a_contact_typing_steps_the_window_only_with_a_screen_reader() {
+        let run = |reader: bool| {
+            let mut app = app();
+            apply_flags(&mut app, Some("typers"));
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            if reader {
+                ctx.enable_accesskit();
+            }
+            let mut delay = std::time::Duration::MAX;
+            // Avatars and media load on threads that ask for a frame when
+            // they finish; measure once three frames in a row had none
+            // pending.
+            let mut settled = 0;
+            for frame in 0..400 {
+                if ctx.has_pending_images() {
+                    settled = 0;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                } else {
+                    settled += 1;
+                }
+                if frame >= 8 && settled > 3 {
+                    break;
+                }
+                let input = egui::RawInput {
+                    time: Some(10.0 + f64::from(frame) * 0.1),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                });
+                output.textures_delta.clear();
+                delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            }
+            (delay, ctx.repaint_causes())
+        };
+        let from_the_dots = |causes: &[egui::RepaintCause]| {
+            causes
+                .iter()
+                .any(|cause| cause.file.ends_with("conversation.rs"))
+        };
+        let (plain, causes) = run(false);
+        assert_eq!(plain, std::time::Duration::ZERO, "{causes:?}");
+        assert!(from_the_dots(&causes), "{causes:?}");
+        let (stepped, causes) = run(true);
+        assert!(
+            stepped > std::time::Duration::from_millis(75) && stepped <= crate::motion::STEP,
+            "{stepped:?}: {causes:?}"
+        );
+        assert!(from_the_dots(&causes), "{causes:?}");
+    }
+
     /// A sent message moves its chat up, and the scrolled chat list follows
     /// it back to the top.
     #[test]

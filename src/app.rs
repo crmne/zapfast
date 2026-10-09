@@ -6032,7 +6032,7 @@ impl App {
         self.handle_notification_opens();
         self.handle_events();
         self.tick(ctx);
-        self.tick_audio();
+        self.tick_audio(ctx);
         self.tick_video(ctx);
         self.apply_actions(ctx);
         self.hold_media();
@@ -6256,7 +6256,7 @@ impl App {
     }
 
     /// Polls audio state and schedules repaints while it changes.
-    fn tick_audio(&mut self) {
+    fn tick_audio(&mut self, ctx: &egui::Context) {
         if let Err(error) = self.player.poll() {
             self.toast_error(error);
         }
@@ -6267,8 +6267,18 @@ impl App {
             self.recording = None;
             self.toast_error(format!("Could not record: {error}"));
         }
+        // The playback bar, the recording light and the waveform only show
+        // progress, so they step while a screen reader is attached.
+        let stepped = crate::motion::screen_reader_attached(ctx);
+        if let Some(recorder) = &self.recording {
+            recorder.set_stepped(stepped);
+        }
         if self.player.is_playing() || self.recording.is_some() {
-            self.waker.wake_after(Duration::from_millis(40));
+            self.waker.wake_after(if stepped {
+                crate::motion::STEP
+            } else {
+                Duration::from_millis(40)
+            });
         }
         // Let the media hold lapse on time if the next clip never lands.
         if let Some((_, _, since)) = &self.voice_wanted {
@@ -6988,6 +6998,30 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    /// While recording, the light, the timer and the waveform ask for a
+    /// frame every 40 ms, or every step while a screen reader is attached,
+    /// and the recorder then stops asking for frames of its own.
+    #[test]
+    fn recording_progress_steps_while_a_screen_reader_is_attached() {
+        let run = |reader: bool| {
+            let directory = tempfile::tempdir().unwrap();
+            let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+            let ctx = crate::motion::tests::reading(reader);
+            app.waker.attach(&ctx);
+            app.recording = Some(Recorder::rehearsal());
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.tick_audio(ui.ctx()));
+            output.textures_delta.clear();
+            let stepped = app.recording.as_ref().is_some_and(Recorder::is_stepped);
+            (
+                output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+                stepped,
+            )
+        };
+        let predicted = Duration::from_secs_f32(1.0 / 60.0);
+        assert_eq!(run(false), (Duration::from_millis(40) - predicted, false));
+        assert_eq!(run(true), (crate::motion::STEP - predicted, true));
     }
 
     #[test]
