@@ -8626,6 +8626,7 @@ mod tests {
             }
             let mut row = message("chat", &format!("photo-{index}"), index as i64 * 2);
             row.content = Content::Image {
+                motion: None,
                 caption: None,
                 media: media(Some(path.clone())),
             };
@@ -8639,6 +8640,7 @@ mod tests {
         rows.push(sticker);
         let mut pending = message("chat", "pending", 7);
         pending.content = Content::Image {
+            motion: None,
             caption: None,
             media: media(None),
         };
@@ -8673,6 +8675,7 @@ mod tests {
         );
         let mut other = message("other", "photo", 0);
         other.content = Content::Image {
+            motion: None,
             caption: None,
             media: media(Some(paths[4].clone())),
         };
@@ -8731,6 +8734,7 @@ mod tests {
                 .map(|(index, path)| {
                     let mut row = message(&chat.id, &format!("photo-{index}"), index as i64);
                     row.content = Content::Image {
+                        motion: None,
                         caption: None,
                         media: Media {
                             mime: "image/png".into(),

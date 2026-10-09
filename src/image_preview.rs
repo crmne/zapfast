@@ -366,6 +366,7 @@ mod tests {
             timestamp: 0,
             history_order: None,
             content: Content::Image {
+                motion: None,
                 caption: None,
                 media: Media {
                     mime: "image/png".into(),
