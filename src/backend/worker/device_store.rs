@@ -11,7 +11,7 @@ use rusqlite::{Connection, OpenFlags};
 use whatsapp_rust::store::SqliteStore;
 
 pub(super) async fn open(path: &Path) -> Result<SqliteStore> {
-    let store = SqliteStore::new(&path.to_string_lossy()).await;
+    let store = SqliteStore::open(&path.to_string_lossy()).await;
     let path = path.to_owned();
     // Also repair after a later migration fails, before returning its error.
     tokio::task::spawn_blocking(move || preserve_legacy_column(&path))

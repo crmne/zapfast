@@ -25,7 +25,7 @@ use whatsapp_rust::prelude::{
 use whatsapp_rust::send::RevokeType;
 use whatsapp_rust::types::events as wa_events;
 use whatsapp_rust::types::message::{EncMediaType, MessageInfo, MessageSource};
-use whatsapp_rust::types::presence::{ChatPresence, ReceiptType};
+use whatsapp_rust::types::presence::{ChatActivity, PresenceStatus, ReceiptType};
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::wacore::download::{DownloadWriter, Downloadable};
 use whatsapp_rust::wacore::history_sync::{HistorySyncStream, MAX_DECOMPRESSED};
@@ -2575,13 +2575,17 @@ impl Worker {
                 self.emit(Event::Typing {
                     chat: self.canonical(&presence.source.chat),
                     sender: self.canonical(&presence.source.sender),
-                    composing: matches!(presence.state, ChatPresence::Composing),
+                    // Recording a voice note also shows as typing, as before.
+                    composing: matches!(
+                        presence.state,
+                        ChatActivity::Typing | ChatActivity::RecordingAudio
+                    ),
                 });
             }
             E::Presence(presence) => {
                 self.emit(Event::Presence {
                     id: self.canonical(&presence.from),
-                    online: !presence.unavailable,
+                    online: presence.status != PresenceStatus::Unavailable,
                     last_seen: presence.last_seen.map(|when| when.timestamp()),
                 });
             }
@@ -2778,7 +2782,12 @@ impl Worker {
             let mut saved_name = None;
             if let Some(name) = name {
                 match profile.set_push_name(&name).await {
-                    Ok(()) => saved_name = Some(name),
+                    Ok(outcome) => {
+                        if let whatsapp_rust::PushNameOutcome::SyncPending { source } = outcome {
+                            log::warn!("name changed, but not yet synced to the phone: {source}");
+                        }
+                        saved_name = Some(name);
+                    }
                     Err(error) => {
                         let _ = events
                             .send(Event::Error(format!("Could not change your name: {error}")));
@@ -5416,7 +5425,7 @@ impl Worker {
                             subject: group.subject.unwrap_or_default(),
                             description: group.description.filter(|text| !text.trim().is_empty()),
                             members: group
-                                .size
+                                .participant_count
                                 .map_or(group.participants.len(), |size| size as usize),
                             approval: group.membership_approval,
                         })
@@ -6354,7 +6363,7 @@ impl Worker {
         let mut message = outgoing_text(text.clone(), context, &mentions);
         let expiration = self.apply_ephemeral(&chat, &mut message);
         let mentions = self.mentions_of(&mentions);
-        let id = client.generate_message_id();
+        let id = client.generate_message_id().into_string();
         let row = Message {
             id: id.clone(),
             chat: chat.clone(),
@@ -6550,7 +6559,7 @@ impl Worker {
         // strip quote chains and secrets, and retain reusable media metadata.
         let (message, expiration) = outgoing_forward(&original, self.ephemeral_expiration(to_chat));
         let client = self.client.clone()?;
-        let id = client.generate_message_id();
+        let id = client.generate_message_id().into_string();
         let mentions = self.mentions_of(&mentioned_of(&message));
         let thumbnail = thumbnail_of(&message).or_else(|| source.thumbnail.clone());
         let row = forwarded_row(
@@ -6900,13 +6909,20 @@ impl Worker {
                         match (&jid, expired && !media_key.is_empty()) {
                             (Some(jid), true) => {
                                 // Ask the phone to re-upload expired media, then retry once.
-                                let request = MediaReuploadRequest {
-                                    msg_id: &id,
-                                    chat_jid: jid,
-                                    media_key: &media_key,
-                                    is_from_me,
-                                    participant: participant.as_ref(),
+                                let target = whatsapp_rust::MessageId::new(&id).and_then(|id| {
+                                    whatsapp_rust::MessageRef::new(
+                                        jid,
+                                        id,
+                                        participant.as_ref(),
+                                        is_from_me,
+                                    )
+                                });
+                                let (Ok(target), Ok(media_key)) =
+                                    (target, <&[u8; 32]>::try_from(media_key.as_slice()))
+                                else {
+                                    return Err(text);
                                 };
+                                let request = MediaReuploadRequest { target, media_key };
                                 match client.media_reupload().request(&request).await {
                                     Ok(MediaRetryResult::Success { direct_path }) => {
                                         match refreshed(direct_path) {
@@ -7156,7 +7172,7 @@ impl Worker {
         let connected = self
             .client
             .as_ref()
-            .is_some_and(|client| client.is_connected());
+            .is_some_and(|client| client.is_socket_connected());
         let Some(client) = self.client.clone().filter(|_| connected) else {
             // Defer profile-picture lookup until connected.
             self.pending_avatars.entry((id, full)).or_insert(0);
@@ -7169,7 +7185,23 @@ impl Worker {
                 let mut failed = false;
                 'lookup: for jid in &candidates {
                     for preview in [!full, false] {
-                        match client.contacts().get_profile_picture(jid, preview).await {
+                        let target = if jid.is_group() {
+                            whatsapp_rust::ProfilePictureTarget::Group(jid)
+                        } else {
+                            whatsapp_rust::ProfilePictureTarget::Contact(jid)
+                        };
+                        let size = if preview {
+                            whatsapp_rust::ProfilePictureType::Preview
+                        } else {
+                            whatsapp_rust::ProfilePictureType::Full
+                        };
+                        let request = whatsapp_rust::ProfilePictureRequest::new(target, size);
+                        match client
+                            .pictures()
+                            .lookup(request)
+                            .await
+                            .map(|lookup| lookup.into_found())
+                        {
                             Ok(Some(found)) => {
                                 picture = Some(found);
                                 break 'lookup;
@@ -7209,7 +7241,7 @@ impl Worker {
         if !self
             .client
             .as_ref()
-            .is_some_and(|client| client.is_connected())
+            .is_some_and(|client| client.is_socket_connected())
         {
             return;
         }
@@ -7384,7 +7416,15 @@ impl Worker {
         self.apply_ephemeral(&chat, &mut message);
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            if let Err(error) = client.edit_message(jid, id.clone(), message).await {
+            if let Err(error) = client
+                .edit_message_raw(
+                    jid,
+                    id.clone(),
+                    message,
+                    whatsapp_rust::EditOptions::default(),
+                )
+                .await
+            {
                 let _ = commands.send(Command::Sent {
                     chat,
                     id: String::new(),
@@ -7463,18 +7503,25 @@ impl Worker {
             .insert((chat.clone(), id.clone()));
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            let result = client
-                .chat_actions()
-                .delete_message_for_me(
+            let target = whatsapp_rust::MessageId::new(&id).and_then(|message_id| {
+                whatsapp_rust::MessageRef::new(
                     &jid,
+                    message_id,
                     participant.as_ref(),
-                    &id,
                     message.from_me,
-                    true,
-                    Some(message.timestamp),
                 )
-                .await;
-            let outcome = message_removal_outcome(result);
+            });
+            let outcome = match target {
+                Ok(target) => message_removal_outcome(
+                    client
+                        .chat_actions()
+                        .delete_message_for_me(&target, true, Some(message.timestamp))
+                        .await,
+                ),
+                // Only an empty id or a group message without its author
+                // fails here; it stays pending like an unconfirmed request.
+                Err(_) => MessageRemovalOutcome::Uncertain,
+            };
             let _ = commands.send(Command::MessageDeletedForMe {
                 generation,
                 chat,
@@ -7589,7 +7636,7 @@ impl Worker {
         }
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            if let Err(error) = client.revoke_message(jid, id, RevokeType::Sender).await {
+            if let Err(error) = client.revoke_message_raw(jid, id, RevokeType::Sender).await {
                 let _ = commands.send(Command::Sent {
                     chat,
                     id: String::new(),
@@ -7968,7 +8015,7 @@ impl Worker {
             participant: (jid.is_group() && !target.from_me).then(|| target.sender.clone()),
         };
         tokio::spawn(async move {
-            if client.send_reaction(jid, key, &emoji).await.is_err() {
+            if client.send_reaction_raw(jid, key, &emoji).await.is_err() {
                 log::warn!("could not send a reaction");
             }
         });
@@ -8045,12 +8092,13 @@ async fn send_outgoing(
                 return Err("Could not save the group message recipients".to_owned());
             }
         }
-        let mut options = SendOptions::default().with_message_id(id.clone());
+        let message_id = whatsapp_rust::MessageId::new(&id).map_err(|error| error.to_string())?;
+        let mut options = SendOptions::default().with_message_id(message_id);
         if let Some(expiration) = ephemeral_expiration {
             options = options.with_ephemeral_expiration(expiration);
         }
         client
-            .send_message_with_options(jid, message, options)
+            .send(whatsapp_rust::SendRequest::new(&jid, message).with_options(options))
             .await
             .map_err(|error| error.to_string())?;
         Ok(())
@@ -8835,16 +8883,15 @@ async fn prepare_voice(
         .upload(bytes.clone(), MediaType::Audio, UploadOptions::default())
         .await
         .map_err(|error| error.to_string())?;
-    let message = audio_message(
-        upload,
-        AudioOptions {
-            mimetype: Some(mime.clone()),
-            duration_seconds: Some(seconds),
-            ptt: Some(true),
-            waveform: Some(waveform.clone()),
-            context_info: context,
-        },
-    );
+    let message = audio_message(upload, {
+        let mut options = AudioOptions::default()
+            .with_mimetype(mime.clone())
+            .with_duration_seconds(seconds)
+            .with_ptt(true)
+            .with_waveform(waveform.clone());
+        options.context_info = context;
+        options
+    });
     Ok(Prepared {
         message,
         content: Content::Audio {
@@ -8906,15 +8953,11 @@ async fn prepare_media(
             .upload(jpeg.clone(), MediaType::Image, UploadOptions::default())
             .await
             .map_err(|error| error.to_string())?;
-        let mut message = image_message(
-            upload,
-            ImageOptions {
-                caption: None,
-                mimetype: Some("image/jpeg".to_owned()),
-                jpeg_thumbnail: thumbnail.clone(),
-                context_info: None,
-            },
-        );
+        let mut message = image_message(upload, {
+            let mut options = ImageOptions::default().with_mimetype("image/jpeg");
+            options.jpeg_thumbnail = thumbnail.clone();
+            options
+        });
         if let Some(image) = message.image_message.as_option_mut() {
             image.width = Some(width);
             image.height = Some(height);
@@ -8959,16 +9002,14 @@ async fn prepare_media(
             .upload(bytes.clone(), MediaType::Video, UploadOptions::default())
             .await
             .map_err(|error| error.to_string())?;
-        let mut message = video_message(
-            upload,
-            VideoOptions {
-                mimetype: Some(mime_owned.clone()),
-                gif_playback: Some(gif),
-                jpeg_thumbnail: thumbnail.clone(),
-                duration_seconds: seconds,
-                ..Default::default()
-            },
-        );
+        let mut message = video_message(upload, {
+            let mut options = VideoOptions::default()
+                .with_mimetype(mime_owned.clone())
+                .with_gif_playback(gif);
+            options.jpeg_thumbnail = thumbnail.clone();
+            options.duration_seconds = seconds;
+            options
+        });
         if let (Some(video), Some((width, height))) =
             (message.video_message.as_option_mut(), size_in_pixels)
         {
@@ -9003,11 +9044,9 @@ async fn prepare_media(
             .map_err(|error| error.to_string())?;
         let message = audio_message(
             upload,
-            AudioOptions {
-                mimetype: Some(mime_owned.clone()),
-                ptt: Some(false),
-                ..Default::default()
-            },
+            AudioOptions::default()
+                .with_mimetype(mime_owned.clone())
+                .with_ptt(false),
         );
         return Ok(Prepared {
             message,
@@ -9030,12 +9069,10 @@ async fn prepare_media(
     let name = file_name.unwrap_or("file").to_owned();
     let message = document_message(
         upload,
-        DocumentOptions {
-            mimetype: Some(mime_owned.clone()),
-            file_name: Some(name.clone()),
-            title: Some(name.clone()),
-            ..Default::default()
-        },
+        DocumentOptions::default()
+            .with_mimetype(mime_owned.clone())
+            .with_file_name(name.clone())
+            .with_title(name.clone()),
     );
     Ok(Prepared {
         message,
@@ -9304,7 +9341,7 @@ pub(super) async fn file_outbound(
         }
     }
     add_mentions(&mut prepared.message, &mentions);
-    let id = client.generate_message_id();
+    let id = client.generate_message_id().into_string();
     let path = media_path(
         dir,
         chat,
@@ -13645,8 +13682,7 @@ mod receipt_tests {
                     is_group: chat.ends_with("@g.us"),
                     ..Default::default()
                 })
-                .state(ChatPresence::Composing)
-                .media(whatsapp_rust::types::presence::ChatPresenceMedia::Text)
+                .state(ChatActivity::Typing)
                 .build();
             worker
                 .handle_wa_event(Arc::new(wa_events::Event::ChatPresence(presence)))
@@ -15442,7 +15478,7 @@ mod chat_removal_tests {
     #[tokio::test]
     async fn deletion_resolves_a_mapping_known_only_to_the_protocol_library() {
         let directory = tempfile::tempdir().unwrap();
-        let store = whatsapp_rust::store::SqliteStore::new(
+        let store = whatsapp_rust::store::SqliteStore::open(
             &directory.path().join("fixture.db").to_string_lossy(),
         )
         .await

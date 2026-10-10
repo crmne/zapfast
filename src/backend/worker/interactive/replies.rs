@@ -243,7 +243,7 @@ impl Worker {
             return;
         };
         let expiration = self.apply_ephemeral(&chat, &mut message);
-        let id = client.generate_message_id();
+        let id = client.generate_message_id().into_string();
         let content = classify(&message).expect("validated interactive reply");
         let row = Message {
             id: id.clone(),
