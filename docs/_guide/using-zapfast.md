@@ -420,8 +420,11 @@ or Dash to Panel. Windows overlays a compact unread-message count on ZapFast's
 taskbar button while the window is open, using `99+` above 99. Windows must use
 its regular taskbar icon size for overlays to appear. The count
 does not count toasts remaining in Windows notification history. On Linux and
-Windows, notifications show the chat picture and open the chat at the message
-they announced when clicked. On Linux, a notification that arrives while the
+Windows, notifications show the chat picture. On Linux, Windows, and macOS, a
+click on a notification opens the chat at the message it announced. On Linux
+and macOS this holds for the 32 most recent notifications (older ones only
+bring ZapFast forward), and reading a chat removes its notifications. macOS
+asks once for permission to show notifications. On Linux, a notification that arrives while the
 window is open behind others also highlights ZapFast in the taskbar until you
 switch to it. Muted chats do not send notifications, and
 archived chats stay quiet while they remain archived. You can change both settings.
