@@ -196,6 +196,11 @@ protocol. These notes are for coding agents and new contributors.
   not to the video decoder. `Action::PlayVideo/SeekVideo/ToggleVideoSound` drive
   it; leaving the chat stops it and an unseen video pauses. Round video
   messages (PTV) are `Content::Video { note: true }` and draw as circles.
+  `Action::CycleVideoSpeed` (the chip, or S full-window) runs the `Clock` at
+  1x, 1.5x or 2x; above 1x a thread decodes the sound from the current
+  position, downmixes it, compresses it with `timestretch` as voice playback
+  does, and queues it from where the video stands, the clock running on wall
+  time until then.
 - Message bodies paint through `markup::paint_selectable` and single lines
   through `widgets::selectable_rich_text`: both hand the galley to
   `egui::text_selection::LabelSelectionState` (which paints it) and only

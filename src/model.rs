@@ -1453,6 +1453,8 @@ pub enum Action {
     },
     /// Mutes or unmutes video playback.
     ToggleVideoSound,
+    /// Plays videos at the next of 1x, 1.5x and 2x.
+    CycleVideoSpeed,
     /// Shows a downloaded video over the whole window, starting it if it is
     /// not the one loaded.
     ExpandVideo {

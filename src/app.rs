@@ -4962,6 +4962,7 @@ impl App {
             }
             Action::SeekVideo { message, fraction } => self.video.seek(&message, fraction),
             Action::ToggleVideoSound => self.video.toggle_mute(),
+            Action::CycleVideoSpeed => self.video.cycle_speed(),
             Action::ExpandVideo { message, path } => {
                 if self.video.message() != Some(message.as_str()) {
                     self.video.set_expanded(true);

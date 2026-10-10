@@ -84,21 +84,41 @@ enum Delivery {
     Unsupported(String),
 }
 
-/// Playback time: wall time while no sound steers it.
+/// Playback time: wall time, scaled by the playback speed, while no sound
+/// steers it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Clock {
     /// Position when the clock last stopped or jumped.
     anchor: Duration,
     /// When it started running from `anchor`, while it runs.
     since: Option<Instant>,
+    /// Video time per wall time in thousandths; 0 is the default 1x.
+    permille: u32,
 }
 
 impl Clock {
     pub fn position(&self, now: Instant) -> Duration {
         self.anchor
-            + self
-                .since
-                .map_or(Duration::ZERO, |since| now.saturating_duration_since(since))
+            + self.since.map_or(Duration::ZERO, |since| {
+                now.saturating_duration_since(since).mul_f64(self.rate())
+            })
+    }
+
+    fn rate(&self) -> f64 {
+        if self.permille == 0 {
+            1.0
+        } else {
+            f64::from(self.permille) / 1000.0
+        }
+    }
+
+    /// Runs at `speed` times wall time from here on, without a jump.
+    pub fn set_speed(&mut self, speed: f32, now: Instant) {
+        self.anchor = self.position(now);
+        if self.since.is_some() {
+            self.since = Some(now);
+        }
+        self.permille = (speed.max(0.0) * 1000.0).round() as u32;
     }
 
     pub fn running(&self) -> bool {
@@ -179,14 +199,88 @@ pub fn arc(center: egui::Pos2, radius: f32, fraction: f32) -> Vec<egui::Pos2> {
 struct Sound {
     device: rodio::MixerDeviceSink,
     sink: rodio::Player,
-    /// Video time the queued decoder started from.
+    /// Video time the queued sound starts from.
     base: Duration,
+    /// Video time per second of queued sound: the playback speed.
+    factor: f32,
+    /// A sped-up copy being made, queued once ready.
+    stretching: Option<Stretching>,
+    waker: Waker,
+}
+
+/// A finished sped-up sound and its sampling rate, handed over by its thread.
+type StretchedSlot = std::sync::Arc<std::sync::Mutex<Option<(Vec<f32>, rodio::SampleRate)>>>;
+
+/// The sound from `from` on, decoded and compressed by `factor` on a
+/// thread with the voice messages' pitch-keeping stretch, in mono.
+struct Stretching {
+    from: Duration,
+    factor: f32,
+    slot: StretchedSlot,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for Stretching {
+    fn drop(&mut self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Stretching {
+    fn start(path: &Path, from: Duration, factor: f32, waker: Waker) -> Self {
+        let slot: StretchedSlot = Default::default();
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (thread_slot, thread_cancelled) = (slot.clone(), cancelled.clone());
+        let path = path.to_owned();
+        let spawned = std::thread::Builder::new()
+            .name("video-stretch".into())
+            .spawn(move || {
+                let Some(track) = sound_decoder(&path, from) else {
+                    return;
+                };
+                let rate = rodio::Source::sample_rate(&track);
+                let channels = usize::from(rodio::Source::channels(&track).get());
+                // The stretch works on one channel: average them.
+                let mut mono = Vec::new();
+                let mut frame = Vec::with_capacity(channels);
+                for sample in track {
+                    frame.push(sample);
+                    if frame.len() == channels {
+                        mono.push(frame.iter().sum::<f32>() / channels as f32);
+                        frame.clear();
+                        if mono.len() % 65_536 == 0
+                            && thread_cancelled.load(std::sync::atomic::Ordering::Relaxed)
+                        {
+                            return;
+                        }
+                    }
+                }
+                let Some(stretched) =
+                    crate::timestretch::speed_up_unless(&mono, factor, &thread_cancelled)
+                else {
+                    return;
+                };
+                *thread_slot.lock().unwrap_or_else(|p| p.into_inner()) = Some((stretched, rate));
+                waker.wake();
+            });
+        if let Err(error) = spawned {
+            log::warn!("could not speed up the video's sound: {error}");
+        }
+        Self {
+            from,
+            factor,
+            slot,
+            cancelled,
+        }
+    }
 }
 
 impl Sound {
     /// Opens the file's sound, paused at `from`. A video without a sound
     /// track, or a computer without an output device, plays silently.
-    fn open(path: &Path, from: Duration, muted: bool) -> Option<Self> {
+    fn open(path: &Path, from: Duration, muted: bool, speed: f32, waker: Waker) -> Option<Self> {
+        // Checks there is sound to play before opening the device.
         let decoder = sound_decoder(path, from)?;
         let device = match crate::audio::open_output() {
             Ok(device) => device,
@@ -198,30 +292,83 @@ impl Sound {
         let sink = rodio::Player::connect_new(device.mixer());
         sink.pause();
         sink.set_volume(if muted { 0.0 } else { 1.0 });
-        sink.append(decoder);
-        Some(Self {
+        let mut sound = Self {
             device,
             sink,
             base: from,
-        })
+            factor: 1.0,
+            stretching: None,
+            waker,
+        };
+        if speed > 1.0 {
+            sound.stretching = Some(Stretching::start(path, from, speed, sound.waker.clone()));
+            sound.factor = speed;
+        } else {
+            sound.sink.append(decoder);
+        }
+        Some(sound)
     }
 
     /// Queues the sound again from `from`, paused. A fresh player keeps the
     /// seek off the audio thread, which `Player::try_seek` would wait for.
-    fn restart(&mut self, path: &Path, from: Duration, muted: bool) {
+    fn restart(&mut self, path: &Path, from: Duration, muted: bool, speed: f32) {
         let sink = rodio::Player::connect_new(self.device.mixer());
         sink.pause();
         sink.set_volume(if muted { 0.0 } else { 1.0 });
-        if let Some(decoder) = sound_decoder(path, from) {
+        self.stretching = None;
+        if speed > 1.0 {
+            self.stretching = Some(Stretching::start(path, from, speed, self.waker.clone()));
+        } else if let Some(decoder) = sound_decoder(path, from) {
             sink.append(decoder);
         }
         self.sink = sink;
         self.base = from;
+        self.factor = speed.max(1.0);
+    }
+
+    /// Queues a finished sped-up copy from the video's current `position`,
+    /// playing if the video plays.
+    fn collect(&mut self, position: Duration, playing: bool) {
+        let Some(stretching) = &self.stretching else {
+            return;
+        };
+        let Some((samples, rate)) = stretching
+            .slot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        else {
+            return;
+        };
+        let (from, factor) = (stretching.from, stretching.factor);
+        self.stretching = None;
+        let start = position.max(from);
+        let skip = (start - from).div_f32(factor);
+        let skipped = (skip.as_secs_f64() * f64::from(rate.get())) as usize;
+        let samples: Vec<rodio::Sample> = samples
+            .get(skipped..)
+            .unwrap_or_default()
+            .iter()
+            .map(|&sample| rodio::Sample::from(sample))
+            .collect();
+        self.sink.append(rodio::buffer::SamplesBuffer::new(
+            rodio::ChannelCount::MIN,
+            rate,
+            samples,
+        ));
+        self.base = start;
+        self.factor = factor;
+        if playing {
+            self.sink.play();
+        }
     }
 
     /// Position of the sound in the video, while there is sound left.
     fn position(&self) -> Option<Duration> {
-        (!self.sink.empty()).then(|| self.base + self.sink.get_pos())
+        if self.stretching.is_some() {
+            return None;
+        }
+        (!self.sink.empty()).then(|| self.base + self.sink.get_pos().mul_f32(self.factor))
     }
 }
 
@@ -351,6 +498,8 @@ pub struct Player {
     /// Longest side frames are decoded to: larger while the video covers
     /// the window.
     side: u32,
+    /// Playback speed, kept from one video to the next.
+    speed: f32,
 }
 
 impl Player {
@@ -362,6 +511,38 @@ impl Player {
             audible: true,
             seen: Cell::new(Instant::now()),
             side: MAX_SIDE,
+            speed: 1.0,
+        }
+    }
+
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
+
+    /// Plays at the next of 1x, 1.5x and 2x, as the voice message chip does.
+    pub fn cycle_speed(&mut self) {
+        self.set_speed(crate::audio::next_cycled_speed(self.speed));
+    }
+
+    /// Plays at `speed`, carrying on from where the video stands.
+    pub fn set_speed(&mut self, speed: f32) {
+        let speed = crate::audio::supported_speed(speed);
+        if speed == self.speed {
+            return;
+        }
+        self.speed = speed;
+        let muted = self.muted;
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        session.clock.set_speed(speed, now);
+        let position = session.clock.position(now);
+        if let Some(sound) = &mut session.sound {
+            sound.restart(&session.path, position, muted, speed);
+            if session.state == State::Playing {
+                sound.sink.play();
+            }
         }
     }
 
@@ -426,8 +607,9 @@ impl Player {
         session.side = side;
         session.resize = None;
         session.frames = spawn_decoder(&session.path, to, side, self.waker.clone());
+        let speed = self.speed;
         if let Some(sound) = &mut session.sound {
-            sound.restart(&session.path, to, muted);
+            sound.restart(&session.path, to, muted, speed);
         }
     }
 
@@ -552,6 +734,7 @@ impl Player {
         self.seen.set(now);
         let mut clock = Clock::default();
         clock.seek(from, now);
+        clock.set_speed(self.speed, now);
         self.session = Some(Session {
             message: message.to_owned(),
             path: path.to_owned(),
@@ -564,7 +747,7 @@ impl Player {
             clock,
             sound: self
                 .audible
-                .then(|| Sound::open(path, from, self.muted))
+                .then(|| Sound::open(path, from, self.muted, self.speed, self.waker.clone()))
                 .flatten(),
             total: Duration::ZERO,
             side: self.side,
@@ -620,6 +803,9 @@ impl Player {
                 }
                 Err(TryRecvError::Empty) => break,
             }
+        }
+        if let Some(sound) = session.sound.as_mut() {
+            sound.collect(session.clock.position(now), session.state == State::Playing);
         }
         if session.state == State::Loading {
             if let Some((_, image)) = session.queue.pop_front() {
@@ -1251,6 +1437,42 @@ mod tests {
         let unreadable = directory.path().join("clip.mp4");
         std::fs::write(&unreadable, b"not a video").unwrap();
         assert_eq!(sound_codec(&unreadable), None);
+    }
+
+    #[test]
+    fn clock_runs_faster_at_a_higher_speed_without_a_jump() {
+        let start = Instant::now();
+        let mut clock = Clock::default();
+        clock.resume(start);
+        let second = start + Duration::from_secs(1);
+        clock.set_speed(2.0, second);
+        assert_eq!(clock.position(second), Duration::from_secs(1));
+        assert_eq!(
+            clock.position(second + Duration::from_secs(2)),
+            Duration::from_secs(5)
+        );
+        clock.set_speed(1.0, second + Duration::from_secs(2));
+        assert_eq!(
+            clock.position(second + Duration::from_secs(3)),
+            Duration::from_secs(6)
+        );
+    }
+
+    #[test]
+    fn the_sound_at_2x_lasts_half_as_long() {
+        let stretching =
+            Stretching::start(Path::new(SAMPLE), Duration::ZERO, 2.0, Waker::default());
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let (samples, rate) = loop {
+            if let Some(done) = stretching.slot.lock().unwrap().take() {
+                break done;
+            }
+            assert!(Instant::now() < deadline, "the sped-up sound never arrived");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let seconds = samples.len() as f64 / f64::from(rate.get());
+        // The three second clip's sound, in half the time.
+        assert!((seconds - 1.5).abs() < 0.1, "got {seconds} s");
     }
 
     #[test]
