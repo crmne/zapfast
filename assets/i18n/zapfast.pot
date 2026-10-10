@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-10 17:42-0300\n"
+"POT-Creation-Date: 2026-10-10 17:47-0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -182,7 +182,7 @@ msgstr ""
 msgid "No favorites yet"
 msgstr ""
 
-#: src/ui/chats.rs:939 src/app.rs:2059
+#: src/ui/chats.rs:939 src/app.rs:2069
 msgid "Message yourself"
 msgstr ""
 
@@ -292,7 +292,7 @@ msgid_plural "{} unread messages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/conversation.rs:2238 src/app.rs:2041 src/app.rs:2060
+#: src/ui/conversation.rs:2238 src/app.rs:2051 src/app.rs:2070
 msgid "You"
 msgstr ""
 
@@ -1120,64 +1120,64 @@ msgstr[1] ""
 msgid "No one yet"
 msgstr ""
 
-#: src/app.rs:1471
+#: src/app.rs:1480
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:1964
+#: src/app.rs:1974
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr ""
 
-#: src/app.rs:2040
+#: src/app.rs:2050
 #, rust-format
 msgid "{name} (You)"
 msgstr ""
 
-#: src/app.rs:2963
+#: src/app.rs:2973
 msgid "Could not use this image"
 msgstr ""
 
-#: src/app.rs:3510
+#: src/app.rs:3540
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr ""
 
-#: src/app.rs:3514
+#: src/app.rs:3544
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:5263
+#: src/app.rs:5334
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:5338
+#: src/app.rs:5409
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:5626 src/ui/labels.rs:253
+#: src/app.rs:5697 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
-#: src/app.rs:6348
+#: src/app.rs:6419
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:6356
+#: src/app.rs:6427
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:6470
+#: src/app.rs:6541
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/app.rs:6904
+#: src/app.rs:6975
 msgid "Copied image"
 msgstr ""
 
-#: src/app.rs:6907 src/app.rs:6912
+#: src/app.rs:6978 src/app.rs:6983
 msgid "Failed to copy image"
 msgstr ""
 
@@ -1567,7 +1567,7 @@ msgstr ""
 msgid "After 1 hour"
 msgstr ""
 
-#: src/account.rs:214
+#: src/account.rs:216
 #, rust-format
 msgid "Account {id}"
 msgstr ""

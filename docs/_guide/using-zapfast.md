@@ -150,6 +150,15 @@ icon in the top-left corner of a picture's thumbnail (or right-click it and choo
 
 Each picture has its own choice. Choose **Send as photo** in the context menu,
 or click the icon again, to return to the default mode.
+The toggle is available for pasted pictures and the supported photo formats
+listed above. Other image formats, including GIF, SVG, and HEIC, do not have it.
+
+If a send is refused because ZapFast is offline or the reply's original message
+is unavailable, the attachments keep their selected modes in the originating
+account and chat. They return when you open that chat, even if you switched
+accounts before the refusal arrived. Staged attachments also stay with their
+chat when you switch conversations. Attachments are kept in memory while
+ZapFast runs; unlike text drafts, they do not survive a restart.
 
 Incoming attachments up to 64 MiB download when they enter view if automatic
 downloads are on, or on click. Visible stickers download automatically even

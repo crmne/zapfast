@@ -10044,6 +10044,68 @@ mod tests {
     }
 
     #[test]
+    fn bmp_and_tiff_files_support_photo_and_document_modes() {
+        for (format, name, mime) in [
+            (image::ImageFormat::Bmp, "fixture.bmp", "image/bmp"),
+            (image::ImageFormat::Tiff, "fixture.tiff", "image/tiff"),
+        ] {
+            let img = image::RgbImage::from_pixel(3, 2, image::Rgb([10, 20, 30]));
+            let mut original = Vec::new();
+            img.write_to(&mut Cursor::new(&mut original), format)
+                .expect("encodes fixture");
+            assert!(crate::app::Pending::can_send_as_photo(
+                std::path::Path::new(name)
+            ));
+            let actual_mime = mime_guess2::from_path(name)
+                .first_or_octet_stream()
+                .to_string();
+            assert_eq!(actual_mime, mime);
+            let photo = plan_media(
+                original.clone(),
+                &actual_mime,
+                Some(name),
+                false,
+                SendMode::Auto,
+            )
+            .expect("plans photo with the decoder enabled");
+            match photo {
+                MediaPlan::Image {
+                    bytes,
+                    mime,
+                    width,
+                    height,
+                    thumbnail,
+                } => {
+                    assert_eq!(mime, "image/jpeg");
+                    assert_eq!((width, height), (3, 2));
+                    let decoded =
+                        image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+                            .expect("photo is a valid JPEG");
+                    assert_eq!((decoded.width(), decoded.height()), (3, 2));
+                    assert!(thumbnail.is_some());
+                }
+                other => panic!("expected photo, got {other:?}"),
+            }
+            let document = plan_media(
+                original.clone(),
+                &actual_mime,
+                Some(name),
+                false,
+                SendMode::Document,
+            )
+            .expect("plans original document");
+            assert_eq!(
+                document,
+                MediaPlan::Document {
+                    bytes: original,
+                    mime: actual_mime,
+                    file_name: name.into(),
+                }
+            );
+        }
+    }
+
+    #[test]
     fn plan_media_handles_non_images_consistently() {
         let text_bytes = b"Hello world document".to_vec();
         let plan_auto = plan_media(
