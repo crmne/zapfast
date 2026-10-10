@@ -12567,6 +12567,39 @@ mod bubble_detail_tests {
         );
     }
 
+    /// A voice message carries its time and ticks on the duration's line,
+    /// as on the phone, rather than on a line of their own under it.
+    #[test]
+    fn a_voice_message_keeps_its_time_on_the_duration_line() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("voice"));
+        frames(&mut app, &ctx, egui::vec2(1180.0, 1400.0));
+        let chat = SAMPLES[0].id;
+        for id in ["ada-voice", "you-voice"] {
+            let frame = rect(
+                &ctx,
+                crate::ui::conversation::bubble_id(chat, id).with("rect"),
+            )
+            .expect("the bubble was drawn");
+            let footer = rect(&ctx, crate::ui::conversation::footer_id(chat, id))
+                .expect("the time was drawn");
+            assert!(
+                frame.contains_rect(footer),
+                "{id}: the time is inside the bubble ({footer:?} in {frame:?})"
+            );
+            assert!(
+                frame.bottom() - footer.bottom() <= 8.0,
+                "{id}: the bubble closes under the time ({footer:?} in {frame:?})"
+            );
+            assert!(
+                frame.height() <= 60.0,
+                "{id}: no line of its own for the time ({footer:?} in {frame:?})"
+            );
+        }
+    }
+
     /// A chat with unsent text shows it in its row, after an accent
     /// "Draft:", while the open chat's text stays in the composer (#245).
     #[test]
