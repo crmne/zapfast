@@ -1801,6 +1801,9 @@ impl App {
             }
             return;
         }
+        if self.image_preview.as_ref().and_then(PreviewState::chat) == Some(id) {
+            self.image_preview = None;
+        }
         if matches!(
             &self.dialog,
             Some(
@@ -2515,6 +2518,18 @@ impl App {
                     }
                 }
                 self.chats = chats;
+                if !self.events_hidden
+                    && self
+                        .image_preview
+                        .as_ref()
+                        .and_then(PreviewState::chat)
+                        .is_some_and(|id| {
+                            self.chat(id)
+                                .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                        })
+                {
+                    self.image_preview = None;
+                }
                 if let Some(open) = self.open_chat.clone() {
                     if self.chat(&open).is_none_or(|chat| chat.locked) {
                         self.open_chat = None;
@@ -4639,7 +4654,8 @@ impl App {
             }
             Action::PreviewImage(path) => {
                 if crate::safety::can_preview_image(&path) && path.is_file() {
-                    self.image_preview = Some(PreviewState::new(path));
+                    self.image_preview =
+                        Some(PreviewState::in_conversation(path, self.open_chat.clone()));
                     self.dialog = None;
                     self.picker = None;
                     // egui drops the focus of widgets behind a modal only from
@@ -4652,6 +4668,27 @@ impl App {
                     });
                 } else {
                     self.actions.push(Action::OpenFile(path));
+                }
+            }
+            Action::PreviousImage | Action::NextImage => {
+                if self
+                    .image_preview
+                    .as_ref()
+                    .and_then(PreviewState::chat)
+                    .is_some_and(|id| {
+                        self.chat(id)
+                            .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                    })
+                {
+                    self.image_preview = None;
+                    return;
+                }
+                let conversations = &self.accounts[self.active].conversations;
+                if let Some(preview) = &mut self.image_preview
+                    && let Some(conversation) =
+                        preview.chat().and_then(|chat| conversations.get(chat))
+                {
+                    preview.navigate(&conversation.messages, matches!(action, Action::NextImage));
                 }
             }
             Action::ZoomImageBy(factor) => {
@@ -8554,6 +8591,230 @@ mod tests {
         app.apply(Action::CloseImagePreview, &ctx);
         assert!(app.image_preview.is_none());
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn image_navigation_stays_in_chat_order_and_skips_unavailable_media() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let dir = tempfile::tempdir().unwrap();
+        let paths: Vec<_> = [
+            "first.png",
+            "middle.jpg",
+            "last.webp",
+            "sticker.png",
+            "other.png",
+        ]
+        .iter()
+        .map(|name| dir.path().join(name))
+        .collect();
+        for path in &paths {
+            std::fs::write(path, b"fixture").unwrap();
+        }
+        let media = |path: Option<PathBuf>| Media {
+            mime: "image/png".into(),
+            size: 7,
+            width: None,
+            height: None,
+            path,
+            state: MediaState::Idle,
+        };
+        let mut rows = Vec::new();
+        for (index, path) in paths[..3].iter().enumerate() {
+            if index == 2 {
+                rows.push(message("chat", "text-between-photos", 3));
+            }
+            let mut row = message("chat", &format!("photo-{index}"), index as i64 * 2);
+            row.content = Content::Image {
+                motion: None,
+                caption: None,
+                media: media(Some(path.clone())),
+            };
+            rows.push(row);
+        }
+        let mut sticker = message("chat", "sticker", 6);
+        sticker.content = Content::Sticker {
+            media: media(Some(paths[3].clone())),
+            animated: false,
+        };
+        rows.push(sticker);
+        let mut pending = message("chat", "pending", 7);
+        pending.content = Content::Image {
+            motion: None,
+            caption: None,
+            media: media(None),
+        };
+        rows.push(pending);
+        let mut video = message("chat", "video", 8);
+        video.content = Content::Video {
+            caption: None,
+            media: media(Some(paths[3].clone())),
+            seconds: Some(1),
+            gif: false,
+            note: false,
+        };
+        rows.push(video);
+        let mut card = message("chat", "card", 9);
+        card.content = Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                carousel: vec![crate::model::InteractiveCard {
+                    image: Some(media(Some(paths[0].clone()))),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })),
+        };
+        rows.push(card);
+        app.conversations.insert(
+            "chat".into(),
+            Conversation {
+                messages: rows,
+                ..Default::default()
+            },
+        );
+        let mut other = message("other", "photo", 0);
+        other.content = Content::Image {
+            motion: None,
+            caption: None,
+            media: media(Some(paths[4].clone())),
+        };
+        app.conversations.insert(
+            "other".into(),
+            Conversation {
+                messages: vec![other],
+                ..Default::default()
+            },
+        );
+        app.open_chat = Some("chat".into());
+        app.chats.push(Chat::new("chat".into(), "Fixture".into()));
+        app.apply(Action::PreviewImage(paths[1].clone()), &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[1]);
+        app.apply(Action::ZoomImageIn, &ctx);
+        app.apply(Action::NextImage, &ctx);
+        let preview = app.image_preview.as_ref().unwrap();
+        assert_eq!(preview.path(), paths[2]);
+        assert!(preview.is_fit());
+        assert_eq!(preview.zoom(), 1.0);
+        app.apply(Action::NextImage, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[0]);
+        app.apply(Action::NextImage, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[0]);
+        std::fs::remove_file(&paths[2]).unwrap();
+        app.apply(Action::PreviousImage, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[1]);
+        app.apply(Action::PreviousImage, &ctx);
+        app.apply(Action::PreviousImage, &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[0]);
+        app.apply(Action::PreviewImage(paths[4].clone()), &ctx);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[4]);
+    }
+
+    #[test]
+    fn image_navigation_revokes_access_when_a_conversation_is_locked() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let paths = [dir.path().join("first.png"), dir.path().join("second.png")];
+        for path in &paths {
+            std::fs::write(path, b"fixture").unwrap();
+        }
+        for remote_lock in [false, true] {
+            let mut app = app();
+            let mut chat = Chat::new("fixture".into(), "Fixture".into());
+            chat.locked = !remote_lock;
+            app.chats.push(chat.clone());
+            if !remote_lock {
+                app.settings.set_chat_lock_code(Some("fixture-code"));
+                app.enter_locked_folder();
+            }
+            app.open_chat = Some(chat.id.clone());
+            let rows = paths
+                .iter()
+                .enumerate()
+                .map(|(index, path)| {
+                    let mut row = message(&chat.id, &format!("photo-{index}"), index as i64);
+                    row.content = Content::Image {
+                        motion: None,
+                        caption: None,
+                        media: Media {
+                            mime: "image/png".into(),
+                            size: 7,
+                            width: None,
+                            height: None,
+                            path: Some(path.clone()),
+                            state: MediaState::Idle,
+                        },
+                    };
+                    row
+                })
+                .collect();
+            app.conversations.insert(
+                chat.id.clone(),
+                Conversation {
+                    messages: rows,
+                    ..Default::default()
+                },
+            );
+            app.apply(Action::PreviewImage(paths[0].clone()), &ctx);
+            app.apply(Action::NextImage, &ctx);
+            assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[1]);
+            app.apply(Action::PreviousImage, &ctx);
+            assert_eq!(app.image_preview.as_ref().unwrap().path(), paths[0]);
+            let retained_preview = app.image_preview.clone();
+            if remote_lock {
+                chat.locked = true;
+                app.apply_backend_event(Event::ChatUpdated(Box::new(chat)), true);
+            } else {
+                app.apply(Action::CloseLockedFolder, &ctx);
+            }
+            assert!(app.image_preview.is_none());
+            assert!(app.open_chat.is_none());
+            // Even a retained preview cannot traverse the still-loaded messages.
+            for action in [Action::PreviousImage, Action::NextImage] {
+                app.image_preview = retained_preview.clone();
+                app.apply(action, &ctx);
+                assert!(app.image_preview.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn chat_snapshots_reconcile_image_preview_access_only_for_the_visible_account() {
+        let ctx = egui::Context::default();
+        for present in [false, true] {
+            for locked in [false, true] {
+                for authorized in [false, true] {
+                    for hidden in [false, true] {
+                        let mut app = app();
+                        if authorized {
+                            app.settings.set_chat_lock_code(Some("fixture-code"));
+                            app.enter_locked_folder();
+                        }
+                        let preview = PreviewState::in_conversation(
+                            "fixture.png".into(),
+                            Some("fixture".into()),
+                        );
+                        app.image_preview = Some(preview.clone());
+                        // Preview access depends on its captured chat, even if no chat is open.
+                        app.open_chat = None;
+                        let mut chat = Chat::new("fixture".into(), "Fixture".into());
+                        chat.locked = locked;
+                        let chats = if present { vec![chat] } else { Vec::new() };
+                        app.events_hidden = hidden;
+                        app.apply_backend_event(Event::Chats(chats), true);
+                        let accessible = present && (!locked || authorized);
+                        assert_eq!(app.image_preview.is_some(), hidden || accessible);
+                        if !hidden {
+                            for action in [Action::PreviousImage, Action::NextImage] {
+                                app.image_preview = Some(preview.clone());
+                                app.apply(action, &ctx);
+                                assert_eq!(app.image_preview.is_some(), accessible);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

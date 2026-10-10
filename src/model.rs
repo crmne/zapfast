@@ -1472,6 +1472,8 @@ pub enum Action {
     /// externally; an image that then fails to decode shows a message with an
     /// Open externally button inside the preview.
     PreviewImage(PathBuf),
+    PreviousImage,
+    NextImage,
     ZoomImageIn,
     /// Scales the previewed image by a factor, as the wheel or a pinch asks.
     ZoomImageBy(f32),

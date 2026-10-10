@@ -325,8 +325,8 @@ pub(super) fn take_plain(input: &mut egui::InputState, key: Key) -> bool {
 }
 
 /// Handles keys while the image preview is open. No chat shortcut runs, and
-/// typing and clipboard input are swallowed; Tab, Enter, Space and the arrows
-/// stay for the preview's own controls.
+/// typing and clipboard input are swallowed; Left/Right browse photos, while
+/// Tab, Enter, Space and Up/Down stay for the preview's own controls.
 fn preview_keys(app: &mut App, ctx: &egui::Context) {
     let mut actions = Vec::new();
     ctx.input_mut(|input| {

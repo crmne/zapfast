@@ -2666,8 +2666,48 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "recording" => app.recording = Some(crate::audio::Recorder::rehearsal()),
             // Shows the native image preview over the demo chat.
             "preview" => {
-                let (photo, _) = sample_files(app);
-                app.image_preview = Some(crate::image_preview::PreviewState::new(photo));
+                let chat = app.open_chat.clone().expect("demo chat");
+                let photos = [stock::ENGINE, stock::LAUNCH, stock::SPACEWALK];
+                let now = crate::util::now();
+                let mut rows = photos
+                    .iter()
+                    .enumerate()
+                    .map(|(index, photo)| {
+                        let mut attachment = media(
+                            "image/jpeg",
+                            photo.bytes.len() as u64,
+                            Some(photo.width),
+                            Some(photo.height),
+                        );
+                        attachment.path =
+                            Some(stock::save_photo(&app.dirs.media_cache_dir(), *photo));
+                        message(
+                            &chat,
+                            &format!("preview-{index}"),
+                            false,
+                            now + index as i64 * 2,
+                            Content::Image {
+                                motion: None,
+                                caption: None,
+                                media: attachment,
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                rows.insert(
+                    2,
+                    message(
+                        &chat,
+                        "preview-text",
+                        false,
+                        now + 3,
+                        Content::text("One more photo below."),
+                    ),
+                );
+                let selected = rows[1].content.media().unwrap().path.clone().unwrap();
+                app.conversations.get_mut(&chat).unwrap().messages = rows;
+                app.actions
+                    .push(crate::model::Action::PreviewImage(selected));
             }
             "compose-emoji" => {
                 app.composer = "Andiamo 😊 con due 👍🏽 e poi testo normale".to_owned();
@@ -5226,6 +5266,36 @@ mod tests {
         assert_eq!(app.composer, "draft");
     }
 
+    #[test]
+    fn preview_arrows_browse_photos_without_touching_the_draft() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("preview"));
+        app.composer = "unsent draft".into();
+        render(&mut app, &ctx);
+        let initial = app.image_preview.as_ref().unwrap().path().to_owned();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowRight, egui::Modifiers::NONE)],
+        );
+        assert_ne!(app.image_preview.as_ref().unwrap().path(), initial);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowLeft, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), initial);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(app.image_preview.is_none());
+        assert_eq!(app.composer, "unsent draft");
+    }
+
     /// Ctrl++ zooms the picture, not the whole interface, including when the
     /// layout needs Shift to type the plus.
     #[test]
@@ -5351,6 +5421,170 @@ mod tests {
         assert_eq!(find(&narrow(3.0 + travel + 2.9), name).0, end);
         let (back, _, _) = find(&narrow(2.0 * (3.0 + travel) + 0.5), name);
         assert_eq!(back, x, "and it scrolls back to its start");
+    }
+
+    #[test]
+    fn preview_navigation_stays_in_modal_gutters_across_photos_and_zoom() {
+        fn controls(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Rect> {
+            fn collect(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
+                match shape {
+                    egui::Shape::Circle(circle) if (circle.radius - 20.0).abs() < 1.1 => {
+                        out.push(egui::Rect::from_center_size(
+                            circle.center,
+                            egui::Vec2::splat(40.0),
+                        ));
+                    }
+                    egui::Shape::Vec(shapes) => {
+                        for shape in shapes {
+                            collect(shape, out);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let mut out = Vec::new();
+            for clipped in shapes {
+                collect(&clipped.shape, &mut out);
+            }
+            out
+        }
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("preview"));
+        render(&mut app, &ctx);
+        let paths: Vec<_> = app.conversations[app.open_chat.as_ref().unwrap()]
+            .messages
+            .iter()
+            .filter_map(|message| message.content.media()?.path.as_ref())
+            .map(|path| crate::util::image_uri(path))
+            .collect();
+        for _ in 0..200 {
+            render(&mut app, &ctx);
+            let ready = paths.iter().all(|uri| {
+                matches!(
+                    ctx.try_load_texture(
+                        uri,
+                        egui::TextureOptions::default(),
+                        egui::SizeHint::default()
+                    ),
+                    Ok(egui::load::TexturePoll::Ready { .. })
+                )
+            });
+            if ready {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        render(&mut app, &ctx);
+        app.composer = "unsent draft".into();
+        let picture = preview_frame(&mut app, &ctx, vec![]);
+        let initial = app.image_preview.as_ref().unwrap().path().to_owned();
+        let outside = egui::pos2(5.0, 5.0);
+        let hidden = frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![egui::Event::PointerMoved(outside)],
+        );
+        assert!(
+            controls(&hidden).is_empty(),
+            "outside the modal hides the arrows"
+        );
+        frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![egui::Event::PointerMoved(picture.center())],
+        );
+        let shown = frame_sized(&mut app, &ctx, 780.0, vec![]);
+        let buttons = controls(&shown);
+        assert_eq!(buttons.len(), 2);
+        assert!(
+            buttons[0].right() < picture.left(),
+            "previous is outside the photo"
+        );
+        assert!(
+            buttons[1].left() > picture.right(),
+            "next is outside the photo"
+        );
+        let positions = buttons.clone();
+        for y in [picture.top() - 5.0, picture.bottom() + 5.0] {
+            let hidden = frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![egui::Event::PointerMoved(egui::pos2(picture.center().x, y))],
+            );
+            assert!(
+                controls(&hidden).is_empty(),
+                "vertical image margins hide the arrows"
+            );
+        }
+        let gutter = frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![egui::Event::PointerMoved(egui::pos2(
+                positions[0].center().x,
+                picture.top() + 5.0,
+            ))],
+        );
+        assert_eq!(
+            controls(&gutter),
+            positions,
+            "hover uses the full modal width"
+        );
+
+        let next = buttons[1].center();
+        frame_sized(&mut app, &ctx, 780.0, vec![egui::Event::PointerMoved(next)]);
+        let hovered = frame_sized(&mut app, &ctx, 780.0, vec![]);
+        assert_eq!(
+            controls(&hovered).len(),
+            2,
+            "hovering an arrow keeps it visible"
+        );
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(next, true)]);
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(next, false)]);
+        assert_ne!(app.image_preview.as_ref().unwrap().path(), initial);
+        preview_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(picture.center())],
+        );
+        let shown = frame_sized(&mut app, &ctx, 780.0, vec![]);
+        assert_eq!(
+            controls(&shown),
+            positions,
+            "changing photos never moves the arrows"
+        );
+        let other_picture = picture_rect(&shown);
+        assert!(positions[0].right() < other_picture.left());
+        assert!(positions[1].left() > other_picture.right());
+        let previous = positions[0].center();
+        frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![egui::Event::PointerMoved(previous)],
+        );
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(previous, true)]);
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(previous, false)]);
+        assert_eq!(app.image_preview.as_ref().unwrap().path(), initial);
+        assert_eq!(app.composer, "unsent draft");
+        app.actions.push(crate::model::Action::ImageActualSize);
+        preview_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(picture.center())],
+        );
+        let zoomed = frame_sized(&mut app, &ctx, 780.0, vec![]);
+        assert_eq!(controls(&zoomed), positions, "zoom never moves the arrows");
+        let gone = frame_sized(&mut app, &ctx, 780.0, vec![egui::Event::PointerGone]);
+        assert!(
+            controls(&gone).is_empty(),
+            "leaving the window hides the arrows"
+        );
     }
 
     /// Opens the sample photo in the preview and waits for it to decode, so

@@ -31,13 +31,52 @@ pub fn preview_action(key: Key, modifiers: Modifiers) -> Option<crate::model::Ac
         }
         (false, Key::Minus) if !modifiers.any() => Some(crate::model::Action::ZoomImageOut),
         (false, Key::Num0) if !modifiers.any() => Some(crate::model::Action::FitImage),
+        (false, Key::ArrowLeft) if !modifiers.any() => Some(crate::model::Action::PreviousImage),
+        (false, Key::ArrowRight) if !modifiers.any() => Some(crate::model::Action::NextImage),
         _ => None,
     }
 }
 
+/// Image slots retain their position even while a download is pending.
+fn image_slots(message: &crate::model::Message) -> usize {
+    match &message.content {
+        crate::model::Content::Image { .. } => 1,
+        crate::model::Content::Interactive {
+            card: Some(card), ..
+        } => 1 + card.carousel.len(),
+        _ => 0,
+    }
+}
+
+/// Downloaded path for a photo or an interactive-card image slot.
+fn image_path(message: &crate::model::Message, slot: usize) -> Option<&Path> {
+    use crate::model::Content;
+    let media = match &message.content {
+        Content::Image { media, .. } if slot == 0 => Some(media),
+        Content::Interactive {
+            card: Some(card), ..
+        } => {
+            if slot == 0 {
+                card.image.as_ref()
+            } else {
+                card.carousel.get(slot - 1)?.image.as_ref()
+            }
+        }
+        _ => None,
+    }?;
+    media.path.as_deref()
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Cursor {
+    message: String,
+    index: usize,
+    slot: usize,
+}
+
 /// The preview swallows keys that would type into or edit the chat behind
 /// it, while leaving navigation and activation keys (Tab, Enter, Space,
-/// arrows) for the preview modal's own controls.
+/// Up/Down) for the preview modal's own controls.
 pub fn consumes_key(key: &Event) -> bool {
     match key {
         Event::Text(_) | Event::Paste(_) | Event::Copy | Event::Cut => true,
@@ -56,8 +95,6 @@ fn is_modal_navigation(key: Key) -> bool {
             | Key::Space
             | Key::ArrowUp
             | Key::ArrowDown
-            | Key::ArrowLeft
-            | Key::ArrowRight
             | Key::Home
             | Key::End
             | Key::PageUp
@@ -111,6 +148,8 @@ pub fn anchored_offset(
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreviewState {
     path: PathBuf,
+    chat: Option<String>,
+    cursor: Option<Cursor>,
     zoom: f32,
     fit: bool,
     /// Scale the fitted image is drawn at, so zooming starts from what is
@@ -123,17 +162,133 @@ impl PreviewState {
     const MAX_ZOOM: f32 = 4.0;
     pub const ZOOM_STEP: f32 = 1.25;
 
+    /// Opens a fitted preview without conversation navigation.
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
+            chat: None,
+            cursor: None,
             zoom: 1.0,
             fit: true,
             fit_scale: 1.0,
         }
     }
 
+    /// Local file currently displayed by the preview.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Opening the preview does not inspect the conversation or count photos.
+    pub fn in_conversation(path: PathBuf, chat: Option<String>) -> Self {
+        Self {
+            chat,
+            ..Self::new(path)
+        }
+    }
+
+    /// Conversation whose loaded messages supply navigation candidates.
+    pub fn chat(&self) -> Option<&str> {
+        self.chat.as_deref()
+    }
+
+    /// Whether the preview has a conversation to browse.
+    pub fn can_navigate(&self) -> bool {
+        self.chat.is_some()
+    }
+
+    /// Moves to the next available photo in either direction, stopping at the ends.
+    pub fn navigate(&mut self, messages: &[crate::model::Message], forward: bool) {
+        self.navigate_with(messages, forward, |path| path.is_file());
+    }
+
+    /// Resolve the anchor only on demand. Its index is reused until paging or
+    /// deletion moves it; message identity also distinguishes repeated paths.
+    fn navigate_with(
+        &mut self,
+        messages: &[crate::model::Message],
+        forward: bool,
+        mut available: impl FnMut(&Path) -> bool,
+    ) {
+        let cached = self.cursor.as_ref().filter(|cursor| {
+            messages.get(cursor.index).is_some_and(|message| {
+                message.id == cursor.message
+                    && image_path(message, cursor.slot) == Some(self.path())
+            })
+        });
+        let find = |same_message: bool| {
+            messages.iter().enumerate().find_map(|(index, message)| {
+                if same_message
+                    && self
+                        .cursor
+                        .as_ref()
+                        .is_some_and(|cursor| cursor.message != message.id)
+                {
+                    return None;
+                }
+                (0..image_slots(message))
+                    .find(|&slot| image_path(message, slot) == Some(self.path()))
+                    .map(|slot| (index, slot))
+            })
+        };
+        let anchor = cached
+            .map(|cursor| (cursor.index, cursor.slot))
+            .or_else(|| find(true))
+            .or_else(|| find(false));
+        let (mut index, mut slot) = if let Some((index, slot)) = anchor {
+            self.cursor = Some(Cursor {
+                message: messages[index].id.clone(),
+                index,
+                slot,
+            });
+            (index, slot)
+        } else if let Some(cursor) = &self.cursor {
+            // Treat the old position as a gap: the next message now occupies
+            // its index, while the previous message is immediately before it.
+            (cursor.index.min(messages.len()), 0)
+        } else {
+            return;
+        };
+        let mut advance = anchor.is_some() || !forward;
+        loop {
+            if !advance {
+                advance = true;
+            } else if forward {
+                slot += 1;
+                if slot >= image_slots(&messages[index]) {
+                    index += 1;
+                    slot = 0;
+                }
+                if index >= messages.len() {
+                    return;
+                }
+            } else if slot > 0 {
+                slot -= 1;
+            } else {
+                if index == 0 {
+                    return;
+                }
+                index -= 1;
+                slot = image_slots(&messages[index]).saturating_sub(1);
+            }
+            if index >= messages.len() {
+                return;
+            }
+            if let Some(path) = image_path(&messages[index], slot)
+                && crate::safety::can_preview_image(path)
+                && available(path)
+            {
+                self.path = path.to_owned();
+                self.cursor = Some(Cursor {
+                    message: messages[index].id.clone(),
+                    index,
+                    slot,
+                });
+                self.fit();
+                self.fit_scale = 1.0;
+                return;
+            }
+        }
     }
 
     pub fn zoom(&self) -> f32 {
@@ -200,6 +355,146 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
 
+    fn photo(id: &str, path: &str) -> crate::model::Message {
+        use crate::model::{Content, Delivery, Media, MediaState, Message};
+        Message {
+            id: id.into(),
+            chat: "fixture".into(),
+            sender: "fixture".into(),
+            sender_name: None,
+            from_me: false,
+            timestamp: 0,
+            history_order: None,
+            content: Content::Image {
+                motion: None,
+                caption: None,
+                media: Media {
+                    mime: "image/png".into(),
+                    size: 0,
+                    width: None,
+                    height: None,
+                    path: Some(path.into()),
+                    state: MediaState::Idle,
+                },
+            },
+            status: Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        }
+    }
+
+    #[test]
+    fn navigation_checks_only_candidates_until_the_first_available_photo() {
+        let messages = vec![
+            photo("a", "a.png"),
+            photo("missing", "missing.png"),
+            photo("b", "b.png"),
+            photo("unvisited", "unvisited.png"),
+        ];
+        let mut preview = PreviewState::in_conversation("a.png".into(), Some("fixture".into()));
+        assert!(
+            preview.cursor.is_none(),
+            "opening does not resolve the anchor"
+        );
+        let mut checked = Vec::new();
+        preview.navigate_with(&messages, true, |path| {
+            checked.push(path.to_owned());
+            path != Path::new("missing.png")
+        });
+        assert_eq!(
+            checked,
+            [PathBuf::from("missing.png"), PathBuf::from("b.png")]
+        );
+        assert_eq!(preview.path(), Path::new("b.png"));
+        preview.navigate_with(&messages, false, |path| path != Path::new("missing.png"));
+        assert_eq!(preview.path(), Path::new("a.png"));
+    }
+
+    #[test]
+    fn navigation_relocates_after_paging_and_sees_new_downloads_and_messages() {
+        let mut messages = vec![
+            photo("a", "same.png"),
+            photo("b", "b.png"),
+            photo("c", "same.png"),
+        ];
+        let mut preview = PreviewState::in_conversation("b.png".into(), Some("fixture".into()));
+        preview.navigate_with(&messages, true, |_| true);
+        assert_eq!(preview.cursor.as_ref().unwrap().message, "c");
+        messages.insert(0, photo("older", "older.png"));
+        preview.navigate_with(&messages, false, |_| true);
+        assert_eq!(preview.path(), Path::new("b.png"));
+        preview.navigate_with(&messages, true, |_| false);
+        assert_eq!(preview.path(), Path::new("b.png"));
+        preview.navigate_with(&messages, true, |_| true);
+        assert_eq!(preview.cursor.as_ref().unwrap().message, "c");
+        preview.navigate_with(&messages, true, |_| true);
+        messages.push(photo("new", "new.png"));
+        preview.navigate_with(&messages, true, |_| true);
+        assert_eq!(preview.path(), Path::new("new.png"));
+    }
+
+    #[test]
+    fn navigation_recovers_after_the_cursor_message_is_deleted() {
+        for forward in [false, true] {
+            let mut messages = vec![
+                photo("before", "before.png"),
+                photo("remaining", "same.png"),
+                photo("after", "after.png"),
+                photo("deleted", "same.png"),
+            ];
+            let mut preview =
+                PreviewState::in_conversation("after.png".into(), Some("fixture".into()));
+            preview.navigate_with(&messages, true, |_| true);
+            assert_eq!(preview.cursor.as_ref().unwrap().message, "deleted");
+            messages.pop();
+            preview.navigate_with(&messages, forward, |_| true);
+            let expected = if forward { "after" } else { "before" };
+            assert_eq!(preview.path(), Path::new(&format!("{expected}.png")));
+            assert_eq!(preview.cursor.as_ref().unwrap().message, expected);
+        }
+    }
+
+    #[test]
+    fn navigation_recovers_after_deletion_of_a_unique_image_path() {
+        for deleted_index in 0..3 {
+            for forward in [false, true] {
+                let mut messages = vec![
+                    photo("a", "a.png"),
+                    photo("b", "b.png"),
+                    photo("c", "c.png"),
+                ];
+                let path = image_path(&messages[deleted_index], 0).unwrap().to_owned();
+                let mut preview =
+                    PreviewState::in_conversation(path.clone(), Some("fixture".into()));
+                // Resolve the cursor without leaving the chosen image.
+                preview.navigate_with(&messages, forward, |_| false);
+                messages.remove(deleted_index);
+                let expected = if forward {
+                    messages.get(deleted_index)
+                } else {
+                    deleted_index
+                        .checked_sub(1)
+                        .and_then(|index| messages.get(index))
+                };
+                preview.navigate_with(&messages, forward, |_| true);
+                let expected_path = expected
+                    .and_then(|message| image_path(message, 0))
+                    .unwrap_or(&path)
+                    .to_owned();
+                assert_eq!(preview.path(), expected_path);
+                messages.clear();
+                preview.navigate_with(&messages, forward, |_| true);
+                assert_eq!(preview.path(), expected_path);
+            }
+        }
+    }
+
     #[test]
     fn zooming_from_fit_starts_at_the_fitted_scale() {
         let mut preview = PreviewState::new(PathBuf::from("photo.png"));
@@ -258,6 +553,31 @@ mod tests {
             Some(crate::model::Action::FitImage)
         );
         assert_eq!(preview_action(Key::Escape, Modifiers::NONE), None);
+    }
+
+    #[test]
+    fn arrows_navigate_only_without_modifiers_and_are_consumed() {
+        for (key, action) in [
+            (Key::ArrowLeft, crate::model::Action::PreviousImage),
+            (Key::ArrowRight, crate::model::Action::NextImage),
+        ] {
+            assert_eq!(preview_action(key, Modifiers::NONE), Some(action));
+            for modifiers in [
+                Modifiers::CTRL,
+                Modifiers::ALT,
+                Modifiers::SHIFT,
+                Modifiers::COMMAND,
+            ] {
+                assert_eq!(preview_action(key, modifiers), None);
+            }
+            assert!(consumes_key(&Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE
+            }));
+        }
     }
 
     #[test]
