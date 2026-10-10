@@ -536,15 +536,40 @@ pub fn phone(digits: &str) -> String {
     if let Some(formatted) = brazilian_phone(&digits) {
         return formatted;
     }
-    let mut out = String::from("+");
-    for (index, character) in digits.chars().enumerate() {
-        // Approximate a country code followed by groups of three digits.
-        if index == 2 || (index > 2 && (index - 2) % 3 == 0) {
-            out.push(' ');
-        }
-        out.push(character);
+    let (country, national) = digits.split_at(country_code_len(&digits).min(digits.len()));
+    let mut out = format!("+{country}");
+    // Approximate national grouping: threes, with the last four together
+    // rather than leaving a lone digit.
+    let mut start = 0;
+    while start < national.len() {
+        let end = match national.len() - start {
+            4 => national.len(),
+            _ => (start + 3).min(national.len()),
+        };
+        out.push(' ');
+        out.push_str(&national[start..end]);
+        start = end;
     }
     out
+}
+
+/// Length of the ITU-T E.164 country calling code `digits` starts with.
+///
+/// The codes are prefix-free: only 1 and 7 have one digit, the two-digit
+/// codes are listed here, and every other code has three.
+fn country_code_len(digits: &str) -> usize {
+    const TWO_DIGITS: [&str; 44] = [
+        "20", "27", "30", "31", "32", "33", "34", "36", "39", "40", "41", "43", "44", "45", "46",
+        "47", "48", "49", "51", "52", "53", "54", "55", "56", "57", "58", "60", "61", "62", "63",
+        "64", "65", "66", "81", "82", "84", "86", "90", "91", "92", "93", "94", "95", "98",
+    ];
+    if digits.starts_with(['1', '7']) {
+        1
+    } else if TWO_DIGITS.iter().any(|code| digits.starts_with(code)) {
+        2
+    } else {
+        3
+    }
 }
 
 /// Formats Brazil's `+55` numbers as `(DDD) XXXX-XXXX` or `(DDD) XXXXX-XXXX`.
@@ -805,8 +830,12 @@ mod tests {
 
     #[test]
     fn phone_numbers_are_grouped() {
-        assert_eq!(phone("393331234567"), "+39 333 123 456 7");
-        assert_eq!(phone("15551234567"), "+15 551 234 567");
+        assert_eq!(phone("393331234567"), "+39 333 123 4567");
+        assert_eq!(phone("15551234567"), "+1 555 123 4567");
+        assert_eq!(phone("79161234567"), "+7 916 123 4567");
+        assert_eq!(phone("584241234567"), "+58 424 123 4567");
+        assert_eq!(phone("2348031234567"), "+234 803 123 4567");
+        assert_eq!(phone("97150123456"), "+971 501 234 56");
         assert_eq!(phone("5511999999999"), "+55 (11) 99999-9999");
         assert_eq!(phone("551140028922"), "+55 (11) 4002-8922");
         assert_eq!(phone("551149508333"), "+55 (11) 4950-8333");

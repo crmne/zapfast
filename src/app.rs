@@ -2030,13 +2030,20 @@ impl App {
         if let Some(name) = saved.or_else(|| called.map(|name| format!("~{name}"))) {
             return name;
         }
+        // A name of digits alone is no name. When the id carries the number,
+        // neither is one as `util::phone` grouped it when the chat was filed:
+        // that is formatted afresh from the id.
+        let phone = crate::model::phone_of(id);
+        let number = |c: char| {
+            c.is_ascii_digit() || (phone.is_some() && matches!(c, '+' | ' ' | '(' | ')' | '-'))
+        };
         if let Some(chat) = self.chat(id)
             && !chat.name.is_empty()
-            && !chat.name.chars().all(|c| c.is_ascii_digit())
+            && !chat.name.chars().all(number)
         {
             return chat.name.clone();
         }
-        match crate::model::phone_of(id) {
+        match phone {
             Some(digits) => crate::util::phone(digits),
             None => "Unknown".to_owned(),
         }
@@ -12453,7 +12460,7 @@ mod tests {
         assert_eq!(app.display_name("1@s.whatsapp.net"), "Ada");
         assert_eq!(
             app.display_name("393331234567@s.whatsapp.net"),
-            "+39 333 123 456 7"
+            "+39 333 123 4567"
         );
         assert_eq!(app.display_name("42@lid"), "Unknown");
         app.contacts.insert(
@@ -12468,6 +12475,35 @@ mod tests {
         assert_eq!(app.display_name("42@lid"), "~Bob");
         app.me = Some("42@lid".into());
         assert_eq!(app.display_name("42@lid"), "You");
+    }
+
+    #[test]
+    fn an_archived_phone_name_is_grouped_again() {
+        // Unnamed chats keep the number as it was formatted when they were
+        // filed, which used to split every country code after two digits.
+        let mut app = app();
+        app.chats.push(Chat::new(
+            "15551234567@s.whatsapp.net".into(),
+            "+15 551 234 567".into(),
+        ));
+        app.chats.push(Chat::new(
+            "5511999999999@s.whatsapp.net".into(),
+            "+55 (11) 99999-9999".into(),
+        ));
+        assert_eq!(
+            app.display_name("15551234567@s.whatsapp.net"),
+            "+1 555 123 4567"
+        );
+        assert_eq!(
+            app.display_name("5511999999999@s.whatsapp.net"),
+            "+55 (11) 99999-9999"
+        );
+        // Without a number in the id there is nothing to format afresh.
+        app.chats
+            .push(Chat::new("42@lid".into(), "+1 555 123 4567".into()));
+        assert_eq!(app.display_name("42@lid"), "+1 555 123 4567");
+        app.chats.push(Chat::new("43@lid".into(), "43".into()));
+        assert_eq!(app.display_name("43@lid"), "Unknown");
     }
 }
 
