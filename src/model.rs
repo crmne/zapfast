@@ -1716,6 +1716,8 @@ pub enum Action {
     SetTheme(crate::settings::ThemeChoice),
     /// Draws the interface in the platform's font or in the bundled Inter.
     SetFont(crate::settings::FontChoice),
+    /// Chooses the emoji source to use after restarting ZapFast.
+    SetEmojiRenderer(crate::settings::EmojiRenderer),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),

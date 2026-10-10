@@ -18,25 +18,30 @@ pub use fastframe_emoji::{PLACEHOLDER, only_emoji};
 /// Noto Color Emoji, behind the platform's font.
 const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
 
-fn setup() {
+fn setup_for(renderer: crate::settings::EmojiRenderer) -> fastframe_emoji::EmojiSetup {
+    fastframe_emoji::EmojiSetup::default()
+        .system(renderer == crate::settings::EmojiRenderer::System)
+        .bundled(BUNDLED)
+        .synchronous(cfg!(any(test, feature = "demo")))
+}
+
+/// Installs ZapFast's configured emoji source before any renderer can initialize.
+pub fn setup(renderer: crate::settings::EmojiRenderer) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        fastframe_emoji::EmojiSetup::default()
-            .bundled(BUNDLED)
-            .synchronous(cfg!(any(test, feature = "demo")))
-            .install();
+        setup_for(renderer).install();
     });
 }
 
 /// Whether a colour emoji font is available.
 pub fn available() -> bool {
-    setup();
+    setup(crate::settings::EmojiRenderer::System);
     fastframe_emoji::available()
 }
 
 /// Finds and maps the emoji fonts before the first frame needs them.
 pub fn warm_up() {
-    setup();
+    setup(crate::settings::EmojiRenderer::System);
     fastframe_emoji::warm_up();
 }
 
@@ -45,14 +50,14 @@ pub fn warm_up() {
 /// `append` lays out and the glyphs `editor_job` hides to the paint calls
 /// below, so message bodies keep their selectable, copyable placeholders.
 pub fn plugin() -> fastframe_emoji::EmojiPlugin {
-    setup();
+    setup(crate::settings::EmojiRenderer::System);
     fastframe_emoji::EmojiPlugin::default()
 }
 
 /// Queues pictures to be drawn off the interface thread before a frame shows
 /// them: the first page of a picker as it opens.
 pub fn prewarm<'a>(ctx: &egui::Context, clusters: impl IntoIterator<Item = &'a str>) {
-    setup();
+    setup(crate::settings::EmojiRenderer::System);
     fastframe_emoji::prewarm(ctx, clusters);
 }
 
@@ -64,13 +69,13 @@ pub fn append(
     text: &str,
     format: &TextFormat,
 ) -> usize {
-    setup();
+    setup(crate::settings::EmojiRenderer::System);
     fastframe_emoji::append(ui, job, placements, text, format)
 }
 
 /// Paints one emoji over `rect`, or its text when no font draws it.
 pub fn paint_cluster(ui: &egui::Ui, cluster: &str, rect: Rect) {
-    setup();
+    setup(crate::settings::EmojiRenderer::System);
     fastframe_emoji::paint_cluster(ui, cluster, rect);
 }
 
@@ -80,13 +85,13 @@ pub fn editor_job(
     text: &str,
     format: &egui::TextFormat,
 ) -> (egui::text::LayoutJob, Vec<(usize, usize, String)>) {
-    setup();
+    setup(crate::settings::EmojiRenderer::System);
     fastframe_emoji::editor_job(text, format)
 }
 
 /// Paints the emoji over a galley's placeholders.
 pub fn paint(ui: &egui::Ui, galley: &egui::Galley, origin: Pos2, placements: &[String]) {
-    setup();
+    setup(crate::settings::EmojiRenderer::System);
     fastframe_emoji::paint(ui, galley, origin, placements);
 }
 
@@ -100,6 +105,22 @@ mod tests {
             .system(false)
             .bundled(BUNDLED)
             .load()
+    }
+
+    #[test]
+    fn selecting_noto_excludes_system_emoji_sources() {
+        let emoji = setup_for(crate::settings::EmojiRenderer::Noto).load();
+        let debug = format!("{emoji:?}");
+        assert!(
+            debug.contains("sources: [\"bundled\"]"),
+            "Noto mode uses only bundled Noto: {debug}"
+        );
+    }
+
+    #[test]
+    fn system_choice_keeps_bundled_noto_as_a_fallback() {
+        let emoji = setup_for(crate::settings::EmojiRenderer::System).load();
+        assert!(format!("{emoji:?}").contains("bundled"));
     }
 
     #[test]

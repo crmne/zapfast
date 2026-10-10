@@ -341,6 +341,11 @@ fn sections(app: &App) -> Vec<Section> {
         font_picker,
     );
     appearance.row(
+        translated(locale, "Emoji style"),
+        translated(locale, "System uses platform emoji with bundled Noto fallback. Noto uses bundled Noto Color Emoji only. Restart ZapFast to apply."),
+        emoji_renderer_picker,
+    );
+    appearance.row(
         translated(locale, "Wallpaper"),
         Text::default(),
         move |ui, app| {
@@ -1083,6 +1088,29 @@ fn font_picker(ui: &mut egui::Ui, app: &mut App) {
             for choice in FontChoice::ALL {
                 if theme_option(ui, &palette, &label(choice), selected == choice) {
                     app.actions.push(Action::SetFont(choice));
+                }
+            }
+        });
+    theme::reveal_focus(&response.response);
+}
+
+fn emoji_renderer_picker(ui: &mut egui::Ui, app: &mut App) {
+    use crate::settings::EmojiRenderer;
+    let selected = app.settings.emoji_renderer;
+    let locale = app.locale;
+    let label = |choice| match choice {
+        EmojiRenderer::System => crate::i18n::gettext(locale, "System").into_owned(),
+        EmojiRenderer::Noto => "Noto Color Emoji".to_owned(),
+    };
+    let palette = app.palette;
+    let response = egui::ComboBox::from_id_salt("emoji_renderer")
+        .selected_text(label(selected))
+        .width(200.0_f32.min(ui.available_width()))
+        .show_ui(ui, |ui| {
+            for choice in [EmojiRenderer::System, EmojiRenderer::Noto] {
+                let label = label(choice);
+                if theme_option(ui, &palette, &label, selected == choice) {
+                    app.actions.push(Action::SetEmojiRenderer(choice));
                 }
             }
         });

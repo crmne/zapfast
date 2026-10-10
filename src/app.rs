@@ -5719,6 +5719,10 @@ impl App {
                 crate::theme::set_font(ctx, choice);
                 ctx.request_repaint();
             }
+            Action::SetEmojiRenderer(choice) => {
+                self.settings.emoji_renderer = choice;
+                self.mark_settings_dirty();
+            }
             Action::SetInterfaceLanguage(choice) => {
                 self.settings.interface_language = choice;
                 self.locale = crate::i18n::resolve(choice);
