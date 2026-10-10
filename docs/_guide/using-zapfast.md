@@ -155,8 +155,11 @@ listed above. Other image formats, including GIF, SVG, and HEIC, do not have it.
 
 If a send is refused because ZapFast is offline or the reply's original message
 is unavailable, the attachments keep their selected modes in the originating
-account and chat. They return when you open that chat, even if you switched
-accounts before the refusal arrived. Staged attachments also stay with their
+account and chat, together with that send's caption and reply. Refused batches
+return one at a time when that chat's composer is free, even if you switched
+accounts before the refusal arrived. Send or discard the current attachments
+and clear their caption and reply to make room for the next batch. A newer
+draft, reply, or edit is kept. Staged attachments also stay with their
 chat when you switch conversations. Attachments are kept in memory while
 ZapFast runs; unlike text drafts, they do not survive a restart.
 

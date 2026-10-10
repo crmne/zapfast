@@ -4,7 +4,7 @@
 //! active account through `App`'s `Deref`. Each account has its own backend
 //! thread, archive, and folders.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -37,7 +37,7 @@ pub struct Account {
     pub scroll_chat_into_view: Option<ChatId>,
     pub drafts: HashMap<ChatId, String>,
     pub(crate) draft_mentions: HashMap<ChatId, Vec<ComposerMention>>,
-    pub(crate) attachment_drafts: HashMap<ChatId, AttachmentDraft>,
+    pub(crate) attachment_drafts: HashMap<ChatId, VecDeque<AttachmentDraft>>,
     pub search: String,
     pub search_selected: Option<ChatId>,
     pub search_hits: Vec<Message>,
