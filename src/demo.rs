@@ -4601,6 +4601,262 @@ mod tests {
         output.textures_delta.clear();
     }
 
+    /// Runs a copy input and follow-up frame, collecting clipboard writes.
+    fn copied_text(app: &mut App, ctx: &egui::Context, event: egui::Event) -> Vec<String> {
+        let mut copied = Vec::new();
+        for events in [vec![event], Vec::new()] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            copied.extend(
+                output
+                    .platform_output
+                    .commands
+                    .into_iter()
+                    .filter_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text),
+                        _ => None,
+                    }),
+            );
+        }
+        copied
+    }
+
+    /// Exports only selected messages in chat order, including off-screen text.
+    #[test]
+    fn selected_messages_copy_in_chat_order_including_offscreen_text() {
+        let (mut app, ctx, chat) = sweep_chat(400);
+        let conversation = app.conversations.get_mut(&chat).unwrap();
+        conversation.messages[1].content = Content::text("*First* 👨‍👩‍👧‍👦\nsecond line");
+        conversation.messages[399].content = Content::text("Last café 🇹🇷");
+        app.selection = Some((chat.clone(), vec!["m399".into(), "m001".into()]));
+        render(&mut app, &ctx);
+        assert!(
+            ctx.data(|data| data.get_temp::<egui::Rect>(
+                crate::ui::conversation::bubble_id(&chat, "m001").with("body")
+            ))
+            .is_none(),
+            "the first selected message is outside the virtualized viewport"
+        );
+        let copied = copied_text(&mut app, &ctx, egui::Event::Copy);
+        assert_eq!(copied.len(), 1, "one clipboard write per copy command");
+        let text = &copied[0];
+        assert!(text.starts_with('['), "uses transcript sharing headers");
+        assert!(text.contains("First 👨‍👩‍👧‍👦\nsecond line\n["), "{text}");
+        assert!(text.ends_with("Last café 🇹🇷"), "{text}");
+        assert!(
+            !text.contains("message number"),
+            "unselected rows are excluded"
+        );
+        assert_eq!(selected_ids(&app), ["m399", "m001"], "copy keeps selection");
+    }
+
+    /// Both platform shortcut variants produce exactly one clipboard write.
+    #[test]
+    fn selected_messages_copy_with_command_and_control_c() {
+        for modifiers in [egui::Modifiers::COMMAND, egui::Modifiers::CTRL] {
+            let (mut app, ctx, chat) = sweep_chat(2);
+            app.selection = Some((chat, vec!["m001".into()]));
+            render(&mut app, &ctx);
+            let copied = copied_text(&mut app, &ctx, key(egui::Key::C, modifiers));
+            assert_eq!(copied.len(), 1, "{modifiers:?}");
+            assert!(copied[0].ends_with("message number 1"));
+        }
+    }
+
+    /// Copy belongs to egui when the selected IDs or conversation are gone;
+    /// available messages consume native and raw shortcuts with one write.
+    #[test]
+    fn selected_messages_consume_copy_only_when_loaded_text_exists() {
+        for missing in [None, Some("messages"), Some("conversation")] {
+            for copy in [
+                vec![egui::Event::Copy],
+                vec![key(egui::Key::C, egui::Modifiers::COMMAND)],
+                vec![key(egui::Key::C, egui::Modifiers::CTRL)],
+                vec![
+                    egui::Event::Copy,
+                    key(egui::Key::C, egui::Modifiers::COMMAND),
+                ],
+            ] {
+                let (mut app, ctx, chat) = sweep_chat(2);
+                let id = if missing == Some("messages") {
+                    "deleted-message"
+                } else {
+                    "m001"
+                };
+                app.selection = Some((chat.clone(), vec![id.into()]));
+                if missing == Some("conversation") {
+                    app.conversations.remove(&chat);
+                }
+                let mut events = copy;
+                events.push(egui::Event::Text("unrelated input".into()));
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        events: events.clone(),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        crate::ui::keys::handle(&mut app, ui.ctx());
+                        ui.ctx().input(|input| {
+                            if missing.is_some() {
+                                assert_eq!(input.events, events, "{missing:?}");
+                            } else {
+                                assert_eq!(input.events, events[events.len() - 1..]);
+                            }
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                if missing.is_some() {
+                    assert!(app.actions.is_empty(), "no selected text to copy");
+                } else {
+                    assert!(matches!(
+                        app.actions.as_slice(),
+                        [crate::model::Action::CopyText(text)]
+                            if text.ends_with("message number 1")
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Whole-message exports resolve mentions and retain captions and media labels.
+    #[test]
+    fn selected_messages_copy_mentions_captions_and_media_labels() {
+        let mut app = app();
+        let chat = sample_ids()[0].to_owned();
+        let conversation = app.conversations.get_mut(&chat).unwrap();
+        let doc = conversation
+            .messages
+            .iter_mut()
+            .find(|m| m.id == "ada-doc")
+            .unwrap();
+        if let Content::Document { caption, .. } = &mut doc.content {
+            *caption = Some("*Notes* for @12345 🎉".into());
+        }
+        doc.mentions = vec![crate::model::MentionRef {
+            user: "12345".into(),
+            id: chat.clone(),
+        }];
+        app.selection = Some((chat, vec!["ada-voice".into(), "ada-doc".into()]));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let copied = copied_text(&mut app, &ctx, egui::Event::Copy);
+        assert_eq!(copied.len(), 1);
+        assert!(
+            copied[0].contains("[document: Notes on the Engine.pdf] Notes for @Ada Lovelace 🎉"),
+            "{}",
+            copied[0]
+        );
+        assert!(
+            copied[0].ends_with("[voice message, 0:42]"),
+            "{}",
+            copied[0]
+        );
+    }
+
+    /// Visible text-field selections retain their normal clipboard handling.
+    #[test]
+    fn selected_messages_leave_copy_available_to_focused_search_text() {
+        let (mut app, ctx, chat) = sweep_chat(2);
+        app.selection = Some((chat, vec!["m001".into()]));
+        app.search = "Ada".into();
+        app.actions.push(crate::model::Action::FocusSearch);
+        render(&mut app, &ctx);
+        assert!(ctx.text_edit_focused());
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::A, egui::Modifiers::COMMAND)],
+        );
+        let copied = copied_text(&mut app, &ctx, egui::Event::Copy);
+        assert_eq!(copied, ["Ada"], "copy belongs to the focused text field");
+    }
+
+    /// Dialogs, another chat, and missing IDs must not export selected messages.
+    #[test]
+    fn selected_messages_do_not_copy_through_dialogs_or_other_chats() {
+        let (mut app, ctx, chat) = sweep_chat(2);
+        app.selection = Some((chat.clone(), vec!["m001".into()]));
+        app.dialog = Some(crate::model::Dialog::Shortcuts);
+        render(&mut app, &ctx);
+        assert!(copied_text(&mut app, &ctx, egui::Event::Copy).is_empty());
+        app.dialog = None;
+        app.selection = Some(("another-chat".into(), vec!["m001".into()]));
+        render(&mut app, &ctx);
+        assert!(copied_text(&mut app, &ctx, egui::Event::Copy).is_empty());
+        app.selection = Some((chat, vec!["deleted-message".into()]));
+        assert!(copied_text(&mut app, &ctx, egui::Event::Copy).is_empty());
+    }
+
+    /// Pasted transcript text in other messages must not add duplicate headers.
+    #[test]
+    fn selected_messages_copy_does_not_annotate_a_transcript_twice() {
+        let (mut app, ctx, chat) = sweep_chat(4);
+        let name = app.display_name(&chat);
+        let first = format!("[{}] {name}: first", crate::util::copy_stamp(1_700_000_000));
+        let second = format!(
+            "[{}] {name}: second",
+            crate::util::copy_stamp(1_700_000_001)
+        );
+        // Unselected messages contain a previously pasted transcript. The
+        // text-selection annotator must not mistake our export for their text.
+        app.conversations.get_mut(&chat).unwrap().messages = [
+            Content::text("first"),
+            Content::text("second"),
+            Content::text(&first),
+            Content::text(&second),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, content)| {
+            message(
+                &chat,
+                &format!("m{i:03}"),
+                false,
+                1_700_000_000 + i as i64,
+                content,
+            )
+        })
+        .collect();
+        app.selection = Some((chat, vec!["m000".into(), "m001".into()]));
+        render(&mut app, &ctx);
+        assert_eq!(
+            copied_text(&mut app, &ctx, egui::Event::Copy),
+            [format!("{first}\n{second}")]
+        );
+    }
+
+    /// A newly hidden composer's stale focus must not delay copying the selection.
+    #[test]
+    fn selected_messages_copy_immediately_after_hiding_a_focused_composer() {
+        let (mut app, ctx, _) = sweep_chat(2);
+        app.composer = "unsent draft".into();
+        app.actions.push(crate::model::Action::FocusComposer);
+        render(&mut app, &ctx);
+        assert!(ctx.text_edit_focused());
+        app.actions
+            .push(crate::model::Action::SelectMessage("m001".into()));
+        let copied = copied_text(&mut app, &ctx, egui::Event::Copy);
+        assert_eq!(copied.len(), 1, "a hidden composer must not swallow Copy");
+        assert!(copied[0].ends_with("message number 1"));
+        assert_eq!(app.composer, "unsent draft");
+    }
+
     /// Lets an eased key scroll's animation settle: tests advance time by the
     /// predicted ~1/60s per frame, and the animation lasts up to 0.3s.
     fn settle_key_scroll(app: &mut App, ctx: &egui::Context) {

@@ -1705,7 +1705,7 @@ struct View<'a> {
     motion_playing: Option<&'a str>,
     player: &'a crate::audio::Player,
     video: &'a crate::video::Player,
-    copy_rows: &'a std::sync::Mutex<Vec<crate::transcript::Row>>,
+    copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
 }
 
 /// A row height to assume for a message that has not been laid out yet. Rows
@@ -1820,7 +1820,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             .map(|(_, message)| message.as_str()),
         player: &app.player,
         video: &app.video,
-        copy_rows: app.copy_rows.as_ref(),
+        // Whole-message exports are already formatted. Do not let the
+        // text-selection annotator reinterpret them as drawn body text.
+        copy_rows: (!app.selection.as_ref().is_some_and(|(id, _)| *id == chat.id))
+            .then_some(app.copy_rows.as_ref()),
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -3077,10 +3080,65 @@ fn transcript_row(
     body: String,
     placements: Vec<String>,
 ) -> crate::transcript::Row {
+    message_copy_row(message, body, placements, view.names_or, view.mention_names)
+}
+
+/// Copies whole selected messages, including rows outside the viewport, in
+/// conversation order rather than the order in which they were selected.
+pub(super) fn selected_text(app: &App) -> Option<String> {
+    let (chat, selected) = app.selection.as_ref()?;
+    if app.open_chat.as_ref() != Some(chat) {
+        return None;
+    }
+    let conversation = app.conversations.get(chat)?;
+    let selected: HashSet<&str> = selected.iter().map(String::as_str).collect();
+    let names_or = |id: &str, hint: Option<&str>| app.display_name_or(id, hint);
+    let mention_names = |id: &str| app.mention_name(id);
+    let lines: Vec<String> = conversation
+        .messages
+        .iter()
+        .filter(|message| selected.contains(message.id.as_str()))
+        .map(|message| {
+            let text = match &message.content {
+                Content::Text { text, .. } | Content::Interactive { text, .. } => text.as_str(),
+                Content::Image { caption, .. }
+                | Content::Video { caption, .. }
+                | Content::Document { caption, .. }
+                | Content::StickerPack { caption, .. } => caption.as_deref().unwrap_or_default(),
+                _ => "",
+            };
+            let mentions: Vec<markup::Mention> = message
+                .mentions
+                .iter()
+                .map(|mention| markup::Mention {
+                    user: mention.user.clone(),
+                    name: mention_names(&mention.id),
+                })
+                .collect();
+            let body = markup::plain(text, &mentions);
+            let mut row = message_copy_row(message, body, Vec::new(), &names_or, &mention_names);
+            // Content without a transcript marker still needs a useful label.
+            if row.body.is_empty() && row.marker.is_none() {
+                row.body = message.content.full_summary();
+            }
+            row.line(&row.body)
+        })
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// Builds shared transcript metadata for drawn text and whole-message exports.
+fn message_copy_row(
+    message: &Message,
+    body: String,
+    placements: Vec<String>,
+    names_or: &dyn Fn(&str, Option<&str>) -> String,
+    mention_names: &dyn Fn(&str) -> String,
+) -> crate::transcript::Row {
     let who = if message.from_me {
-        (view.mention_names)(&message.sender)
+        mention_names(&message.sender)
     } else {
-        (view.names_or)(&message.sender, message.sender_name.as_deref())
+        names_or(&message.sender, message.sender_name.as_deref())
     };
     let marker = match &message.content {
         Content::Image { .. } => Some("[photo]".to_owned()),
@@ -3122,13 +3180,7 @@ fn transcript_row(
         let listed: Vec<String> = message
             .reactions
             .iter()
-            .map(|reaction| {
-                format!(
-                    "{} {}",
-                    reaction.emoji,
-                    (view.names_or)(&reaction.sender, None)
-                )
-            })
+            .map(|reaction| format!("{} {}", reaction.emoji, names_or(&reaction.sender, None)))
             .collect();
         format!(" ({})", listed.join(", "))
     };
@@ -3136,8 +3188,16 @@ fn transcript_row(
         let name = quoted
             .sender_name
             .clone()
-            .unwrap_or_else(|| (view.names_or)(&quoted.sender, None));
-        let summary = markup::plain(&quoted.summary, &quote_mentions(view, quoted));
+            .unwrap_or_else(|| names_or(&quoted.sender, None));
+        let mentions: Vec<markup::Mention> = quoted
+            .mentions
+            .iter()
+            .map(|mention| markup::Mention {
+                user: mention.user.clone(),
+                name: mention_names(&mention.id),
+            })
+            .collect();
+        let summary = markup::plain(&quoted.summary, &mentions);
         let short: String = summary.chars().take(48).collect();
         let cut = if summary.chars().count() > 48 {
             "…"
@@ -4612,8 +4672,8 @@ fn content(
         | Content::Document { caption, .. } => caption.is_some(),
         _ => false,
     };
-    if !has_body {
-        view.copy_rows
+    if !has_body && let Some(copy_rows) = view.copy_rows {
+        copy_rows
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .push(transcript_row(view, message, String::new(), Vec::new()));
@@ -5712,15 +5772,17 @@ fn rich_body(
         allocation.x = allocation.x.max(span);
     }
     // Register the body for transcript formatting when copying across messages.
-    view.copy_rows
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .push(transcript_row(
-            view,
-            message,
-            laid.galley.text().to_owned(),
-            laid.placements().to_vec(),
-        ));
+    if let Some(copy_rows) = view.copy_rows {
+        copy_rows
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(transcript_row(
+                view,
+                message,
+                laid.galley.text().to_owned(),
+                laid.placements().to_vec(),
+            ));
+    }
     // Click links and drag to select text.
     // Text selection and web links do not need a sequential Tab stop.
     // The surrounding transcript remains available to accessibility readers.

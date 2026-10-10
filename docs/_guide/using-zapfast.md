@@ -283,6 +283,13 @@ uses WhatsApp's sharing format:
 [18:27, 8/30/2026] You: Sure, I will take a look
 ```
 
+To copy whole messages, choose **Select** from a message's menu (or
+Command-click on macOS, Ctrl-click elsewhere), then select the other messages
+you want. Press `Cmd+C` on macOS or `Ctrl+C` elsewhere. The clipboard includes
+only the selected messages, in chat order, using the same sharing format,
+even if some have scrolled off-screen. Attachments contribute a text label and
+any caption; their files are not copied. Copying keeps the selection open.
+
 ## Chats
 
 The search bar finds chats by name, number, or latest message; searches all
