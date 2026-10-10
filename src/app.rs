@@ -6143,8 +6143,15 @@ impl App {
     /// viewport too, since `window_focused` stays false behind the app lock
     /// even while the lock screen has the focus.
     fn request_attention(&mut self, ctx: &egui::Context) {
+        self.request_attention_on(ctx, gnome_desktop());
+    }
+
+    /// [`Self::request_attention`] on a desktop that is GNOME or not, which
+    /// shows its own "is ready" notice instead of marking the taskbar (#466).
+    fn request_attention_on(&mut self, ctx: &egui::Context, gnome: bool) {
         if std::mem::take(&mut self.wants_attention)
             && cfg!(target_os = "linux")
+            && !gnome
             && !self.window_hidden
             && !self.window_focused
             && ctx.input(|input| input.viewport().focused) != Some(true)
@@ -6998,6 +7005,22 @@ impl Delivery {
     pub fn in_flight(self) -> bool {
         matches!(self, Delivery::Pending)
     }
+}
+
+/// Whether `desktop`, an `XDG_CURRENT_DESKTOP` value, names GNOME. GNOME
+/// turns a window's request for attention into a "“ZapFast” is ready" notice
+/// of its own on every message, on top of the message's notification,
+/// instead of marking the taskbar (#466).
+fn is_gnome(desktop: Option<&str>) -> bool {
+    desktop.is_some_and(|desktop| {
+        desktop
+            .split(':')
+            .any(|name| name.eq_ignore_ascii_case("GNOME"))
+    })
+}
+
+fn gnome_desktop() -> bool {
+    is_gnome(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref())
 }
 
 /// Whether an incoming message in this chat warrants a desktop notification.
@@ -13050,6 +13073,17 @@ mod app_lock_tests {
         assert_eq!(app.open_chat.as_deref(), Some(CHAT), "opened once unlocked");
     }
 
+    #[test]
+    fn gnome_is_recognised_in_any_entry_of_the_desktop_list() {
+        for desktop in ["GNOME", "zorin:GNOME", "ubuntu:GNOME", "gnome"] {
+            assert!(is_gnome(Some(desktop)), "{desktop}");
+        }
+        for desktop in ["KDE", "XFCE", "Hyprland", "GNOME-Flashback", ""] {
+            assert!(!is_gnome(Some(desktop)), "{desktop}");
+        }
+        assert!(!is_gnome(None));
+    }
+
     fn attention_requested(ctx: &egui::Context) -> bool {
         ctx.viewport(|viewport| {
             viewport
@@ -13070,16 +13104,35 @@ mod app_lock_tests {
         app.window_hidden = false;
         app.window_focused = false;
         app.maybe_notify(CHAT, &message);
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
         assert!(attention_requested(&ctx));
 
         let ctx = egui::Context::default();
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
         assert!(!attention_requested(&ctx), "only once per notification");
 
         app.window_hidden = true;
         app.maybe_notify(CHAT, &message);
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
+        assert!(!attention_requested(&ctx));
+    }
+
+    /// GNOME shows its own "is ready" notice for a window that asks for
+    /// attention, on top of the message's notification (#466).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gnome_gets_no_attention_request() {
+        let ctx = egui::Context::default();
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.window_hidden = false;
+        app.window_focused = false;
+        app.maybe_notify(CHAT, &message);
+        app.request_attention_on(&ctx, true);
+        assert!(!attention_requested(&ctx));
+        // The request is spent, not kept for another desktop later.
+        let ctx = egui::Context::default();
+        app.request_attention_on(&ctx, false);
         assert!(!attention_requested(&ctx));
     }
 
@@ -13104,7 +13157,7 @@ mod app_lock_tests {
         app.lock_app();
         assert!(!app.window_focused);
         app.maybe_notify(CHAT, &message);
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
         assert!(!attention_requested(&ctx));
     }
 
@@ -13118,7 +13171,7 @@ mod app_lock_tests {
         app.page = Page::Chats;
         app.open_chat = Some(CHAT.into());
         app.maybe_notify(CHAT, &message);
-        app.request_attention(&ctx);
+        app.request_attention_on(&ctx, false);
         assert!(!attention_requested(&ctx));
     }
 
