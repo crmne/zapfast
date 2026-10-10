@@ -452,6 +452,15 @@ impl Archive {
         Ok(())
     }
 
+    /// Moves a chat's activity forward to `timestamp` (Unix seconds), never back.
+    pub fn touch_activity(&self, id: &str, timestamp: i64) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET last_activity = MAX(last_activity, ?2) WHERE id = ?1",
+            params![id, timestamp],
+        )?;
+        Ok(())
+    }
+
     /// Updates group subject, members, and posting permission.
     pub fn set_group_info(
         &self,
