@@ -10047,7 +10047,7 @@ mod tests {
     fn fallback_names_read_as_phones_or_ids() {
         assert_eq!(
             fallback_name("393331234567@s.whatsapp.net"),
-            "+39 333 123 456 7"
+            "+39 333 123 4567"
         );
         assert_eq!(fallback_name("1-2@g.us"), "");
         assert_eq!(fallback_name("42@lid"), "42");
