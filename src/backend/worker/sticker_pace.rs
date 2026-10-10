@@ -2,13 +2,15 @@
 //! limit. Fetching every missing favorite at once on connecting (126 for one
 //! reader) answered `429 rate-overlimit` and left the account throttled, so
 //! the next picture or sticker the reader sent failed too (#298, #307).
+//! Opening the picker did the same with the chat stickers it fetches (#405).
 
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 /// Favorites started per tick of the worker's five-second clock.
 const PER_TICK: usize = 2;
-/// Downloads of each kind allowed in flight at once.
+/// Favorite downloads, and picker downloads (recent and chat stickers
+/// together), allowed in flight at once.
 pub(super) const IN_FLIGHT: usize = 2;
 /// The first pause after the server says to slow down, doubled each time
 /// it says so again, up to [`LONGEST`].

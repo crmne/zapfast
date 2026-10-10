@@ -82,7 +82,9 @@ adding more. ZapFast adds **Received** (the speech bubble) after Favorites.
 Click a sticker to send it. Animated stickers play on hover.
 
 **Recent** holds the stickers you sent, not the ones you received.
-Right-click one to take it out of Recent here and on your phone.
+Right-click one to take it out of Recent here and on your phone. A sticker
+you sent long ago may be gone from WhatsApp's servers: it joins Recent once
+you click it in its chat, which asks your phone for it again.
 
 **Received** holds the stickers people sent you that are already
 downloaded, newest first, each once. Stickers already in Recent or
