@@ -2030,18 +2030,20 @@ impl App {
         if let Some(name) = saved.or_else(|| called.map(|name| format!("~{name}"))) {
             return name;
         }
-        // A name of digits alone, or a number as `util::phone` once grouped
-        // it when the chat was filed, is formatted afresh from the id.
+        // A name of digits alone is no name. When the id carries the number,
+        // neither is one as `util::phone` grouped it when the chat was filed:
+        // that is formatted afresh from the id.
+        let phone = crate::model::phone_of(id);
+        let number = |c: char| {
+            c.is_ascii_digit() || (phone.is_some() && matches!(c, '+' | ' ' | '(' | ')' | '-'))
+        };
         if let Some(chat) = self.chat(id)
             && !chat.name.is_empty()
-            && !chat
-                .name
-                .chars()
-                .all(|c| c.is_ascii_digit() || matches!(c, '+' | ' ' | '(' | ')' | '-'))
+            && !chat.name.chars().all(number)
         {
             return chat.name.clone();
         }
-        match crate::model::phone_of(id) {
+        match phone {
             Some(digits) => crate::util::phone(digits),
             None => "Unknown".to_owned(),
         }
@@ -12496,6 +12498,12 @@ mod tests {
             app.display_name("5511999999999@s.whatsapp.net"),
             "+55 (11) 99999-9999"
         );
+        // Without a number in the id there is nothing to format afresh.
+        app.chats
+            .push(Chat::new("42@lid".into(), "+1 555 123 4567".into()));
+        assert_eq!(app.display_name("42@lid"), "+1 555 123 4567");
+        app.chats.push(Chat::new("43@lid".into(), "43".into()));
+        assert_eq!(app.display_name("43@lid"), "Unknown");
     }
 }
 
