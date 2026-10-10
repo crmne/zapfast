@@ -81,8 +81,10 @@ pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
         .clamp(MIN_WIDTH, MAX_WIDTH)
         .min(region.width());
     let rect = Rect::from_min_max(pos2(region.right() - width, region.top()), region.max);
+    // Above the conversation's header too, which a vibrant window draws on
+    // a layer of its own over the messages, so the header keeps its glass.
     egui::Area::new(egui::Id::new("chat-search-overlay"))
-        .order(egui::Order::Middle)
+        .order(egui::Order::Foreground)
         .fixed_pos(rect.min)
         .constrain(false)
         .show(ctx, |ui| {

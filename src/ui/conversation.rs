@@ -44,12 +44,45 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
     wallpaper::paint(ui, &app.wallpaper());
+    // On a vibrant window the messages scroll on under the header, as in
+    // Messages: the header and any banner go on a layer above them.
+    if app.palette.vibrant() {
+        let layer = egui::LayerId::new(egui::Order::Middle, ui.id().with("chat-header"));
+        let bar = ui
+            .scope_builder(egui::UiBuilder::new().layer_id(layer), |ui| {
+                // Beneath the header: the messages under it, frosted, and a
+                // veil of the chat's colour that keeps the title readable.
+                let glass = ui.painter().add(egui::Shape::Noop);
+                let veil = ui.painter().add(egui::Shape::Noop);
+                header(app, ui, &chat);
+                if theme::macos_chrome(ui.ctx()) {
+                    super::banner(app, ui);
+                }
+                let bar = ui.min_rect();
+                // Strongest at the top, both ease off from within the bar to
+                // a little below it, so where they start never shows.
+                let frosted = bar.with_max_y(bar.bottom() + HEADER_TAIL);
+                let ease = HEADER_TAIL + bar.height() * HEADER_EASE;
+                ui.painter().set(glass, super::glass::shape(frosted, ease));
+                ui.painter()
+                    .set(veil, header_veil(&app.palette, frosted, ease));
+                bar
+            })
+            .inner;
+        composer(app, ui, &chat);
+        let list = ui.available_rect_before_wrap().with_min_y(bar.top());
+        ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
+            messages(app, ui, &chat, bar.height());
+        });
+        // A vibrant window is flat, as Messages is: no shadows over the chat.
+        return;
+    }
     let header = header(app, ui, &chat);
     if theme::macos_chrome(ui.ctx()) {
         super::banner(app, ui);
     }
     composer(app, ui, &chat);
-    messages(app, ui, &chat);
+    messages(app, ui, &chat, 0.0);
     // Over the messages, which scroll under the header.
     widgets::paint_shadow_below(
         ui,
@@ -115,6 +148,81 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// The share of a vibrant header, from its bottom, over which its frost and
+/// veil begin to ease off.
+const HEADER_EASE: f32 = 0.35;
+/// How far below a vibrant header its frost and veil carry on, easing off.
+const HEADER_TAIL: f32 = 24.0;
+/// Rows of the veil's ease, enough for its curve to look smooth.
+const VEIL_STEPS: usize = 8;
+
+/// The veil over a vibrant header's frost: the palette's at the top, then
+/// easing to nothing over the bottom `ease` points of `rect` along the same
+/// curve as the frost, so the messages under it never stop at a line.
+fn header_veil(palette: &Palette, rect: Rect, ease: f32) -> egui::Shape {
+    let top = palette.vibrant_header(palette.chat);
+    let start = rect.bottom() - ease;
+    let mut mesh = egui::Mesh::default();
+    let mut row = |y: f32, color: Color32| {
+        mesh.colored_vertex(pos2(rect.left(), y), color);
+        mesh.colored_vertex(pos2(rect.right(), y), color);
+    };
+    row(rect.top(), top);
+    for step in 0..=VEIL_STEPS {
+        let t = step as f32 / VEIL_STEPS as f32;
+        // smoothstep, as the frost's shader eases.
+        let strength = 1.0 - t * t * (3.0 - 2.0 * t);
+        row(start + ease * t, top.gamma_multiply(strength));
+    }
+    let rows = mesh.vertices.len() as u32 / 2;
+    for row in 0..rows - 1 {
+        let at = row * 2;
+        mesh.add_triangle(at, at + 1, at + 3);
+        mesh.add_triangle(at, at + 3, at + 2);
+    }
+    egui::Shape::mesh(mesh)
+}
+
+/// How round the glass under a vibrant header's name is: straight-sided,
+/// leaving room around the text, rather than a capsule.
+const NAME_GLASS_RADIUS: f32 = 12.0;
+/// The room around the name and status on their glass: wide at the sides,
+/// and little above, so the glass keeps clear of the window's top edge.
+const NAME_GLASS_PADDING: Vec2 = vec2(14.0, 3.5);
+/// The room above and below a name alone on its glass.
+const NAME_GLASS_SINGLE: f32 = 7.0;
+/// How tall the name and status stand together on glass: less than the
+/// avatar, so the two lines sit a little closer around its middle.
+const NAME_GLASS_LINES: f32 = 32.0;
+/// How wide the round glass under each of a vibrant header's buttons is.
+const BUTTON_GLASS: f32 = 36.0;
+/// The space between two of a vibrant header's buttons, beyond their glass.
+const BUTTON_GAP: f32 = 10.0;
+
+/// The round glass under one of a vibrant header's buttons.
+fn glass_button(palette: &Palette, button: Rect) -> egui::Shape {
+    glass(
+        palette,
+        Rect::from_center_size(button.center(), Vec2::splat(BUTTON_GLASS)),
+        BUTTON_GLASS / 2.0,
+    )
+}
+
+/// Glass under a vibrant header's name or one of its buttons: the veil
+/// thickened where they sit, with a faint edge, as Messages floats them.
+fn glass(palette: &Palette, rect: Rect, radius: f32) -> egui::Shape {
+    let radius = CornerRadius::from(radius);
+    egui::Shape::Vec(vec![
+        egui::Shape::rect_filled(rect, radius, palette.vibrant_pill(palette.chat)),
+        egui::Shape::rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, palette.text.gamma_multiply(0.08)),
+            egui::StrokeKind::Inside,
+        ),
+    ])
+}
+
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -122,7 +230,13 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
         .show_separator_line(false)
         .frame(
             Frame::new()
-                .fill(palette.panel)
+                // On a vibrant window the messages scroll on under it,
+                // frosted, with the veil drawn beneath the header instead.
+                .fill(if palette.vibrant() {
+                    Color32::TRANSPARENT
+                } else {
+                    palette.panel
+                })
                 .inner_margin(Margin::symmetric(14, 8)),
         )
         .show(ui, |ui| {
@@ -141,8 +255,19 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 }
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
-                // More and Search, and Back in a narrow window.
-                let right_controls = if narrow { 108.0 } else { 72.0 };
+                // More and Search, and Back in a narrow window, each on its
+                // own glass with room around it on a vibrant window.
+                let buttons = if narrow { 3.0 } else { 2.0 };
+                let right_controls = if palette.vibrant() {
+                    buttons * 36.0 + (buttons - 0.5) * BUTTON_GAP + (BUTTON_GLASS - 30.0)
+                } else {
+                    buttons * 36.0
+                };
+                // On a vibrant window the name and the buttons sit on glass
+                // pills, drawn beneath them once they are measured.
+                let name_pill = ui.painter().add(egui::Shape::Noop);
+                let mut text = Rect::NOTHING;
+                let mut avatar = Rect::NOTHING;
                 // Treat the avatar, name, and subtitle as one info button.
                 let block = ui
                     .scope(|ui| {
@@ -162,6 +287,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                     40.0,
                                     picture.as_deref(),
                                 );
+                                avatar = avatar_response.rect;
                                 if chat.ephemeral_expiration.is_some() {
                                     widgets::paint_disappearing_badge(
                                         ui,
@@ -169,44 +295,84 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                         avatar_response.rect,
                                     );
                                 }
-                                ui.add_space(4.0);
+                                // Room for the name's glass pill to clear the avatar.
+                                ui.add_space(if palette.vibrant() { 14.0 } else { 4.0 });
                                 ui.vertical(|ui| {
                                     let width = (ui.available_width() - right_controls).max(80.0);
                                     ui.set_max_width(width);
+                                    // On glass the lines centre on the avatar: the
+                                    // column starts at the row's top otherwise.
+                                    if palette.vibrant() {
+                                        let column = if subtitle.is_empty() {
+                                            40.0
+                                        } else {
+                                            NAME_GLASS_LINES
+                                        };
+                                        let top = avatar.center().y - column / 2.0;
+                                        ui.add_space((top - ui.cursor().top()).max(0.0));
+                                    }
                                     if subtitle.is_empty() {
                                         // Center the name on the avatar.
                                         ui.allocate_ui_with_layout(
                                             vec2(width, 40.0),
                                             Layout::left_to_right(Align::Center),
                                             |ui| {
-                                                widgets::rich_text(
+                                                text = widgets::rich_text(
                                                     ui,
                                                     &title,
-                                                    theme::semibold(17.0),
+                                                    // Lighter on glass, as Apple's.
+                                                    if palette.vibrant() {
+                                                        theme::medium(15.0)
+                                                    } else {
+                                                        theme::semibold(17.0)
+                                                    },
                                                     palette.text,
-                                                );
+                                                )
+                                                .rect;
                                             },
                                         );
                                     } else {
-                                        // Align the name and subtitle with the avatar edges.
+                                        // Align the name and subtitle with the avatar edges,
+                                        // or on glass a little closer, around its middle.
                                         ui.allocate_ui_with_layout(
-                                            vec2(width, 40.0),
+                                            vec2(
+                                                width,
+                                                if palette.vibrant() {
+                                                    NAME_GLASS_LINES
+                                                } else {
+                                                    40.0
+                                                },
+                                            ),
                                             Layout::top_down(Align::Min),
                                             |ui| {
-                                                widgets::rich_text(
+                                                text = widgets::rich_text(
                                                     ui,
                                                     &title,
-                                                    theme::semibold(15.0),
+                                                    theme::semibold(if palette.vibrant() {
+                                                        14.0
+                                                    } else {
+                                                        15.0
+                                                    }),
                                                     palette.text,
-                                                );
+                                                )
+                                                .rect;
                                                 ui.with_layout(
                                                     Layout::bottom_up(Align::Min),
                                                     |ui| {
-                                                        widgets::rich_text(
-                                                            ui,
-                                                            &subtitle,
-                                                            theme::regular(12.5),
-                                                            color,
+                                                        text = text.union(
+                                                            widgets::rich_text(
+                                                                ui,
+                                                                &subtitle,
+                                                                theme::regular(
+                                                                    if palette.vibrant() {
+                                                                        11.5
+                                                                    } else {
+                                                                        12.5
+                                                                    },
+                                                                ),
+                                                                color,
+                                                            )
+                                                            .rect,
                                                         );
                                                     },
                                                 );
@@ -218,6 +384,25 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         );
                     })
                     .response;
+                if palette.vibrant() && text.is_positive() {
+                    // A lone name gets Apple's roomier padding.
+                    let padding = vec2(
+                        NAME_GLASS_PADDING.x,
+                        if subtitle.is_empty() {
+                            NAME_GLASS_SINGLE
+                        } else {
+                            NAME_GLASS_PADDING.y
+                        },
+                    );
+                    // Centred on the avatar, whatever room the lines leave
+                    // above and below their glyphs.
+                    let glass_rect = Rect::from_center_size(
+                        pos2(text.center().x, avatar.center().y),
+                        text.size() + 2.0 * padding,
+                    );
+                    ui.painter()
+                        .set(name_pill, glass(&palette, glass_rect, NAME_GLASS_RADIUS));
+                }
                 let block = ui
                     .interact(block.rect, ui.id().with("chat-header-info"), Sense::click())
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -235,6 +420,12 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 };
                 let select_messages_label = crate::i18n::gettext(app.locale, "Select messages");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    // Each button on a vibrant window floats on its own glass,
+                    // with room around it.
+                    if palette.vibrant() {
+                        ui.add_space(BUTTON_GAP / 2.0);
+                    }
+                    let more_glass = ui.painter().add(egui::Shape::Noop);
                     let more = theme::icon_button(
                         ui,
                         Icon::Ellipsis,
@@ -243,6 +434,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         palette.text,
                         "More",
                     );
+                    if palette.vibrant() {
+                        ui.painter()
+                            .set(more_glass, glass_button(&palette, more.rect));
+                    }
                     let width = widgets::menu_width(
                         ui,
                         &[
@@ -343,7 +538,11 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         crate::i18n::gettext(app.locale, "Search messages"),
                         super::keys::label("Ctrl+F")
                     );
-                    if theme::icon_button(
+                    if palette.vibrant() {
+                        ui.add_space(BUTTON_GAP);
+                    }
+                    let search_glass = ui.painter().add(egui::Shape::Noop);
+                    let search = theme::icon_button(
                         ui,
                         Icon::Search,
                         18.0,
@@ -355,9 +554,12 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         palette.text,
                         &tip,
                     )
-                    .tab_stop(Stop::ChatSearch)
-                    .clicked()
-                    {
+                    .tab_stop(Stop::ChatSearch);
+                    if palette.vibrant() {
+                        ui.painter()
+                            .set(search_glass, glass_button(&palette, search.rect));
+                    }
+                    if search.clicked() {
                         app.actions.push(if searching {
                             Action::CloseChatSearch
                         } else {
@@ -367,6 +569,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     // A narrow window shows the list or the chat, not both;
                     // this is the way back to the list.
                     if narrow {
+                        if palette.vibrant() {
+                            ui.add_space(BUTTON_GAP);
+                        }
+                        let back_glass = ui.painter().add(egui::Shape::Noop);
                         let back = theme::icon_button(
                             ui,
                             Icon::ArrowLeft,
@@ -376,6 +582,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             "Back to chats",
                         )
                         .tab_stop(Stop::Back);
+                        if palette.vibrant() {
+                            ui.painter()
+                                .set(back_glass, glass_button(&palette, back.rect));
+                        }
                         ui.ctx()
                             .data_mut(|data| data.insert_temp(back_button_id(), back.rect));
                         if back.clicked() {
@@ -1462,8 +1672,15 @@ fn last_line<R>(ui: &mut egui::Ui, line: f32, add: impl FnOnce(&mut egui::Ui) ->
 
 /// The rounded field that holds the composer's controls, or the recorder.
 fn composer_pill(palette: &Palette) -> Frame {
+    // Glass over a vibrant conversation, as the header's.
+    let (fill, edge) = if palette.vibrant() {
+        (palette.glass(), palette.glass_edge())
+    } else {
+        (palette.bubble_in, Stroke::NONE)
+    };
     Frame::new()
-        .fill(palette.bubble_in)
+        .fill(fill)
+        .stroke(edge)
         .corner_radius(CornerRadius::same(COMPOSER_RADIUS))
         // The end buttons are inset by as much at the sides as above and
         // below, so they sit evenly in the rounded ends.
@@ -1748,7 +1965,9 @@ fn shows_sender_pictures(chat: &Chat) -> bool {
     chat.is_group()
 }
 
-fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+/// The conversation's messages. `under` is how much of the list's top lies
+/// beneath the header, which a vibrant window lays over it.
+fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let palette = app.palette;
     // Taken up front: `names_or` below borrows the rest of `app` for the
     // whole function, so a pending scroll must come out before that.
@@ -2004,13 +2223,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 3.0;
+                    if under > 0.0 {
+                        ui.add_space(under);
+                    }
                     top_of_history(ui, &palette, &conversation, chat, &mut actions);
                     let mut previous: Option<&Message> = None;
                     // Rows within a few viewports of the screen are laid out
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
                     let margin = (viewport.height() * 3.0).max(600.0);
-                    for message in &conversation.messages {
+                    for (index, message) in conversation.messages.iter().enumerate() {
                         let before = ui.cursor().top();
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
@@ -2092,7 +2314,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 .vertical_centered(|ui| widgets::chip(ui, &palette, &label))
                                 .inner;
                             if !placed && view.anchor.is_none() {
-                                response.scroll_to_me(Some(Align::Min));
+                                // Clear of the header that may lie over the top.
+                                ui.scroll_to_rect(
+                                    response.rect.with_min_y(response.rect.top() - under),
+                                    Some(Align::Min),
+                                );
                                 divider_placed = true;
                             }
                             ui.add_space(4.0);
@@ -2105,11 +2331,23 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }));
                         // The first message of a run from one side, as the
                         // phone draws it: a little apart, with a tail.
-                        let first_in_run = new_day
-                            || previous.is_none_or(|previous| {
-                                previous.from_me != message.from_me
-                                    || (!message.from_me && previous.sender != message.sender)
-                            });
+                        let first_in_run =
+                            new_day || previous.is_none_or(|previous| !same_run(previous, message));
+                        // Messages curls its tail under a run's last bubble.
+                        // The sender's picture: beside the first message of a
+                        // run in WhatsApp's style, beside the last in Messages.
+                        let show_avatar = if palette.bubbles == theme::BubbleStyle::Messages {
+                            shows_sender_pictures(chat)
+                                && !message.from_me
+                                && last_of_run(&conversation.messages, index)
+                        } else {
+                            show_sender
+                        };
+                        let tailed = if palette.bubbles == theme::BubbleStyle::Messages {
+                            last_bubble_of_run(&palette, &conversation.messages, index)
+                        } else {
+                            first_in_run
+                        };
                         if first_in_run && !new_day && previous.is_some() {
                             ui.add_space(RUN_GAP);
                         }
@@ -2133,7 +2371,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                         &view,
                                         message,
                                         show_sender,
-                                        first_in_run,
+                                        show_avatar,
+                                        tailed,
                                         &mut actions,
                                     )
                                 })
@@ -2141,7 +2380,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             })
                             .inner
                         } else {
-                            bubble(ui, &view, message, show_sender, first_in_run, &mut actions)
+                            bubble(
+                                ui,
+                                &view,
+                                message,
+                                show_sender,
+                                show_avatar,
+                                tailed,
+                                &mut actions,
+                            )
                         };
                         if let Some((slot, top)) = flash {
                             if view.anchor == Some(message.id.as_str()) && response.is_some() {
@@ -2676,7 +2923,13 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String)]
             .rect;
         ui.painter().set(
             backdrop,
-            widgets::bubble_shape(&palette, rect, palette.bubble_in, Some(widgets::Side::Left)),
+            widgets::bubble_shape(
+                &palette,
+                rect,
+                palette.bubble_in,
+                Some(widgets::Side::Left),
+                ui.ctx().pixels_per_point(),
+            ),
         );
     });
 }
@@ -2882,7 +3135,8 @@ fn bubble(
     view: &View<'_>,
     message: &Message,
     show_sender: bool,
-    first_in_run: bool,
+    show_avatar: bool,
+    tailed: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let own = message.from_me;
@@ -2927,23 +3181,47 @@ fn bubble(
         |ui| {
             if with_avatar {
                 ui.horizontal_top(|ui| {
-                    let (rect, avatar) = ui.allocate_exact_size(
-                        Vec2::splat(SENDER_AVATAR),
-                        if show_sender {
-                            Sense::CLICK
-                        } else {
-                            Sense::hover()
-                        },
-                    );
+                    let (space, _) =
+                        ui.allocate_exact_size(Vec2::splat(SENDER_AVATAR), Sense::hover());
+                    // Keep bubble content vertically laid out inside the row.
+                    ui.vertical(|ui| {
+                        response = Some(bubble_frame(
+                            ui,
+                            view,
+                            message,
+                            show_sender,
+                            tailed,
+                            max_width,
+                            actions,
+                        ));
+                    });
+                    if !show_avatar {
+                        return;
+                    }
+                    // Messages puts the avatar beside the run's last message,
+                    // level with its bottom; WhatsApp beside the first, at
+                    // its top.
+                    let rect = match &response {
+                        Some(bubble) if view.palette.bubbles == theme::BubbleStyle::Messages => {
+                            Rect::from_min_size(
+                                pos2(
+                                    space.left(),
+                                    (bubble.rect.bottom() - SENDER_AVATAR).max(space.top()),
+                                ),
+                                Vec2::splat(SENDER_AVATAR),
+                            )
+                        }
+                        _ => space,
+                    };
+                    let avatar = ui.interact(rect, id.with("avatar"), Sense::CLICK);
                     theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR / 2.0);
-                    if show_sender
-                        && avatar
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
+                    if avatar
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
                     {
                         actions.push(Action::ShowDialog(Dialog::ChatInfo(message.sender.clone())));
                     }
-                    if show_sender && ui.is_rect_visible(rect) {
+                    if ui.is_rect_visible(rect) {
                         let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
                         widgets::paint_avatar(
                             ui,
@@ -2956,18 +3234,6 @@ fn bubble(
                                 .and_then(|picture| picture.as_deref()),
                         );
                     }
-                    // Keep bubble content vertically laid out inside the row.
-                    ui.vertical(|ui| {
-                        response = Some(bubble_frame(
-                            ui,
-                            view,
-                            message,
-                            show_sender,
-                            first_in_run,
-                            max_width,
-                            actions,
-                        ));
-                    });
                 });
             } else {
                 response = Some(bubble_frame(
@@ -2975,7 +3241,7 @@ fn bubble(
                     view,
                     message,
                     show_sender,
-                    first_in_run,
+                    tailed,
                     max_width,
                     actions,
                 ));
@@ -3290,25 +3556,59 @@ fn speed_menu_row(
     );
 }
 
+/// Whether `message` draws without a bubble around it: stickers, round video
+/// messages, carousels, and in the Messages style a lone picture.
+fn bubbleless(palette: &Palette, message: &Message) -> bool {
+    matches!(
+        &message.content,
+        Content::Sticker { .. } | Content::Video { note: true, .. }
+    ) || matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty())
+        || bare_picture(palette, message)
+}
+
+/// Whether `messages[index]` ends its run: the next message is from the other
+/// side, another sender, or another day.
+fn last_of_run(messages: &[Message], index: usize) -> bool {
+    let message = &messages[index];
+    messages.get(index + 1).is_none_or(|next| {
+        !same_run(message, next)
+            || crate::util::day_key(message.timestamp) != crate::util::day_key(next.timestamp)
+    })
+}
+
+/// Whether `messages[index]` is the last bubble of its run, which Messages
+/// tails: messages drawn without one after it, a lone photo or a sticker,
+/// leave the tail to it.
+fn last_bubble_of_run(palette: &Palette, messages: &[Message], index: usize) -> bool {
+    let message = &messages[index];
+    !messages[index + 1..]
+        .iter()
+        .take_while(|next| {
+            same_run(message, next)
+                && crate::util::day_key(message.timestamp) == crate::util::day_key(next.timestamp)
+        })
+        .any(|next| !bubbleless(palette, next))
+}
+
+/// Whether `next` continues the run `message` belongs to: the same side,
+/// and in a group the same sender.
+fn same_run(message: &Message, next: &Message) -> bool {
+    message.from_me == next.from_me && (message.from_me || message.sender == next.sender)
+}
+
 /// Draws a message bubble and its menu.
 fn bubble_frame(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
     show_sender: bool,
-    first_in_run: bool,
+    tailed: bool,
     max_width: f32,
     actions: &mut Vec<Action>,
 ) -> egui::Response {
     let palette = view.palette;
     let own = message.from_me;
-    let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
-    // Stickers and round video messages draw without a bubble.
-    let bare = matches!(
-        message.content,
-        Content::Sticker { .. } | Content::Video { note: true, .. }
-    );
-    let fill = if carousel || bare {
+    let fill = if bubbleless(&palette, message) {
         Color32::TRANSPARENT
     } else if own {
         palette.bubble_out
@@ -3325,7 +3625,7 @@ fn bubble_frame(
     let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::CLICK));
     // Painted once the contents are measured, beneath them.
     let backdrop = ui.painter().add(egui::Shape::Noop);
-    let tail = (first_in_run && fill != Color32::TRANSPARENT).then_some(if own {
+    let tail = (tailed && fill != Color32::TRANSPARENT).then_some(if own {
         widgets::Side::Right
     } else {
         widgets::Side::Left
@@ -3334,11 +3634,15 @@ fn bubble_frame(
     // the bubble closes under it as evenly as it opens above it.
     let over_picture = time_over_picture(message);
     let inner = Frame::new()
-        .inner_margin(Margin {
-            left: 10,
-            right: 10,
-            top: 6,
-            bottom: if over_picture { 6 } else { 5 },
+        .inner_margin(if bare_picture(&palette, message) {
+            Margin::ZERO
+        } else {
+            Margin {
+                left: 10,
+                right: 10,
+                top: 6,
+                bottom: if over_picture { 6 } else { 5 },
+            }
         })
         .show(ui, |ui| {
             ui.set_max_width(max_width);
@@ -3412,7 +3716,13 @@ fn bubble_frame(
     if fill != Color32::TRANSPARENT && ui.is_rect_visible(inner.response.rect) {
         ui.painter().set(
             backdrop,
-            widgets::bubble_shape(&palette, inner.response.rect, fill, tail),
+            widgets::bubble_shape(
+                &palette,
+                inner.response.rect,
+                fill,
+                tail,
+                ui.ctx().pixels_per_point(),
+            ),
         );
     }
     ui.ctx()
@@ -3848,6 +4158,25 @@ fn footer_width(ui: &egui::Ui, message: &Message) -> f32 {
 /// on a line of their own: a picture without a caption, as in WhatsApp.
 fn time_over_picture(message: &Message) -> bool {
     matches!(message.content, Content::Image { caption: None, .. })
+}
+
+/// Whether a picture stands without a bubble, as Messages draws a photo
+/// with nothing else in its message: it takes the bubble's round shape
+/// itself. A quote or the forwarded label keeps the bubble around it.
+fn bare_picture(palette: &Palette, message: &Message) -> bool {
+    palette.bubbles == theme::BubbleStyle::Messages
+        && time_over_picture(message)
+        && message.quoted.is_none()
+        && !message.forwarded
+}
+
+/// How round a picture's corners are: a bubble's, when it has none.
+fn picture_radius(palette: &Palette, message: &Message) -> f32 {
+    if bare_picture(palette, message) {
+        f32::from(widgets::MESSAGES_BUBBLE_RADIUS)
+    } else {
+        6.0
+    }
 }
 
 /// Space between a picture's edges and the time drawn over it: the scrim
@@ -6156,6 +6485,7 @@ fn picture(
     actions: &mut Vec<Action>,
 ) -> Rect {
     let palette = view.palette;
+    let radius = picture_radius(&palette, message);
     let (max_width, max_height) = match sticker {
         Some(_) => (STICKER_SIDE, STICKER_SIDE),
         None => (width.min(PICTURE_WIDTH), PICTURE_HEIGHT),
@@ -6178,7 +6508,7 @@ fn picture(
                         );
                     }
                     _ => {
-                        ui.painter().rect_filled(rect, 6.0, palette.surface);
+                        ui.painter().rect_filled(rect, radius, palette.surface);
                         theme::paint_icon(ui, Icon::Sticker, rect, 32.0, palette.secondary);
                     }
                 }
@@ -6224,7 +6554,7 @@ fn picture(
                 let response = ui.add(
                     image
                         .fit_to_exact_size(size)
-                        .corner_radius(if sticker.is_some() { 0.0 } else { 6.0 })
+                        .corner_radius(if sticker.is_some() { 0.0 } else { radius })
                         .sense(Sense::click()),
                 );
                 let rect = response.rect;
@@ -6253,7 +6583,7 @@ fn picture(
                 };
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                 if ui.is_rect_visible(rect) {
-                    ui.painter().rect_filled(rect, 6.0, palette.surface);
+                    ui.painter().rect_filled(rect, radius, palette.surface);
                     theme::paint_spinner(ui, rect, 22.0, palette.accent);
                 }
                 rect
@@ -6266,7 +6596,7 @@ fn picture(
                 };
                 let (rect, response) = ui.allocate_exact_size(size, Sense::click());
                 if ui.is_rect_visible(rect) {
-                    ui.painter().rect_filled(rect, 6.0, palette.surface);
+                    ui.painter().rect_filled(rect, radius, palette.surface);
                     theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, palette.danger);
                     ui.painter().text(
                         rect.center() + vec2(0.0, 24.0),
@@ -6295,13 +6625,13 @@ fn picture(
             Some(uri) => {
                 egui::Image::new(uri)
                     .fit_to_exact_size(size)
-                    .corner_radius(6.0)
+                    .corner_radius(radius)
                     .paint_at(ui, rect);
                 ui.painter()
-                    .rect_filled(rect, 6.0, Color32::from_black_alpha(60));
+                    .rect_filled(rect, radius, Color32::from_black_alpha(60));
             }
             None => {
-                ui.painter().rect_filled(rect, 6.0, palette.surface);
+                ui.painter().rect_filled(rect, radius, palette.surface);
             }
         }
         let disc = Rect::from_center_size(rect.center(), Vec2::splat(44.0));
@@ -7957,6 +8287,118 @@ mod reaction_tests {
             from_me,
             emoji: emoji.into(),
         }
+    }
+
+    /// The tail goes to a run's last bubble, past the messages drawn without
+    /// one after it, and only to one in the same run.
+    #[test]
+    fn the_tail_goes_to_the_last_bubble_of_a_run() {
+        let photo = Message {
+            id: "photo".into(),
+            content: Content::Image {
+                caption: None,
+                media: crate::model::Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    path: None,
+                    state: crate::model::MediaState::Idle,
+                },
+                motion: None,
+            },
+            ..with_reactions(Vec::new())
+        };
+        let text = with_reactions(Vec::new());
+        let mine = Message {
+            from_me: true,
+            ..with_reactions(Vec::new())
+        };
+        let messages = Palette::messages();
+        // Text, then a lone photo in the same run: the text keeps the tail.
+        let run = [text.clone(), photo.clone()];
+        assert!(last_bubble_of_run(&messages, &run, 0));
+        // Text, text: only the second.
+        let run = [text.clone(), text.clone()];
+        assert!(!last_bubble_of_run(&messages, &run, 0));
+        assert!(last_bubble_of_run(&messages, &run, 1));
+        // A photo, then text of the other side: the run ends, the text tails.
+        let run = [text.clone(), photo.clone(), mine, text.clone()];
+        assert!(last_bubble_of_run(&messages, &run, 0));
+        // WhatsApp frames the photo, so there it is the last bubble.
+        assert!(!last_bubble_of_run(
+            &Palette::dark(),
+            &[text.clone(), photo.clone()],
+            0
+        ));
+    }
+
+    /// The avatar Messages puts beside a run goes to its last message,
+    /// bubble or not, and a run ends with another sender or another day.
+    #[test]
+    fn a_run_ends_with_its_last_message() {
+        let from = |sender: &str, timestamp: i64| Message {
+            sender: sender.into(),
+            timestamp,
+            ..with_reactions(Vec::new())
+        };
+        let run = [
+            from("a", 0),
+            from("a", 60),
+            from("b", 120),
+            from("b", 2 * 86_400),
+        ];
+        assert!(!last_of_run(&run, 0));
+        assert!(last_of_run(&run, 1));
+        // Another day starts another run, from the same sender too.
+        assert!(last_of_run(&run, 2));
+        assert!(last_of_run(&run, 3));
+    }
+
+    /// Messages draws a photo alone in its message without a bubble, with
+    /// a bubble's corners; anything else in the message keeps the bubble.
+    #[test]
+    fn only_lone_pictures_stand_without_a_bubble_in_messages() {
+        let photo = |caption: Option<&str>| Message {
+            content: Content::Image {
+                caption: caption.map(Into::into),
+                media: crate::model::Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    path: None,
+                    state: crate::model::MediaState::Idle,
+                },
+                motion: None,
+            },
+            ..with_reactions(Vec::new())
+        };
+        let messages = Palette::messages();
+        assert!(bare_picture(&messages, &photo(None)));
+        assert_eq!(
+            picture_radius(&messages, &photo(None)),
+            f32::from(widgets::MESSAGES_BUBBLE_RADIUS)
+        );
+        assert!(bare_picture(&Palette::messages_light(), &photo(None)));
+        // WhatsApp's bubbles keep their frame around every picture.
+        assert!(!bare_picture(&Palette::dark(), &photo(None)));
+        assert_eq!(picture_radius(&Palette::dark(), &photo(None)), 6.0);
+        // A caption, a quote or the forwarded label keep the bubble.
+        assert!(!bare_picture(&messages, &photo(Some("Look"))));
+        let mut forwarded = photo(None);
+        forwarded.forwarded = true;
+        assert!(!bare_picture(&messages, &forwarded));
+        let mut quoting = photo(None);
+        quoting.quoted = Some(crate::model::Quoted {
+            id: "q".into(),
+            sender: "a@s.whatsapp.net".into(),
+            sender_name: None,
+            summary: "hi".into(),
+            mentions: Vec::new(),
+        });
+        assert!(!bare_picture(&messages, &quoting));
+        assert!(!bare_picture(&messages, &with_reactions(Vec::new())));
     }
 
     #[test]

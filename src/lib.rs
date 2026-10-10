@@ -7,6 +7,7 @@ pub mod app_lock;
 pub mod archive;
 pub mod audio;
 pub mod autostart;
+pub mod backdrop;
 pub mod backend;
 pub mod bidi;
 #[cfg(any(test, feature = "demo"))]

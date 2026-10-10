@@ -89,8 +89,18 @@ name or description, in the interface language or in English.
 
 **Appearance**
 
-- **Theme**: dark, light, follow the system, or a local JSON palette from the
-  themes folder. See [Making a theme]({{ '/themes/' | relative_url }}).
+- **Theme**: dark, light, follow the system, Messages, or a local JSON
+  palette from the themes folder. See [Making a theme]({{ '/themes/' | relative_url }}).
+  **Messages** follows the system's light or dark appearance in macOS's
+  greys, with bubbles shaped as Messages draws them, a frosted header that
+  messages scroll under, and photos without a bubble. Its sidebar and
+  conversation show the desktop through the window where the platform
+  offers a material: AppKit's on macOS, Mica on Windows 11 22H2 and later,
+  and Hyprland's blur on Linux. Elsewhere, including other Linux desktops,
+  where an unblurred desktop behind the sidebar would cost its text
+  contrast, and in a window opened before choosing it on Windows or Linux,
+  the window is opaque in the theme's colours; it turns translucent from
+  the next window.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.
