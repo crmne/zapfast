@@ -18,6 +18,7 @@ use whatsapp_rust::media::{
     AudioOptions, DocumentOptions, ImageOptions, VideoOptions, audio_message, document_message,
     image_message, video_message,
 };
+use whatsapp_rust::pair::NATIVE_CAMERA_DEEP_LINK_PREFIX;
 use whatsapp_rust::pair_code::PairCodeOptions;
 use whatsapp_rust::prelude::{
     Bot, BotHandle, Client, Jid, MessageBuilderExt, MessageExt, MessageField, SendOptions, wa,
@@ -2400,7 +2401,8 @@ impl Worker {
         use wa_events::Event as E;
         match &*event {
             E::PairingQrCode(qr) => {
-                self.qr = Some(qr.code.clone());
+                // The prefix lets the phone camera open WhatsApp at Linked devices.
+                self.qr = Some(format!("{NATIVE_CAMERA_DEEP_LINK_PREFIX}{}", qr.code));
                 let status = self.unlinked();
                 self.set_status(status);
             }
@@ -14129,6 +14131,22 @@ mod receipt_tests {
             .set_archived_at(&id, false, time.timestamp_millis() + 1)
             .unwrap();
         assert!(!worker.archive.chat(PEER).unwrap().unwrap().archived);
+    }
+
+    #[tokio::test]
+    async fn pairing_qr_opens_linked_devices_from_a_phone_camera() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let qr = wa_events::PairingQrCode::builder()
+            .code("ref,noise,identity,adv,0".into())
+            .timeout(std::time::Duration::from_secs(20))
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::PairingQrCode(qr)))
+            .await;
+        assert_eq!(
+            worker.qr.as_deref(),
+            Some("https://wa.me/settings/linked_devices#ref,noise,identity,adv,0")
+        );
     }
 
     #[test]
