@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use whatsapp_rust::download::MediaType;
+use whatsapp_rust::features::PresencePolicy;
 use whatsapp_rust::features::message_edit::{
     SecretEncKind, decrypt_secret_encrypted_with_fallback, extract_secret_encrypted,
 };
@@ -704,6 +705,20 @@ const PRIVACY_GRACE: Duration = Duration::from_secs(10);
 
 /// How long ZapFast stays "available" after the window loses focus.
 const PRESENCE_LINGER: Duration = Duration::from_secs(10);
+
+/// The window owns every presence transition (#461). Left at the default
+/// `Automatic` policy, the client announces "available" whenever it connects
+/// or the push name syncs, so an account whose window sits in the tray still
+/// shows online and the phone holds back its own notifications. ZapFast
+/// announces through `Command::SetOnline` instead.
+///
+/// Public so the integration test in `tests/presence.rs` drives the same
+/// builder step `start_bot` uses.
+pub fn host_owned_presence<B, T, H, R>(
+    builder: whatsapp_rust::bot::BotBuilder<B, T, H, R>,
+) -> whatsapp_rust::bot::BotBuilder<B, T, H, R> {
+    builder.with_presence_policy(PresencePolicy::Manual)
+}
 
 /// Waits longer after each failed lock-state recovery, so a collection the
 /// server keeps refusing is not rebuilt every few seconds.
@@ -1690,8 +1705,7 @@ impl Worker {
             }
         };
         let sender = self.wa_sender.clone();
-        let builder = Bot::builder()
-            .with_backend(store)
+        let builder = host_owned_presence(Bot::builder().with_backend(store))
             .with_watched_ab_props([abprops::web::AURA_PINNED_CHATS_BENEFIT_ACTIVE]);
         let builder = match crate::proxy::for_whatsapp() {
             Some(proxy) => {

@@ -17,7 +17,7 @@ pub(crate) mod sticker_import;
 mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
-pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS};
+pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS, host_owned_presence};
 
 /// Result of a deletion request, without protocol errors crossing the bridge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
