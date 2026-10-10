@@ -189,8 +189,11 @@ protocol. These notes are for coding agents and new contributors.
   with the same `mp4` and `openh264` pieces: a thread decodes from the
   keyframe before the start (openh264 must not flush after each packet or
   B-frames stop it) and streams scaled frames with presentation times; the
-  interface thread shows the due frame in one texture. rodio's symphonia
-  decodes the AAC track and its position steers the clock. Unsupported formats
+  interface thread shows the due frame in one texture. `mp4` reads the AAC
+  track too, symphonia's AAC decoder decodes it, and rodio plays it; its
+  position steers the clock. rodio's own MP4 reader (symphonia 0.5's isomp4)
+  is not used for it: it refuses WhatsApp's videos, whose `esds` carries a
+  custom SLConfigDescriptor (#265). Unsupported formats
   go to the system player. Playback reads a downloaded local file; the shared
   64 MiB attachment download limit applies to automatic and manual downloads,
   not to the video decoder. `Action::PlayVideo/SeekVideo/ToggleVideoSound` drive
