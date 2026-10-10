@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use whatsapp_rust::download::MediaType;
+use whatsapp_rust::features::PresencePolicy;
 use whatsapp_rust::features::message_edit::{
     SecretEncKind, decrypt_secret_encrypted_with_fallback, extract_secret_encrypted,
 };
@@ -532,6 +533,9 @@ pub async fn run(
         online_wanted: false,
         online_changed: Instant::now(),
         online_sent: None,
+        presence_in_flight: false,
+        presence_refresh_pending: false,
+        presence_generation: 0,
         pending_older: HashMap::new(),
         older_warned: HashSet::new(),
         pending_avatars: HashMap::new(),
@@ -598,6 +602,11 @@ pub async fn run(
                 RuntimeEvent::FavoriteChatsRead { generation, complete } => {
                     worker.favorite_chats_read(generation, complete);
                 }
+                RuntimeEvent::PresenceSent {
+                    generation,
+                    online,
+                    succeeded,
+                } => worker.presence_sent(generation, online, succeeded),
             },
             _ = async {
                 match deadline {
@@ -634,6 +643,11 @@ enum RuntimeEvent {
     MessageRemoval {
         generation: u64,
         event: Arc<wa_events::Event>,
+    },
+    PresenceSent {
+        generation: u64,
+        online: bool,
+        succeeded: bool,
     },
     PreferencesRecovered {
         generation: u64,
@@ -704,6 +718,20 @@ const PRIVACY_GRACE: Duration = Duration::from_secs(10);
 
 /// How long ZapFast stays "available" after the window loses focus.
 const PRESENCE_LINGER: Duration = Duration::from_secs(10);
+
+/// The window owns every presence transition (#461). Left at the default
+/// `Automatic` policy, the client announces "available" whenever it connects
+/// or the push name syncs, so an account whose window sits in the tray still
+/// shows online and the phone holds back its own notifications. ZapFast
+/// announces through `Command::SetOnline` instead.
+///
+/// Public so the integration test in `tests/presence.rs` drives the same
+/// builder step `start_bot` uses.
+pub fn host_owned_presence<B, T, H, R>(
+    builder: whatsapp_rust::bot::BotBuilder<B, T, H, R>,
+) -> whatsapp_rust::bot::BotBuilder<B, T, H, R> {
+    builder.with_presence_policy(PresencePolicy::Manual)
+}
 
 /// Waits longer after each failed lock-state recovery, so a collection the
 /// server keeps refusing is not rebuilt every few seconds.
@@ -837,8 +865,14 @@ struct Worker {
     online_wanted: bool,
     /// When `online_wanted` last changed.
     online_changed: Instant,
-    /// The presence last announced on this connection.
+    /// The presence last confirmed on this connection.
     online_sent: Option<bool>,
+    /// A presence request currently awaiting its result.
+    presence_in_flight: bool,
+    /// Push-name sync can trigger a library-owned availability announcement.
+    presence_refresh_pending: bool,
+    /// Invalidates completions from an older connection.
+    presence_generation: u64,
     /// Pending phone-history requests by chat.
     pending_older: HashMap<ChatId, OlderRequest>,
     /// Chats already told that the phone did not answer; cleared when the
@@ -1690,8 +1724,7 @@ impl Worker {
             }
         };
         let sender = self.wa_sender.clone();
-        let builder = Bot::builder()
-            .with_backend(store)
+        let builder = host_owned_presence(Bot::builder().with_backend(store))
             .with_watched_ab_props([abprops::web::AURA_PINNED_CHATS_BENEFIT_ACTIVE]);
         let builder = match crate::proxy::for_whatsapp() {
             Some(proxy) => {
@@ -1758,15 +1791,15 @@ impl Worker {
         }
         // Coming back is announced at once; leaving waits for the tick, so a
         // quick switch to another window does not flap.
-        if online {
-            self.announce_presence(true);
+        if online || self.unavailable_due() {
+            self.announce_presence(online);
         }
     }
 
-    /// Announces "unavailable" once the window has stayed away long enough.
+    /// Announces the current state, once the offline linger has elapsed.
     fn settle_presence(&mut self) {
-        if self.unavailable_due() {
-            self.announce_presence(false);
+        if self.online_wanted || self.unavailable_due() {
+            self.announce_presence(self.online_wanted);
         }
     }
 
@@ -1779,13 +1812,18 @@ impl Worker {
     /// WhatsApp holds back push notifications on the phone while a linked
     /// device is available, as WhatsApp Web does while its tab has focus.
     fn announce_presence(&mut self, online: bool) {
-        if self.online_sent == Some(online) || !matches!(self.status, LinkStatus::Connected) {
+        if self.online_sent == Some(online)
+            || self.presence_in_flight
+            || !matches!(self.status, LinkStatus::Connected)
+        {
             return;
         }
         let Some(client) = self.client.clone() else {
             return;
         };
-        self.online_sent = Some(online);
+        self.presence_in_flight = true;
+        let generation = self.presence_generation;
+        let sender = self.wa_sender.clone();
         tokio::spawn(async move {
             let presence = client.presence();
             let result = if online {
@@ -1793,10 +1831,39 @@ impl Worker {
             } else {
                 presence.set_unavailable().await
             };
-            if let Err(error) = result {
+            if let Err(error) = &result {
                 log::debug!("presence not announced: {error}");
             }
+            let _ = sender.send(RuntimeEvent::PresenceSent {
+                generation,
+                online,
+                succeeded: result.is_ok(),
+            });
         });
+    }
+
+    fn presence_sent(&mut self, generation: u64, online: bool, succeeded: bool) {
+        if generation != self.presence_generation {
+            return;
+        }
+        self.presence_in_flight = false;
+        if self.presence_refresh_pending {
+            self.presence_refresh_pending = false;
+            self.online_sent = None;
+            self.announce_presence(self.online_wanted);
+        } else if succeeded {
+            self.online_sent = Some(online);
+            self.settle_presence();
+        }
+    }
+
+    fn push_name_synced(&mut self) {
+        self.online_sent = None;
+        if self.presence_in_flight {
+            self.presence_refresh_pending = true;
+        } else {
+            self.announce_presence(self.online_wanted);
+        }
     }
 
     fn refresh_legacy_preferences(&mut self) {
@@ -2460,7 +2527,10 @@ impl Worker {
                 if let Some(client) = self.client.clone() {
                     let me = self.me_pn.clone().and_then(|pn| Self::jid_of(&pn));
                     let commands = self.commands.clone();
+                    self.presence_generation = self.presence_generation.wrapping_add(1);
                     self.online_sent = None;
+                    self.presence_in_flight = false;
+                    self.presence_refresh_pending = false;
                     self.announce_presence(self.online_wanted);
                     spawn_pin_limit_check(client.clone(), self.events.clone(), self.waker.clone());
                     let channels = self.commands.clone();
@@ -2756,6 +2826,7 @@ impl Worker {
                 self.me_name = Some(update.new_name.clone());
                 let _ = self.archive.set_meta("me_name", &update.new_name);
                 self.emit(self.me_event());
+                self.push_name_synced();
             }
             E::OfflineSyncCompleted(_) => self.emit_chats(),
             _ => {}
@@ -11300,6 +11371,78 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn failed_presence_send_retries_when_the_window_state_repeats() {
+        let (mut worker, _events, _, mut wa_events) = receipt_tests::worker();
+        let directory = tempfile::tempdir().unwrap();
+        let store = whatsapp_rust::store::SqliteStore::new(
+            directory.path().join("session.db").to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        let bot = host_owned_presence(Bot::builder().with_backend(store))
+            .build()
+            .await
+            .unwrap();
+        let client = bot.client();
+        client
+            .persistence_manager()
+            .process_command(whatsapp_rust::store::commands::DeviceCommand::SetPushName(
+                "ZapFast".to_owned(),
+            ))
+            .await;
+        worker.client = Some(client);
+        worker.online_wanted = true;
+        worker.online_sent = Some(true);
+        worker.push_name_synced();
+        assert!(
+            worker.presence_in_flight,
+            "push-name sync reannounces even an already confirmed state"
+        );
+
+        let RuntimeEvent::PresenceSent {
+            generation,
+            online,
+            succeeded,
+        } = tokio::time::timeout(Duration::from_secs(1), wa_events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("presence attempt should report its result");
+        };
+        assert!(online);
+        assert!(!succeeded, "an unconnected client cannot send presence");
+        worker.presence_sent(generation, online, succeeded);
+        assert_eq!(worker.online_sent, None, "failed sends are not recorded");
+
+        worker.set_online(true);
+        assert!(
+            worker.presence_in_flight,
+            "repeating the wanted state retries an unsuccessful announcement"
+        );
+
+        worker.push_name_synced();
+        assert!(worker.presence_refresh_pending);
+        let RuntimeEvent::PresenceSent {
+            generation,
+            online,
+            succeeded,
+        } = tokio::time::timeout(Duration::from_secs(1), wa_events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("presence retry should report its result");
+        };
+        worker.presence_sent(generation, online, succeeded);
+        assert!(
+            worker.presence_in_flight,
+            "push-name sync reannounces after an overlapping presence request"
+        );
+        assert!(!worker.presence_refresh_pending);
+    }
+
     #[test]
     fn leaving_the_window_waits_before_going_unavailable() {
         let (mut worker, _events, _, _) = receipt_tests::worker();
@@ -12465,6 +12608,9 @@ mod receipt_tests {
             online_wanted: false,
             online_changed: Instant::now(),
             online_sent: None,
+            presence_in_flight: false,
+            presence_refresh_pending: false,
+            presence_generation: 0,
             pending_older: HashMap::new(),
             older_warned: HashSet::new(),
             pending_avatars: HashMap::new(),
