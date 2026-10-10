@@ -14,8 +14,8 @@ use crate::i18n::Locale;
 use crate::image_preview::PreviewState;
 use crate::model::{
     AccountId, Action, Chat, ChatFilter, ChatId, Contact, Content, Delivery, Dialog, Gif, GifError,
-    Label, Media, MediaState, Message, Page, PickerTab, Scroll, SidebarDisplayMode, StickerPack,
-    StickerShelf, Toast, ToastKind,
+    Label, Media, MediaState, Message, OutboundFile, Page, PickerTab, Scroll, SendMode,
+    SidebarDisplayMode, StickerPack, StickerShelf, Toast, ToastKind,
 };
 use crate::nav::{History, Location};
 use crate::paths::AppDirs;
@@ -684,8 +684,22 @@ pub enum Pending {
         height: usize,
         rgba: std::sync::Arc<Vec<u8>>,
         texture: Option<egui::TextureHandle>,
+        mode: SendMode,
     },
-    File(PathBuf),
+    File {
+        path: PathBuf,
+        mode: SendMode,
+    },
+}
+
+/// Staged or refused attachments kept in memory for one account's chat.
+#[derive(Default)]
+pub(crate) struct AttachmentDraft {
+    pending: Vec<Pending>,
+    reply_to: Option<String>,
+    /// A refused send owns its caption, including an explicitly empty one.
+    /// Parked attachments use the ordinary composer draft instead.
+    caption: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -695,11 +709,56 @@ pub(crate) struct ComposerMention {
 }
 
 impl Pending {
+    pub fn file(path: PathBuf) -> Self {
+        Self::File {
+            path,
+            mode: SendMode::Auto,
+        }
+    }
+
+    pub fn file_with_mode(path: PathBuf, mode: SendMode) -> Self {
+        Self::File { path, mode }
+    }
+
+    pub fn picture(width: usize, height: usize, rgba: Vec<u8>) -> Self {
+        Self::Picture {
+            width,
+            height,
+            rgba: std::sync::Arc::new(rgba),
+            texture: None,
+            mode: SendMode::Auto,
+        }
+    }
+
+    pub fn picture_with_mode(width: usize, height: usize, rgba: Vec<u8>, mode: SendMode) -> Self {
+        Self::Picture {
+            width,
+            height,
+            rgba: std::sync::Arc::new(rgba),
+            texture: None,
+            mode,
+        }
+    }
+
+    pub fn mode(&self) -> SendMode {
+        match self {
+            Self::Picture { mode, .. } => *mode,
+            Self::File { mode, .. } => *mode,
+        }
+    }
+
     /// Whether the composer can preview the file as an image.
     pub fn is_picture_file(path: &std::path::Path) -> bool {
         mime_guess2::from_path(path)
             .first()
             .is_some_and(|mime| mime.type_() == "image")
+    }
+
+    /// Whether automatic routing can send this file as a photo.
+    pub fn can_send_as_photo(path: &std::path::Path) -> bool {
+        mime_guess2::from_path(path)
+            .first()
+            .is_some_and(|mime| crate::model::is_photo_mime(mime.essence_str()))
     }
 }
 
@@ -1210,6 +1269,7 @@ impl App {
 
     fn park_composer(&mut self) {
         if let Some(previous) = self.open_chat.clone() {
+            self.park_attachments(&previous);
             let draft = std::mem::take(&mut self.composer);
             if self.is_untouched_prefill(&previous, &draft) {
                 // A link's text is not the reader's, so the draft they wrote
@@ -1241,6 +1301,7 @@ impl App {
         if let Some(id) = self.open_chat.clone() {
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
+            self.restore_attachments(&id);
         } else {
             self.composer.clear();
             self.composer_mentions.clear();
@@ -1774,6 +1835,7 @@ impl App {
         }
         self.drafts.remove(id);
         self.draft_mentions.remove(id);
+        self.attachment_drafts.remove(id);
         self.typing.remove(id);
         self.unread_kept.remove(id);
         if self.scroll_chat_into_view.as_deref() == Some(id) {
@@ -3141,9 +3203,12 @@ impl App {
                 // Unsent text belongs to the account that was unlinked.
                 self.drafts.clear();
                 self.draft_mentions.clear();
+                self.attachment_drafts.clear();
                 if live {
                     self.composer.clear();
                     self.composer_mentions.clear();
+                    self.pending.clear();
+                    self.reply_to = None;
                 }
                 self.link = status;
                 // The password guarded chats that are gone now; a forgotten
@@ -3250,6 +3315,7 @@ impl App {
         // Clearing a chat also removes its stored draft.
         self.drafts.remove(id);
         self.draft_mentions.remove(id);
+        self.attachment_drafts.remove(id);
         self.search_hits
             .retain(|message| message.chat != id || message.timestamp > through);
         // Nothing earlier is left here, and the phone no longer has it either.
@@ -3378,6 +3444,9 @@ impl App {
             self.leave_chat(id);
             return;
         }
+        if self.open_chat.as_deref() == Some(id) {
+            self.park_attachments(id);
+        }
         if self.open_chat.as_deref() == Some(id)
             && self.editing.is_none()
             && self.composer.is_empty()
@@ -3412,11 +3481,20 @@ impl App {
         unsent: Unsent,
         reason: Refusal,
     ) {
-        let open = self.open_chat.as_deref() == Some(chat.as_str());
+        // A late completion must not restore data after this account unlinked.
+        if matches!(self.link, LinkStatus::LoggedOut) {
+            return;
+        }
+        let open = !self.events_hidden && self.open_chat.as_deref() == Some(chat.as_str());
         // Re-arm the reply banner, unless the user has moved on to another
         // reply or an edit since.
-        if open && quoting.is_some() && self.reply_to.is_none() && self.editing.is_none() {
-            self.reply_to = quoting;
+        if open
+            && !matches!(&unsent, Unsent::Files { .. } | Unsent::Image { .. })
+            && quoting.is_some()
+            && self.reply_to.is_none()
+            && self.editing.is_none()
+        {
+            self.reply_to = quoting.clone();
             self.focus_composer = true;
         }
         match unsent {
@@ -3425,27 +3503,42 @@ impl App {
                 self.unsent_voice = Some((chat, samples));
                 self.focus_composer = open;
             }
-            Unsent::Files { paths, caption } => {
+            Unsent::Files { files, caption } => {
+                self.retain_attachments(
+                    &chat,
+                    files.into_iter().map(|file| Pending::File {
+                        path: file.path,
+                        mode: file.mode,
+                    }),
+                    quoting,
+                    caption.unwrap_or_default(),
+                );
                 if open {
-                    self.pending.extend(paths.into_iter().map(Pending::File));
+                    self.restore_attachments(&chat);
                 }
-                self.restore_text(&chat, caption.unwrap_or_default());
             }
             Unsent::Image {
                 width,
                 height,
                 rgba,
                 caption,
+                mode,
             } => {
-                if open {
-                    self.pending.push(Pending::Picture {
+                self.retain_attachments(
+                    &chat,
+                    [Pending::Picture {
                         width: width as usize,
                         height: height as usize,
                         rgba: std::sync::Arc::new(rgba),
                         texture: None,
-                    });
+                        mode,
+                    }],
+                    quoting,
+                    caption.unwrap_or_default(),
+                );
+                if open {
+                    self.restore_attachments(&chat);
                 }
-                self.restore_text(&chat, caption.unwrap_or_default());
             }
             Unsent::Sticker | Unsent::Gif => {}
         }
@@ -3462,13 +3555,93 @@ impl App {
         self.toast_error(message.into_owned());
     }
 
+    /// Queues each refused batch with its own caption and reply in its account.
+    fn retain_attachments(
+        &mut self,
+        chat: &str,
+        pending: impl IntoIterator<Item = Pending>,
+        quoting: Option<String>,
+        caption: String,
+    ) {
+        self.attachment_drafts
+            .entry(chat.to_owned())
+            .or_default()
+            .push_back(AttachmentDraft {
+                pending: pending.into_iter().collect(),
+                reply_to: quoting,
+                caption: Some(caption),
+            });
+    }
+
+    /// Parks the visible attachments before changing account or conversation.
+    fn park_attachments(&mut self, chat: &str) {
+        if !self.pending.is_empty() {
+            let mut pending = std::mem::take(&mut self.pending);
+            for item in &mut pending {
+                if let Pending::Picture { texture, .. } = item {
+                    *texture = None;
+                }
+            }
+            let quoting = self.reply_to.take();
+            // The batch being edited returns before any later refused sends.
+            self.attachment_drafts
+                .entry(chat.to_owned())
+                .or_default()
+                .push_front(AttachmentDraft {
+                    pending,
+                    reply_to: quoting,
+                    caption: None,
+                });
+        }
+    }
+
+    /// Restores one batch when the composer is free, keeping send metadata apart.
+    fn restore_attachments(&mut self, chat: &str) {
+        if self.events_hidden
+            || self.app_lock.is_locked()
+            || !self.pending.is_empty()
+            || self.editing.is_some()
+        {
+            return;
+        }
+        let refused = self
+            .attachment_drafts
+            .get(chat)
+            .and_then(|queue| queue.front())
+            .is_some_and(|draft| draft.caption.is_some());
+        if refused && (!self.composer.trim().is_empty() || self.reply_to.is_some()) {
+            return;
+        }
+        let Some(queue) = self.attachment_drafts.get_mut(chat) else {
+            return;
+        };
+        let Some(draft) = queue.pop_front() else {
+            return;
+        };
+        if queue.is_empty() {
+            self.attachment_drafts.remove(chat);
+        }
+        self.pending = draft.pending;
+        if let Some(caption) = draft.caption {
+            self.composer = caption;
+            self.composer_mentions.clear();
+            self.emoji_start = None;
+            self.mention_start = None;
+            self.store_draft(chat, &self.composer);
+        }
+        if self.reply_to.is_none() {
+            self.reply_to = draft.reply_to;
+        }
+        self.focus_composer = true;
+    }
+
     /// Returns refused text to its chat's composer, or to its stored draft
     /// when another chat is open. Text typed since the send is kept.
     fn restore_text(&mut self, chat: &str, text: String) {
         if text.trim().is_empty() {
             return;
         }
-        if self.open_chat.as_deref() == Some(chat) {
+        if !self.events_hidden && self.open_chat.as_deref() == Some(chat) {
             if self.composer.trim().is_empty() && self.editing.is_none() {
                 self.composer = text;
                 self.composer_mentions.clear();
@@ -3781,6 +3954,7 @@ impl App {
             self.emoji_jump = None;
             self.jump_highlight = None;
             if let Some(previous) = self.open_chat.take() {
+                self.park_attachments(&previous);
                 let draft = std::mem::take(&mut self.composer);
                 // Text a link brought, and the reader never changed, is not
                 // their draft: the one they wrote stays theirs. An edit of it
@@ -3829,6 +4003,7 @@ impl App {
         self.emoji_start = None;
         self.mention_start = None;
         self.open_chat = Some(id.clone());
+        self.restore_attachments(&id);
         self.page = Page::Chats;
         self.scroll_to_bottom = true;
         self.at_bottom = true;
@@ -4012,7 +4187,7 @@ impl App {
             return;
         }
         for path in paths {
-            self.pending.push(Pending::File(path));
+            self.pending.push(Pending::file(path));
         }
         self.focus_composer = true;
     }
@@ -4035,8 +4210,20 @@ impl App {
                     width,
                     height,
                     rgba,
+                    mode,
                     ..
                 } => {
+                    // Flush preceding disk files before a pasted picture so the
+                    // first staged attachment keeps the caption and reply.
+                    if !files.is_empty() {
+                        self.backend.send(Command::SendFiles {
+                            chat: chat.clone(),
+                            files: std::mem::take(&mut files),
+                            caption: caption.take(),
+                            mentions: std::mem::take(&mut mentions),
+                            quoting: quoting.take(),
+                        });
+                    }
                     self.backend.send(Command::SendImage {
                         chat: chat.clone(),
                         width: width as u32,
@@ -4045,15 +4232,16 @@ impl App {
                         caption: caption.take(),
                         mentions: std::mem::take(&mut mentions),
                         quoting: quoting.take(),
+                        mode,
                     });
                 }
-                Pending::File(path) => files.push(path),
+                Pending::File { path, mode } => files.push(OutboundFile { path, mode }),
             }
         }
         if !files.is_empty() {
             self.backend.send(Command::SendFiles {
                 chat,
-                paths: files,
+                files,
                 caption: caption.take(),
                 mentions,
                 quoting: quoting.take(),
@@ -4078,7 +4266,7 @@ impl App {
         ));
         self.backend.send(Command::SendFiles {
             chat,
-            paths,
+            files: paths.into_iter().map(OutboundFile::auto).collect(),
             caption: None,
             mentions: Vec::new(),
             quoting: None,
@@ -4310,6 +4498,13 @@ impl App {
         // A frame with no queued action still fixes the opening place, so the
         // first navigation has somewhere to return to.
         self.record_location();
+        // Sending or clearing the current draft makes room for the next batch.
+        if !self.attachment_drafts.is_empty()
+            && self.pending.is_empty()
+            && let Some(chat) = self.open_chat.clone()
+        {
+            self.restore_attachments(&chat);
+        }
     }
 
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
@@ -4472,6 +4667,7 @@ impl App {
             }
             Action::CloseChat => {
                 if let Some(chat) = self.open_chat.take() {
+                    self.park_attachments(&chat);
                     self.stop_composing(&chat);
                     let draft = std::mem::take(&mut self.composer);
                     if self.is_untouched_prefill(&chat, &draft) {
@@ -4947,6 +5143,23 @@ impl App {
             }
             Action::SendFiles(paths) => self.stage_files(paths),
             Action::SendPending { chat, caption } => self.send_pending(chat, caption),
+            Action::SetPendingMode { index, mode } => {
+                if let Some(pending) = self.pending.get_mut(index) {
+                    match pending {
+                        Pending::File { mode: current, .. }
+                        | Pending::Picture { mode: current, .. } => *current = mode,
+                    }
+                }
+            }
+            Action::TogglePendingMode(index) => {
+                if let Some(pending) = self.pending.get_mut(index) {
+                    match pending {
+                        Pending::File { mode, .. } | Pending::Picture { mode, .. } => {
+                            *mode = mode.toggle()
+                        }
+                    }
+                }
+            }
             Action::RemovePending(index) => {
                 if index < self.pending.len() {
                     self.pending.remove(index);
@@ -5306,12 +5519,7 @@ impl App {
             } => {
                 // Stage the files so the user can add a caption.
                 if self.open_chat.is_some() {
-                    self.pending.push(Pending::Picture {
-                        width,
-                        height,
-                        rgba: std::sync::Arc::new(rgba),
-                        texture: None,
-                    });
+                    self.pending.push(Pending::picture(width, height, rgba));
                     self.focus_composer = true;
                 }
             }
@@ -8415,7 +8623,8 @@ mod tests {
         assert_eq!(image_reads, 0, "the icon picture is never read");
         assert!(matches!(
             app.pending.as_slice(),
-            [Pending::File(first), Pending::File(second)] if *first == pdf && *second == zip
+            [Pending::File { path: first, .. }, Pending::File { path: second, .. }]
+                if *first == pdf && *second == zip
         ));
         assert_eq!(app.composer, "caption", "the file name is not pasted");
     }
@@ -11009,13 +11218,8 @@ mod tests {
         let chat = "fixture@s.whatsapp.net";
         app.open_chat = Some(chat.into());
         app.reply_to = Some("original".into());
-        app.pending.push(Pending::Picture {
-            width: 1,
-            height: 1,
-            rgba: std::sync::Arc::new(vec![1, 2, 3, 4]),
-            texture: None,
-        });
-        app.pending.push(Pending::File("/fixture/a.pdf".into()));
+        app.pending.push(Pending::picture(1, 1, vec![1, 2, 3, 4]));
+        app.pending.push(Pending::file("/fixture/a.pdf".into()));
         app.apply(
             Action::SendPending {
                 chat: chat.into(),
@@ -11057,9 +11261,10 @@ mod tests {
                 height: 1,
                 rgba: vec![1, 2, 3, 4],
                 caption: Some("Caption fixture".into()),
+                mode: SendMode::Auto,
             },
             Unsent::Files {
-                paths: vec!["/fixture/a.pdf".into()],
+                files: vec![OutboundFile::auto(PathBuf::from("/fixture/a.pdf"))],
                 caption: None,
             },
             Unsent::Gif,
@@ -11076,13 +11281,725 @@ mod tests {
         app.handle_events();
         assert!(matches!(
             app.pending.as_slice(),
-            [Pending::Picture { width: 1, height: 1, .. }, Pending::File(path)]
-                if path == std::path::Path::new("/fixture/a.pdf")
+            [Pending::Picture {
+                width: 1,
+                height: 1,
+                ..
+            }]
         ));
         assert_eq!(app.composer, "Caption fixture");
         assert_eq!(app.reply_to.as_deref(), Some("original"));
+        assert_eq!(app.attachment_drafts[chat].len(), 1);
         // Repeats of one error share a toast.
         assert_eq!(error_toasts(&app).len(), 1);
+    }
+
+    #[test]
+    fn photo_mode_is_available_only_for_formats_sent_as_photos() {
+        for name in [
+            "photo.jpg",
+            "photo.jpeg",
+            "photo.png",
+            "photo.webp",
+            "photo.bmp",
+            "photo.tif",
+            "photo.tiff",
+        ] {
+            assert!(
+                Pending::can_send_as_photo(std::path::Path::new(name)),
+                "{name}"
+            );
+        }
+        for name in ["animation.gif", "drawing.svg", "photo.heic", "notes.pdf"] {
+            assert!(
+                !Pending::can_send_as_photo(std::path::Path::new(name)),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_pending_attachments_keep_modes_and_caption_on_the_first() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.reply_to = Some("original".into());
+        app.pending = vec![
+            Pending::file_with_mode("/fixture/first.png".into(), SendMode::Document),
+            Pending::file("/fixture/second.jpg".into()),
+            Pending::picture_with_mode(1, 1, vec![1, 2, 3, 4], SendMode::Document),
+            Pending::file("/fixture/last.pdf".into()),
+            Pending::picture(1, 1, vec![5, 6, 7, 8]),
+        ];
+        app.apply(
+            Action::SendPending {
+                chat: chat.into(),
+                caption: "Caption fixture".into(),
+            },
+            &ctx,
+        );
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(matches!(sent.as_slice(), [
+            Command::SendFiles { chat: first_chat, files: first, caption: Some(caption), quoting: Some(quote), .. },
+            Command::SendImage { chat: image_chat, mode: SendMode::Document, caption: None, quoting: None, rgba, .. },
+            Command::SendFiles { chat: last_chat, files: last, caption: None, quoting: None, .. },
+            Command::SendImage { chat: last_image_chat, mode: SendMode::Auto, caption: None, quoting: None, .. },
+        ] if first_chat == chat && image_chat == chat && last_chat == chat && last_image_chat == chat
+            && caption == "Caption fixture" && quote == "original"
+            && *first == vec![OutboundFile { path: "/fixture/first.png".into(), mode: SendMode::Document }, OutboundFile::auto("/fixture/second.jpg".into())]
+            && *last == vec![OutboundFile::auto("/fixture/last.pdf".into())]
+            && *rgba == vec![1, 2, 3, 4]));
+        assert!(app.pending.is_empty());
+        assert!(app.reply_to.is_none());
+    }
+
+    #[test]
+    fn a_hidden_account_refusal_does_not_restore_attachments_into_the_visible_composer() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = two_accounts(root.path());
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.accounts[1].backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        app.accounts[0].open_chat = Some(chat.into());
+        app.accounts[1].open_chat = Some(chat.into());
+        app.pending
+            .push(Pending::file("/fixture/visible.jpg".into()));
+        app.focus_composer = false;
+        for unsent in [
+            Unsent::Files {
+                files: vec![OutboundFile {
+                    path: "/fixture/hidden.png".into(),
+                    mode: SendMode::Document,
+                }],
+                caption: Some("Hidden caption".into()),
+            },
+            Unsent::Image {
+                width: 1,
+                height: 1,
+                rgba: vec![1, 2, 3, 4],
+                caption: None,
+                mode: SendMode::Document,
+            },
+        ] {
+            events
+                .send(refused(
+                    chat,
+                    Some("hidden-reply"),
+                    unsent,
+                    Refusal::Offline,
+                ))
+                .unwrap();
+        }
+        app.handle_events();
+        assert!(app.composer.is_empty());
+        assert!(app.reply_to.is_none());
+        assert!(!app.focus_composer);
+        assert!(
+            matches!(app.pending.as_slice(), [Pending::File { path, mode: SendMode::Auto }] if path == std::path::Path::new("/fixture/visible.jpg"))
+        );
+        assert_eq!(app.accounts[1].attachment_drafts[chat].len(), 2);
+        assert_eq!(
+            app.accounts[1].attachment_drafts[chat][0]
+                .caption
+                .as_deref(),
+            Some("Hidden caption")
+        );
+        assert!(!app.accounts[1].drafts.contains_key(chat));
+        assert!(!app.accounts[0].drafts.contains_key(chat));
+
+        // Returning restores the first batch, even though both accounts
+        // remember the same chat identifier. The second batch stays queued.
+        let hidden = app.accounts[1].id.clone();
+        let visible = app.accounts[0].id.clone();
+        app.switch_account(&hidden);
+        assert_eq!(app.composer, "Hidden caption");
+        assert_eq!(app.reply_to.as_deref(), Some("hidden-reply"));
+        assert!(matches!(
+            app.pending.as_slice(),
+            [Pending::File { path, mode: SendMode::Document }]
+                if path == std::path::Path::new("/fixture/hidden.png")
+        ));
+        assert_eq!(app.attachment_drafts[chat].len(), 1);
+
+        // A second switch keeps the recovered attachments with their account.
+        app.switch_account(&visible);
+        assert!(
+            matches!(app.pending.as_slice(), [Pending::File { path, .. }]
+            if path == std::path::Path::new("/fixture/visible.jpg"))
+        );
+        assert!(app.reply_to.is_none());
+        app.switch_account(&hidden);
+        assert_eq!(app.pending.len(), 1);
+        assert_eq!(app.reply_to.as_deref(), Some("hidden-reply"));
+        resend_restored_attachments(&mut app, chat);
+        assert!(matches!(app.pending.as_slice(),
+            [Pending::Picture { width: 1, height: 1, rgba, mode: SendMode::Document, .. }]
+            if rgba.as_slice() == [1, 2, 3, 4]));
+        assert!(app.attachment_drafts.is_empty());
+    }
+
+    /// Sends through the same action queue used by the composer, then lets the
+    /// next restored batch occupy the now-empty composer.
+    fn resend_restored_attachments(app: &mut App, chat: &str) {
+        let caption = std::mem::take(&mut app.composer);
+        app.actions.push(Action::SendPending {
+            chat: chat.into(),
+            caption,
+        });
+        app.apply_actions(&egui::Context::default());
+    }
+
+    fn refused_sends_round_trip(metadata: &[(Option<&str>, Option<&str>)], reason: Refusal) {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        for (index, (caption, quote)) in metadata.iter().enumerate() {
+            app.pending.push(if index == 0 {
+                Pending::file_with_mode("/fixture/file-A.png".into(), SendMode::Document)
+            } else {
+                Pending::picture_with_mode(1, 1, vec![10, 20, 30, 40], SendMode::Document)
+            });
+            app.reply_to = quote.map(str::to_owned);
+            app.composer = caption.unwrap_or_default().into();
+            let caption = std::mem::take(&mut app.composer);
+            app.apply(
+                Action::SendPending {
+                    chat: chat.into(),
+                    caption,
+                },
+                &ctx,
+            );
+        }
+        let mut originals = Vec::new();
+        for command in std::iter::from_fn(|| commands.try_recv().ok()) {
+            let (chat, quoting, unsent) = match command {
+                Command::SendFiles {
+                    chat,
+                    files,
+                    caption,
+                    quoting,
+                    ..
+                } => {
+                    assert_eq!(files[0].path, std::path::Path::new("/fixture/file-A.png"));
+                    assert_eq!(files[0].mode, SendMode::Document);
+                    originals.push(("file-A", caption.clone(), quoting.clone()));
+                    (chat, quoting, Unsent::Files { files, caption })
+                }
+                Command::SendImage {
+                    chat,
+                    width,
+                    height,
+                    rgba,
+                    caption,
+                    quoting,
+                    mode,
+                    ..
+                } => {
+                    assert_eq!((width, height), (1, 1));
+                    assert_eq!(rgba, [10, 20, 30, 40]);
+                    assert_eq!(mode, SendMode::Document);
+                    originals.push(("clipboard-B", caption.clone(), quoting.clone()));
+                    (
+                        chat,
+                        quoting,
+                        Unsent::Image {
+                            width,
+                            height,
+                            rgba,
+                            caption,
+                            mode,
+                        },
+                    )
+                }
+                _ => continue,
+            };
+            events
+                .send(Event::SendRefused {
+                    chat,
+                    quoting,
+                    unsent,
+                    reason,
+                })
+                .unwrap();
+        }
+        assert_eq!(originals.len(), metadata.len());
+        // Both refusals arrive before the app processes any backend events.
+        app.handle_events();
+        assert_eq!(app.pending.len(), 1);
+        for _ in metadata {
+            resend_restored_attachments(&mut app, chat);
+        }
+        let retried: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::SendFiles {
+                    caption, quoting, ..
+                } => Some(("file-A", caption, quoting)),
+                Command::SendImage {
+                    caption, quoting, ..
+                } => Some(("clipboard-B", caption, quoting)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            retried, originals,
+            "each attachment keeps its own send's metadata"
+        );
+        assert!(app.pending.is_empty());
+        assert!(app.attachment_drafts.is_empty());
+        assert!(app.composer.is_empty());
+        assert!(app.reply_to.is_none());
+    }
+
+    #[test]
+    fn refused_sends_second_quote_stays_on_second_attachment() {
+        for reason in [Refusal::Offline, Refusal::QuoteUnavailable] {
+            refused_sends_round_trip(&[(None, None), (None, Some("quote-B"))], reason);
+        }
+    }
+
+    #[test]
+    fn refused_sends_second_caption_stays_on_second_attachment() {
+        for reason in [Refusal::Offline, Refusal::QuoteUnavailable] {
+            refused_sends_round_trip(&[(None, None), (Some("caption-B"), None)], reason);
+        }
+    }
+
+    #[test]
+    fn refused_sends_distinct_metadata_and_explicit_absence_are_preserved() {
+        for reason in [Refusal::Offline, Refusal::QuoteUnavailable] {
+            refused_sends_round_trip(
+                &[
+                    (Some("caption-A"), Some("quote-A")),
+                    (Some("caption-B"), Some("quote-B")),
+                    (None, None),
+                ],
+                reason,
+            );
+        }
+    }
+
+    #[test]
+    fn refused_sends_single_send_is_preserved() {
+        for reason in [Refusal::Offline, Refusal::QuoteUnavailable] {
+            refused_sends_round_trip(&[(Some("caption-A"), Some("quote-A"))], reason);
+        }
+    }
+
+    #[test]
+    fn refused_batch_waits_for_newer_text_reply_edit_or_attachments() {
+        for newer in ["text", "reply", "edit", "attachments"] {
+            let mut app = app();
+            let chat = "fixture@s.whatsapp.net";
+            app.open_chat = Some(chat.into());
+            match newer {
+                "text" => app.composer = "Newer text".into(),
+                "reply" => app.reply_to = Some("newer-reply".into()),
+                "edit" => app.editing = Some("newer-edit".into()),
+                "attachments" => app.pending.push(Pending::file("/fixture/newer.png".into())),
+                _ => unreachable!(),
+            }
+            app.send_refused(
+                chat.into(),
+                Some("original-reply".into()),
+                Unsent::Files {
+                    files: vec![OutboundFile::auto("/fixture/refused.png".into())],
+                    caption: Some("Original caption".into()),
+                },
+                Refusal::Offline,
+            );
+            app.apply_actions(&egui::Context::default());
+            assert_eq!(app.attachment_drafts[chat].len(), 1, "{newer}");
+            assert_eq!(
+                app.composer,
+                if newer == "text" { "Newer text" } else { "" }
+            );
+            assert_eq!(
+                app.reply_to.as_deref(),
+                (newer == "reply").then_some("newer-reply")
+            );
+            assert_eq!(
+                app.editing.as_deref(),
+                (newer == "edit").then_some("newer-edit")
+            );
+            assert_eq!(app.pending.len(), usize::from(newer == "attachments"));
+            app.composer.clear();
+            app.reply_to = None;
+            app.editing = None;
+            app.actions.push(Action::ClearPending);
+            app.apply_actions(&egui::Context::default());
+            assert!(
+                matches!(app.pending.as_slice(), [Pending::File { path, .. }]
+                if path == std::path::Path::new("/fixture/refused.png"))
+            );
+            assert_eq!(app.composer, "Original caption");
+            assert_eq!(app.reply_to.as_deref(), Some("original-reply"));
+            assert!(app.attachment_drafts.is_empty());
+        }
+    }
+
+    #[test]
+    fn cancelling_one_restored_reply_does_not_change_the_next_batch() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        for (file, caption, quote) in [
+            ("A.png", "caption-A", "quote-A"),
+            ("B.png", "caption-B", "quote-B"),
+        ] {
+            app.send_refused(
+                chat.into(),
+                Some(quote.into()),
+                Unsent::Files {
+                    files: vec![OutboundFile::auto(file.into())],
+                    caption: Some(caption.into()),
+                },
+                Refusal::QuoteUnavailable,
+            );
+        }
+        app.actions.push(Action::CancelReply);
+        app.apply_actions(&egui::Context::default());
+        resend_restored_attachments(&mut app, chat);
+        assert_eq!(app.composer, "caption-B");
+        assert_eq!(app.reply_to.as_deref(), Some("quote-B"));
+        resend_restored_attachments(&mut app, chat);
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::SendFiles {
+                    files,
+                    caption,
+                    quoting,
+                    ..
+                } => Some((files, caption, quoting)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            matches!(sent.as_slice(), [(first, Some(a), None), (second, Some(b), Some(quote))]
+            if first[0].path == std::path::Path::new("A.png") && a == "caption-A"
+                && second[0].path == std::path::Path::new("B.png") && b == "caption-B" && quote == "quote-B")
+        );
+    }
+
+    #[test]
+    fn refused_attachments_wait_for_their_chat_and_keep_their_order_when_resent() {
+        for reason in [Refusal::Offline, Refusal::QuoteUnavailable] {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+            let (backend, mut commands, events) = Backend::recording_with_events();
+            app.backend = backend;
+            let chat = "fixture@s.whatsapp.net";
+            let other = "other@s.whatsapp.net";
+            app.open_chat = Some(other.into());
+            app.composer = "Newer draft".into();
+            app.reply_to = Some("newer-reply".into());
+            app.pending.push(Pending::file("/fixture/newer.jpg".into()));
+            for (quote, unsent) in [
+                (
+                    Some("original"),
+                    Unsent::Files {
+                        files: vec![OutboundFile {
+                            path: "/fixture/first.png".into(),
+                            mode: SendMode::Document,
+                        }],
+                        caption: Some("Original caption".into()),
+                    },
+                ),
+                (
+                    None,
+                    Unsent::Image {
+                        width: 2,
+                        height: 1,
+                        rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                        caption: None,
+                        mode: SendMode::Document,
+                    },
+                ),
+                (
+                    None,
+                    Unsent::Files {
+                        files: vec![OutboundFile::auto("/fixture/last.jpg".into())],
+                        caption: None,
+                    },
+                ),
+            ] {
+                events.send(refused(chat, quote, unsent, reason)).unwrap();
+            }
+            app.handle_events();
+            assert_eq!(app.composer, "Newer draft");
+            assert_eq!(app.reply_to.as_deref(), Some("newer-reply"));
+            assert_eq!(app.pending.len(), 1);
+            app.open_chat(chat.into());
+            assert_eq!(app.composer, "Original caption");
+            assert_eq!(app.reply_to.as_deref(), Some("original"));
+            assert_eq!(app.pending.len(), 1);
+            assert_eq!(app.pending[0].mode(), SendMode::Document);
+            assert_eq!(app.attachment_drafts[chat].len(), 2);
+            // Switching away and back cannot duplicate or move recovered data.
+            app.open_chat(other.into());
+            assert_eq!(app.composer, "Newer draft");
+            assert_eq!(app.reply_to.as_deref(), Some("newer-reply"));
+            assert!(
+                matches!(app.pending.as_slice(), [Pending::File { path, .. }]
+                if path == std::path::Path::new("/fixture/newer.jpg"))
+            );
+            app.open_chat(chat.into());
+            let _ = std::iter::from_fn(|| commands.try_recv().ok()).count();
+            for _ in 0..3 {
+                resend_restored_attachments(&mut app, chat);
+            }
+            let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+                .filter(|command| {
+                    matches!(
+                        command,
+                        Command::SendFiles { .. } | Command::SendImage { .. }
+                    )
+                })
+                .collect();
+            assert!(matches!(sent.as_slice(), [
+                Command::SendFiles { files: first, caption: Some(caption), quoting: Some(quote), .. },
+                Command::SendImage { width: 2, height: 1, rgba, caption: None, quoting: None,
+                    mode: SendMode::Document, .. },
+                Command::SendFiles { files: last, caption: None, quoting: None, .. },
+            ] if first == &[OutboundFile {path: "/fixture/first.png".into(), mode: SendMode::Document}]
+                && caption == "Original caption" && quote == "original"
+                && rgba == &[1, 2, 3, 4, 5, 6, 7, 8]
+                && last == &[OutboundFile::auto("/fixture/last.jpg".into())]));
+            assert!(app.pending.is_empty());
+        }
+    }
+
+    #[test]
+    fn closing_a_chat_preserves_attachment_modes_and_reply() {
+        let mut app = app();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.pending.push(Pending::picture_with_mode(
+            1,
+            1,
+            vec![1, 2, 3, 4],
+            SendMode::Document,
+        ));
+        app.reply_to = Some("original".into());
+        app.apply(Action::CloseChat, &egui::Context::default());
+        assert!(app.pending.is_empty());
+        app.open_chat(chat.into());
+        assert_eq!(app.pending.len(), 1);
+        assert_eq!(app.pending[0].mode(), SendMode::Document);
+        assert_eq!(app.reply_to.as_deref(), Some("original"));
+    }
+
+    #[test]
+    fn forgotten_and_unlinked_chats_drop_retained_attachments() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = two_accounts(root.path());
+        let chat = "fixture@s.whatsapp.net";
+        app.accounts[0].open_chat = Some(chat.into());
+        app.pending
+            .push(Pending::file("/fixture/visible.png".into()));
+        app.active = 1;
+        app.events_hidden = true;
+        app.send_refused(
+            chat.into(),
+            Some("original".into()),
+            Unsent::Image {
+                width: 1,
+                height: 1,
+                rgba: vec![1, 2, 3, 4],
+                caption: None,
+                mode: SendMode::Document,
+            },
+            Refusal::Offline,
+        );
+        assert_eq!(app.attachment_drafts.len(), 1);
+        app.forget_chat(chat);
+        assert!(app.attachment_drafts.is_empty());
+        app.retain_attachments(
+            chat,
+            [Pending::file("/fixture/hidden.png".into())],
+            None,
+            String::new(),
+        );
+        app.handle_link(LinkStatus::LoggedOut, false);
+        assert!(app.attachment_drafts.is_empty());
+        app.send_refused(
+            chat.into(),
+            None,
+            Unsent::Files {
+                files: vec![OutboundFile::auto("/fixture/late.png".into())],
+                caption: Some("Late caption".into()),
+            },
+            Refusal::Offline,
+        );
+        assert!(app.attachment_drafts.is_empty());
+        assert!(!app.drafts.contains_key(chat));
+        app.events_hidden = false;
+        app.active = 0;
+        assert!(
+            matches!(app.pending.as_slice(), [Pending::File { path, .. }]
+            if path == std::path::Path::new("/fixture/visible.png"))
+        );
+    }
+
+    #[test]
+    fn unsent_files_preserve_mixed_send_modes_and_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        events
+            .send(refused(
+                chat,
+                None,
+                Unsent::Files {
+                    files: vec![
+                        OutboundFile {
+                            path: "/fixture/photo.png".into(),
+                            mode: SendMode::Document,
+                        },
+                        OutboundFile::auto(PathBuf::from("/fixture/normal.jpg")),
+                    ],
+                    caption: Some("mixed files".into()),
+                },
+                Refusal::Offline,
+            ))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.pending.len(), 2);
+        match &app.pending[0] {
+            Pending::File { path, mode } => {
+                assert_eq!(path, std::path::Path::new("/fixture/photo.png"));
+                assert_eq!(*mode, SendMode::Document);
+            }
+            _ => panic!("expected Pending::File"),
+        }
+        match &app.pending[1] {
+            Pending::File { path, mode } => {
+                assert_eq!(path, std::path::Path::new("/fixture/normal.jpg"));
+                assert_eq!(*mode, SendMode::Auto);
+            }
+            _ => panic!("expected Pending::File"),
+        }
+        assert_eq!(app.composer, "mixed files");
+        // Returning attachments must not replace a reply or edit started since.
+        for editing in [false, true] {
+            app.composer = "Newer draft".into();
+            app.reply_to = (!editing).then(|| "newer-reply".into());
+            app.editing = editing.then(|| "newer-edit".into());
+            events
+                .send(refused(
+                    chat,
+                    Some("older-reply"),
+                    Unsent::Files {
+                        files: vec![OutboundFile::auto("/fixture/late.jpg".into())],
+                        caption: Some("Older caption".into()),
+                    },
+                    Refusal::Offline,
+                ))
+                .unwrap();
+            app.handle_events();
+            assert_eq!(app.composer, "Newer draft");
+            assert_eq!(app.reply_to.as_deref(), (!editing).then_some("newer-reply"));
+            assert_eq!(app.editing.as_deref(), editing.then_some("newer-edit"));
+            assert!(
+                matches!(app.attachment_drafts[chat].back().unwrap().pending.as_slice(),
+                    [Pending::File { path, .. }]
+                    if path == std::path::Path::new("/fixture/late.jpg"))
+            );
+        }
+    }
+
+    #[test]
+    fn unsent_pasted_image_preserves_document_send_mode() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        events
+            .send(refused(
+                chat,
+                None,
+                Unsent::Image {
+                    width: 2,
+                    height: 2,
+                    rgba: vec![
+                        10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160,
+                    ],
+                    caption: Some("Pasted doc caption".into()),
+                    mode: SendMode::Document,
+                },
+                Refusal::Offline,
+            ))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.pending.len(), 1);
+        match &app.pending[0] {
+            Pending::Picture {
+                width,
+                height,
+                rgba,
+                mode,
+                ..
+            } => {
+                assert_eq!(*width, 2);
+                assert_eq!(*height, 2);
+                assert_eq!(
+                    rgba.as_slice(),
+                    &[
+                        10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160
+                    ]
+                );
+                assert_eq!(*mode, SendMode::Document);
+            }
+            _ => panic!("expected Pending::Picture"),
+        }
+        assert_eq!(app.composer, "Pasted doc caption");
+    }
+
+    #[test]
+    fn toggle_and_set_pending_mode_works_on_pasted_picture() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let ctx = egui::Context::default();
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        app.apply(
+            Action::PasteImage {
+                width: 1,
+                height: 1,
+                rgba: vec![0, 0, 0, 255],
+            },
+            &ctx,
+        );
+        assert_eq!(app.pending.len(), 1);
+        assert_eq!(app.pending[0].mode(), SendMode::Auto);
+
+        app.apply(Action::TogglePendingMode(0), &ctx);
+        assert_eq!(app.pending[0].mode(), SendMode::Document);
+
+        app.apply(Action::TogglePendingMode(0), &ctx);
+        assert_eq!(app.pending[0].mode(), SendMode::Auto);
+
+        app.apply(
+            Action::SetPendingMode {
+                index: 0,
+                mode: SendMode::Document,
+            },
+            &ctx,
+        );
+        assert_eq!(app.pending[0].mode(), SendMode::Document);
     }
 
     #[test]

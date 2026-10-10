@@ -57,7 +57,8 @@ use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
     ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, OutboundFile, Quoted, Reaction,
+    SendMode,
 };
 use crate::paths::AccountDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
@@ -4853,12 +4854,12 @@ impl Worker {
             Command::Picked { chat, paths } => self.emit(Event::Picked { chat, paths }),
             Command::SendFiles {
                 chat,
-                paths,
+                files,
                 caption,
                 mentions,
                 quoting,
             } => {
-                self.send_files(chat, paths, caption, mentions, quoting);
+                self.send_files(chat, files, caption, mentions, quoting);
             }
             Command::SendImage {
                 chat,
@@ -4868,7 +4869,10 @@ impl Worker {
                 caption,
                 mentions,
                 quoting,
-            } => self.send_pasted_image(chat, width, height, rgba, caption, mentions, quoting),
+                mode,
+            } => {
+                self.send_pasted_image(chat, width, height, rgba, caption, mentions, quoting, mode)
+            }
             Command::Outbound { chat, row, raw } => self.outbound(chat, *row, raw),
             Command::SendSticker {
                 chat,
@@ -7604,7 +7608,7 @@ impl Worker {
     fn send_files(
         &mut self,
         chat: ChatId,
-        paths: Vec<PathBuf>,
+        files: Vec<OutboundFile>,
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<String>,
@@ -7612,7 +7616,7 @@ impl Worker {
         let mut quote = match self.quote(&chat, quoting.as_deref()) {
             Ok(quote) => quote,
             Err(reason) => {
-                self.refuse(chat, quoting, Unsent::Files { paths, caption }, reason);
+                self.refuse(chat, quoting, Unsent::Files { files, caption }, reason);
                 return;
             }
         };
@@ -7620,12 +7624,12 @@ impl Worker {
             self.refuse(
                 chat,
                 quoting,
-                Unsent::Files { paths, caption },
+                Unsent::Files { files, caption },
                 Refusal::Offline,
             );
             return;
         };
-        for (index, path) in paths.into_iter().enumerate() {
+        for (index, file) in files.into_iter().enumerate() {
             let client = client.clone();
             // Like the caption, the reply belongs to the first file.
             let quote = quote.take();
@@ -7642,17 +7646,25 @@ impl Worker {
             };
             tokio::spawn(async move {
                 let outcome = async {
-                    let bytes = tokio::fs::read(&path)
+                    let bytes = tokio::fs::read(&file.path)
                         .await
-                        .map_err(|error| format!("{}: {error}", path.display()))?;
-                    let mime = mime_guess2::from_path(&path)
+                        .map_err(|error| format!("{}: {error}", file.path.display()))?;
+                    let mime = mime_guess2::from_path(&file.path)
                         .first_or_octet_stream()
                         .to_string();
-                    let file_name = path
+                    let file_name = file
+                        .path
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned());
-                    let prepared =
-                        prepare_media(&client, bytes, &mime, file_name.as_deref(), false).await?;
+                    let prepared = prepare_media(
+                        &client,
+                        bytes,
+                        &mime,
+                        file_name.as_deref(),
+                        false,
+                        file.mode,
+                    )
+                    .await?;
                     quoted_outbound(
                         &client, &chat, &me, &dir, prepared, caption, mentions, quote,
                     )
@@ -7689,12 +7701,14 @@ impl Worker {
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<String>,
+        mode: SendMode,
     ) {
         let unsent = |rgba, caption| Unsent::Image {
             width,
             height,
             rgba,
             caption,
+            mode,
         };
         let quote = match self.quote(&chat, quoting.as_deref()) {
             Ok(quote) => quote,
@@ -7712,14 +7726,14 @@ impl Worker {
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
-                let encoded = tokio::task::spawn_blocking(move || {
-                    let image = image::RgbaImage::from_raw(width, height, rgba)
-                        .ok_or_else(|| "Clipboard image data is invalid".to_owned())?;
-                    encode_jpeg(&image::DynamicImage::ImageRgba8(image), 88)
+                let (encoded, mime, file_name) = tokio::task::spawn_blocking(move || {
+                    encode_pasted_image(width, height, rgba, mode)
                 })
                 .await
                 .map_err(|error| error.to_string())??;
-                let prepared = prepare_media(&client, encoded, "image/jpeg", None, false).await?;
+                let prepared =
+                    prepare_media(&client, encoded, mime, file_name.as_deref(), false, mode)
+                        .await?;
                 quoted_outbound(
                     &client, &chat, &me, &dir, prepared, caption, mentions, quote,
                 )
@@ -7893,7 +7907,8 @@ impl Worker {
                 })
                 .await
                 .map_err(|error| error.to_string())??;
-                let mut prepared = prepare_media(&client, bytes, "video/mp4", None, true).await?;
+                let mut prepared =
+                    prepare_media(&client, bytes, "video/mp4", None, true, SendMode::Auto).await?;
                 if let Content::Video { media, .. } = &mut prepared.content {
                     media.width = Some(gif.width);
                     media.height = Some(gif.height);
@@ -8761,6 +8776,40 @@ fn encode_jpeg(image: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, Stri
     Ok(bytes)
 }
 
+/// Encodes raw RGBA pixels from the clipboard for sending.
+///
+/// In `SendMode::Auto`, the pixels are compressed as JPEG without preserving
+/// transparency. In `SendMode::Document`, the pixels and any transparency are
+/// preserved in a lossless PNG named `image.png`.
+fn encode_pasted_image(
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    mode: SendMode,
+) -> Result<(Vec<u8>, &'static str, Option<String>), String> {
+    let image = image::RgbaImage::from_raw(width, height, rgba)
+        .ok_or_else(|| "Clipboard image data is invalid".to_owned())?;
+    match mode {
+        SendMode::Auto => {
+            let bytes = encode_jpeg(&image::DynamicImage::ImageRgba8(image), 88)?;
+            Ok((bytes, "image/jpeg", None))
+        }
+        SendMode::Document => {
+            use image::ImageEncoder;
+            let mut bytes = Vec::new();
+            image::codecs::png::PngEncoder::new(&mut bytes)
+                .write_image(
+                    image.as_raw(),
+                    width,
+                    height,
+                    image::ExtendedColorType::Rgba8,
+                )
+                .map_err(|error| error.to_string())?;
+            Ok((bytes, "image/png", Some("image.png".to_owned())))
+        }
+    }
+}
+
 /// Downloads a picture through the proxy settings into the avatar cache.
 async fn download_avatar(url: String, path: PathBuf) -> Result<PathBuf, String> {
     let bytes = tokio::task::spawn_blocking(move || {
@@ -8875,26 +8924,61 @@ fn whatsapp_audio_mime(mime: &str) -> Option<&'static str> {
     }
 }
 
-/// Uploads a file and builds its message. Images are encoded as JPEG.
-async fn prepare_media(
-    client: &Client,
+/// Planned media representation before upload.
+#[derive(Debug, PartialEq)]
+enum MediaPlan {
+    Image {
+        bytes: Vec<u8>,
+        mime: String,
+        width: u32,
+        height: u32,
+        thumbnail: Option<Vec<u8>>,
+    },
+    Video {
+        bytes: Vec<u8>,
+        mime: String,
+        file_name: Option<String>,
+        thumbnail: Option<Vec<u8>>,
+        size_in_pixels: Option<(u32, u32)>,
+        seconds: Option<u32>,
+        gif: bool,
+    },
+    Audio {
+        bytes: Vec<u8>,
+        mime: String,
+        file_name: Option<String>,
+    },
+    Document {
+        bytes: Vec<u8>,
+        mime: String,
+        file_name: String,
+    },
+}
+
+/// Determines how outbound media should be encoded and uploaded.
+///
+/// When `mode` is `SendMode::Document`, the media is always planned as a document,
+/// preserving its original bytes, MIME type, and filename without re-encoding to JPEG.
+fn plan_media(
     bytes: Vec<u8>,
     mime: &str,
     file_name: Option<&str>,
     gif: bool,
-) -> Result<Prepared, String> {
+    mode: SendMode,
+) -> Result<MediaPlan, String> {
+    if mode == SendMode::Document {
+        let name = file_name.unwrap_or("file").to_owned();
+        return Ok(MediaPlan::Document {
+            bytes,
+            mime: mime.to_owned(),
+            file_name: name,
+        });
+    }
+
     let kind = mime.split('/').next().unwrap_or_default();
-    let is_picture = matches!(
-        mime,
-        "image/jpeg" | "image/png" | "image/webp" | "image/bmp" | "image/tiff"
-    );
+    let is_picture = crate::model::is_photo_mime(mime);
     if is_picture {
-        let decoded = tokio::task::spawn_blocking({
-            let bytes = bytes.clone();
-            move || image::load_from_memory(&bytes).map_err(|error| error.to_string())
-        })
-        .await
-        .map_err(|error| error.to_string())??;
+        let decoded = image::load_from_memory(&bytes).map_err(|error| error.to_string())?;
         let (width, height) = (decoded.width(), decoded.height());
         let jpeg = if mime == "image/jpeg" {
             bytes
@@ -8902,154 +8986,229 @@ async fn prepare_media(
             encode_jpeg(&decoded, 88)?
         };
         let thumbnail = thumbnail_jpeg(&decoded);
-        let upload = client
-            .upload(jpeg.clone(), MediaType::Image, UploadOptions::default())
-            .await
-            .map_err(|error| error.to_string())?;
-        let mut message = image_message(
-            upload,
-            ImageOptions {
-                caption: None,
-                mimetype: Some("image/jpeg".to_owned()),
-                jpeg_thumbnail: thumbnail.clone(),
-                context_info: None,
-            },
-        );
-        if let Some(image) = message.image_message.as_option_mut() {
-            image.width = Some(width);
-            image.height = Some(height);
-        }
-        return Ok(Prepared {
-            message,
-            content: Content::Image {
-                motion: None,
-                caption: None,
-                media: media(
-                    Some(&"image/jpeg".to_owned()),
-                    Some(jpeg.len() as u64),
-                    Some(width),
-                    Some(height),
-                ),
-            },
-            thumbnail,
+        return Ok(MediaPlan::Image {
             bytes: jpeg,
             mime: "image/jpeg".to_owned(),
-            file_name: None,
+            width,
+            height,
+            thumbnail,
         });
     }
-    let size = bytes.len() as u64;
-    let mime_owned = mime.to_owned();
+
     if kind == "video" {
-        // The picture, size, and length phones show before downloading it.
-        // Reading a second of frames takes a moment, so off the runtime.
-        let poster = {
-            let bytes = bytes.clone();
-            tokio::task::spawn_blocking(move || crate::animation::poster(&bytes))
-                .await
-                .ok()
-                .flatten()
-        };
+        let poster = crate::animation::poster(&bytes);
         let thumbnail = poster
             .as_ref()
             .and_then(|poster| poster.picture.clone())
             .and_then(|picture| thumbnail_jpeg(&image::DynamicImage::ImageRgb8(picture)));
         let size_in_pixels = poster.as_ref().map(|poster| (poster.width, poster.height));
         let seconds = poster.as_ref().map(|poster| poster.seconds);
-        let upload = client
-            .upload(bytes.clone(), MediaType::Video, UploadOptions::default())
-            .await
-            .map_err(|error| error.to_string())?;
-        let mut message = video_message(
-            upload,
-            VideoOptions {
-                mimetype: Some(mime_owned.clone()),
-                gif_playback: Some(gif),
-                jpeg_thumbnail: thumbnail.clone(),
-                duration_seconds: seconds,
-                ..Default::default()
-            },
-        );
-        if let (Some(video), Some((width, height))) =
-            (message.video_message.as_option_mut(), size_in_pixels)
-        {
-            video.width = Some(width);
-            video.height = Some(height);
-        }
-        return Ok(Prepared {
-            message,
-            content: Content::Video {
-                caption: None,
-                media: media(
-                    Some(&mime_owned),
-                    Some(size),
-                    size_in_pixels.map(|(width, _)| width),
-                    size_in_pixels.map(|(_, height)| height),
-                ),
-                seconds,
-                gif,
-                note: false,
-            },
+        return Ok(MediaPlan::Video {
+            bytes,
+            mime: mime.to_owned(),
+            file_name: file_name.map(str::to_owned),
             thumbnail,
-            bytes,
-            mime: mime_owned,
-            file_name: file_name.map(str::to_owned),
+            size_in_pixels,
+            seconds,
+            gif,
         });
     }
+
     if let Some(audio_mime) = whatsapp_audio_mime(mime) {
-        let mime_owned = audio_mime.to_owned();
-        let upload = client
-            .upload(bytes.clone(), MediaType::Audio, UploadOptions::default())
-            .await
-            .map_err(|error| error.to_string())?;
-        let message = audio_message(
-            upload,
-            AudioOptions {
-                mimetype: Some(mime_owned.clone()),
-                ptt: Some(false),
-                ..Default::default()
-            },
-        );
-        return Ok(Prepared {
-            message,
-            content: Content::Audio {
-                media: media(Some(&mime_owned), Some(size), None, None),
-                seconds: None,
-                voice_note: false,
-                waveform: Vec::new(),
-            },
-            thumbnail: None,
+        return Ok(MediaPlan::Audio {
             bytes,
-            mime: mime_owned,
+            mime: audio_mime.to_owned(),
             file_name: file_name.map(str::to_owned),
         });
     }
-    let upload = client
-        .upload(bytes.clone(), MediaType::Document, UploadOptions::default())
-        .await
-        .map_err(|error| error.to_string())?;
+
     let name = file_name.unwrap_or("file").to_owned();
-    let message = document_message(
-        upload,
-        DocumentOptions {
-            mimetype: Some(mime_owned.clone()),
-            file_name: Some(name.clone()),
-            title: Some(name.clone()),
-            ..Default::default()
-        },
-    );
-    Ok(Prepared {
-        message,
-        content: Content::Document {
-            media: media(Some(&mime_owned), Some(size), None, None),
-            file_name: name.clone(),
-            caption: None,
-            pages: None,
-        },
-        thumbnail: None,
+    Ok(MediaPlan::Document {
         bytes,
-        mime: mime_owned,
-        file_name: Some(name),
+        mime: mime.to_owned(),
+        file_name: name,
     })
+}
+
+/// Uploads a file and builds its message. Images are encoded as JPEG unless sent as a document.
+async fn prepare_media(
+    client: &Client,
+    bytes: Vec<u8>,
+    mime: &str,
+    file_name: Option<&str>,
+    gif: bool,
+    mode: SendMode,
+) -> Result<Prepared, String> {
+    let plan = if mode == SendMode::Document {
+        plan_media(bytes, mime, file_name, gif, mode)?
+    } else {
+        let mime_owned = mime.to_owned();
+        let file_name_owned = file_name.map(str::to_owned);
+        tokio::task::spawn_blocking(move || {
+            plan_media(bytes, &mime_owned, file_name_owned.as_deref(), gif, mode)
+        })
+        .await
+        .map_err(|error| error.to_string())??
+    };
+    match plan {
+        MediaPlan::Image {
+            bytes: jpeg,
+            mime,
+            width,
+            height,
+            thumbnail,
+        } => {
+            let upload = client
+                .upload(jpeg.clone(), MediaType::Image, UploadOptions::default())
+                .await
+                .map_err(|error| error.to_string())?;
+            let mut message = image_message(
+                upload,
+                ImageOptions {
+                    caption: None,
+                    mimetype: Some(mime.clone()),
+                    jpeg_thumbnail: thumbnail.clone(),
+                    context_info: None,
+                },
+            );
+            if let Some(image) = message.image_message.as_option_mut() {
+                image.width = Some(width);
+                image.height = Some(height);
+            }
+            Ok(Prepared {
+                message,
+                content: Content::Image {
+                    motion: None,
+                    caption: None,
+                    media: media(
+                        Some(&mime),
+                        Some(jpeg.len() as u64),
+                        Some(width),
+                        Some(height),
+                    ),
+                },
+                thumbnail,
+                bytes: jpeg,
+                mime,
+                file_name: None,
+            })
+        }
+        MediaPlan::Video {
+            bytes,
+            mime,
+            file_name,
+            thumbnail,
+            size_in_pixels,
+            seconds,
+            gif,
+        } => {
+            let size = bytes.len() as u64;
+            let upload = client
+                .upload(bytes.clone(), MediaType::Video, UploadOptions::default())
+                .await
+                .map_err(|error| error.to_string())?;
+            let mut message = video_message(
+                upload,
+                VideoOptions {
+                    mimetype: Some(mime.clone()),
+                    gif_playback: Some(gif),
+                    jpeg_thumbnail: thumbnail.clone(),
+                    duration_seconds: seconds,
+                    ..Default::default()
+                },
+            );
+            if let (Some(video), Some((width, height))) =
+                (message.video_message.as_option_mut(), size_in_pixels)
+            {
+                video.width = Some(width);
+                video.height = Some(height);
+            }
+            Ok(Prepared {
+                message,
+                content: Content::Video {
+                    caption: None,
+                    media: media(
+                        Some(&mime),
+                        Some(size),
+                        size_in_pixels.map(|(width, _)| width),
+                        size_in_pixels.map(|(_, height)| height),
+                    ),
+                    seconds,
+                    gif,
+                    note: false,
+                },
+                thumbnail,
+                bytes,
+                mime,
+                file_name,
+            })
+        }
+        MediaPlan::Audio {
+            bytes,
+            mime,
+            file_name,
+        } => {
+            let size = bytes.len() as u64;
+            let upload = client
+                .upload(bytes.clone(), MediaType::Audio, UploadOptions::default())
+                .await
+                .map_err(|error| error.to_string())?;
+            let message = audio_message(
+                upload,
+                AudioOptions {
+                    mimetype: Some(mime.clone()),
+                    ptt: Some(false),
+                    ..Default::default()
+                },
+            );
+            Ok(Prepared {
+                message,
+                content: Content::Audio {
+                    media: media(Some(&mime), Some(size), None, None),
+                    seconds: None,
+                    voice_note: false,
+                    waveform: Vec::new(),
+                },
+                thumbnail: None,
+                bytes,
+                mime,
+                file_name,
+            })
+        }
+        MediaPlan::Document {
+            bytes,
+            mime,
+            file_name,
+        } => {
+            let size = bytes.len() as u64;
+            let upload = client
+                .upload(bytes.clone(), MediaType::Document, UploadOptions::default())
+                .await
+                .map_err(|error| error.to_string())?;
+            let message = document_message(
+                upload,
+                DocumentOptions {
+                    mimetype: Some(mime.clone()),
+                    file_name: Some(file_name.clone()),
+                    title: Some(file_name.clone()),
+                    ..Default::default()
+                },
+            );
+            Ok(Prepared {
+                message,
+                content: Content::Document {
+                    media: media(Some(&mime), Some(size), None, None),
+                    file_name: file_name.clone(),
+                    caption: None,
+                    pages: None,
+                },
+                thumbnail: None,
+                bytes,
+                mime,
+                file_name: Some(file_name),
+            })
+        }
+    }
 }
 
 /// Uploads a WebP sticker and builds its message without a library builder.
@@ -9786,6 +9945,254 @@ mod tests {
         for document in ["take.wav", "album.flac", "loop.aiff", "old.wma", "x.weba"] {
             assert_eq!(sent_as(document), None, "{document}");
         }
+    }
+
+    #[test]
+    fn plan_media_preserves_transparent_png_bytes_in_document_mode() {
+        let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 128]));
+        let mut png_bytes = Vec::new();
+        img.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+            .expect("writes png");
+        let plan = plan_media(
+            png_bytes.clone(),
+            "image/png",
+            Some("transparent.png"),
+            false,
+            SendMode::Document,
+        )
+        .expect("planned");
+        assert_eq!(
+            plan,
+            MediaPlan::Document {
+                bytes: png_bytes,
+                mime: "image/png".into(),
+                file_name: "transparent.png".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn plan_media_converts_transparent_png_to_jpeg_in_auto_mode() {
+        let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 128]));
+        let mut png_bytes = Vec::new();
+        img.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+            .expect("writes png");
+        let plan = plan_media(
+            png_bytes.clone(),
+            "image/png",
+            Some("transparent.png"),
+            false,
+            SendMode::Auto,
+        )
+        .expect("planned");
+        match plan {
+            MediaPlan::Image {
+                bytes,
+                mime,
+                width,
+                height,
+                thumbnail,
+            } => {
+                assert_eq!(mime, "image/jpeg");
+                assert_eq!(width, 2);
+                assert_eq!(height, 2);
+                assert_ne!(bytes, png_bytes);
+                assert!(thumbnail.is_some());
+            }
+            other => panic!("expected MediaPlan::Image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_media_preserves_jpeg_with_metadata_in_document_mode() {
+        let img = image::RgbImage::from_pixel(2, 2, image::Rgb([0, 255, 0]));
+        let mut jpeg_bytes = Vec::new();
+        img.write_to(&mut Cursor::new(&mut jpeg_bytes), image::ImageFormat::Jpeg)
+            .expect("writes jpeg");
+        // APP1 containing a little-endian EXIF IFD with Orientation = 1.
+        let exif = b"Exif\0\0II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x01\0\0\0\0\0\0\0";
+        let mut app1 = vec![0xff, 0xe1];
+        app1.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+        app1.extend_from_slice(exif);
+        jpeg_bytes.splice(2..2, app1);
+        assert!(image::load_from_memory(&jpeg_bytes).is_ok());
+        let plan = plan_media(
+            jpeg_bytes.clone(),
+            "image/jpeg",
+            Some("photo_with_exif.jpg"),
+            false,
+            SendMode::Document,
+        )
+        .expect("planned");
+        assert_eq!(
+            plan,
+            MediaPlan::Document {
+                bytes: jpeg_bytes.clone(),
+                mime: "image/jpeg".into(),
+                file_name: "photo_with_exif.jpg".into(),
+            }
+        );
+        let auto = plan_media(
+            jpeg_bytes.clone(),
+            "image/jpeg",
+            Some("photo_with_exif.jpg"),
+            false,
+            SendMode::Auto,
+        )
+        .expect("planned photo");
+        assert!(matches!(auto, MediaPlan::Image { bytes, .. } if bytes == jpeg_bytes));
+    }
+
+    #[test]
+    fn bmp_and_tiff_files_support_photo_and_document_modes() {
+        for (format, name, mime) in [
+            (image::ImageFormat::Bmp, "fixture.bmp", "image/bmp"),
+            (image::ImageFormat::Tiff, "fixture.tiff", "image/tiff"),
+        ] {
+            let img = image::RgbImage::from_pixel(3, 2, image::Rgb([10, 20, 30]));
+            let mut original = Vec::new();
+            img.write_to(&mut Cursor::new(&mut original), format)
+                .expect("encodes fixture");
+            assert!(crate::app::Pending::can_send_as_photo(
+                std::path::Path::new(name)
+            ));
+            let actual_mime = mime_guess2::from_path(name)
+                .first_or_octet_stream()
+                .to_string();
+            assert_eq!(actual_mime, mime);
+            let photo = plan_media(
+                original.clone(),
+                &actual_mime,
+                Some(name),
+                false,
+                SendMode::Auto,
+            )
+            .expect("plans photo with the decoder enabled");
+            match photo {
+                MediaPlan::Image {
+                    bytes,
+                    mime,
+                    width,
+                    height,
+                    thumbnail,
+                } => {
+                    assert_eq!(mime, "image/jpeg");
+                    assert_eq!((width, height), (3, 2));
+                    let decoded =
+                        image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+                            .expect("photo is a valid JPEG");
+                    assert_eq!((decoded.width(), decoded.height()), (3, 2));
+                    assert!(thumbnail.is_some());
+                }
+                other => panic!("expected photo, got {other:?}"),
+            }
+            let document = plan_media(
+                original.clone(),
+                &actual_mime,
+                Some(name),
+                false,
+                SendMode::Document,
+            )
+            .expect("plans original document");
+            assert_eq!(
+                document,
+                MediaPlan::Document {
+                    bytes: original,
+                    mime: actual_mime,
+                    file_name: name.into(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn plan_media_handles_non_images_consistently() {
+        let text_bytes = b"Hello world document".to_vec();
+        let plan_auto = plan_media(
+            text_bytes.clone(),
+            "text/plain",
+            Some("doc.txt"),
+            false,
+            SendMode::Auto,
+        )
+        .expect("planned auto");
+        let plan_doc = plan_media(
+            text_bytes.clone(),
+            "text/plain",
+            Some("doc.txt"),
+            false,
+            SendMode::Document,
+        )
+        .expect("planned doc");
+        assert_eq!(
+            plan_auto,
+            MediaPlan::Document {
+                bytes: text_bytes.clone(),
+                mime: "text/plain".into(),
+                file_name: "doc.txt".into(),
+            }
+        );
+        assert_eq!(plan_auto, plan_doc);
+    }
+
+    #[test]
+    fn encode_pasted_image_in_document_mode_preserves_dimensions_and_alpha() {
+        // 3x2 RGBA image with diverse colors and alpha (0, 128, 255)
+        let (w, h) = (3u32, 2u32);
+        let rgba = vec![
+            255, 0, 0, 255, // Red opaque
+            0, 255, 0, 128, // Green semi-transparent
+            0, 0, 255, 0, // Blue fully transparent
+            255, 255, 0, 64, // Yellow semi-transparent
+            255, 0, 255, 200, // Magenta semi-transparent
+            0, 255, 255, 255, // Cyan opaque
+        ];
+
+        let (bytes, mime, file_name) =
+            encode_pasted_image(w, h, rgba.clone(), SendMode::Document).expect("encodes doc");
+        assert_eq!(mime, "image/png");
+        assert_eq!(file_name.as_deref(), Some("image.png"));
+
+        // Decode the generated PNG and verify dimensions and raw RGBA pixels
+        let decoded = image::load_from_memory(&bytes).expect("decodes png");
+        assert_eq!(decoded.width(), w);
+        assert_eq!(decoded.height(), h);
+        assert_eq!(decoded.to_rgba8().into_raw(), rgba);
+
+        // Planning this media as a document retains its bytes, mime and file_name
+        let plan = plan_media(
+            bytes.clone(),
+            mime,
+            file_name.as_deref(),
+            false,
+            SendMode::Document,
+        )
+        .expect("plans doc");
+        assert_eq!(
+            plan,
+            MediaPlan::Document {
+                bytes,
+                mime: "image/png".into(),
+                file_name: "image.png".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn encode_pasted_image_in_auto_mode_produces_jpeg() {
+        let (w, h) = (2u32, 2u32);
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+
+        let (bytes, mime, file_name) =
+            encode_pasted_image(w, h, rgba, SendMode::Auto).expect("encodes photo");
+        assert_eq!(mime, "image/jpeg");
+        assert_eq!(file_name, None);
+        assert_eq!(
+            image::guess_format(&bytes).expect("guesses format"),
+            image::ImageFormat::Jpeg
+        );
     }
 
     #[tokio::test]
@@ -14742,13 +15149,25 @@ mod receipt_tests {
             (
                 Command::SendFiles {
                     chat: PEER.into(),
-                    paths: vec!["/fixture/a.pdf".into(), "/fixture/b.png".into()],
+                    files: vec![
+                        OutboundFile {
+                            path: "/fixture/a.png".into(),
+                            mode: SendMode::Document,
+                        },
+                        OutboundFile::auto(PathBuf::from("/fixture/b.png")),
+                    ],
                     caption: Some("Caption fixture".into()),
                     mentions: Vec::new(),
                     quoting: quoting.clone(),
                 },
                 Unsent::Files {
-                    paths: vec!["/fixture/a.pdf".into(), "/fixture/b.png".into()],
+                    files: vec![
+                        OutboundFile {
+                            path: "/fixture/a.png".into(),
+                            mode: SendMode::Document,
+                        },
+                        OutboundFile::auto(PathBuf::from("/fixture/b.png")),
+                    ],
                     caption: Some("Caption fixture".into()),
                 },
             ),
@@ -14761,12 +15180,33 @@ mod receipt_tests {
                     caption: Some("Picture fixture".into()),
                     mentions: Vec::new(),
                     quoting: quoting.clone(),
+                    mode: SendMode::Auto,
                 },
                 Unsent::Image {
                     width: 1,
                     height: 1,
                     rgba: vec![1, 2, 3, 4],
                     caption: Some("Picture fixture".into()),
+                    mode: SendMode::Auto,
+                },
+            ),
+            (
+                Command::SendImage {
+                    chat: PEER.into(),
+                    width: 1,
+                    height: 1,
+                    rgba: vec![5, 6, 7, 8],
+                    caption: Some("Doc picture fixture".into()),
+                    mentions: Vec::new(),
+                    quoting: quoting.clone(),
+                    mode: SendMode::Document,
+                },
+                Unsent::Image {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![5, 6, 7, 8],
+                    caption: Some("Doc picture fixture".into()),
+                    mode: SendMode::Document,
                 },
             ),
             (

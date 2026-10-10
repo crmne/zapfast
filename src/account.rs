@@ -4,11 +4,11 @@
 //! active account through `App`'s `Deref`. Each account has its own backend
 //! thread, archive, and folders.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::app::{ComposerMention, Conversation};
+use crate::app::{AttachmentDraft, ComposerMention, Conversation};
 use crate::backend::{Backend, LinkStatus, Waker};
 use crate::model::{
     AccountId, Chat, ChatFilter, ChatId, Contact, Label, Message, PollDraft, StickerPack,
@@ -37,6 +37,7 @@ pub struct Account {
     pub scroll_chat_into_view: Option<ChatId>,
     pub drafts: HashMap<ChatId, String>,
     pub(crate) draft_mentions: HashMap<ChatId, Vec<ComposerMention>>,
+    pub(crate) attachment_drafts: HashMap<ChatId, VecDeque<AttachmentDraft>>,
     pub search: String,
     pub search_selected: Option<ChatId>,
     pub search_hits: Vec<Message>,
@@ -103,6 +104,7 @@ impl Account {
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
             draft_mentions: HashMap::new(),
+            attachment_drafts: HashMap::new(),
             search: String::new(),
             search_selected: None,
             search_hits: Vec::new(),

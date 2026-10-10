@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-09 11:56+0200\n"
+"POT-Creation-Date: 2026-10-10 17:58-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -179,7 +179,7 @@ msgstr "Trancadas"
 msgid "No favorites yet"
 msgstr "Ainda não há favoritas"
 
-#: src/ui/chats.rs:939 src/app.rs:2010
+#: src/ui/chats.rs:939 src/app.rs:2072
 msgid "Message yourself"
 msgstr "Envie uma mensagem para você mesmo"
 
@@ -292,7 +292,7 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} mensagem não lida"
 msgstr[1] "{} mensagens não lidas"
 
-#: src/ui/conversation.rs:2238 src/app.rs:1992 src/app.rs:2011
+#: src/ui/conversation.rs:2238 src/app.rs:2054 src/app.rs:2073
 msgid "You"
 msgstr "Você"
 
@@ -314,8 +314,8 @@ msgstr "Dados da mensagem"
 msgid "Reload earlier messages"
 msgstr ""
 
-#: src/ui/conversation.rs:4340 src/ui/image_preview.rs:76
-#: src/ui/image_preview.rs:222
+#: src/ui/conversation.rs:4340 src/ui/image_preview.rs:77
+#: src/ui/image_preview.rs:233
 msgid "Copy image"
 msgstr "Copiar imagem"
 
@@ -428,6 +428,30 @@ msgstr "Ativar som"
 msgid "Mute"
 msgstr "Silenciar"
 
+#: src/ui/conversation.rs:7902 src/ui/conversation.rs:8223
+msgid "Send as photo · Click to send as document"
+msgstr "Enviar como foto · Clique para enviar como documento"
+
+#: src/ui/conversation.rs:8190
+msgid "Document"
+msgstr "Documento"
+
+#: src/ui/conversation.rs:8232
+msgid "Send as document · Click to send as photo"
+msgstr "Enviar como documento · Clique para enviar como foto"
+
+#: src/ui/conversation.rs:8271
+msgid "Send as photo"
+msgstr "Enviar como foto"
+
+#: src/ui/conversation.rs:8272
+msgid "Send as document"
+msgstr "Enviar como documento"
+
+#: src/ui/conversation.rs:8273 src/ui/dialogs.rs:1193
+msgid "Remove"
+msgstr "Remover"
+
 #: src/ui/dialogs.rs:681
 msgid "Show shortcut hints under the message box"
 msgstr "Mostrar dicas de atalho abaixo da caixa de mensagem"
@@ -501,10 +525,6 @@ msgid ""
 msgstr ""
 "Isso desvincula o número neste computador e apaga as conversas locais. As "
 "outras contas ficam."
-
-#: src/ui/dialogs.rs:1193
-msgid "Remove"
-msgstr "Remover"
 
 #: src/ui/dialogs.rs:1213
 msgid "Leave this channel?"
@@ -1069,7 +1089,7 @@ msgid "Choose a file…"
 msgstr "Escolher um arquivo…"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:730
+#: src/ui/widgets.rs:842
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "Feito com amor por {name}"
@@ -1137,29 +1157,29 @@ msgstr[1] "{} restantes"
 msgid "No one yet"
 msgstr "Ninguém ainda"
 
-#: src/app.rs:1422
+#: src/app.rs:1483
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:1915
+#: src/app.rs:1977
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Já existe uma etiqueta chamada “{name}”."
 
-#: src/app.rs:1991
+#: src/app.rs:2053
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Você)"
 
-#: src/app.rs:2914
+#: src/app.rs:2976
 msgid "Could not use this image"
 msgstr "Não foi possível usar esta imagem"
 
-#: src/app.rs:3455
+#: src/app.rs:3548
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Não enviado: o ZapFast não está conectado ao WhatsApp."
 
-#: src/app.rs:3459
+#: src/app.rs:3552
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1167,36 +1187,36 @@ msgstr ""
 "Não enviado: a mensagem que você está respondendo não está disponível neste "
 "computador. Cancele a resposta para enviar sem citação."
 
-#: src/app.rs:5178
+#: src/app.rs:5391
 msgid "Added to favorites"
 msgstr "Adicionada aos favoritos"
 
-#: src/app.rs:5253
+#: src/app.rs:5466
 msgid "Sending the sticker pack…"
 msgstr "Enviando o pacote de figurinhas…"
 
-#: src/app.rs:5546 src/ui/labels.rs:253
+#: src/app.rs:5754 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Você tem {limit} etiquetas, o máximo que o ZapFast guarda."
 
-#: src/app.rs:6268
+#: src/app.rs:6476
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:6276
+#: src/app.rs:6484
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:6390
+#: src/app.rs:6598
 msgid "This video opens in your system player"
 msgstr "Este vídeo abre no player do sistema"
 
-#: src/app.rs:6824
+#: src/app.rs:7032
 msgid "Copied image"
 msgstr "Imagem copiada"
 
-#: src/app.rs:6827 src/app.rs:6832
+#: src/app.rs:7035 src/app.rs:7040
 msgid "Failed to copy image"
 msgstr "Falha ao copiar imagem"
 
@@ -1532,11 +1552,11 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Silenciar chamadas desconhecidas"
 
-#: src/ui/image_preview.rs:223
+#: src/ui/image_preview.rs:234
 msgid "Save as…"
 msgstr "Salvar como…"
 
-#: src/ui/image_preview.rs:225
+#: src/ui/image_preview.rs:236
 msgid "Open in another app"
 msgstr "Abrir em outro aplicativo"
 
@@ -1605,7 +1625,7 @@ msgstr ""
 msgid "After 1 hour"
 msgstr ""
 
-#: src/account.rs:214
+#: src/account.rs:216
 #, rust-format
 msgid "Account {id}"
 msgstr "Conta {id}"

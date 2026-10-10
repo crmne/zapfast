@@ -44,8 +44,8 @@ egui_extras = { version = "0.36", features = ["file", "image", "svg", "webp", "g
 # Reads the colour emoji font's bitmaps for the demo tour's GIF fixtures. Keep
 # skrifa aligned with epaint to avoid compiling two versions.
 skrifa = "0.44"
-# Decodes JPEG, PNG, WebP, and GIF images.
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+# Decodes JPEG, PNG, WebP, GIF, BMP, and TIFF images on every platform.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "tiff"] }
 # WhatsApp Web protocol: pairing, encryption, history sync, and media. Version
 # 0.7.0 on crates.io enables `simd`, which needs nightly Rust. This commit builds
 # on stable and includes snapshot recovery and no-progress conflict handling

@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-09 11:56+0200\n"
+"POT-Creation-Date: 2026-10-10 17:58-0300\n"
 "PO-Revision-Date: 2026-10-02 18:51+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
 "Language-Team: Chinese (Traditional)\n"
@@ -178,7 +178,7 @@ msgstr "已鎖定"
 msgid "No favorites yet"
 msgstr "尚無最愛"
 
-#: src/ui/chats.rs:939 src/app.rs:2010
+#: src/ui/chats.rs:939 src/app.rs:2072
 msgid "Message yourself"
 msgstr "傳訊息給自己"
 
@@ -288,7 +288,7 @@ msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} 則未讀訊息"
 
-#: src/ui/conversation.rs:2238 src/app.rs:1992 src/app.rs:2011
+#: src/ui/conversation.rs:2238 src/app.rs:2054 src/app.rs:2073
 msgid "You"
 msgstr "您"
 
@@ -310,8 +310,8 @@ msgstr "訊息資訊"
 msgid "Reload earlier messages"
 msgstr ""
 
-#: src/ui/conversation.rs:4340 src/ui/image_preview.rs:76
-#: src/ui/image_preview.rs:222
+#: src/ui/conversation.rs:4340 src/ui/image_preview.rs:77
+#: src/ui/image_preview.rs:233
 msgid "Copy image"
 msgstr "複製圖片"
 
@@ -414,6 +414,30 @@ msgstr "取消靜音"
 msgid "Mute"
 msgstr "靜音"
 
+#: src/ui/conversation.rs:7902 src/ui/conversation.rs:8223
+msgid "Send as photo · Click to send as document"
+msgstr ""
+
+#: src/ui/conversation.rs:8190
+msgid "Document"
+msgstr ""
+
+#: src/ui/conversation.rs:8232
+msgid "Send as document · Click to send as photo"
+msgstr ""
+
+#: src/ui/conversation.rs:8271
+msgid "Send as photo"
+msgstr ""
+
+#: src/ui/conversation.rs:8272
+msgid "Send as document"
+msgstr ""
+
+#: src/ui/conversation.rs:8273 src/ui/dialogs.rs:1193
+msgid "Remove"
+msgstr "移除"
+
 #: src/ui/dialogs.rs:681
 msgid "Show shortcut hints under the message box"
 msgstr "在訊息方塊下方顯示快捷鍵提示"
@@ -479,10 +503,6 @@ msgstr ""
 msgid ""
 "This unlinks the number on this computer and deletes its local chats. Other "
 "accounts stay."
-msgstr ""
-
-#: src/ui/dialogs.rs:1193
-msgid "Remove"
 msgstr ""
 
 #: src/ui/dialogs.rs:1213
@@ -1034,7 +1054,7 @@ msgid "Choose a file…"
 msgstr "選擇檔案…"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:730
+#: src/ui/widgets.rs:842
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "由 {name} 精心打造"
@@ -1097,65 +1117,65 @@ msgstr[0] "還有 {} 個"
 msgid "No one yet"
 msgstr "尚無對象"
 
-#: src/app.rs:1422
+#: src/app.rs:1483
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:1915
+#: src/app.rs:1977
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "已有名為「{name}」的標籤。"
 
-#: src/app.rs:1991
+#: src/app.rs:2053
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name}（您）"
 
-#: src/app.rs:2914
+#: src/app.rs:2976
 msgid "Could not use this image"
 msgstr "無法使用這張圖片"
 
-#: src/app.rs:3455
+#: src/app.rs:3548
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "未送出：ZapFast 尚未連線至 WhatsApp。"
 
-#: src/app.rs:3459
+#: src/app.rs:3552
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 "未送出：您要回覆的訊息在這部電腦上無法使用。取消回覆即可不附帶引用內容送出。"
 
-#: src/app.rs:5178
+#: src/app.rs:5391
 msgid "Added to favorites"
 msgstr "已加入最愛"
 
-#: src/app.rs:5253
+#: src/app.rs:5466
 msgid "Sending the sticker pack…"
 msgstr "正在傳送貼圖集…"
 
-#: src/app.rs:5546 src/ui/labels.rs:253
+#: src/app.rs:5754 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "您已有 {limit} 個標籤，已達 ZapFast 的上限。"
 
-#: src/app.rs:6268
+#: src/app.rs:6476
 msgid "App lock password saved"
 msgstr "已儲存應用程式鎖密碼"
 
-#: src/app.rs:6276
+#: src/app.rs:6484
 msgid "App lock turned off"
 msgstr "已關閉應用程式鎖"
 
-#: src/app.rs:6390
+#: src/app.rs:6598
 msgid "This video opens in your system player"
 msgstr "此影片會在您的系統播放器中開啟"
 
-#: src/app.rs:6824
+#: src/app.rs:7032
 msgid "Copied image"
 msgstr "已複製圖片"
 
-#: src/app.rs:6827 src/app.rs:6832
+#: src/app.rs:7035 src/app.rs:7040
 msgid "Failed to copy image"
 msgstr "複製圖片失敗"
 
@@ -1476,11 +1496,11 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "陌生來電靜音"
 
-#: src/ui/image_preview.rs:223
+#: src/ui/image_preview.rs:234
 msgid "Save as…"
 msgstr "另存為…"
 
-#: src/ui/image_preview.rs:225
+#: src/ui/image_preview.rs:236
 msgid "Open in another app"
 msgstr "在其他應用程式中開啟"
 
@@ -1546,7 +1566,7 @@ msgstr "15 分鐘後"
 msgid "After 1 hour"
 msgstr "1 小時後"
 
-#: src/account.rs:214
+#: src/account.rs:216
 #, rust-format
 msgid "Account {id}"
 msgstr ""

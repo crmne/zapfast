@@ -14,7 +14,7 @@ use crate::app::{App, Conversation, JumpHighlight, KeyScroll, RowHeight};
 use crate::markup;
 use crate::model::{
     Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
-    PickerTab, Scroll,
+    PickerTab, Scroll, SendMode,
 };
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
@@ -7871,6 +7871,62 @@ mod tests {
     }
 
     #[test]
+    fn pending_picture_mode_can_be_toggled_with_the_keyboard() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = crate::app::App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        );
+        app.pending
+            .push(crate::app::Pending::picture(1, 1, vec![0, 0, 0, 255]));
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            pending_strip(&mut app, ui);
+        });
+        output.textures_delta.clear();
+        // Tab reaches the mode button, with a label for assistive technology.
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| pending_strip(&mut app, ui),
+        );
+        output.textures_delta.clear();
+        let label = crate::i18n::gettext(app.locale, "Send as photo · Click to send as document");
+        assert!(
+            output
+                .platform_output
+                .events
+                .iter()
+                .any(|event| matches!(event,
+            egui::output::OutputEvent::FocusGained(info) if info.label.as_deref() == Some(label.as_ref()))),
+            "{:?}", output.platform_output.events
+        );
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| pending_strip(&mut app, ui),
+        );
+        output.textures_delta.clear();
+        assert!(app.actions.contains(&Action::TogglePendingMode(0)));
+    }
+
+    #[test]
     fn composer_triggers_only_start_at_word_boundaries() {
         assert_eq!(standalone_trigger(":", 1, ':'), Some(0));
         assert_eq!(standalone_trigger("hello :", 7, ':'), Some(6));
@@ -8011,10 +8067,13 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let tile = 72.0;
     let mut remove = None;
+    let mut toggle_mode = None;
+    let mut set_mode = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         for (index, item) in app.pending.iter_mut().enumerate() {
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(tile), Sense::hover());
+            // The tile opens a pointer menu; only its actual controls take Tab focus.
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(tile), Sense::CLICK);
             if ui.is_rect_visible(rect) {
                 // Lifted off the chat like a bubble, with a bubble's corners.
                 let radius = CornerRadius::same(widgets::BUBBLE_RADIUS);
@@ -8026,13 +8085,16 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     palette.raised_edge(palette.surface),
                 );
                 ui.painter().rect_filled(rect, radius, palette.surface);
+                let mut picture_mode = None;
                 match item {
                     crate::app::Pending::Picture {
                         width,
                         height,
                         rgba,
                         texture,
+                        mode,
                     } => {
+                        picture_mode = Some(*mode);
                         let handle = texture.get_or_insert_with(|| {
                             // Limit thumbnails to the GPU's maximum texture size.
                             let image = if *width > 1024 || *height > 1024 {
@@ -8079,8 +8141,11 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                             .corner_radius(6.0)
                             .paint_at(ui, inner);
                     }
-                    crate::app::Pending::File(path) => {
+                    crate::app::Pending::File { path, mode } => {
                         if crate::app::Pending::is_picture_file(path) {
+                            if crate::app::Pending::can_send_as_photo(path) {
+                                picture_mode = Some(*mode);
+                            }
                             widgets::file_image(ui, path)
                                 .fit_to_exact_size(Vec2::splat(tile - 8.0))
                                 .corner_radius(6.0)
@@ -8114,6 +8179,79 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 }
+                if picture_mode == Some(SendMode::Document) {
+                    let badge_h = 16.0;
+                    let badge_rect = Rect::from_min_max(
+                        pos2(rect.left() + 6.0, rect.bottom() - 6.0 - badge_h),
+                        pos2(rect.right() - 6.0, rect.bottom() - 6.0),
+                    );
+                    ui.painter()
+                        .rect_filled(badge_rect, CornerRadius::same(4), palette.accent);
+                    let doc_label = crate::i18n::gettext(app.locale, "Document");
+                    let line = widgets::line(
+                        ui,
+                        &doc_label,
+                        theme::medium(10.0),
+                        palette.on_accent,
+                        badge_rect.width() - 4.0,
+                        1,
+                    );
+                    line.paint(
+                        ui,
+                        pos2(
+                            badge_rect.center().x - line.size().x / 2.0,
+                            badge_rect.center().y - line.size().y / 2.0,
+                        ),
+                        palette.on_accent,
+                    );
+                }
+                // Mode toggle button in the top-left corner for pictures.
+                if let Some(mode) = picture_mode {
+                    let mode_rect = Rect::from_center_size(
+                        rect.left_top() + vec2(10.0, 10.0),
+                        Vec2::splat(18.0),
+                    );
+                    let mode_response =
+                        ui.interact(mode_rect, ui.id().with(("mode", index)), Sense::click());
+                    let (bg, icon_color, icon, tooltip) = match mode {
+                        SendMode::Auto => (
+                            palette.overlay,
+                            palette.text,
+                            Icon::Image,
+                            crate::i18n::gettext(
+                                app.locale,
+                                "Send as photo · Click to send as document",
+                            ),
+                        ),
+                        SendMode::Document => (
+                            palette.accent,
+                            palette.on_accent,
+                            Icon::FileText,
+                            crate::i18n::gettext(
+                                app.locale,
+                                "Send as document · Click to send as photo",
+                            ),
+                        ),
+                    };
+                    mode_response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            ui.is_enabled(),
+                            &tooltip,
+                        )
+                    });
+                    theme::reveal_focus(&mode_response);
+                    ui.painter().circle_filled(mode_rect.center(), 9.0, bg);
+                    theme::paint_icon(ui, icon, mode_rect, 12.0, icon_color);
+                    theme::focus_outline(ui, mode_response.id, mode_rect, 9.0);
+                    if mode_response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(tooltip)
+                        .clicked()
+                    {
+                        toggle_mode = Some(index);
+                    }
+                }
                 // Remove button in the corner.
                 let close =
                     Rect::from_center_size(rect.right_top() + vec2(-10.0, 10.0), Vec2::splat(18.0));
@@ -8128,10 +8266,36 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                 {
                     remove = Some(index);
                 }
+                if let Some(mode) = picture_mode {
+                    response.context_menu(|ui| {
+                        let as_photo = crate::i18n::gettext(app.locale, "Send as photo");
+                        let as_doc = crate::i18n::gettext(app.locale, "Send as document");
+                        let remove_text = crate::i18n::gettext(app.locale, "Remove");
+                        if widgets::menu_item(ui, &palette, Some(Icon::Image), &as_photo)
+                            && mode != SendMode::Auto
+                        {
+                            set_mode = Some((index, SendMode::Auto));
+                        }
+                        if widgets::menu_item(ui, &palette, Some(Icon::FileText), &as_doc)
+                            && mode != SendMode::Document
+                        {
+                            set_mode = Some((index, SendMode::Document));
+                        }
+                        widgets::menu_separator(ui, &palette);
+                        if widgets::menu_item(ui, &palette, Some(Icon::X), &remove_text) {
+                            remove = Some(index);
+                        }
+                    });
+                }
             }
-            let _ = response;
         }
     });
+    if let Some(index) = toggle_mode {
+        app.actions.push(Action::TogglePendingMode(index));
+    }
+    if let Some((index, mode)) = set_mode {
+        app.actions.push(Action::SetPendingMode { index, mode });
+    }
     if let Some(index) = remove {
         app.actions.push(Action::RemovePending(index));
     }

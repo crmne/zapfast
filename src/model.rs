@@ -1325,6 +1325,50 @@ pub enum Scroll {
     Bottom,
 }
 
+/// Image MIME types that automatic routing sends as photos.
+pub fn is_photo_mime(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/jpeg" | "image/png" | "image/webp" | "image/bmp" | "image/tiff"
+    )
+}
+
+/// How an image or file attachment should be sent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SendMode {
+    /// Existing media routing by MIME type, including original JPEG bytes for photos.
+    #[default]
+    Auto,
+    /// Sent as a document: preserves original bytes for disk files, or encodes clipboard pixels losslessly into PNG.
+    Document,
+}
+
+impl SendMode {
+    /// Toggles between Auto and Document modes.
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Auto => Self::Document,
+            Self::Document => Self::Auto,
+        }
+    }
+}
+
+/// A file attachment paired with its intended send mode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutboundFile {
+    pub path: PathBuf,
+    pub mode: SendMode,
+}
+
+impl OutboundFile {
+    pub fn auto(path: PathBuf) -> Self {
+        Self {
+            path,
+            mode: SendMode::Auto,
+        }
+    }
+}
+
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -1830,6 +1874,13 @@ pub enum Action {
         chat: ChatId,
         caption: String,
     },
+    /// Changes how a pending attachment is sent.
+    SetPendingMode {
+        index: usize,
+        mode: SendMode,
+    },
+    /// Toggles how a pending attachment is sent (e.g. photo vs document).
+    TogglePendingMode(usize),
     /// Removes one pending attachment.
     RemovePending(usize),
     /// Removes all pending attachments.

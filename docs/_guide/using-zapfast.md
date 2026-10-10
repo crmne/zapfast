@@ -133,6 +133,36 @@ caption. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
 one. Press Escape or click a file's close button to remove it.
 
+By default, supported pictures (JPEG, PNG, WebP, BMP, and TIFF) are sent as
+photos. Existing JPEG files reuse their original bytes; the other supported
+formats and pasted clipboard pixels are encoded as JPEG. Click the mode toggle
+icon in the top-left corner of a picture's thumbnail (or right-click it and choose
+**Send as document**) to send it as a document file:
+
+- **Files from disk** (selected via the paperclip, dropped onto the window,
+  or copied as files in your file manager): the original bytes, filename,
+  extension, and any transparency or metadata in the file are preserved.
+- **Pasted clipboard images** (copied as raw pixels, e.g. "Copy Image" from a
+  browser): because clipboard pixels do not carry the original file, filename,
+  or EXIF metadata, ZapFast encodes the available pixels into a lossless PNG
+  named `image.png`, preserving transparency/alpha when present, and sends it
+  as a document. This does not recover the original file's bytes or metadata.
+
+Each picture has its own choice. Choose **Send as photo** in the context menu,
+or click the icon again, to return to the default mode.
+The toggle is available for pasted pictures and the supported photo formats
+listed above. Other image formats, including GIF, SVG, and HEIC, do not have it.
+
+If a send is refused because ZapFast is offline or the reply's original message
+is unavailable, the attachments keep their selected modes in the originating
+account and chat, together with that send's caption and reply. Refused batches
+return one at a time when that chat's composer is free, even if you switched
+accounts before the refusal arrived. Send or discard the current attachments
+and clear their caption and reply to make room for the next batch. A newer
+draft, reply, or edit is kept. Staged attachments also stay with their
+chat when you switch conversations. Attachments are kept in memory while
+ZapFast runs; unlike text drafts, they do not survive a restart.
+
 Incoming attachments up to 64 MiB download when they enter view if automatic
 downloads are on, or on click. Visible stickers download automatically even
 when that setting is off. The 64 MiB limit applies to both automatic and manual

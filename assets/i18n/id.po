@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-09 11:56+0200\n"
+"POT-Creation-Date: 2026-10-10 17:58-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Indonesian\n"
@@ -179,7 +179,7 @@ msgstr "Terkunci"
 msgid "No favorites yet"
 msgstr "Belum ada favorit"
 
-#: src/ui/chats.rs:939 src/app.rs:2010
+#: src/ui/chats.rs:939 src/app.rs:2072
 msgid "Message yourself"
 msgstr "Kirim pesan ke diri sendiri"
 
@@ -294,7 +294,7 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} pesan belum dibaca"
 msgstr[1] "{} pesan belum dibaca"
 
-#: src/ui/conversation.rs:2238 src/app.rs:1992 src/app.rs:2011
+#: src/ui/conversation.rs:2238 src/app.rs:2054 src/app.rs:2073
 msgid "You"
 msgstr "Anda"
 
@@ -316,8 +316,8 @@ msgstr "Info pesan"
 msgid "Reload earlier messages"
 msgstr "Muat ulang pesan sebelumnya"
 
-#: src/ui/conversation.rs:4340 src/ui/image_preview.rs:76
-#: src/ui/image_preview.rs:222
+#: src/ui/conversation.rs:4340 src/ui/image_preview.rs:77
+#: src/ui/image_preview.rs:233
 msgid "Copy image"
 msgstr "Salin gambar"
 
@@ -433,6 +433,30 @@ msgstr "Batalkan bisu"
 msgid "Mute"
 msgstr "Bisukan"
 
+#: src/ui/conversation.rs:7902 src/ui/conversation.rs:8223
+msgid "Send as photo · Click to send as document"
+msgstr ""
+
+#: src/ui/conversation.rs:8190
+msgid "Document"
+msgstr ""
+
+#: src/ui/conversation.rs:8232
+msgid "Send as document · Click to send as photo"
+msgstr ""
+
+#: src/ui/conversation.rs:8271
+msgid "Send as photo"
+msgstr ""
+
+#: src/ui/conversation.rs:8272
+msgid "Send as document"
+msgstr ""
+
+#: src/ui/conversation.rs:8273 src/ui/dialogs.rs:1193
+msgid "Remove"
+msgstr "Hapus"
+
 #: src/ui/dialogs.rs:681
 msgid "Show shortcut hints under the message box"
 msgstr "Tampilkan tips pintasan di bawah kotak pesan"
@@ -506,10 +530,6 @@ msgid ""
 msgstr ""
 "Ini akan memutuskan tautan nomor di komputer ini dan menghapus chat "
 "lokalnya. Akun lain tetap ada."
-
-#: src/ui/dialogs.rs:1193
-msgid "Remove"
-msgstr "Hapus"
 
 #: src/ui/dialogs.rs:1213
 msgid "Leave this channel?"
@@ -1077,7 +1097,7 @@ msgid "Choose a file…"
 msgstr "Pilih file…"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:730
+#: src/ui/widgets.rs:842
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "Dibuat dengan cinta oleh {name}"
@@ -1145,29 +1165,29 @@ msgstr[1] "tersisa {}"
 msgid "No one yet"
 msgstr "Belum ada siapa pun"
 
-#: src/app.rs:1422
+#: src/app.rs:1483
 msgid "Could not delete the removed account's files"
 msgstr "Tidak dapat menghapus file akun yang dihapus"
 
-#: src/app.rs:1915
+#: src/app.rs:1977
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Label bernama “{name}” sudah ada."
 
-#: src/app.rs:1991
+#: src/app.rs:2053
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Anda)"
 
-#: src/app.rs:2914
+#: src/app.rs:2976
 msgid "Could not use this image"
 msgstr "Tidak dapat menggunakan gambar ini"
 
-#: src/app.rs:3455
+#: src/app.rs:3548
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Tidak terkirim: ZapFast tidak terhubung ke WhatsApp."
 
-#: src/app.rs:3459
+#: src/app.rs:3552
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1175,36 +1195,36 @@ msgstr ""
 "Tidak terkirim: pesan yang Anda balas tidak tersedia di komputer ini. "
 "Batalkan balasan untuk mengirim tanpa kutipan."
 
-#: src/app.rs:5178
+#: src/app.rs:5391
 msgid "Added to favorites"
 msgstr "Ditambahkan ke favorit"
 
-#: src/app.rs:5253
+#: src/app.rs:5466
 msgid "Sending the sticker pack…"
 msgstr "Mengirim paket stiker…"
 
-#: src/app.rs:5546 src/ui/labels.rs:253
+#: src/app.rs:5754 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Anda memiliki {limit} label, batas maksimal yang disimpan ZapFast."
 
-#: src/app.rs:6268
+#: src/app.rs:6476
 msgid "App lock password saved"
 msgstr "Kata sandi kunci aplikasi disimpan"
 
-#: src/app.rs:6276
+#: src/app.rs:6484
 msgid "App lock turned off"
 msgstr "Kunci aplikasi dinonaktifkan"
 
-#: src/app.rs:6390
+#: src/app.rs:6598
 msgid "This video opens in your system player"
 msgstr "Video ini dibuka di pemutar media sistem"
 
-#: src/app.rs:6824
+#: src/app.rs:7032
 msgid "Copied image"
 msgstr "Gambar disalin"
 
-#: src/app.rs:6827 src/app.rs:6832
+#: src/app.rs:7035 src/app.rs:7040
 msgid "Failed to copy image"
 msgstr "Gagal menyalin gambar"
 
@@ -1538,11 +1558,11 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Bisukan penelepon tidak dikenal"
 
-#: src/ui/image_preview.rs:223
+#: src/ui/image_preview.rs:234
 msgid "Save as…"
 msgstr "Simpan sebagai…"
 
-#: src/ui/image_preview.rs:225
+#: src/ui/image_preview.rs:236
 msgid "Open in another app"
 msgstr "Buka di aplikasi lain"
 
@@ -1610,7 +1630,7 @@ msgstr "Setelah 15 menit"
 msgid "After 1 hour"
 msgstr "Setelah 1 jam"
 
-#: src/account.rs:214
+#: src/account.rs:216
 #, rust-format
 msgid "Account {id}"
 msgstr "Akun {id}"
