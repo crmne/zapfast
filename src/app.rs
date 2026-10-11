@@ -1641,6 +1641,11 @@ impl App {
                 ControlCommand::Show => self.actions.push(Action::ShowWindow),
                 ControlCommand::ReloadThemes => self.actions.push(Action::ReloadThemes),
                 ControlCommand::Ping => {}
+                ControlCommand::OpenInvite(code) => {
+                    self.actions.push(Action::ShowWindow);
+                    self.actions
+                        .push(Action::OpenUrl(format!("https://chat.whatsapp.com/{code}")));
+                }
                 ControlCommand::OpenChat(request) => {
                     // The chat is only visible in a window, so a run
                     // started into the tray shows one first.
@@ -4770,6 +4775,14 @@ impl App {
                         text: None,
                     });
                 }
+                Action::OpenUrl(url) => {
+                    // Only an invite link is held: it is what a launch
+                    // argument may carry. A link from a message stays
+                    // unreachable while locked.
+                    if let Some(code) = crate::safety::group_invite_code(&url) {
+                        self.app_lock.deferred_invite = Some(code);
+                    }
+                }
                 Action::PrefillComposer { chat, text } => {
                     // The chat it belongs to arrives in the request the
                     // StartChat above is holding; a template without its
@@ -6803,6 +6816,10 @@ impl App {
                             });
                         }
                     }
+                    if let Some(code) = self.app_lock.deferred_invite.take() {
+                        self.actions
+                            .push(Action::OpenUrl(format!("https://chat.whatsapp.com/{code}")));
+                    }
                     if let Some(request) = self.app_lock.deferred_request.take() {
                         self.actions.push(Action::ShowWindow);
                         self.actions.push(Action::StartChat {
@@ -6850,6 +6867,7 @@ impl App {
         self.app_lock.form = None;
         self.app_lock.deferred = None;
         self.app_lock.deferred_request = None;
+        self.app_lock.deferred_invite = None;
         self.app_lock.release();
         if self.settings.app_lock_hash.take().is_some() {
             self.save_settings();
@@ -14490,6 +14508,40 @@ mod app_lock_tests {
         );
         assert_eq!(app.composer, "Invoice 123 is attached");
         assert_eq!(app.app_lock.deferred_request, None, "and forgets it");
+    }
+
+    /// A group invite from the command line waits for the unlock too, while
+    /// any other link stays shut out.
+    #[test]
+    fn a_group_invite_waits_for_the_unlock() {
+        let ctx = egui::Context::default();
+        let mut app = app_with(settings(Some(PASSWORD)));
+        assert!(app.app_lock.is_locked());
+
+        app.apply(Action::OpenUrl("https://example.com/".into()), &ctx);
+        assert_eq!(
+            app.app_lock.deferred_invite, None,
+            "other links are dropped"
+        );
+
+        app.apply(
+            Action::OpenUrl("https://chat.whatsapp.com/AbCdEf1234567890XyZ".into()),
+            &ctx,
+        );
+        assert!(app.invite.is_none(), "the lock hides the invite");
+        assert_eq!(
+            app.app_lock.deferred_invite.as_deref(),
+            Some("AbCdEf1234567890XyZ")
+        );
+
+        try_password(&mut app, &ctx, PASSWORD);
+
+        assert_eq!(
+            app.invite.as_ref().map(|invite| invite.code.as_str()),
+            Some("AbCdEf1234567890XyZ"),
+            "the unlock shows the invite"
+        );
+        assert_eq!(app.app_lock.deferred_invite, None, "and forgets it");
     }
 
     /// Without a password there is nothing to wait for: the link opens.

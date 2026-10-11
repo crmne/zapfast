@@ -170,8 +170,15 @@ fn run() -> eframe::Result<()> {
     // passes. Read before the single-instance guard, because it changes the
     // verb: a running copy is asked to open the chat instead of to show.
     let target = cli.target.as_deref().and_then(zapfast::target::parse);
+    // A group invite link names a group, not a number: it opens the invite
+    // dialog instead of a chat.
+    let invite = cli
+        .target
+        .as_deref()
+        .and_then(zapfast::safety::group_invite_code);
     if let Some(argument) = cli.target.as_deref()
         && target.is_none()
+        && invite.is_none()
     {
         eprintln!("ZapFast cannot read a phone number from {argument}");
         std::process::exit(2);
@@ -186,21 +193,24 @@ fn run() -> eframe::Result<()> {
         None
     } else {
         // A hidden start must not surface a copy that is already running.
-        let verb = match &target {
-            Some(request) => request.verb(),
-            None if cli.start_hidden => "ping".to_owned(),
-            None => "show".to_owned(),
+        let verb = match (&target, &invite) {
+            (Some(request), _) => request.verb(),
+            (None, Some(code)) => format!("invite {code}"),
+            (None, None) if cli.start_hidden => "ping".to_owned(),
+            (None, None) => "show".to_owned(),
         };
         match single_instance::acquire(&discovered.runtime, &waker, &verb) {
             single_instance::Outcome::Only(guard) => Some(guard),
-            single_instance::Outcome::Surfaced if cli.start_hidden && target.is_none() => {
+            single_instance::Outcome::Surfaced
+                if cli.start_hidden && target.is_none() && invite.is_none() =>
+            {
                 eprintln!("ZapFast is already running");
                 return Ok(());
             }
             single_instance::Outcome::Surfaced => {
                 eprintln!(
                     "ZapFast or FastsApp is already running; asked it to {}",
-                    if target.is_some() {
+                    if target.is_some() || invite.is_some() {
                         "open the chat"
                     } else {
                         "show its window"
@@ -287,6 +297,11 @@ fn run() -> eframe::Result<()> {
             });
         }
     }
+    if let Some(code) = &invite {
+        app.actions.push(zapfast::model::Action::OpenUrl(format!(
+            "https://chat.whatsapp.com/{code}"
+        )));
+    }
     #[cfg(feature = "demo")]
     if demo {
         zapfast::demo::populate(&mut app);
@@ -319,7 +334,7 @@ fn run() -> eframe::Result<()> {
     // named would otherwise open behind a tray nobody is looking at.
     let start_hidden = start_hidden(
         cli.start_hidden,
-        target.is_some(),
+        target.is_some() || invite.is_some(),
         demo,
         update_receipt.is_some(),
     );

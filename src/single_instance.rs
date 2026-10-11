@@ -51,6 +51,8 @@ pub enum ControlCommand {
     Ping,
     /// Opens the chat a link named, showing the window as it does.
     OpenChat(crate::target::Request),
+    /// Opens the invite dialog for the group a link named.
+    OpenInvite(String),
 }
 
 type Queue = Arc<Mutex<Vec<ControlCommand>>>;
@@ -138,6 +140,11 @@ pub fn send(dir: &Path, verb: &str) -> std::io::Result<()> {
 fn parse(verb: &str) -> Option<ControlCommand> {
     if let Some(request) = verb.strip_prefix("open ") {
         return crate::target::Request::from_verb(request).map(ControlCommand::OpenChat);
+    }
+    if let Some(code) = verb.strip_prefix("invite ") {
+        // Held to the rule a clicked link meets, not trusted as it arrives.
+        let url = format!("https://chat.whatsapp.com/{code}");
+        return crate::safety::group_invite_code(&url).map(ControlCommand::OpenInvite);
     }
     match verb {
         "show" => Some(ControlCommand::Show),
@@ -276,6 +283,12 @@ mod tests {
                 text: Some("Hello there".into())
             }))
         );
+        assert_eq!(
+            parse("invite AbCdEf1234567890XyZ"),
+            Some(ControlCommand::OpenInvite("AbCdEf1234567890XyZ".into()))
+        );
+        assert_eq!(parse("invite ../evil"), None);
+        assert_eq!(parse("invite short"), None);
         // A chat this copy would not have opened is declined, not acted on.
         assert_eq!(parse("open 20123456789@lid"), None);
         assert_eq!(parse("open"), None);

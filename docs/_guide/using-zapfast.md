@@ -451,6 +451,7 @@ else that hands a link to the desktop.
 xdg-open 'whatsapp://send?phone=20123456789'
 zapfast 'https://wa.me/20123456789?text=Invoice%20%23123%20is%20attached'
 zapfast +20123456789
+zapfast 'https://chat.whatsapp.com/AbCdEf1234567890XyZ'
 ```
 
 A number on its own, a `wa.me` or `api.whatsapp.com` link, and the
@@ -459,6 +460,10 @@ most shared links carry, lands in the composer without being sent, so you can
 edit it or add to it before sending. The composer keeps whatever you were
 already typing, and a chat with unsent text of your own keeps it: a template
 never replaces a draft you wrote.
+
+A `chat.whatsapp.com` group invite link given to `zapfast` shows the same
+invite as clicking it in a message: the group is looked up, and you choose
+whether to join.
 
 When ZapFast is already running the link brings its window forward on that
 chat rather than starting a second copy, and when it is not it starts and

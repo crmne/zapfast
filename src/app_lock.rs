@@ -239,6 +239,9 @@ pub struct AppLock {
     /// names a chat the lock would otherwise hide, so it waits rather than
     /// being dropped: the reader asked for it from outside.
     pub deferred_request: Option<crate::target::Request>,
+    /// The code of a group invite a link asked for while locked, shown once
+    /// unlocked for the same reason.
+    pub deferred_invite: Option<String>,
     /// The Settings password form, when open.
     pub form: Option<Form>,
 }
@@ -268,6 +271,7 @@ impl AppLock {
             forgetting: Forgetting::No,
             deferred: None,
             deferred_request: None,
+            deferred_invite: None,
             form: None,
         }
     }
