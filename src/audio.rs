@@ -718,30 +718,68 @@ fn record(
     let channels = microphone.channels().get();
     let rate = microphone.sample_rate().get();
     let chunk = (rate as usize * usize::from(channels) / 20).max(1);
-    let started = Instant::now();
-    let mut heard = Vec::new();
-    while !stop.load(Ordering::Relaxed) && started.elapsed() < LONGEST_RECORDING {
-        let before = heard.len();
-        heard.extend(microphone.by_ref().take(chunk));
-        let taken = &heard[before..];
-        if taken.is_empty() {
-            break;
-        }
-        let loudness = (taken.iter().map(|s| s * s).sum::<f32>() / taken.len() as f32).sqrt();
-        levels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(loudness);
-        wake();
-        if taken.len() < chunk {
-            // The device disappeared before recording stopped.
-            break;
-        }
-    }
+    let heard = capture(
+        &mut microphone,
+        chunk,
+        STALLED_MICROPHONE,
+        stop,
+        levels,
+        wake,
+    );
     if heard.is_empty() {
         return Err("The microphone did not record any audio".to_owned());
     }
     Ok(voice::mono_at_rate(&heard, channels, rate))
+}
+
+/// How long the microphone may go without a sample before the recording ends.
+///
+/// Once the stream has reported any error, a recoverable overrun included,
+/// rodio's reads come back empty whenever its buffer runs dry, so an empty
+/// read alone does not mean the device is gone (#382).
+const STALLED_MICROPHONE: Duration = Duration::from_secs(1);
+
+/// Reads `chunk` samples at a time until `stop`, keeping a loudness per chunk,
+/// or until the microphone has sent nothing for `stalled`.
+fn capture(
+    microphone: &mut impl Iterator<Item = f32>,
+    chunk: usize,
+    stalled: Duration,
+    stop: &AtomicBool,
+    levels: &Mutex<Vec<f32>>,
+    wake: &dyn Fn(),
+) -> Vec<f32> {
+    let started = Instant::now();
+    let mut last_sample = started;
+    let mut heard = Vec::new();
+    // Samples heard since the last loudness.
+    let mut pending = 0;
+    while !stop.load(Ordering::Relaxed) && started.elapsed() < LONGEST_RECORDING {
+        let before = heard.len();
+        heard.extend(microphone.by_ref().take(chunk - pending));
+        let taken = heard.len() - before;
+        if taken > 0 {
+            last_sample = Instant::now();
+            pending += taken;
+        }
+        if pending == chunk {
+            let samples = &heard[heard.len() - chunk..];
+            let loudness = (samples.iter().map(|s| s * s).sum::<f32>() / chunk as f32).sqrt();
+            levels
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(loudness);
+            wake();
+            pending = 0;
+        } else if taken == 0 {
+            if last_sample.elapsed() >= stalled {
+                log::warn!("recording: the microphone stopped delivering audio");
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    heard
 }
 
 /// Temporary recording path used before sending and archiving.
@@ -791,6 +829,96 @@ mod tests {
         recorder.set_stepped(false);
         assert!(waited(&|| asked.load(Ordering::SeqCst) >= 1));
         recorder.finish().expect("recorded");
+    }
+
+    /// A microphone that plays back a script; `None` is an empty read.
+    struct Script<'a> {
+        reads: std::collections::VecDeque<Option<f32>>,
+        /// Set once the script runs out, as the reader stopping would.
+        stop_at_end: Option<&'a AtomicBool>,
+    }
+
+    impl Iterator for Script<'_> {
+        type Item = f32;
+
+        fn next(&mut self) -> Option<f32> {
+            match self.reads.pop_front() {
+                Some(read) => read,
+                None => {
+                    if let Some(stop) = self.stop_at_end {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                    None
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_stream_error_that_recovers_does_not_end_the_recording() {
+        // rodio returns None while its buffer is empty once any stream error,
+        // even a recoverable overrun, has been reported (#382).
+        let stop = AtomicBool::new(false);
+        let mut microphone = Script {
+            reads: [Some(0.1), Some(0.2), None, Some(0.3), Some(0.4)].into(),
+            stop_at_end: Some(&stop),
+        };
+        let levels = Mutex::new(Vec::new());
+        let heard = capture(
+            &mut microphone,
+            2,
+            STALLED_MICROPHONE,
+            &stop,
+            &levels,
+            &|| {},
+        );
+        assert_eq!(heard, [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(levels.lock().unwrap().len(), 2, "one level per chunk");
+    }
+
+    #[test]
+    fn a_microphone_that_goes_silent_ends_the_recording() {
+        let stop = AtomicBool::new(false);
+        let mut microphone = Script {
+            reads: [Some(0.1), Some(0.2), Some(0.3)].into(),
+            stop_at_end: None,
+        };
+        let levels = Mutex::new(Vec::new());
+        let started = Instant::now();
+        let heard = capture(
+            &mut microphone,
+            2,
+            Duration::from_millis(30),
+            &stop,
+            &levels,
+            &|| {},
+        );
+        assert!(started.elapsed() >= Duration::from_millis(30));
+        assert_eq!(heard, [0.1, 0.2, 0.3], "what was heard is kept");
+        assert!(!stop.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn stopping_ends_a_recording_the_microphone_still_feeds() {
+        let stop = AtomicBool::new(false);
+        let mut reads = 0;
+        let mut microphone = std::iter::from_fn(|| {
+            reads += 1;
+            if reads == 4 {
+                stop.store(true, Ordering::Relaxed);
+            }
+            Some(0.5)
+        });
+        let levels = Mutex::new(Vec::new());
+        let heard = capture(
+            &mut microphone,
+            2,
+            STALLED_MICROPHONE,
+            &stop,
+            &levels,
+            &|| {},
+        );
+        assert_eq!(heard.len(), 4, "the chunk under way when stopped is kept");
     }
 
     #[test]
