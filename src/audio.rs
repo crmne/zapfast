@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use rodio::Source;
@@ -708,7 +708,12 @@ fn record(
     levels: &Mutex<Vec<f32>>,
     wake: &dyn Fn(),
 ) -> Result<Vec<f32>, String> {
-    let mut microphone = rodio::microphone::MicrophoneBuilder::new()
+    record_from(open_microphone, STALLED_MICROPHONE, stop, levels, wake)
+}
+
+/// Opens the default microphone, with its channel count and sample rate.
+fn open_microphone() -> Result<(rodio::microphone::Microphone, u16, u32), String> {
+    let microphone = rodio::microphone::MicrophoneBuilder::new()
         .default_device()
         .map_err(|error| format!("No microphone available: {error}"))?
         .default_config()
@@ -717,19 +722,74 @@ fn record(
         .map_err(|error| format!("Could not open the microphone: {error}"))?;
     let channels = microphone.channels().get();
     let rate = microphone.sample_rate().get();
-    let chunk = (rate as usize * usize::from(channels) / 20).max(1);
-    let heard = capture(
-        &mut microphone,
-        chunk,
-        STALLED_MICROPHONE,
-        stop,
-        levels,
-        wake,
-    );
+    Ok((microphone, channels, rate))
+}
+
+/// Records from the microphone `open` returns, as mono 48 kHz samples.
+///
+/// A read from rodio's microphone waits until a sample arrives, so the
+/// microphone is opened and read on a thread of its own and this one waits
+/// for it with a timeout: a device that stalls without reporting an error
+/// cannot keep a stop or the stall limit from ending the recording. A read
+/// still stuck then is left to finish on its own, keeping the device open
+/// until a sample or an error arrives; only an interruptible read in rodio
+/// itself would avoid that.
+fn record_from<M: Iterator<Item = f32>>(
+    open: impl FnOnce() -> Result<(M, u16, u32), String> + Send + 'static,
+    stalled: Duration,
+    stop: &AtomicBool,
+    levels: &Mutex<Vec<f32>>,
+    wake: &dyn Fn(),
+) -> Result<Vec<f32>, String> {
+    let done = Arc::new(AtomicBool::new(false));
+    let (opened_tx, opened) = mpsc::channel();
+    let (samples_tx, samples) = mpsc::channel();
+    {
+        let done = Arc::clone(&done);
+        std::thread::Builder::new()
+            .name("voice-microphone".to_owned())
+            .spawn(move || {
+                let (mut microphone, channels, rate) = match open() {
+                    Ok(opened) => opened,
+                    Err(error) => {
+                        let _ = opened_tx.send(Err(error));
+                        return;
+                    }
+                };
+                let _ = opened_tx.send(Ok((channels, rate)));
+                // 10 ms blocks: a stop drops at most the block still being read.
+                let block = (chunk_len(channels, rate) / 5).max(1);
+                read_microphone(&mut microphone, block, &done, &samples_tx);
+            })
+            .map_err(|error| format!("Could not start recording: {error}"))?;
+    }
+    let outcome = loop {
+        match opened.recv_timeout(POLL_MICROPHONE) {
+            Ok(Ok((channels, rate))) => {
+                let chunk = chunk_len(channels, rate);
+                let heard = capture(&samples, chunk, stalled, stop, &done, levels, wake);
+                break Ok((heard, channels, rate));
+            }
+            Ok(Err(error)) => break Err(error),
+            Err(mpsc::RecvTimeoutError::Timeout) if !stop.load(Ordering::Relaxed) => {}
+            // Stopped before the microphone was open.
+            Err(mpsc::RecvTimeoutError::Timeout) => break Ok((Vec::new(), 1, voice::RATE)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                break Err("Could not open the microphone".to_owned());
+            }
+        }
+    };
+    done.store(true, Ordering::Relaxed);
+    let (heard, channels, rate) = outcome?;
     if heard.is_empty() {
         return Err("The microphone did not record any audio".to_owned());
     }
     Ok(voice::mono_at_rate(&heard, channels, rate))
+}
+
+/// Samples in 50 ms of interleaved audio: one loudness for the live bars.
+fn chunk_len(channels: u16, rate: u32) -> usize {
+    (rate as usize * usize::from(channels) / 20).max(1)
 }
 
 /// How long the microphone may go without a sample before the recording ends.
@@ -739,45 +799,83 @@ fn record(
 /// read alone does not mean the device is gone (#382).
 const STALLED_MICROPHONE: Duration = Duration::from_secs(1);
 
-/// Reads `chunk` samples at a time until `stop`, keeping a loudness per chunk,
-/// or until the microphone has sent nothing for `stalled`.
-fn capture(
+/// How often a wait for the microphone looks at the stop and stall limits.
+const POLL_MICROPHONE: Duration = Duration::from_millis(10);
+
+/// Sends the microphone's samples in blocks of up to `block` until `done` or
+/// until nobody is listening. Empty reads are waited out, not taken for the
+/// end of the device (see [`STALLED_MICROPHONE`]).
+fn read_microphone(
     microphone: &mut impl Iterator<Item = f32>,
+    block: usize,
+    done: &AtomicBool,
+    samples: &mpsc::Sender<Vec<f32>>,
+) {
+    while !done.load(Ordering::Relaxed) {
+        let read: Vec<f32> = microphone.by_ref().take(block).collect();
+        if read.is_empty() {
+            std::thread::sleep(POLL_MICROPHONE);
+        } else if samples.send(read).is_err() {
+            return;
+        }
+    }
+}
+
+/// Collects `samples` until `stop`, keeping a loudness per `chunk`, or until
+/// none has arrived for `stalled` since the first. Waiting for the first is
+/// left to `stop`: a device can be slow to start. Sets `done` for the reader
+/// and keeps what had already arrived.
+fn capture(
+    samples: &mpsc::Receiver<Vec<f32>>,
     chunk: usize,
     stalled: Duration,
     stop: &AtomicBool,
+    done: &AtomicBool,
     levels: &Mutex<Vec<f32>>,
     wake: &dyn Fn(),
 ) -> Vec<f32> {
     let started = Instant::now();
-    let mut last_sample = started;
+    let mut last_sample: Option<Instant> = None;
     let mut heard = Vec::new();
     // Samples heard since the last loudness.
     let mut pending = 0;
-    while !stop.load(Ordering::Relaxed) && started.elapsed() < LONGEST_RECORDING {
-        let before = heard.len();
-        heard.extend(microphone.by_ref().take(chunk - pending));
-        let taken = heard.len() - before;
-        if taken > 0 {
-            last_sample = Instant::now();
-            pending += taken;
-        }
-        if pending == chunk {
-            let samples = &heard[heard.len() - chunk..];
+    let mut take = |heard: &mut Vec<f32>, block: Vec<f32>| {
+        pending += block.len();
+        heard.extend(block);
+        let mut measured = false;
+        while pending >= chunk {
+            let end = heard.len() - (pending - chunk);
+            let samples = &heard[end - chunk..end];
             let loudness = (samples.iter().map(|s| s * s).sum::<f32>() / chunk as f32).sqrt();
             levels
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .push(loudness);
-            wake();
-            pending = 0;
-        } else if taken == 0 {
-            if last_sample.elapsed() >= stalled {
-                log::warn!("recording: the microphone stopped delivering audio");
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
+            pending -= chunk;
+            measured = true;
         }
+        if measured {
+            wake();
+        }
+    };
+    while !stop.load(Ordering::Relaxed) && started.elapsed() < LONGEST_RECORDING {
+        match samples.recv_timeout(POLL_MICROPHONE) {
+            Ok(block) => {
+                last_sample = Some(Instant::now());
+                take(&mut heard, block);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if last_sample.is_some_and(|last| last.elapsed() >= stalled) {
+                    log::warn!("recording: the microphone stopped delivering audio");
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    done.store(true, Ordering::Relaxed);
+    for block in samples.try_iter() {
+        take(&mut heard, block);
     }
     heard
 }
@@ -858,67 +956,211 @@ mod tests {
     fn a_stream_error_that_recovers_does_not_end_the_recording() {
         // rodio returns None while its buffer is empty once any stream error,
         // even a recoverable overrun, has been reported (#382).
-        let stop = AtomicBool::new(false);
+        let done = AtomicBool::new(false);
         let mut microphone = Script {
             reads: [Some(0.1), Some(0.2), None, Some(0.3), Some(0.4)].into(),
-            stop_at_end: Some(&stop),
+            stop_at_end: Some(&done),
         };
-        let levels = Mutex::new(Vec::new());
-        let heard = capture(
-            &mut microphone,
-            2,
-            STALLED_MICROPHONE,
-            &stop,
-            &levels,
-            &|| {},
-        );
-        assert_eq!(heard, [0.1, 0.2, 0.3, 0.4]);
-        assert_eq!(levels.lock().unwrap().len(), 2, "one level per chunk");
+        let (samples, read) = mpsc::channel();
+        read_microphone(&mut microphone, 2, &done, &samples);
+        drop(samples);
+        let blocks: Vec<Vec<f32>> = read.iter().collect();
+        assert_eq!(blocks, [vec![0.1, 0.2], vec![0.3, 0.4]]);
     }
 
     #[test]
     fn a_microphone_that_goes_silent_ends_the_recording() {
         let stop = AtomicBool::new(false);
-        let mut microphone = Script {
-            reads: [Some(0.1), Some(0.2), Some(0.3)].into(),
-            stop_at_end: None,
-        };
+        let (samples, read) = mpsc::channel();
+        samples.send(vec![0.1, 0.2, 0.3]).unwrap();
+        samples.send(vec![0.4]).unwrap();
         let levels = Mutex::new(Vec::new());
         let started = Instant::now();
         let heard = capture(
-            &mut microphone,
+            &read,
             2,
             Duration::from_millis(30),
             &stop,
+            &AtomicBool::new(false),
             &levels,
             &|| {},
         );
         assert!(started.elapsed() >= Duration::from_millis(30));
-        assert_eq!(heard, [0.1, 0.2, 0.3], "what was heard is kept");
+        assert_eq!(heard, [0.1, 0.2, 0.3, 0.4], "what was heard is kept");
+        assert_eq!(levels.lock().unwrap().len(), 2, "one level per chunk");
         assert!(!stop.load(Ordering::Relaxed));
+        drop(samples);
+    }
+
+    #[test]
+    fn stopping_keeps_audio_that_has_already_arrived() {
+        let stop = AtomicBool::new(true);
+        let (samples, read) = mpsc::channel();
+        samples.send(vec![0.1, 0.2]).unwrap();
+        samples.send(vec![0.3, 0.4, 0.5]).unwrap();
+        let levels = Mutex::new(Vec::new());
+        let heard = capture(
+            &read,
+            2,
+            STALLED_MICROPHONE,
+            &stop,
+            &AtomicBool::new(false),
+            &levels,
+            &|| {},
+        );
+        assert_eq!(heard, [0.1, 0.2, 0.3, 0.4, 0.5]);
+        assert_eq!(levels.lock().unwrap().len(), 2, "one level per chunk");
+    }
+
+    /// Runs `record_from` on a thread, stopping it after `stop_after`, and
+    /// hands back what it returns and when, or `None` if it never does.
+    fn record_in_thread<M: Iterator<Item = f32>>(
+        open: impl FnOnce() -> Result<(M, u16, u32), String> + Send + 'static,
+        stalled: Duration,
+        stop_after: Option<Duration>,
+    ) -> Option<(Result<Vec<f32>, String>, Duration)> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let started = Instant::now();
+        let (done, result) = mpsc::channel();
+        {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let levels = Mutex::new(Vec::new());
+                let recorded = record_from(open, stalled, &stop, &levels, &|| {});
+                let _ = done.send((recorded, started.elapsed()));
+            });
+        }
+        if let Some(after) = stop_after {
+            std::thread::sleep(after);
+            stop.store(true, Ordering::Relaxed);
+        }
+        result.recv_timeout(Duration::from_secs(3)).ok()
+    }
+
+    /// A microphone that sends `left` samples and then blocks without an
+    /// error, as rodio's does when a device stalls silently.
+    struct Stalling {
+        left: usize,
+    }
+
+    impl Iterator for Stalling {
+        type Item = f32;
+
+        fn next(&mut self) -> Option<f32> {
+            if self.left == 0 {
+                loop {
+                    std::thread::park();
+                }
+            }
+            self.left -= 1;
+            Some(0.25)
+        }
+    }
+
+    /// Opens a mono 48 kHz [`Stalling`] microphone.
+    fn stalling_microphone(
+        samples: usize,
+    ) -> impl FnOnce() -> Result<(Stalling, u16, u32), String> + Send + 'static {
+        move || Ok((Stalling { left: samples }, 1, voice::RATE))
+    }
+
+    #[test]
+    fn a_stalled_microphone_still_stops_when_asked() {
+        let (recorded, _) = record_in_thread(
+            stalling_microphone(4_800),
+            Duration::from_secs(60),
+            Some(Duration::from_millis(200)),
+        )
+        .expect("stopping returns although the microphone blocks");
+        assert_eq!(recorded.expect("what was heard is kept").len(), 4_800);
+    }
+
+    #[test]
+    fn a_microphone_that_blocks_ends_after_the_stall_limit() {
+        let (recorded, _) =
+            record_in_thread(stalling_microphone(4_800), Duration::from_millis(300), None)
+                .expect("the stall limit ends a read that never returns");
+        assert_eq!(recorded.expect("what was heard is kept").len(), 4_800);
+    }
+
+    #[test]
+    fn a_slow_first_sample_is_waited_for() {
+        // A device can take a while to deliver its first callback (a headset
+        // switching profiles); the stall limit counts from the first sample.
+        let (recorded, after) = record_in_thread(
+            stalling_microphone(0),
+            Duration::from_millis(50),
+            Some(Duration::from_millis(300)),
+        )
+        .expect("stopping returns");
+        assert!(after >= Duration::from_millis(300), "{after:?}");
+        assert_eq!(
+            recorded.unwrap_err(),
+            "The microphone did not record any audio"
+        );
+    }
+
+    #[test]
+    fn a_microphone_that_will_not_open_reports_why() {
+        let open = || -> Result<(std::iter::Empty<f32>, u16, u32), String> {
+            Err("No microphone available".to_owned())
+        };
+        let (recorded, _) =
+            record_in_thread(open, STALLED_MICROPHONE, None).expect("returns at once");
+        assert_eq!(recorded.unwrap_err(), "No microphone available");
+        let open = || -> Result<(std::iter::Empty<f32>, u16, u32), String> {
+            panic!("the audio backend failed")
+        };
+        let (recorded, _) =
+            record_in_thread(open, STALLED_MICROPHONE, None).expect("returns at once");
+        assert_eq!(recorded.unwrap_err(), "Could not open the microphone");
+    }
+
+    #[test]
+    fn stopping_while_the_microphone_opens_returns() {
+        let open = || -> Result<(std::iter::Empty<f32>, u16, u32), String> {
+            loop {
+                std::thread::park();
+            }
+        };
+        let (recorded, _) =
+            record_in_thread(open, STALLED_MICROPHONE, Some(Duration::from_millis(100)))
+                .expect("stopping returns although opening never finishes");
+        assert!(recorded.is_err());
     }
 
     #[test]
     fn stopping_ends_a_recording_the_microphone_still_feeds() {
-        let stop = AtomicBool::new(false);
-        let mut reads = 0;
-        let mut microphone = std::iter::from_fn(|| {
-            reads += 1;
-            if reads == 4 {
-                stop.store(true, Ordering::Relaxed);
-            }
-            Some(0.5)
-        });
-        let levels = Mutex::new(Vec::new());
-        let heard = capture(
-            &mut microphone,
-            2,
-            STALLED_MICROPHONE,
-            &stop,
-            &levels,
-            &|| {},
-        );
-        assert_eq!(heard.len(), 4, "the chunk under way when stopped is kept");
+        // About real time: 480 samples every 10 ms.
+        let open = || {
+            let mut sent = 0;
+            let microphone = std::iter::from_fn(move || {
+                sent += 1;
+                if sent % 480 == 0 {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Some(0.5)
+            });
+            Ok((microphone, 1, voice::RATE))
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let (done, result) = mpsc::channel();
+        {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let levels = Mutex::new(Vec::new());
+                let recorded = record_from(open, STALLED_MICROPHONE, &stop, &levels, &|| {});
+                let _ = done.send((recorded, levels.into_inner().unwrap().len()));
+            });
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        stop.store(true, Ordering::Relaxed);
+        let (recorded, levels) = result
+            .recv_timeout(Duration::from_secs(3))
+            .expect("stopping ends the recording");
+        let heard = recorded.expect("something was heard");
+        assert!(!heard.is_empty());
+        assert_eq!(levels, heard.len() / 2_400, "one level per 50 ms");
     }
 
     #[test]
