@@ -829,6 +829,15 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_icon_draws_without_svg_filters() {
+        // Qt's SVG renderer rejects filter primitives such as feFuncA, and a
+        // tray that asks for the themed icon then draws a missing-icon
+        // marker (#396).
+        let svg = std::str::from_utf8(MARK).expect("the icon is UTF-8");
+        assert!(!svg.contains("<filter"), "packaging/icons/zapfast.svg");
+    }
+
+    #[test]
     fn phone_numbers_are_grouped() {
         assert_eq!(phone("393331234567"), "+39 333 123 4567");
         assert_eq!(phone("15551234567"), "+1 555 123 4567");
