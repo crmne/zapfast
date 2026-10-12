@@ -5623,32 +5623,75 @@ mod tests {
         );
     }
 
-    /// macOS and Wayland report trackpad scrolling in points; a two-finger
-    /// scroll moves a picture larger than the area.
+    /// A two-finger vertical trackpad gesture zooms in on upward motion and
+    /// out on downward motion.
     #[test]
-    fn a_trackpad_scroll_moves_the_previewed_image_instead_of_zooming() {
+    fn a_trackpad_vertical_scroll_zooms_the_previewed_image() {
         let mut app = app();
         let ctx = egui::Context::default();
         open_sample_preview(&mut app, &ctx);
         app.actions.push(crate::model::Action::ImageActualSize);
         render(&mut app, &ctx);
         let before = preview_frame(&mut app, &ctx, vec![]);
+        // Upward motion zooms in.
         wheel_at(
             &mut app,
             &ctx,
             before.center(),
             egui::MouseWheelUnit::Point,
-            -60.0,
+            60.0,
             egui::Modifiers::NONE,
         );
-        let after = preview_frame(&mut app, &ctx, vec![]);
+        let zoomed_in = preview_frame(&mut app, &ctx, vec![]);
         assert!(
-            before.top() - after.top() > 30.0,
-            "{before:?} did not scroll to {after:?}"
+            zoomed_in.width() > before.width() * 1.1,
+            "{before:?} did not zoom in to {zoomed_in:?}"
         );
         let preview = app.image_preview.as_ref().unwrap();
         assert!(!preview.is_fit());
-        assert_eq!(preview.zoom(), 1.0);
+        assert!(preview.zoom() > 1.0);
+
+        // Downward motion zooms out.
+        wheel_at(
+            &mut app,
+            &ctx,
+            zoomed_in.center(),
+            egui::MouseWheelUnit::Point,
+            -60.0,
+            egui::Modifiers::NONE,
+        );
+        let zoomed_out = preview_frame(&mut app, &ctx, vec![]);
+        assert!(
+            zoomed_out.width() < zoomed_in.width(),
+            "{zoomed_in:?} did not zoom out to {zoomed_out:?}"
+        );
+    }
+
+    /// Zooming with a trackpad keeps the picture point under the pointer in
+    /// place.
+    #[test]
+    fn trackpad_zoom_keeps_the_pointed_at_pixel_under_the_pointer() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        open_sample_preview(&mut app, &ctx);
+        let pointer = preview_frame(&mut app, &ctx, vec![]).center() + egui::vec2(-200.0, -150.0);
+        app.actions.push(crate::model::Action::ImageActualSize);
+        app.actions.push(crate::model::Action::ZoomImageIn);
+        render(&mut app, &ctx);
+        let before = preview_frame(&mut app, &ctx, vec![]);
+        let spot = (pointer - before.min) / before.size();
+        wheel_at(
+            &mut app,
+            &ctx,
+            pointer,
+            egui::MouseWheelUnit::Point,
+            60.0,
+            egui::Modifiers::NONE,
+        );
+        let after = preview_frame(&mut app, &ctx, vec![]);
+        assert!(after.width() > before.width() * 1.1, "the trackpad zoomed");
+        let drift = after.min + spot * after.size() - pointer;
+        assert!(drift.length() < 1.5, "the pixel drifted by {drift:?}");
     }
 
     /// Zooming with the wheel keeps the picture point under the pointer in

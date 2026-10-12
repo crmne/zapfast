@@ -203,10 +203,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     }
                     let scroll_id =
                         ui.make_persistent_id(egui::IdSalt::new("image-preview-scroll"));
-                    let trackpad = app.scrolling.from_trackpad();
                     // Read before the scroll area, which would otherwise take the
                     // wheel. The zoom itself is applied by `App` after the frame.
-                    let zoom = zoom_input(ui, area, trackpad).and_then(|(factor, pointer)| {
+                    let zoom = zoom_input(ui, area).and_then(|(factor, pointer)| {
                         let mut next = app.image_preview.clone()?;
                         next.zoom_by(factor);
                         let zoomed = display_size(texture.size, canvas, next.is_fit(), next.zoom());
@@ -354,13 +353,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Zoom factor the wheel or a pinch asks for over the preview area, with the
-/// anchor point relative to the picture area. Each wheel notch is one header
-/// zoom step. A plain mouse wheel zooms instead of scrolling, so its delta is
-/// taken from the scroll area. Windows and X11 report touchpads as wheel
-/// lines, so two fingers zoom there; only scrolling reported in points
-/// (macOS, Wayland) keeps moving the picture.
-fn zoom_input(ui: &mut egui::Ui, area: Rect, trackpad: bool) -> Option<(f32, Vec2)> {
+/// Zoom factor the wheel, trackpad, or a pinch asks for over the preview area,
+/// with the anchor point relative to the picture area. Each wheel notch is one
+/// header zoom step; trackpad scrolling scales continuously. Plain vertical
+/// scrolling zooms instead of scrolling, so its vertical delta is taken from
+/// the scroll area; dragging moves the picture.
+fn zoom_input(ui: &mut egui::Ui, area: Rect) -> Option<(f32, Vec2)> {
     let (touch, hover) = ui.input(|input| {
         (
             input.multi_touch().map(|touch| touch.center_pos),
@@ -392,11 +390,7 @@ fn zoom_input(ui: &mut egui::Ui, area: Rect, trackpad: bool) -> Option<(f32, Vec
         }
         // Shift and Alt turn the wheel sideways; Ctrl pressed during a plain
         // notch must not hand the rest of it to the scroll area.
-        if !trackpad
-            && !input.modifiers.shift
-            && !input.modifiers.alt
-            && input.smooth_scroll_delta.y != 0.0
-        {
+        if !input.modifiers.shift && !input.modifiers.alt && input.smooth_scroll_delta.y != 0.0 {
             factor *= step.powf(input.smooth_scroll_delta.y / line_speed);
             input.smooth_scroll_delta.y = 0.0;
         }
