@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-14 00:15+0200\n"
+"POT-Creation-Date: 2026-10-14 00:41+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -251,7 +251,7 @@ msgstr "Покинуть группу"
 msgid "Leave channel"
 msgstr "Покинуть канал"
 
-#: src/ui/chats.rs:1655 src/ui/labels.rs:166 src/ui/labels.rs:213
+#: src/ui/chats.rs:1655 src/ui/labels.rs:178 src/ui/labels.rs:223
 msgid "Labels"
 msgstr "Метки"
 
@@ -672,7 +672,7 @@ msgstr "Загрузка набора…"
 msgid "Add to my stickers"
 msgstr "Добавить в мои стикеры"
 
-#: src/ui/dialogs.rs:1088 src/ui/message_info.rs:28 src/ui/labels.rs:224
+#: src/ui/dialogs.rs:1088 src/ui/message_info.rs:28 src/ui/labels.rs:234
 #: src/ui/info.rs:252
 msgid "Close"
 msgstr "Закрыть"
@@ -1662,7 +1662,7 @@ msgid "Hang up the current call first"
 msgstr "Сначала завершите текущий звонок"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:861
+#: src/ui/widgets.rs:886
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "Сделано с любовью: {name}"
@@ -1814,7 +1814,7 @@ msgstr "Добавлено в избранное"
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:7633 src/ui/labels.rs:247
+#: src/app.rs:7633 src/ui/labels.rs:257
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
@@ -1905,11 +1905,11 @@ msgstr "Цвет"
 msgid "Manage labels"
 msgstr "Управление метками"
 
-#: src/ui/labels.rs:200
+#: src/ui/labels.rs:166
 msgid "Manage labels…"
 msgstr "Управление метками…"
 
-#: src/ui/labels.rs:236
+#: src/ui/labels.rs:246
 msgid ""
 "Labels stay on this computer. They do not reach your phone or anyone you "
 "chat with."
@@ -1917,15 +1917,15 @@ msgstr ""
 "Метки остаются на этом компьютере. Они не попадают ни на ваш телефон, ни к "
 "собеседникам."
 
-#: src/ui/labels.rs:257
+#: src/ui/labels.rs:267
 msgid "New label"
 msgstr "Новая метка"
 
-#: src/ui/labels.rs:271
+#: src/ui/labels.rs:281
 msgid "Create"
 msgstr "Создать"
 
-#: src/ui/labels.rs:301
+#: src/ui/labels.rs:311
 msgid ""
 "No labels yet. Create one above, then add chats to it from their right-click "
 "menu."
@@ -1933,11 +1933,11 @@ msgstr ""
 "Меток пока нет. Создайте метку выше, затем добавляйте чаты через их "
 "контекстное меню."
 
-#: src/ui/labels.rs:336
+#: src/ui/labels.rs:346
 msgid "Next colour"
 msgstr "Следующий цвет"
 
-#: src/ui/labels.rs:385
+#: src/ui/labels.rs:395
 #, rust-format
 msgid "{} chat"
 msgid_plural "{} chats"
@@ -1945,11 +1945,11 @@ msgstr[0] "{} чат"
 msgstr[1] "{} чата"
 msgstr[2] "{} чатов"
 
-#: src/ui/labels.rs:406
+#: src/ui/labels.rs:416
 msgid "Rename or recolour"
 msgstr "Переименовать или сменить цвет"
 
-#: src/ui/labels.rs:431
+#: src/ui/labels.rs:441
 msgid "Delete this label. Its chats keep their messages."
 msgstr "Удалить эту метку. Сообщения в её чатах останутся."
 

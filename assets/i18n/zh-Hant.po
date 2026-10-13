@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-14 00:15+0200\n"
+"POT-Creation-Date: 2026-10-14 00:41+0200\n"
 "PO-Revision-Date: 2026-10-02 18:51+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
 "Language-Team: Chinese (Traditional)\n"
@@ -247,7 +247,7 @@ msgstr "離開群組"
 msgid "Leave channel"
 msgstr "離開頻道"
 
-#: src/ui/chats.rs:1655 src/ui/labels.rs:166 src/ui/labels.rs:213
+#: src/ui/chats.rs:1655 src/ui/labels.rs:178 src/ui/labels.rs:223
 msgid "Labels"
 msgstr "標籤"
 
@@ -639,7 +639,7 @@ msgstr "正在下載貼圖集…"
 msgid "Add to my stickers"
 msgstr "加入我的貼圖"
 
-#: src/ui/dialogs.rs:1088 src/ui/message_info.rs:28 src/ui/labels.rs:224
+#: src/ui/dialogs.rs:1088 src/ui/message_info.rs:28 src/ui/labels.rs:234
 #: src/ui/info.rs:252
 msgid "Close"
 msgstr "關閉"
@@ -1591,7 +1591,7 @@ msgid "Hang up the current call first"
 msgstr "請先掛斷目前的通話"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:861
+#: src/ui/widgets.rs:886
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "由 {name} 精心打造"
@@ -1735,7 +1735,7 @@ msgstr "已加入最愛"
 msgid "Sending the sticker pack…"
 msgstr "正在傳送貼圖集…"
 
-#: src/app.rs:7633 src/ui/labels.rs:247
+#: src/app.rs:7633 src/ui/labels.rs:257
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "您已有 {limit} 個標籤，已達 ZapFast 的上限。"
@@ -1826,45 +1826,45 @@ msgstr "顏色"
 msgid "Manage labels"
 msgstr "管理標籤"
 
-#: src/ui/labels.rs:200
+#: src/ui/labels.rs:166
 msgid "Manage labels…"
 msgstr "管理標籤…"
 
-#: src/ui/labels.rs:236
+#: src/ui/labels.rs:246
 msgid ""
 "Labels stay on this computer. They do not reach your phone or anyone you "
 "chat with."
 msgstr "標籤只儲存在這部電腦上，不會同步到您的手機或對話對象。"
 
-#: src/ui/labels.rs:257
+#: src/ui/labels.rs:267
 msgid "New label"
 msgstr "新標籤"
 
-#: src/ui/labels.rs:271
+#: src/ui/labels.rs:281
 msgid "Create"
 msgstr "建立"
 
-#: src/ui/labels.rs:301
+#: src/ui/labels.rs:311
 msgid ""
 "No labels yet. Create one above, then add chats to it from their right-click "
 "menu."
 msgstr "尚無標籤。請先在上方建立一個，再從對話的右鍵選單將對話加入。"
 
-#: src/ui/labels.rs:336
+#: src/ui/labels.rs:346
 msgid "Next colour"
 msgstr "下一個顏色"
 
-#: src/ui/labels.rs:385
+#: src/ui/labels.rs:395
 #, rust-format
 msgid "{} chat"
 msgid_plural "{} chats"
 msgstr[0] "{} 個對話"
 
-#: src/ui/labels.rs:406
+#: src/ui/labels.rs:416
 msgid "Rename or recolour"
 msgstr "重新命名或變更顏色"
 
-#: src/ui/labels.rs:431
+#: src/ui/labels.rs:441
 msgid "Delete this label. Its chats keep their messages."
 msgstr "刪除此標籤，其中的對話與訊息都會保留。"
 

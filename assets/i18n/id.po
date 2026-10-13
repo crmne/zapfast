@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-14 00:15+0200\n"
+"POT-Creation-Date: 2026-10-14 00:41+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Indonesian\n"
@@ -248,7 +248,7 @@ msgstr "Keluar dari grup"
 msgid "Leave channel"
 msgstr "Keluar dari saluran"
 
-#: src/ui/chats.rs:1655 src/ui/labels.rs:166 src/ui/labels.rs:213
+#: src/ui/chats.rs:1655 src/ui/labels.rs:178 src/ui/labels.rs:223
 msgid "Labels"
 msgstr "Label"
 
@@ -661,7 +661,7 @@ msgstr "Mengunduh paket…"
 msgid "Add to my stickers"
 msgstr "Tambahkan ke stiker saya"
 
-#: src/ui/dialogs.rs:1088 src/ui/message_info.rs:28 src/ui/labels.rs:224
+#: src/ui/dialogs.rs:1088 src/ui/message_info.rs:28 src/ui/labels.rs:234
 #: src/ui/info.rs:252
 msgid "Close"
 msgstr "Tutup"
@@ -1650,7 +1650,7 @@ msgid "Hang up the current call first"
 msgstr "Akhiri dulu panggilan yang sedang berlangsung"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:861
+#: src/ui/widgets.rs:886
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "Dibuat dengan cinta oleh {name}"
@@ -1800,7 +1800,7 @@ msgstr "Ditambahkan ke favorit"
 msgid "Sending the sticker pack…"
 msgstr "Mengirim paket stiker…"
 
-#: src/app.rs:7633 src/ui/labels.rs:247
+#: src/app.rs:7633 src/ui/labels.rs:257
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Anda memiliki {limit} label, batas maksimal yang disimpan ZapFast."
@@ -1891,11 +1891,11 @@ msgstr "Warna"
 msgid "Manage labels"
 msgstr "Kelola label"
 
-#: src/ui/labels.rs:200
+#: src/ui/labels.rs:166
 msgid "Manage labels…"
 msgstr "Kelola label…"
 
-#: src/ui/labels.rs:236
+#: src/ui/labels.rs:246
 msgid ""
 "Labels stay on this computer. They do not reach your phone or anyone you "
 "chat with."
@@ -1903,15 +1903,15 @@ msgstr ""
 "Label hanya tersimpan di komputer ini. Label tidak dikirim ke ponsel Anda "
 "atau siapa pun yang Anda ajak chat."
 
-#: src/ui/labels.rs:257
+#: src/ui/labels.rs:267
 msgid "New label"
 msgstr "Label baru"
 
-#: src/ui/labels.rs:271
+#: src/ui/labels.rs:281
 msgid "Create"
 msgstr "Buat"
 
-#: src/ui/labels.rs:301
+#: src/ui/labels.rs:311
 msgid ""
 "No labels yet. Create one above, then add chats to it from their right-click "
 "menu."
@@ -1919,22 +1919,22 @@ msgstr ""
 "Belum ada label. Buat label baru di atas, lalu tambahkan chat dari menu klik "
 "kanan."
 
-#: src/ui/labels.rs:336
+#: src/ui/labels.rs:346
 msgid "Next colour"
 msgstr "Warna berikutnya"
 
-#: src/ui/labels.rs:385
+#: src/ui/labels.rs:395
 #, rust-format
 msgid "{} chat"
 msgid_plural "{} chats"
 msgstr[0] "{} chat"
 msgstr[1] "{} chat"
 
-#: src/ui/labels.rs:406
+#: src/ui/labels.rs:416
 msgid "Rename or recolour"
 msgstr "Ganti nama atau warna"
 
-#: src/ui/labels.rs:431
+#: src/ui/labels.rs:441
 msgid "Delete this label. Its chats keep their messages."
 msgstr "Hapus label ini. Pesan dalam chat-nya tetap ada."
 
