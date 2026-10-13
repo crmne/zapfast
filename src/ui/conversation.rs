@@ -3578,13 +3578,18 @@ fn bubble(
                     actions,
                 ));
             }
-            if !message.reactions.is_empty() {
+            // An album row carries every member's reactions, each set
+            // reacting to its own item.
+            let members = album.unwrap_or(std::slice::from_ref(message));
+            if members.iter().any(|member| !member.reactions.is_empty()) {
                 ui.add_space(-7.0);
                 ui.horizontal(|ui| {
                     if with_avatar {
                         ui.add_space(SENDER_AVATAR + 8.0);
                     }
-                    reactions(ui, view, message, actions);
+                    for member in members.iter().filter(|member| !member.reactions.is_empty()) {
+                        reactions(ui, view, member, actions);
+                    }
                 });
                 ui.add_space(2.0);
             }
@@ -4025,6 +4030,7 @@ fn bubble_frame(
     // A picture without a caption carries its time over its corner, so
     // the bubble closes under it as evenly as it opens above it.
     let over_picture = album.is_none() && time_over_picture(message);
+    let mut tiles: Vec<(Rect, String)> = Vec::new();
     let inner = Frame::new()
         .inner_margin(Margin {
             left: 10,
@@ -4078,7 +4084,7 @@ fn bubble_frame(
                         quote_block(ui, view, member, quoted, settled.unwrap_or(cap), actions);
                     }
                 }
-                album_content(ui, view, messages, settled.unwrap_or(cap), actions);
+                tiles = album_content(ui, view, messages, settled.unwrap_or(cap), actions);
                 None
             } else {
                 match settled {
@@ -4180,8 +4186,47 @@ fn bubble_frame(
                 .layer_id_at(pos)
                 .is_none_or(|layer| layer == bubble.layer_id)
         });
-    let force_menu = view.open_menu == Some(message.id.as_str());
-    let width = menu_width(ui, view.locale, view.reaction_emoji, message);
+    // In an album the menu belongs to the member under the pointer, so a
+    // reply, reaction, forward or deletion reaches that item, not the first.
+    let target_id = bubble_id.with("album-target");
+    if album.is_some() && right_clicked {
+        let pointer = ui.input(|input| input.pointer.interact_pos());
+        let hit = tiles
+            .iter()
+            .find(|(rect, _)| pointer.is_some_and(|pos| rect.contains(pos)))
+            .map(|(_, id)| id.clone());
+        ui.ctx().data_mut(|data| {
+            if let Some(id) = hit {
+                data.insert_temp(target_id, id);
+            } else {
+                data.remove::<String>(target_id);
+            }
+        });
+    }
+    if let Some(members) = album
+        && let Some(opened) = view.open_menu
+        && members.iter().any(|member| member.id == opened)
+    {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(target_id, opened.to_owned()));
+    }
+    let menu_target = album
+        .and_then(|members| {
+            let id = ui.ctx().data(|data| data.get_temp::<String>(target_id))?;
+            members.iter().find(|member| member.id == id)
+        })
+        .unwrap_or(message);
+    let force_menu = match album {
+        Some(members) => view
+            .open_menu
+            .is_some_and(|opened| members.iter().any(|member| member.id == opened)),
+        None => view.open_menu == Some(message.id.as_str()),
+    };
+    let reacting = reacting
+        || (album.is_some()
+            && view.reaction_menu
+            && view.reaction == Some(menu_target.id.as_str()));
+    let width = menu_width(ui, view.locale, view.reaction_emoji, menu_target);
     let keyboard_clicked =
         bubble.clicked() && bubble.has_focus() && !ui.input(|input| input.pointer.any_click());
     let open = if right_clicked || force_menu || reacting || keyboard_clicked {
@@ -4219,7 +4264,7 @@ fn bubble_frame(
         popup.at_pointer_fixed()
     };
     let menu = popup.show(|ui| {
-        context_menu(ui, view, message, MenuOrigin::Chat, actions);
+        context_menu(ui, view, menu_target, MenuOrigin::Chat, actions);
     });
     if let Some(menu) = menu {
         ui.ctx()
@@ -6445,24 +6490,35 @@ fn carousel_arrow(
         .on_hover_text(label)
 }
 
-/// Draws WhatsApp's media-album items as one compact grid with one batch action.
+/// Draws WhatsApp's media-album items as one compact grid with one batch
+/// action, and returns where each member's tile was drawn.
 fn album_content(
     ui: &mut egui::Ui,
     view: &View<'_>,
     messages: &[Message],
     width: f32,
     actions: &mut Vec<Action>,
-) {
+) -> Vec<(Rect, String)> {
     let gap = 3.0;
     let columns = 2;
     let tile = ((width - gap * (columns - 1) as f32) / columns as f32).max(80.0);
+    let mut tiles = Vec::with_capacity(messages.len());
     for (row, chunk) in messages.chunks(columns).enumerate() {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for (column, message) in chunk.iter().enumerate() {
-                album_tile(ui, view, message, vec2(tile, tile), row, column, actions);
-            }
-        });
+        // An own bubble lays out right to left; the grid keeps reading order.
+        ui.allocate_ui_with_layout(
+            vec2(tile * columns as f32 + gap, tile),
+            Layout::left_to_right(Align::Min),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for (column, message) in chunk.iter().enumerate() {
+                    if let Some(rect) =
+                        album_tile(ui, view, message, vec2(tile, tile), row, column, actions)
+                    {
+                        tiles.push((rect, message.id.clone()));
+                    }
+                }
+            },
+        );
     }
 
     for message in messages {
@@ -6505,7 +6561,15 @@ fn album_content(
             Some((path.clone(), attachment_name(&message.content, path)))
         })
         .collect();
-    if !files.is_empty() && theme::pill_button(ui, &view.palette, "Save all…", true).clicked() {
+    if !files.is_empty()
+        && theme::pill_button(
+            ui,
+            &view.palette,
+            &crate::i18n::gettext(view.locale, "Save all…"),
+            true,
+        )
+        .clicked()
+    {
         actions.push(Action::SaveAttachments { files });
     }
     if !missing.is_empty() {
@@ -6518,11 +6582,14 @@ fn album_content(
         if theme::pill_button(
             ui,
             &view.palette,
-            if downloading {
-                "Downloading…"
-            } else {
-                "Download all"
-            },
+            &crate::i18n::gettext(
+                view.locale,
+                if downloading {
+                    "Downloading…"
+                } else {
+                    "Download all"
+                },
+            ),
             !downloading,
         )
         .clicked()
@@ -6541,9 +6608,11 @@ fn album_content(
             }
         }
     }
+    tiles
 }
 
-/// Draws one album member with its own download, selection and activation targets.
+/// Draws one album member with its own download, selection and activation
+/// targets, and returns its rect.
 fn album_tile(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -6552,10 +6621,8 @@ fn album_tile(
     row: usize,
     column: usize,
     actions: &mut Vec<Action>,
-) {
-    let Some(media) = message.content.media() else {
-        return;
-    };
+) -> Option<Rect> {
+    let media = message.content.media()?;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let kind = if matches!(message.content, Content::Image { .. }) {
         "Photo"
@@ -6641,9 +6708,19 @@ fn album_tile(
             footer_over_picture(ui, view, message, rect, starred, pinned, actions);
         }
     }
+    // A motion photo in an album keeps its own badge and clip.
+    if let Content::Image {
+        motion: Some(motion),
+        ..
+    } = &message.content
+    {
+        motion_clip(ui, view, message, motion, rect, actions);
+    }
     theme::focus_outline(ui, response.id, rect, 5.0);
+    // Each member keeps its own failure: the others stay usable, and a click
+    // on this one retries it.
     let response = if let MediaState::Failed(error) = &media.state {
-        response.on_hover_text(error)
+        response.on_hover_text(format!("{error} · Click to retry"))
     } else {
         response
     };
@@ -6666,6 +6743,14 @@ fn album_tile(
             });
         }
     }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(album_tile_id(&view.chat.id, &message.id), rect));
+    Some(rect)
+}
+
+/// Where an album member's tile was drawn, for interaction tests.
+pub fn album_tile_id(chat: &str, message: &str) -> egui::Id {
+    bubble_id(chat, message).with("album-tile")
 }
 
 /// A carousel uses a short image preview; opening it shows the full picture.

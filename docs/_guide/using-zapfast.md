@@ -234,7 +234,9 @@ items with the same protocol album identity, sender and local calendar date
 are grouped. **Download all** downloads every item that is not on this
 computer yet, whatever its size, as clicking each one would, and shows
 individual failures; **Save all…** copies downloaded files to a folder
-without replacing existing files. Open an item to view it individually.
+without replacing existing files. Open an item to view it individually, and
+right-click it to reply to, react to, forward or delete that item alone. A
+download that fails marks only its own item; click it to retry.
 
 Incoming attachments up to 64 MiB download when they enter view if automatic
 downloads are on, or on click. Visible stickers download automatically even

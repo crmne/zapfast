@@ -7243,6 +7243,116 @@ mod tests {
         );
     }
 
+    /// A right-click on one album tile opens the menu for that member, so
+    /// Reply quotes the picture under the pointer rather than the first.
+    #[test]
+    fn the_menu_of_an_album_tile_acts_on_that_member() {
+        let mut app = app();
+        media_album_sample(&mut app, true);
+        let chat = app.open_chat.clone().unwrap();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let tile = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(crate::ui::conversation::album_tile_id(
+                    &chat, "album-2",
+                ))
+            })
+            .expect("the third member's tile was drawn");
+        let press = |pressed| egui::Event::PointerButton {
+            pos: tile.center(),
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(tile.center()), press(true)],
+        );
+        frame_with(&mut app, &ctx, vec![press(false)]);
+        let popup = crate::ui::conversation::bubble_id(&chat, "album-0").with("popup");
+        assert!(
+            egui::Popup::is_id_open(&ctx, popup),
+            "the album's menu opened"
+        );
+        let reply = accessible_nodes(&mut app, &ctx, Vec::new())
+            .into_iter()
+            .find(|(label, _, _)| label == "Reply")
+            .expect("the menu offers Reply")
+            .2;
+        for pressed in [true, false] {
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(reply),
+                    egui::Event::PointerButton {
+                        pos: reply,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        render(&mut app, &ctx);
+        assert_eq!(app.reply_to.as_deref(), Some("album-2"));
+    }
+
+    /// Our own albums lay their tiles out in reading order even though an
+    /// own bubble lays out from the right.
+    #[test]
+    fn our_album_tiles_keep_reading_order() {
+        let mut app = app();
+        media_album_sample(&mut app, true);
+        let chat = app.open_chat.clone().unwrap();
+        for row in &mut app.conversations.get_mut(&chat).unwrap().messages {
+            row.from_me = true;
+            row.status = crate::model::Delivery::Read;
+        }
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let tile = |id: &str| {
+            ctx.data(|data| {
+                data.get_temp::<egui::Rect>(crate::ui::conversation::album_tile_id(&chat, id))
+            })
+            .expect("the tile was drawn")
+        };
+        assert!(tile("album-0").left() < tile("album-1").left());
+        assert!(tile("album-2").left() < tile("album-3").left());
+        assert!(tile("album-1").bottom() <= tile("album-2").top());
+    }
+
+    /// A reaction to a later member shows under the album row, which
+    /// otherwise carried only the first member's reactions.
+    #[test]
+    fn album_rows_show_every_members_reactions() {
+        let mut app = app();
+        media_album_sample(&mut app, true);
+        let chat = app.open_chat.clone().unwrap();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let bare = app.conversations[&chat].rows["album-0"].height;
+        app.conversations.get_mut(&chat).unwrap().messages[2]
+            .reactions
+            .push(Reaction {
+                sender: "fixture@s.whatsapp.net".into(),
+                from_me: false,
+                emoji: "👍".into(),
+            });
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        assert!(app.conversations[&chat].rows["album-0"].height > bare);
+    }
+
     /// Checks that grouped album members remain independently selectable and actionable.
     #[test]
     fn selecting_messages_keeps_every_album_member_individually_accessible() {

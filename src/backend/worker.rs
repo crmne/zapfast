@@ -11922,6 +11922,78 @@ mod tests {
         );
     }
 
+    /// A motion photo sent inside an album is one album member with its clip,
+    /// and the clip, which reads the same association field, never becomes a
+    /// member or a message of its own.
+    #[test]
+    fn a_motion_photo_in_an_album_is_one_member_and_its_clip_is_not() {
+        use wa::message_association::AssociationType;
+        let mut photo = album_member("album-parent");
+        photo.image_message = MessageField::some({
+            let mut image = wa::message::ImageMessage::default();
+            image.mimetype = Some("image/jpeg".into());
+            image.context_info = MessageField::some({
+                let mut context = wa::ContextInfo::default();
+                context.paired_media_type =
+                    Some(wa::context_info::PairedMediaType::MOTION_PHOTO_PARENT);
+                context
+            });
+            image
+        });
+        let Some(Content::Image { media, motion, .. }) = classify(&photo) else {
+            panic!("the photo is a picture");
+        };
+        assert_eq!(media.album.as_deref(), Some("album-parent"));
+        assert!(motion.is_some(), "the photo keeps its motion clip");
+
+        // The clip names the photo, not the album, as its parent.
+        let mut clip = album_member("photo");
+        clip.message_context_info
+            .as_option_mut()
+            .and_then(|context| context.message_association.as_option_mut())
+            .unwrap()
+            .association_type = Some(AssociationType::MOTION_PHOTO);
+        clip.associated_child_message = MessageField::some({
+            let mut wrapper = wa::message::FutureProofMessage::default();
+            wrapper.message = MessageField::some({
+                let mut child = wa::Message::default();
+                child.video_message = MessageField::some({
+                    let mut video = wa::message::VideoMessage::default();
+                    video.mimetype = Some("video/mp4".into());
+                    video
+                });
+                child
+            });
+            wrapper
+        });
+        assert_eq!(classify(&clip), None, "the clip is not a message");
+        assert_eq!(
+            motion_clip(&clip).map(|(parent, _)| parent).as_deref(),
+            Some("photo")
+        );
+        // Even with the album's association on its wrapper, the paired clip
+        // stays the photo's clip.
+        let mut wrapped = clip.clone();
+        wrapped
+            .message_context_info
+            .as_option_mut()
+            .and_then(|context| context.message_association.as_option_mut())
+            .unwrap()
+            .association_type = Some(AssociationType::MEDIA_ALBUM);
+        wrapped
+            .associated_child_message
+            .as_option_mut()
+            .and_then(|wrapper| wrapper.message.as_option_mut())
+            .and_then(|child| child.video_message.as_option_mut())
+            .unwrap()
+            .context_info = MessageField::some({
+            let mut context = wa::ContextInfo::default();
+            context.paired_media_type = Some(wa::context_info::PairedMediaType::MOTION_PHOTO_CHILD);
+            context
+        });
+        assert_eq!(classify(&wrapped), None);
+    }
+
     #[test]
     fn only_phone_playable_audio_is_sent_as_an_audio_message() {
         let sent_as = |name: &str| {
