@@ -396,9 +396,6 @@ pub struct Settings {
     /// Whether Enter sends. Off, Enter adds a line and Ctrl+Enter (Cmd+Enter
     /// on macOS) sends.
     pub enter_sends: bool,
-    /// Keep the chat list's scroll position after sending instead of jumping
-    /// to the top. Off by default, matching the usual WhatsApp behavior.
-    pub keep_chat_list_position: bool,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
     /// Send typing state while composing.
@@ -509,7 +506,6 @@ impl Default for Settings {
             sidebar_width: 320.0,
             search_pane_width: 380.0,
             enter_sends: true,
-            keep_chat_list_position: false,
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
@@ -992,7 +988,7 @@ mod tests {
         let (settings, stored) = load_from(
             r#"{"enter_sends":false,"label_chips":true,"show_sender_pictures":true,
                 "names_from_contacts":false,"collapse_chat_list":false,
-                "save_contacts_to_phone":false}"#,
+                "save_contacts_to_phone":false,"keep_chat_list_position":true}"#,
         );
         assert!(!settings.enter_sends, "the rest of the file still loads");
         assert!(
@@ -1006,23 +1002,11 @@ mod tests {
             "collapse_chat_list",
             "pause_media_while_recording",
             "pause_media_while_playing",
+            "keep_chat_list_position",
         ] {
             assert!(stored.get(key).is_none(), "{key} is dropped on save");
         }
         assert_eq!(stored["pause_other_media"], true);
-    }
-
-    /// Older settings keep the usual jump-to-top behavior; opting out is
-    /// persisted across saving and loading the settings file.
-    #[test]
-    fn keeping_chat_list_position_is_opt_in_and_survives_restart() {
-        let (settings, _) = load_from("{}");
-        assert!(!settings.keep_chat_list_position);
-        let (settings, stored) = load_from(r#"{"keep_chat_list_position":true}"#);
-        assert!(settings.keep_chat_list_position);
-        assert_eq!(stored["keep_chat_list_position"], true);
-        let restored: Settings = serde_json::from_value(stored).unwrap();
-        assert!(restored.keep_chat_list_position);
     }
 
     #[test]

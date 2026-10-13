@@ -3379,10 +3379,10 @@ mod tests {
         assert!(from_the_dots(&causes), "{causes:?}");
     }
 
-    /// The full frame loop follows sent chats to the top by default and keeps
-    /// the sidebar offset when the reader opts out.
+    /// A sent message moves its chat up, and a chat list within a row of the
+    /// top follows it there; a list scrolled further down keeps its place.
     #[test]
-    fn sending_a_message_scrolls_the_chat_list_back_to_the_top() {
+    fn sending_a_message_scrolls_the_chat_list_back_to_the_top_only_from_near_it() {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
@@ -3408,26 +3408,34 @@ mod tests {
                 output.textures_delta.clear();
             }
         };
-        for keep_position in [false, true] {
-            app.settings.keep_chat_list_position = keep_position;
+        let send = |app: &mut App| {
             let last = app.visible_chats().last().map(|chat| chat.id.clone());
-            app.scroll_chat_into_view.clone_from(&last);
-            render(&mut app);
-            let before = offset();
-            assert!(before > 0.0, "the list starts scrolled down");
-
             app.actions.push(crate::model::Action::SendText {
                 chat: last.expect("sample chats"),
                 text: "Fixture".into(),
                 quoting: None,
             });
-            render(&mut app);
-            assert_eq!(
-                offset(),
-                if keep_position { before } else { 0.0 },
-                "sending respects the chat list preference"
-            );
-        }
+            render(app);
+        };
+        let last = app.visible_chats().last().map(|chat| chat.id.clone());
+        app.scroll_chat_into_view = last;
+        render(&mut app);
+        let far = offset();
+        assert!(far > crate::theme::ROW_HEIGHT, "the list starts far down");
+        send(&mut app);
+        assert_eq!(offset(), far, "a reader far down keeps their place");
+
+        let near = crate::theme::ROW_HEIGHT / 2.0;
+        let id = ctx
+            .data(|data| data.get_temp::<egui::Id>(crate::ui::chats::list_offset_id().with("id")))
+            .expect("the chat list was drawn");
+        let mut state = egui::scroll_area::State::load(&ctx, id).expect("scroll state");
+        state.offset.y = near;
+        state.store(&ctx, id);
+        render(&mut app);
+        assert_eq!(offset(), near, "the list is just below the top");
+        send(&mut app);
+        assert_eq!(offset(), 0.0, "the list is back at the top");
     }
 
     /// A clicked notification lands on the message it announced and keeps it
