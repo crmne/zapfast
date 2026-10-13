@@ -1353,6 +1353,7 @@ mod idle_tests {
                 mentions: Vec::new(),
                 forwarded: false,
                 thumbnail: None,
+                history_order: None,
             });
         }
         conversation.complete = true;
