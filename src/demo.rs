@@ -2575,6 +2575,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         for_everyone: false,
                     });
             }
+            "select-delete" => {
+                if let Some(chat) = app.open_chat.clone() {
+                    app.selection =
+                        Some((chat, vec!["ada-format".to_owned(), "ada-reply".to_owned()]));
+                    app.open_selection_delete_menu = true;
+                }
+            }
             "delete-selection" => {
                 if let Some(chat) = app.open_chat.clone() {
                     let messages = vec!["ada-doc".to_owned(), "ada-reply".to_owned()];
@@ -3008,20 +3015,6 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "forward-portuguese" => {
                 apply_flags(app, Some("forward"));
                 app.locale = crate::i18n::Locale::PortugueseBrazil;
-            }
-            "delete-direct" => {
-                app.dialog = Some(Dialog::ConfirmDeleteMessage {
-                    chat: SAMPLES[0].id.into(),
-                    message: "ada-format".into(),
-                    for_everyone: false,
-                });
-            }
-            "delete-selected-two" => {
-                app.dialog = Some(Dialog::ConfirmDeleteSelection {
-                    chat: SAMPLES[0].id.into(),
-                    messages: vec!["ada-format".into(), "ada-reply".into()],
-                    for_everyone: false,
-                });
             }
             "staged" => {
                 let (photo, _) = sample_files(app);
@@ -5449,6 +5442,7 @@ mod tests {
             "delete-message-mine",
             "remove-pack",
             "delete-selection",
+            "select-delete",
             "new-contact",
             "accounts",
             "accounts,light",
@@ -5492,8 +5486,6 @@ mod tests {
             "rail",
             "search",
             "forward-portuguese",
-            "delete-direct",
-            "delete-selected-two",
             "staged",
             "attachment-draft-away",
             "attachment-draft-return",
@@ -7534,17 +7526,98 @@ mod tests {
         );
     }
 
-    /// The two-message deletion demo references two real messages from its chat.
+    /// The batch-deletion demo references real messages from its chat.
     #[test]
     fn the_batch_delete_demo_uses_existing_messages() {
         let mut app = app();
-        apply_flags(&mut app, Some("delete-selected-two"));
+        apply_flags(&mut app, Some("delete-selection"));
         let Some(Dialog::ConfirmDeleteSelection { chat, messages, .. }) = &app.dialog else {
             panic!("batch confirmation");
         };
         assert_eq!(messages.len(), 2);
         for id in messages {
             assert!(app.conversations[chat].message(id).is_some(), "{id}");
+        }
+    }
+
+    /// The selection bar's Delete menu opens the batch confirmation for the
+    /// whole selection, and offers Delete for everyone only when every
+    /// selected message can still be revoked.
+    #[test]
+    fn the_selection_bar_deletes_the_whole_selection() {
+        for own in [false, true] {
+            let mut app = app();
+            let chat = SAMPLES[0].id.to_owned();
+            let ids = ["ada-format", "ada-reply"];
+            if own {
+                let conversation = app.conversations.get_mut(&chat).unwrap();
+                for id in ids {
+                    let message = conversation.message_mut(id).unwrap();
+                    message.from_me = true;
+                    message.timestamp = crate::util::now();
+                }
+            }
+            app.selection = Some((chat.clone(), ids.map(str::to_owned).to_vec()));
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            for _ in 0..3 {
+                render(&mut app, &ctx);
+            }
+            let click = |app: &mut App, pos| {
+                let event = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                frame_with(app, &ctx, vec![egui::Event::PointerMoved(pos), event(true)]);
+                frame_with(app, &ctx, vec![event(false)]);
+            };
+            let find = |app: &mut App, label: &str| {
+                accessible_nodes(app, &ctx, Vec::new())
+                    .into_iter()
+                    .find(|(text, _, _)| text == label)
+                    .map(|(_, _, pos)| pos)
+            };
+            let delete = find(&mut app, "Delete…").expect("the selection bar offers Delete");
+            click(&mut app, delete);
+            render(&mut app, &ctx);
+            let everyone = find(&mut app, "Delete for everyone").expect("menu item");
+            click(&mut app, everyone);
+            if own {
+                assert_eq!(
+                    app.dialog,
+                    Some(Dialog::ConfirmDeleteSelection {
+                        chat: chat.clone(),
+                        messages: ids.map(str::to_owned).to_vec(),
+                        for_everyone: true,
+                    })
+                );
+                continue;
+            }
+            assert!(
+                app.dialog.is_none(),
+                "others' messages cannot be deleted for everyone"
+            );
+            render(&mut app, &ctx);
+            let pos = match find(&mut app, "Delete for me") {
+                Some(pos) => pos,
+                None => {
+                    click(&mut app, delete);
+                    render(&mut app, &ctx);
+                    find(&mut app, "Delete for me").expect("menu item")
+                }
+            };
+            click(&mut app, pos);
+            assert_eq!(
+                app.dialog,
+                Some(Dialog::ConfirmDeleteSelection {
+                    chat: chat.clone(),
+                    messages: ids.map(str::to_owned).to_vec(),
+                    for_everyone: false,
+                })
+            );
         }
     }
 

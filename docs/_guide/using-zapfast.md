@@ -60,9 +60,12 @@ when an acknowledgement was lost. Unlinking clears those requests. Confirmed
 deletions whose local cleanup failed are repaired on restart or reconnect
 without another network request. Neither deletion can be undone.
 
-With several messages selected, right-click any selected message to delete
-the complete selection. The confirmation shows its count and offers the
-available deletion scopes. Each message is deleted as it would be on its own.
+To delete several messages at once, select them (see
+[Selecting messages](#selecting-messages)) and choose **Delete…** in the bar
+under the chat, or right-click any selected message. **Delete for everyone** is
+offered only when every selected message can still be revoked. The
+confirmation shows how many messages it deletes, and each is deleted as it
+would be on its own.
 
 **Delete chat** and **Clear chat** already sync in 0.19.0, as described under
 [Chats](#chats).
@@ -89,7 +92,7 @@ message it passes, scrolling when you hold the pointer at the top or bottom
 edge. A drag that starts beside the bubbles, off the text, starts a selection
 too. A drag over the text outside a selection still selects the text to copy.
 **Forward…** sends the selected messages together, in their original
-order. Unticking the last message keeps the selection open; Escape or the
+order, and **Delete…** deletes them all. Unticking the last message keeps the selection open; Escape or the
 close button ends it. A batch goes out one message at a time, each starting
 once the one before it reached WhatsApp, so a picture cannot overtake the
 text that came before it. Deleted or unsupported messages, phone-only content,

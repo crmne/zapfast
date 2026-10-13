@@ -472,6 +472,9 @@ pub struct App {
     /// Demo/test: keep the open chat's header menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_header_menu: Option<ChatId>,
+    /// Demo/test: keep the selection bar's delete menu open.
+    #[cfg(any(test, feature = "demo"))]
+    pub open_selection_delete_menu: bool,
     /// Emoji-grid header to scroll into view.
     pub emoji_jump: Option<&'static str>,
     /// Attachments pending in the composer.
@@ -1241,6 +1244,8 @@ impl App {
             open_chat_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_header_menu: None,
+            #[cfg(any(test, feature = "demo"))]
+            open_selection_delete_menu: false,
             emoji_jump: None,
             pending: Vec::new(),
             next_pending_id: 0,

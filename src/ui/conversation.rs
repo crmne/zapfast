@@ -4996,17 +4996,33 @@ fn selection_menu(
     selected: &[String],
     actions: &mut Vec<Action>,
 ) {
+    selection_delete_items(
+        ui,
+        &view.palette,
+        &view.chat.id,
+        selection_can_revoke(messages, selected, view.now),
+        selected,
+        actions,
+    );
+}
+
+/// The two ways to delete a selection, shared by the selection's context
+/// menu and the selection bar's Delete menu. Each opens the confirmation.
+fn selection_delete_items(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    chat: &str,
+    can_revoke: bool,
+    selected: &[String],
+    actions: &mut Vec<Action>,
+) {
     for (label, for_everyone, enabled) in [
-        (
-            "Delete for everyone",
-            true,
-            selection_can_revoke(messages, selected, view.now),
-        ),
+        ("Delete for everyone", true, can_revoke),
         ("Delete for me", false, !selected.is_empty()),
     ] {
-        if widgets::menu_item_enabled(ui, &view.palette, Some(Icon::Trash), label, enabled) {
+        if widgets::menu_item_enabled(ui, palette, Some(Icon::Trash), label, enabled) {
             actions.push(Action::ShowDialog(Dialog::ConfirmDeleteSelection {
-                chat: view.chat.id.clone(),
+                chat: chat.to_owned(),
                 messages: selected.to_vec(),
                 for_everyone,
             }));
@@ -8576,6 +8592,28 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
                     messages: selected.to_vec(),
                 }));
             }
+            let delete = ui
+                .add_enabled_ui(!selected.is_empty(), |ui| {
+                    theme::pill_button(ui, &palette, "Delete…", false)
+                })
+                .inner;
+            // Demo/test: hold this menu open for a screenshot.
+            #[cfg(any(test, feature = "demo"))]
+            if app.open_selection_delete_menu {
+                egui::Popup::open_id(ui.ctx(), delete.id.with("popup"));
+            }
+            let can_revoke = app.conversations.get(chat).is_some_and(|conversation| {
+                selection_can_revoke(&conversation.messages, selected, crate::util::now())
+            });
+            let width = widgets::menu_width(ui, &["Delete for everyone", "Delete for me"], true);
+            let mut actions = Vec::new();
+            egui::Popup::menu(&delete)
+                .width(width)
+                .frame(widgets::menu_frame(&palette))
+                .show(|ui| {
+                    selection_delete_items(ui, &palette, chat, can_revoke, selected, &mut actions);
+                });
+            app.actions.extend(actions);
         });
     });
 }
