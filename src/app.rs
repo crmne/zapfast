@@ -2482,43 +2482,37 @@ impl App {
             && crate::util::now() - message.timestamp <= REVOKE_WINDOW.as_secs() as i64
     }
 
-    /// The open composer's current contents take precedence over its saved draft.
-    fn draft_contents(&self, chat: &str) -> (&str, &[Pending]) {
+    /// Whether a chat holds unsent text or attachments. Editing a sent
+    /// message is not a draft.
+    #[cfg(test)]
+    fn has_draft(&self, chat: &str) -> bool {
         if self.open_chat.as_deref() == Some(chat) {
-            let text = if self.editing.is_none() {
-                self.composer.as_str()
-            } else {
-                ""
-            };
-            (text, &self.pending)
+            (self.editing.is_none() && !self.composer.trim().is_empty()) || !self.pending.is_empty()
         } else {
-            (
-                self.drafts.get(chat).map_or("", String::as_str),
-                self.attachment_drafts
-                    .get(chat)
-                    .map_or(&[], |draft| draft.pending.as_slice()),
-            )
+            self.drafts
+                .get(chat)
+                .is_some_and(|text| !text.trim().is_empty())
+                || self.attachment_drafts.contains_key(chat)
         }
     }
 
-    /// Unsent text or attachments make a draft; editing a sent message does not.
-    pub fn has_draft(&self, chat: &str) -> bool {
-        let (text, pending) = self.draft_contents(chat);
-        !text.trim().is_empty() || !pending.is_empty()
-    }
-
-    /// A chat's unsent text or first attachment on one line for its list row.
-    /// Active text stays in the composer; attachment drafts also show in the row.
+    /// A chat's unsent text on one line, or its first staged attachment, for
+    /// its row in the chat list. The open chat's draft is in the composer,
+    /// where the reader sees it.
     pub fn draft_preview(&self, chat: &str) -> Option<String> {
-        let (text, pending) = self.draft_contents(chat);
-        if self.open_chat.as_deref() == Some(chat) && pending.is_empty() {
+        if self.open_chat.as_deref() == Some(chat) {
             return None;
         }
-        let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let line = self
+            .drafts
+            .get(chat)
+            .map(|draft| draft.split_whitespace().collect::<Vec<_>>().join(" "))
+            .unwrap_or_default();
         if !line.is_empty() {
             return Some(line);
         }
-        pending.first().map(|attachment| match attachment {
+        let attachment = self.attachment_drafts.get(chat)?.pending.first()?;
+        Some(match attachment {
             Pending::File(path) => path.file_name().map_or_else(
                 || "📎".to_owned(),
                 |name| {
@@ -3358,17 +3352,6 @@ impl App {
         self.drafts.remove(id);
         self.draft_mentions.remove(id);
         self.attachment_drafts.remove(id);
-        if live && self.open_chat.as_deref() == Some(id) {
-            if !self.pending.is_empty() {
-                self.pending.clear();
-                self.composer.clear();
-                self.composer_mentions.clear();
-                self.reply_to = None;
-            } else if self.editing.is_none() {
-                self.composer.clear();
-                self.composer_mentions.clear();
-            }
-        }
         self.search_hits
             .retain(|message| message.chat != id || message.timestamp > through);
         // Nothing earlier is left here, and the phone no longer has it either.
@@ -4167,9 +4150,10 @@ impl App {
         (text, mentions)
     }
 
-    /// Parks attachments and reply quotes before leaving a chat or account.
+    /// Parks staged attachments, and the reply they carry, before leaving a
+    /// chat or account. A reply without attachments is not kept, as before.
     fn save_attachment_draft(&mut self, chat: &str) {
-        if self.pending.is_empty() && self.reply_to.is_none() {
+        if self.pending.is_empty() {
             self.attachment_drafts.remove(chat);
         } else {
             let draft = AttachmentDraft {
@@ -7822,46 +7806,18 @@ mod tests {
         assert!(app.draft_preview(chat).is_none());
     }
 
-    /// A quote without text or attachments remains separate across chats and accounts.
+    /// A reply without attachments is not parked, as before attachment
+    /// drafts: only staged files carry their reply with them.
     #[test]
-    fn quote_only_drafts_survive_navigation_without_entering_another_account() {
-        let directory = tempfile::tempdir().unwrap();
-        let dirs = AppDirs::under(directory.path());
-        let mut app = App::headless(dirs.clone(), Settings::default()).0;
-        let first_id = app.account().id.clone();
-        let second_id = AccountId::parse("2").unwrap();
-        let (second, _) = Account::detached(
-            &dirs,
-            second_id.clone(),
-            crate::settings::AccountSettings::default(),
-        )
-        .unwrap();
-        app.accounts.push(second);
+    fn a_reply_without_attachments_is_not_kept_when_switching_chats() {
+        let mut app = app();
         app.open_chat("synthetic-chat".into());
         app.reply_to = Some("first-quote".into());
         app.open_chat("other-chat".into());
         assert!(app.reply_to.is_none());
         app.open_chat("synthetic-chat".into());
-        assert_eq!(app.reply_to.as_deref(), Some("first-quote"));
-        app.switch_account(&second_id);
-        app.open_chat("synthetic-chat".into());
         assert!(app.reply_to.is_none());
-        app.reply_to = Some("second-quote".into());
-        app.switch_account(&first_id);
-        assert_eq!(app.reply_to.as_deref(), Some("first-quote"));
-        app.apply(Action::CloseChat, &egui::Context::default());
-        assert!(app.reply_to.is_none());
-        app.open_chat("synthetic-chat".into());
-        assert_eq!(app.reply_to.as_deref(), Some("first-quote"));
-        app.reply_to = None;
-        app.open_chat("other-chat".into());
-        app.open_chat("synthetic-chat".into());
-        assert!(
-            app.reply_to.is_none(),
-            "cancelled quotes must stay cancelled"
-        );
-        app.switch_account(&second_id);
-        assert_eq!(app.reply_to.as_deref(), Some("second-quote"));
+        assert!(app.attachment_drafts.is_empty());
     }
 
     /// Late file and image refusals recover only into their originating account's draft.
@@ -7964,13 +7920,16 @@ mod tests {
         app.open_chat("cleared".into());
         app.composer = "Caption".into();
         app.stage_files(vec!["Cleared.pdf".into()]);
+        app.open_chat("other".into());
+        assert!(app.has_draft("cleared"));
         app.handle_chat_cleared("cleared", 1, true);
         assert!(!app.has_draft("cleared"));
-        assert!(app.composer.is_empty());
+        app.open_chat("deleted".into());
         app.stage_files(vec!["Deleted.pdf".into()]);
         app.open_chat("other".into());
-        app.forget_chat("cleared");
-        assert!(!app.has_draft("cleared"));
+        assert!(app.has_draft("deleted"));
+        app.forget_chat("deleted");
+        assert!(!app.has_draft("deleted"));
         app.stage_files(vec!["Unlinked.pdf".into()]);
         app.open_chat("last".into());
         app.stage_files(vec!["Active.pdf".into()]);
@@ -10750,24 +10709,6 @@ mod tests {
         // Only the cleared chat loses its search hits.
         assert!(app.search_hits.iter().all(|hit| hit.chat != chat));
         assert_eq!(app.search_hits.len(), 1);
-    }
-
-    #[test]
-    fn clearing_a_chat_discards_its_open_text_draft_and_mentions() {
-        let mut app = app();
-        let chat = "peer@s.whatsapp.net";
-        app.open_chat = Some(chat.into());
-        app.composer = "Synthetic draft @Mira".into();
-        app.composer_mentions.push(ComposerMention {
-            id: "member@s.whatsapp.net".into(),
-            name: "Mira".into(),
-        });
-        let draft = app.composer.clone();
-        app.drafts.insert(chat.into(), draft);
-        app.handle_chat_cleared(chat, 100, true);
-        assert!(app.composer.is_empty());
-        assert!(app.composer_mentions.is_empty());
-        assert!(!app.drafts.contains_key(chat));
     }
 
     #[test]

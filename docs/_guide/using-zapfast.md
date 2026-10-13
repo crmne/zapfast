@@ -142,12 +142,10 @@ caption. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
 one. Press Escape or click a file's close button to remove it.
 
-Staged attachments, captions, selected mentions and reply quotes remain with
-their chat and account when you switch or close conversations. Text drafts
-persist in the encrypted archive; attachment drafts stay in memory until
-ZapFast exits. Clearing or deleting the chat, or unlinking its account,
-discards its drafts. A refused attachment send returns to its originating
-chat without filling another account's composer.
+Staged attachments stay with their chat, along with their caption and reply,
+when you switch chats or accounts, and come back when you return. Unlike text
+drafts, they are kept only while ZapFast runs. A refused attachment send goes
+back to the chat it was meant for.
 
 Incoming attachments up to 64 MiB download when they enter view if automatic
 downloads are on, or on click. Visible stickers download automatically even
