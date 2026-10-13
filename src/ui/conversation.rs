@@ -7762,8 +7762,9 @@ fn voice_player(
                 );
                 ui.painter().circle_filled(at.center(), button / 2.0, fill);
                 theme::paint_icon(ui, Icon::Music, at, 20.0, palette.accent);
+                let label = crate::i18n::gettext(view.locale, "Audio");
                 response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Audio")
+                    egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label.as_ref())
                 });
                 ui.ctx().data_mut(|data| {
                     data.insert_temp(bubble_id(&view.chat.id, &message.id).with("audio-file"), at);
