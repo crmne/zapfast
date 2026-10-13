@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 23:19+0200\n"
+"POT-Creation-Date: 2026-10-13 23:23+0200\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -21,27 +21,27 @@ msgctxt "mention"
 msgid "all"
 msgstr "herkes"
 
-#: src/model.rs:159
+#: src/model.rs:196
 msgid "All"
 msgstr "Tümü"
 
-#: src/model.rs:160
+#: src/model.rs:197
 msgid "Unread"
 msgstr "Okunmamış"
 
-#: src/model.rs:161
+#: src/model.rs:198
 msgid "Private"
 msgstr "Bireysel"
 
-#: src/model.rs:162 src/ui/picker.rs:1190
+#: src/model.rs:199 src/ui/picker.rs:1190
 msgid "Favorites"
 msgstr "Favoriler"
 
-#: src/model.rs:163 src/settings.rs:375
+#: src/model.rs:200 src/settings.rs:375
 msgid "Groups"
 msgstr "Gruplar"
 
-#: src/model.rs:164
+#: src/model.rs:201
 msgid "Channels"
 msgstr "Kanallar"
 
@@ -185,7 +185,7 @@ msgstr "Kasım"
 msgid "December"
 msgstr "Aralık"
 
-#: src/ui/chats.rs:152 src/ui/chats.rs:451 src/app.rs:2983
+#: src/ui/chats.rs:152 src/ui/chats.rs:451 src/app.rs:2989
 msgid "Starred"
 msgstr ""
 
@@ -221,7 +221,7 @@ msgstr ""
 msgid "No favorites yet"
 msgstr "Henüz favori yok"
 
-#: src/ui/chats.rs:1343 src/app.rs:2400
+#: src/ui/chats.rs:1343 src/app.rs:2403
 msgid "Message yourself"
 msgstr "Kendinize mesaj gönderin"
 
@@ -233,7 +233,7 @@ msgstr "Taslak:"
 msgid "Remove from favorites"
 msgstr "Favorilerden kaldır"
 
-#: src/ui/chats.rs:1621 src/ui/chats.rs:2008 src/ui/conversation.rs:5379
+#: src/ui/chats.rs:1621 src/ui/chats.rs:2008 src/ui/conversation.rs:5430
 #: src/ui/dialogs.rs:1226 src/ui/picker.rs:1622
 msgid "Add to favorites"
 msgstr "Favorilere ekle"
@@ -269,12 +269,12 @@ msgstr "Mesajları seç"
 msgid "Hang up"
 msgstr "Aramayı sonlandır"
 
-#: src/ui/conversation.rs:505 src/ui/conversation.rs:3825 src/ui/calls.rs:84
+#: src/ui/conversation.rs:505 src/ui/conversation.rs:3851 src/ui/calls.rs:84
 #: src/ui/calls.rs:261
 msgid "Voice call"
 msgstr "Sesli arama"
 
-#: src/ui/conversation.rs:524 src/ui/conversation.rs:3833 src/ui/calls.rs:85
+#: src/ui/conversation.rs:524 src/ui/conversation.rs:3859 src/ui/calls.rs:85
 #: src/ui/calls.rs:248
 msgid "Video call"
 msgstr "Görüntülü arama"
@@ -295,19 +295,23 @@ msgstr "ZapFast'te kanallar salt okunurdur"
 msgid "You left this group"
 msgstr "Bu gruptan ayrıldınız"
 
-#: src/ui/conversation.rs:1267
+#: src/ui/conversation.rs:1170
+msgid "Original group message unavailable"
+msgstr "Orijinal grup mesajı kullanılamıyor"
+
+#: src/ui/conversation.rs:1293
 msgid "Attach"
 msgstr "Ekle"
 
-#: src/ui/conversation.rs:1363
+#: src/ui/conversation.rs:1389
 msgid "Type a message"
 msgstr "Bir mesaj yazın"
 
-#: src/ui/conversation.rs:1366
+#: src/ui/conversation.rs:1392
 msgid "Add a caption"
 msgstr "Açıklama ekleyin"
 
-#: src/ui/conversation.rs:1568
+#: src/ui/conversation.rs:1594
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -315,230 +319,234 @@ msgstr ""
 "Enter gönderir · Yeni satır için Shift+Enter · *kalın* _italik_ ~üstü "
 "çizili~ · Ctrl+V görsel yapıştırır"
 
-#: src/ui/conversation.rs:1570
+#: src/ui/conversation.rs:1596
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Ctrl+Enter gönderir · *kalın* _italik_ ~üstü çizili~ · Ctrl+V görsel "
 "yapıştırır"
 
-#: src/ui/conversation.rs:1581
+#: src/ui/conversation.rs:1607
 msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
 msgstr "Kısayol ipuçlarını gizle (Klavye kısayollarından tekrar açabilirsiniz)"
 
-#: src/ui/conversation.rs:1596
+#: src/ui/conversation.rs:1622
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Tüm kısayollar ({})"
 
-#: src/ui/conversation.rs:1727
+#: src/ui/conversation.rs:1753
 msgid "Send files"
 msgstr "Dosya gönder"
 
-#: src/ui/conversation.rs:1733
+#: src/ui/conversation.rs:1759
 msgid "Send as document"
 msgstr "Belge olarak gönder"
 
-#: src/ui/conversation.rs:1737 src/ui/locations.rs:16
+#: src/ui/conversation.rs:1763 src/ui/locations.rs:16
 #, fuzzy
 msgid "Send location"
 msgstr "Canlı konum"
 
-#: src/ui/conversation.rs:1742
+#: src/ui/conversation.rs:1768
 msgid "Create poll"
 msgstr "Anket oluştur"
 
-#: src/ui/conversation.rs:1804
+#: src/ui/conversation.rs:1830
 #, rust-format
 msgid "Voice message ({duration}) not sent"
 msgstr "Sesli mesaj ({duration}) gönderilemedi"
 
-#: src/ui/conversation.rs:1806
+#: src/ui/conversation.rs:1832
 msgid "Discard voice message"
 msgstr "Sesli mesajı iptal et"
 
-#: src/ui/conversation.rs:2064
+#: src/ui/conversation.rs:2090
 msgid "You pinned a message"
 msgstr ""
 
-#: src/ui/conversation.rs:2067
+#: src/ui/conversation.rs:2093
 msgid "A message was pinned"
 msgstr ""
 
-#: src/ui/conversation.rs:2069
+#: src/ui/conversation.rs:2095
 #, rust-format
 msgid "{} pinned a message"
 msgstr ""
 
-#: src/ui/conversation.rs:2575 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2601 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} okunmamış mesaj"
 msgstr[1] "{} okunmamış mesaj"
 
-#: src/ui/conversation.rs:2736 src/app.rs:2382 src/app.rs:2401
+#: src/ui/conversation.rs:2762 src/app.rs:2385 src/app.rs:2404
 msgid "You"
 msgstr "Siz"
 
-#: src/ui/conversation.rs:2747
+#: src/ui/conversation.rs:2773
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "{sender} tarafından {time} tarihinde gönderilen mesajı seç: {summary}"
 
-#: src/ui/conversation.rs:3816
+#: src/ui/conversation.rs:3842
 msgid "Group calls happen on the phone"
 msgstr "Grup aramaları telefonda yapılır"
 
-#: src/ui/conversation.rs:4760 src/ui/conversation.rs:5008
-#: src/ui/conversation.rs:5453 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:4794 src/ui/conversation.rs:5042
+#: src/ui/conversation.rs:5504 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Mesaj bilgisi"
 
-#: src/ui/conversation.rs:5007 src/ui/conversation.rs:5388
+#: src/ui/conversation.rs:5041 src/ui/conversation.rs:5439
 msgid "Open in system player"
 msgstr "Sistem oynatıcısında aç"
 
-#: src/ui/conversation.rs:5009 src/ui/conversation.rs:5465
+#: src/ui/conversation.rs:5043 src/ui/conversation.rs:5516
 msgid "Reload earlier messages"
 msgstr ""
 
-#: src/ui/conversation.rs:5010 src/ui/conversation.rs:5271
+#: src/ui/conversation.rs:5044 src/ui/conversation.rs:5322
 msgid "Unstar"
 msgstr ""
 
-#: src/ui/conversation.rs:5011 src/ui/conversation.rs:5273
+#: src/ui/conversation.rs:5045 src/ui/conversation.rs:5324
 msgid "Star"
 msgstr ""
 
-#: src/ui/conversation.rs:5287
+#: src/ui/conversation.rs:5312
+msgid "Reply privately"
+msgstr "Özel olarak yanıtla"
+
+#: src/ui/conversation.rs:5338
 msgid "Unpin message"
 msgstr ""
 
-#: src/ui/conversation.rs:5289
+#: src/ui/conversation.rs:5340
 msgid "Pin message"
 msgstr ""
 
-#: src/ui/conversation.rs:5400 src/ui/image_preview.rs:77
+#: src/ui/conversation.rs:5451 src/ui/image_preview.rs:77
 #: src/ui/image_preview.rs:236
 msgid "Copy image"
 msgstr "Görseli kopyala"
 
-#: src/ui/conversation.rs:5846
+#: src/ui/conversation.rs:5897
 msgid "Location"
 msgstr "Konum"
 
-#: src/ui/conversation.rs:5891
+#: src/ui/conversation.rs:5942
 msgid "Live location ended"
 msgstr "Canlı konum sona erdi"
 
-#: src/ui/conversation.rs:5893 src/ui/conversation.rs:6136
+#: src/ui/conversation.rs:5944 src/ui/conversation.rs:6187
 msgid "Live location"
 msgstr "Canlı konum"
 
-#: src/ui/conversation.rs:5903
+#: src/ui/conversation.rs:5954
 #, rust-format
 msgid "Updated {time}"
 msgstr "Güncellendi: {time}"
 
-#: src/ui/conversation.rs:5918 src/ui/conversation.rs:6144
+#: src/ui/conversation.rs:5969 src/ui/conversation.rs:6195
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Takip etmek için telefonunuzda WhatsApp'ı açın."
 
-#: src/ui/conversation.rs:5962
+#: src/ui/conversation.rs:6013
 msgid "Chat"
 msgstr "Sohbet"
 
-#: src/ui/conversation.rs:5977
+#: src/ui/conversation.rs:6028
 msgid "Add"
 msgstr "Ekle"
 
-#: src/ui/conversation.rs:6025
+#: src/ui/conversation.rs:6076
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} çıkartma"
 msgstr[1] "{} çıkartma"
 
-#: src/ui/conversation.rs:6038
+#: src/ui/conversation.rs:6089
 msgid "View stickers"
 msgstr "Çıkartmaları görüntüle"
 
-#: src/ui/conversation.rs:6162
+#: src/ui/conversation.rs:6213
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen fotoğraf. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:6166
+#: src/ui/conversation.rs:6217
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen video. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:6170
+#: src/ui/conversation.rs:6221
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez dinlenebilen sesli mesaj. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:6174
+#: src/ui/conversation.rs:6225
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez dinlenebilen ses kaydı. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:6178
+#: src/ui/conversation.rs:6229
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen mesaj. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:6180
+#: src/ui/conversation.rs:6231
 msgid "This message can only be seen on your phone."
 msgstr "Bu mesaj yalnızca telefonunuzda görülebilir."
 
-#: src/ui/conversation.rs:6517
+#: src/ui/conversation.rs:6568
 #, fuzzy
 msgid "Save all…"
 msgstr "Farklı kaydet…"
 
-#: src/ui/conversation.rs:7207
+#: src/ui/conversation.rs:7258
 msgid "Message"
 msgstr "Mesaj gönder"
 
-#: src/ui/conversation.rs:7208
+#: src/ui/conversation.rs:7259
 msgid "Copy number"
 msgstr "Numarayı kopyala"
 
-#: src/ui/conversation.rs:7444 src/ui/locations.rs:45
+#: src/ui/conversation.rs:7495 src/ui/locations.rs:45
 msgid "Open in a map"
 msgstr "Haritada aç"
 
-#: src/ui/conversation.rs:8142
+#: src/ui/conversation.rs:8193
 msgid "Pause"
 msgstr "Duraklat"
 
-#: src/ui/conversation.rs:8144 src/ui/settings.rs:1780
+#: src/ui/conversation.rs:8195 src/ui/settings.rs:1780
 msgid "Play"
 msgstr "Oynat"
 
-#: src/ui/conversation.rs:8171
+#: src/ui/conversation.rs:8222
 msgid "Back to the message (Esc)"
 msgstr "Mesaja geri dön (Esc)"
 
-#: src/ui/conversation.rs:8173
+#: src/ui/conversation.rs:8224
 msgid "Fill the window"
 msgstr "Pencereyi kapla"
 
-#: src/ui/conversation.rs:8203 src/ui/call.rs:469
+#: src/ui/conversation.rs:8254 src/ui/call.rs:469
 msgid "Unmute"
 msgstr "Sesi aç"
 
-#: src/ui/conversation.rs:8205 src/ui/call.rs:476
+#: src/ui/conversation.rs:8256 src/ui/call.rs:476
 msgid "Mute"
 msgstr "Sessize al"
 
-#: src/ui/conversation.rs:8797
+#: src/ui/conversation.rs:8848
 msgid "Audio"
 msgstr "Ses"
 
@@ -931,7 +939,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr "Sohbet duvar kâğıdı"
 
-#: src/ui/settings.rs:348 src/app.rs:2873
+#: src/ui/settings.rs:348 src/app.rs:2879
 msgid "Image"
 msgstr "Görsel"
 
@@ -1479,7 +1487,7 @@ msgstr "Bağlanılamadı"
 msgid "No answer"
 msgstr "Yanıt yok"
 
-#: src/ui/call.rs:358 src/ui/calls.rs:106 src/app.rs:3830
+#: src/ui/call.rs:358 src/ui/calls.rs:106 src/app.rs:3836
 msgid "Connection lost"
 msgstr "Bağlantı koptu"
 
@@ -1691,69 +1699,69 @@ msgstr[1] "{} kaldı"
 msgid "No one yet"
 msgstr "Henüz kimse yok"
 
-#: src/app.rs:790
+#: src/app.rs:793
 msgid "Could not check the number. Please try again."
 msgstr "Numara kontrol edilemedi. Lütfen tekrar deneyin."
 
-#: src/app.rs:794
+#: src/app.rs:797
 msgid "This number is not on WhatsApp"
 msgstr "Bu numara WhatsApp'ta kayıtlı değil"
 
-#: src/app.rs:797
+#: src/app.rs:800
 msgid "Not connected to WhatsApp"
 msgstr "WhatsApp'a bağlı değil"
 
-#: src/app.rs:800 src/app.rs:6882
+#: src/app.rs:803 src/app.rs:7022
 msgid "Enter a valid international phone number"
 msgstr "Geçerli bir uluslararası telefon numarası girin"
 
-#: src/app.rs:1690
+#: src/app.rs:1693
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:2302
+#: src/app.rs:2305
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "“{name}” adında bir etiket zaten var."
 
-#: src/app.rs:2381
+#: src/app.rs:2384
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Siz)"
 
-#: src/app.rs:2985
+#: src/app.rs:2991
 msgid "Star removed"
 msgstr ""
 
-#: src/app.rs:3021
+#: src/app.rs:3027
 msgid "Pinned for 7 days"
 msgstr ""
 
-#: src/app.rs:3023
+#: src/app.rs:3029
 msgid "Pin removed"
 msgstr ""
 
-#: src/app.rs:3454
+#: src/app.rs:3460
 msgid "Loading chat history"
 msgstr ""
 
-#: src/app.rs:3548
+#: src/app.rs:3554
 msgid "Could not use this image"
 msgstr "Bu görsel kullanılamadı"
 
-#: src/app.rs:3770 src/app.rs:6785
+#: src/app.rs:3776 src/app.rs:6925
 msgid "This chat already has three pinned messages"
 msgstr ""
 
-#: src/app.rs:3840
+#: src/app.rs:3846
 msgid "Connecting"
 msgstr ""
 
-#: src/app.rs:4267
+#: src/app.rs:4311
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Gönderilmedi: ZapFast WhatsApp'a bağlı değil."
 
-#: src/app.rs:4271
+#: src/app.rs:4315
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1762,47 +1770,47 @@ msgstr ""
 "göndermek için yanıtı iptal edin."
 
 #
-#: src/app.rs:5998
+#: src/app.rs:6136
 msgid "A selected chat is no longer writable"
 msgstr "Seçilen sohbetlerden birine artık mesaj gönderilemiyor"
 
-#: src/app.rs:6545
+#: src/app.rs:6683
 msgid "Added to favorites"
 msgstr "Favorilere eklendi"
 
-#: src/app.rs:6620
+#: src/app.rs:6760
 msgid "Sending the sticker pack…"
 msgstr "Çıkartma paketi gönderiliyor…"
 
-#: src/app.rs:6993 src/ui/labels.rs:247
+#: src/app.rs:7133 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:7493
+#: src/app.rs:7633
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:7847
+#: src/app.rs:7987
 msgid "App lock password saved"
 msgstr "Uygulama kilidi parolası kaydedildi"
 
-#: src/app.rs:7855
+#: src/app.rs:7995
 msgid "App lock turned off"
 msgstr "Uygulama kilidi kapatıldı"
 
-#: src/app.rs:7979
+#: src/app.rs:8119
 msgid "This video opens in your system player"
 msgstr "Bu video sistem oynatıcınızda açılır"
 
-#: src/app.rs:8454
+#: src/app.rs:8622
 msgid "Copied image"
 msgstr "Görsel kopyalandı"
 
-#: src/app.rs:8457 src/app.rs:8462
+#: src/app.rs:8625 src/app.rs:8630
 msgid "Failed to copy image"
 msgstr "Görsel kopyalanamadı"
 
@@ -2250,14 +2258,6 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
-
-#: src/ui/conversation.rs:1170
-msgid "Original group message unavailable"
-msgstr "Orijinal grup mesajı kullanılamıyor"
-
-#: src/ui/conversation.rs:5174
-msgid "Reply privately"
-msgstr "Özel olarak yanıtla"
 
 #~ msgid "New message"
 #~ msgstr "Yeni mesaj"
