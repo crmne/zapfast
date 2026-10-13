@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:14+0200\n"
+"POT-Creation-Date: 2026-10-13 21:25+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Indonesian\n"
@@ -478,7 +478,7 @@ msgstr "Batalkan bisu"
 msgid "Mute"
 msgstr "Bisukan"
 
-#: src/ui/conversation.rs:7392
+#: src/ui/conversation.rs:7746
 msgid "Audio"
 msgstr "Audio"
 

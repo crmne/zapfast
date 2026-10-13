@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:14+0200\n"
+"POT-Creation-Date: 2026-10-13 21:25+0200\n"
 "PO-Revision-Date: 2026-10-02 18:51+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
 "Language-Team: Chinese (Traditional)\n"
@@ -459,7 +459,7 @@ msgstr "取消靜音"
 msgid "Mute"
 msgstr "靜音"
 
-#: src/ui/conversation.rs:7392
+#: src/ui/conversation.rs:7746
 msgid "Audio"
 msgstr "音訊"
 
