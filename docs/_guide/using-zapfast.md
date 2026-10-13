@@ -146,6 +146,10 @@ Right-click a sticker in a chat or the picker to add it to your
 **Favorites**. Favorites stay in sync with your phone: a sticker you favorite
 or unfavorite on either side follows on the other.
 
+Click a downloaded sticker in a chat to see it on its own, larger and playing
+if it is animated, with **Add to favorites** or **Remove from favorites** below
+it. Click the sticker or outside it, or press Escape, to close it.
+
 Type in the search field to find stickers by emoji (😂), by a word that names
 an emoji ("laugh", "duck"), or by pack name. Stickers carry the emojis they
 express in their metadata, as WhatsApp's own stickers do.
