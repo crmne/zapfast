@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:04+0200\n"
+"POT-Creation-Date: 2026-10-13 21:09+0200\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -217,7 +217,7 @@ msgstr "Taslak:"
 msgid "Remove from favorites"
 msgstr "Favorilerden kaldır"
 
-#: src/ui/chats.rs:1301 src/ui/chats.rs:1667 src/ui/conversation.rs:4491
+#: src/ui/chats.rs:1301 src/ui/chats.rs:1667 src/ui/conversation.rs:4551
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Favorilere ekle"
@@ -248,12 +248,12 @@ msgstr "Mesajları seç"
 msgid "Hang up"
 msgstr "Aramayı sonlandır"
 
-#: src/ui/conversation.rs:362 src/ui/conversation.rs:3289 src/ui/calls.rs:84
+#: src/ui/conversation.rs:362 src/ui/conversation.rs:3349 src/ui/calls.rs:84
 #: src/ui/calls.rs:261
 msgid "Voice call"
 msgstr "Sesli arama"
 
-#: src/ui/conversation.rs:381 src/ui/conversation.rs:3297 src/ui/calls.rs:85
+#: src/ui/conversation.rs:381 src/ui/conversation.rs:3357 src/ui/calls.rs:85
 #: src/ui/calls.rs:248
 msgid "Video call"
 msgstr "Görüntülü arama"
@@ -326,151 +326,151 @@ msgstr "Sesli mesaj ({duration}) gönderilemedi"
 msgid "Discard voice message"
 msgstr "Sesli mesajı iptal et"
 
-#: src/ui/conversation.rs:2172 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2175 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} okunmamış mesaj"
 msgstr[1] "{} okunmamış mesaj"
 
-#: src/ui/conversation.rs:2324 src/app.rs:2131 src/app.rs:2150
+#: src/ui/conversation.rs:2327 src/app.rs:2131 src/app.rs:2150
 msgid "You"
 msgstr "Siz"
 
-#: src/ui/conversation.rs:2335
+#: src/ui/conversation.rs:2338
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "{sender} tarafından {time} tarihinde gönderilen mesajı seç: {summary}"
 
-#: src/ui/conversation.rs:3280
+#: src/ui/conversation.rs:3340
 msgid "Group calls happen on the phone"
 msgstr "Grup aramaları telefonda yapılır"
 
-#: src/ui/conversation.rs:3611 src/ui/conversation.rs:4500
+#: src/ui/conversation.rs:3671 src/ui/conversation.rs:4560
 msgid "Open in system player"
 msgstr "Sistem oynatıcısında aç"
 
-#: src/ui/conversation.rs:3612 src/ui/conversation.rs:4122
-#: src/ui/conversation.rs:4564 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3672 src/ui/conversation.rs:4182
+#: src/ui/conversation.rs:4624 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Mesaj bilgisi"
 
-#: src/ui/conversation.rs:3613 src/ui/conversation.rs:4576
+#: src/ui/conversation.rs:3673 src/ui/conversation.rs:4636
 msgid "Reload earlier messages"
 msgstr ""
 
-#: src/ui/conversation.rs:4512 src/ui/image_preview.rs:77
+#: src/ui/conversation.rs:4572 src/ui/image_preview.rs:77
 #: src/ui/image_preview.rs:236
 msgid "Copy image"
 msgstr "Görseli kopyala"
 
-#: src/ui/conversation.rs:4957
+#: src/ui/conversation.rs:5017
 msgid "Location"
 msgstr "Konum"
 
-#: src/ui/conversation.rs:4991
+#: src/ui/conversation.rs:5051
 msgid "Live location ended"
 msgstr "Canlı konum sona erdi"
 
-#: src/ui/conversation.rs:4993 src/ui/conversation.rs:5235
+#: src/ui/conversation.rs:5053 src/ui/conversation.rs:5295
 msgid "Live location"
 msgstr "Canlı konum"
 
-#: src/ui/conversation.rs:5003
+#: src/ui/conversation.rs:5063
 #, rust-format
 msgid "Updated {time}"
 msgstr "Güncellendi: {time}"
 
-#: src/ui/conversation.rs:5018 src/ui/conversation.rs:5243
+#: src/ui/conversation.rs:5078 src/ui/conversation.rs:5303
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Takip etmek için telefonunuzda WhatsApp'ı açın."
 
-#: src/ui/conversation.rs:5062
+#: src/ui/conversation.rs:5122
 msgid "Chat"
 msgstr "Sohbet"
 
-#: src/ui/conversation.rs:5076
+#: src/ui/conversation.rs:5136
 msgid "Add"
 msgstr "Ekle"
 
-#: src/ui/conversation.rs:5124
+#: src/ui/conversation.rs:5184
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} çıkartma"
 msgstr[1] "{} çıkartma"
 
-#: src/ui/conversation.rs:5137
+#: src/ui/conversation.rs:5197
 msgid "View stickers"
 msgstr "Çıkartmaları görüntüle"
 
-#: src/ui/conversation.rs:5261
+#: src/ui/conversation.rs:5321
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen fotoğraf. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5265
+#: src/ui/conversation.rs:5325
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen video. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5269
+#: src/ui/conversation.rs:5329
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez dinlenebilen sesli mesaj. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5273
+#: src/ui/conversation.rs:5333
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez dinlenebilen ses kaydı. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5277
+#: src/ui/conversation.rs:5337
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen mesaj. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5279
+#: src/ui/conversation.rs:5339
 msgid "This message can only be seen on your phone."
 msgstr "Bu mesaj yalnızca telefonunuzda görülebilir."
 
-#: src/ui/conversation.rs:6040
+#: src/ui/conversation.rs:6102
 msgid "Message"
 msgstr "Mesaj gönder"
 
-#: src/ui/conversation.rs:6041
+#: src/ui/conversation.rs:6103
 msgid "Copy number"
 msgstr "Numarayı kopyala"
 
-#: src/ui/conversation.rs:6277
+#: src/ui/conversation.rs:6339
 msgid "Open in a map"
 msgstr "Haritada aç"
 
-#: src/ui/conversation.rs:6964
+#: src/ui/conversation.rs:7026
 msgid "Pause"
 msgstr "Duraklat"
 
-#: src/ui/conversation.rs:6966 src/ui/settings.rs:1746
+#: src/ui/conversation.rs:7028 src/ui/settings.rs:1746
 msgid "Play"
 msgstr "Oynat"
 
-#: src/ui/conversation.rs:6993
+#: src/ui/conversation.rs:7055
 msgid "Back to the message (Esc)"
 msgstr "Mesaja geri dön (Esc)"
 
-#: src/ui/conversation.rs:6995
+#: src/ui/conversation.rs:7057
 msgid "Fill the window"
 msgstr "Pencereyi kapla"
 
-#: src/ui/conversation.rs:7025 src/ui/call.rs:469
+#: src/ui/conversation.rs:7087 src/ui/call.rs:469
 msgid "Unmute"
 msgstr "Sesi aç"
 
-#: src/ui/conversation.rs:7027 src/ui/call.rs:476
+#: src/ui/conversation.rs:7089 src/ui/call.rs:476
 msgid "Mute"
 msgstr "Sessize al"
 

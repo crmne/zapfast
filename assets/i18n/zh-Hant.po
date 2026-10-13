@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:04+0200\n"
+"POT-Creation-Date: 2026-10-13 21:09+0200\n"
 "PO-Revision-Date: 2026-10-02 18:51+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
 "Language-Team: Chinese (Traditional)\n"
@@ -217,7 +217,7 @@ msgstr "草稿："
 msgid "Remove from favorites"
 msgstr "從最愛中移除"
 
-#: src/ui/chats.rs:1301 src/ui/chats.rs:1667 src/ui/conversation.rs:4491
+#: src/ui/chats.rs:1301 src/ui/chats.rs:1667 src/ui/conversation.rs:4551
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "加入最愛"
@@ -248,12 +248,12 @@ msgstr "選取訊息"
 msgid "Hang up"
 msgstr "掛斷"
 
-#: src/ui/conversation.rs:362 src/ui/conversation.rs:3289 src/ui/calls.rs:84
+#: src/ui/conversation.rs:362 src/ui/conversation.rs:3349 src/ui/calls.rs:84
 #: src/ui/calls.rs:261
 msgid "Voice call"
 msgstr "語音通話"
 
-#: src/ui/conversation.rs:381 src/ui/conversation.rs:3297 src/ui/calls.rs:85
+#: src/ui/conversation.rs:381 src/ui/conversation.rs:3357 src/ui/calls.rs:85
 #: src/ui/calls.rs:248
 msgid "Video call"
 msgstr "視訊通話"
@@ -323,139 +323,139 @@ msgstr "語音訊息（{duration}）未送出"
 msgid "Discard voice message"
 msgstr "丟棄語音訊息"
 
-#: src/ui/conversation.rs:2172 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2175 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} 則未讀訊息"
 
-#: src/ui/conversation.rs:2324 src/app.rs:2131 src/app.rs:2150
+#: src/ui/conversation.rs:2327 src/app.rs:2131 src/app.rs:2150
 msgid "You"
 msgstr "您"
 
-#: src/ui/conversation.rs:2335
+#: src/ui/conversation.rs:2338
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "選取{sender}在{time}傳送的訊息：{summary}"
 
-#: src/ui/conversation.rs:3280
+#: src/ui/conversation.rs:3340
 msgid "Group calls happen on the phone"
 msgstr "群組通話請在手機上進行"
 
-#: src/ui/conversation.rs:3611 src/ui/conversation.rs:4500
+#: src/ui/conversation.rs:3671 src/ui/conversation.rs:4560
 msgid "Open in system player"
 msgstr "在系統播放器中開啟"
 
-#: src/ui/conversation.rs:3612 src/ui/conversation.rs:4122
-#: src/ui/conversation.rs:4564 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3672 src/ui/conversation.rs:4182
+#: src/ui/conversation.rs:4624 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "訊息資訊"
 
-#: src/ui/conversation.rs:3613 src/ui/conversation.rs:4576
+#: src/ui/conversation.rs:3673 src/ui/conversation.rs:4636
 msgid "Reload earlier messages"
 msgstr ""
 
-#: src/ui/conversation.rs:4512 src/ui/image_preview.rs:77
+#: src/ui/conversation.rs:4572 src/ui/image_preview.rs:77
 #: src/ui/image_preview.rs:236
 msgid "Copy image"
 msgstr "複製圖片"
 
-#: src/ui/conversation.rs:4957
+#: src/ui/conversation.rs:5017
 msgid "Location"
 msgstr "位置"
 
-#: src/ui/conversation.rs:4991
+#: src/ui/conversation.rs:5051
 msgid "Live location ended"
 msgstr "即時位置已結束"
 
-#: src/ui/conversation.rs:4993 src/ui/conversation.rs:5235
+#: src/ui/conversation.rs:5053 src/ui/conversation.rs:5295
 msgid "Live location"
 msgstr "即時位置"
 
-#: src/ui/conversation.rs:5003
+#: src/ui/conversation.rs:5063
 #, rust-format
 msgid "Updated {time}"
 msgstr "更新於 {time}"
 
-#: src/ui/conversation.rs:5018 src/ui/conversation.rs:5243
+#: src/ui/conversation.rs:5078 src/ui/conversation.rs:5303
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "請在手機上開啟 WhatsApp 以追蹤。"
 
-#: src/ui/conversation.rs:5062
+#: src/ui/conversation.rs:5122
 msgid "Chat"
 msgstr "對話"
 
-#: src/ui/conversation.rs:5076
+#: src/ui/conversation.rs:5136
 msgid "Add"
 msgstr "新增"
 
-#: src/ui/conversation.rs:5124
+#: src/ui/conversation.rs:5184
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} 個貼圖"
 
-#: src/ui/conversation.rs:5137
+#: src/ui/conversation.rs:5197
 msgid "View stickers"
 msgstr "檢視貼圖"
 
-#: src/ui/conversation.rs:5261
+#: src/ui/conversation.rs:5321
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr "檢視一次的相片。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:5265
+#: src/ui/conversation.rs:5325
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr "檢視一次的影片。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:5269
+#: src/ui/conversation.rs:5329
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr "檢視一次的語音訊息。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:5273
+#: src/ui/conversation.rs:5333
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr "檢視一次的音訊。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:5277
+#: src/ui/conversation.rs:5337
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr "檢視一次的訊息。為了保護您的隱私，只會在您的手機上開啟。"
 
-#: src/ui/conversation.rs:5279
+#: src/ui/conversation.rs:5339
 msgid "This message can only be seen on your phone."
 msgstr "此訊息只能在您的手機上查看。"
 
-#: src/ui/conversation.rs:6040
+#: src/ui/conversation.rs:6102
 msgid "Message"
 msgstr "傳訊息"
 
-#: src/ui/conversation.rs:6041
+#: src/ui/conversation.rs:6103
 msgid "Copy number"
 msgstr "複製號碼"
 
-#: src/ui/conversation.rs:6277
+#: src/ui/conversation.rs:6339
 msgid "Open in a map"
 msgstr "在地圖中開啟"
 
-#: src/ui/conversation.rs:6964
+#: src/ui/conversation.rs:7026
 msgid "Pause"
 msgstr "暫停"
 
-#: src/ui/conversation.rs:6966 src/ui/settings.rs:1746
+#: src/ui/conversation.rs:7028 src/ui/settings.rs:1746
 msgid "Play"
 msgstr "播放"
 
-#: src/ui/conversation.rs:6993
+#: src/ui/conversation.rs:7055
 msgid "Back to the message (Esc)"
 msgstr "回到訊息（Esc）"
 
-#: src/ui/conversation.rs:6995
+#: src/ui/conversation.rs:7057
 msgid "Fill the window"
 msgstr "填滿視窗"
 
-#: src/ui/conversation.rs:7025 src/ui/call.rs:469
+#: src/ui/conversation.rs:7087 src/ui/call.rs:469
 msgid "Unmute"
 msgstr "取消靜音"
 
-#: src/ui/conversation.rs:7027 src/ui/call.rs:476
+#: src/ui/conversation.rs:7089 src/ui/call.rs:476
 msgid "Mute"
 msgstr "靜音"
 
