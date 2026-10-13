@@ -322,6 +322,21 @@ fn start_decode(ctx: &egui::Context, inbox: &Inbox, path: &Path, all: bool) -> S
 }
 
 /// MP4 playback is always available because H.264 decodes in-process.
+/// Whether a WebP file's header announces an animation, without decoding it.
+/// The format requires an animated file to start with a VP8X chunk whose
+/// flags carry the animation bit; the ANIM chunk itself can come after a
+/// colour profile, far from the start.
+pub fn webp_moves(head: &[u8]) -> bool {
+    if head.len() < 12 || &head[0..4] != b"RIFF" || &head[8..12] != b"WEBP" {
+        return false;
+    }
+    let flagged = head.len() >= 21 && &head[12..16] == b"VP8X" && head[20] & 0x02 != 0;
+    flagged
+        || head[..head.len().min(64)]
+            .windows(4)
+            .any(|window| window == b"ANIM")
+}
+
 pub fn can_play_video() -> bool {
     true
 }
@@ -1215,6 +1230,43 @@ mod tests {
         };
         assert_eq!(old.frames.len(), 1);
         assert!(!old.complete, "it decodes again when it next plays");
+    }
+
+    /// WhatsApp stickers can carry their EXIF metadata ahead of the animation.
+    #[test]
+    fn a_sticker_with_metadata_before_its_frames_still_plays() {
+        let dir = tempfile::tempdir().expect("temp");
+        let plain = std::fs::read(animated_webp(dir.path(), "plain.webp", 3)).expect("reads");
+        assert_eq!(&plain[12..16], b"VP8X");
+        let mut bytes = plain[..30].to_vec();
+        bytes[20] |= 0x08;
+        bytes.extend_from_slice(b"EXIF");
+        bytes.extend_from_slice(&8u32.to_le_bytes());
+        bytes.extend_from_slice(b"MM\0*\0\0\0\x08");
+        bytes.extend_from_slice(&plain[30..]);
+        let size = (bytes.len() - 8) as u32;
+        bytes[4..8].copy_from_slice(&size.to_le_bytes());
+        let path = dir.path().join("sticker.webp");
+        std::fs::write(&path, &bytes).expect("writes");
+        assert!(webp_moves(&bytes));
+        let decoded = decode(&path, MAX_FRAMES).expect("decodes");
+        assert_eq!(decoded.frames.len(), 3);
+    }
+
+    #[test]
+    fn a_webp_moves_when_its_header_says_so() {
+        // A colour profile ahead of the animation chunk, as other apps write.
+        let mut moving = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\x22\0\0\0\0\0\0\0\0\0".to_vec();
+        moving.extend_from_slice(b"ICCP\x00\x01\0\0");
+        moving.extend(std::iter::repeat_n(0u8, 256));
+        moving.extend_from_slice(b"ANIM");
+        assert!(webp_moves(&moving[..64]), "the VP8X flag is enough");
+        let still = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\x10\0\0\0\0\0\0\0\0\0";
+        assert!(!webp_moves(still), "alpha alone is not motion");
+        assert!(!webp_moves(b"RIFF\0\0\0\0WEBPVP8 \0\0\0\0\x02\0\0\0"));
+        assert!(webp_moves(b"RIFF\0\0\0\0WEBPANIM"));
+        assert!(!webp_moves(b"GIF89aANIM"));
+        assert!(!webp_moves(b"RIFF"));
     }
 
     /// An animated WebP of `count` 8x8 frames that all differ.
