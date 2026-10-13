@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 19:49+0200\n"
+"POT-Creation-Date: 2026-10-13 19:56+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Indonesian\n"
@@ -193,26 +193,26 @@ msgstr "Kirim pesan ke diri sendiri"
 msgid "Draft:"
 msgstr "Draft:"
 
-#: src/ui/chats.rs:1199 src/ui/chats.rs:1565 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1209 src/ui/chats.rs:1575 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "Hapus dari favorit"
 
-#: src/ui/chats.rs:1201 src/ui/chats.rs:1567 src/ui/conversation.rs:4346
+#: src/ui/chats.rs:1211 src/ui/chats.rs:1577 src/ui/conversation.rs:4383
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Tambah ke favorit"
 
-#: src/ui/chats.rs:1211 src/ui/chats.rs:1591 src/ui/conversation.rs:234
+#: src/ui/chats.rs:1221 src/ui/chats.rs:1601 src/ui/conversation.rs:234
 #: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
 msgid "Leave group"
 msgstr "Keluar dari grup"
 
-#: src/ui/chats.rs:1212 src/ui/chats.rs:1589 src/ui/conversation.rs:232
+#: src/ui/chats.rs:1222 src/ui/chats.rs:1599 src/ui/conversation.rs:232
 #: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
 msgid "Leave channel"
 msgstr "Keluar dari saluran"
 
-#: src/ui/chats.rs:1227 src/ui/labels.rs:172 src/ui/labels.rs:219
+#: src/ui/chats.rs:1237 src/ui/labels.rs:172 src/ui/labels.rs:219
 msgid "Labels"
 msgstr "Label"
 
@@ -293,149 +293,149 @@ msgstr "Pesan suara ({duration}) gagal terkirim"
 msgid "Discard voice message"
 msgstr "Hapus pesan suara"
 
-#: src/ui/conversation.rs:2112 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2114 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} pesan belum dibaca"
 msgstr[1] "{} pesan belum dibaca"
 
-#: src/ui/conversation.rs:2264 src/app.rs:2047 src/app.rs:2066
+#: src/ui/conversation.rs:2266 src/app.rs:2047 src/app.rs:2066
 msgid "You"
 msgstr "Anda"
 
-#: src/ui/conversation.rs:2275
+#: src/ui/conversation.rs:2277
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr ""
 
-#: src/ui/conversation.rs:3505 src/ui/conversation.rs:4355
+#: src/ui/conversation.rs:3507 src/ui/conversation.rs:4392
 msgid "Open in system player"
 msgstr "Buka di pemutar sistem"
 
-#: src/ui/conversation.rs:3506 src/ui/conversation.rs:3981
-#: src/ui/conversation.rs:4419 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3508 src/ui/conversation.rs:4018
+#: src/ui/conversation.rs:4456 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Info pesan"
 
-#: src/ui/conversation.rs:3507 src/ui/conversation.rs:4431
+#: src/ui/conversation.rs:3509 src/ui/conversation.rs:4468
 msgid "Reload earlier messages"
 msgstr "Muat ulang pesan sebelumnya"
 
-#: src/ui/conversation.rs:4367 src/ui/image_preview.rs:77
+#: src/ui/conversation.rs:4404 src/ui/image_preview.rs:77
 #: src/ui/image_preview.rs:233
 msgid "Copy image"
 msgstr "Salin gambar"
 
-#: src/ui/conversation.rs:4812
+#: src/ui/conversation.rs:4849
 msgid "Location"
 msgstr "Lokasi"
 
-#: src/ui/conversation.rs:4846
+#: src/ui/conversation.rs:4883
 msgid "Live location ended"
 msgstr "Lokasi terkini berakhir"
 
-#: src/ui/conversation.rs:4848 src/ui/conversation.rs:5050
+#: src/ui/conversation.rs:4885 src/ui/conversation.rs:5087
 msgid "Live location"
 msgstr "Lokasi terkini"
 
-#: src/ui/conversation.rs:4858
+#: src/ui/conversation.rs:4895
 #, rust-format
 msgid "Updated {time}"
 msgstr "Diperbarui {time}"
 
-#: src/ui/conversation.rs:4873 src/ui/conversation.rs:5058
+#: src/ui/conversation.rs:4910 src/ui/conversation.rs:5095
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Buka WhatsApp di ponselmu untuk mengikuti ini."
 
-#: src/ui/conversation.rs:4917
+#: src/ui/conversation.rs:4954
 msgid "Chat"
 msgstr "Chat"
 
-#: src/ui/conversation.rs:4931
+#: src/ui/conversation.rs:4968
 msgid "Add"
 msgstr "Tambah"
 
-#: src/ui/conversation.rs:4979
+#: src/ui/conversation.rs:5016
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} stiker"
 msgstr[1] "{} stiker"
 
-#: src/ui/conversation.rs:4992
+#: src/ui/conversation.rs:5029
 msgid "View stickers"
 msgstr "Lihat stiker"
 
-#: src/ui/conversation.rs:5076
+#: src/ui/conversation.rs:5113
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Foto sekali lihat. Untuk privasi Anda, foto ini hanya dapat dibuka melalui "
 "aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5080
+#: src/ui/conversation.rs:5117
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Video sekali lihat. Untuk privasi Anda, video ini hanya dapat dibuka melalui "
 "aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5084
+#: src/ui/conversation.rs:5121
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Pesan suara sekali lihat. Untuk privasi Anda, pesan suara ini hanya dapat "
 "dibuka melalui aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5088
+#: src/ui/conversation.rs:5125
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Audio sekali lihat. Untuk privasi Anda, audio ini hanya dapat dibuka melalui "
 "aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5092
+#: src/ui/conversation.rs:5129
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Pesan sekali lihat. Untuk privasi Anda, pesan ini hanya dapat dibuka melalui "
 "aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5094
+#: src/ui/conversation.rs:5131
 msgid "This message can only be seen on your phone."
 msgstr "Pesan ini hanya dapat dilihat melalui ponsel anda."
 
-#: src/ui/conversation.rs:5855
+#: src/ui/conversation.rs:5892
 #, fuzzy
 msgid "Message"
 msgstr "Info pesan"
 
-#: src/ui/conversation.rs:5856
+#: src/ui/conversation.rs:5893
 #, fuzzy
 msgid "Copy number"
 msgstr "Salin gambar"
 
-#: src/ui/conversation.rs:6092
+#: src/ui/conversation.rs:6129
 msgid "Open in a map"
 msgstr "Buka di map"
 
-#: src/ui/conversation.rs:6779
+#: src/ui/conversation.rs:6816
 msgid "Pause"
 msgstr "Jeda"
 
-#: src/ui/conversation.rs:6781 src/ui/settings.rs:1738
+#: src/ui/conversation.rs:6818 src/ui/settings.rs:1738
 msgid "Play"
 msgstr "Mulai"
 
-#: src/ui/conversation.rs:6808
+#: src/ui/conversation.rs:6845
 msgid "Back to the message (Esc)"
 msgstr "Kembali ke pesan (Esc)"
 
-#: src/ui/conversation.rs:6810
+#: src/ui/conversation.rs:6847
 msgid "Fill the window"
 msgstr "Penuhi jendela"
 
-#: src/ui/conversation.rs:6840
+#: src/ui/conversation.rs:6877
 msgid "Unmute"
 msgstr "Batalkan bisu"
 
-#: src/ui/conversation.rs:6842
+#: src/ui/conversation.rs:6879
 msgid "Mute"
 msgstr "Bisukan"
 
@@ -1092,27 +1092,27 @@ msgstr "Dibuat dengan cinta oleh {name}"
 msgid "This message is no longer available."
 msgstr "Pesan ini sudah tidak tersedia lagi."
 
-#: src/ui/message_info.rs:87
+#: src/ui/message_info.rs:93
 msgid "Loading…"
 msgstr "Memuat…"
 
-#: src/ui/message_info.rs:171
+#: src/ui/message_info.rs:184
 msgid "Played"
 msgstr "Diputar"
 
-#: src/ui/message_info.rs:173
+#: src/ui/message_info.rs:186
 msgid "Read"
 msgstr "Dibaca"
 
-#: src/ui/message_info.rs:178
+#: src/ui/message_info.rs:200
 msgid "Delivered"
 msgstr "Tersampaikan"
 
-#: src/ui/message_info.rs:194
+#: src/ui/message_info.rs:216
 msgid "Time not recorded"
 msgstr "Waktu tidak tercatat"
 
-#: src/ui/message_info.rs:216
+#: src/ui/message_info.rs:238
 msgid ""
 "No receipts were recorded for this message. Details are available for "
 "messages sent from now on."
@@ -1120,7 +1120,7 @@ msgstr ""
 "Tidak ada tanda terima yang tercatat untuk pesan ini. Detail tersedia untuk "
 "pesan yang dikirim mulai sekarang."
 
-#: src/ui/message_info.rs:228
+#: src/ui/message_info.rs:250
 msgid ""
 "Some receipts for this message were not recorded. Details are complete for "
 "messages sent from now on."
@@ -1128,26 +1128,26 @@ msgstr ""
 "Beberapa tanda terima untuk pesan ini tidak tercatat. Detail akan lengkap "
 "untuk pesan yang dikirim mulai sekarang."
 
-#: src/ui/message_info.rs:238
+#: src/ui/message_info.rs:260
 msgid "Played by"
 msgstr "Diputar oleh"
 
-#: src/ui/message_info.rs:247
+#: src/ui/message_info.rs:269
 msgid "Read by"
 msgstr "Dibaca oleh"
 
-#: src/ui/message_info.rs:255
+#: src/ui/message_info.rs:277
 msgid "Delivered to"
 msgstr "Tersampaikan ke"
 
-#: src/ui/message_info.rs:265
+#: src/ui/message_info.rs:287
 #, rust-format
 msgid "{} remaining"
 msgid_plural "{} remaining"
 msgstr[0] "tersisa {}"
 msgstr[1] "tersisa {}"
 
-#: src/ui/message_info.rs:292
+#: src/ui/message_info.rs:314
 msgid "No one yet"
 msgstr "Belum ada siapa pun"
 

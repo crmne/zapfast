@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 19:49+0200\n"
+"POT-Creation-Date: 2026-10-13 19:56+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -193,26 +193,26 @@ msgstr "Envoyez-vous un message"
 msgid "Draft:"
 msgstr "Brouillon :"
 
-#: src/ui/chats.rs:1199 src/ui/chats.rs:1565 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1209 src/ui/chats.rs:1575 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "Retirer des favoris"
 
-#: src/ui/chats.rs:1201 src/ui/chats.rs:1567 src/ui/conversation.rs:4346
+#: src/ui/chats.rs:1211 src/ui/chats.rs:1577 src/ui/conversation.rs:4383
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Ajouter aux favoris"
 
-#: src/ui/chats.rs:1211 src/ui/chats.rs:1591 src/ui/conversation.rs:234
+#: src/ui/chats.rs:1221 src/ui/chats.rs:1601 src/ui/conversation.rs:234
 #: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
 msgid "Leave group"
 msgstr "Quitter le groupe"
 
-#: src/ui/chats.rs:1212 src/ui/chats.rs:1589 src/ui/conversation.rs:232
+#: src/ui/chats.rs:1222 src/ui/chats.rs:1599 src/ui/conversation.rs:232
 #: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
 msgid "Leave channel"
 msgstr "Quitter la chaîne"
 
-#: src/ui/chats.rs:1227 src/ui/labels.rs:172 src/ui/labels.rs:219
+#: src/ui/chats.rs:1237 src/ui/labels.rs:172 src/ui/labels.rs:219
 msgid "Labels"
 msgstr "Étiquettes"
 
@@ -291,149 +291,149 @@ msgstr "Message vocal ({duration}) non envoyé"
 msgid "Discard voice message"
 msgstr "Supprimer le message vocal"
 
-#: src/ui/conversation.rs:2112 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2114 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} message non lu"
 msgstr[1] "{} messages non lus"
 
-#: src/ui/conversation.rs:2264 src/app.rs:2047 src/app.rs:2066
+#: src/ui/conversation.rs:2266 src/app.rs:2047 src/app.rs:2066
 msgid "You"
 msgstr "Vous"
 
-#: src/ui/conversation.rs:2275
+#: src/ui/conversation.rs:2277
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "Sélectionner le message de {sender} ({time}) : {summary}"
 
-#: src/ui/conversation.rs:3505 src/ui/conversation.rs:4355
+#: src/ui/conversation.rs:3507 src/ui/conversation.rs:4392
 msgid "Open in system player"
 msgstr "Ouvrir dans le lecteur du système"
 
-#: src/ui/conversation.rs:3506 src/ui/conversation.rs:3981
-#: src/ui/conversation.rs:4419 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3508 src/ui/conversation.rs:4018
+#: src/ui/conversation.rs:4456 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Infos du message"
 
-#: src/ui/conversation.rs:3507 src/ui/conversation.rs:4431
+#: src/ui/conversation.rs:3509 src/ui/conversation.rs:4468
 msgid "Reload earlier messages"
 msgstr ""
 
-#: src/ui/conversation.rs:4367 src/ui/image_preview.rs:77
+#: src/ui/conversation.rs:4404 src/ui/image_preview.rs:77
 #: src/ui/image_preview.rs:233
 msgid "Copy image"
 msgstr "Copier l'image"
 
-#: src/ui/conversation.rs:4812
+#: src/ui/conversation.rs:4849
 #, fuzzy
 msgid "Location"
 msgstr "Position en direct"
 
-#: src/ui/conversation.rs:4846
+#: src/ui/conversation.rs:4883
 msgid "Live location ended"
 msgstr "Position en direct terminée"
 
-#: src/ui/conversation.rs:4848 src/ui/conversation.rs:5050
+#: src/ui/conversation.rs:4885 src/ui/conversation.rs:5087
 msgid "Live location"
 msgstr "Position en direct"
 
-#: src/ui/conversation.rs:4858
+#: src/ui/conversation.rs:4895
 #, rust-format
 msgid "Updated {time}"
 msgstr "Mise à jour à {time}"
 
-#: src/ui/conversation.rs:4873 src/ui/conversation.rs:5058
+#: src/ui/conversation.rs:4910 src/ui/conversation.rs:5095
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Ouvrez WhatsApp sur votre téléphone pour la suivre."
 
-#: src/ui/conversation.rs:4917
+#: src/ui/conversation.rs:4954
 #, fuzzy
 msgid "Chat"
 msgstr "Discussions"
 
-#: src/ui/conversation.rs:4931
+#: src/ui/conversation.rs:4968
 msgid "Add"
 msgstr ""
 
-#: src/ui/conversation.rs:4979
+#: src/ui/conversation.rs:5016
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} sticker"
 msgstr[1] "{} stickers"
 
-#: src/ui/conversation.rs:4992
+#: src/ui/conversation.rs:5029
 msgid "View stickers"
 msgstr "Voir les stickers"
 
-#: src/ui/conversation.rs:5076
+#: src/ui/conversation.rs:5113
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Photo à vue unique. Pour votre confidentialité, elle ne s'ouvre que sur "
 "votre téléphone."
 
-#: src/ui/conversation.rs:5080
+#: src/ui/conversation.rs:5117
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Vidéo à vue unique. Pour votre confidentialité, elle ne s'ouvre que sur "
 "votre téléphone."
 
-#: src/ui/conversation.rs:5084
+#: src/ui/conversation.rs:5121
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Message vocal à écoute unique. Pour votre confidentialité, il ne s'ouvre que "
 "sur votre téléphone."
 
-#: src/ui/conversation.rs:5088
+#: src/ui/conversation.rs:5125
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Audio à écoute unique. Pour votre confidentialité, il ne s'ouvre que sur "
 "votre téléphone."
 
-#: src/ui/conversation.rs:5092
+#: src/ui/conversation.rs:5129
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Message à vue unique. Pour votre confidentialité, il ne s'ouvre que sur "
 "votre téléphone."
 
-#: src/ui/conversation.rs:5094
+#: src/ui/conversation.rs:5131
 msgid "This message can only be seen on your phone."
 msgstr "Ce message n'est visible que sur votre téléphone."
 
-#: src/ui/conversation.rs:5855
+#: src/ui/conversation.rs:5892
 msgid "Message"
 msgstr "Envoyer un message"
 
-#: src/ui/conversation.rs:5856
+#: src/ui/conversation.rs:5893
 msgid "Copy number"
 msgstr "Copier le numéro"
 
-#: src/ui/conversation.rs:6092
+#: src/ui/conversation.rs:6129
 msgid "Open in a map"
 msgstr "Ouvrir dans une carte"
 
-#: src/ui/conversation.rs:6779
+#: src/ui/conversation.rs:6816
 msgid "Pause"
 msgstr "Pause"
 
-#: src/ui/conversation.rs:6781 src/ui/settings.rs:1738
+#: src/ui/conversation.rs:6818 src/ui/settings.rs:1738
 msgid "Play"
 msgstr "Lire"
 
-#: src/ui/conversation.rs:6808
+#: src/ui/conversation.rs:6845
 msgid "Back to the message (Esc)"
 msgstr "Revenir au message (Échap)"
 
-#: src/ui/conversation.rs:6810
+#: src/ui/conversation.rs:6847
 msgid "Fill the window"
 msgstr "Remplir la fenêtre"
 
-#: src/ui/conversation.rs:6840
+#: src/ui/conversation.rs:6877
 msgid "Unmute"
 msgstr "Réactiver le son"
 
-#: src/ui/conversation.rs:6842
+#: src/ui/conversation.rs:6879
 msgid "Mute"
 msgstr "Couper le son"
 
@@ -1090,27 +1090,27 @@ msgstr "Fait avec amour par {name}"
 msgid "This message is no longer available."
 msgstr "Ce message n’est plus disponible."
 
-#: src/ui/message_info.rs:87
+#: src/ui/message_info.rs:93
 msgid "Loading…"
 msgstr "Chargement…"
 
-#: src/ui/message_info.rs:171
+#: src/ui/message_info.rs:184
 msgid "Played"
 msgstr "Écouté"
 
-#: src/ui/message_info.rs:173
+#: src/ui/message_info.rs:186
 msgid "Read"
 msgstr "Lu"
 
-#: src/ui/message_info.rs:178
+#: src/ui/message_info.rs:200
 msgid "Delivered"
 msgstr "Distribué"
 
-#: src/ui/message_info.rs:194
+#: src/ui/message_info.rs:216
 msgid "Time not recorded"
 msgstr "Heure non enregistrée"
 
-#: src/ui/message_info.rs:216
+#: src/ui/message_info.rs:238
 msgid ""
 "No receipts were recorded for this message. Details are available for "
 "messages sent from now on."
@@ -1118,7 +1118,7 @@ msgstr ""
 "Aucun accusé n’a été enregistré pour ce message. Les détails sont "
 "disponibles pour les messages envoyés à partir de maintenant."
 
-#: src/ui/message_info.rs:228
+#: src/ui/message_info.rs:250
 msgid ""
 "Some receipts for this message were not recorded. Details are complete for "
 "messages sent from now on."
@@ -1126,26 +1126,26 @@ msgstr ""
 "Certains accusés de ce message n’ont pas été enregistrés. Les détails sont "
 "complets pour les messages envoyés à partir de maintenant."
 
-#: src/ui/message_info.rs:238
+#: src/ui/message_info.rs:260
 msgid "Played by"
 msgstr "Écouté par"
 
-#: src/ui/message_info.rs:247
+#: src/ui/message_info.rs:269
 msgid "Read by"
 msgstr "Lu par"
 
-#: src/ui/message_info.rs:255
+#: src/ui/message_info.rs:277
 msgid "Delivered to"
 msgstr "Distribué à"
 
-#: src/ui/message_info.rs:265
+#: src/ui/message_info.rs:287
 #, rust-format
 msgid "{} remaining"
 msgid_plural "{} remaining"
 msgstr[0] "{} restant"
 msgstr[1] "{} restants"
 
-#: src/ui/message_info.rs:292
+#: src/ui/message_info.rs:314
 msgid "No one yet"
 msgstr "Personne pour l’instant"
 
