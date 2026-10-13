@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:53+0200\n"
+"POT-Creation-Date: 2026-10-13 22:01+0200\n"
 "PO-Revision-Date: 2026-10-02 18:51+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
 "Language-Team: Chinese (Traditional)\n"
@@ -37,7 +37,7 @@ msgstr "私聊"
 msgid "Favorites"
 msgstr "最愛"
 
-#: src/model.rs:162
+#: src/model.rs:162 src/settings.rs:375
 msgid "Groups"
 msgstr "群組"
 
@@ -64,7 +64,7 @@ msgstr "{weekday} {time}"
 msgid "{date} at {time}"
 msgstr "{date} {time}"
 
-#: src/util.rs:286
+#: src/util.rs:286 src/settings.rs:373
 msgid "Off"
 msgstr ""
 
@@ -205,7 +205,7 @@ msgstr "已鎖定"
 msgid "No favorites yet"
 msgstr "尚無最愛"
 
-#: src/ui/chats.rs:1044 src/app.rs:2228
+#: src/ui/chats.rs:1044 src/app.rs:2260
 msgid "Message yourself"
 msgstr "傳訊息給自己"
 
@@ -334,7 +334,7 @@ msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} 則未讀訊息"
 
-#: src/ui/conversation.rs:2424 src/app.rs:2210 src/app.rs:2229
+#: src/ui/conversation.rs:2424 src/app.rs:2242 src/app.rs:2261
 msgid "You"
 msgstr "您"
 
@@ -444,7 +444,7 @@ msgstr "在地圖中開啟"
 msgid "Pause"
 msgstr "暫停"
 
-#: src/ui/conversation.rs:7158 src/ui/settings.rs:1751
+#: src/ui/conversation.rs:7158 src/ui/settings.rs:1780
 msgid "Play"
 msgstr "播放"
 
@@ -509,7 +509,7 @@ msgid "Send"
 msgstr "傳送"
 
 #: src/ui/dialogs.rs:1066 src/ui/dialogs.rs:1199 src/ui/dialogs.rs:1261
-#: src/ui/locations.rs:75 src/ui/settings.rs:974 src/ui/settings.rs:1537
+#: src/ui/locations.rs:75 src/ui/settings.rs:1003 src/ui/settings.rs:1566
 #: src/ui/lock.rs:142
 msgid "Cancel"
 msgstr "取消"
@@ -671,7 +671,7 @@ msgstr "「系統」是您桌面的介面字型。Inter 在每台電腦上呈現
 msgid "Wallpaper"
 msgstr "桌布"
 
-#: src/ui/settings.rs:348 src/app.rs:2701
+#: src/ui/settings.rs:348 src/app.rs:2733
 msgid "Image"
 msgstr "圖片"
 
@@ -755,7 +755,7 @@ msgstr "請輸入密碼"
 msgid "Clear"
 msgstr "清除"
 
-#: src/ui/settings.rs:487 src/ui/settings.rs:1879
+#: src/ui/settings.rs:487 src/ui/settings.rs:1908
 msgid "Notifications"
 msgstr "通知"
 
@@ -775,193 +775,204 @@ msgstr "在通知中顯示訊息內容"
 msgid "When off, they say only “New message”."
 msgstr "關閉後，通知只顯示「新訊息」。"
 
-#: src/ui/settings.rs:505 src/ui/settings.rs:1886
+#: src/ui/settings.rs:505
+#, fuzzy
+msgid "Limit repeat notifications"
+msgstr "桌面通知"
+
+#: src/ui/settings.rs:508
+msgid ""
+"After one notification, a chat stays quiet for 10 minutes. Opening the chat "
+"resets this. In groups, mentions and replies to you still notify."
+msgstr ""
+
+#: src/ui/settings.rs:534 src/ui/settings.rs:1915
 msgid "Play sounds for group messages"
 msgstr "群組訊息播放提示音"
 
-#: src/ui/settings.rs:508
+#: src/ui/settings.rs:537
 msgid "When off, only mentions and replies to you make a sound."
 msgstr "關閉後，只有提及您或回覆您的訊息才會發出聲音。"
 
-#: src/ui/settings.rs:516
+#: src/ui/settings.rs:545
 msgid "Privacy"
 msgstr "隱私"
 
-#: src/ui/settings.rs:518
+#: src/ui/settings.rs:547
 msgid "Off for your account, so only groups get them."
 msgstr "您的帳號已關閉，因此只有群組會收到。"
 
-#: src/ui/settings.rs:520
+#: src/ui/settings.rs:549
 msgid "Let people see when you read their messages."
 msgstr "讓他人看到您讀取其訊息的時間。"
 
-#: src/ui/settings.rs:523
+#: src/ui/settings.rs:552
 msgid "Send read receipts"
 msgstr "傳送已讀回執"
 
-#: src/ui/settings.rs:528
+#: src/ui/settings.rs:557
 msgid "Show when you are typing"
 msgstr "顯示正在輸入"
 
-#: src/ui/settings.rs:539
+#: src/ui/settings.rs:568
 msgid ""
 "Could not load your account privacy. Trying again when ZapFast reconnects."
 msgstr "無法載入您的帳號隱私設定，將在 ZapFast 重新連線後再試一次。"
 
-#: src/ui/settings.rs:544
+#: src/ui/settings.rs:573
 msgid "Connect to WhatsApp to change your account privacy."
 msgstr "請連線至 WhatsApp 以變更您的帳號隱私設定。"
 
-#: src/ui/settings.rs:549
+#: src/ui/settings.rs:578
 msgid "Loading your account privacy…"
 msgstr "正在載入您的帳號隱私設定…"
 
-#: src/ui/settings.rs:574
+#: src/ui/settings.rs:603
 msgid "Change who is excluded on your phone."
 msgstr "請在手機上變更被排除的人員。"
 
-#: src/ui/settings.rs:592
+#: src/ui/settings.rs:621
 msgid "System"
 msgstr "系統"
 
-#: src/ui/settings.rs:594
+#: src/ui/settings.rs:623
 msgid "Keep running when the window closes"
 msgstr "關閉視窗後繼續在背景執行"
 
-#: src/ui/settings.rs:595
+#: src/ui/settings.rs:624
 msgid "Quit from the tray or with Ctrl+Q."
 msgstr "請從系統匣選單退出，或按 Ctrl+Q。"
 
-#: src/ui/settings.rs:600 src/ui/settings.rs:608
+#: src/ui/settings.rs:629 src/ui/settings.rs:637
 msgid "Start at login"
 msgstr "登入時啟動"
 
-#: src/ui/settings.rs:601
+#: src/ui/settings.rs:630
 msgid "Starts in the tray, without a window."
 msgstr "啟動時會在系統匣中執行，不顯示視窗。"
 
-#: src/ui/settings.rs:624
+#: src/ui/settings.rs:653
 msgid "Check for updates"
 msgstr "檢查更新"
 
-#: src/ui/settings.rs:627
+#: src/ui/settings.rs:656
 msgid "Asks GitHub once a day, sending only the ZapFast version."
 msgstr "每天向 GitHub 詢問一次，只傳送 ZapFast 的版本資訊。"
 
-#: src/ui/settings.rs:632
+#: src/ui/settings.rs:661
 msgid "Download updates automatically"
 msgstr "自動下載更新"
 
-#: src/ui/settings.rs:635
+#: src/ui/settings.rs:664
 msgid ""
 "You still choose when to restart. Package managers and Flatpak update "
 "ZapFast themselves."
 msgstr ""
 "您仍可自行選擇重新啟動的時間。套件管理員與 Flatpak 會自行更新 ZapFast。"
 
-#: src/ui/settings.rs:648
+#: src/ui/settings.rs:677
 #, rust-format
 msgid "Using {proxy} from the environment."
 msgstr "正在使用環境變數中的 {proxy}。"
 
-#: src/ui/settings.rs:656
+#: src/ui/settings.rs:685
 msgid "For WhatsApp, media, and updates. Empty uses ALL_PROXY or HTTPS_PROXY."
 msgstr "用於 WhatsApp、媒體與更新。留空時會使用 ALL_PROXY 或 HTTPS_PROXY。"
 
-#: src/ui/settings.rs:659
+#: src/ui/settings.rs:688
 msgid "Proxy"
 msgstr "Proxy 伺服器"
 
-#: src/ui/settings.rs:679
+#: src/ui/settings.rs:708
 msgid "GIPHY API key"
 msgstr "GIPHY API 金鑰"
 
-#: src/ui/settings.rs:683
+#: src/ui/settings.rs:712
 msgid "For GIF search. Replaces the key this build includes."
 msgstr "用於 GIF 搜尋。會取代這個版本內建的金鑰。"
 
-#: src/ui/settings.rs:688
+#: src/ui/settings.rs:717
 msgid "For GIF search. Get a free key at developers.giphy.com."
 msgstr "用於 GIF 搜尋。可至 developers.giphy.com 免費取得金鑰。"
 
-#: src/ui/settings.rs:704 src/ui/settings.rs:1933 src/ui/settings.rs:1939
+#: src/ui/settings.rs:733 src/ui/settings.rs:1962 src/ui/settings.rs:1968
 msgid "Account"
 msgstr "帳號"
 
-#: src/ui/settings.rs:707 src/ui/settings.rs:1436
+#: src/ui/settings.rs:736 src/ui/settings.rs:1465
 msgid "Your name"
 msgstr "您的姓名"
 
-#: src/ui/settings.rs:709 src/ui/settings.rs:1444
+#: src/ui/settings.rs:738 src/ui/settings.rs:1473
 msgctxt "profile"
 msgid "About"
 msgstr ""
 
-#: src/ui/settings.rs:712 src/ui/settings.rs:1413
+#: src/ui/settings.rs:741 src/ui/settings.rs:1442
 msgid "Change profile picture"
 msgstr "變更個人照片"
 
-#: src/ui/settings.rs:713 src/ui/settings.rs:1496 src/ui/settings.rs:1935
+#: src/ui/settings.rs:742 src/ui/settings.rs:1525 src/ui/settings.rs:1964
 msgid "Unlink this computer"
 msgstr "取消連結這部電腦"
 
-#: src/ui/settings.rs:714 src/ui/settings.rs:1507 src/ui/accounts.rs:123
+#: src/ui/settings.rs:743 src/ui/settings.rs:1536 src/ui/accounts.rs:123
 msgid "Add account"
 msgstr ""
 
-#: src/ui/settings.rs:715 src/ui/settings.rs:1483
+#: src/ui/settings.rs:744 src/ui/settings.rs:1512
 msgid "Remove this account"
 msgstr ""
 
-#: src/ui/settings.rs:720
+#: src/ui/settings.rs:749
 msgid "Files"
 msgstr "檔案"
 
-#: src/ui/settings.rs:723
+#: src/ui/settings.rs:752
 msgid "Open folder"
 msgstr "開啟資料夾"
 
-#: src/ui/settings.rs:725
+#: src/ui/settings.rs:754
 msgid "Message archive"
 msgstr "訊息存檔"
 
-#: src/ui/settings.rs:743
+#: src/ui/settings.rs:772
 msgid "Downloads"
 msgstr "下載項目"
 
-#: src/ui/settings.rs:756
+#: src/ui/settings.rs:785
 msgid "Change…"
 msgstr "變更…"
 
-#: src/ui/settings.rs:768
+#: src/ui/settings.rs:797
 msgid "Use default"
 msgstr "使用預設值"
 
-#: src/ui/settings.rs:779
+#: src/ui/settings.rs:808
 msgid "Log"
 msgstr "日誌"
 
-#: src/ui/settings.rs:786
+#: src/ui/settings.rs:815
 msgid "Open"
 msgstr "開啟"
 
-#: src/ui/settings.rs:796 src/ui/settings.rs:1626
+#: src/ui/settings.rs:825 src/ui/settings.rs:1655
 msgid "About"
 msgstr "關於"
 
-#: src/ui/settings.rs:800 src/ui/settings.rs:1615
+#: src/ui/settings.rs:829 src/ui/settings.rs:1644
 msgid "Keyboard shortcuts"
 msgstr "鍵盤快捷鍵"
 
-#: src/ui/settings.rs:801 src/ui/settings.rs:1637
+#: src/ui/settings.rs:830 src/ui/settings.rs:1666
 msgid "Source code"
 msgstr "原始碼"
 
-#: src/ui/settings.rs:826 src/ui/settings.rs:853
+#: src/ui/settings.rs:855 src/ui/settings.rs:882
 msgid "App lock"
 msgstr "應用程式鎖"
 
-#: src/ui/settings.rs:829
+#: src/ui/settings.rs:858
 msgid ""
 "Asks for a password at start and after a while unused. It keeps people using "
 "this computer out of your chats and encrypts nothing more. A forgotten "
@@ -970,156 +981,156 @@ msgstr ""
 "啟動時及一段時間未使用後會要求輸入密碼。它能防止使用這部電腦的人看到您的對"
 "話，此外不會加密任何內容。忘記密碼就只能取消連結。"
 
-#: src/ui/settings.rs:836
+#: src/ui/settings.rs:865
 msgid "Turn off…"
 msgstr "關閉…"
 
-#: src/ui/settings.rs:837
+#: src/ui/settings.rs:866
 msgid "Change password…"
 msgstr "變更密碼…"
 
-#: src/ui/settings.rs:840
+#: src/ui/settings.rs:869
 msgid "Set password…"
 msgstr "設定密碼…"
 
-#: src/ui/settings.rs:854 src/ui/settings.rs:861
+#: src/ui/settings.rs:883 src/ui/settings.rs:890
 msgid "Lock after"
 msgstr "自動鎖定"
 
-#: src/ui/settings.rs:864
+#: src/ui/settings.rs:893
 msgid ""
 "Time without using ZapFast, also counted while it is in the tray. "
 "Ctrl+Shift+L locks it at once."
 msgstr ""
 "未使用 ZapFast 經過的時間，在系統匣中也會計算。Ctrl+Shift+L 可立即鎖定。"
 
-#: src/ui/settings.rs:906
+#: src/ui/settings.rs:935
 msgid "Set an app lock password"
 msgstr "設定應用程式鎖密碼"
 
-#: src/ui/settings.rs:907
+#: src/ui/settings.rs:936
 msgid "Change the app lock password"
 msgstr "變更應用程式鎖密碼"
 
-#: src/ui/settings.rs:908
+#: src/ui/settings.rs:937
 msgid "Turn off the app lock"
 msgstr "關閉應用程式鎖"
 
-#: src/ui/settings.rs:918
+#: src/ui/settings.rs:947
 msgid "Current password"
 msgstr "目前的密碼"
 
-#: src/ui/settings.rs:925
+#: src/ui/settings.rs:954
 #, rust-format
 msgid "New password, at least {count} characters"
 msgstr "新密碼，至少 {count} 個字元"
 
-#: src/ui/settings.rs:930
+#: src/ui/settings.rs:959
 msgid "Type the new password again"
 msgstr "再次輸入新密碼"
 
-#: src/ui/settings.rs:954
+#: src/ui/settings.rs:983
 #, rust-format
 msgid "The password needs at least {count} characters."
 msgstr "密碼至少需要 {count} 個字元。"
 
-#: src/ui/settings.rs:956
+#: src/ui/settings.rs:985
 msgid "The two new passwords are different."
 msgstr "兩次輸入的新密碼不相同。"
 
-#: src/ui/settings.rs:957 src/ui/lock.rs:85
+#: src/ui/settings.rs:986 src/ui/lock.rs:85
 msgid "Wrong password. Try again."
 msgstr "密碼錯誤，請再試一次。"
 
-#: src/ui/settings.rs:964
+#: src/ui/settings.rs:993
 msgid "Turn on"
 msgstr "開啟"
 
-#: src/ui/settings.rs:965
+#: src/ui/settings.rs:994
 msgid "Change password"
 msgstr "變更密碼"
 
-#: src/ui/settings.rs:966
+#: src/ui/settings.rs:995
 msgid "Turn off"
 msgstr "關閉"
 
-#: src/ui/settings.rs:1069
+#: src/ui/settings.rs:1098
 msgid "How to make a theme"
 msgstr "如何製作主題"
 
-#: src/ui/settings.rs:1110 src/ui/settings.rs:1119
+#: src/ui/settings.rs:1139 src/ui/settings.rs:1148
 msgid "Auto"
 msgstr "自動"
 
-#: src/ui/settings.rs:1206
+#: src/ui/settings.rs:1235
 msgid "Add doodles"
 msgstr "加入塗鴉"
 
-#: src/ui/settings.rs:1210
+#: src/ui/settings.rs:1239
 msgid "Show the default doodles over the selected colour."
 msgstr "在所選的顏色上顯示預設塗鴉。"
 
-#: src/ui/settings.rs:1294
+#: src/ui/settings.rs:1323
 msgid "Choose image…"
 msgstr "選擇圖片…"
 
-#: src/ui/settings.rs:1295
+#: src/ui/settings.rs:1324
 msgid "Remove image"
 msgstr "移除圖片"
 
-#: src/ui/settings.rs:1323
+#: src/ui/settings.rs:1352
 msgctxt "wallpaper colour"
 msgid "Theme"
 msgstr "桌布主題"
 
-#: src/ui/settings.rs:1452
+#: src/ui/settings.rs:1481
 msgid "Linked device"
 msgstr "已連結的裝置"
 
-#: src/ui/settings.rs:1463
+#: src/ui/settings.rs:1492
 msgid "Edit your name and About"
 msgstr "編輯您的姓名與關於"
 
-#: src/ui/settings.rs:1527
+#: src/ui/settings.rs:1556
 msgid "Save"
 msgstr "儲存"
 
-#: src/ui/settings.rs:1594
+#: src/ui/settings.rs:1623
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "以 Rust、egui 與 whatsapp-rust 打造的原生 WhatsApp 使用者端。"
 
-#: src/ui/settings.rs:1605
+#: src/ui/settings.rs:1634
 #, rust-format
 msgid "Update to {version}"
 msgstr "更新至 {version}"
 
-#: src/ui/settings.rs:1707
+#: src/ui/settings.rs:1736
 msgid "Mention sound"
 msgstr "提及提示音"
 
-#: src/ui/settings.rs:1708
+#: src/ui/settings.rs:1737
 msgid "When a group mentions you or replies to you."
 msgstr "群組提及您或回覆您時播放。"
 
-#: src/ui/settings.rs:1711
+#: src/ui/settings.rs:1740
 msgid "Message sound"
 msgstr "訊息提示音"
 
-#: src/ui/settings.rs:1728
+#: src/ui/settings.rs:1757
 msgid "Pidgin alert"
 msgstr "Pidgin 提示音"
 
-#: src/ui/settings.rs:1729 src/ui/call.rs:544
+#: src/ui/settings.rs:1758 src/ui/call.rs:544
 msgid "System default"
 msgstr "系統預設"
 
 #. Translators: no notification sound.
-#: src/ui/settings.rs:1731
+#: src/ui/settings.rs:1760
 msgctxt "sound"
 msgid "None"
 msgstr "無"
 
-#: src/ui/settings.rs:1768
+#: src/ui/settings.rs:1797
 msgid "Choose a file…"
 msgstr "選擇檔案…"
 
@@ -1191,7 +1202,7 @@ msgstr "無法連線"
 msgid "No answer"
 msgstr "無人接聽"
 
-#: src/ui/call.rs:358 src/ui/calls.rs:106 src/app.rs:3432
+#: src/ui/call.rs:358 src/ui/calls.rs:106 src/app.rs:3464
 msgid "Connection lost"
 msgstr "連線中斷"
 
@@ -1332,7 +1343,7 @@ msgstr "已鎖定的對話"
 msgid "Incoming call"
 msgstr "來電"
 
-#: src/app/calls.rs:360
+#: src/app/calls.rs:362
 msgid "Hang up the current call first"
 msgstr "請先掛斷目前的通話"
 
@@ -1400,76 +1411,76 @@ msgstr "尚無對象"
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:2130
+#: src/app.rs:2162
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "已有名為「{name}」的標籤。"
 
-#: src/app.rs:2209
+#: src/app.rs:2241
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name}（您）"
 
-#: src/app.rs:3142
+#: src/app.rs:3174
 msgid "Loading chat history"
 msgstr ""
 
-#: src/app.rs:3236
+#: src/app.rs:3268
 msgid "Could not use this image"
 msgstr "無法使用這張圖片"
 
-#: src/app.rs:3442
+#: src/app.rs:3474
 msgid "Connecting"
 msgstr ""
 
-#: src/app.rs:3838
+#: src/app.rs:3874
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "未送出：ZapFast 尚未連線至 WhatsApp。"
 
-#: src/app.rs:3842
+#: src/app.rs:3878
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 "未送出：您要回覆的訊息在這部電腦上無法使用。取消回覆即可不附帶引用內容送出。"
 
-#: src/app.rs:5836
+#: src/app.rs:5874
 msgid "Added to favorites"
 msgstr "已加入最愛"
 
-#: src/app.rs:5911
+#: src/app.rs:5949
 msgid "Sending the sticker pack…"
 msgstr "正在傳送貼圖集…"
 
-#: src/app.rs:6211 src/ui/labels.rs:247
+#: src/app.rs:6249 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "您已有 {limit} 個標籤，已達 ZapFast 的上限。"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6711
+#: src/app.rs:6749
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:7025
+#: src/app.rs:7063
 msgid "App lock password saved"
 msgstr "已儲存應用程式鎖密碼"
 
-#: src/app.rs:7033
+#: src/app.rs:7071
 msgid "App lock turned off"
 msgstr "已關閉應用程式鎖"
 
-#: src/app.rs:7157
+#: src/app.rs:7195
 msgid "This video opens in your system player"
 msgstr "此影片會在您的系統播放器中開啟"
 
-#: src/app.rs:7631
+#: src/app.rs:7669
 msgid "Copied image"
 msgstr "已複製圖片"
 
-#: src/app.rs:7634 src/app.rs:7639
+#: src/app.rs:7672 src/app.rs:7677
 msgid "Failed to copy image"
 msgstr "複製圖片失敗"
 
@@ -1846,7 +1857,7 @@ msgstr "取消連結"
 
 #. Translators: the body of a notification that hides who wrote and
 #. what: a message has arrived.
-#: src/notify.rs:306
+#: src/notify.rs:397
 msgctxt "notification"
 msgid "New message"
 msgstr "新訊息"
@@ -1862,6 +1873,15 @@ msgstr "15 分鐘後"
 #: src/settings.rs:342
 msgid "After 1 hour"
 msgstr "1 小時後"
+
+#: src/settings.rs:374
+#, fuzzy
+msgid "Direct messages"
+msgstr "選取訊息"
+
+#: src/settings.rs:376
+msgid "Direct messages and groups"
+msgstr ""
 
 #: src/account.rs:237
 #, rust-format
