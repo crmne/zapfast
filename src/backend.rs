@@ -358,6 +358,16 @@ pub enum Command {
         text: String,
         mentions: Vec<String>,
     },
+    /// Internal: WhatsApp's answer to an edit sent from here. The archive
+    /// takes the new text only once WhatsApp accepts it.
+    EditSettled {
+        chat: ChatId,
+        id: String,
+        /// Orders edits sent from here, so a late answer to an older one
+        /// cannot replace a newer one.
+        generation: u64,
+        accepted: Result<(crate::model::Content, Vec<crate::model::MentionRef>), String>,
+    },
     Revoke {
         chat: ChatId,
         id: String,
