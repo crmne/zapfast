@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:28+0200\n"
+"POT-Creation-Date: 2026-10-13 21:30+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -208,7 +208,7 @@ msgstr ""
 msgid "No favorites yet"
 msgstr ""
 
-#: src/ui/chats.rs:1044 src/app.rs:2150
+#: src/ui/chats.rs:1044 src/app.rs:2156
 msgid "Message yourself"
 msgstr ""
 
@@ -332,7 +332,7 @@ msgid_plural "{} unread messages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/conversation.rs:2396 src/app.rs:2132 src/app.rs:2151
+#: src/ui/conversation.rs:2396 src/app.rs:2138 src/app.rs:2157
 msgid "You"
 msgstr ""
 
@@ -649,7 +649,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr ""
 
-#: src/ui/settings.rs:348 src/app.rs:2623
+#: src/ui/settings.rs:348 src/app.rs:2629
 msgid "Image"
 msgstr ""
 
@@ -1157,7 +1157,7 @@ msgstr ""
 msgid "No answer"
 msgstr ""
 
-#: src/ui/call.rs:358 src/ui/calls.rs:106 src/app.rs:3354
+#: src/ui/call.rs:358 src/ui/calls.rs:106 src/app.rs:3360
 msgid "Connection lost"
 msgstr ""
 
@@ -1367,75 +1367,75 @@ msgstr ""
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:2052
+#: src/app.rs:2058
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr ""
 
-#: src/app.rs:2131
+#: src/app.rs:2137
 #, rust-format
 msgid "{name} (You)"
 msgstr ""
 
-#: src/app.rs:3064
+#: src/app.rs:3070
 msgid "Loading chat history"
 msgstr ""
 
-#: src/app.rs:3158
+#: src/app.rs:3164
 msgid "Could not use this image"
 msgstr ""
 
-#: src/app.rs:3364
+#: src/app.rs:3370
 msgid "Connecting"
 msgstr ""
 
-#: src/app.rs:3739
+#: src/app.rs:3745
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr ""
 
-#: src/app.rs:3743
+#: src/app.rs:3749
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:5679
+#: src/app.rs:5693
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:5754
+#: src/app.rs:5768
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:6047 src/ui/labels.rs:247
+#: src/app.rs:6061 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6547
+#: src/app.rs:6561
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:6834
+#: src/app.rs:6875
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:6842
+#: src/app.rs:6883
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:6967
+#: src/app.rs:7007
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/app.rs:7399
+#: src/app.rs:7439
 msgid "Copied image"
 msgstr ""
 
-#: src/app.rs:7402 src/app.rs:7407
+#: src/app.rs:7442 src/app.rs:7447
 msgid "Failed to copy image"
 msgstr ""
 
