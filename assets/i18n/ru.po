@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 19:56+0200\n"
+"POT-Creation-Date: 2026-10-13 19:58+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -198,7 +198,7 @@ msgstr "Черновик:"
 msgid "Remove from favorites"
 msgstr "Убрать из избранного"
 
-#: src/ui/chats.rs:1211 src/ui/chats.rs:1577 src/ui/conversation.rs:4383
+#: src/ui/chats.rs:1211 src/ui/chats.rs:1577 src/ui/conversation.rs:4392
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Добавить в избранное"
@@ -293,7 +293,7 @@ msgstr "Голосовое сообщение ({duration}) не отправле
 msgid "Discard voice message"
 msgstr "Удалить голосовое сообщение"
 
-#: src/ui/conversation.rs:2114 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2116 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
@@ -301,65 +301,65 @@ msgstr[0] "{} непрочитанное сообщение"
 msgstr[1] "{} непрочитанных сообщения"
 msgstr[2] "{} непрочитанных сообщений"
 
-#: src/ui/conversation.rs:2266 src/app.rs:2047 src/app.rs:2066
+#: src/ui/conversation.rs:2268 src/app.rs:2047 src/app.rs:2066
 msgid "You"
 msgstr "Вы"
 
-#: src/ui/conversation.rs:2277
+#: src/ui/conversation.rs:2279
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "Выбрать сообщение от {sender} ({time}): {summary}"
 
-#: src/ui/conversation.rs:3507 src/ui/conversation.rs:4392
+#: src/ui/conversation.rs:3516 src/ui/conversation.rs:4401
 msgid "Open in system player"
 msgstr "Открыть в системном плеере"
 
-#: src/ui/conversation.rs:3508 src/ui/conversation.rs:4018
-#: src/ui/conversation.rs:4456 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3517 src/ui/conversation.rs:4027
+#: src/ui/conversation.rs:4465 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Данные сообщения"
 
-#: src/ui/conversation.rs:3509 src/ui/conversation.rs:4468
+#: src/ui/conversation.rs:3518 src/ui/conversation.rs:4477
 msgid "Reload earlier messages"
 msgstr ""
 
-#: src/ui/conversation.rs:4404 src/ui/image_preview.rs:77
+#: src/ui/conversation.rs:4413 src/ui/image_preview.rs:77
 #: src/ui/image_preview.rs:233
 msgid "Copy image"
 msgstr "Копировать изображение"
 
-#: src/ui/conversation.rs:4849
+#: src/ui/conversation.rs:4858
 #, fuzzy
 msgid "Location"
 msgstr "Геоданные в реальном времени"
 
-#: src/ui/conversation.rs:4883
+#: src/ui/conversation.rs:4892
 msgid "Live location ended"
 msgstr "Трансляция геоданных завершена"
 
-#: src/ui/conversation.rs:4885 src/ui/conversation.rs:5087
+#: src/ui/conversation.rs:4894 src/ui/conversation.rs:5096
 msgid "Live location"
 msgstr "Геоданные в реальном времени"
 
-#: src/ui/conversation.rs:4895
+#: src/ui/conversation.rs:4904
 #, rust-format
 msgid "Updated {time}"
 msgstr "Обновлено в {time}"
 
-#: src/ui/conversation.rs:4910 src/ui/conversation.rs:5095
+#: src/ui/conversation.rs:4919 src/ui/conversation.rs:5104
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Откройте WhatsApp на телефоне, чтобы следить за ними."
 
-#: src/ui/conversation.rs:4954
+#: src/ui/conversation.rs:4963
 #, fuzzy
 msgid "Chat"
 msgstr "Чаты"
 
-#: src/ui/conversation.rs:4968
+#: src/ui/conversation.rs:4977
 msgid "Add"
 msgstr ""
 
-#: src/ui/conversation.rs:5016
+#: src/ui/conversation.rs:5025
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
@@ -367,77 +367,77 @@ msgstr[0] "{} стикер"
 msgstr[1] "{} стикера"
 msgstr[2] "{} стикеров"
 
-#: src/ui/conversation.rs:5029
+#: src/ui/conversation.rs:5038
 msgid "View stickers"
 msgstr "Посмотреть стикеры"
 
-#: src/ui/conversation.rs:5113
+#: src/ui/conversation.rs:5122
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое фото. В целях конфиденциальности оно открывается только на "
 "телефоне."
 
-#: src/ui/conversation.rs:5117
+#: src/ui/conversation.rs:5126
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое видео. В целях конфиденциальности оно открывается только на "
 "телефоне."
 
-#: src/ui/conversation.rs:5121
+#: src/ui/conversation.rs:5130
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое голосовое сообщение. В целях конфиденциальности оно открывается "
 "только на телефоне."
 
-#: src/ui/conversation.rs:5125
+#: src/ui/conversation.rs:5134
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое аудио. В целях конфиденциальности оно открывается только на "
 "телефоне."
 
-#: src/ui/conversation.rs:5129
+#: src/ui/conversation.rs:5138
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Одноразовое сообщение. В целях конфиденциальности оно открывается только на "
 "телефоне."
 
-#: src/ui/conversation.rs:5131
+#: src/ui/conversation.rs:5140
 msgid "This message can only be seen on your phone."
 msgstr "Это сообщение можно посмотреть только на телефоне."
 
-#: src/ui/conversation.rs:5892
+#: src/ui/conversation.rs:5901
 msgid "Message"
 msgstr "Написать сообщение"
 
-#: src/ui/conversation.rs:5893
+#: src/ui/conversation.rs:5902
 msgid "Copy number"
 msgstr "Скопировать номер"
 
-#: src/ui/conversation.rs:6129
+#: src/ui/conversation.rs:6138
 msgid "Open in a map"
 msgstr "Открыть на карте"
 
-#: src/ui/conversation.rs:6816
+#: src/ui/conversation.rs:6825
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/ui/conversation.rs:6818 src/ui/settings.rs:1738
+#: src/ui/conversation.rs:6827 src/ui/settings.rs:1738
 msgid "Play"
 msgstr "Воспроизвести"
 
-#: src/ui/conversation.rs:6845
+#: src/ui/conversation.rs:6854
 msgid "Back to the message (Esc)"
 msgstr "Вернуть в сообщение (Esc)"
 
-#: src/ui/conversation.rs:6847
+#: src/ui/conversation.rs:6856
 msgid "Fill the window"
 msgstr "На всё окно"
 
-#: src/ui/conversation.rs:6877
+#: src/ui/conversation.rs:6886
 msgid "Unmute"
 msgstr "Включить звук"
 
-#: src/ui/conversation.rs:6879
+#: src/ui/conversation.rs:6888
 msgid "Mute"
 msgstr "Выключить звук"
 
