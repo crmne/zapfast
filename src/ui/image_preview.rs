@@ -469,7 +469,8 @@ pub fn show_sticker(app: &mut App, ctx: &egui::Context) {
         .fill(palette.overlay)
         .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS + 4))
-        .inner_margin(Margin::same(20));
+        .inner_margin(Margin::same(20))
+        .shadow(palette.modal_shadow());
     let response = egui::Modal::new(egui::Id::new("sticker-preview"))
         .frame(card)
         .backdrop_color(palette.shadow)
