@@ -291,6 +291,16 @@ mod tests {
             ),
             (Locale::ChineseSimplified, "私下回复", "原始群组消息不可用"),
             (
+                Locale::ChineseTraditional,
+                "私下回覆",
+                "無法取得原始群組訊息",
+            ),
+            (
+                Locale::Indonesian,
+                "Balas secara pribadi",
+                "Pesan grup asli tidak tersedia",
+            ),
+            (
                 Locale::Turkish,
                 "Özel olarak yanıtla",
                 "Orijinal grup mesajı kullanılamıyor",

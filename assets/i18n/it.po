@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 20:08+0200\n"
+"POT-Creation-Date: 2026-10-13 20:09+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Italian\n"
@@ -22,27 +22,27 @@ msgctxt "mention"
 msgid "all"
 msgstr "tutti"
 
-#: src/model.rs:156
+#: src/model.rs:150
 msgid "All"
 msgstr "Tutti"
 
-#: src/model.rs:157
+#: src/model.rs:151
 msgid "Unread"
 msgstr "Non letti"
 
-#: src/model.rs:158
+#: src/model.rs:152
 msgid "Private"
 msgstr "Privati"
 
-#: src/model.rs:159 src/ui/picker.rs:1188
+#: src/model.rs:153 src/ui/picker.rs:1188
 msgid "Favorites"
 msgstr "Preferiti"
 
-#: src/model.rs:160
+#: src/model.rs:154
 msgid "Groups"
 msgstr "Gruppi"
 
-#: src/model.rs:161
+#: src/model.rs:155
 msgid "Channels"
 msgstr "Canali"
 
@@ -206,7 +206,7 @@ msgstr "Bloccati"
 msgid "No favorites yet"
 msgstr "Ancora nessun preferito"
 
-#: src/ui/chats.rs:1005 src/app.rs:2104
+#: src/ui/chats.rs:1005 src/app.rs:2085
 msgid "Message yourself"
 msgstr "Invia un messaggio a te stesso"
 
@@ -326,7 +326,7 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} messaggio non letto"
 msgstr[1] "{} messaggi non letti"
 
-#: src/ui/conversation.rs:2294 src/app.rs:2086 src/app.rs:2105
+#: src/ui/conversation.rs:2294 src/app.rs:2067 src/app.rs:2086
 msgid "You"
 msgstr "Tu"
 
@@ -663,7 +663,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr "Sfondo"
 
-#: src/ui/settings.rs:348 src/app.rs:2577
+#: src/ui/settings.rs:348 src/app.rs:2561
 msgid "Image"
 msgstr "Immagine"
 
@@ -1174,25 +1174,25 @@ msgstr[1] "{} in attesa"
 msgid "No one yet"
 msgstr "Ancora nessuno"
 
-#: src/app.rs:1489
+#: src/app.rs:1483
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:2006
+#: src/app.rs:1987
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Esiste già un’etichetta chiamata «{name}»."
 
-#: src/app.rs:2085
+#: src/app.rs:2066
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Tu)"
 
-#: src/app.rs:2990
+#: src/app.rs:2974
 msgid "Loading chat history"
 msgstr ""
 
-#: src/app.rs:3069
+#: src/app.rs:3053
 msgid "Could not use this image"
 msgstr "Impossibile usare questa immagine"
 
@@ -1200,15 +1200,15 @@ msgstr "Impossibile usare questa immagine"
 msgid "Connection lost"
 msgstr "Connessione persa"
 
-#: src/app.rs:3275
+#: src/app.rs:3259
 msgid "Connecting"
 msgstr ""
 
-#: src/app.rs:3698
+#: src/app.rs:3670
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Non inviato: ZapFast non è connesso a WhatsApp."
 
-#: src/app.rs:3702
+#: src/app.rs:3674
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1216,43 +1216,43 @@ msgstr ""
 "Non inviato: il messaggio a cui stai rispondendo non è disponibile su questo "
 "computer. Annulla la risposta per inviare senza citazione."
 
-#: src/app.rs:5664
+#: src/app.rs:5626
 msgid "Added to favorites"
 msgstr "Aggiunto ai preferiti"
 
-#: src/app.rs:5741
+#: src/app.rs:5703
 msgid "Sending the sticker pack…"
 msgstr "Invio del pacchetto di sticker…"
 
-#: src/app.rs:6034 src/ui/labels.rs:247
+#: src/app.rs:5996 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Hai {limit} etichette, il massimo che ZapFast conserva."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6534
+#: src/app.rs:6496
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:6818
+#: src/app.rs:6780
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:6826
+#: src/app.rs:6788
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:6950
+#: src/app.rs:6912
 msgid "This video opens in your system player"
 msgstr "Questo video si apre nel lettore di sistema"
 
-#: src/app.rs:7410
+#: src/app.rs:7372
 msgid "Copied image"
 msgstr "Immagine copiata"
 
-#: src/app.rs:7413 src/app.rs:7418
+#: src/app.rs:7375 src/app.rs:7380
 msgid "Failed to copy image"
 msgstr "Impossibile copiare l'immagine"
 
@@ -1660,7 +1660,7 @@ msgstr ""
 msgid "After 1 hour"
 msgstr ""
 
-#: src/account.rs:223
+#: src/account.rs:217
 #, rust-format
 msgid "Account {id}"
 msgstr "Account {id}"
