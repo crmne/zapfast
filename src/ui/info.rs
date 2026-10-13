@@ -1,8 +1,9 @@
 //! The info panel beside the open chat: a contact's, group's or channel's
 //! picture, name and actions, its members, and the pictures, videos,
-//! documents and links shared in it. Like the search pane it docks at the
-//! right when the window has room for it and a readable conversation, and
-//! lies over the conversation otherwise.
+//! documents and links shared in it. It takes a column at the right, and
+//! the conversation narrows beside it; when the chat list leaves too little
+//! room, the list steps aside. In the narrow window mode it is a page of its
+//! own over the chat, with Back.
 
 use egui::{Align, Align2, Color32, CornerRadius, Frame, Margin, Rect, Sense, Stroke, Vec2};
 use egui::{pos2, vec2};
@@ -72,10 +73,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
         }
         return None;
     }
+    // A narrow window shows the panel as a page of its own over the chat.
+    if super::narrow(ui.ctx()) {
+        return Some(ui.available_rect_before_wrap());
+    }
+    // Otherwise it takes a column beside the conversation, which narrows.
     let wanted = app.settings.info_pane_width;
-    match pane::dock(app, ui, "chat-info-pane", wanted, |app, ui| {
-        contents(app, ui, false)
-    }) {
+    match pane::docked(
+        app,
+        ui,
+        "chat-info-pane",
+        wanted,
+        pane::INFO_MIN,
+        pane::INFO_CONVERSATION_MIN,
+        |app, ui| contents(app, ui, false),
+    ) {
         Docking::Docked { width, wanted } => {
             // Only a drag moves the edge off the width asked for.
             if (width - wanted).abs() > 1.0 {
@@ -90,9 +102,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
     }
 }
 
-/// The panel over the right of a conversation too narrow to share.
+/// The panel as a page over the whole conversation in a narrow window.
 pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
-    let width = app.settings.info_pane_width;
+    let width = region.width();
     pane::overlay(app, ctx, "chat-info-overlay", width, region, |app, ui| {
         contents(app, ui, true)
     });
@@ -233,8 +245,13 @@ fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool) {
     } else {
         crate::i18n::gettext(app.locale, "Contact info")
     };
-    let close = crate::i18n::gettext(app.locale, "Close");
-    header(app, ui, Icon::X, &close, &title, Action::CloseInfo, false);
+    // As a page of its own, the panel goes back to the chat it covers.
+    let (icon, close) = if overlay {
+        (Icon::ChevronLeft, crate::i18n::gettext(app.locale, "Back"))
+    } else {
+        (Icon::X, crate::i18n::gettext(app.locale, "Close"))
+    };
+    header(app, ui, icon, &close, &title, Action::CloseInfo, false);
     egui::ScrollArea::vertical()
         .id_salt(("chat-info", id))
         .auto_shrink([false, false])

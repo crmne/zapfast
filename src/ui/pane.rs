@@ -24,6 +24,11 @@ const MAX_WIDTH: f32 = 520.0;
 /// The narrowest conversation a docked pane leaves beside it. Below this the
 /// pane lies over the conversation instead of squeezing it.
 const CONVERSATION_MIN: f32 = 360.0;
+/// The info panel always takes a column of its own outside the narrow
+/// window mode, so it may be narrower than the search pane, and the
+/// conversation beside it too.
+pub(super) const INFO_MIN: f32 = 260.0;
+pub(super) const INFO_CONVERSATION_MIN: f32 = 280.0;
 const ROW_HEIGHT: f32 = 60.0;
 /// Characters of context kept before a match deep in a long line.
 const LEAD: usize = 18;
@@ -57,7 +62,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
 
 /// The pane over the right of a conversation too narrow to share.
 pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
-    let width = app.settings.search_pane_width;
+    let width = app.settings.search_pane_width.clamp(MIN_WIDTH, MAX_WIDTH);
     overlay(app, ctx, "chat-search-overlay", width, region, |app, ui| {
         search(app, ui, true)
     });
@@ -84,9 +89,24 @@ pub(super) fn dock(
     if region.width() < MIN_WIDTH + CONVERSATION_MIN {
         return Docking::Overlay(region);
     }
+    docked(app, ui, id, wanted, MIN_WIDTH, CONVERSATION_MIN, contents)
+}
+
+/// Docks a right-hand pane whatever the room, narrowing the conversation
+/// down to `conversation_min` and the pane down to `min`.
+pub(super) fn docked(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    id: &str,
+    wanted: f32,
+    min: f32,
+    conversation_min: f32,
+    contents: impl FnOnce(&mut App, &mut egui::Ui),
+) -> Docking {
+    let region = ui.available_rect_before_wrap();
     let palette = app.palette;
-    let max = (region.width() - CONVERSATION_MIN).clamp(MIN_WIDTH, MAX_WIDTH);
-    let wanted = wanted.clamp(MIN_WIDTH, max);
+    let max = (region.width() - conversation_min).clamp(min, MAX_WIDTH);
+    let wanted = wanted.clamp(min, max);
     let id = egui::Id::new(id);
     // egui would remember a width a narrow window squeezed; the saved width
     // is the reader's, so it comes back when the window widens again.
@@ -95,7 +115,7 @@ pub(super) fn dock(
     let response = egui::Panel::right(id)
         .resizable(true)
         .default_size(wanted)
-        .size_range(MIN_WIDTH..=max)
+        .size_range(min..=max)
         .show_separator_line(false)
         .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO))
         .show(ui, |ui| contents(app, ui));
@@ -121,7 +141,7 @@ pub(super) fn overlay(
     contents: impl FnOnce(&mut App, &mut egui::Ui),
 ) {
     let palette = app.palette;
-    let width = width.clamp(MIN_WIDTH, MAX_WIDTH).min(region.width());
+    let width = width.max(MIN_WIDTH).min(region.width());
     let rect = Rect::from_min_max(pos2(region.right() - width, region.top()), region.max);
     egui::Area::new(egui::Id::new(id))
         .order(egui::Order::Middle)

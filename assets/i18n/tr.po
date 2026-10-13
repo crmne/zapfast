@@ -193,7 +193,7 @@ msgstr ""
 msgid "Chats"
 msgstr "Sohbetler"
 
-#: src/ui/chats.rs:214 src/ui/chats.rs:509 src/ui/pane.rs:211
+#: src/ui/chats.rs:214 src/ui/chats.rs:509 src/ui/pane.rs:231
 msgid "Search"
 msgstr "Ara"
 
@@ -239,12 +239,12 @@ msgid "Add to favorites"
 msgstr "Favorilere ekle"
 
 #: src/ui/chats.rs:1631 src/ui/chats.rs:2032 src/ui/conversation.rs:385
-#: src/ui/dialogs.rs:1445 src/ui/info.rs:532
+#: src/ui/dialogs.rs:1445 src/ui/info.rs:549
 msgid "Leave group"
 msgstr "Gruptan ayrıl"
 
 #: src/ui/chats.rs:1632 src/ui/chats.rs:2030 src/ui/conversation.rs:383
-#: src/ui/dialogs.rs:1443 src/ui/info.rs:530
+#: src/ui/dialogs.rs:1443 src/ui/info.rs:547
 msgid "Leave channel"
 msgstr "Kanaldan ayrıl"
 
@@ -279,7 +279,7 @@ msgstr "Sesli arama"
 msgid "Video call"
 msgstr "Görüntülü arama"
 
-#: src/ui/conversation.rs:540 src/ui/pane.rs:175
+#: src/ui/conversation.rs:540 src/ui/pane.rs:195
 msgid "Search messages"
 msgstr "Mesajlarda ara"
 
@@ -561,7 +561,7 @@ msgstr[1] "{count} mesajı ilet"
 msgid "Forward to these chats?"
 msgstr "Bu sohbetlere iletilsin mi?"
 
-#: src/ui/dialogs.rs:506 src/ui/info.rs:878
+#: src/ui/dialogs.rs:506 src/ui/info.rs:250 src/ui/info.rs:895
 msgid "Back"
 msgstr "Geri"
 
@@ -654,7 +654,7 @@ msgid "Add to my stickers"
 msgstr "Çıkartmalarıma ekle"
 
 #: src/ui/dialogs.rs:1086 src/ui/message_info.rs:28 src/ui/labels.rs:224
-#: src/ui/info.rs:236
+#: src/ui/info.rs:252
 msgid "Close"
 msgstr "Kapat"
 
@@ -1974,43 +1974,43 @@ msgstr "Paket içe aktarılıyor…"
 msgid "Remove from recents"
 msgstr "Son kullanılanlardan kaldır"
 
-#: src/ui/pane.rs:165
+#: src/ui/pane.rs:185
 msgid "Close search"
 msgstr "Aramayı kapat"
 
-#: src/ui/pane.rs:193 src/ui/pane.rs:371
+#: src/ui/pane.rs:213 src/ui/pane.rs:391
 msgid "Filter by date"
 msgstr "Tarihe göre filtrele"
 
-#: src/ui/pane.rs:246
+#: src/ui/pane.rs:266
 #, rust-format
 msgid "Search messages with {}"
 msgstr "{} ile mesajları ara"
 
-#: src/ui/pane.rs:269
+#: src/ui/pane.rs:289
 msgid "No messages found"
 msgstr "Mesaj bulunamadı"
 
-#: src/ui/pane.rs:270
+#: src/ui/pane.rs:290
 msgid "Try another word or pick a different day."
 msgstr "Başka bir kelime deneyin veya farklı bir gün seçin."
 
-#: src/ui/pane.rs:297
+#: src/ui/pane.rs:317
 #, rust-format
 msgid "Only the newest {} matches are listed. Narrow the search or pick a day."
 msgstr ""
 "Yalnızca en yeni {} eşleşme listeleniyor. Aramayı daraltın veya bir gün "
 "seçin."
 
-#: src/ui/pane.rs:386
+#: src/ui/pane.rs:406
 msgid "Clear the day filter"
 msgstr "Gün filtresini temizle"
 
-#: src/ui/pane.rs:453
+#: src/ui/pane.rs:473
 msgid "Next month"
 msgstr "Sonraki ay"
 
-#: src/ui/pane.rs:465
+#: src/ui/pane.rs:485
 msgid "Previous month"
 msgstr "Önceki ay"
 
@@ -2200,133 +2200,133 @@ msgstr ""
 msgid "{count} unread chats"
 msgstr ""
 
-#: src/ui/info.rs:38
+#: src/ui/info.rs:39
 msgid "Media, links and docs"
 msgstr "Medya, bağlantılar ve belgeler"
 
-#: src/ui/info.rs:230
+#: src/ui/info.rs:242
 msgid "Group info"
 msgstr "Grup bilgisi"
 
-#: src/ui/info.rs:232
+#: src/ui/info.rs:244
 msgid "Channel info"
 msgstr "Kanal bilgisi"
 
-#: src/ui/info.rs:234
+#: src/ui/info.rs:246
 msgid "Contact info"
 msgstr "Kişi bilgisi"
 
-#: src/ui/info.rs:297
+#: src/ui/info.rs:314
 msgid "Edit group name"
 msgstr "Grup adını düzenle"
 
-#: src/ui/info.rs:424
+#: src/ui/info.rs:441
 msgid "Saving…"
 msgstr "Kaydediliyor…"
 
-#: src/ui/info.rs:432
+#: src/ui/info.rs:449
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} üye"
 msgstr[1] "{} üye"
 
-#: src/ui/info.rs:502
+#: src/ui/info.rs:519
 msgid "Description"
 msgstr ""
 
-#: src/ui/info.rs:803
+#: src/ui/info.rs:820
 #, rust-format
 msgid "{}+"
 msgstr "{}+"
 
-#: src/ui/info.rs:856
+#: src/ui/info.rs:873
 msgid "Could not list the media."
 msgstr "Medya listelenemedi."
 
-#: src/ui/info.rs:864
+#: src/ui/info.rs:881
 msgid "Try again"
 msgstr "Tekrar deneyin"
 
-#: src/ui/info.rs:976
+#: src/ui/info.rs:993
 msgid "No media"
 msgstr "Medya yok"
 
-#: src/ui/info.rs:979
+#: src/ui/info.rs:996
 msgid "Photos and videos shared in this chat will show here."
 msgstr "Bu sohbette paylaşılan fotoğraflar ve videolar burada görünür."
 
-#: src/ui/info.rs:1044
+#: src/ui/info.rs:1061
 msgid "Video"
 msgstr "Video"
 
-#: src/ui/info.rs:1046
+#: src/ui/info.rs:1063
 msgid "Photo"
 msgstr "Fotoğraf"
 
-#: src/ui/info.rs:1153
+#: src/ui/info.rs:1170
 msgid "No documents"
 msgstr "Belge yok"
 
-#: src/ui/info.rs:1154
+#: src/ui/info.rs:1171
 msgid "Files shared in this chat will show here."
 msgstr "Bu sohbette paylaşılan dosyalar burada görünür."
 
-#: src/ui/info.rs:1177
+#: src/ui/info.rs:1194
 #, rust-format
 msgid "{} page"
 msgid_plural "{} pages"
 msgstr[0] "{} sayfa"
 msgstr[1] "{} sayfa"
 
-#: src/ui/info.rs:1199
+#: src/ui/info.rs:1216
 msgid "No links"
 msgstr "Bağlantı yok"
 
-#: src/ui/info.rs:1200
+#: src/ui/info.rs:1217
 msgid "Links shared in this chat will show here."
 msgstr "Bu sohbette paylaşılan bağlantılar burada görünür."
 
-#: src/ui/info.rs:1273
+#: src/ui/info.rs:1290
 msgid "Only the newest items are listed."
 msgstr "Yalnızca en yeni öğeler listelenir."
 
-#: src/ui/info.rs:1289
+#: src/ui/info.rs:1306
 msgctxt "info tab"
 msgid "Media"
 msgstr "Medya"
 
-#: src/ui/info.rs:1290
+#: src/ui/info.rs:1307
 msgctxt "info tab"
 msgid "Docs"
 msgstr "Belgeler"
 
-#: src/ui/info.rs:1291
+#: src/ui/info.rs:1308
 msgctxt "info tab"
 msgid "Links"
 msgstr "Bağlantılar"
 
-#: src/ui/info.rs:1328
+#: src/ui/info.rs:1345
 msgid "Change group photo"
 msgstr "Grup fotoğrafını değiştir"
 
-#: src/ui/info.rs:1335
+#: src/ui/info.rs:1352
 msgid "Change photo"
 msgstr "Fotoğrafı değiştir"
 
-#: src/ui/info.rs:1336
+#: src/ui/info.rs:1353
 msgid "Remove photo"
 msgstr "Fotoğrafı kaldır"
 
-#: src/ui/info.rs:1374
+#: src/ui/info.rs:1391
 msgid "Group name"
 msgstr "Grup adı"
 
-#: src/ui/info.rs:1417
+#: src/ui/info.rs:1434
 msgid "Save name (Enter)"
 msgstr "Adı kaydet (Enter)"
 
-#: src/ui/info.rs:1429
+#: src/ui/info.rs:1446
 msgid "Cancel (Escape)"
 msgstr "İptal (Escape)"
 

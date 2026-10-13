@@ -131,8 +131,16 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
         return;
     }
     // A narrow window gives the open chat or page all of its width; the
-    // conversation header's Back returns to the list.
-    if !narrow(ui.ctx()) {
+    // conversation header's Back returns to the list. The info panel takes
+    // a column of its own, and when the list leaves too little room for it
+    // and the conversation, the list steps aside while the panel is open.
+    let list_width = match app.sidebar_mode() {
+        SidebarDisplayMode::Expanded => app.settings.sidebar_width,
+        SidebarDisplayMode::CollapsedIconsOnly => chats::compact_width(ui.ctx()),
+    };
+    let crowded = app.info_visible()
+        && ui.available_width() - list_width < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;
+    if !narrow(ui.ctx()) && !crowded {
         match app.sidebar_mode() {
             SidebarDisplayMode::Expanded => chats::show(app, ui),
             SidebarDisplayMode::CollapsedIconsOnly => chats::compact_show(app, ui),

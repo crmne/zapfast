@@ -1178,7 +1178,7 @@ mod tests {
     /// The panel shares the search pane's docking: beside the chat when the
     /// window has room, over it when the chat list leaves too little.
     #[test]
-    fn the_info_panel_docks_beside_a_wide_chat_and_lies_over_a_narrow_one() {
+    fn the_info_panel_takes_a_column_and_is_a_page_in_a_narrow_window() {
         let mut app = super::super::tests::app();
         prepare(&mut app);
         let ctx = egui::Context::default();
@@ -1196,13 +1196,20 @@ mod tests {
             frame_sized(&mut app, &mut tour, &ctx, vec2(1180.0, 780.0), Vec::new());
         }
         assert_eq!(docked(&ctx), Some(true), "docked in a wide window");
+        // Too tight for the list, the conversation and the panel: the list
+        // steps aside and the panel keeps its own column.
         for _ in 0..2 {
             frame_sized(&mut app, &mut tour, &ctx, vec2(760.0, 600.0), Vec::new());
         }
-        assert_eq!(docked(&ctx), Some(false), "over a narrow chat");
+        assert_eq!(docked(&ctx), Some(true), "still a column of its own");
+        // The narrow window mode shows it as a page over the chat.
+        for _ in 0..2 {
+            frame_sized(&mut app, &mut tour, &ctx, vec2(560.0, 600.0), Vec::new());
+        }
+        assert_eq!(docked(&ctx), Some(false), "a page in a narrow window");
         assert!(app.info.is_some());
         app.actions.push(crate::model::Action::CloseInfo);
-        frame_sized(&mut app, &mut tour, &ctx, vec2(760.0, 600.0), Vec::new());
+        frame_sized(&mut app, &mut tour, &ctx, vec2(560.0, 600.0), Vec::new());
         assert_eq!(docked(&ctx), None, "gone with the panel");
     }
 
@@ -1409,7 +1416,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let mut tour = Tour::new(None, None);
-        let size = vec2(760.0, 600.0);
+        let size = vec2(560.0, 600.0);
         let ada = super::super::sample_ids()[0].to_owned();
         app.actions
             .push(crate::model::Action::OpenChat(ada.clone()));

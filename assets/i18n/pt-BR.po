@@ -194,7 +194,7 @@ msgstr "Com estrela"
 msgid "Chats"
 msgstr "Conversas"
 
-#: src/ui/chats.rs:214 src/ui/chats.rs:509 src/ui/pane.rs:211
+#: src/ui/chats.rs:214 src/ui/chats.rs:509 src/ui/pane.rs:231
 msgid "Search"
 msgstr "Buscar"
 
@@ -242,12 +242,12 @@ msgid "Add to favorites"
 msgstr "Adicionar aos favoritos"
 
 #: src/ui/chats.rs:1631 src/ui/chats.rs:2032 src/ui/conversation.rs:385
-#: src/ui/dialogs.rs:1445 src/ui/info.rs:532
+#: src/ui/dialogs.rs:1445 src/ui/info.rs:549
 msgid "Leave group"
 msgstr "Sair do grupo"
 
 #: src/ui/chats.rs:1632 src/ui/chats.rs:2030 src/ui/conversation.rs:383
-#: src/ui/dialogs.rs:1443 src/ui/info.rs:530
+#: src/ui/dialogs.rs:1443 src/ui/info.rs:547
 msgid "Leave channel"
 msgstr "Sair do canal"
 
@@ -282,7 +282,7 @@ msgstr "Chamada de voz"
 msgid "Video call"
 msgstr "Chamada de vídeo"
 
-#: src/ui/conversation.rs:540 src/ui/pane.rs:175
+#: src/ui/conversation.rs:540 src/ui/pane.rs:195
 msgid "Search messages"
 msgstr "Buscar mensagens"
 
@@ -561,7 +561,7 @@ msgstr[1] "Encaminhar {count} mensagens"
 msgid "Forward to these chats?"
 msgstr "Encaminhar para estas conversas?"
 
-#: src/ui/dialogs.rs:506 src/ui/info.rs:878
+#: src/ui/dialogs.rs:506 src/ui/info.rs:250 src/ui/info.rs:895
 msgid "Back"
 msgstr "Voltar"
 
@@ -654,7 +654,7 @@ msgid "Add to my stickers"
 msgstr "Adicionar às minhas figurinhas"
 
 #: src/ui/dialogs.rs:1086 src/ui/message_info.rs:28 src/ui/labels.rs:224
-#: src/ui/info.rs:236
+#: src/ui/info.rs:252
 msgid "Close"
 msgstr "Fechar"
 
@@ -1967,43 +1967,43 @@ msgstr "Importando o pacote…"
 msgid "Remove from recents"
 msgstr "Remover das recentes"
 
-#: src/ui/pane.rs:165
+#: src/ui/pane.rs:185
 msgid "Close search"
 msgstr "Fechar pesquisa"
 
-#: src/ui/pane.rs:193 src/ui/pane.rs:371
+#: src/ui/pane.rs:213 src/ui/pane.rs:391
 msgid "Filter by date"
 msgstr "Filtrar por data"
 
-#: src/ui/pane.rs:246
+#: src/ui/pane.rs:266
 #, rust-format
 msgid "Search messages with {}"
 msgstr "Buscar mensagens em {}"
 
-#: src/ui/pane.rs:269
+#: src/ui/pane.rs:289
 msgid "No messages found"
 msgstr "Nenhuma mensagem encontrada"
 
-#: src/ui/pane.rs:270
+#: src/ui/pane.rs:290
 msgid "Try another word or pick a different day."
 msgstr "Tente outra palavra ou escolha outro dia."
 
-#: src/ui/pane.rs:297
+#: src/ui/pane.rs:317
 #, rust-format
 msgid "Only the newest {} matches are listed. Narrow the search or pick a day."
 msgstr ""
 "Só as {} correspondências mais recentes são listadas. Restrinja a busca ou "
 "escolha um dia."
 
-#: src/ui/pane.rs:386
+#: src/ui/pane.rs:406
 msgid "Clear the day filter"
 msgstr "Remover o filtro de dia"
 
-#: src/ui/pane.rs:453
+#: src/ui/pane.rs:473
 msgid "Next month"
 msgstr "Próximo mês"
 
-#: src/ui/pane.rs:465
+#: src/ui/pane.rs:485
 msgid "Previous month"
 msgstr "Mês anterior"
 
@@ -2192,133 +2192,133 @@ msgstr ""
 msgid "{count} unread chats"
 msgstr ""
 
-#: src/ui/info.rs:38
+#: src/ui/info.rs:39
 msgid "Media, links and docs"
 msgstr "Mídia, links e documentos"
 
-#: src/ui/info.rs:230
+#: src/ui/info.rs:242
 msgid "Group info"
 msgstr "Informações do grupo"
 
-#: src/ui/info.rs:232
+#: src/ui/info.rs:244
 msgid "Channel info"
 msgstr "Informações do canal"
 
-#: src/ui/info.rs:234
+#: src/ui/info.rs:246
 msgid "Contact info"
 msgstr "Informações do contato"
 
-#: src/ui/info.rs:297
+#: src/ui/info.rs:314
 msgid "Edit group name"
 msgstr "Editar nome do grupo"
 
-#: src/ui/info.rs:424
+#: src/ui/info.rs:441
 msgid "Saving…"
 msgstr "Salvando…"
 
-#: src/ui/info.rs:432
+#: src/ui/info.rs:449
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} membro"
 msgstr[1] "{} membros"
 
-#: src/ui/info.rs:502
+#: src/ui/info.rs:519
 msgid "Description"
 msgstr "Descrição"
 
-#: src/ui/info.rs:803
+#: src/ui/info.rs:820
 #, rust-format
 msgid "{}+"
 msgstr "{}+"
 
-#: src/ui/info.rs:856
+#: src/ui/info.rs:873
 msgid "Could not list the media."
 msgstr "Não foi possível listar a mídia."
 
-#: src/ui/info.rs:864
+#: src/ui/info.rs:881
 msgid "Try again"
 msgstr "Tentar novamente"
 
-#: src/ui/info.rs:976
+#: src/ui/info.rs:993
 msgid "No media"
 msgstr "Nenhuma mídia"
 
-#: src/ui/info.rs:979
+#: src/ui/info.rs:996
 msgid "Photos and videos shared in this chat will show here."
 msgstr "Fotos e vídeos compartilhados nesta conversa aparecerão aqui."
 
-#: src/ui/info.rs:1044
+#: src/ui/info.rs:1061
 msgid "Video"
 msgstr "Vídeo"
 
-#: src/ui/info.rs:1046
+#: src/ui/info.rs:1063
 msgid "Photo"
 msgstr "Foto"
 
-#: src/ui/info.rs:1153
+#: src/ui/info.rs:1170
 msgid "No documents"
 msgstr "Nenhum documento"
 
-#: src/ui/info.rs:1154
+#: src/ui/info.rs:1171
 msgid "Files shared in this chat will show here."
 msgstr "Arquivos compartilhados nesta conversa aparecerão aqui."
 
-#: src/ui/info.rs:1177
+#: src/ui/info.rs:1194
 #, rust-format
 msgid "{} page"
 msgid_plural "{} pages"
 msgstr[0] "{} página"
 msgstr[1] "{} páginas"
 
-#: src/ui/info.rs:1199
+#: src/ui/info.rs:1216
 msgid "No links"
 msgstr "Nenhum link"
 
-#: src/ui/info.rs:1200
+#: src/ui/info.rs:1217
 msgid "Links shared in this chat will show here."
 msgstr "Links compartilhados nesta conversa aparecerão aqui."
 
-#: src/ui/info.rs:1273
+#: src/ui/info.rs:1290
 msgid "Only the newest items are listed."
 msgstr "Somente os itens mais recentes são listados."
 
-#: src/ui/info.rs:1289
+#: src/ui/info.rs:1306
 msgctxt "info tab"
 msgid "Media"
 msgstr "Mídia"
 
-#: src/ui/info.rs:1290
+#: src/ui/info.rs:1307
 msgctxt "info tab"
 msgid "Docs"
 msgstr "Documentos"
 
-#: src/ui/info.rs:1291
+#: src/ui/info.rs:1308
 msgctxt "info tab"
 msgid "Links"
 msgstr "Links"
 
-#: src/ui/info.rs:1328
+#: src/ui/info.rs:1345
 msgid "Change group photo"
 msgstr "Alterar foto do grupo"
 
-#: src/ui/info.rs:1335
+#: src/ui/info.rs:1352
 msgid "Change photo"
 msgstr "Alterar foto"
 
-#: src/ui/info.rs:1336
+#: src/ui/info.rs:1353
 msgid "Remove photo"
 msgstr "Remover foto"
 
-#: src/ui/info.rs:1374
+#: src/ui/info.rs:1391
 msgid "Group name"
 msgstr "Nome do grupo"
 
-#: src/ui/info.rs:1417
+#: src/ui/info.rs:1434
 msgid "Save name (Enter)"
 msgstr "Salvar nome (Enter)"
 
-#: src/ui/info.rs:1429
+#: src/ui/info.rs:1446
 msgid "Cancel (Escape)"
 msgstr "Cancelar (Esc)"
 

@@ -573,7 +573,10 @@ ZapFast.
 documents, and the links shared in the chat, newest first: click a photo or a
 document to go to its message, or a link to open it in the browser. Press
 Escape to go back to the overview, and again to close the panel. Drag its edge
-to change its width. In a narrow window the panel lies over the chat. A locked
+to change its width. The conversation narrows beside the panel, and when the
+window is too tight for the chat list as well, the list steps aside until the
+panel closes. In a narrow window the panel is a page of its own: **Back**
+returns to the chat. A locked
 chat's media is listed only while the locked folder is open.
 
 **Development builds** also show a group's description in the panel. You can
