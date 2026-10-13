@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 17:29+0200\n"
+"POT-Creation-Date: 2026-10-13 19:43+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -186,7 +186,7 @@ msgstr "Заблокированные"
 msgid "No favorites yet"
 msgstr "Пока нет избранных"
 
-#: src/ui/chats.rs:939 src/app.rs:2052
+#: src/ui/chats.rs:939 src/app.rs:2065
 msgid "Message yourself"
 msgstr "Написать себе"
 
@@ -301,7 +301,7 @@ msgstr[0] "{} непрочитанное сообщение"
 msgstr[1] "{} непрочитанных сообщения"
 msgstr[2] "{} непрочитанных сообщений"
 
-#: src/ui/conversation.rs:2264 src/app.rs:2034 src/app.rs:2053
+#: src/ui/conversation.rs:2264 src/app.rs:2047 src/app.rs:2066
 msgid "You"
 msgstr "Вы"
 
@@ -634,7 +634,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr "Обои"
 
-#: src/ui/settings.rs:348 src/app.rs:2525
+#: src/ui/settings.rs:348 src/app.rs:2538
 msgid "Image"
 msgstr "Изображение"
 
@@ -1148,29 +1148,29 @@ msgstr[2] "ещё {}"
 msgid "No one yet"
 msgstr "Пока никто"
 
-#: src/app.rs:1450
+#: src/app.rs:1463
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:1954
+#: src/app.rs:1967
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Метка «{name}» уже есть."
 
-#: src/app.rs:2033
+#: src/app.rs:2046
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Вы)"
 
-#: src/app.rs:3011
+#: src/app.rs:3024
 msgid "Could not use this image"
 msgstr "Не удалось использовать это изображение"
 
-#: src/app.rs:3561
+#: src/app.rs:3574
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
 
-#: src/app.rs:3565
+#: src/app.rs:3578
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1178,36 +1178,36 @@ msgstr ""
 "Не отправлено: сообщение, на которое вы отвечаете, недоступно на этом "
 "компьютере. Отмените ответ, чтобы отправить без цитаты."
 
-#: src/app.rs:5408
+#: src/app.rs:5443
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: src/app.rs:5483
+#: src/app.rs:5518
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:5776 src/ui/labels.rs:253
+#: src/app.rs:5811 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
 
-#: src/app.rs:6531
+#: src/app.rs:6566
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:6539
+#: src/app.rs:6574
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:6663
+#: src/app.rs:6698
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
 
-#: src/app.rs:7089
+#: src/app.rs:7123
 msgid "Copied image"
 msgstr "Изображение скопировано"
 
-#: src/app.rs:7092 src/app.rs:7097
+#: src/app.rs:7126 src/app.rs:7131
 msgid "Failed to copy image"
 msgstr "Не удалось скопировать изображение"
 
@@ -1599,7 +1599,7 @@ msgstr ""
 msgid "Unlink"
 msgstr "В сети"
 
-#: src/notify.rs:263
+#: src/notify.rs:284
 #, fuzzy
 msgid "New message"
 msgstr "Введите сообщение"

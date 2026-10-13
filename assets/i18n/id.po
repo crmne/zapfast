@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 17:29+0200\n"
+"POT-Creation-Date: 2026-10-13 19:43+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Indonesian\n"
@@ -185,7 +185,7 @@ msgstr "Terkunci"
 msgid "No favorites yet"
 msgstr "Belum ada favorit"
 
-#: src/ui/chats.rs:939 src/app.rs:2052
+#: src/ui/chats.rs:939 src/app.rs:2065
 msgid "Message yourself"
 msgstr "Kirim pesan ke diri sendiri"
 
@@ -300,7 +300,7 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} pesan belum dibaca"
 msgstr[1] "{} pesan belum dibaca"
 
-#: src/ui/conversation.rs:2264 src/app.rs:2034 src/app.rs:2053
+#: src/ui/conversation.rs:2264 src/app.rs:2047 src/app.rs:2066
 msgid "You"
 msgstr "Anda"
 
@@ -635,7 +635,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr "Wallpaper"
 
-#: src/ui/settings.rs:348 src/app.rs:2525
+#: src/ui/settings.rs:348 src/app.rs:2538
 msgid "Image"
 msgstr "Gambar"
 
@@ -1151,29 +1151,29 @@ msgstr[1] "tersisa {}"
 msgid "No one yet"
 msgstr "Belum ada siapa pun"
 
-#: src/app.rs:1450
+#: src/app.rs:1463
 msgid "Could not delete the removed account's files"
 msgstr "Tidak dapat menghapus file akun yang dihapus"
 
-#: src/app.rs:1954
+#: src/app.rs:1967
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Label bernama “{name}” sudah ada."
 
-#: src/app.rs:2033
+#: src/app.rs:2046
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Anda)"
 
-#: src/app.rs:3011
+#: src/app.rs:3024
 msgid "Could not use this image"
 msgstr "Tidak dapat menggunakan gambar ini"
 
-#: src/app.rs:3561
+#: src/app.rs:3574
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Tidak terkirim: ZapFast tidak terhubung ke WhatsApp."
 
-#: src/app.rs:3565
+#: src/app.rs:3578
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1181,36 +1181,36 @@ msgstr ""
 "Tidak terkirim: pesan yang Anda balas tidak tersedia di komputer ini. "
 "Batalkan balasan untuk mengirim tanpa kutipan."
 
-#: src/app.rs:5408
+#: src/app.rs:5443
 msgid "Added to favorites"
 msgstr "Ditambahkan ke favorit"
 
-#: src/app.rs:5483
+#: src/app.rs:5518
 msgid "Sending the sticker pack…"
 msgstr "Mengirim paket stiker…"
 
-#: src/app.rs:5776 src/ui/labels.rs:253
+#: src/app.rs:5811 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Anda memiliki {limit} label, batas maksimal yang disimpan ZapFast."
 
-#: src/app.rs:6531
+#: src/app.rs:6566
 msgid "App lock password saved"
 msgstr "Kata sandi kunci aplikasi disimpan"
 
-#: src/app.rs:6539
+#: src/app.rs:6574
 msgid "App lock turned off"
 msgstr "Kunci aplikasi dinonaktifkan"
 
-#: src/app.rs:6663
+#: src/app.rs:6698
 msgid "This video opens in your system player"
 msgstr "Video ini dibuka di pemutar media sistem"
 
-#: src/app.rs:7089
+#: src/app.rs:7123
 msgid "Copied image"
 msgstr "Gambar disalin"
 
-#: src/app.rs:7092 src/app.rs:7097
+#: src/app.rs:7126 src/app.rs:7131
 msgid "Failed to copy image"
 msgstr "Gagal menyalin gambar"
 
@@ -1600,7 +1600,7 @@ msgstr ""
 msgid "Unlink"
 msgstr "Putuskan tautan"
 
-#: src/notify.rs:263
+#: src/notify.rs:284
 msgid "New message"
 msgstr "Pesan baru"
 
