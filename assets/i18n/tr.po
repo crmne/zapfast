@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 20:36+0200\n"
+"POT-Creation-Date: 2026-10-13 20:39+0200\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -497,12 +497,12 @@ msgstr "Saydam arka planı koru"
 msgid "Emojis that describe it, like 😂 or ❤️"
 msgstr "Bunu tanımlayan emojiler (ör. 😂 veya ❤️)"
 
-#: src/ui/dialogs.rs:1051 src/ui/locations.rs:67
+#: src/ui/dialogs.rs:1051 src/ui/locations.rs:80
 msgid "Send"
 msgstr "Gönder"
 
 #: src/ui/dialogs.rs:1066 src/ui/dialogs.rs:1199 src/ui/dialogs.rs:1261
-#: src/ui/locations.rs:62 src/ui/settings.rs:969 src/ui/settings.rs:1532
+#: src/ui/locations.rs:75 src/ui/settings.rs:969 src/ui/settings.rs:1532
 #: src/ui/lock.rs:142
 msgid "Cancel"
 msgstr "İptal"
@@ -615,7 +615,12 @@ msgstr "İptal (Escape)"
 msgid "Paste a map link or coordinates"
 msgstr ""
 
-#: src/ui/locations.rs:54
+#: src/ui/locations.rs:58
+msgid ""
+"Short links only open online. Paste the full map link or the coordinates."
+msgstr ""
+
+#: src/ui/locations.rs:67
 msgid "That is not a location."
 msgstr ""
 
@@ -1220,11 +1225,11 @@ msgstr "Bağlantı koptu"
 msgid "Connecting"
 msgstr ""
 
-#: src/app.rs:3655
+#: src/app.rs:3661
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Gönderilmedi: ZapFast WhatsApp'a bağlı değil."
 
-#: src/app.rs:3659
+#: src/app.rs:3665
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1232,43 +1237,43 @@ msgstr ""
 "Gönderilmedi: Yanıtladığınız mesaj bu bilgisayarda mevcut değil. Alıntısız "
 "göndermek için yanıtı iptal edin."
 
-#: src/app.rs:5577
+#: src/app.rs:5583
 msgid "Added to favorites"
 msgstr "Favorilere eklendi"
 
-#: src/app.rs:5652
+#: src/app.rs:5658
 msgid "Sending the sticker pack…"
 msgstr "Çıkartma paketi gönderiliyor…"
 
-#: src/app.rs:5948 src/ui/labels.rs:247
+#: src/app.rs:5954 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6448
+#: src/app.rs:6454
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:6733
+#: src/app.rs:6739
 msgid "App lock password saved"
 msgstr "Uygulama kilidi parolası kaydedildi"
 
-#: src/app.rs:6741
+#: src/app.rs:6747
 msgid "App lock turned off"
 msgstr "Uygulama kilidi kapatıldı"
 
-#: src/app.rs:6865
+#: src/app.rs:6871
 msgid "This video opens in your system player"
 msgstr "Bu video sistem oynatıcınızda açılır"
 
-#: src/app.rs:7297
+#: src/app.rs:7303
 msgid "Copied image"
 msgstr "Görsel kopyalandı"
 
-#: src/app.rs:7300 src/app.rs:7305
+#: src/app.rs:7306 src/app.rs:7311
 msgid "Failed to copy image"
 msgstr "Görsel kopyalanamadı"
 

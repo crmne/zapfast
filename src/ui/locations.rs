@@ -48,6 +48,19 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             }
         }
         None if app.location_draft.trim().is_empty() => {}
+        // A short link names its spot only on the server it redirects
+        // through, and ZapFast asks no server, so it asks for the full link.
+        None if geo::is_short_link(&app.location_draft) => {
+            theme::text(
+                ui,
+                crate::i18n::gettext(
+                    app.locale,
+                    "Short links only open online. Paste the full map link or the coordinates.",
+                ),
+                theme::regular(12.0),
+                palette.dim,
+            );
+        }
         None => {
             theme::text(
                 ui,

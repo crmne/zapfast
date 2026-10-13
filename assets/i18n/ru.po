@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 20:36+0200\n"
+"POT-Creation-Date: 2026-10-13 20:39+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -502,12 +502,12 @@ msgstr "Сохранить прозрачный фон"
 msgid "Emojis that describe it, like 😂 or ❤️"
 msgstr "Эмодзи, которые его описывают, например 😂 или ❤️"
 
-#: src/ui/dialogs.rs:1051 src/ui/locations.rs:67
+#: src/ui/dialogs.rs:1051 src/ui/locations.rs:80
 msgid "Send"
 msgstr "Отправить"
 
 #: src/ui/dialogs.rs:1066 src/ui/dialogs.rs:1199 src/ui/dialogs.rs:1261
-#: src/ui/locations.rs:62 src/ui/settings.rs:969 src/ui/settings.rs:1532
+#: src/ui/locations.rs:75 src/ui/settings.rs:969 src/ui/settings.rs:1532
 #: src/ui/lock.rs:142
 msgid "Cancel"
 msgstr "Отмена"
@@ -623,7 +623,12 @@ msgstr "Отмена (Escape)"
 msgid "Paste a map link or coordinates"
 msgstr "Вставьте ссылку на карту или координаты"
 
-#: src/ui/locations.rs:54
+#: src/ui/locations.rs:58
+msgid ""
+"Short links only open online. Paste the full map link or the coordinates."
+msgstr ""
+
+#: src/ui/locations.rs:67
 msgid "That is not a location."
 msgstr "Это не геопозиция."
 
@@ -1222,11 +1227,11 @@ msgstr "Соединение потеряно"
 msgid "Connecting"
 msgstr ""
 
-#: src/app.rs:3655
+#: src/app.rs:3661
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
 
-#: src/app.rs:3659
+#: src/app.rs:3665
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1234,43 +1239,43 @@ msgstr ""
 "Не отправлено: сообщение, на которое вы отвечаете, недоступно на этом "
 "компьютере. Отмените ответ, чтобы отправить без цитаты."
 
-#: src/app.rs:5577
+#: src/app.rs:5583
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: src/app.rs:5652
+#: src/app.rs:5658
 msgid "Sending the sticker pack…"
 msgstr "Отправка набора стикеров…"
 
-#: src/app.rs:5948 src/ui/labels.rs:247
+#: src/app.rs:5954 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "У вас {limit} меток — больше ZapFast не хранит."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6448
+#: src/app.rs:6454
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:6733
+#: src/app.rs:6739
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:6741
+#: src/app.rs:6747
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:6865
+#: src/app.rs:6871
 msgid "This video opens in your system player"
 msgstr "Это видео откроется в системном плеере"
 
-#: src/app.rs:7297
+#: src/app.rs:7303
 msgid "Copied image"
 msgstr "Изображение скопировано"
 
-#: src/app.rs:7300 src/app.rs:7305
+#: src/app.rs:7306 src/app.rs:7311
 msgid "Failed to copy image"
 msgstr "Не удалось скопировать изображение"
 
