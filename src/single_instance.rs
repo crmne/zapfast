@@ -97,7 +97,7 @@ pub fn acquire(dir: &Path, waker: &crate::backend::Waker, verb: &str) -> Outcome
         // `fastframe-instance` ignore what they do not know: it holds the
         // slot either way, so it is at most brought forward.
         fastframe_instance::Claim::Unanswered | fastframe_instance::Claim::Declined => {
-            return fall_back(verb, || send(dir, "show").is_ok());
+            return fall_back(verb, || matches!(send(dir, "show"), Sent::Taken));
         }
     };
     // A copy from before the lock only knows `show` and `ping`. Anything else
@@ -163,10 +163,63 @@ fn claim(
     })
 }
 
-/// Sends one request to the running instance. An error of kind `NotFound`
-/// or `ConnectionRefused` means none is running.
-pub fn send(dir: &Path, verb: &str) -> std::io::Result<()> {
-    slot(dir).send(verb).map(drop)
+/// What became of a request [`send`] made of the running copy.
+#[derive(Debug)]
+pub enum Sent {
+    /// The running copy took the request.
+    Taken,
+    /// No copy is running.
+    NotRunning,
+    /// A copy is running that does not know the request: one with the lock
+    /// declines it or, before declining existed, closes without a word, and
+    /// one from before the lock (0.15 and earlier) only listens on its
+    /// fixed port.
+    Older,
+    /// A copy holds the slot but could not be asked.
+    Failed(std::io::Error),
+}
+
+/// Sends one request to the running copy, without becoming it when there is
+/// none: for a command-line action that only makes sense while ZapFast runs.
+pub fn send(dir: &Path, verb: &str) -> Sent {
+    sent(slot(dir).send(verb).map(drop), legacy_instance_answers_ping)
+}
+
+/// Reads the result of a request. A copy from before the lock is asked
+/// (`legacy`) only when the slot has none, as it holds no slot.
+fn sent(result: std::io::Result<()>, legacy: impl FnOnce() -> bool) -> Sent {
+    use std::io::ErrorKind;
+    match result {
+        Ok(()) => Sent::Taken,
+        Err(error) => match error.kind() {
+            ErrorKind::NotFound | ErrorKind::ConnectionRefused => {
+                if legacy() {
+                    Sent::Older
+                } else {
+                    Sent::NotRunning
+                }
+            }
+            // Only ZapFast listens in the slot, so a refusal or a silent
+            // close comes from a copy older than the request.
+            ErrorKind::PermissionDenied | ErrorKind::InvalidData | ErrorKind::UnexpectedEof => {
+                Sent::Older
+            }
+            _ => Sent::Failed(error),
+        },
+    }
+}
+
+/// Whether a copy from before the lock answers `ping` on its fixed port.
+/// Unlike [`legacy_instance_answers`], a port held by something that does
+/// not answer as ZapFast counts as no copy.
+fn legacy_instance_answers_ping() -> bool {
+    if TcpListener::bind((Ipv4Addr::LOCALHOST, LEGACY_PORT)).is_ok() {
+        return false;
+    }
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, LEGACY_PORT));
+    TcpStream::connect_timeout(&address, REPLY_TIME)
+        .and_then(|stream| legacy_request(stream, "ping"))
+        .is_ok()
 }
 
 /// The verbs another launch may send. Anything else is declined.
@@ -490,9 +543,12 @@ mod tests {
         // A launch of this version.
         let second = claim(&dir, "show", &Queue::default(), &waker);
         assert!(matches!(second, fastframe_instance::Claim::Running(reply) if reply == OK));
-        send(&dir, "reload-themes").expect("themes reload without a window");
-        let declined = send(&dir, "frobnicate").unwrap_err();
-        assert_eq!(declined.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(matches!(send(&dir, "reload-themes"), Sent::Taken));
+        assert!(matches!(send(&dir, "quit"), Sent::Taken));
+        assert!(
+            matches!(send(&dir, "frobnicate"), Sent::Older),
+            "a verb this copy does not know is declined"
+        );
         assert!(matches!(
             claim(&dir, "frobnicate", &Queue::default(), &waker),
             fastframe_instance::Claim::Declined
@@ -517,9 +573,71 @@ mod tests {
             vec![
                 ControlCommand::Show,
                 ControlCommand::ReloadThemes,
+                ControlCommand::Quit,
                 ControlCommand::Show,
             ]
         );
         drop(first);
+    }
+
+    /// `zapfast quit` against a copy from before the verb: one that declines
+    /// it is left running and reported as older, and nothing new starts.
+    #[test]
+    fn a_copy_that_declines_quit_is_reported_as_older() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("runtime");
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&asked);
+        // The handler of a copy that knows only `show` and `ping`.
+        let fastframe_instance::Claim::First(older) = slot(&dir).claim("show", move |request| {
+            seen.lock().unwrap().push(request.to_owned());
+            matches!(request, "show" | "ping").then(|| OK.to_owned())
+        }) else {
+            panic!("the older copy takes the slot");
+        };
+        assert!(matches!(send(&dir, "quit"), Sent::Older));
+        assert_eq!(*asked.lock().unwrap(), vec!["quit".to_owned()]);
+        drop(older);
+    }
+
+    /// Copies from before declining existed close the connection without a
+    /// word when they do not know a verb.
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_that_ignores_quit_is_reported_as_older() {
+        let home = tempfile::tempdir().unwrap();
+        let socket = home.path().join("instance.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let older = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = [0u8; 64];
+            let _ = stream.read(&mut line);
+        });
+        assert!(matches!(send(home.path(), "quit"), Sent::Older));
+        older.join().unwrap();
+    }
+
+    /// No copy in the slot means none runs, unless a copy from before the
+    /// lock answers on its fixed port; anything else that goes wrong is
+    /// reported, never read as permission to start.
+    #[test]
+    fn a_request_reads_who_answered() {
+        use std::io::{Error, ErrorKind};
+        let none = || Error::from(ErrorKind::NotFound);
+        assert!(matches!(sent(Ok(()), || unreachable!()), Sent::Taken));
+        assert!(matches!(sent(Err(none()), || false), Sent::NotRunning));
+        assert!(matches!(
+            sent(Err(ErrorKind::ConnectionRefused.into()), || false),
+            Sent::NotRunning
+        ));
+        assert!(matches!(sent(Err(none()), || true), Sent::Older));
+        assert!(matches!(
+            sent(Err(ErrorKind::PermissionDenied.into()), || unreachable!()),
+            Sent::Older
+        ));
+        assert!(matches!(
+            sent(Err(ErrorKind::TimedOut.into()), || unreachable!()),
+            Sent::Failed(_)
+        ));
     }
 }

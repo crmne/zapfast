@@ -9967,6 +9967,25 @@ mod tests {
         );
     }
 
+    /// `zapfast quit` takes the tray's Quit path, and does even behind the
+    /// app lock, since quitting reveals nothing.
+    #[test]
+    fn a_quit_request_quits_even_behind_the_lock() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.app_lock = crate::app_lock::AppLock::new(true);
+        assert!(app.app_lock.is_locked());
+        let queue = std::sync::Arc::new(std::sync::Mutex::new(vec![ControlCommand::Quit]));
+        app.control_commands = Some(queue);
+        app.handle_control_commands();
+        app.apply_actions(&ctx);
+        assert!(app.quit_requested);
+        assert_eq!(
+            fastframe_shell::Resident::closed(&app),
+            fastframe_shell::Closed::Quit
+        );
+    }
+
     #[test]
     fn a_notification_behind_the_lock_keeps_its_account() {
         let directory = tempfile::tempdir().unwrap();

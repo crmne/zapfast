@@ -113,6 +113,42 @@ enum Control {
     Quit,
 }
 
+impl Control {
+    /// The request the running copy is sent.
+    fn verb(&self) -> &'static str {
+        match self {
+            Control::ReloadThemes => "reload-themes",
+            Control::Quit => "quit",
+        }
+    }
+}
+
+/// The exit code and the line for stderr after `command` was sent. Quitting
+/// when nothing runs is what was asked for, so it succeeds quietly; a copy
+/// too old to take the request is left running, with a pointer to its tray.
+fn control(command: &Control, sent: single_instance::Sent) -> (i32, Option<String>) {
+    use single_instance::Sent;
+    match (command, sent) {
+        (_, Sent::Taken) | (Control::Quit, Sent::NotRunning) => (0, None),
+        (Control::ReloadThemes, Sent::NotRunning) => (
+            1,
+            Some("ZapFast is not running, so there are no themes to reload.".to_owned()),
+        ),
+        (Control::ReloadThemes, Sent::Older) => (
+            1,
+            Some("The running ZapFast is too old to reload themes from the command line.".to_owned()),
+        ),
+        (Control::Quit, Sent::Older) => (
+            1,
+            Some(
+                "The running ZapFast is too old to quit from the command line; use Quit in its tray menu."
+                    .to_owned(),
+            ),
+        ),
+        (_, Sent::Failed(error)) => (1, Some(format!("Could not reach the running ZapFast: {error}"))),
+    }
+}
+
 /// Default log filter, used when `RUST_LOG` is unset.
 ///
 /// `fastframe_fonts` logs, once at startup, which installed face draws each
@@ -162,29 +198,18 @@ fn run() -> eframe::Result<()> {
     let launch = fastframe_update::intercept(&zapfast::updates::CONFIG);
     let cli = Cli::parse_from(&launch.arguments);
     let discovered = paths::AppDirs::discover();
+    // A control command only talks to the running copy: whatever the answer,
+    // it never starts ZapFast and never stops a process itself.
     if let Some(command) = &cli.command {
-        let (verb, not_running) = match command {
-            Control::ReloadThemes => (
-                "reload-themes",
-                "ZapFast is not running, so there are no themes to reload.",
-            ),
-            Control::Quit => ("quit", "ZapFast is not running."),
-        };
-        if let Err(error) = single_instance::send(&discovered.runtime, verb) {
-            use std::io::ErrorKind;
-            if matches!(
-                error.kind(),
-                ErrorKind::NotFound | ErrorKind::ConnectionRefused
-            ) {
-                eprintln!("{not_running}");
-                // Nothing left to quit is what was asked for.
-                if matches!(command, Control::Quit) {
-                    return Ok(());
-                }
-            } else {
-                eprintln!("Could not reach the running ZapFast: {error}");
-            }
-            std::process::exit(1);
+        let (code, message) = control(
+            command,
+            single_instance::send(&discovered.runtime, command.verb()),
+        );
+        if let Some(message) = message {
+            eprintln!("{message}");
+        }
+        if code != 0 {
+            std::process::exit(code);
         }
         return Ok(());
     }
@@ -828,6 +853,33 @@ mod target_cli_tests {
         let cli = Cli::try_parse_from(["zapfast", "wa.me/20123456789"]).unwrap();
         assert!(cli.command.is_none());
         assert_eq!(cli.target.as_deref(), Some("wa.me/20123456789"));
+    }
+
+    /// `quit` is the subcommand, not a chat to open, and takes no chat.
+    #[test]
+    fn quit_is_a_subcommand() {
+        let cli = Cli::try_parse_from(["zapfast", "quit"]).unwrap();
+        assert!(matches!(cli.command, Some(Control::Quit)));
+        assert!(cli.target.is_none());
+        assert_eq!(Control::Quit.verb(), "quit");
+        assert!(Cli::try_parse_from(["zapfast", "quit", "20123456789"]).is_err());
+    }
+
+    /// Quitting succeeds when the running copy takes it and, quietly, when
+    /// nothing runs. A copy too old to take it is left running and the
+    /// command fails, pointing at the tray.
+    #[test]
+    fn quit_reports_what_the_running_copy_did() {
+        use single_instance::Sent;
+        assert_eq!(control(&Control::Quit, Sent::Taken), (0, None));
+        assert_eq!(control(&Control::Quit, Sent::NotRunning), (0, None));
+        let (code, message) = control(&Control::Quit, Sent::Older);
+        assert_eq!(code, 1);
+        assert!(message.unwrap().contains("tray menu"));
+        let failed = Sent::Failed(std::io::ErrorKind::TimedOut.into());
+        assert_eq!(control(&Control::Quit, failed).0, 1);
+        assert_eq!(control(&Control::ReloadThemes, Sent::NotRunning).0, 1);
+        assert_eq!(control(&Control::ReloadThemes, Sent::Taken), (0, None));
     }
 
     /// A launch with nothing to open still works: the target is optional.
