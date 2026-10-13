@@ -7136,6 +7136,9 @@ fn picture(
         None => (width.min(PICTURE_WIDTH), PICTURE_HEIGHT),
     };
     if let Some(path) = &media.path {
+        // Phones often leave a sticker's animated flag out, so a downloaded
+        // file that says it moves is played as well.
+        let sticker = sticker.map(|animated| animated || crate::ui::picker::moves(ui.ctx(), path));
         if sticker == Some(true) {
             let size = fit_sticker(
                 media.width.unwrap_or(180) as f32,
