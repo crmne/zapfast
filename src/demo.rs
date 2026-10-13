@@ -9885,31 +9885,63 @@ mod tests {
         );
     }
 
+    /// Platforms deliver only the Ctrl+V release for a picture paste, and a
+    /// quick tap lets go of Ctrl before V (#494). A typed V is never a paste.
     #[test]
-    fn a_paste_is_seen_on_the_key_release() {
-        // Platforms may deliver only the Ctrl+V key release for image paste.
+    fn a_picture_paste_is_seen_on_the_key_release() {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
         render(&mut app, &ctx);
-        let release = egui::Event::Key {
+        let picture = || {
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("fixture-clipboard-image"),
+                    (2_usize, 2_usize, vec![200_u8; 16]),
+                )
+            })
+        };
+        let v = |pressed, modifiers| egui::Event::Key {
             key: egui::Key::V,
             physical_key: None,
-            pressed: false,
+            pressed,
             repeat: false,
-            modifiers: egui::Modifiers::COMMAND,
+            modifiers,
         };
-        frame_with(&mut app, &ctx, vec![release]);
-        assert!(ctx.input(crate::app::wants_paste));
-        let plain = egui::Event::Key {
-            key: egui::Key::V,
-            physical_key: None,
-            pressed: false,
-            repeat: false,
-            modifiers: egui::Modifiers::NONE,
-        };
-        frame_with(&mut app, &ctx, vec![plain]);
-        assert!(!ctx.input(crate::app::wants_paste), "a plain V is typing");
+        let command = egui::Event::ModifiersChanged(egui::Modifiers::COMMAND);
+        let none = egui::Event::ModifiersChanged(egui::Modifiers::NONE);
+        // Ctrl held until V goes up; egui-winit swallowed the press.
+        picture();
+        frame_with(&mut app, &ctx, vec![command.clone()]);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![v(false, egui::Modifiers::COMMAND), none.clone()],
+        );
+        assert_eq!(app.pending.len(), 1, "a held Ctrl+V");
+        // A quick tap: Ctrl comes up first, all within one frame.
+        picture();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![
+                command.clone(),
+                none.clone(),
+                v(false, egui::Modifiers::NONE),
+            ],
+        );
+        assert_eq!(app.pending.len(), 2, "a quick tap releasing Ctrl first");
+        // The same tap spread over frames.
+        picture();
+        frame_with(&mut app, &ctx, vec![command]);
+        frame_with(&mut app, &ctx, vec![none]);
+        frame_with(&mut app, &ctx, vec![v(false, egui::Modifiers::NONE)]);
+        assert_eq!(app.pending.len(), 3, "a tap across frames");
+        // Typing V reaches us as a press, and its release is no paste.
+        picture();
+        frame_with(&mut app, &ctx, vec![v(true, egui::Modifiers::NONE)]);
+        frame_with(&mut app, &ctx, vec![v(false, egui::Modifiers::NONE)]);
+        assert_eq!(app.pending.len(), 3, "a plain V is typing");
     }
 
     #[test]

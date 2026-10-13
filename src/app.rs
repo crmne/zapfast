@@ -444,14 +444,8 @@ pub struct App {
     pub(crate) sweep: Option<Sweep>,
     /// Whether files are being dragged over the window.
     pub dropping: bool,
-    /// A text paste already handled the clipboard before the shortcut release.
-    paste_before_release: bool,
-    /// Last observed command state, distinguishing a new shortcut from V-up.
-    paste_command_down: bool,
-    /// A V press delivered to us, unlike the press swallowed by native paste.
-    ordinary_v_down: bool,
-    saw_paste_command: bool,
-    paste_was_focused: bool,
+    /// Where the Ctrl/Cmd+V shortcut stands across frames.
+    paste_keys: PasteKeys,
     /// Open emoji, GIF, or sticker picker tab.
     pub picker: Option<PickerTab>,
     /// Picker anchor at the composer button.
@@ -1127,11 +1121,7 @@ impl App {
             selection_anchor: None,
             sweep: None,
             dropping: false,
-            paste_before_release: false,
-            paste_command_down: false,
-            ordinary_v_down: false,
-            saw_paste_command: false,
-            paste_was_focused: false,
+            paste_keys: PasteKeys::default(),
             picker: None,
             picker_anchor: None,
             picker_search: String::new(),
@@ -1864,11 +1854,7 @@ impl App {
         self.theme_transition = fastframe_theme::Transition::default();
         self.zoom_applied = false;
         self.window_hidden = false;
-        self.paste_before_release = false;
-        self.paste_command_down = false;
-        self.ordinary_v_down = false;
-        self.saw_paste_command = false;
-        self.paste_was_focused = false;
+        self.paste_keys = PasteKeys::default();
         self.hide_intent = false;
         self.wants_show = false;
         self.reopen = false;
@@ -7445,110 +7431,7 @@ impl App {
             return;
         }
         ctx.data_mut(|data| data.insert_temp(frame_id, (frame, false)));
-        if ctx.input(|input| {
-            !input.focused
-                || input
-                    .events
-                    .iter()
-                    .any(|event| matches!(event, egui::Event::WindowFocused(false)))
-        }) {
-            self.saw_paste_command = false;
-            self.paste_was_focused = false;
-        }
-        let (paste, text, released, focused, command) = ctx.input(|input| {
-            let text = input
-                .events
-                .iter()
-                .any(|event| matches!(event, egui::Event::Paste(_)));
-            let ordinary_v = self.ordinary_v_down
-                || input.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::Key {
-                            key: egui::Key::V,
-                            pressed: true,
-                            ..
-                        }
-                    )
-                });
-            (
-                text || (!ordinary_v
-                    && (wants_paste(input)
-                        || input.events.iter().any(|event| {
-                            matches!(
-                                event,
-                                egui::Event::Key {
-                                    key: egui::Key::V,
-                                    pressed: false,
-                                    ..
-                                }
-                            ) && !self.ordinary_v_down
-                                && (self.saw_paste_command
-                                    || (self.paste_was_focused && input.modifiers.command))
-                                && !input.events.iter().any(|event| {
-                                    matches!(
-                                        event,
-                                        egui::Event::Key {
-                                            key: egui::Key::V,
-                                            pressed: true,
-                                            ..
-                                        }
-                                    )
-                                })
-                        }))),
-                text,
-                input.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::Key {
-                            key: egui::Key::V,
-                            pressed: false,
-                            ..
-                        }
-                    )
-                }),
-                input.focused,
-                input.modifiers.command,
-            )
-        });
-        if command && !self.paste_command_down {
-            // A new command press starts another shortcut, including after a
-            // menu paste that had no V release.
-            self.paste_before_release = false;
-        }
-        self.paste_command_down = command && focused;
-        let requested =
-            paste && (text || self.paste_was_focused) && (text || !self.paste_before_release);
-        self.paste_was_focused = focused;
-        // egui-winit swallows Ctrl/Cmd+V's press even for an image-only
-        // clipboard. A release after an observed command modifier can be that
-        // shortcut, including when Ctrl/Cmd was released first. Ordinary typing has a
-        // delivered press, and must never stage an unrelated clipboard image.
-        if ctx.input(|input| {
-            input.events.iter().any(|event| {
-                matches!(
-                    event,
-                    egui::Event::Key {
-                        key: egui::Key::V,
-                        pressed: true,
-                        ..
-                    }
-                )
-            })
-        }) {
-            self.ordinary_v_down = true;
-        }
-        if released || !focused {
-            self.paste_before_release = false;
-            self.ordinary_v_down = false;
-            self.saw_paste_command = false;
-        } else if text {
-            // A menu paste has no key release to wait for.
-            self.paste_before_release = command || self.saw_paste_command;
-        }
-        if focused && !released && command {
-            self.saw_paste_command = true;
-        }
+        let requested = ctx.input(|input| self.paste_keys.read(input));
         // A message or button may retain keyboard focus after clicking it.
         // Other text fields still own their clipboard input.
         let editing_text = ctx.text_edit_focused();
@@ -7559,7 +7442,6 @@ impl App {
                     && !memory.has_focus(egui::Id::new("chat-search")))
         });
         if requested
-            && focused
             && composing
             && self.page == Page::Chats
             && self.dialog.is_none()
@@ -7730,19 +7612,99 @@ fn mention_refs(ids: &[String]) -> Vec<crate::model::MentionRef> {
         .collect()
 }
 
-pub fn wants_paste(input: &egui::InputState) -> bool {
-    input.events.iter().any(|event| {
-        matches!(event, egui::Event::Paste(_))
-            || matches!(
-                event,
+/// How long after Ctrl/Cmd goes up a V release still completes the paste
+/// shortcut: a quick tap often lets go of the modifier first (#494).
+const PASTE_RELEASE_GRACE: f64 = 0.5;
+
+/// Follows the Ctrl/Cmd+V shortcut across frames.
+///
+/// egui-winit swallows the shortcut's key press and sends a `Paste` event
+/// only when the clipboard holds text, so on Linux and Windows a picture or
+/// file paste shows up only as the V release. That release carries the
+/// modifiers of its own moment, which no longer include Ctrl when a quick tap
+/// lets go of Ctrl first. So a V release is the shortcut when no V press of
+/// its own reached us (a delivered press is typing) and Ctrl/Cmd was down at
+/// most [`PASTE_RELEASE_GRACE`] before. macOS's Edit menu sends `Paste` for
+/// Cmd+V whatever the clipboard holds, and its release is then ignored.
+#[derive(Debug, Default)]
+struct PasteKeys {
+    /// Ctrl/Cmd is down, as of the last event that said.
+    command: bool,
+    /// When Ctrl/Cmd was last seen down.
+    command_at: Option<f64>,
+    /// A V press reached us since the last V release: typing, not a paste.
+    typed_v: bool,
+    /// This shortcut's `Paste` event already took the clipboard, so its
+    /// release must not read it again.
+    handled: bool,
+}
+
+impl PasteKeys {
+    /// Reads one frame's events, in order, and says whether they ask for a
+    /// paste: a `Paste` event, or the release of a swallowed Ctrl/Cmd+V.
+    fn read(&mut self, input: &egui::InputState) -> bool {
+        let now = input.time;
+        if !input.focused {
+            *self = Self::default();
+            return false;
+        }
+        if self.command {
+            // Still held when this frame's events arrived.
+            self.command_at = Some(now);
+        }
+        let recent = |at: Option<f64>| at.is_some_and(|at| now - at <= PASTE_RELEASE_GRACE);
+        let mut requested = false;
+        for event in &input.events {
+            match event {
+                egui::Event::WindowFocused(_) => *self = Self::default(),
+                egui::Event::ModifiersChanged(modifiers) => {
+                    self.set_command(modifiers.command, now)
+                }
+                egui::Event::Paste(_) => {
+                    requested = true;
+                    // A menu paste has no key release to wait for. The Edit
+                    // menu's Cmd+V may arrive after Cmd is already up.
+                    self.handled = recent(self.command_at);
+                }
                 egui::Event::Key {
-                    key: egui::Key::V,
-                    pressed: false,
+                    key,
+                    pressed,
                     modifiers,
                     ..
-                } if modifiers.command
-            )
-    })
+                } => {
+                    self.set_command(modifiers.command, now);
+                    if *key != egui::Key::V {
+                        continue;
+                    }
+                    if *pressed {
+                        self.typed_v = true;
+                        continue;
+                    }
+                    requested |= !self.typed_v && !self.handled && recent(self.command_at);
+                    self.typed_v = false;
+                    self.handled = false;
+                    if !self.command {
+                        // The next release needs a Ctrl/Cmd of its own.
+                        self.command_at = None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        requested
+    }
+
+    fn set_command(&mut self, down: bool, now: f64) {
+        if down {
+            if !self.command {
+                // A new press starts another shortcut, including after a
+                // menu paste that had no V release.
+                self.handled = false;
+            }
+            self.command_at = Some(now);
+        }
+        self.command = down;
+    }
 }
 
 /// What a paste into the composer stages.
@@ -9917,6 +9879,88 @@ mod tests {
         assert_eq!(app.pending.len(), 1);
         clipboard_frame(&mut app, &ctx, vec![release], true);
         assert_eq!(app.pending.len(), 2, "each shortcut stages one image");
+    }
+
+    /// Runs clipboard frames at the given input times, returning how often
+    /// the clipboard was read.
+    fn timed_clipboard_frames(
+        app: &mut App,
+        ctx: &egui::Context,
+        frames: Vec<(f64, Vec<egui::Event>)>,
+    ) -> usize {
+        let mut reads = 0;
+        for (time, events) in frames {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.take_clipboard_paste(ui.ctx(), || {
+                        reads += 1;
+                        Some(ClipboardPaste::Image {
+                            width: 2,
+                            height: 2,
+                            rgba: vec![200; 16],
+                        })
+                    });
+                },
+            );
+            output.textures_delta.clear();
+        }
+        reads
+    }
+
+    fn bare_v_release() -> egui::Event {
+        let mut release = paste_release();
+        if let egui::Event::Key { modifiers, .. } = &mut release {
+            *modifiers = egui::Modifiers::NONE;
+        }
+        release
+    }
+
+    /// A quick tap whose events land in one frame (#494): by the V release,
+    /// neither the event nor the frame says Ctrl any more.
+    #[test]
+    fn a_quick_tap_releasing_control_first_pastes_within_one_frame() {
+        let (mut app, ctx) = clipboard_app();
+        let up = egui::Event::ModifiersChanged(egui::Modifiers::NONE);
+        let down = egui::Event::ModifiersChanged(egui::Modifiers::COMMAND);
+        let reads = timed_clipboard_frames(
+            &mut app,
+            &ctx,
+            vec![
+                (10.0, vec![up.clone()]),
+                (20.0, vec![down, up, bare_v_release()]),
+            ],
+        );
+        assert_eq!(reads, 1);
+        assert_eq!(app.pending.len(), 1);
+    }
+
+    /// A V release without a press of its own long after Ctrl went up (an
+    /// input method that kept the press, say) is not the shortcut.
+    #[test]
+    fn a_v_release_long_after_control_is_not_a_paste() {
+        let (mut app, ctx) = clipboard_app();
+        let reads = timed_clipboard_frames(
+            &mut app,
+            &ctx,
+            vec![
+                (
+                    10.0,
+                    vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND)],
+                ),
+                (
+                    10.1,
+                    vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
+                ),
+                (10.2 + PASTE_RELEASE_GRACE, vec![bare_v_release()]),
+            ],
+        );
+        assert_eq!(reads, 0);
+        assert!(app.pending.is_empty());
     }
 
     #[test]
